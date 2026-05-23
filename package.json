@@ -1,0 +1,26 @@
+{
+  "name": "scorebug",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Live volleyball streaming with a graphical scoreboard overlay",
+  "license": "MIT",
+  "author": "Conley Chaos LLC",
+  "repository": "github:jdconley/scorebug",
+  "homepage": "https://scorebug.live",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,45 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+build/
+*.tsbuildinfo
+.next/
+.turbo/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# editor / OS
+.DS_Store
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# iOS / Xcode
+ios/.build/
+ios/build/
+ios/DerivedData/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/Pods/
+Package.resolved
+
+# runtime
+/tmp/score.txt
+*.pid
+
+# coverage / test artifacts
+coverage/
+.nyc_output/
