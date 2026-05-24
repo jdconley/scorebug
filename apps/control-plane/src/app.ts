@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import type { Config } from './config.js';
 import { HomeBus } from './home-bus.js';
 import { createLogger, type Logger } from './logger.js';
@@ -19,6 +20,17 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}): App
   const bus = overrides.bus ?? new HomeBus(log);
 
   const app = new Hono();
+
+  const origins = config.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+  app.use(
+    '*',
+    cors({
+      origin: origins.includes('*') ? '*' : origins,
+      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowHeaders: ['authorization', 'content-type'],
+      maxAge: 600,
+    }),
+  );
 
   app.get('/healthz', (c) => c.json({ ok: true, home: bus.isConnected() }));
 

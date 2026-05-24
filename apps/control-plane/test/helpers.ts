@@ -14,6 +14,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     INGEST_HOST: 'ingest.test',
     INGEST_PORT: 8890,
     LOG_LEVEL: 'error',
+    CORS_ORIGINS: '*',
     ...overrides,
   };
 }

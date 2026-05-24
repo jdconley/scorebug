@@ -9,6 +9,8 @@ const schema = z.object({
   INGEST_HOST: z.string().default('ingest.scorebug.live'),
   INGEST_PORT: z.coerce.number().int().positive().default(8890),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  /** Comma-separated origins for CORS. `*` allows any. Default `*` for personal-scale use. */
+  CORS_ORIGINS: z.string().default('*'),
 });
 
 export type Config = z.infer<typeof schema>;
