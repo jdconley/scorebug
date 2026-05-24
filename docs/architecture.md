@@ -61,7 +61,7 @@ Shared types live in `packages/protocol/src/messages.ts`. Both control plane and
 |--------|----------------------------|-----------------------|---------------------------------------|
 | POST   | `/games/start`             | phone token           | `{ homeTeam, awayTeam, youtubeStreamKey }` |
 | POST   | `/games/:id/end`           | phone token           | —                                     |
-| POST   | `/games/:id/score`         | phone token           | `{ home, away, set }`                 |
+| POST   | `/games/:id/score`         | phone token           | `{ home, away, set, homeSets, awaySets }` |
 | POST   | `/games/:id/callout`       | phone token           | `{ kind: 'kill'\|'dig'\|'block', player }` |
 | POST   | `/internal/stream-ready`   | MediaMTX bearer       | (webhook fired by MediaMTX `runOnReady`) |
 | GET    | `/home/ws`                 | home token (query)    | WebSocket upgrade                     |
