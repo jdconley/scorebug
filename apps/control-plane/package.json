@@ -14,12 +14,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^2.0.4",
     "@hono/node-ws": "^1.0.5",
-    "@hono/zod-validator": "^0.4.1",
+    "@hono/zod-validator": "^0.8.0",
     "@scorebug/protocol": "workspace:*",
     "hono": "^4.6.10",
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
