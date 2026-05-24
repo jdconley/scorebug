@@ -140,7 +140,10 @@ describe('internal routes', () => {
 
     const r2 = await app.request('/internal/stream-ready', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.INTERNAL_TOKEN}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.INTERNAL_TOKEN}`,
+      },
       body: JSON.stringify({ path: `game_${id}` }),
     });
     expect(r2.status).toBe(200);
@@ -159,7 +162,10 @@ describe('internal routes', () => {
 
     const r2 = await app.request('/internal/stream-ready', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.PHONE_TOKEN}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.PHONE_TOKEN}`,
+      },
       body: JSON.stringify({ path: `game_${id}` }),
     });
     expect(r2.status).toBe(401);

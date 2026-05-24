@@ -14,14 +14,19 @@ export type AppDeps = {
   log: Logger;
 };
 
-export function createApp(config: Config, overrides: Partial<AppDeps> = {}): AppDeps & { app: Hono } {
+export function createApp(
+  config: Config,
+  overrides: Partial<AppDeps> = {},
+): AppDeps & { app: Hono } {
   const log = overrides.log ?? createLogger(config.LOG_LEVEL);
   const store = overrides.store ?? new GameStore();
   const bus = overrides.bus ?? new HomeBus(log);
 
   const app = new Hono();
 
-  const origins = config.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+  const origins = config.CORS_ORIGINS.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   app.use(
     '*',
     cors({

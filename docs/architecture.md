@@ -30,25 +30,25 @@ End-to-end latency target: **5–10s glass-to-glass** (YouTube "low latency" mod
 
 - Swift, `AVFoundation`, **HaishinKit.swift** for SRT.
 - `AVCaptureSession` produces `CMSampleBuffer`s. Fork on two independent serial queues:
-  1. **Stream** — encode H.264 1080p @ 5–6 Mbps, ship via SRT.
-  2. **Archive** — `AVAssetWriter` writing fragmented MP4 (movieFragmentInterval set for crash safety). Never re-encoded.
+    1. **Stream** — encode H.264 1080p @ 5–6 Mbps, ship via SRT.
+    2. **Archive** — `AVAssetWriter` writing fragmented MP4 (movieFragmentInterval set for crash safety). Never re-encoded.
 - Trim HaishinKit: no WebRTC, no playback, no talkback — one-way feed only.
 - Configure control plane URL + auth token in Settings.
 
 ### VPS (Hetzner CPX11, Hillsboro, OR)
 
 - docker-compose with three services:
-  - **Caddy** — TLS termination, reverse proxy to control plane.
-  - **control-plane** (Hono on Node 22) — REST + WebSocket to home.
-  - **MediaMTX** with `network_mode: host` — SRT ingest + pull.
+    - **Caddy** — TLS termination, reverse proxy to control plane.
+    - **control-plane** (Hono on Node 22) — REST + WebSocket to home.
+    - **MediaMTX** with `network_mode: host` — SRT ingest + pull.
 - ~$5/mo, always-on. ~11 GB egress per 2-hour game; included in plan's 1 TB.
 
 ### Home (always-on box w/ NVIDIA GPU)
 
 - **home-daemon** (Node, systemd unit) — outbound WebSocket to control plane.
-  - On `start_game`: spawn ffmpeg.
-  - On `score_update` / `callout`: atomic-write `/tmp/score.txt` (tmp + rename) so `drawtext textfile=...:reload=1` picks it up.
-  - On `end_game`: kill ffmpeg.
+    - On `start_game`: spawn ffmpeg.
+    - On `score_update` / `callout`: atomic-write `/tmp/score.txt` (tmp + rename) so `drawtext textfile=...:reload=1` picks it up.
+    - On `end_game`: kill ffmpeg.
 - **Overlay** — served locally; v1 = `drawtext`, v2 = Smelter Web View loading a Vite-built React page over GPU compositing.
 
 ## Protocol
@@ -57,14 +57,14 @@ Shared types live in `packages/protocol/src/messages.ts`. Both control plane and
 
 ### REST (control plane)
 
-| Method | Path                       | Auth                  | Body                                  |
-|--------|----------------------------|-----------------------|---------------------------------------|
-| POST   | `/games/start`             | phone token           | `{ homeTeam, awayTeam, youtubeStreamKey }` |
-| POST   | `/games/:id/end`           | phone token           | —                                     |
-| POST   | `/games/:id/score`         | phone token           | `{ home, away, set, homeSets, awaySets }` |
-| POST   | `/games/:id/callout`       | phone token           | `{ kind: 'kill'\|'dig'\|'block', player }` |
-| POST   | `/internal/stream-ready`   | MediaMTX bearer       | (webhook fired by MediaMTX `runOnReady`) |
-| GET    | `/home/ws`                 | home token (query)    | WebSocket upgrade                     |
+| Method | Path                     | Auth               | Body                                       |
+| ------ | ------------------------ | ------------------ | ------------------------------------------ |
+| POST   | `/games/start`           | phone token        | `{ homeTeam, awayTeam, youtubeStreamKey }` |
+| POST   | `/games/:id/end`         | phone token        | —                                          |
+| POST   | `/games/:id/score`       | phone token        | `{ home, away, set, homeSets, awaySets }`  |
+| POST   | `/games/:id/callout`     | phone token        | `{ kind: 'kill'\|'dig'\|'block', player }` |
+| POST   | `/internal/stream-ready` | MediaMTX bearer    | (webhook fired by MediaMTX `runOnReady`)   |
+| GET    | `/home/ws`               | home token (query) | WebSocket upgrade                          |
 
 ### WebSocket (control plane ↔ home)
 
@@ -75,14 +75,14 @@ Shared types live in `packages/protocol/src/messages.ts`. Both control plane and
 ## Security
 
 - Three Bearer secrets, all rotatable, stored as env vars:
-  - **phone token** — for iPhone + scoring PWA → control plane.
-  - **home token** — for home daemon WS.
-  - **internal token** — for MediaMTX webhook.
+    - **phone token** — for iPhone + scoring PWA → control plane.
+    - **home token** — for home daemon WS.
+    - **internal token** — for MediaMTX webhook.
 - Per-game **two SRT passphrases**:
-  - `publish_secret` — handed to the iPhone for this game.
-  - `read_secret` — handed to the home daemon for this game.
-  - Leaked publish → disrupt this stream, can't exfiltrate.
-  - Leaked read → can't inject content.
+    - `publish_secret` — handed to the iPhone for this game.
+    - `read_secret` — handed to the home daemon for this game.
+    - Leaked publish → disrupt this stream, can't exfiltrate.
+    - Leaked read → can't inject content.
 - Home never accepts inbound. Period.
 
 ## Stream IDs

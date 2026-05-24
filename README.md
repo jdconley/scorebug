@@ -19,6 +19,7 @@ Glass-to-glass latency target: ~5–10s.
 ## Why
 
 Existing options:
+
 - Paid SaaS: $30–100+/mo, no source access.
 - OBS + manual scoreboard: needs someone at a laptop the whole game.
 

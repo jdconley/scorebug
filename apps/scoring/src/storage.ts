@@ -17,7 +17,9 @@ export function saveConfig(cfg: ControlPlaneConfig): void {
   localStorage.setItem(KEY_CONFIG, JSON.stringify(cfg));
 }
 
-export function loadLastTeams(): { home: string; homeShort: string; away: string; awayShort: string } | undefined {
+export function loadLastTeams():
+  | { home: string; homeShort: string; away: string; awayShort: string }
+  | undefined {
   const raw = localStorage.getItem(KEY_TEAMS);
   if (!raw) return undefined;
   try {
@@ -26,7 +28,12 @@ export function loadLastTeams(): { home: string; homeShort: string; away: string
     return undefined;
   }
 }
-export function saveLastTeams(t: { home: string; homeShort: string; away: string; awayShort: string }): void {
+export function saveLastTeams(t: {
+  home: string;
+  homeShort: string;
+  away: string;
+  awayShort: string;
+}): void {
   localStorage.setItem(KEY_TEAMS, JSON.stringify(t));
 }
 

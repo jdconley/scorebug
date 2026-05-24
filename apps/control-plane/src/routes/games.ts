@@ -37,12 +37,7 @@ const calloutSchema = z.object({
   }),
 });
 
-export function gamesRoutes(deps: {
-  config: Config;
-  store: GameStore;
-  bus: HomeBus;
-  log: Logger;
-}) {
+export function gamesRoutes(deps: { config: Config; store: GameStore; bus: HomeBus; log: Logger }) {
   const { config, store, bus, log } = deps;
   const app = new Hono();
 

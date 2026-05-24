@@ -1,0 +1,4 @@
+{$CADDY_DOMAIN} {
+    encode gzip
+    reverse_proxy control-plane:8787
+}

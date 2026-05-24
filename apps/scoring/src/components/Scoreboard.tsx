@@ -23,8 +23,7 @@ export function Scoreboard(props: {
     Promise.resolve(props.onChange(next)).finally(() => setBusy(false));
   };
 
-  const inc = (side: 'home' | 'away') =>
-    push({ ...score, [side]: score[side] + 1 });
+  const inc = (side: 'home' | 'away') => push({ ...score, [side]: score[side] + 1 });
 
   const undo = () => {
     if (history.length === 0) return;
@@ -76,10 +75,18 @@ export function Scoreboard(props: {
       {props.error ? <div className="error">{props.error}</div> : null}
 
       <div className="controls">
-        <button onClick={undo} disabled={history.length === 0 || busy}>Undo</button>
-        <button onClick={endSet} className="ok" disabled={busy}>End set</button>
-        <button onClick={() => props.onChange(score)} disabled={busy}>Resync</button>
-        <button onClick={props.onEndGame} className="danger" disabled={busy}>End game</button>
+        <button onClick={undo} disabled={history.length === 0 || busy}>
+          Undo
+        </button>
+        <button onClick={endSet} className="ok" disabled={busy}>
+          End set
+        </button>
+        <button onClick={() => props.onChange(score)} disabled={busy}>
+          Resync
+        </button>
+        <button onClick={props.onEndGame} className="danger" disabled={busy}>
+          End game
+        </button>
       </div>
     </div>
   );

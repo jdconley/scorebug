@@ -1,0 +1,59 @@
+# Production VPS stack: Caddy (TLS) + control-plane (Hono) + MediaMTX (SRT).
+# MediaMTX runs in host networking mode so SRT UDP punches through cleanly.
+#
+# Run from this directory:
+#   docker compose pull
+#   docker compose build
+#   docker compose up -d
+#
+# Required env in `.env` (next to this file):
+#   PHONE_TOKEN, HOME_TOKEN, INTERNAL_TOKEN — see ../../apps/control-plane/.env.example
+#   CADDY_DOMAIN — e.g. api.scorebug.live (Caddy will fetch a Let's Encrypt cert)
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN}
+    depends_on:
+      - control-plane
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: apps/control-plane/Dockerfile
+    image: scorebug/control-plane:latest
+    restart: unless-stopped
+    environment:
+      PHONE_TOKEN: ${PHONE_TOKEN}
+      HOME_TOKEN: ${HOME_TOKEN}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      PORT: 8787
+      HOST: 0.0.0.0
+      INGEST_HOST: ${INGEST_HOST}
+      INGEST_PORT: ${INGEST_PORT:-8890}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      LOG_LEVEL: info
+    expose:
+      - '8787'
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MTX_INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+volumes:
+  caddy_data:
+  caddy_config:

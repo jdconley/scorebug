@@ -31,12 +31,23 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     'boxborderw=18',
     'x=40',
     'y=h-100',
-    "fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    'fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
   ].join(':');
 
   const video = spec.nvenc
     ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-b:v', '6000k', '-g', '60']
-    : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-b:v', '6000k', '-g', '60'];
+    : [
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-tune',
+        'zerolatency',
+        '-b:v',
+        '6000k',
+        '-g',
+        '60',
+      ];
 
   return [
     '-hide_banner',
@@ -66,8 +77,12 @@ export function startPipeline(spec: PipelineSpec, log: Logger): PipelineHandle {
   log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
   const child: ChildProcess = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  child.stdout?.on('data', (b: Buffer) => log.debug('ffmpeg_stdout', { line: b.toString().trim() }));
-  child.stderr?.on('data', (b: Buffer) => log.debug('ffmpeg_stderr', { line: b.toString().trim() }));
+  child.stdout?.on('data', (b: Buffer) =>
+    log.debug('ffmpeg_stdout', { line: b.toString().trim() }),
+  );
+  child.stderr?.on('data', (b: Buffer) =>
+    log.debug('ffmpeg_stderr', { line: b.toString().trim() }),
+  );
 
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     child.once('exit', (code, signal) => {

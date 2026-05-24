@@ -82,7 +82,9 @@ export function App() {
     return (
       <div className="app">
         <Topbar
-          status={homeConnected === undefined ? 'control plane?' : homeConnected ? 'home ✓' : 'home ✗'}
+          status={
+            homeConnected === undefined ? 'control plane?' : homeConnected ? 'home ✓' : 'home ✗'
+          }
           onSettings={() => setShowSettings(true)}
         />
         <Scoreboard
@@ -121,7 +123,12 @@ export function App() {
   const startGame = async (f: TeamForm) => {
     setBusy(true);
     setSetupError(undefined);
-    storage.saveLastTeams({ home: f.home, homeShort: f.homeShort, away: f.away, awayShort: f.awayShort });
+    storage.saveLastTeams({
+      home: f.home,
+      homeShort: f.homeShort,
+      away: f.away,
+      awayShort: f.awayShort,
+    });
     const homeTeam: Team = { name: f.home, shortName: f.homeShort, color: '#1e3a8a' };
     const awayTeam: Team = { name: f.away, shortName: f.awayShort, color: '#b91c1c' };
     try {
@@ -142,7 +149,9 @@ export function App() {
   return (
     <div className="app">
       <Topbar
-        status={homeConnected === undefined ? 'control plane?' : homeConnected ? 'home ✓' : 'home ✗'}
+        status={
+          homeConnected === undefined ? 'control plane?' : homeConnected ? 'home ✓' : 'home ✗'
+        }
         onSettings={() => setShowSettings(true)}
       />
       <GameSetup

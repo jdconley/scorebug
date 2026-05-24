@@ -5,6 +5,7 @@ Report vulnerabilities privately to **security@scorebug.live**. Please include r
 We aim to acknowledge reports within 72 hours.
 
 Scorebug is a personal-scale system. The threat model assumes:
+
 - Per-game SRT passphrases are split into publish vs read secrets.
 - Bearer tokens (phone / home / internal) are rotatable env vars.
 - The home machine accepts no inbound connections.

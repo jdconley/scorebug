@@ -20,16 +20,16 @@ Server listens on `http://localhost:8787`. WS upgrade is at `ws://localhost:8787
 
 ## Endpoints
 
-| Method | Path                       | Auth     |
-|--------|----------------------------|----------|
-| GET    | `/healthz`                 | none     |
-| POST   | `/games/start`             | phone    |
-| POST   | `/games/:id/end`           | phone    |
-| POST   | `/games/:id/score`         | phone    |
-| POST   | `/games/:id/callout`       | phone    |
-| GET    | `/games/:id`               | phone    |
-| POST   | `/internal/stream-ready`   | internal |
-| GET    | `/home/ws`                 | home (query `?token=`) |
+| Method | Path                     | Auth                   |
+| ------ | ------------------------ | ---------------------- |
+| GET    | `/healthz`               | none                   |
+| POST   | `/games/start`           | phone                  |
+| POST   | `/games/:id/end`         | phone                  |
+| POST   | `/games/:id/score`       | phone                  |
+| POST   | `/games/:id/callout`     | phone                  |
+| GET    | `/games/:id`             | phone                  |
+| POST   | `/internal/stream-ready` | internal               |
+| GET    | `/home/ws`               | home (query `?token=`) |
 
 ## Test
 
