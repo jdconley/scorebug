@@ -50,7 +50,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - name: build control-plane image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/control-plane/Dockerfile
@@ -59,7 +59,7 @@ jobs:
           tags: scorebug/control-plane:ci
 
       - name: build home-daemon image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/home-daemon/Dockerfile
