@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@scorebug/protocol": "workspace:*",
-    "ws": "^8.18.0",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
