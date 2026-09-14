@@ -24,7 +24,7 @@ RUN pnpm install --frozen-lockfile --filter @scorebug/home-daemon...
 COPY packages/protocol packages/protocol
 COPY apps/home-daemon apps/home-daemon
 
-RUN pnpm --filter @scorebug/home-daemon build
+RUN pnpm --filter @scorebug/home-daemon... -r build
 
 ENV SCORE_DIR=/tmp/scorebug
 RUN mkdir -p /tmp/scorebug

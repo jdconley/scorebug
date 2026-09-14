@@ -15,7 +15,7 @@ RUN pnpm install --frozen-lockfile --filter @scorebug/control-plane...
 FROM deps AS build
 COPY packages/protocol packages/protocol
 COPY apps/control-plane apps/control-plane
-RUN pnpm --filter @scorebug/control-plane build
+RUN pnpm --filter @scorebug/control-plane... -r build
 
 FROM node:22-alpine AS runtime
 RUN apk add --no-cache tini

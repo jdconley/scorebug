@@ -132,8 +132,9 @@ Recording associations, broadcast commands, and the selected-worker snapshot end
 are implemented and restart-tested: [media control evidence](../../media-control-api.md).
 Relay credential retrieval, source observation, and automatic relay reconciliation
 are now integrated. The worker now consumes durable native assignments and current
-scores. Observed worker status in the API/native UI and remaining adversarial
-integration cases are still required before this milestone is complete.
+scores. [Observed worker status](../../worker-status.md) is connected to the API and
+native UI; remaining adversarial scoring integration cases still need their full
+milestone audit.
 
 ## Milestone 2: Real local media through a portable worker
 
@@ -147,7 +148,7 @@ new `infra/local/`, `scripts/media-fixture.sh`, and `scripts/test-media.mjs`.
       VideoToolbox and software first, extensible backend interface for later GPU hosts.
 - [ ] Fix SRT credential provisioning, private relay API access, and hook routing.
       Add real connection tests for valid/invalid publish and read credentials and revocation.
-- [ ] Wait for source readiness; reconcile late/restarted workers; reject stale
+- [x] Wait for source readiness; reconcile late/restarted workers; reject stale
       generation commands. Report actual first frames/output progress and failures.
 - [x] Fix process supervision: spawn errors, awaited async handlers, serialized
       lifecycle changes, bounded restarts, and SIGTERM/SIGKILL based on process exit.
@@ -172,8 +173,8 @@ restart, worker SIGKILL/encoder cleanup, API outage lease/recovery, source-loss
 recovery, current-score restoration, and match-end shutdown.
 Source-frame barcodes distinguish fresh frames from muxed/duplicated frames. See
 [worker runbook](../../../apps/home-daemon/README.md). This does not complete the
-ten-minute/audio-sync qualification, capability negotiation, or native status
-reporting gates. The Linux arm64 CPU container also starts and runs the compiled
+ten-minute/audio-sync qualification or capability negotiation gates. Native status
+reporting now has separate API/Swift/simulator evidence. The Linux arm64 CPU container also starts and runs the compiled
 media pipeline; other hosts and GPU drivers remain unqualified.
 
 ## Milestone 3: iPhone recording core and streaming adapter

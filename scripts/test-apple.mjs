@@ -12,6 +12,9 @@ const runtimeID = `com.apple.CoreSimulator.SimRuntime.iOS-${runtime.replaceAll('
 const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-15';
 const simulators = [];
 const twoPhones = process.argv.includes('--two-phones');
+const workerStatus = process.argv.includes('--worker-status');
+if (twoPhones && workerStatus)
+  throw new Error('Run worker status separately from the two-phone scenario');
 let api;
 let databaseDirectory;
 let activeProcess;
@@ -177,10 +180,10 @@ try {
     await testSimulator(second, 'join');
     await testSimulator(first, 'observe');
   } else {
-    await testSimulator(first, 'lifecycle');
+    await testSimulator(first, workerStatus ? 'worker-status' : 'lifecycle');
   }
   console.log(
-    `PASS: shared Swift tests, unsigned iOS 17 deployment build, and native scoring ${twoPhones ? 'across two phone simulators' : 'lifecycle'}.`,
+    `PASS: shared Swift tests, unsigned iOS 17 deployment build, and native scoring ${twoPhones ? 'across two phone simulators' : workerStatus ? 'with worker status transitions' : 'lifecycle'}.`,
   );
   console.log(
     'Camera/SRT, Watch, and physical-device behavior remain separate qualification gates.',

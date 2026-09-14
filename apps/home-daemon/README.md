@@ -20,8 +20,11 @@ process per worker ID remains required; this is not a distributed fencing mechan
 
 `producing_output` in local logs means FFmpeg's frame and timestamp counters have
 advanced. It does not establish delivery to viewers or sustained fresh-frame rate.
-Worker observations are not yet sent back to the native app. The old WebSocket
-client remains unused legacy code.
+Worker observations now reach the API and native scorer through an independent
+reporting loop. Reports expire after five seconds without a heartbeat; the native
+display also expires them locally when a network request stalls. See the
+[status contract and tests](../../docs/worker-status.md). The old WebSocket client
+remains unused legacy code.
 
 ## Run locally
 

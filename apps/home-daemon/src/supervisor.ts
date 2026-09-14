@@ -1,5 +1,6 @@
 import type { PipelineHandle, PipelineProgress } from './pipeline.js';
 import { atomicWrite } from './score-file.js';
+import type { WorkerObservation } from '@scorebug/protocol';
 
 export type WorkerInput = {
   gameId: string;
@@ -79,6 +80,8 @@ export class WorkerSupervisor {
   // Retain score high-water marks for the supervisor lifetime, including assignment switches.
   private readonly scores = new Map<string, Pick<WorkerInput, 'scoreRevision' | 'overlay'>>();
   private nextAttempt = -Infinity;
+  private attempt = 0;
+  private lastState: WorkerState = { state: 'idle' };
 
   constructor(private readonly options: WorkerSupervisorOptions) {
     this.now = options.now ?? (() => performance.now());
@@ -116,17 +119,36 @@ export class WorkerSupervisor {
     return this.closing;
   }
 
+  /** A copied public observation; it contains no media URL or credential. */
+  observation(): WorkerObservation | null {
+    const state = this.lastState;
+    if (state.state === 'idle' || state.gameId === undefined || state.generation === undefined)
+      return null;
+    const active = this.active;
+    return {
+      gameId: state.gameId,
+      generation: state.generation,
+      state: state.state,
+      reason: state.reason ?? null,
+      attempt: this.attempt,
+      frame: active?.progress?.frame ?? null,
+      outTimeUs: active?.progress?.outTimeUs ?? null,
+      scoreRevision: active?.input.scoreRevision ?? null,
+    };
+  }
+
   private emit(
     state: WorkerState['state'],
     reason?: WorkerState['reason'],
     input = this.assignment,
   ): void {
+    this.lastState = {
+      state,
+      ...(input && { gameId: input.gameId, generation: input.generation }),
+      ...(reason && { reason }),
+    };
     try {
-      this.options.onState?.({
-        state,
-        ...(input && { gameId: input.gameId, generation: input.generation }),
-        ...(reason && { reason }),
-      });
+      this.options.onState?.({ ...this.lastState });
     } catch {
       // Observer errors must neither interrupt supervision nor expose their contents.
     }
@@ -310,6 +332,7 @@ export class WorkerSupervisor {
     let handle: PipelineHandle;
     let running: Running | undefined;
     let earlyProgress: PipelineProgress | undefined;
+    this.attempt++;
     try {
       handle = this.options.start(input, (progress) => {
         if (running) this.acceptProgress(running, progress);

@@ -101,7 +101,7 @@ An optional progress callback parses bounded, complete, monotonic FFmpeg output
 frame/time counters. These counters do not prove delivery freshness or remote
 playback. The worker entry point now consumes durable native assignments, handles
 initial/current scores, and uses these counters for a ten-second output watchdog.
-States are logged locally; API/native UI status reporting remains required.
+States are logged locally and sent through [expiring API/native UI observations](worker-status.md).
 
 Focused verification passes 14 relay adapter tests, 25 lifecycle tests, 6 route tests,
 and 20 pipeline argument/process
@@ -110,8 +110,8 @@ failure, progress parsing, and credential-safe logs. Harness tests also cover
 partial container startup and cancellation cleanup. CI is configured to run the
 real relay test on Linux; a local Mac pass is not Linux host qualification.
 
-The complete workspace passes 169 API tests, 72 worker tests, and 12 tooling tests,
-plus typecheck, production build, and formatting. Production server container
+The complete workspace passes 180 API tests, 81 worker tests, 13 tooling tests,
+and one plain-Node protocol import test, plus typecheck, production build, and formatting. Production server container
 startup and the four-exit native scoring recovery test also pass with this integration.
 
 ## Native worker short media check
@@ -136,7 +136,7 @@ Match end stops output and revokes publishing without changing recording metadat
 Artifacts: `artifacts/qa/native-worker-{software,videotoolbox}/` contains playable
 clips and inspected stills; adjacent `.log` files record the runs. All owned runtime
 resources were removed. These short checks do not establish audio synchronization,
-ten-minute stability, native status reporting, physical recording, or NVENC/other-host
+ten-minute stability, physical recording, or NVENC/other-host
 qualification. Independently killing the guardian remains a fail-closed case requiring
 host-level cleanup, not a confirmed encoder exit. The default Linux arm64 CPU image
 has separate compiled-pipeline/startup/decode/stop evidence. See the

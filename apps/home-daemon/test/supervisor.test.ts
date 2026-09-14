@@ -87,6 +87,66 @@ afterEach(() => {
 });
 
 describe('WorkerSupervisor', () => {
+  it('stops reporting the previous assignment when control returns idle', async () => {
+    const r = rig();
+    await r.supervisor.tick();
+    r.set(null);
+    const tick = r.supervisor.tick();
+    await flush();
+    r.children[0]!.exit();
+    await tick;
+    expect(r.supervisor.observation()).toBeNull();
+  });
+  it('exposes a credential-free observation of the actual encoder attempt and written score', async () => {
+    const r = rig();
+    expect(r.supervisor.observation()).toBeNull();
+    await r.supervisor.tick();
+    expect(r.supervisor.observation()).toEqual({
+      gameId: 'game',
+      generation: 1,
+      state: 'starting',
+      reason: null,
+      attempt: 1,
+      frame: null,
+      outTimeUs: null,
+      scoreRevision: 1,
+    });
+    r.children[0]!.progress({ frame: 12, outTimeUs: 400000 });
+    const reported = r.supervisor.observation()!;
+    expect(reported.state).toBe('producing_output');
+    expect(reported.frame).toBe(12);
+    expect(JSON.stringify(reported)).not.toContain('relay');
+    reported.frame = 999;
+    expect(r.supervisor.observation()!.frame).toBe(12);
+    r.children[0]!.exit();
+    await flush();
+    expect(r.supervisor.observation()).toMatchObject({
+      state: 'retrying',
+      attempt: 1,
+      frame: null,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await r.supervisor.tick();
+    r.children[1]!.progress({ frame: 1, outTimeUs: 33000 });
+    expect(r.supervisor.observation()).toMatchObject({
+      state: 'producing_output',
+      attempt: 2,
+      frame: 1,
+    });
+  });
+  it('does not report a score revision before the overlay write completes', async () => {
+    const r = rig();
+    await r.supervisor.tick();
+    const written = deferred<void>();
+    r.writeScore.mockImplementationOnce(() => written.promise);
+    r.set(input({ scoreRevision: 2, overlay: 'TWO' }));
+    const tick = r.supervisor.tick();
+    await flush();
+    expect(r.supervisor.observation()!.scoreRevision).toBe(1);
+    written.resolve();
+    await tick;
+    expect(r.supervisor.observation()!.scoreRevision).toBe(2);
+  });
   it('writes initial overlay before spawn and reports output only with positive frame and time', async () => {
     const r = rig();
     await r.supervisor.tick();

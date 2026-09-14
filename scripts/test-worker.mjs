@@ -357,12 +357,22 @@ try {
     assert.ok(response.ok, 'Sink observation failed');
     return response.json();
   };
+  const workerStatus = async () =>
+    (await request(`/v1/matches/${matchId}/media/status`, created.credential.token)).status;
   const ready = async () => {
     await until(
       async () => {
         assert.ok(!worker.exited, 'Worker exited before output');
         const state = await sinkState();
-        return state.ready && state.bytesReceived > 0 && worker.output.includes('producing_output');
+        const reported = await workerStatus();
+        return (
+          state.ready &&
+          state.bytesReceived > 0 &&
+          worker.output.includes('producing_output') &&
+          reported.state === 'producing_output' &&
+          reported.observation.frame > 0 &&
+          reported.observation.outTimeUs > 0
+        );
       },
       'real worker output',
       25_000,
@@ -451,6 +461,10 @@ try {
   };
   worker = startWorker();
   await until(() => worker.output.includes('waiting_source'), 'worker waits for source');
+  await until(
+    async () => (await workerStatus()).state === 'waiting_source',
+    'native API observes waiting worker',
+  );
   assert.equal((await sinkState()).ready, false);
   const publisherArgs = [
     '-v',
@@ -503,6 +517,10 @@ try {
     async () => (await readFile(join(directory, 'score.txt'), 'utf8')).includes('HOME 1-0 AWAY'),
     'authoritative score update',
   );
+  await until(
+    async () => (await workerStatus()).observation?.scoreRevision === score.snapshot.revision,
+    'native API observes written score revision',
+  );
   const changed = await clip('point-one');
   const pixelDistance = (a, b) => {
     assert.equal(a.length, b.length);
@@ -540,6 +558,11 @@ try {
   );
   crashDescendants.clear();
   await until(() => worker.exited, 'worker crash exit');
+  await until(
+    async () => (await workerStatus()).state === 'stale',
+    'native API expires crashed worker status',
+    7000,
+  );
   worker = startWorker();
   await ready();
   await currentScoreClip('worker-crash-recovered');
@@ -571,6 +594,7 @@ try {
   await until(() => publisher.exited, 'match end revokes input');
   const media = await request(`/v1/matches/${matchId}/media`, capture.credential.token);
   assert.equal(media.snapshot.recordings[0].status, 'recording');
+  assert.equal((await workerStatus()).state, 'not_requested');
   console.log(
     'Worker SIGKILL, source loss, API outage lease, recovery, and match-end stop verified.',
   );

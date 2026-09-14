@@ -74,6 +74,13 @@ private struct NativeScoringView: View {
                 Button("Check and reconcile") { Task { await model.discardExpired() } }.disabled(model.busy)
             } message: { Text("The app will check for a server receipt and only clear an unconfirmed action after it can no longer arrive.") }
             .sheet(isPresented: $showOverride) { overrideSheet }
+            .task(id: scenePhase == .active ? model.workerStatusIdentity : nil) {
+                guard scenePhase == .active, model.workerStatusIdentity != nil else { return }
+                while !Task.isCancelled {
+                    await model.refreshWorkerStatus()
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                }
+            }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
                 await model.wake()
@@ -130,6 +137,11 @@ private struct NativeScoringView: View {
         Section {
             Text("\(match.teams.home.name) vs \(match.teams.away.name)").font(.headline)
             Text("Set \(match.score.set) · Sets \(match.score.homeSets)–\(match.score.awaySets)")
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(model.broadcastStatusText())
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("scoring.broadcastStatus")
+            }
             HStack(spacing: 16) {
                 pointButton(side: .home, name: match.teams.home.name, score: match.score.home, color: .blue)
                 pointButton(side: .away, name: match.teams.away.name, score: match.score.away, color: .red)

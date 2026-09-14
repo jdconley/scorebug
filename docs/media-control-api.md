@@ -56,7 +56,7 @@ when that worker is selected for the active match's requested broadcast. Other
 workers receive `null`. A late or restarted worker can fetch current score and intent.
 `desired: running` is a request, not proof of an active stream. The native worker
 consumes this endpoint and the connection route to launch media. Worker output
-health is logged locally but is not yet reported to the API/native UI.
+health reaches the API and native scorer through [expiring observations](worker-status.md).
 
 The publishing route takes `{recordingId, generation}` and returns only publishing
 access for the selected capture device. The worker connection route returns only
@@ -78,10 +78,10 @@ with native matches.
 - 49 pure media state tests, 10 persistence tests, and 4 HTTP route tests pass.
   Coverage includes ownership, ordering, rejected operations, schema migration,
   independent SQLite connections, and rollback when receipt persistence fails.
-- The complete workspace suite passes 169 API tests, 72 worker tests,
-  and 12 tooling tests. Typecheck, production build, formatting, and the actual
-  production server container startup check pass.
-- Shared Swift passes 45 tests, including 11 media contract/client tests.
+- The complete workspace suite passes 180 API tests, 81 worker tests,
+  13 tooling tests, and one plain-Node protocol import test. Typecheck, production
+  build, formatting, and the production server container startup check pass.
+- Shared Swift passes 50 tests, including 11 media contract/client tests.
   TypeScript and Swift consume identical `media-v1.json` wire fixtures.
   The native scoring app also passes an unsigned generic iPhone build with an
   iOS 17 deployment target using Xcode 26.2; this is compilation, not a device run.
@@ -92,5 +92,6 @@ with native matches.
 These results do not qualify recording, SRT, FFmpeg output, watch networking, or
 physical devices. Relay credential retrieval and short native worker media runs
 now have [separate integration evidence](../apps/home-daemon/README.md).
-Next work includes observed worker status and the full local media qualification
-gate. The worker media harness now also exercises abrupt worker crash and source loss.
+Observed worker status is now connected through the native display. Next work
+includes the full local media qualification gate. The worker media harness also
+exercises abrupt worker crash and source loss.

@@ -1,3 +1,4 @@
+import { WorkerObservations } from './worker-observations.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Config } from './config.js';
@@ -14,6 +15,7 @@ import { RelayLifecycle } from './relay-lifecycle.js';
 
 export type AppDeps = {
   config: Config;
+  observations: WorkerObservations;
   store: GameStore;
   bus: HomeBus;
   log: Logger;
@@ -30,6 +32,7 @@ export function createApp(
   const store = overrides.store ?? new GameStore();
   const bus = overrides.bus ?? new HomeBus(log);
   const matches = overrides.matches ?? new MatchStore(config.DATABASE_PATH, config.PHONE_TOKEN);
+  const observations = overrides.observations ?? new WorkerObservations(matches.media);
   const relay =
     overrides.relay ??
     (config.RELAY_API_URL
@@ -82,8 +85,8 @@ export function createApp(
   app.get('/healthz', (c) => c.json({ ok: true, home: bus.isConnected() }));
 
   app.route('/games', gamesRoutes({ config, store, bus, log }));
-  app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle));
-  app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle));
+  app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle, observations));
+  app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle, observations));
   app.route('/internal', internalRoutes({ config, store, log }));
 
   app.onError((err, c) => {
@@ -91,5 +94,5 @@ export function createApp(
     return c.json({ error: 'internal' }, 500);
   });
 
-  return { app, config, store, bus, log, matches, relay, relayLifecycle };
+  return { app, config, store, bus, log, matches, relay, relayLifecycle, observations };
 }

@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import type { MatchCredential } from '@scorebug/protocol';
+import { WORKER_STATES, WORKER_REASONS, type MatchCredential } from '@scorebug/protocol';
+import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
@@ -38,7 +39,12 @@ const command = z
 type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
 /** Mounted under /v1/matches/:id/media. Recording telemetry never changes scoring authority. */
-export function mediaRoutes(config: Config, matches: MatchStore, relayLifecycle?: RelayLifecycle) {
+export function mediaRoutes(
+  config: Config,
+  matches: MatchStore,
+  relayLifecycle?: RelayLifecycle,
+  observations = new WorkerObservations(matches.media),
+) {
   const app = new Hono<Env>();
   const installation = bearer(config.PHONE_TOKEN, 'installation');
   const scoped = createMiddleware<Env>(async (c, next) => {
@@ -48,6 +54,7 @@ export function mediaRoutes(config: Config, matches: MatchStore, relayLifecycle?
     c.set('credential', credential);
     await next();
   });
+  app.get('/status', scoped, (c) => c.json(observations.status(c.get('credential').gameId)));
   app.get('/', scoped, (c) =>
     c.json({
       snapshot: matches.media.get(c.get('credential').gameId),
@@ -99,6 +106,7 @@ export function mediaRoutes(config: Config, matches: MatchStore, relayLifecycle?
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
   app.onError((error, c) => {
+    if (error instanceof WorkerObservationError) return c.json({ error: error.code }, 409);
     if (error instanceof RelayLifecycleError)
       return c.json(
         { error: error.code },
@@ -114,13 +122,52 @@ export function mediaRoutes(config: Config, matches: MatchStore, relayLifecycle?
   });
   return app;
 }
-export function workerRoutes(config: Config, matches: MatchStore, relayLifecycle?: RelayLifecycle) {
+export function workerRoutes(
+  config: Config,
+  matches: MatchStore,
+  relayLifecycle?: RelayLifecycle,
+  observations = new WorkerObservations(matches.media),
+) {
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     await next();
   });
   app.use('*', bearer(config.HOME_TOKEN, 'worker'));
+  app.post('/sessions', zValidator('json', z.object({ workerId: id, runId: id }).strict()), (c) =>
+    c.json(observations.register(c.req.valid('json'))),
+  );
+  app.post(
+    '/observations',
+    zValidator(
+      'json',
+      z
+        .object({
+          workerId: id,
+          sessionId: id,
+          sequence,
+          observation: z
+            .object({
+              gameId: id,
+              generation: sequence,
+              state: z.enum(WORKER_STATES),
+              reason: z.enum(WORKER_REASONS).nullable(),
+              attempt: sequence,
+              frame: sequence.nullable(),
+              outTimeUs: sequence.nullable(),
+              scoreRevision: sequence.nullable(),
+            })
+            .strict()
+            .refine(
+              (o) =>
+                o.state !== 'producing_output' ||
+                (o.frame !== null && o.frame > 0 && o.outTimeUs !== null && o.outTimeUs > 0),
+            ),
+        })
+        .strict(),
+    ),
+    (c) => c.json(observations.report(c.req.valid('json'))),
+  );
   app.get('/snapshot', zValidator('query', z.object({ workerId: id }).strict()), (c) =>
     c.json({
       assignment: matches.media.workerAssignment(c.req.valid('query').workerId),
@@ -142,6 +189,7 @@ export function workerRoutes(config: Config, matches: MatchStore, relayLifecycle
     return c.json({ connection, serverTime: new Date().toISOString() });
   });
   app.onError((error, c) => {
+    if (error instanceof WorkerObservationError) return c.json({ error: error.code }, 409);
     if (error instanceof RelayLifecycleError)
       return c.json({ error: error.code }, error.code === 'broadcast_changed' ? 409 : 503);
     throw error;

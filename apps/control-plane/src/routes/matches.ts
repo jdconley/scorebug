@@ -1,3 +1,4 @@
+import type { WorkerObservations } from '../worker-observations.js';
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
@@ -70,7 +71,12 @@ const command = z
   .strict();
 type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
-export function matchesRoutes(config: Config, store: MatchStore, relayLifecycle?: RelayLifecycle) {
+export function matchesRoutes(
+  config: Config,
+  store: MatchStore,
+  relayLifecycle?: RelayLifecycle,
+  observations?: WorkerObservations,
+) {
   const app = new Hono<Env>();
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -128,7 +134,7 @@ export function matchesRoutes(config: Config, store: MatchStore, relayLifecycle?
     const outcome = store.receipt(credential.gameId, credential.deviceId, c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
-  app.route('/:id/media', mediaRoutes(config, store, relayLifecycle));
+  app.route('/:id/media', mediaRoutes(config, store, relayLifecycle, observations));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)
       return c.json(

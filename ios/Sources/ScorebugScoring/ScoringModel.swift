@@ -42,8 +42,12 @@ private struct ScoringKeychain: ScoringSetupStorage {
 
 @MainActor
 final class ScoringModel: ObservableObject {
-    @Published var endpoint = "http://localhost:18787"
-    @Published var installationToken = ""
+    @Published var endpoint = "http://localhost:18787" {
+        didSet { if endpoint != oldValue { invalidateWorkerStatus() } }
+    }
+    @Published var installationToken = "" {
+        didSet { if installationToken != oldValue { invalidateWorkerStatus() } }
+    }
     @Published var homeName = "Home"
     @Published var awayName = "Away"
     @Published var bestOf = 3
@@ -61,8 +65,21 @@ final class ScoringModel: ObservableObject {
     private var messageSource: MessageSource = .action
     private var setup: SavedScoringSetup?
     private var coordinator: MatchCommandCoordinator? {
-        didSet { describedOutcomeId = nil }
+        didSet { describedOutcomeId = nil; invalidateWorkerStatus() }
     }
+    struct WorkerStatusIdentity: Equatable {
+        let epoch: UUID
+        let endpoint: String
+        let credential: MatchCredential
+        let generation: Int
+    }
+    private struct WorkerStatusValue {
+        let identity: WorkerStatusIdentity
+        let response: WorkerMediaStatusResponse?
+        let freshness: WorkerStatusFreshness?
+    }
+    private var workerStatusEpoch = UUID()
+    @Published private var workerStatus: WorkerStatusValue?
     private var describedOutcomeId: String?
     private var didRestore = false
     private let keychain: any ScoringSetupStorage
@@ -247,6 +264,70 @@ final class ScoringModel: ObservableObject {
         do { state = try await coordinator.recover(); describeOutcome() }
         catch { await report(error) }
     }
+    private func invalidateWorkerStatus() {
+        workerStatusEpoch = UUID()
+        workerStatus = nil
+    }
+
+    var workerStatusIdentity: WorkerStatusIdentity? {
+        guard connected, let setup, let credential = setup.credential, let snapshot,
+              snapshot.id == credential.gameId,
+              installationToken == setup.installationToken,
+              let endpoint = try? ScoringEndpoint(endpoint),
+              endpoint == (try? ScoringEndpoint(setup.endpoint)) else { return nil }
+        return WorkerStatusIdentity(epoch: workerStatusEpoch, endpoint: endpoint.url.absoluteString,
+                                    credential: credential, generation: snapshot.broadcast.generation)
+    }
+
+    /// This request never acquires the scoring busy flag or calls the coordinator.
+    func refreshWorkerStatus() async {
+        guard let identity = workerStatusIdentity, let setup, snapshot?.broadcast.desired == .running else { return }
+        let startedAt = ContinuousClock.now
+        do {
+            let response = try await client(setup).workerStatus(credential: identity.credential)
+            let receivedAt = ContinuousClock.now
+            guard !Task.isCancelled, identity == workerStatusIdentity,
+                  response.status.gameId == identity.credential.gameId,
+                  response.status.generation == identity.generation else { return }
+            if let observation = response.status.observation {
+                guard observation.gameId == identity.credential.gameId,
+                      observation.generation == identity.generation else { return }
+            }
+            workerStatus = WorkerStatusValue(identity: identity, response: response,
+                freshness: WorkerStatusFreshness(response: response, receivedAt: receivedAt,
+                                                  requestDuration: startedAt.duration(to: receivedAt)))
+        } catch {
+            guard !Task.isCancelled, identity == workerStatusIdentity else { return }
+            workerStatus = WorkerStatusValue(identity: identity, response: nil, freshness: nil)
+        }
+    }
+
+    func broadcastStatusText(at instant: ContinuousClock.Instant = .now) -> String {
+        // The authoritative request can stop independently of delayed telemetry.
+        if snapshot?.broadcast.desired == .stopped { return "Broadcast not requested" }
+        guard let identity = workerStatusIdentity, let value = workerStatus,
+              value.identity == identity else { return "Waiting for worker status" }
+        guard let response = value.response else { return "Worker status unavailable" }
+        switch response.status.state {
+        case .notRequested: return "Broadcast not requested"
+        case .unknown: return "Waiting for worker status"
+        case .stale: return "Worker status unavailable"
+        default:
+            guard value.freshness?.isFresh(at: instant) == true else { return "Worker status unavailable" }
+        }
+        switch response.status.state {
+        case .idle: return "Worker idle"
+        case .waitingSource: return "Worker waiting for video source"
+        case .starting: return "Worker starting"
+        case .producingOutput: return "Worker encoding video"
+        case .stopping: return "Worker stopping"
+        case .retrying: return "Worker retrying"
+        case .failed: return "Worker failed"
+        case .closed: return "Worker closed"
+        case .notRequested, .unknown, .stale: return "Worker status unavailable"
+        }
+    }
+
     func discardExpired() async {
         guard !busy, let coordinator else { return }
         busy = true

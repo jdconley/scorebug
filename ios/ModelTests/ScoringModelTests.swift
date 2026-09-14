@@ -241,6 +241,82 @@ final class ScoringModelTests: XCTestCase {
         XCTAssertEqual(model.message, "Confirm the pending match on its original server before changing the server address.")
     }
 
+    func testHeldWorkerStatusDoesNotBlockScoringOrReplaceScoringErrors() async {
+        let server = ModelServer()
+        await server.setBroadcast(.running, generation: 1)
+        let model = makeModel(SetupStore(saved(credential: credential)), server: server)
+        await model.wake()
+        await server.holdNextStatus()
+        let status = Task { await model.refreshWorkerStatus() }
+        await server.waitUntilHeld()
+        XCTAssertFalse(model.busy)
+        XCTAssertTrue(model.canScore)
+        await model.send(.awardPoint(side: .home))
+        XCTAssertTrue(model.pending)
+        let scoreError = model.message
+        await server.release()
+        await status.value
+        XCTAssertEqual(model.message, scoreError)
+        XCTAssertEqual(model.broadcastStatusText(), "Worker encoding video")
+        await model.refresh()
+        XCTAssertFalse(model.pending)
+        XCTAssertTrue(model.canScore)
+    }
+
+    func testWorkerStatusExpiresLocallyAndStoppedSnapshotTakesImmediatePrecedence() async {
+        let server = ModelServer()
+        await server.setBroadcast(.running, generation: 1)
+        let model = makeModel(SetupStore(saved(credential: credential)), server: server)
+        await model.wake()
+        XCTAssertEqual(model.broadcastStatusText(), "Waiting for worker status")
+        await model.refreshWorkerStatus()
+        XCTAssertEqual(model.broadcastStatusText(), "Worker encoding video")
+        XCTAssertEqual(model.broadcastStatusText(at: ContinuousClock.now.advanced(by: .seconds(6))), "Worker status unavailable")
+        await server.setBroadcast(.stopped, generation: 2)
+        await model.refresh()
+        XCTAssertEqual(model.broadcastStatusText(), "Broadcast not requested")
+    }
+
+    func testLateWorkerStatusCannotLeakAcrossGenerationOrCredentialScope() async {
+        for change in ["generation", "endpoint", "token", "endpointReverted", "tokenReverted", "newMatch", "cancel"] {
+            let server = ModelServer()
+            await server.setBroadcast(.running, generation: 1)
+            let model = makeModel(SetupStore(saved(credential: credential)), server: server)
+            await model.wake()
+            await server.holdNextStatus()
+            let status = Task { await model.refreshWorkerStatus() }
+            await server.waitUntilHeld()
+            switch change {
+            case "generation": await server.setBroadcast(.running, generation: 2); await model.refresh()
+            case "endpoint": model.endpoint = "https://new.example.com"
+            case "token": model.installationToken = "changed"
+            case "endpointReverted": model.endpoint = "https://new.example.com"; model.endpoint = "https://old.example.com"
+            case "tokenReverted": model.installationToken = "changed"; model.installationToken = "old-account"
+            case "newMatch": model.newMatch()
+            default: status.cancel()
+            }
+            await server.release()
+            await status.value
+            XCTAssertNotEqual(model.broadcastStatusText(), "Worker encoding video", change)
+        }
+    }
+
+    func testFailedStatusFetchDoesNotChangeScoringAuthorityOrError() async {
+        let server = ModelServer()
+        await server.setBroadcast(.running, generation: 1)
+        let model = makeModel(SetupStore(saved(credential: credential)), server: server)
+        await model.wake()
+        await server.rejectNextCommand()
+        await model.send(.endSet(winner: nil, overrideReason: nil))
+        let scoreError = model.message
+        await server.failNextStatus()
+        await model.refreshWorkerStatus()
+        XCTAssertTrue(model.canScore)
+        XCTAssertFalse(model.busy)
+        XCTAssertEqual(model.message, scoreError)
+        XCTAssertEqual(model.broadcastStatusText(), "Worker status unavailable")
+    }
+
     private var credential: MatchCredential {
         MatchCredential(gameId: "old-game", deviceId: "phone", role: .score, token: "old-scoped-secret")
     }
@@ -284,6 +360,12 @@ private actor ModelServer {
     private var creationStatus: Int?
     private var acceptsCreation = false
     private var discoveryFails = false
+    private var holdStatus = false
+    private var statusFails = false
+    private var broadcast = MatchBroadcast(desired: .stopped, generation: 0)
+    func setBroadcast(_ desired: BroadcastDesired, generation: Int) { broadcast = MatchBroadcast(desired: desired, generation: generation) }
+    func holdNextStatus() { holdStatus = true }
+    func failNextStatus() { statusFails = true }
     private var holdSnapshot = false
     private var snapshotFails = false
     private var commandReceipt: CommandOutcome?
@@ -304,6 +386,19 @@ private actor ModelServer {
     func release() { held?.resume(); held = nil }
     func handle(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
+        if request.url?.lastPathComponent == "status" {
+            let generation = broadcast.generation
+            if holdStatus {
+                holdStatus = false
+                await withCheckedContinuation { continuation in held = continuation; waiter?.resume(); waiter = nil }
+            }
+            if statusFails { statusFails = false; throw URLError(.timedOut) }
+            let time = Date()
+            let format = ISO8601DateFormatter()
+            let observation = WorkerObservation(gameId: "old-game", generation: generation, state: .producingOutput, reason: nil, attempt: 1, frame: 12, outTimeUs: 400000, scoreRevision: 0)
+            let status = WorkerMediaStatus(gameId: "old-game", generation: generation, workerId: "mac", state: .producingOutput, observation: observation, observedAt: format.string(from: time), expiresAt: format.string(from: time.addingTimeInterval(5)))
+            return (try JSONEncoder().encode(WorkerMediaStatusResponse(status: status, serverTime: format.string(from: time))), response(request))
+        }
         if request.url?.lastPathComponent == "active", discoveryFails { throw URLError(.cannotConnectToHost) }
         if request.httpMethod == "POST", request.url?.lastPathComponent == "commands" {
             let command = try JSONDecoder().decode(MatchCommand.self, from: XCTUnwrap(request.httpBody))
@@ -347,7 +442,7 @@ private actor ModelServer {
             rules: MatchRules(bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: nil),
             score: MatchScore(home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0), completedSets: [], status: .active,
             endReason: nil, canUndo: false, scorer: MatchScorer(deviceId: "phone", epoch: 1),
-            broadcast: MatchBroadcast(desired: .stopped, generation: 0))
+            broadcast: broadcast)
     }
     private func response(_ request: URLRequest, status: Int = 200) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!

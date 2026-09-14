@@ -68,6 +68,10 @@ public struct MatchHTTPClient: Sendable {
         try await send(path: [credential.gameId, "media"], token: credential.token)
     }
 
+    public func workerStatus(credential: MatchCredential) async throws -> WorkerMediaStatusResponse {
+        try await send(path: [credential.gameId, "media", "status"], token: credential.token)
+    }
+
     public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
         try await send(path: [credential.gameId, "media", "recordings"], method: "POST", token: credential.token,
                        body: JSONEncoder().encode(report))
