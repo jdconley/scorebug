@@ -196,7 +196,7 @@ and native macOS `tools/media-harness/` sharing the media core where supported.
       Offline recording must not invoke game creation as a prerequisite.
 - [ ] Replace raw passthrough assumptions with valid encoding. Retain delegates and
       serialize writer access. Bound each queue and protect archive writes from live congestion.
-- [ ] Implement initialization/media segment storage, atomic completion, manifest,
+- [x] Implement initialization/media segment storage, atomic completion, manifest,
       relaunch scan/recovery, playback/export, and safe storage-reserve handling.
 - [ ] Add camera role joining, truthful status, archive health/space, and explicit
       recording stop. Remote match end cannot silently discard a recording.
@@ -234,9 +234,14 @@ remain unchanged. The [capture owner and iPhone adapter](../../native-capture-so
 now provide an injectable source, explicit common-clock startup, callback quiescence
 before archive drain, and drop/interruption failure reporting. Eleven new lifecycle
 tests bring the shared media suite to 71 tests. Camera configuration runs off the
-UI thread and requires an explicit recording action for permissions. Next: adopt
-the adapter in the native app with Film/Score roles and recordings/recovery UI,
-then qualify Simulator workflows, production publishing, and sustained load.
+UI thread and requires an explicit recording action for permissions. The
+[native app](../../native-film-app.md) now connects Film, Score, and Recordings to
+this source and the shared archive. Simulator workflows cover offline recording,
+actual native scoring during capture, stop/relaunch, interrupted recovery, export,
+and advancing playback. Model/library tests include slow-disk metrics and scan
+exclusion so disk work does not block scoring or compete with capture. Next:
+production publisher orchestration, capture-role registration, sustained load,
+and physical-phone qualification.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.

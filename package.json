@@ -31,7 +31,8 @@
     "local:down": "docker compose -f docker-compose.dev.yml down",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:native-app": "node scripts/test-native-app.mjs"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

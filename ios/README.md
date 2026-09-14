@@ -73,21 +73,43 @@ To inspect interactively, start `pnpm dev:api`, open
 `ios/ScorebugScoring.xcodeproj`, and choose a dedicated Scorebug simulator.
 Use the development token from `infra/local/.env.example` only for local tests.
 
-## Camera app scaffold (media integration pending)
+## Native filming and scoring app
 
-`Project.yml` and `Sources/Scorebug` retain the original filming prototype. They
-are excluded from the scoring harness and have not passed the new media gates.
-The sample forwarding into SRT is incomplete, and the archive writer's raw-buffer
-passthrough assumptions do not establish a reliable recording. The previous
-crash-safety and simultaneous streaming claims are unverified.
+`Project.yml` now builds **Scorebug**, with Film, Score, and Recordings tabs. The
+obsolete camera prototype has been replaced by the shared capture/recording path.
+Filming requires no match, server connection, or streaming key. Switching to the
+native scorer keeps local recording running. No browser scorer is used.
 
-The shared [native archive core](../docs/native-archive.md) now passes Mac fixture
-encoding, crash recovery, and MP4 export checks, and compiles for generic iOS
-simulator/device destinations. It is not yet integrated into this camera scaffold.
-Milestone 3 continues with simultaneous archive/SRT and capture integration.
-Milestone 5 adds the native watch app.
-See the [architecture](../docs/architecture.md) and
+Record explicitly starts camera/microphone permission and capture on a phone.
+The initial clean archive is 1080p/30 SDR H.264 with audio. Leaving the app requests
+recording stop; camera interruptions and failures preserve recoverable segments.
+Recordings distinguishes completed, recoverable, and unavailable media. Export
+retains the original and verifies the full MP4 before offering playback/sharing.
+
+Debug Simulator builds generate timed video/audio through the same recording
+owner. This is labeled in Film and does not use a physical camera. Release and
+physical-device builds choose the iPhone camera adapter. Live publishing and
+adaptive quality are not yet connected to this app.
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
+pnpm test:native-app
+SCOREBUG_IOS_RUNTIME=18.5 pnpm test:native-app
+SCOREBUG_IOS_RUNTIME=26.2 SCOREBUG_IOS_DEVICE_TYPE=iPhone-15 pnpm test:native-app
+xcodegen generate --spec ios/Project.yml
+xcodebuild -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests \
+  -destination 'platform=macOS' -derivedDataPath ios/DerivedData/FilmModel \
+  test CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-
+```
+
+The native-app runner owns a fresh Simulator and local scoring server. It tests
+recording without setup, a real scoring command during recording, stop/relaunch,
+forced-termination recovery, export, and advancing video playback. It copies the
+recordings into `artifacts/qa/native-app-*`, fully decodes exports, checks sequential
+source frame identities, and applies the 100 ms audio/video coverage gate. Only
+the runner's device and processes are cleaned up. It never shares the video.
+
+See [native app integration](../docs/native-film-app.md), the
+[architecture](../docs/architecture.md), and the
 [delivery plan](../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
-
-To inspect the legacy camera project, run `xcodegen generate --spec ios/Project.yml`.
-Do not interpret a scoring-harness build as a camera-project or device-media pass.
+Physical-phone camera qualification and the native Watch app remain ahead.

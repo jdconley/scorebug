@@ -42,6 +42,6 @@ including recording with a nonzero source clock.
 
 The [capture owner and iPhone source](native-capture-source.md) now connect this
 session to an injectable source, with explicit camera startup, callback quiescence,
-and capture/audio interruption reporting. The camera application still needs to
-adopt the adapter and present recordings, recovery, playback, and export. Physical
+and capture/audio interruption reporting. The [native app](native-film-app.md) now
+adopts the adapter and presents recordings, recovery, playback, and export. Physical
 device performance and interruption behavior remain in milestone 3.

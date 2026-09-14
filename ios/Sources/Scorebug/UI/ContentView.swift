@@ -1,137 +1,209 @@
 import AVFoundation
+import AVKit
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
-    @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var camera: CameraSession
-    @State private var showSettings = false
-    @State private var setup = GameSetupModel()
-    @State private var activeGameId: String?
-    @State private var busy = false
-    @State private var errorText: String?
-
+    @ObservedObject var film: FilmModel
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                CameraPreviewView(session: cameraSessionForPreview())
-                    .ignoresSafeArea()
-                VStack {
-                    Spacer()
-                    panel
-                }
-                .padding()
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
-        }
-        .task {
-            await camera.prepare()
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
+        tabs
+            .task(id: scenePhase) { await monitorRecording() }
+            .onChange(of: film.state) { _, state in updateIdleTimer(state) }
+            .onChange(of: scenePhase) { _, phase in stopIfBackgrounded(phase) }
+    }
+    private var tabs: some View {
+        TabView {
+            FilmView(model: film).tabItem { Label("Film", systemImage: "video") }
+            NativeScoringView().tabItem { Label("Score", systemImage: "sportscourt") }
+            RecordingsView(model: film).tabItem { Label("Recordings", systemImage: "rectangle.stack") }
         }
     }
+    @MainActor private func monitorRecording() async {
+        guard scenePhase == .active else { return }
+        await film.refreshRecordings()
+        while !Task.isCancelled {
+            await film.pollHealth()
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+        }
+    }
+    @MainActor private func updateIdleTimer(_ state: FilmModel.State) {
+        UIApplication.shared.isIdleTimerDisabled = state == .starting || state == .recording || state == .stopping
+    }
+    @MainActor private func stopIfBackgrounded(_ phase: ScenePhase) {
+        if phase == .background, film.canStop { Task { await film.stop() } }
+    }
 
-    private var panel: some View {
+}
+
+private struct FilmView: View {
+    @ObservedObject var model: FilmModel
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    preview
+                    if model.isScanning { ProgressView("Checking saved recordings…") }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(status).font(.headline).accessibilityIdentifier("film.status")
+                            Text(Duration.seconds(model.elapsedSeconds).formatted(.time(pattern: .minuteSecond)))
+                                .monospacedDigit().font(.title)
+                                .accessibilityIdentifier("film.duration")
+                                .accessibilityValue(String(format: "%.2f", model.elapsedSeconds))
+                        }
+                        Spacer()
+                        if model.canStop {
+                            Button("Stop recording", role: .destructive) { Task { await model.stop() } }
+                                .buttonStyle(.borderedProminent).accessibilityIdentifier("film.stop")
+                        } else {
+                            Button("Record video") { Task { await model.start() } }
+                                .buttonStyle(.borderedProminent).disabled(!model.canStart)
+                                .accessibilityIdentifier("film.start")
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Saved on this device", systemImage: "internaldrive")
+                        Text("1080p · 30 fps · Audio included").foregroundStyle(.secondary)
+                        if let bytes = model.freeBytes {
+                            Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) available")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("You can switch to Score while recording. Keep the app open to continue filming.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    if let message = model.message {
+                        Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("film.message")
+                    }
+                }.padding()
+            }.navigationTitle("Film")
+        }
+    }
+    private var status: String {
+        switch model.state {
+        case .idle: "Ready to record"
+        case .starting: "Starting recording…"
+        case .recording: "Recording"
+        case .stopping: "Saving recording…"
+        case .failed: "Recording stopped with an error"
+        }
+    }
+    @ViewBuilder private var preview: some View {
+        #if DEBUG && targetEnvironment(simulator)
         VStack(spacing: 12) {
-            if activeGameId == nil {
-                gameSetupPanel
-            } else {
-                publishingPanel
+            Image(systemName: "video.badge.waveform").font(.largeTitle)
+            Text("Simulator video source").font(.headline)
+            Text("Generated video and tone use the same recorder as the phone camera.")
+                .font(.caption).multilineTextAlignment(.center)
+        }.padding().frame(maxWidth: .infinity).frame(height: 190)
+            .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+        #else
+        if let session = model.captureSession {
+            CameraPreviewView(session: session).aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+        } else {
+            ContentUnavailableView("Ready to film", systemImage: "video", description: Text("The camera and microphone start when you record."))
+                .frame(height: 190)
+        }
+        #endif
+    }
+}
+
+private struct RecordingsView: View {
+    @ObservedObject var model: FilmModel
+    @State private var showPlayer = false
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.isScanning { ProgressView("Checking saved recordings…") }
+                if model.recordings.isEmpty {
+                    ContentUnavailableView("No saved recordings", systemImage: "video", description: Text("Record a video in Film. Saved video stays on this device."))
+                }
+                ForEach(model.recordings) { entry in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(entry.createdAt, format: .dateTime.month().day().hour().minute()).font(.headline)
+                        HStack {
+                            Text(status(entry.status))
+                            Spacer()
+                            Text(Duration.seconds(entry.duration).formatted(.time(pattern: .minuteSecond))).monospacedDigit()
+                        }.foregroundStyle(.secondary)
+                        if let reason = entry.reason { Text(reason).font(.caption) }
+                        Button(entry.status == .recoverable ? "Recover and export MP4" : "Export MP4") {
+                            Task {
+                                await model.export(id: entry.id)
+                                if model.selectedExport != nil { showPlayer = true }
+                            }
+                        }
+                        .disabled(!entry.canExport || !model.canStart || model.exportingID != nil)
+                        .accessibilityIdentifier("recordings.\(entry.status == .recoverable ? "recover" : "export").\(entry.id)")
+                        if model.exportingID == entry.id { ProgressView("Preparing and checking video…") }
+                    }.padding(.vertical, 4)
+                }
+                if let message = model.message { Text(message).accessibilityIdentifier("recordings.message") }
             }
-            if let err = errorText {
-                Text(err).font(.caption).foregroundStyle(.red)
+            .navigationTitle("Recordings")
+            .task { await model.refreshRecordings() }
+            .refreshable { await model.refreshRecordings() }
+            .sheet(isPresented: $showPlayer) {
+                if let url = model.selectedExport { RecordingPlayer(url: url) }
             }
         }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
-
-    private var gameSetupPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Scorebug").font(.headline)
-                Spacer()
-                Button { showSettings = true } label: { Image(systemName: "gear") }
-            }
-            HStack {
-                TextField("Home", text: $setup.home).textFieldStyle(.roundedBorder)
-                TextField("HOME", text: $setup.homeShort).textFieldStyle(.roundedBorder).frame(width: 80)
-            }
-            HStack {
-                TextField("Away", text: $setup.away).textFieldStyle(.roundedBorder)
-                TextField("AWAY", text: $setup.awayShort).textFieldStyle(.roundedBorder).frame(width: 80)
-            }
-            SecureField("YouTube stream key", text: $setup.streamKey).textFieldStyle(.roundedBorder)
-            Button(action: start) {
-                Text(busy ? "Starting…" : "Start Game")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(busy || !setup.isValid || !settings.isConfigured)
-        }
-    }
-
-    private var publishingPanel: some View {
-        VStack(spacing: 8) {
-            Text("LIVE").font(.headline).foregroundStyle(.red)
-            Text("game \(activeGameId?.prefix(8) ?? "")")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-            Button("End Game", role: .destructive, action: end)
-                .buttonStyle(.bordered)
-        }
-    }
-
-    private func cameraSessionForPreview() -> AVCaptureSession {
-        // CameraSession exposes its internal AVCaptureSession lazily through a
-        // computed property to keep the API surface small.
-        Mirror(reflecting: camera).children
-            .first { $0.label == "session" }?.value as? AVCaptureSession ?? AVCaptureSession()
-    }
-
-    private func start() {
-        guard let client = ControlPlaneClient(baseURL: settings.controlPlaneURL, token: settings.phoneToken) else {
-            errorText = "Bad control-plane URL."
-            return
-        }
-        busy = true
-        errorText = nil
-        Task {
-            do {
-                let req = StartGameRequest(
-                    homeTeam: TeamSpec(name: setup.home, shortName: setup.homeShort, color: "#1e3a8a"),
-                    awayTeam: TeamSpec(name: setup.away, shortName: setup.awayShort, color: "#b91c1c"),
-                    youtubeStreamKey: setup.streamKey
-                )
-                let res = try await client.startGame(req)
-                await camera.startPublishing(credentials: res.publish)
-                activeGameId = res.id
-            } catch {
-                errorText = "Start failed: \(error)"
-            }
-            busy = false
-        }
-    }
-
-    private func end() {
-        guard let id = activeGameId else { return }
-        guard let client = ControlPlaneClient(baseURL: settings.controlPlaneURL, token: settings.phoneToken) else { return }
-        Task {
-            await camera.stopPublishing()
-            try? await client.endGame(id: id)
-            activeGameId = nil
+    private func status(_ status: RecordingEntry.Status) -> String {
+        switch status {
+        case .completed: "Completed"
+        case .recoverable: "Recoverable"
+        case .unavailable: "Unavailable"
         }
     }
 }
 
-struct GameSetupModel {
-    var home: String = ""
-    var homeShort: String = ""
-    var away: String = ""
-    var awayShort: String = ""
-    var streamKey: String = ""
-    var isValid: Bool {
-        !home.isEmpty && !homeShort.isEmpty && !away.isEmpty && !awayShort.isEmpty && streamKey.count >= 8
+private struct RecordingPlayer: View {
+    let url: URL
+    @State private var player: AVPlayer?
+    @State private var playbackError: String?
+    @State private var playbackSeconds = 0.0
+    @State private var timeObserver: Any?
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                VideoPlayer(player: player).aspectRatio(16 / 9, contentMode: .fit)
+                Text("MP4 ready").font(.headline).accessibilityIdentifier("recordings.exportReady")
+                Button("Play video") { player?.play() }
+                    .disabled(player == nil).accessibilityIdentifier("recordings.play")
+                Text(Duration.seconds(playbackSeconds).formatted(.time(pattern: .minuteSecond)))
+                    .monospacedDigit().accessibilityIdentifier("recordings.playbackTime")
+                    .accessibilityValue(String(format: "%.2f", playbackSeconds))
+                Text("The original recording is kept on this device.").font(.callout).foregroundStyle(.secondary)
+                if let playbackError { Text(playbackError).foregroundStyle(.red).font(.caption) }
+                ShareLink(item: url) { Label("Share video", systemImage: "square.and.arrow.up") }
+                    .buttonStyle(.borderedProminent)
+                Spacer()
+            }.padding()
+                .navigationTitle("Recorded video")
+                .toolbar { ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.accessibilityIdentifier("recordings.closePlayer")
+                } }
+        }
+        .onAppear {
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                try AVAudioSession.sharedInstance().setActive(true)
+                let prepared = AVPlayer(url: url)
+                player = prepared
+                timeObserver = prepared.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 4), queue: .main) { time in
+                    if time.seconds.isFinite { playbackSeconds = time.seconds }
+                }
+            } catch { playbackError = "Playback audio could not start: \(error.localizedDescription)" }
+        }
+        .onDisappear {
+            player?.pause()
+            if let timeObserver { player?.removeTimeObserver(timeObserver) }
+            timeObserver = nil
+            player = nil
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }

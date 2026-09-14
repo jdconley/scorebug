@@ -4,7 +4,8 @@ The isolated [probes](../tools/media-sdk-probe/README.md) now include macOS dual
 recording/SRT execution and full executable linking for ARM64 iOS Simulator and
 an unsigned generic iPhone destination with iOS 17 deployment.
 It uses a [locally patched source subset](sdk-startup-patch.md) of HaishinKit **2.2.5**, revision `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`,
-and Logboard **2.6.0**. The original camera scaffold remains unchanged and unqualified.
+and Logboard **2.6.0**. The [native app](native-film-app.md) now records offline;
+production SRT publishing is not yet connected to its camera source.
 
 The pinned package declares iOS 15+/macOS 12+ and includes libsrt 1.5.4 for both
 platforms. No camera session or physical device has been exercised. The
@@ -67,11 +68,11 @@ simulator linking remains unsupported with this resolved binary.
 
 ## Recording correction and integration work
 
-The camera scaffold requests raw NV12 video. Its writer currently treats that as
-compressed H.264 pass-through with nil output settings. The replacement must
-configure H.264 and AAC encoding for raw video/PCM, check each start/append/finish
-result, and preserve a shared timestamp origin. It must isolate recording from
-publishing, including offline operation and publisher bitrate changes.
+The removed camera scaffold treated raw NV12 as compressed H.264 passthrough.
+The native app now uses the shared H.264/AAC archive and explicit common-clock
+capture owner, checking startup, sample admission, interruption, and finalization.
+Recording is offline and independent of score/network state. The dual-output fixture
+separately checks publisher bitrate changes without reconfiguring the archive.
 [Apple's writer input contract](<https://developer.apple.com/documentation/avfoundation/avassetwriterinput/init(mediatype:outputsettings:)>).
 
 The [native archive fixture](native-archive.md) now exercises valid H.264/AAC

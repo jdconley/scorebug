@@ -1,58 +1,98 @@
-# XcodeGen spec. Generates `Scorebug.xcodeproj` from the source tree.
-# Install xcodegen: brew install xcodegen
-# Then:           cd ios && xcodegen generate && open Scorebug.xcodeproj
-
+# Generate: xcodegen generate --spec ios/Project.yml
 name: Scorebug
 options:
   bundleIdPrefix: live.scorebug
   deploymentTarget:
-    iOS: 17.0
-  groupSortPosition: top
+    iOS: '17.0'
   developmentLanguage: en
-  xcodeVersion: '16.0'
-
 settings:
   base:
     SWIFT_VERSION: '5.10'
-    ENABLE_USER_SCRIPT_SANDBOXING: NO
     MARKETING_VERSION: '0.0.1'
     CURRENT_PROJECT_VERSION: '1'
-
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
 packages:
-  HaishinKit:
-    url: https://github.com/shogo4405/HaishinKit.swift
-    from: 2.0.4
-
+  ScorebugCore:
+    path: Packages/ScorebugCore
+  ScorebugMedia:
+    path: Packages/ScorebugMedia
 targets:
   Scorebug:
     type: application
     platform: iOS
     sources:
       - path: Sources/Scorebug
+      - path: Sources/ScorebugScoring
+        excludes:
+          - ScoringApp.swift
     resources:
-      - path: Resources
+      - path: Resources/Assets.xcassets
     info:
       path: Resources/Info.plist
       properties:
-        UILaunchScreen:
-          UIColorName: AccentColor
-        NSCameraUsageDescription: Scorebug needs the camera to film the game.
-        NSMicrophoneUsageDescription: Scorebug needs the microphone to record gym audio.
+        CFBundleDisplayName: Scorebug
+        UILaunchScreen: {}
+        NSCameraUsageDescription: Scorebug uses the camera when you choose to record video.
+        NSMicrophoneUsageDescription: Scorebug records audio with your video.
+        NSLocalNetworkUsageDescription: Connect to your Scorebug server for native scoring and streaming.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIRequiresFullScreen: true
-        UIBackgroundModes:
-          - audio
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app
         TARGETED_DEVICE_FAMILY: '1,2'
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: 'UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight'
-        SWIFT_OBJC_BRIDGING_HEADER: ''
-        ENABLE_BITCODE: NO
     dependencies:
-      - package: HaishinKit
-        product: HaishinKit
-      - package: HaishinKit
-        product: SRTHaishinKit
+      - package: ScorebugCore
+      - package: ScorebugMedia
+  ScorebugAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: AppUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app.uitests
+    dependencies:
+      - target: Scorebug
+  ScorebugFilmModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Sources/Scorebug/Capture
+      - path: FilmModelTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.film.modeltests
+    dependencies:
+      - package: ScorebugMedia
+schemes:
+  ScorebugFilmModelTests:
+    build:
+      targets:
+        ScorebugFilmModelTests: all
+    test:
+      targets:
+        - ScorebugFilmModelTests
+  Scorebug:
+    build:
+      targets:
+        Scorebug: all
+    test:
+      targets:
+        - ScorebugAppUITests
+      gatherCoverageData: true
+      environmentVariables:
+        SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
+        SCOREBUG_TEST_TOKEN: qa-phone-token-not-production

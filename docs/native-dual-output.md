@@ -3,7 +3,8 @@
 The Mac fixture feeds the same immutable NV12/PCM samples to two consumers:
 the shared segmented archive and the locally patched HaishinKit 2.2.5 SRT publisher. It exercises
 actual AVFoundation encoders, an actual local SRT connection, and decoded outputs.
-The prototype camera app is not integrated yet.
+The [native app](native-film-app.md) uses the archive/capture lifecycle for offline
+recording; production SRT publishing is not yet connected to that app.
 
 ## Boundaries and ownership
 
@@ -106,6 +107,7 @@ x86_64 slice; ARM64 simulator linking is tested for this Mac. Library compilatio
 alone had not exposed either issue.
 
 Still required: sustained dual encoding, network loss/jitter/bandwidth shaping,
-reconnection, bounded production capture and publisher orchestration, the camera UI,
-Simulator app workflows, and physical iPhone qualification. Native Watch scoring
+reconnection, bounded production publisher orchestration, camera-role registration,
+and physical iPhone qualification. Offline Simulator app workflows now have a separate
+[native app validation runner](native-film-app.md). Native Watch scoring
 remains a separate planned milestone.

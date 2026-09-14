@@ -71,8 +71,8 @@ swift test --package-path ios/Packages/ScorebugMedia
 pnpm test:dual-output
 ```
 
-The native camera app still needs to adopt this adapter, expose Film/Score roles,
-and present recording health, recovery, playback, and export. Simulator workflows
-need the injected fixture source. Device permissions, camera/audio interruptions,
+The [native app](native-film-app.md) now adopts this adapter and exposes Film, Score,
+and Recordings with recovery, playback, and export. Its Simulator workflow uses an
+injected timed video/audio source. Device permissions, camera/audio interruptions,
 storage pressure, sustained recording, and thermal behavior must then be tested on
 an actual phone. This slice does not enable production publishing or Watch scoring.
