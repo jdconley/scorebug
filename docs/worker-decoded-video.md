@@ -140,3 +140,20 @@ The next diagnosis must distinguish transport receipt, worker decoder completion
 and output drain; synchronized track ends alone cannot establish full delivery.
 The earlier archive overflow remains unresolved. See the
 [native tail evidence and plan](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
+
+
+The optional terminal diagnostic now retains a separate lifetime decoder aggregate,
+final validated output progress, genuine encoder exit evidence and telemetry EOF.
+It leaves the five-second report snapshot unchanged. The owned native fixture saves
+bounded sanitized lifecycle events after worker close, including failure cleanup.
+153 worker tests, 163 tool tests and type checking pass; both reviews approve.
+
+At `4884734`, native run `native-app-VrXKA9` passes all existing gates with 1,252
+archive frames and 856 live frames at 30 fps. The worker decoded 869 fresh frames
+and reported 869 packets at output progress, then exited 0 without a stop signal.
+The sink therefore has a 13-frame count deficit after decoder ingress. An independent
+short-burst replay supports MediaMTX recorder shutdown loss: 120 encoded/submitted
+video packets yield 112 saved frames with immediate EOF versus 119 with a one-second
+EOF delay. This is diagnostic evidence, not an application fix or exact attribution
+of the native deficit. The next step is an independently qualified test recorder;
+see the [tail investigation](superpowers/plans/2026-09-14-native-tail-diagnosis.md).

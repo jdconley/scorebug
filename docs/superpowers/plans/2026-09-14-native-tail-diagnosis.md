@@ -167,7 +167,7 @@ report freshness unchanged.
   invalid EOF, exact once callback including exceptions, actual exit vs guardian
   loss, late telemetry/progress drain; collector bounds and field filtering,
   scope and failure cleanup. Full worker/tool tests and typecheck, then reviews.
-- [ ] Run one isolated unchanged native qualification and compare lifetime
+- [x] Run one isolated unchanged native qualification and compare lifetime
   decoder counts/PTS span and output progress to offline source barcodes at sink.
   Count evidence can distinguish decoder-vs-output losses, but cannot establish
   an unqualified PTS mapping or prove upstream delivery. Add native transport
@@ -189,4 +189,86 @@ routing and coercion of an array into a signal name; both have retained red/gree
 logs. Both specification and code quality reviews approve. A third regression
 ensures the collector loads before the native runner builds protocol artifacts;
 its finite private allowlists have no generated-file dependency. The isolated
-native run is pending.
+native run is recorded below.
+
+
+### Native terminal evidence at `4884734`
+
+Isolated iPhone 14/iOS 17.5 run `artifacts/qa/native-app-VrXKA9` passed all maintained
+UI, recording, streaming, native scoring/overlay, export, observation and report-age
+gates; runner exited 0 and owned cleanup completed. The archive contains 1,252
+consecutive frames 0–1251 at 30 fps. All 2,504 archive samples were accepted/written,
+with zero queue rejection/drop, peak one 3,200-byte item, valid timing and complete
+component coverage. Its A/V end offset is +14.667 ms. Live contains 856 consecutive
+frames 198–1053 at 30 fps; maximum marker offset is 65.25 ms and end offset −15.751 ms.
+Two native age proofs match independent API windows; five steady windows match 750
+source frames. No media threshold changed.
+
+Native capture and encoding cover 929 consecutive frames 138–1066. The separately
+observed acquisition interval is 60 frames; 13 terminal native frames are absent
+from the sink. The new worker evidence is complete: 143 retained events, zero
+invalid/oversized/omitted events, full stdout EOF, actual worker exit 0. One scoped
+pipeline reports 869 fresh decoder frames, no duplicates/reordering, valid terminal
+EOF, and PTS 68640–2672641 at 90 kHz. FFmpeg reports 869 output frames and exits 0
+with no signal; there was no pipeline SIGTERM or SIGKILL before that exit.
+
+The 13-frame count deficit is after decoder ingress. This does not itself identify
+encoding, muxing, RTMP receipt, or sink recording as the cause, and it does not
+establish a production mapping between native source PTS and worker PTS. Version-
+pinned FFmpeg source clarifies that progress `frame` counts packets entering the
+mux submission path, incremented before `av_interleaved_write_frame`; it is not a
+receipt acknowledgment. Evidence: `worker-terminal-evidence.json`, `results.json`,
+and the scoped offline `terminal-comparison.json` in that run.
+
+### Test-recorder shutdown investigation
+
+MediaMTX 1.21.0 recorder shutdown removes its stream reader before closing the
+format. Reader shutdown closes a gortsplib 5.6.5 ring buffer, which clears pending
+callbacks. Separately, fMP4 keeps one pending sample for duration calculation;
+format close does not flush that sample. Source references:
+
+- https://github.com/bluenviron/mediamtx/blob/v1.21.0/internal/recorder/recorder_instance.go
+- https://github.com/bluenviron/mediamtx/blob/v1.21.0/internal/stream/reader.go
+- https://github.com/bluenviron/gortsplib/blob/v5.6.5/pkg/ringbuffer/ringbuffer.go
+- https://github.com/bluenviron/mediamtx/blob/v1.21.0/internal/recorder/format_fmp4_track.go
+- https://github.com/bluenviron/mediamtx/blob/v1.21.0/internal/recorder/format_fmp4.go
+- https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/fftools/ffmpeg.c
+- https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/fftools/ffmpeg_mux.c
+
+A standalone local replay (`artifacts/qa/sink-eof-probe/probe.py`) sends archived
+fixture frames through VideoToolbox/RTMP to fresh owned MediaMTX containers. A
+transparent loopback relay changes only its deliberate post-client-EOF delay,
+0 versus 1 second. FFmpeg's `stats_enc_post` and `stats_mux_pre` retain packet
+boundaries; all resulting sink files pass full A/V decode and barcode analysis.
+These are diagnostic experiments, not replacements for native qualification.
+
+| Replay | Video packets encoded / submitted | Saved frames, immediate EOF | Saved frames, delayed EOF |
+| --- | --- | --- | --- |
+| 10 seconds paced | 300 / 300 | 299 | 299 |
+| 10 seconds burst | 300 / 300 | 163 | 163 |
+| 4 seconds burst | 120 / 120 | 112 | 119 |
+
+For the short burst, all four complete audio/video packet-stat files are byte-
+identical across cases (SHA-256 comparison retained). Each run forwards 38,543
+client bytes, has 174 audio packets and exits 0. Seven additional source frames
+are saved when EOF is delayed; one final sample still remains absent. This supports
+queued-recorder-work cancellation alongside the independently identified final-
+sample issue. The larger-burst loss is not localized by this experiment.
+
+Limitations: separate executions have unavoidable scheduling differences; forwarded
+byte counts are not receipt acknowledgments. The prototype's `relayQueueErrorObserved`
+filter did not cover all possible warnings and discarded stderr, so false does not
+establish absence of reader overload. No queue occupancy/drop counters were measured.
+Exact attribution of the native run's 13 missing frames remains unproved. The
+one-second delay is a discriminator, not an application shutdown fix. Both the
+positive and non-discriminating replay results remain preserved.
+
+### Next bounded step
+
+Qualify a terminal-complete independent RTMP test recorder, or a reviewed recorder
+fix, before making app shutdown changes for this sink deficit. Establish packet and
+source-frame preservation with paced and short-burst replay, then rerun the native
+workflow against it. Keep the existing MediaMTX runs as comparative evidence. Do not
+hide the deficit with sleeps or weaker gates. The earlier local archive overflow,
+sustained physical iPhone/Watch runs, source-clock qualification, adaptive profile
+transitions and additional worker-host qualification remain open.

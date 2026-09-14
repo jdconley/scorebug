@@ -445,3 +445,12 @@ No cloud purchase, deployment, or external broadcast occurs as part of this plan
 - CI includes real server-container startup, protocol/scoring regressions, media fixtures,
   and iOS/watchOS compilation; hardware qualification remains a separately recorded gate.
 - README, architecture, runbook, and platform matrix reflect measured capabilities.
+
+
+2026-09-14 terminal-delivery checkpoint: `4884734` adds reviewed optional worker
+terminal diagnostics. Native run `native-app-VrXKA9` passes all unchanged gates
+(1,252 archive / 856 live frames at 30 fps), while worker decoder/output progress
+both count 869. A separate short-burst experiment supports recorder-side disconnect
+loss in the MediaMTX test sink, with exact native attribution still open. Qualify an
+independent terminal-complete RTMP recorder before changing app shutdown behavior;
+full findings and limitations are in the [native tail plan](2026-09-14-native-tail-diagnosis.md).
