@@ -72,6 +72,69 @@ import XCTest
         writer.cancel()
     }
 
+    func testSnapshotWaitingForDurableStoreDoesNotHoldWriterLifecycleLock() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = PersistenceGate()
+        defer { gate.release() }
+        let profile = ArchiveProfile(width: 320, height: 240, videoBitRate: 200_000, segmentDuration: 1)
+        let store = try ArchiveSegmentStore(directory: root.appendingPathComponent("store"),
+            profile: profile, availableBytes: { Int64.max }, failureInjection: { point in
+                if case .beforeCommit = point { gate.blockOnce() }
+            })
+        let writer = try SegmentedArchiveWriter(directory: root.appendingPathComponent("writer"), profile: profile)
+        let persisted = expectation(description: "durable append joined")
+        DispatchQueue.global().async {
+            defer { persisted.fulfill() }
+            do { try store.append(data: Data([1, 2, 3]), kind: .initialization) }
+            catch { XCTFail("Unexpected store error: \(error)") }
+        }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !gate.entered && ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(gate.entered)
+        let readEntered = expectation(description: "snapshot entered actual store read")
+        let snapshotReturned = expectation(description: "snapshot returned after durable append")
+        let result = SnapshotResult()
+        DispatchQueue.global().async {
+            result.set(writer.snapshot(readSegments: {
+                readEntered.fulfill()
+                return store.segments
+            }))
+            snapshotReturned.fulfill()
+        }
+        await fulfillment(of: [readEntered], timeout: 5)
+        XCTAssertNil(result.value, "Store remains gated before commit")
+        let lifecycleReturned = DispatchSemaphore(value: 0)
+        let lifecycleJoined = expectation(description: "lifecycle operation joined")
+        DispatchQueue.global().async {
+            defer { lifecycleReturned.signal(); lifecycleJoined.fulfill() }
+            // This exercises the real lifecycle lock but rejects before making
+            // any AVFoundation call; encoder readiness cannot affect the result.
+            do {
+                try writer.start(at: .invalid)
+                XCTFail("Invalid start unexpectedly succeeded")
+            } catch {
+                XCTAssertEqual(error as? ArchiveWriterError, .invalidTimestamp)
+            }
+        }
+        let prompt = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: lifecycleReturned.wait(timeout: .now() + 1) == .success)
+            }
+        }
+        XCTAssertTrue(prompt, "A storage snapshot must not hold the lifecycle lock while waiting for persistence")
+        gate.release()
+        await fulfillment(of: [persisted, snapshotReturned, lifecycleJoined], timeout: 5)
+        let snapshot = try XCTUnwrap(result.value)
+        XCTAssertEqual(snapshot.state, .prepared)
+        XCTAssertEqual(snapshot.videoFrames, 0)
+        XCTAssertEqual(snapshot.acceptedDuration, 0)
+        XCTAssertEqual(snapshot.segments, store.segments)
+        XCTAssertEqual(snapshot.segments.count, 1)
+        XCTAssertEqual(try ArchiveSegmentStore.recover(directory: store.directory).segments, snapshot.segments)
+    }
+
     func testUnattachedDiagnosticsClockIsNeverReadByNativeWriter() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -230,6 +293,54 @@ import XCTest
         XCTAssertEqual(Array(try ArchiveSegmentStore.recover(directory: root).segments.prefix(committed.count)), committed)
     }
 
+    func testAcceptedDurationProgressesWithAcceptedSamplesAndSurvivesFinish() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let profile = ArchiveProfile(width: 320, height: 240, videoBitRate: 200_000, segmentDuration: 1)
+        let writer = try SegmentedArchiveWriter(directory: root, profile: profile)
+        XCTAssertEqual(writer.acceptedDuration, 0)
+        try writer.start(at: .zero)
+        XCTAssertEqual(writer.acceptedDuration, 0)
+        try await appendGeneratedMedia(to: writer)
+        XCTAssertEqual(writer.acceptedDuration, 3, accuracy: 0.000001)
+        _ = try await writer.finish()
+        XCTAssertEqual(writer.acceptedDuration, 3, accuracy: 0.000001)
+        writer.cancel()
+        XCTAssertEqual(writer.acceptedDuration, writer.snapshot.acceptedDuration)
+    }
+
+    func testSnapshotKeepsPreFinishStateWhileItsSegmentReadIsPending() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let profile = ArchiveProfile(width: 320, height: 240, videoBitRate: 200_000, segmentDuration: 1)
+        let writer = try SegmentedArchiveWriter(directory: root, profile: profile)
+        try writer.start(at: .zero)
+        try await appendGeneratedMedia(to: writer)
+        let beforeFinish = writer.snapshot.segments
+        let readEntered = expectation(description: "snapshot segment view captured before finish")
+        let snapshotReturned = expectation(description: "earlier snapshot returned")
+        let releaseRead = DispatchSemaphore(value: 0)
+        defer { releaseRead.signal() }
+        let result = SnapshotResult()
+        DispatchQueue.global().async {
+            result.set(writer.snapshot(readSegments: {
+                readEntered.fulfill()
+                XCTAssertEqual(releaseRead.wait(timeout: .now() + 10), .success)
+                return beforeFinish
+            }))
+            snapshotReturned.fulfill()
+        }
+        await fulfillment(of: [readEntered], timeout: 5)
+        let recovered = try await writer.finish()
+        releaseRead.signal()
+        await fulfillment(of: [snapshotReturned], timeout: 5)
+        let earlier = try XCTUnwrap(result.value)
+        XCTAssertEqual(earlier.state, .writing, "An earlier segment view must not be labeled finished")
+        XCTAssertEqual(earlier.segments, beforeFinish)
+        XCTAssertEqual(writer.snapshot.state, .finished)
+        XCTAssertEqual(writer.snapshot.segments, recovered.segments)
+    }
+
     func testFinishCompletesGeneratedVideoAndAudio() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -339,6 +450,13 @@ private final class FinishResult: @unchecked Sendable {
     private var result: Result<RecoveredArchive, Error>?
     var value: Result<RecoveredArchive, Error>? { lock.withLock { result } }
     func set(_ value: Result<RecoveredArchive, Error>) { lock.withLock { result = value } }
+}
+
+private final class SnapshotResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot: ArchiveWriterSnapshot?
+    var value: ArchiveWriterSnapshot? { lock.withLock { snapshot } }
+    func set(_ value: ArchiveWriterSnapshot) { lock.withLock { snapshot = value } }
 }
 
 #if DEBUG

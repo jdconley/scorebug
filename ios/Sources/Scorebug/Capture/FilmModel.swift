@@ -67,7 +67,7 @@ struct CurrentCapture: Sendable {
          sourceFactory: @escaping () -> any CaptureSource,
          sinkFactory: @escaping RecordingLibrary.SinkFactory = RecordingLibrary.defaultSinkFactory,
          durationReader: @escaping @Sendable (any RecordingArchiveSink) -> Double? = {
-             ($0 as? SegmentedArchiveSink)?.writer.snapshot.acceptedDuration
+             ($0 as? SegmentedArchiveSink)?.writer.acceptedDuration
          }) {
         self.library = library
         self.profile = profile
@@ -224,8 +224,9 @@ struct CurrentCapture: Sendable {
         let recordingID = draft.id
         let sink = draft.sink
         let readDuration = durationReader
-        // Writer snapshots may wait behind segment hashing/fsync. Keep that wait
-        // off MainActor, with at most one read outstanding across all recordings.
+        // Scalar duration reads avoid segment storage but still share the writer's
+        // lifecycle lock. Keep native writer waits off MainActor, with at most one
+        // read outstanding across all recordings.
         let duration = await Task.detached(priority: .utility) { readDuration(sink) }.value
         readingDuration = false
         guard recorder === recording, self.draft?.id == recordingID else { return }

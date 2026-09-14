@@ -112,14 +112,33 @@ public final class SegmentedArchiveWriter: @unchecked Sendable {
     }
     #endif
 
+    /// Accepted input duration, without querying segment storage. This shares the
+    /// lifecycle lock and can still wait for an in-progress native writer call.
+    public var acceptedDuration: Double { lock.withLock { acceptedEnd } }
+
+    /// Scalars are captured before committed segments; this is not one atomic
+    /// writer/store snapshot. Segments may include a later commit. A finished
+    /// scalar state still includes all final segments, because durability precedes
+    /// that state transition and the segment read follows it.
     public var snapshot: ArchiveWriterSnapshot {
-        lock.withLock {
+        snapshot(readSegments: { receiver.store.segments })
+    }
+
+    /// Internal storage-read dependency used by the public snapshot path.
+    func snapshot(readSegments: () -> [ArchiveSegment]) -> ArchiveWriterSnapshot {
+        let scalar = lock.withLock {
             let storageFailed = receiver.failed
-            return ArchiveWriterSnapshot(state: storageFailed ? .failed : state,
-                videoFrames: videoFrames, audioSamples: audioSamples,
-                acceptedDuration: acceptedEnd, segments: receiver.store.segments,
-                failure: storageFailed ? .storageFailed : failure)
+            return (state: storageFailed ? ArchiveWriterState.failed : state,
+                    videoFrames: videoFrames, audioSamples: audioSamples,
+                    acceptedDuration: acceptedEnd,
+                    failure: storageFailed ? ArchiveWriterError.storageFailed : failure)
         }
+        // Store reads can wait behind durable segment writes. Never hold the
+        // append/finish/cancel lock during that wait.
+        return ArchiveWriterSnapshot(state: scalar.state,
+            videoFrames: scalar.videoFrames, audioSamples: scalar.audioSamples,
+            acceptedDuration: scalar.acceptedDuration, segments: readSegments(),
+            failure: scalar.failure)
     }
 
     /// Both input tracks use this one capture timestamp origin.

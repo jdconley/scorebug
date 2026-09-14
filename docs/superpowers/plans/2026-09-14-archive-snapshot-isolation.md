@@ -10,16 +10,16 @@ the writer lifecycle lock while waiting for the segment store's disk-operation
 lock. Remove that dependency without changing native lifecycle serialization,
 segment durability, queue budgets, capture pacing, or encoding profiles.
 
-- [ ] Add a deterministic failing regression. A gated segment read must not prevent
+- [x] Add a deterministic failing regression. A gated segment read must not prevent
   a competing writer operation from acquiring its lock. Use an internal segment-read
   dependency seam if needed to establish ordering; thread-start signals or sleeps
   cannot prove lock entry. Preserve a real store persistence gate integration test.
-- [ ] Capture writer scalar/lifecycle state under its short lock, release that lock,
+- [x] Capture writer scalar/lifecycle state under its short lock, release that lock,
   then read committed segments. Document that these fields are not an atomic
   cross-component snapshot; a finished state must never accompany an earlier
   incomplete segment list. Add a scalar accepted-duration accessor for periodic
   Film health polling so that duration reads do not query committed segment storage.
-- [ ] Observe red/green; verify duration progression and storage failure behavior,
+- [x] Observe red/green; verify duration progression and storage failure behavior,
   snapshot semantics, cancellation/finalization races and synchronous durability.
   Run full Media and Film suites, then independent spec and quality reviews.
 - [ ] Record evidence and commit the reviewed fix. Run an isolated short native
@@ -32,3 +32,18 @@ and append, and persistence phases with bounded diagnostics before choosing anot
 fix. Asynchronous persistence would require its own bounded queue, failure semantics
 and finish barrier; it is outside this focused change. Motion-heavy fixtures and
 physical-device tests remain necessary after basic recording reliability improves.
+
+## Implementation evidence
+
+The actual-store gate regression fails on the old lock placement with the expected
+assertion that a segment-storage wait blocks the lifecycle operation. It passes
+after snapshot scalar capture and segment reading are separated. A concurrent
+finish regression checks that an earlier segment view retains its earlier writer
+state, and a scalar-duration test checks progression through finalization.
+
+The focused writer suite passes 11 tests, full Media passes 136 (104 XCTest plus 32
+Swift Testing), and Film passes 77. Generic unsigned iOS Release build, including
+the Watch app, succeeds. Logs are retained as `artifacts/qa/archive-snapshot-*.log`.
+Specification and independent quality reviews approve with no remaining findings.
+Native qualification is pending. These tests prove the specific lock dependency is removed; the
+ten-minute native overflow remains unqualified until a new run is measured.
