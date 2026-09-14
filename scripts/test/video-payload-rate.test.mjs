@@ -142,3 +142,108 @@ for (const s of [
   test(`rejects invalid or ambiguous streams ${JSON.stringify(s)}`, () =>
     assert.throws(() => measure(packets(), s)));
 }
+
+const workload = (...rates) =>
+  measure(
+    rates.flatMap((rate, index) => {
+      const total = (rate * 5e6) / 8;
+      return packets(150, index * 450000).map((p, i) => ({
+        ...p,
+        size: String(Math.floor(total / 150) + (i < total % 150 ? 1 : 0)),
+      }));
+    }),
+  );
+
+test('structured calibration preserves inclusive archive and live demand bands', () => {
+  const archive = workload(6, 18),
+    before = structuredClone(archive);
+  assert.deepEqual(payload.qualifyStructuredMotionPayload(archive, 'archive'), {
+    formatVersion: 1,
+    kind: 'archive',
+    windowSeconds: 5,
+    minimumMbps: 6,
+    maximumMbps: 18,
+    windowCount: 2,
+    measuredMinimumMbps: 6,
+    measuredMaximumMbps: 18,
+  });
+  assert.deepEqual(archive, before);
+  assert.equal(payload.qualifyStructuredMotionPayload(workload(3, 9), 'live').minimumMbps, 3);
+  assert.equal(payload.qualifyStructuredMotionPayload(workload(3, 9), 'live').maximumMbps, 9);
+});
+test('structured demand rejects a low window even when the aggregate fits', () => {
+  const measurement = workload(12, 5);
+  assert.equal(measurement.measured.meanMbps, 8.5);
+  assert.throws(() => payload.qualifyStructuredMotionPayload(measurement, 'archive'), /band/);
+});
+test('structured demand rejects a high window even when the aggregate fits', () => {
+  const measurement = workload(3, 12);
+  assert.equal(measurement.measured.meanMbps, 7.5);
+  assert.throws(() => payload.qualifyStructuredMotionPayload(measurement, 'live'), /band/);
+});
+test('structured demand detects one payload byte outside either boundary', () => {
+  for (const [kind, bytes, delta] of [
+    ['archive', 25000, -1],
+    ['archive', 75000, 1],
+    ['live', 12500, -1],
+    ['live', 37500, 1],
+  ]) {
+    const p = packets().map((x) => ({ ...x, size: String(bytes) }));
+    p[0].size = String(bytes + delta);
+    assert.throws(() => payload.qualifyStructuredMotionPayload(measure(p), kind), /band/);
+  }
+});
+test('structured demand rejects missing or malformed window evidence', () => {
+  for (const change of [
+    (x) => {
+      x.formatVersion = 2;
+    },
+    (x) => {
+      x.windowSeconds = 4;
+    },
+    (x) => {
+      x.windows = [];
+    },
+    (x) => {
+      x.windows[0].megabitsPerSecond = NaN;
+    },
+    (x) => {
+      x.windows[0].megabitsPerSecond = Infinity;
+    },
+    (x) => {
+      x.windows[0].payloadBytes++;
+    },
+    (x) => {
+      x.windows[0].packetCount = 0;
+    },
+    (x) => {
+      x.windows[0].endTimeSeconds = 4;
+    },
+    (x) => {
+      x.windows[0].startTimeSeconds = 0.5;
+    },
+  ]) {
+    const x = workload(6);
+    change(x);
+    assert.throws(() => payload.qualifyStructuredMotionPayload(x, 'archive'));
+  }
+  for (const x of [
+    null,
+    undefined,
+    {},
+    { formatVersion: 1, windowSeconds: 5, windows: 'invalid' },
+  ]) {
+    assert.throws(() => payload.qualifyStructuredMotionPayload(x, 'archive'));
+  }
+  for (const kind of [undefined, 'video', false]) {
+    assert.throws(() => payload.qualifyStructuredMotionPayload(workload(6), kind));
+  }
+});
+test('structured demand cannot skip an internal media window or accept oversized history', () => {
+  const gap = workload(6, 6, 6);
+  gap.windows.splice(1, 1);
+  assert.throws(() => payload.qualifyStructuredMotionPayload(gap, 'archive'));
+  const large = workload(6);
+  large.windows = Array(129).fill(large.windows[0]);
+  assert.throws(() => payload.qualifyStructuredMotionPayload(large, 'archive'));
+});

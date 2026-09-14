@@ -77,11 +77,11 @@ color/contrast variation while staying near both requested rates in this experim
   and prior emitted buffers remain intact. Cover new runner/UITest flag mapping.
 - [x] Run focused source, full Film, focused/full tools and combined iPhone/Watch
   Release build, then independent specification and quality reviews.
-- [ ] Run the same short native workflow with explicit `blocks16`. Keep every
+- [x] Run the same short native workflow with explicit `blocks16`. Keep every
   existing frame-identity/cadence, A/V marker/coverage, native scoring, clean
   archive, report-age and terminal-delivery gate unchanged. Record exact revision,
   workload, per-window payload and bounded diagnostic scope; preserve failures.
-- [ ] Review the measured native workload before freezing acceptance. Existing
+- [x] Review the measured native workload before freezing acceptance. Existing
   initial 6/3 Mbps archive/live demand targets are calibration observations only;
   also examine upper rates against 12/6 Mbps settings. Never infer a hard bitrate
   ceiling, wire throughput or visual quality from those settings.
@@ -102,7 +102,7 @@ for independent decode. Design capture/retention overhead before enabling it;
 never perform file I/O in capture callbacks or silently change transport policy.
 
 Independent design review approves this separate calibration candidate.
-Source and tooling are implemented; native blocks16 calibration has not started.
+Source and tooling are implemented; the first short native blocks16 calibration passes as recorded below.
 
 
 ## Tooling verification
@@ -129,3 +129,61 @@ diagnostics and actual recording/export. The combined unsigned iPhone/Watch
 Release build passes. Logs are under `artifacts/qa/structured-motion-source-{red,green}.log`,
 `structured-motion-film-full.log` and `structured-motion-release.log`.
 Combined specification and independent quality reviews approve with no findings.
+
+
+## Short native calibration at a4a5c25: passed
+
+`native-app-nX1LnQ` completed with runner exit 0 on iPhone 14/iOS 17.5. The explicit
+workload is `motion-blocks16`. Archive: 1,315 consecutive frames 0–1314, 43.8333 seconds,
+30 fps, 2,630 accepted/written samples, zero rejected/dropped samples. Live: 918
+consecutive frames 214–1131, 30.6 source seconds,approximately 30 fps, zero acquired-frame
+loss and complete final encoded frame 1131. Capture 153 precedes encoded 154; the 60
+encoded frames 154–213 before receiver acquisition remain explicit. The archive
+continues 183 frames beyond live output. Five steady observation windows each have
+150 capture/150 encoded frames. Both report-age proofs match independent API evidence.
+
+Archive video payload over eight complete five-second windows averages 12.115732 Mbps
+(range 12.090522–12.123202 Mbps). Live over five complete windows averages 7.616506 Mbps
+(range 7.592077–7.644997 Mbps), about 27% above its requested 6 Mbps. Archive/live maximum
+marker offsets are 0.020833/65.250 ms; tail differences are +5.333/+25.664 ms. Native
+scoring changed 693 overlay pixels. Full A/V decode, all archive identities, acquired
+live identities and final delivery pass unchanged gates. Worker encoder exit 0 was
+preceded by a recorded SIGTERM request; do not call it an unrequested natural exit.
+The direct recorder exited 0 without a termination request. No worker evidence was
+omitted. This is one short simulator run, not sustained/hardware qualification.
+
+## Frozen workload band for longer holds
+
+Independent design review approves this prospective, inclusive band for each
+complete five-second video payload window: archive 6–18 Mbps, live 3–9 Mbps. Both
+extremes must hold independently for every window; an aggregate cannot hide an
+outlier. The lower bound preserves substantive encoded demand; the upper bound
+keeps this particular calibration workload bounded near the selected profile.
+These broad bands do not prove delivery at the requested bitrate, real-camera
+visual quality, usable link capacity, or a hardware ceiling.
+
+Apply the gate only to `motion-blocks16`. Reject unknown media kinds, malformed or
+empty evidence, nonfinite/inconsistent rates, non-five-second or omitted internal
+windows and oversized history. Keep the original pixel-noise/barcode modes and all
+existing media checks unchanged. Persist band bounds, actual minima/maxima and
+window counts alongside the full packet-derived rates. `qualifyStructuredMotionPayload`
+in `scripts/video-payload-rate.mjs` is called immediately after measurement by the
+native runner. Tests exercise inclusive edges, a single byte outside each bound,
+and outlier windows hidden by valid aggregates. The pilot's saved rates pass a
+separate `payload-band-audit.json`; its original `results.json` remains unchanged.
+Long-run source/profile, seed, flags, media gates and bands are now fixed before
+180-/600-second qualification. Any future change requires a new calibration.
+
+Qualifier verification: corrected red has four expected missing-qualifier failures;
+focused payload green passes 39. The initial full suite passes 360/361: the unrelated
+stuck-readiness-probe test can consume its 15 ms budget during filesystem setup,
+before the probe runs. Its original focused rerun passes, consistent with scheduling
+sensitivity. The test now uses the existing injected clock to isolate probe timeout;
+a separate deterministic case covers deadline expiry before probing and cleanup.
+Production recorder behavior and deadlines are unchanged. Combined focused checks
+pass 66; full tools pass 362 with normal exit 0. Syntax and diff checks pass.
+Independent specification and quality reviews approve the qualifier. Logs:
+`structured-motion-demand-red-corrected.log`, `structured-motion-demand-green.log`,
+`structured-motion-demand-tools.log` (original failure),
+`structured-motion-readiness-reproduce.log`, `structured-motion-demand-focused.log`
+and `structured-motion-demand-tools-green.log`.

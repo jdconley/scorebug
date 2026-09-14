@@ -136,3 +136,59 @@ export function measureVideoPayloadRate({ streams, packets }) {
     },
   };
 }
+
+/** Fixed blocks16 calibration band; never a product bitrate or visual-quality guarantee. */
+export function qualifyStructuredMotionPayload(measurement, kind) {
+  assert.ok(kind === 'archive' || kind === 'live', 'Unknown structured motion media kind');
+  assert.ok(
+    measurement?.formatVersion === 1 && measurement.windowSeconds === WINDOW_SECONDS,
+    'Invalid structured motion measurement',
+  );
+  assert.ok(
+    Array.isArray(measurement.windows) &&
+      measurement.windows.length > 0 &&
+      measurement.windows.length <= MAX_WINDOWS,
+    'Invalid structured motion windows',
+  );
+  const minimumMbps = kind === 'archive' ? 6 : 3;
+  const maximumMbps = kind === 'archive' ? 18 : 9;
+  let previousEnd;
+  const rates = [];
+  for (const window of measurement.windows) {
+    assert.ok(
+      window &&
+        Number.isSafeInteger(window.startTimeSeconds) &&
+        Number.isSafeInteger(window.endTimeSeconds) &&
+        window.startTimeSeconds % WINDOW_SECONDS === 0 &&
+        window.endTimeSeconds - window.startTimeSeconds === WINDOW_SECONDS &&
+        (previousEnd === undefined || window.startTimeSeconds === previousEnd),
+      'Invalid or missing structured motion window',
+    );
+    assert.ok(
+      Number.isSafeInteger(window.packetCount) &&
+        window.packetCount > 0 &&
+        Number.isSafeInteger(window.payloadBytes) &&
+        window.payloadBytes > 0 &&
+        window.payloadBytes <= Math.floor(Number.MAX_SAFE_INTEGER / 8) &&
+        Number.isFinite(window.megabitsPerSecond) &&
+        window.megabitsPerSecond === (window.payloadBytes * 8) / (WINDOW_SECONDS * 1e6),
+      'Invalid structured motion payload',
+    );
+    assert.ok(
+      window.megabitsPerSecond >= minimumMbps && window.megabitsPerSecond <= maximumMbps,
+      `Structured motion ${kind} payload outside ${minimumMbps}..${maximumMbps} Mbps band at ${window.startTimeSeconds}s`,
+    );
+    rates.push(window.megabitsPerSecond);
+    previousEnd = window.endTimeSeconds;
+  }
+  return {
+    formatVersion: 1,
+    kind,
+    windowSeconds: WINDOW_SECONDS,
+    minimumMbps,
+    maximumMbps,
+    windowCount: rates.length,
+    measuredMinimumMbps: Math.min(...rates),
+    measuredMaximumMbps: Math.max(...rates),
+  };
+}

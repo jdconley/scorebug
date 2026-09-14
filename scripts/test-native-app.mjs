@@ -22,7 +22,7 @@ import {
   qualifyNativeStreamingHold,
 } from './native-streaming-options.mjs';
 import { qualifyDirectRecorderDelivery } from './direct-recorder-qualification.mjs';
-import { measureVideoPayloadRate } from './video-payload-rate.mjs';
+import { measureVideoPayloadRate, qualifyStructuredMotionPayload } from './video-payload-rate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
@@ -197,7 +197,7 @@ async function analyze(path, index, live = false) {
     if (!live)
       assert.equal(code, frame, `Missing, duplicated, or reordered source frame at ${frame}`);
   }
-  let sync, freshFps, sourceLoss, overlayChangedPixels, videoPayload;
+  let sync, freshFps, sourceLoss, overlayChangedPixels, videoPayload, workloadQualification;
   if (streaming) {
     const packetProbe = JSON.parse(
       await run(
@@ -217,6 +217,12 @@ async function analyze(path, index, live = false) {
       ),
     );
     videoPayload = measureVideoPayloadRate(packetProbe);
+    if (fixtureWorkload === 'motion-blocks16') {
+      workloadQualification = qualifyStructuredMotionPayload(
+        videoPayload,
+        live ? 'live' : 'archive',
+      );
+    }
     const pcmPath = join(artifact, `audio-${index}.f32`);
     await run(
       ffmpeg,
@@ -295,6 +301,7 @@ async function analyze(path, index, live = false) {
     sourceLoss,
     overlayChangedPixels,
     videoPayload,
+    workloadQualification,
     frames: frames.length,
     firstSourceFrame: codes[0],
     lastSourceFrame: codes.at(-1),

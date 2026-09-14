@@ -243,12 +243,16 @@ test('cancellation reaps a real readiness probe that ignores TERM', async (t) =>
 
 test('a stuck readiness probe cannot exceed the startup budget', async (t) => {
   let probeJoined = false;
+  let now = 0;
   const f = await fixture(t, {
+    // Filesystem setup must not consume this test's deliberately tiny probe budget.
+    now: () => now,
     execFile: (_file, _args, { signal }) =>
       new Promise((resolve) => {
         signal.addEventListener(
           'abort',
           () => {
+            now = 15;
             probeJoined = true;
             resolve({ stdout: '' });
           },
@@ -260,6 +264,23 @@ test('a stuck readiness probe cannot exceed the startup budget', async (t) => {
   await assert.rejects(f.start(), /direct RTMP recorder/i);
   assert.deepEqual(f.kills, ['SIGTERM']);
   assert.equal(probeJoined, true);
+});
+
+test('startup budget consumed before probing still cleans up the recorder', async (t) => {
+  let clockReads = 0;
+  let probes = 0;
+  const f = await fixture(t, {
+    now: () => (clockReads++ === 0 ? 0 : 15),
+    startupMs: 15,
+    execFile: async () => {
+      probes++;
+      return { stdout: '' };
+    },
+  });
+  await assert.rejects(f.start(), /readiness deadline expired/);
+  assert.equal(probes, 0);
+  assert.deepEqual(f.kills, ['SIGTERM']);
+  assert.equal((await f.manifest()).terminationRequested, true);
 });
 
 test('finish deadline is a failure even if termination causes a zero exit', async (t) => {
