@@ -152,4 +152,40 @@ A real ffprobe metadata smoke check against `native-app-OCNlMh` succeeds:
 40 complete archive seconds measure 0.103861 Mbps video payload; 25 live seconds
 measure 0.076717 Mbps. These exclude audio/container overhead and are not wire rates.
 Metadata and calculations are retained in `artifacts/qa/motion-payload-baseline/`.
-The new native motion workload has not yet been calibrated or qualified.
+The first native motion calibration failed; it is not qualified. See the evidence below.
+
+
+## First native motion calibration: failed
+
+`native-app-24AFo1` at `879404d` used the iPhone 14/iOS 17.5 simulator, direct receiver
+and default short hold. The actual runner exited 1 after Xcode 65. The app reached
+publishing/worker output, scored a point and completed the hold, then failed the
+second worker-producing-output check. Worker pipeline 1 reported 616 decoded frames
+and natural encoder exit 0; it subsequently attempted restarts (pipeline 2 had zero
+frames/exit 195). The receiver ended naturally 0. Worker evidence omitted 89 events,
+so it is incomplete; do not use this run as a terminal-delivery qualification.
+
+The saved receiver video fully decodes through FFmpeg but has visibly corrupted
+static barcode regions and nonconsecutive decoded source IDs. Successful downstream
+decode alone does not establish intact upstream images. Three complete five-second
+windows measure 46.277673 Mbps video payload (44.108987–48.157326 Mbps), against the
+requested worker 6 Mbps. This is an observation, not a confirmed cause of interruption.
+
+Archive preservation itself failed during simulator teardown: zero files were
+copied, and the manifest is explicitly incomplete. See the reviewed
+[failure-evidence plan](2026-09-14-motion-failure-evidence.md) for the bounded state
+transition repair before repeating this workload. The original failed artifact and
+manifest remain unchanged. Retained findings, packet probes/rates, decoded barcode
+IDs and a diagnostic frame are in the same artifact directory.
+
+A bounded local replay re-encoded the already-corrupted saved clip through
+VideoToolbox, with no live transport. With a 10-second input cutoff, the complete
+five-second measured window contained 145 video packets. Existing average-rate
+settings produced 45.928024 Mbps. An experimental 9 Mbps maximum produced 33.714190 Mbps;
+experimental 6 Mbps constant-rate produced 33.742722 Mbps. These alternatives are not
+production changes or qualified fixes. A separate -r 30/VFR invocation was rejected
+by FFmpeg before encoding as contradictory; no output/result is claimed for it.
+All replay evidence is under `native-app-24AFo1/rate-replay/`. The source is synthetic
+pixel noise, and encoder behavior on it must not be generalized to real sports
+footage. Repeat with archive/QA evidence before selecting changes to the workload,
+transport or encoder. Three-/ten-minute motion holds remain pending.

@@ -282,6 +282,236 @@ test('missing owned simulator does not resolve another device container', async 
   assert.equal(result.manifest.copiedFiles, 0);
 });
 
+async function resolutionScenario(t, { states, failedLookups = 0, failCommand } = {}) {
+  const f = await fixture(t);
+  await f.put('Recordings/session/recording-status.json', 'recording');
+  await f.put('QA/observation.json', 'observation');
+  const calls = [],
+    delays = [];
+  let stateReads = 0,
+    lookupAttempts = 0;
+  const result = await preserveNativeFailureArtifacts({
+    ...f,
+    simulator: 'owned-id',
+    delay: async (milliseconds) => {
+      delays.push(milliseconds);
+    },
+    run: async (binary, args, name, options) => {
+      calls.push({ binary, args, name, options });
+      if (args[1] === failCommand) throw new Error('secret subprocess error /private/path');
+      if (args[1] === 'list') {
+        const state = states[Math.min(stateReads++, states.length - 1)];
+        return JSON.stringify({
+          devices: {
+            runtime: [
+              { udid: 'unrelated-id', state: 'Shutdown', secret: 'private device metadata' },
+              ...(state === null ? [] : [{ udid: 'owned-id', state }]),
+            ],
+          },
+        });
+      }
+      if (args[1] === 'get_app_container') {
+        if (lookupAttempts++ < failedLookups) throw new Error('secret container resolution error');
+        return f.container;
+      }
+      return '';
+    },
+  });
+  assert.ok(calls.every(({ binary }) => binary === 'xcrun'));
+  assert.ok(calls.every(({ args }) => args[0] === 'simctl'));
+  assert.ok(
+    calls.filter(({ args }) => args[1] !== 'list').every(({ args }) => args[2] === 'owned-id'),
+  );
+  assert.ok(
+    calls
+      .filter(({ args }) => args[1] === 'get_app_container')
+      .every(({ args }) => args[3] === 'live.scorebug.app' && args[4] === 'data'),
+  );
+  return { ...f, ...result, calls, delays, operations: calls.map(({ args }) => args[1]) };
+}
+
+test('recovers a booted-to-shutdown lookup race within one shared boot and lookup budget', async (t) => {
+  const result = await resolutionScenario(t, { states: ['Booted', 'Shutdown'], failedLookups: 1 });
+  assert.equal(result.manifest.copiedFiles, 2);
+  assert.equal(result.manifest.incomplete, false);
+  assert.deepEqual(result.operations, [
+    'list',
+    'get_app_container',
+    'list',
+    'boot',
+    'bootstatus',
+    'get_app_container',
+  ]);
+  assert.deepEqual(result.manifest.resolution, {
+    stage: 'complete',
+    state: 'Shutdown',
+    stateReads: 2,
+    lookupAttempts: 2,
+    bootAttempts: 1,
+  });
+  assert.equal(
+    await fs.readFile(join(result.destination, 'QA/observation.json'), 'utf8'),
+    'observation',
+  );
+  assert.equal(
+    await fs.readFile(join(result.source, 'Recordings/session/recording-status.json'), 'utf8'),
+    'recording',
+  );
+  assert.equal(
+    new Set(result.calls.map(({ name }) => name)).size,
+    result.calls.length,
+    'Each diagnostic outcome has its own log',
+  );
+  for (const call of result.calls) {
+    assert.equal(call.options.timeout, call.args[1] === 'bootstatus' ? 30_000 : 10_000);
+    assert.equal(call.options.cleanup, true);
+    assert.equal(call.options.logOutput, false);
+  }
+});
+
+test('initial shutdown and a later shutdown share the same one-boot budget', async (t) => {
+  const first = await resolutionScenario(t, { states: ['Shutdown'] });
+  assert.equal(first.manifest.incomplete, false);
+  assert.equal(first.manifest.resolution.bootAttempts, 1);
+  assert.equal(first.manifest.resolution.lookupAttempts, 1);
+  const repeated = await resolutionScenario(t, { states: ['Shutdown'], failedLookups: 1 });
+  assert.equal(repeated.manifest.incomplete, true);
+  assert.equal(repeated.manifest.copiedFiles, 0);
+  assert.deepEqual(repeated.operations, [
+    'list',
+    'boot',
+    'bootstatus',
+    'get_app_container',
+    'list',
+  ]);
+  assert.deepEqual(repeated.manifest.resolution, {
+    stage: 'boot',
+    state: 'Shutdown',
+    stateReads: 2,
+    lookupAttempts: 1,
+    bootAttempts: 1,
+  });
+});
+
+test('stable booted lookup failures never trigger a boot or more than two lookups', async (t) => {
+  const result = await resolutionScenario(t, { states: ['Booted'], failedLookups: 10 });
+  assert.equal(result.manifest.incomplete, true);
+  assert.equal(result.manifest.copiedFiles, 0);
+  assert.deepEqual(result.operations, ['list', 'get_app_container', 'list', 'get_app_container']);
+  assert.deepEqual(result.manifest.resolution, {
+    stage: 'lookup',
+    state: 'Booted',
+    stateReads: 2,
+    lookupAttempts: 2,
+    bootAttempts: 0,
+  });
+  assert.deepEqual(result.delays, []);
+  assert.equal(JSON.stringify(result.manifest).includes('secret'), false);
+});
+
+test('stable booted success uses one lookup without rebooting', async (t) => {
+  const result = await resolutionScenario(t, { states: ['Booted'] });
+  assert.equal(result.manifest.incomplete, false);
+  assert.deepEqual(result.operations, ['list', 'get_app_container']);
+  assert.deepEqual(result.manifest.resolution, {
+    stage: 'complete',
+    state: 'Booted',
+    stateReads: 1,
+    lookupAttempts: 1,
+    bootAttempts: 0,
+  });
+});
+
+test('waits for initial shutdown transitions without resolving or booting a transitioning device', async (t) => {
+  const result = await resolutionScenario(t, {
+    states: ['Shutting Down', 'ShuttingDown', 'Shutdown'],
+  });
+  assert.equal(result.manifest.incomplete, false);
+  assert.deepEqual(result.delays, [200, 200]);
+  assert.deepEqual(result.operations, [
+    'list',
+    'list',
+    'list',
+    'boot',
+    'bootstatus',
+    'get_app_container',
+  ]);
+  assert.equal(result.manifest.resolution.stateReads, 3);
+});
+
+test('allows exactly five transition delays after the first lookup failure', async (t) => {
+  const result = await resolutionScenario(t, {
+    states: ['Booted', ...Array(5).fill('ShuttingDown'), 'Shutdown'],
+    failedLookups: 1,
+  });
+  assert.equal(result.manifest.incomplete, false);
+  assert.deepEqual(result.delays, Array(5).fill(200));
+  assert.deepEqual(result.manifest.resolution, {
+    stage: 'complete',
+    state: 'Shutdown',
+    stateReads: 7,
+    lookupAttempts: 2,
+    bootAttempts: 1,
+  });
+});
+
+test('transition exhaustion fails after six state reads and five delays', async (t) => {
+  const result = await resolutionScenario(t, { states: ['ShuttingDown'] });
+  assert.equal(result.manifest.incomplete, true);
+  assert.equal(result.manifest.copiedFiles, 0);
+  assert.deepEqual(result.operations, Array(6).fill('list'));
+  assert.deepEqual(result.delays, Array(5).fill(200));
+  assert.deepEqual(result.manifest.resolution, {
+    stage: 'waiting-shutdown',
+    state: 'ShuttingDown',
+    stateReads: 6,
+    lookupAttempts: 0,
+    bootAttempts: 0,
+  });
+});
+
+test('two waits remain bounded without resetting the shared boot budget', async (t) => {
+  const result = await resolutionScenario(t, {
+    states: [...Array(5).fill('ShuttingDown'), 'Shutdown', ...Array(6).fill('ShuttingDown')],
+    failedLookups: 1,
+  });
+  assert.equal(result.manifest.incomplete, true);
+  assert.equal(result.manifest.resolution.stateReads, 12);
+  assert.equal(result.manifest.resolution.bootAttempts, 1);
+  assert.equal(result.manifest.resolution.lookupAttempts, 1);
+  assert.deepEqual(result.delays, Array(10).fill(200));
+  assert.equal(result.operations.filter((operation) => operation === 'bootstatus').length, 1);
+});
+
+for (const state of [null, 'Booting', 'secret arbitrary /state', { secret: 'untrusted' }]) {
+  test(`unavailable or unsupported state ${JSON.stringify(state)} fails without a device mutation`, async (t) => {
+    const result = await resolutionScenario(t, { states: [state] });
+    assert.equal(result.manifest.incomplete, true);
+    assert.deepEqual(result.operations, ['list']);
+    assert.deepEqual(result.manifest.resolution, {
+      stage: 'state',
+      state: state === null ? 'Missing' : 'Unknown',
+      stateReads: 1,
+      lookupAttempts: 0,
+      bootAttempts: 0,
+    });
+    assert.equal(JSON.stringify(result.manifest).includes('secret'), false);
+    assert.equal(JSON.stringify(result.manifest).includes('unrelated-id'), false);
+  });
+}
+
+for (const failCommand of ['boot', 'bootstatus']) {
+  test(`failed ${failCommand} stops recovery without spending another boot`, async (t) => {
+    const result = await resolutionScenario(t, { states: ['Shutdown'], failCommand });
+    assert.equal(result.manifest.incomplete, true);
+    assert.equal(result.manifest.resolution.bootAttempts, 1);
+    assert.equal(result.manifest.resolution.lookupAttempts, 0);
+    assert.equal(result.manifest.resolution.stage, failCommand);
+    assert.equal(result.operations.filter((operation) => operation === 'boot').length, 1);
+    assert.equal(JSON.stringify(result.manifest).includes('secret'), false);
+  });
+}
+
 // Exercise the runner's actual catch/finally block in isolation. The UI workflow
 // is deliberately excluded; this regression concerns failure and cleanup order.
 async function runnerFailureHandler() {

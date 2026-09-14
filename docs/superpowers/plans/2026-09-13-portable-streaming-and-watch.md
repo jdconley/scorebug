@@ -339,6 +339,19 @@ open diagnoses. Continue the [native tail plan](2026-09-14-native-tail-diagnosis
 production source mapping, other adaptive inputs, profile transitions, impairment
 and sustained hardware qualification are still required before enabling adaptation.
 
+The subsequent [snapshot-isolation fix](2026-09-14-archive-snapshot-isolation.md)
+and [ten-minute qualification](2026-09-14-native-ten-minute-validation.md) now pass
+at `a49408c` in `native-app-6o9S2U`: 18,947 consecutive archive frames, 18,532 consecutive
+acquired live frames, 30 fps, zero archive rejected/dropped samples and complete live
+terminal delivery. Both native report-age proofs match independent API evidence.
+This single low-complexity simulator pass does not qualify motion load or physical
+hardware. The new [motion workload](2026-09-14-native-motion-load-validation.md) is
+implemented and reviewed at `879404d`; its first short native calibration failed
+with visible live-image corruption, worker restarts and measured 46.278 Mbps output
+against a 6 Mbps request. Archive evidence preservation also failed during simulator
+teardown; a state transition race is suspected. Follow the [failure-evidence plan](2026-09-14-motion-failure-evidence.md)
+before longer motion runs or enabling adaptation.
+
 ## Milestone 5: Watch scoring and complete simulator workflows
 
 [Networking design notes](../../watch-networking-design.md) map the existing shared

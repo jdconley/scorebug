@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 
 const defaultLimits = { maxBytes: 1024 ** 3, maxEntries: 10_000, maxDepth: 32 };
 const safeCodes = new Set([
@@ -216,28 +217,90 @@ export async function preserveNativeFailureArtifacts({
   run,
   limits,
   io = fs,
+  delay = wait,
 }) {
   const snapshot = await createSnapshot(artifact, limits, io);
-  try {
-    if (!simulator) throw new Error('No owned simulator');
-    const diagnostic = (args, name) =>
-      run('xcrun', ['simctl', ...args], name, { cleanup: true, logOutput: false });
-    const devices = JSON.parse(
-      await diagnostic(['list', 'devices', '--json'], 'failure-device-state'),
-    );
-    const owned = Object.values(devices.devices)
-      .flat()
-      .find((device) => device.udid === simulator);
-    if (!owned) throw new Error('Owned simulator unavailable');
-    if (owned.state === 'Shutdown') {
-      await diagnostic(['boot', simulator], 'failure-boot-for-export');
-      await diagnostic(['bootstatus', simulator, '-b'], 'failure-ready-for-export');
+  const resolution = {
+    stage: 'state',
+    // Last observed owned state, not an assumption about a later command.
+    state: 'Unknown',
+    stateReads: 0,
+    lookupAttempts: 0,
+    bootAttempts: 0,
+  };
+  snapshot.manifest.resolution = resolution;
+  let diagnosticCalls = 0;
+  const diagnostic = (args, name, timeout = 10_000) =>
+    run('xcrun', ['simctl', ...args], `${name}-${++diagnosticCalls}`, {
+      timeout,
+      cleanup: true,
+      logOutput: false,
+    });
+
+  async function stableOwnedState() {
+    // One wait has six reads and at most five short delays. Both waits share
+    // the enclosing boot/lookup budget, including an initially shut-down device.
+    for (let poll = 0; poll <= 5; poll++) {
+      resolution.stage = 'state';
+      resolution.stateReads++;
+      const devices = JSON.parse(
+        await diagnostic(['list', 'devices', '--json'], 'failure-device-state'),
+      );
+      const owned = Object.values(devices.devices)
+        .flat()
+        .find((device) => device?.udid === simulator);
+      const state = owned?.state === 'Shutting Down' ? 'ShuttingDown' : owned?.state;
+      resolution.state = !owned
+        ? 'Missing'
+        : ['Booted', 'Shutdown', 'ShuttingDown'].includes(state)
+          ? state
+          : 'Unknown';
+      if (resolution.state === 'Booted' || resolution.state === 'Shutdown') return;
+      if (resolution.state !== 'ShuttingDown') throw new Error('Owned state unavailable');
+      resolution.stage = 'waiting-shutdown';
+      if (poll === 5) throw new Error('Owned shutdown wait exhausted');
+      await delay(200);
     }
-    const container = await diagnostic(
-      ['get_app_container', simulator, 'live.scorebug.app', 'data'],
-      'failure-container',
-    );
+  }
+
+  async function prepareOwnedState() {
+    await stableOwnedState();
+    if (resolution.state === 'Shutdown') {
+      resolution.stage = 'boot';
+      if (resolution.bootAttempts === 1) throw new Error('Owned boot budget exhausted');
+      resolution.bootAttempts++;
+      await diagnostic(['boot', simulator], 'failure-boot-for-export');
+      resolution.stage = 'bootstatus';
+      await diagnostic(['bootstatus', simulator, '-b'], 'failure-ready-for-export', 30_000);
+    }
+  }
+
+  try {
+    if (!simulator) {
+      resolution.state = 'Missing';
+      throw new Error('No owned simulator');
+    }
+    await prepareOwnedState();
+    let container;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      resolution.stage = 'lookup';
+      resolution.lookupAttempts++;
+      try {
+        container = await diagnostic(
+          ['get_app_container', simulator, 'live.scorebug.app', 'data'],
+          'failure-container',
+        );
+        break;
+      } catch (error) {
+        if (attempt === 1) throw error;
+        // Xcode may begin shutting the device down after the preceding state
+        // read. Recheck only this owned device before the one permitted retry.
+        await prepareOwnedState();
+      }
+    }
+    resolution.stage = 'copy';
     await copyTrees(container, snapshot, io);
+    resolution.stage = 'complete';
   } catch (error) {
     snapshot.manifest.incomplete = true;
     snapshot.manifest.entries.push({
