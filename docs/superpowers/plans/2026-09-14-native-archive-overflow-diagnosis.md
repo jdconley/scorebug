@@ -187,3 +187,11 @@ Evidence: `post-run-independent-checks.json`, `failure-copy-verification.json`,
 that run directory. Post-run checks do not replace the runner's failed result.
 
 Continue with the [native tail diagnosis](2026-09-14-native-tail-diagnosis.md).
+
+The subsequent `native-app-yCntsf` run at `9679081` passes all maintained native
+gates after the independently reproduced control-stop race was fixed. It also has
+zero archive rejections/drops, with 1,225 consecutive archive frames. The earlier
+overflow is still unresolved; these short runs do not establish sustained recording
+reliability. Thirteen terminal native encoded frames are absent from the live sink,
+so complete end delivery remains a separate open diagnosis despite passing A/V
+alignment. See the tail plan for the exact results and next measurements.

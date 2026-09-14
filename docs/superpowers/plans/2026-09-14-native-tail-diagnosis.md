@@ -83,6 +83,26 @@ unchanged acknowledgment/ownership assertions. The initial full-suite failure is
 retained in `native-stop-order-film-before-fixture-join.log`; final evidence is in
 `artifacts/qa/native-stop-order-{green,relaunch,film,core,release}.log`.
 
+### Post-fix native result
+
+At `9679081`, isolated run `artifacts/qa/native-app-yCntsf` passed the maintained
+iPhone 14/iOS 17.5 workflow and all existing media/observation/report-age gates
+(runner exit 0, owned cleanup complete). The archive contains 1,225 consecutive
+frames 0–1224; live contains 799 consecutive acquired frames 229–1027 at 30 fps.
+Archive queue rejections/drops remain zero. Native scoring changed 341 overlay
+pixels. Live maximum marker offset is 65.25 ms and its end offset is −17.567 ms,
+within the unchanged 100 ms budget. Both native age proofs match independent API
+windows. Four steady observation windows match 600 decoded frames.
+
+Complete terminal delivery is still unproven: native capture/encoder observations
+cover frames 169–1040, leaving 13 terminal encoded frames (1028–1040) absent from
+the sink, in addition to the separately reported 60-frame acquisition interval.
+The A/V gate passes because both tracks end close together; it cannot detect equal
+truncation of both tracks. This result validates the existing gates after the
+control-race fix, not complete end delivery or attribution of the prior failure.
+Continue the bounded terminal-delivery localization below, preserving this passing
+run and the earlier failed runs. Do not erase the unresolved archive overflow.
+
 ## If tail localization remains unresolved
 
 Retain small, bounded, sanitized evidence across the stop boundary: native transport

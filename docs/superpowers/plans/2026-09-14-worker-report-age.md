@@ -220,10 +220,10 @@ ages, one unmatched latest proof, and no independent matches. Prefer a separate
 - [x] Export bounded, credential-free evidence that the actual native helper accepts
   a scoped server upper bound and adds request/residence time. Reuse the explicit
   DEBUG simulator flag and joined shutdown export; no per-frame I/O or new UI.
-- [ ] Require bounded-age evidence in the maintained native fixture while preserving
+- [x] Require bounded-age evidence in the maintained native fixture while preserving
   all current media gates. Run focused regressions and relevant builds before one
   isolated native streaming qualification, with no concurrent media/build jobs.
-- [ ] Record exact outcomes and remaining adaptive gates in the telemetry contract,
+- [x] Record exact outcomes and remaining adaptive gates in the telemetry contract,
   worker decoder documentation, and parent plan. Review and commit.
 
 Checkpoint 4 source passes 58 Film model tests, all 135 tooling tests (including
@@ -245,3 +245,20 @@ queue/timing evidence before another qualification attempt. This checkpoint's
 running-app gate remains open; the source commit does not mark it complete.
 Continue with the [archive overflow diagnosis plan](2026-09-14-native-archive-overflow-diagnosis.md)
 before another native qualification attempt.
+
+Checkpoint 4's maintained native gate now passes in `artifacts/qa/native-app-yCntsf`
+at `9679081` (iPhone 14/iOS 17.5, local Mac VideoToolbox worker). Both exported helper
+proofs match independent API windows with full identity and immutable content:
+sequence 3 has native/independent server upper bounds 5,090/2,065 ms, and sequence 4
+has 2,120/2,080 ms. Different poll ages are expected; exact request/residence addition
+and each individual bound are validated. All unchanged media gates passed, with
+1,225 archive frames and 799 acquired live frames at 30 fps. Runner exit was 0.
+
+The intervening `native-app-9V41qA` run passed independent age checks but failed its
+live A/V tail gate; it remains failed. A deterministic local control-stop race was
+then fixed and reviewed, with 74 Film and 119 Core tests and combined Release build
+passing. Its relationship to that native failure is not established. The final
+passing run still reports 13 encoded terminal frames absent from the sink. Complete
+end delivery, the earlier archive overflow, production source correlation, qualified
+capacity/queue inputs, profile transitions, impairment and sustained hardware tests
+remain open. Report-age qualification alone does not enable adaptive settings.

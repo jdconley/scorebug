@@ -211,3 +211,22 @@ isolated native attempt (`native-app-mIqwM3`) encountered an archive queue overf
 at 34.90 seconds, before stop/export and qualification completed. The run remains
 failed. Queue/timing diagnosis takes precedence over claiming a complete age path;
 no queue limit, quality policy, or media acceptance gate has been relaxed.
+
+The complete report-age native fixture now passes at `9679081` in
+`artifacts/qa/native-app-yCntsf` (iPhone 14/iOS 17.5, local Mac VideoToolbox worker).
+Two actual helper proof windows match independent bounded API readings; exact
+request/residence arithmetic and immutable remote/local identity checks pass along
+with every existing media gate. The archive has 1,225 consecutive frames and live
+has 799 consecutive acquired frames at 30 fps. Four steady capture/encoder windows
+match 600 decoded frames. Live marker offset is at most 65.25 ms; tail alignment
+is −17.567 ms against the unchanged 100 ms budget.
+
+This follows a reviewed fix for a deterministic periodic-poll race that could send
+the owned stop command before bounded publisher finish settled. Final checks pass
+74 Film and 119 Core tests and the combined unsigned iPhone/Watch Release build.
+The previous live-tail failure and archive overflow remain recorded separately.
+The passing fixture still excludes 60 acquisition frames and 13 terminal encoded
+frames absent from the sink. Passing A/V alignment cannot prove complete end
+delivery when both tracks truncate together. Terminal delivery, production source
+mapping, qualified capacity/queue inputs, profile transitions, impairment and
+sustained hardware qualification remain required; adaptation remains disabled.

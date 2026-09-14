@@ -327,8 +327,17 @@ report-transit gap.
 The native proof exporter/comparator now passes 58 Film model and 135 tooling
 tests, Release compilation and both reviews. Its first isolated run
 (`native-app-mIqwM3`) failed because the archive queue overflowed at 34.90 seconds.
-Preserving failed media and diagnosing bounded queue/timing evidence is the next
-priority before completing the native age gate or enabling adaptive profiles.
+Failure preservation and bounded archive diagnostics are now implemented and
+reviewed. An intervening run completed its archive but failed live tail alignment;
+a separately reproduced control-poll stop race was fixed with 74 Film/119 Core
+tests and the combined Release build passing. The maintained native age gate now
+passes in `native-app-yCntsf` at `9679081`: 1,225 archive frames, 799 acquired live
+frames at 30 fps, four steady observation windows matching 600 frames, and two
+helper proof windows matching independent API readings. All media gates are
+unchanged. The prior archive overflow and 13 absent terminal encoded frames remain
+open diagnoses. Continue the [native tail plan](2026-09-14-native-tail-diagnosis.md);
+production source mapping, other adaptive inputs, profile transitions, impairment
+and sustained hardware qualification are still required before enabling adaptation.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 

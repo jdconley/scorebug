@@ -126,3 +126,17 @@ Capture and encoder counters, correlation across source intervals, qualified
 capacity estimates, complete transport-age bounds, resolution transitions,
 impairment tests, and sustained hardware qualification remain open. See the
 [runtime telemetry contract](adaptive-telemetry.md).
+
+The transit-inclusive report-age slice now passes the maintained iPhone 14/iOS 17.5
+fixture with the local Mac VideoToolbox worker (`native-app-yCntsf`, `9679081`). Both
+native helper proof windows match independent API readings, including exact request
+and local-residence additions. All existing media gates pass: 1,225 archive frames,
+799 acquired live frames at 30 fps, and four steady observation windows matching
+600 decoded frames. Maximum live marker offset is 65.25 ms; end alignment is
+−17.567 ms. This closes that report-age checkpoint, not adaptive enablement.
+
+Thirteen terminal frames completed by the native encoder are absent from the sink.
+The next diagnosis must distinguish transport receipt, worker decoder completion,
+and output drain; synchronized track ends alone cannot establish full delivery.
+The earlier archive overflow remains unresolved. See the
+[native tail evidence and plan](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
