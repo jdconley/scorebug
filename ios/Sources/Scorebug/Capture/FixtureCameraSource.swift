@@ -9,6 +9,8 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
     private let lock = NSLock()
     private let profile: ArchiveProfile
     private let failAfterFrames: Int?
+    private let motionFlag: String?
+    private var motion: FixtureMotionPattern?
     private let origin = CMTime(value: 7_395, timescale: 60) // 123.25 s, not wall time.
     private var callbacks: CaptureSourceCallbacks?
     private var pump: Task<Void, Never>?
@@ -23,8 +25,8 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             return true
         }
     }
-    init(profile: ArchiveProfile = .init(), failAfterFrames: Int? = nil) {
-        self.profile = profile; self.failAfterFrames = failAfterFrames
+    init(profile: ArchiveProfile = .init(), failAfterFrames: Int? = nil, motionFlag: String? = nil) {
+        self.profile = profile; self.failAfterFrames = failAfterFrames; self.motionFlag = motionFlag
     }
     deinit { pump?.cancel() }
     func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
@@ -33,6 +35,7 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             try profile.validate()
             guard profile.framesPerSecond == 30, profile.audioSampleRate == 48_000,
                   profile.audioChannels == 1 else { throw FixtureError.format }
+            if try FixtureMotionPattern.enabled(motionFlag) { motion = try FixtureMotionPattern(profile: profile) }
             used = true
             self.callbacks = callbacks
             return origin
@@ -43,6 +46,7 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             guard pump == nil, let callbacks else { throw FixtureError.state }
             let profile = profile, origin = origin, failAfterFrames = failAfterFrames
             let diagnostics = archivePressureDiagnostics
+            let motion = motion
             pump = Task.detached {
                 let began = ContinuousClock.now
                 do {
@@ -54,7 +58,7 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
                         if let failAfterFrames, frame >= failAfterFrames { callbacks.event(.interrupted); return }
                         diagnostics?.beginFrame(index: Int64(frame), deadline: deadline)
                         let samples = try autoreleasepool {
-                            (try Self.video(frame: frame, profile: profile, origin: origin),
+                            (try Self.video(frame: frame, profile: profile, origin: origin, motion: motion),
                              try Self.audio(frame: frame, origin: origin))
                         }
                         diagnostics?.generationFinished()
@@ -69,37 +73,47 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
         }
     }
     func stop() async {
-        let pending = lock.withLock { callbacks = nil; return pump }
-        pending?.cancel()
-        await pending?.value
+        let pending = lock.withLock { callbacks = nil; return (task: pump, prepared: used) }
+        pending.task?.cancel()
+        await pending.task?.value
+        if pending.prepared {
+            // Published samples own independent pixel buffers, so releasing the
+            // prepared textures after the joined pump cannot alter their pixels.
+            lock.withLock { motion = nil; pump = nil }
+        }
     }
     private enum FixtureError: Error { case state, format, buffer }
-    private static func video(frame: Int, profile: ArchiveProfile, origin: CMTime) throws -> CMSampleBuffer {
+    private static func video(frame: Int, profile: ArchiveProfile, origin: CMTime, motion: FixtureMotionPattern?) throws -> CMSampleBuffer {
         var pixel: CVPixelBuffer?
         guard CVPixelBufferCreate(kCFAllocatorDefault, profile.width, profile.height,
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &pixel) == kCVReturnSuccess,
             let pixel else { throw FixtureError.buffer }
         CVPixelBufferLockBaseAddress(pixel, [])
-        for plane in 0..<2 {
-            memset(CVPixelBufferGetBaseAddressOfPlane(pixel, plane), plane == 0 ? 32 : 128,
-                CVPixelBufferGetBytesPerRowOfPlane(pixel, plane) * CVPixelBufferGetHeightOfPlane(pixel, plane))
-        }
-        if let luma = CVPixelBufferGetBaseAddressOfPlane(pixel, 0) {
-            let stride = CVPixelBufferGetBytesPerRowOfPlane(pixel, 0)
-            let bandWidth = max(1, profile.width / 16)
-            for bit in 0..<16 {
-                let level = (frame >> bit) & 1 == 1 ? 220 : 70
-                for row in 0..<profile.height / 3 {
-                    memset(luma.advanced(by: row * stride + bit * bandWidth), Int32(level), bandWidth)
+        do {
+            defer { CVPixelBufferUnlockBaseAddress(pixel, []) }
+            for plane in 0..<2 {
+                memset(CVPixelBufferGetBaseAddressOfPlane(pixel, plane), plane == 0 ? 32 : 128,
+                    CVPixelBufferGetBytesPerRowOfPlane(pixel, plane) * CVPixelBufferGetHeightOfPlane(pixel, plane))
+            }
+            if let luma = CVPixelBufferGetBaseAddressOfPlane(pixel, 0) {
+                let stride = CVPixelBufferGetBytesPerRowOfPlane(pixel, 0)
+                let bandWidth = max(1, profile.width / 16)
+                for bit in 0..<16 {
+                    let level = (frame >> bit) & 1 == 1 ? 220 : 70
+                    for row in 0..<profile.height / 3 {
+                        memset(luma.advanced(by: row * stride + bit * bandWidth), Int32(level), bandWidth)
+                    }
+                }
+                if motion == nil {
+                    let position = (frame * 8) % max(1, profile.width - 40)
+                    for row in (profile.height / 2)..<min(profile.height, profile.height / 2 + 40) {
+                        memset(luma.advanced(by: row * stride + position), 230, 40)
+                    }
                 }
             }
-            let position = (frame * 8) % max(1, profile.width - 40)
-            for row in (profile.height / 2)..<min(profile.height, profile.height / 2 + 40) {
-                memset(luma.advanced(by: row * stride + position), 230, 40)
-            }
+            try motion?.copyMiddle(into: pixel, frame: frame)
         }
-        CVPixelBufferUnlockBaseAddress(pixel, [])
         var format: CMVideoFormatDescription?
         guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixel,
             formatDescriptionOut: &format) == noErr, let format else { throw FixtureError.buffer }

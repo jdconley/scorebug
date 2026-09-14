@@ -18,6 +18,11 @@ final class NativeStreamingTests: XCTestCase {
             holdSeconds = parsed
             app.launchEnvironment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = rawHold
         }
+        let motionFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? ""
+        if !motionFlag.isEmpty {
+            XCTAssertEqual(motionFlag, "1", "Malformed native motion fixture flag")
+            app.launchEnvironment["SCOREBUG_TEST_MOTION_FIXTURE"] = motionFlag
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

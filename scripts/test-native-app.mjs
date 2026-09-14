@@ -17,14 +17,17 @@ import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
+  nativeFixtureWorkload,
   nativeStreamingTestBudget,
   qualifyNativeStreamingHold,
 } from './native-streaming-options.mjs';
 import { qualifyDirectRecorderDelivery } from './direct-recorder-qualification.mjs';
+import { measureVideoPayloadRate } from './video-payload-rate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
 const streamingBudget = nativeStreamingTestBudget(streamingOptions.holdSeconds);
 const decodedWindowLimit = streamingOptions.completedWindowLimit === 128 ? 128 : 64;
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
@@ -39,6 +42,7 @@ await writeFile(
       deviceType,
       streaming,
       streamingOptions,
+      fixtureWorkload,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
@@ -191,8 +195,26 @@ async function analyze(path, index, live = false) {
     if (!live)
       assert.equal(code, frame, `Missing, duplicated, or reordered source frame at ${frame}`);
   }
-  let sync, freshFps, sourceLoss, overlayChangedPixels;
+  let sync, freshFps, sourceLoss, overlayChangedPixels, videoPayload;
   if (streaming) {
+    const packetProbe = JSON.parse(
+      await run(
+        ffprobe,
+        [
+          '-v',
+          'error',
+          '-show_streams',
+          '-show_packets',
+          '-show_entries',
+          'stream=index,codec_type,time_base:packet=stream_index,pts,duration,size',
+          '-of',
+          'json',
+          path,
+        ],
+        `probe-payload-${index}`,
+      ),
+    );
+    videoPayload = measureVideoPayloadRate(packetProbe);
     const pcmPath = join(artifact, `audio-${index}.f32`);
     await run(
       ffmpeg,
@@ -270,6 +292,7 @@ async function analyze(path, index, live = false) {
     freshFps,
     sourceLoss,
     overlayChangedPixels,
+    videoPayload,
     frames: frames.length,
     firstSourceFrame: codes[0],
     lastSourceFrame: codes.at(-1),
@@ -347,6 +370,7 @@ try {
       'CODE_SIGN_IDENTITY=-',
       `SCOREBUG_TEST_API_URL=${api.baseURL}`,
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
+      `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureWorkload === 'motion' ? '1' : ''}`,
     ],
     'workflow',
     { timeout: streamingBudget.workflowTimeoutMs },
@@ -511,6 +535,7 @@ try {
         runtime,
         deviceType,
         streamingOptions,
+        fixtureWorkload,
         streamingBudget,
         media,
         live,

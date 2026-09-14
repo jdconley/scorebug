@@ -40,16 +40,16 @@ a separate physical-device gate.
 
 ## Ordered work
 
-- [ ] Define an explicit trusted opt-in fixture option and its memory/content
+- [x] Define an explicit trusted opt-in fixture option and its memory/content
   contract. Reject malformed settings before starting owned resources. Plumb it
   through the runner, Xcode test environment, native UI launch and DEBUG simulator
   source selection; absent options preserve the old source. Record selected
   workload in the artifact configuration.
-- [ ] TDD the deterministic source: stable seeded initialization, changing central
+- [x] TDD the deterministic source: stable seeded initialization, changing central
   image area, unchanged identity bands/static overlay crop, immutable published
   frames, correct NV12 layout/PTS/audio, bounded retained data and joined stop.
   Include scaled test profiles, while actual workload qualification uses 1080p30.
-- [ ] Measure actual encoded video payload rates from packet sizes and media
+- [x] Measure actual encoded video payload rates from packet sizes and media
   timestamps in both finalized outputs. Keep audio/container overhead separate.
   Exclude acquisition/partial boundaries explicitly; report steady-window rates
   and retain exact measurement scope. Unit-test packet accounting, invalid/empty
@@ -71,7 +71,8 @@ a separate physical-device gate.
   Watch/phone testing when hardware is reachable.
 
 The conditional prerequisite now passes in `native-app-6o9S2U` at `a49408c`.
-Independent design review approves this direction; implementation has not started.
+Independent design, specification and quality reviews approve the implemented workload.
+Native calibration is the next gate.
 
 ## Implementation contract
 
@@ -128,3 +129,27 @@ tools, Release build and independent specification/quality reviews before any
 isolated native calibration. Coordinate builds/tests to avoid concurrent media
 qualification. Start with default short hold; keep 6/3 Mbps as calibration observations
 until actual measured demand and generator timing are reviewed.
+
+## Implementation verification
+
+The source and tooling slices are implemented. Motion textures retain 24,883,200
+bytes at 1080p (checked 32 MiB ceiling); tests cover stride-padded 322×242 buffers and
+the entire 1080p barcode/scoring crop, reproducibility, legal ranges and independent
+published buffers. The default image remains unchanged. Joined stop releases the
+prepared textures. The native source validates its flag during prepare; the runner
+validates before any owned resources.
+
+Focused source tests pass 10 and full Film tests pass 83. Source red evidence contains
+38 expected assertions across 5 cases; its Xcode driver later stalled finalizing the
+already-completed test result and required termination of that owned driver (143).
+This is recorded separately in `motion-source-red-finalization.log`; both green
+runs completed normally. Options/payload tests pass 65 and full tools pass 336.
+The unsigned generic iOS Release build (including Watch) passes. Logs are retained
+under `artifacts/qa/motion-*.log` and `video-payload-rate-*.log`.
+
+Both slices pass specification review and independent quality review, with no findings.
+A real ffprobe metadata smoke check against `native-app-OCNlMh` succeeds:
+40 complete archive seconds measure 0.103861 Mbps video payload; 25 live seconds
+measure 0.076717 Mbps. These exclude audio/container overhead and are not wire rates.
+Metadata and calculations are retained in `artifacts/qa/motion-payload-baseline/`.
+The new native motion workload has not yet been calibrated or qualified.

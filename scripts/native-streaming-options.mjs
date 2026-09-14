@@ -45,3 +45,15 @@ export function nativeStreamingTestBudget(holdSeconds) {
     testExecutionAllowanceSeconds: holdSeconds > 180 ? holdSeconds + 180 : null,
   };
 }
+
+/** Explicit test workload; reject bad flags before any native resources exist. */
+export function nativeFixtureWorkload({ streaming, environment }) {
+  const raw = environment.SCOREBUG_TEST_MOTION_FIXTURE;
+  if (raw === undefined) return 'barcode';
+  assert.equal(raw, '1', 'Motion fixture requires the exact opt-in 1');
+  assert.ok(
+    streaming && environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
+    'Motion fixture requires native streaming and the direct RTMP recorder',
+  );
+  return 'motion';
+}

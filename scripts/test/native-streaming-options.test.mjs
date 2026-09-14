@@ -97,3 +97,50 @@ test('workflow and XCTest budgets extend only beyond the existing hold bound', (
   for (const value of [11, 601, Infinity, '600', 600.5])
     assert.throws(() => options.nativeStreamingTestBudget(value), /hold/);
 });
+
+test('motion workload is absent by default and requires exact trusted opt-in', () => {
+  assert.equal(options.nativeFixtureWorkload({ streaming: false, environment: {} }), 'barcode');
+  assert.equal(options.nativeFixtureWorkload({ streaming: true, environment: {} }), 'barcode');
+  assert.equal(
+    options.nativeFixtureWorkload({
+      streaming: true,
+      environment: {
+        SCOREBUG_TEST_MOTION_FIXTURE: '1',
+        SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
+      },
+    }),
+    'motion',
+  );
+});
+for (const flag of ['', '0', 'true', '01', ' 1', '1 ', 1, true, null]) {
+  test(`motion workload rejects malformed opt-in ${JSON.stringify(flag)}`, () => {
+    assert.throws(
+      () =>
+        options.nativeFixtureWorkload({
+          streaming: true,
+          environment: {
+            SCOREBUG_TEST_MOTION_FIXTURE: flag,
+            SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
+          },
+        }),
+      /motion/i,
+    );
+  });
+}
+test('motion workload requires native streaming and direct recorder', () => {
+  for (const streaming of [false, true])
+    for (const direct of [undefined, 'true', '0', '1']) {
+      if (streaming && direct === '1') continue;
+      assert.throws(
+        () =>
+          options.nativeFixtureWorkload({
+            streaming,
+            environment: {
+              SCOREBUG_TEST_MOTION_FIXTURE: '1',
+              SCOREBUG_TEST_DIRECT_RTMP_RECORDER: direct,
+            },
+          }),
+        /motion/i,
+      );
+    }
+});

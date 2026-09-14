@@ -18,7 +18,9 @@ struct ScorebugApp: App {
         let streaming = CaptureStreamingModel()
         let film = FilmModel(sourceFactory: {
         #if DEBUG && targetEnvironment(simulator)
-        return FixtureCameraSource(failAfterFrames: Int(ProcessInfo.processInfo.environment["SCOREBUG_FIXTURE_FAIL_AFTER"] ?? ""))
+        return FixtureCameraSource(
+            failAfterFrames: Int(ProcessInfo.processInfo.environment["SCOREBUG_FIXTURE_FAIL_AFTER"] ?? ""),
+            motionFlag: ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"])
         #else
         return IOSCameraCaptureSource()
         #endif

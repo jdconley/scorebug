@@ -14,38 +14,40 @@ final class FixtureCameraSourceTests: XCTestCase {
     }
 
     func testDiagnosticHooksPreserveIndicesPTSAndCallbackOrder() async throws {
-        let profile = ArchiveProfile(width: 320, height: 240)
-        let source = FixtureCameraSource(profile: profile, failAfterFrames: 3)
-        let diagnostics = ArchivePressureDiagnostics(recordingID: "fixture")
-        XCTAssertTrue(source.attachArchivePressureDiagnostics(diagnostics))
-        XCTAssertFalse(source.attachArchivePressureDiagnostics(ArchivePressureDiagnostics(recordingID: "other")))
-        let ledger = FixtureHookLedger()
-        let done = expectation(description: "Three frame pairs")
-        let origin = try await source.prepare(callbacks: CaptureSourceCallbacks(sample: { sample in
-            ledger.record(sample, snapshot: diagnostics.snapshot)
-        }, event: { _ in done.fulfill() }))
-        let late = ArchivePressureDiagnostics(recordingID: "late")
-        XCTAssertFalse(source.attachArchivePressureDiagnostics(late))
-        XCTAssertFalse(late.snapshot.coverage.producer)
-        try await source.start()
-        await fulfillment(of: [done], timeout: 3)
-        await source.stop()
-        let entries = ledger.entries
-        XCTAssertEqual(entries.map(\.kind), ["video", "audio", "video", "audio", "video", "audio"])
-        for (index, entry) in entries.enumerated() {
-            XCTAssertEqual(CMTimeCompare(entry.pts, origin + CMTime(value: Int64(index / 2), timescale: 30)), 0)
-            XCTAssertEqual(entry.active?.frameIndex, String(index / 2))
-            XCTAssertNotNil(entry.active?.generationEnd)
-            XCTAssertNotNil(entry.active?.callbackStart)
-            XCTAssertNil(entry.active?.callbackEnd)
+        for motionFlag in [nil, "1"] as [String?] {
+            let profile = ArchiveProfile(width: 320, height: 240)
+            let source = FixtureCameraSource(profile: profile, failAfterFrames: 3, motionFlag: motionFlag)
+            let diagnostics = ArchivePressureDiagnostics(recordingID: "fixture")
+            XCTAssertTrue(source.attachArchivePressureDiagnostics(diagnostics))
+            XCTAssertFalse(source.attachArchivePressureDiagnostics(ArchivePressureDiagnostics(recordingID: "other")))
+            let ledger = FixtureHookLedger()
+            let done = expectation(description: "Three frame pairs")
+            let origin = try await source.prepare(callbacks: CaptureSourceCallbacks(sample: { sample in
+                ledger.record(sample, snapshot: diagnostics.snapshot)
+            }, event: { _ in done.fulfill() }))
+            let late = ArchivePressureDiagnostics(recordingID: "late")
+            XCTAssertFalse(source.attachArchivePressureDiagnostics(late))
+            XCTAssertFalse(late.snapshot.coverage.producer)
+            try await source.start()
+            await fulfillment(of: [done], timeout: 3)
+            await source.stop()
+            let entries = ledger.entries
+            XCTAssertEqual(entries.map(\.kind), ["video", "audio", "video", "audio", "video", "audio"])
+            for (index, entry) in entries.enumerated() {
+                XCTAssertEqual(CMTimeCompare(entry.pts, origin + CMTime(value: Int64(index / 2), timescale: 30)), 0)
+                XCTAssertEqual(entry.active?.frameIndex, String(index / 2))
+                XCTAssertNotNil(entry.active?.generationEnd)
+                XCTAssertNotNil(entry.active?.callbackStart)
+                XCTAssertNil(entry.active?.callbackEnd)
+            }
+            let spans = diagnostics.snapshot.observations.producers.completed
+            XCTAssertEqual(spans.map(\.frameIndex), ["0", "1", "2"])
+            for index in 1..<spans.count {
+                XCTAssertEqual(try XCTUnwrap(spans[index].deadline) - XCTUnwrap(spans[index - 1].deadline), 1.0 / 30, accuracy: 0.000001)
+            }
+            XCTAssertTrue(diagnostics.snapshot.coverage.producer)
+            XCTAssertNil(diagnostics.snapshot.observations.activeProducer)
         }
-        let spans = diagnostics.snapshot.observations.producers.completed
-        XCTAssertEqual(spans.map(\.frameIndex), ["0", "1", "2"])
-        for index in 1..<spans.count {
-            XCTAssertEqual(try XCTUnwrap(spans[index].deadline) - XCTUnwrap(spans[index - 1].deadline), 1.0 / 30, accuracy: 0.000001)
-        }
-        XCTAssertTrue(diagnostics.snapshot.coverage.producer)
-        XCTAssertNil(diagnostics.snapshot.observations.activeProducer)
     }
 
     func testFailureInsideVideoCallbackRetainsPartialProducerAndLateCallsDoNotReadClock() async throws {
@@ -79,27 +81,29 @@ final class FixtureCameraSourceTests: XCTestCase {
     }
 
     func testSimulatorSourceProducesExportableRealMediaAndStops() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let profile = ArchiveProfile(width: 640, height: 360, videoBitRate: 1_000_000)
-        let writer = try SegmentedArchiveWriter(directory: root.appendingPathComponent("part"), profile: profile)
-        let owner = CaptureRecording(source: FixtureCameraSource(profile: profile),
-            session: try RecordingSession(sink: SegmentedArchiveSink(writer: writer)))
-        try await owner.start()
-        let deadline = ContinuousClock.now + .seconds(10)
-        while writer.snapshot.acceptedDuration < 3 {
-            guard ContinuousClock.now < deadline else { XCTFail("Fixture failed to advance"); owner.cancel(); return }
-            try await Task.sleep(for: .milliseconds(50))
+        for motionFlag in [nil, "1"] as [String?] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let profile = ArchiveProfile(width: 640, height: 360, videoBitRate: 1_000_000)
+            let writer = try SegmentedArchiveWriter(directory: root.appendingPathComponent("part"), profile: profile)
+            let owner = CaptureRecording(source: FixtureCameraSource(profile: profile, motionFlag: motionFlag),
+                session: try RecordingSession(sink: SegmentedArchiveSink(writer: writer)))
+            try await owner.start()
+            let deadline = ContinuousClock.now + .seconds(10)
+            while writer.snapshot.acceptedDuration < 3 {
+                guard ContinuousClock.now < deadline else { XCTFail("Fixture failed to advance"); owner.cancel(); return }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            let recovered = try await owner.stop()
+            let samplesAfterStop = owner.snapshot.writtenSamples
+            let exported = try await ArchiveExporter().export(recovered, to: root.appendingPathComponent("movie.mp4"))
+            XCTAssertGreaterThanOrEqual(exported.videoFrames, 89)
+            XCTAssertGreaterThanOrEqual(exported.audioSamples, 140_000)
+            XCTAssertLessThan(exported.duration, 5, "Nonzero fixture origin must not create a blank lead-in")
+            XCTAssertEqual(owner.snapshot.writtenSamples, samplesAfterStop)
+            XCTAssertEqual(owner.snapshot.state, .finished)
         }
-        let recovered = try await owner.stop()
-        let samplesAfterStop = owner.snapshot.writtenSamples
-        let exported = try await ArchiveExporter().export(recovered, to: root.appendingPathComponent("movie.mp4"))
-        XCTAssertGreaterThanOrEqual(exported.videoFrames, 89)
-        XCTAssertGreaterThanOrEqual(exported.audioSamples, 140_000)
-        XCTAssertLessThan(exported.duration, 5, "Nonzero fixture origin must not create a blank lead-in")
-        XCTAssertEqual(owner.snapshot.writtenSamples, samplesAfterStop)
-        XCTAssertEqual(owner.snapshot.state, .finished)
     }
 }
 
