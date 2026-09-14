@@ -261,12 +261,16 @@ and sustained operation remain unqualified.
 
 ## Milestone 4: Adaptive quality and measurable reliability
 
+The [pure-policy implementation plan](2026-09-14-adaptive-quality-policy.md) starts
+this milestone. Its [runtime telemetry contract](../../adaptive-telemetry.md)
+records which measurements still need instrumentation before app enablement.
+
 **Files:** new `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,
 its Swift tests, capture/publish adapter, worker telemetry/profile handling,
 shared protocol telemetry fixtures, new `infra/local/netem/`,
 `scripts/test-media.mjs`, and `scripts/analyze-media.mjs`.
 
-- [ ] Implement a pure policy controller with fake time and deterministic telemetry:
+- [x] Implement a pure policy controller with fake time and deterministic telemetry:
       30 fps target, 24 fps rolling floor, prompt decrease, 30-second recovery hysteresis,
       capacity headroom, supported profile limits, bounded queues, and outage state.
 - [ ] Track captured/encoded/received fresh frames separately from muxed/duplicated
@@ -288,7 +292,18 @@ windows; stable 30 fps profiles have under 1% fresh-frame loss. Measure adaptati
 transients/outages separately, without excluding them from the report. Archive stays
 continuous during network-only impairment. No false sustained quality or latency claim.
 
+The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
+tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
+10, and independent spec/quality reviews approve the source. It is not wired to live
+media yet; missing runtime telemetry, profile transitions, impairment, and soak
+qualification remain open. The rolling five-second output gate is separate from
+the controller's deterministic 1–5-second input windows.
+
 ## Milestone 5: Watch scoring and complete simulator workflows
+
+[Networking design notes](../../watch-networking-design.md) map the existing shared
+client to direct/companion routes and distinguish Simulator protocol coverage from
+physical paired-device transfer and suspension tests.
 
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,

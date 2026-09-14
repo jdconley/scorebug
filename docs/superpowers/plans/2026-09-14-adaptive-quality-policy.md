@@ -52,3 +52,15 @@ remain independent of every policy decision.
 Only the first two steps are the initial pure-policy implementation. Thresholds are
 proposed starting values from the parent plan; media impairment and physical-device
 results must qualify them before claiming adaptive streaming reliability.
+
+## Implementation checkpoint
+
+Steps 1 and 2 are complete: `QualityController` and 20 focused tests are implemented,
+all 88 Core tests pass, the package compiles for arm64_32 watchOS 10, and independent
+specification/code-quality reviews approve the source. Recommendations have explicit
+expiry and applied revisions; rejected input preserves the monotonic time watermark,
+and bitrate arithmetic clamps before conversion on 32-bit Watch targets.
+See [policy behavior and evidence](../../adaptive-quality-policy.md).
+
+Steps 3–5 remain open. The production app still uses fixed 1080p30; no archive or
+live encoder behavior changes merely because the pure policy is present.
