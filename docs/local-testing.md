@@ -304,11 +304,12 @@ xcodebuild -project Scorebug.xcodeproj -scheme ScorebugWatch \
   -destination "platform=watchOS Simulator,id=$SCOREBUG_SIM_WATCH" test
 ```
 
-`ScorebugWatch`, test targets, and the fixture adapter do not yet exist. The implementation
-must generate shared schemes and verify their names with `xcodebuild -list` before these
-commands become acceptance commands. Check simulator SRT library slices in milestone 3;
-if absent, use a publisher double in the UI and the real native media harness for protocol
-coverage. Record that distinction in the report.
+`ScorebugWatch`, its UI test target, and a Debug-only initial setup fixture now exist.
+Use `pnpm test:native-watch` for the owned real-API Watch workflow; it supplies the
+expiring setup and creates/removes only its own simulator. Directly invoking the UI
+scheme without that setup is not a complete test command. See the
+[native Watch evidence and limitations](native-watch-app.md). The vendored SRT
+simulator binary requires ARM64; use Apple Silicon simulator destinations.
 
 Recording tests: initialization segment durability; termination during a segment and
 between file rename/manifest update; no disk space; append/finalize errors; interrupted

@@ -1,0 +1,29 @@
+name: ScorebugPhoneWatchModels
+settings:
+  base:
+    SWIFT_VERSION: '5.10'
+packages:
+  ScorebugCore:
+    path: Packages/ScorebugCore
+targets:
+  ScorebugPhoneWatchModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Sources/Scorebug/Companion/PhoneWatchModel.swift
+      - path: PhoneWatchModelTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.phonewatch.modeltests
+    dependencies:
+      - package: ScorebugCore
+schemes:
+  ScorebugPhoneWatchModelTests:
+    build:
+      targets:
+        ScorebugPhoneWatchModelTests: all
+    test:
+      targets:
+        - ScorebugPhoneWatchModelTests

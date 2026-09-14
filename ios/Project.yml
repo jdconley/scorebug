@@ -4,6 +4,7 @@ options:
   bundleIdPrefix: live.scorebug
   deploymentTarget:
     iOS: '17.0'
+    watchOS: '10.0'
   developmentLanguage: en
 settings:
   base:
@@ -26,6 +27,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Scorebug
+      - path: Sources/WatchSupport
       - path: Sources/ScorebugScoring
         excludes:
           - ScoringApp.swift
@@ -56,6 +58,42 @@ targets:
       - package: ScorebugCore
       - package: ScorebugMedia
       - package: ScorebugStreaming
+      - target: ScorebugWatch
+        embed: true
+  ScorebugWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Sources/ScorebugWatch
+      - path: Sources/WatchSupport
+    info:
+      path: Resources/Watch-Info.plist
+      properties:
+        CFBundleDisplayName: Scorebug
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: live.scorebug.app
+        WKRunsIndependentlyOfCompanionApp: true
+        NSLocalNetworkUsageDescription: Connect to your Scorebug server to score matches.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.app.watchkitapp
+        TARGETED_DEVICE_FAMILY: '4'
+        SKIP_INSTALL: YES
+    dependencies:
+      - package: ScorebugCore
+  ScorebugWatchUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources:
+      - path: WatchUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.watch.uitests
+    dependencies:
+      - target: ScorebugWatch
   ScorebugAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -83,6 +121,15 @@ targets:
       - package: ScorebugStreaming
       - package: ScorebugCore
 schemes:
+  ScorebugWatch:
+    build:
+      targets:
+        ScorebugWatch: all
+    test:
+      targets:
+        - ScorebugWatchUITests
+      environmentVariables:
+        SCOREBUG_TEST_WATCH_SETUP: $(SCOREBUG_TEST_WATCH_SETUP)
   ScorebugFilmModelTests:
     build:
       targets:

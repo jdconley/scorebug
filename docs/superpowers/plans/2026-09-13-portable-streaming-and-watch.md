@@ -313,21 +313,24 @@ physical paired-device transfer and suspension tests.
 
 The [pairing foundation](../../watch-pairing-foundation.md) now supplies distinct
 Watch credentials and durable setup recovery. Real Swift HTTP scoring passed after
-a lost pairing reply and API/client restart. Native Watch UI and companion setup
-adapters remain pending, so the complete simulator/Watch items below stay open.
+a lost pairing reply and API/client restart. The [native Watch app and companion
+setup adapters](../../native-watch-app.md) are implemented. The first normal-polling
+Series 7 41 mm/watchOS 10.5 UI run passed real redemption, scoring, rejection,
+Keychain relaunch recovery, and end-match. Its initial setup was injected; actual
+companion exchange and complete media workflows remain open.
 
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
 `ios/WatchTests/`, `ios/WatchUITests/`, and native iPhone scoring tests from milestone 1.
 
-- [ ] Add a watchOS target independent of camera/media dependencies and a companion
+- [x] Add a watchOS target independent of camera/media dependencies and a companion
       setup/join flow within the full native iPhone app. Keep Film and Score roles separate.
 - [ ] Set iOS 17/watchOS 10 deployment targets and availability-guard newer APIs.
       Test Series 7 41 mm and Ultra 2 layouts, plus an SE-sized screen. Add watchOS 11
       runtime coverage; that release generation is not currently installed on this Mac.
-- [ ] Implement HTTP(S) scoring and snapshot refresh on wake. Use scoped Keychain
+- [x] Implement HTTP(S) scoring and snapshot refresh on wake. Use scoped Keychain
       credentials and an expiring pairing code; optionally transfer setup with WatchConnectivity.
-- [ ] Add home/away score, set/match display, undo, confirmed/pending states, retry,
+- [x] Add home/away score, set/match display, undo, confirmed/pending states, retry,
       end-set confirmation, and guarded end-match. Do not require a WebSocket on watchOS.
 - [ ] Persist uncertain commands across suspension and reuse IDs across HTTP/companion
       routes. Haptics signal server acknowledgment; pending actions look different.

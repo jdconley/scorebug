@@ -2,7 +2,8 @@
 
 The [pairing foundation](watch-pairing-foundation.md) now provides server issuance,
 redemption, and durable Watch setup recovery through the shared Swift HTTP client.
-The Watch app and native companion adapters remain to be connected. ScorebugCore's
+The [native Watch app and companion adapters](native-watch-app.md) now use this
+foundation. ScorebugCore's
 durable command coordinator owns command identity and receipt reconciliation
 independently of the iPhone UI.
 

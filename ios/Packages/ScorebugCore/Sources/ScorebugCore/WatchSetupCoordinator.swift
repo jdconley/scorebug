@@ -232,12 +232,7 @@ public actor WatchSetupCoordinator {
         !value.isEmpty && value.utf8.count <= 512 && value.utf8.allSatisfy { (33...126).contains($0) }
     }
     private static func endpoint(_ value: String) throws -> String {
-        let original = try ScoringEndpoint(value)
-        var parts = URLComponents(url: original.url, resolvingAgainstBaseURL: false)!
-        parts.scheme = parts.scheme?.lowercased(); parts.host = parts.host?.lowercased()
-        if (parts.scheme == "https" && parts.port == 443) || (parts.scheme == "http" && parts.port == 80) { parts.port = nil }
-        while parts.percentEncodedPath.hasSuffix("/") { parts.percentEncodedPath.removeLast() }
-        return parts.url!.absoluteString
+        try ScoringEndpoint(value).canonicalAddress
     }
     private static func date(_ value: String) -> Date? {
         let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

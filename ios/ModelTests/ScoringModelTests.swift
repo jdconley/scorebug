@@ -4,6 +4,40 @@ import XCTest
 
 @MainActor
 final class ScoringModelTests: XCTestCase {
+    func testWatchConnectionBeforeWakeReadsSavedSetupWithoutScoringSideEffects() async throws {
+        let store = SetupStore(saved(credential: credential)), server = ModelServer()
+        let outbox = ConnectionLookupOutbox()
+        let model = makeModel(store, server: server, pendingStore: outbox)
+        model.endpoint = "https://uncommitted.example.com"
+        model.installationToken = "uncommitted-token"
+        let connection = try XCTUnwrap(model.watchSetupConnection)
+        XCTAssertEqual(connection.endpoint, "https://old.example.com")
+        XCTAssertEqual(connection.installationToken, "old-account")
+        XCTAssertEqual(store.saveCount, 0)
+        XCTAssertEqual(outbox.loadCount, 0)
+        XCTAssertEqual(outbox.saveCount, 0)
+        XCTAssertFalse(model.hasJoinedMatch, "Discovery must not restore or activate the scorer")
+        XCTAssertFalse(model.connected)
+        XCTAssertNil(model.state)
+        let requests = await server.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testWatchConnectionBeforeWakeFailsClosedForUnreadableOrMalformedSavedSetup() {
+        let unreadable = SetupStore(saved())
+        unreadable.failNextLoad = true
+        XCTAssertNil(makeModel(unreadable, server: ModelServer()).watchSetupConnection)
+        let malformed = SetupStore(saved())
+        malformed.corrupt()
+        XCTAssertNil(makeModel(malformed, server: ModelServer()).watchSetupConnection)
+        for (address, token) in [("not a URL", "token"), ("https://user:secret@example.com", "token"),
+                                 ("https://example.com", ""), ("https://example.com", " \n\t ")] {
+            var value = saved(); value.endpoint = address; value.installationToken = token
+            XCTAssertNil(makeModel(SetupStore(value), server: ModelServer()).watchSetupConnection)
+        }
+        XCTAssertNil(makeModel(SetupStore(), server: ModelServer()).watchSetupConnection)
+    }
+
     func testPreviouslyRejectedOutcomeCannotOverwriteNewerActionNotSentFeedback() async {
         let server = ModelServer()
         let model = makeModel(SetupStore(saved(credential: credential)), server: server)
@@ -341,11 +375,19 @@ private final class SetupStore: ScoringSetupStorage {
         if failNextLoad { failNextLoad = false; throw NSError(domain: "ScorebugKeychain", code: -1) }
         return try data.map { try JSONDecoder().decode(SavedScoringSetup.self, from: $0) }
     }
+    func corrupt() { data = Data("{malformed".utf8) }
     func save(_ setup: SavedScoringSetup) throws {
         saveCount += 1
         if failSave { throw NSError(domain: "ScorebugKeychain", code: -1) }
         data = try JSONEncoder().encode(setup)
     }
+}
+
+private final class ConnectionLookupOutbox: PendingCommandStore, @unchecked Sendable {
+    private(set) var loadCount = 0
+    private(set) var saveCount = 0
+    func load() throws -> PendingMatchCommand? { loadCount += 1; return nil }
+    func save(_ pending: PendingMatchCommand?) throws { saveCount += 1 }
 }
 
 private struct EmptyOutbox: PendingCommandStore {

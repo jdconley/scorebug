@@ -13,6 +13,22 @@ final class ScoringEndpointTests: XCTestCase {
         }
     }
 
+    func testCanonicalAddressNormalizesAuthorityAndTrailingSeparators() throws {
+        for address in ["https://API.example.com/", "HTTPS://api.example.com:443", "https://api.example.com///"] {
+            XCTAssertEqual(try ScoringEndpoint(address).canonicalAddress, "https://api.example.com")
+        }
+        XCTAssertEqual(try ScoringEndpoint("HTTP://LOCALHOST:80/api///").canonicalAddress, "http://localhost/api")
+    }
+
+    func testCanonicalAddressPreservesMeaningfulPortsAndEncodedBasePaths() throws {
+        XCTAssertEqual(try ScoringEndpoint("HTTPS://API.EXAMPLE.COM:8443/API%2Fv1/").canonicalAddress,
+            "https://api.example.com:8443/API%2Fv1")
+        XCTAssertNotEqual(try ScoringEndpoint("https://api.example.com/API").canonicalAddress,
+            try ScoringEndpoint("https://api.example.com/api").canonicalAddress)
+        XCTAssertNotEqual(try ScoringEndpoint("https://api.example.com:8443").canonicalAddress,
+            try ScoringEndpoint("https://api.example.com").canonicalAddress)
+    }
+
     func testRejectsMissingHostOrNonHTTPTransports() {
         for address in ["", "localhost:3000", "/games", "https://", "file:///tmp/server", "ws://localhost:3000"] {
             XCTAssertThrowsError(try ScoringEndpoint(address), address)

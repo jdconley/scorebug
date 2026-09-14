@@ -6,7 +6,7 @@
 It builds only `Sources/ScorebugScoring` and the local `Packages/ScorebugCore`
 Swift package. It does not resolve or link the camera app, HaishinKit, or SRT.
 The iPhone deployment baseline is iOS 17.0; the shared package also declares
-watchOS 10.0 for later native Watch work.
+watchOS 10.0 for the native Watch app.
 
 The SwiftUI screen connects to the durable match API, creates or joins the active
 match, scores, undoes actions, ends sets/matches, and takes over scoring explicitly.
@@ -75,7 +75,7 @@ Use the development token from `infra/local/.env.example` only for local tests.
 
 ## Native filming and scoring app
 
-`Project.yml` now builds **Scorebug**, with Film, Score, and Recordings tabs. The
+`Project.yml` now builds **Scorebug**, with Film, Score, Watch, and Recordings tabs. The
 obsolete camera prototype has been replaced by the shared capture/recording path.
 Filming requires no match, server connection, or streaming key. Switching to the
 native scorer keeps local recording running. No browser scorer is used.
@@ -88,8 +88,8 @@ retains the original and verifies the full MP4 before offering playback/sharing.
 
 Debug Simulator builds generate timed video/audio through the same recording
 owner. This is labeled in Film and does not use a physical camera. Release and
-physical-device builds choose the iPhone camera adapter. Live publishing and
-adaptive quality are not yet connected to this app.
+physical-device builds choose the iPhone camera adapter. Native SRT publishing is
+connected; adaptive quality remains pending.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
@@ -113,3 +113,23 @@ See [native app integration](../docs/native-film-app.md), the
 [architecture](../docs/architecture.md), and the
 [delivery plan](../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
 Physical-phone camera qualification and the native Watch app remain ahead.
+
+## Native Watch scorer
+
+`Project.yml` also generates **ScorebugWatch**, a watchOS 10 application embedded
+in the phone app. It uses ScorebugCore and Apple frameworks, without media packages.
+The phone's Watch tab sends an expiring setup offer using a saved Film or Score
+connection. Accept it on the Watch, then take over scoring explicitly. Watch commands
+use its own credential, Keychain setup, and durable scoring outbox.
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
+pnpm test:native-watch
+SCOREBUG_WATCH_RUNTIME=26.2 SCOREBUG_WATCH_DEVICE_TYPE=Apple-Watch-Ultra-2-49mm pnpm test:native-watch
+SCOREBUG_WATCH_RUNTIME=10.0 SCOREBUG_WATCH_DEVICE_TYPE=Apple-Watch-SE-40mm-2nd-generation pnpm test:native-watch
+```
+
+The runner owns a fresh simulator and real local API. It injects only initial setup
+into a Debug simulator build; redemption, Keychain, commands, and relaunch recovery
+use production paths. This does not qualify WatchConnectivity or physical radio
+selection. See [native Watch implementation and evidence](../docs/native-watch-app.md).

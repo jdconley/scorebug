@@ -2,7 +2,9 @@ import ScorebugCore
 import SwiftUI
 
 struct NativeScoringView: View {
-    @StateObject private var model = ScoringModel()
+    @StateObject private var model: ScoringModel
+    @MainActor init() { _model = StateObject(wrappedValue: ScoringModel()) }
+    init(model: ScoringModel) { _model = StateObject(wrappedValue: model) }
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmEnd = false
     @State private var confirmSet = false

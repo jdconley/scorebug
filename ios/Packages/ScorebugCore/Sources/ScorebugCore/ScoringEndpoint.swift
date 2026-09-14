@@ -25,6 +25,17 @@ public struct ScoringEndpoint: Equatable, Sendable {
         self.url = url
     }
 
+    /// Stable setup identity. This preserves meaningful ports and encoded base
+    /// paths while normalizing scheme/host case, default ports and trailing slashes.
+    /// The original URL remains unchanged for existing HTTP clients.
+    public var canonicalAddress: String {
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        parts.scheme = parts.scheme?.lowercased(); parts.host = parts.host?.lowercased()
+        if (parts.scheme == "https" && parts.port == 443) || (parts.scheme == "http" && parts.port == 80) { parts.port = nil }
+        while parts.percentEncodedPath.hasSuffix("/") { parts.percentEncodedPath.removeLast() }
+        return parts.url!.absoluteString
+    }
+
     // HTTP is useful for the simulator or a development server on the same LAN.
     // Public servers require HTTPS. No network or transport policy is changed here.
     private static func isLocalHost(_ host: String) -> Bool {

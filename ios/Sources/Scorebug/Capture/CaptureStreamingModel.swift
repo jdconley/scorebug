@@ -25,6 +25,10 @@ import ScorebugStreaming
     private var workerEpoch = UUID()
     private var workerFreshness: WorkerStatusFreshness?
     private var setup: SavedCaptureSetup?
+    var watchSetupConnection: (endpoint: String, installationToken: String)? {
+        guard !needsStorageRetry, let setup, !setup.installationToken.isEmpty else { return nil }
+        return (setup.endpoint, setup.installationToken)
+    }
     private var restored = false
     private var current: CurrentCapture?
     private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int)?

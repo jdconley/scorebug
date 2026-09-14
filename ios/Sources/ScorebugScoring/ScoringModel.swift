@@ -64,6 +64,14 @@ final class ScoringModel: ObservableObject {
     private enum MessageSource { case action, recovery }
     private var messageSource: MessageSource = .action
     private var setup: SavedScoringSetup?
+    var watchSetupConnection: (endpoint: String, installationToken: String)? {
+        // The Watch tab can discover the committed connection before Score wakes.
+        // Reading it must not activate scoring, recover its outbox, or use form edits.
+        guard !needsStorageRetry, let saved = setup ?? (try? keychain.load()),
+              let endpoint = try? ScoringEndpoint(saved.endpoint),
+              !saved.installationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return (endpoint.url.absoluteString, saved.installationToken)
+    }
     private var coordinator: MatchCommandCoordinator? {
         didSet { describedOutcomeId = nil; invalidateWorkerStatus() }
     }

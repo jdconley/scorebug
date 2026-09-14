@@ -6,10 +6,18 @@ import UIKit
 struct ContentView: View {
     @ObservedObject var film: FilmModel
     @ObservedObject var streaming: CaptureStreamingModel
+    @ObservedObject var scoring: ScoringModel
+    @ObservedObject var phoneWatch: PhoneWatchModel
+    let connectivity: WatchSetupConnectivity
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         tabs
             .task(id: scenePhase) { await monitorRecording() }
+            .task(id: scenePhase) {
+                await phoneWatch.suspend()
+                guard !Task.isCancelled, scenePhase == .active else { return }
+                phoneWatch.resume(); connectivity.activate()
+            }
             .task(id: scenePhase) { await monitorStreamingControl() }
             .task(id: scenePhase) { await monitorStreamingHealth() }
             .onChange(of: film.state) { _, state in updateIdleTimer(state) }
@@ -18,9 +26,21 @@ struct ContentView: View {
     private var tabs: some View {
         TabView {
             FilmView(model: film, streaming: streaming).tabItem { Label("Film", systemImage: "video") }
-            NativeScoringView().tabItem { Label("Score", systemImage: "sportscourt") }
+            NativeScoringView(model: scoring).tabItem { Label("Score", systemImage: "sportscourt") }
+            PhoneWatchView(model: phoneWatch, connections: watchConnections).tabItem { Label("Watch", systemImage: "applewatch") }
             RecordingsView(model: film).tabItem { Label("Recordings", systemImage: "rectangle.stack") }
         }
+    }
+    private var watchConnections: [PhoneWatchConnection] {
+        var result: [PhoneWatchConnection] = []
+        if let saved = streaming.watchSetupConnection {
+            result.append(PhoneWatchConnection(label: "Recording server", endpoint: saved.endpoint, installationToken: saved.installationToken))
+        }
+        if let saved = scoring.watchSetupConnection,
+           !result.contains(where: { $0.endpoint == saved.endpoint && $0.installationToken == saved.installationToken }) {
+            result.append(PhoneWatchConnection(label: "Scoring server", endpoint: saved.endpoint, installationToken: saved.installationToken))
+        }
+        return result
     }
     @MainActor private func monitorRecording() async {
         guard scenePhase == .active else { return }

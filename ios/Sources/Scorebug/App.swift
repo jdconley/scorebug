@@ -5,7 +5,16 @@ import SwiftUI
 struct ScorebugApp: App {
     @StateObject private var film: FilmModel
     @StateObject private var streaming: CaptureStreamingModel
+    @StateObject private var scoring = ScoringModel()
+    @StateObject private var phoneWatch: PhoneWatchModel
+    @StateObject private var connectivity: WatchSetupConnectivity
     init() {
+        let connectivity = WatchSetupConnectivity()
+        let phoneWatch = PhoneWatchModel(storage: PhoneWatchRequestKeychain(), sendEnvelope: { try connectivity.sendEnvelope($0) })
+        connectivity.noticeHandler = { [weak phoneWatch] in phoneWatch?.receive($0) }
+        connectivity.peerChangedHandler = { [weak phoneWatch] in phoneWatch?.peerChanged() }
+        _connectivity = StateObject(wrappedValue: connectivity)
+        _phoneWatch = StateObject(wrappedValue: phoneWatch)
         let streaming = CaptureStreamingModel()
         let film = FilmModel(sourceFactory: {
         #if DEBUG && targetEnvironment(simulator)
@@ -20,6 +29,6 @@ struct ScorebugApp: App {
         _streaming = StateObject(wrappedValue: streaming)
     }
     var body: some Scene {
-        WindowGroup { ContentView(film: film, streaming: streaming) }
+        WindowGroup { ContentView(film: film, streaming: streaming, scoring: scoring, phoneWatch: phoneWatch, connectivity: connectivity) }
     }
 }
