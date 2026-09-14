@@ -9,6 +9,15 @@ final class NativeStreamingTests: XCTestCase {
         app.launchEnvironment["SCOREBUG_TEST_API_URL"] = endpoint
         app.launchEnvironment["SCOREBUG_TEST_TOKEN"] = "qa-phone-token-not-production"
         app.launchEnvironment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] = "1"
+        let rawHold = ProcessInfo.processInfo.environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] ?? ""
+        var holdSeconds = 12
+        if !rawHold.isEmpty {
+            let parsed = try XCTUnwrap(Int(rawHold))
+            XCTAssertEqual(String(parsed), rawHold)
+            XCTAssertTrue((12...180).contains(parsed))
+            holdSeconds = parsed
+            app.launchEnvironment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = rawHold
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])
@@ -34,15 +43,19 @@ final class NativeStreamingTests: XCTestCase {
         tap(app.buttons["scoring.homePoint"])
         value(app.buttons["scoring.homePoint"], equals: "1")
         app.tabBars.buttons["Film"].tap()
-        // At least twelve more seconds yields several complete identity markers.
+        // The explicit longer hold exercises simultaneous recording and streaming.
         app.swipeDown()
-        let elapsed = Double(app.staticTexts["film.duration"].value as? String ?? "") ?? 0
-        duration(app, atLeast: elapsed + 12)
+        let elapsed = try XCTUnwrap(Double(try XCTUnwrap(app.staticTexts["film.duration"].value as? String)))
+        XCTAssertTrue(elapsed.isFinite && elapsed >= 0)
+        duration(app, atLeast: elapsed + Double(holdSeconds), timeout: Double(holdSeconds) + 23, minimumElapsed: Double(holdSeconds))
         app.swipeUp()
+        value(app.staticTexts["streaming.localStatus"], equals: "publishing")
+        value(app.staticTexts["streaming.workerStatus"], equals: "producing_output")
         tap(app.buttons["streaming.stop"])
         value(app.staticTexts["streaming.localStatus"], equals: "idle")
         app.swipeDown()
-        let stoppedAt = Double(app.staticTexts["film.duration"].value as? String ?? "") ?? 0
+        let stoppedAt = try XCTUnwrap(Double(try XCTUnwrap(app.staticTexts["film.duration"].value as? String)))
+        XCTAssertTrue(stoppedAt.isFinite && stoppedAt >= 0)
         duration(app, atLeast: stoppedAt + 3)
         attach(app, "Local recording continues after streaming stops")
         tap(app.buttons["film.stop"])
@@ -66,9 +79,13 @@ final class NativeStreamingTests: XCTestCase {
     @MainActor private func value(_ element: XCUIElement, equals text: String, timeout: Double = 20) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: element)], timeout: timeout), .completed)
     }
-    @MainActor private func duration(_ app: XCUIApplication, atLeast seconds: Double) {
-        let predicate = NSPredicate { _, _ in (Double(app.staticTexts["film.duration"].value as? String ?? "") ?? 0) >= seconds }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 35), .completed, app.debugDescription)
+    @MainActor private func duration(_ app: XCUIApplication, atLeast seconds: Double, timeout: Double = 35, minimumElapsed: Double = 0) {
+        let started = ContinuousClock.now
+        let predicate = NSPredicate { _, _ in
+            (Double(app.staticTexts["film.duration"].value as? String ?? "") ?? 0) >= seconds &&
+                started.duration(to: .now) >= .seconds(minimumElapsed)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: timeout), .completed, app.debugDescription)
         XCTAssertTrue(app.buttons["film.stop"].isEnabled)
     }
     @MainActor private func attach(_ app: XCUIApplication, _ name: String) {

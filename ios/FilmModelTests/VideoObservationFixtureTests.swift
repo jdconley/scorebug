@@ -44,6 +44,32 @@ final class VideoObservationFixtureTests: XCTestCase {
         XCTAssertFalse(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "0"]))
         XCTAssertTrue(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1"]))
     }
+
+    func testExtendedHistoryRequiresExplicitFixtureAndCanonicalBoundedHold() {
+        XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: [:]), 8)
+        XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180"]), 8)
+        for raw in ["", " 180", "0180", "+180", "180.0", "11", "181", "NaN"] {
+            XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": raw]), 8)
+        }
+        for raw in ["12", "90", "180"] {
+            XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": raw]), 64)
+        }
+    }
+
+    func testExtendedFixtureRetainsThreeMinutesWithoutEviction() throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match", broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let limit = VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180"])
+        var accumulator = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0, completedWindowLimit: limit)
+        for frame in 0..<5400 {
+            let pts = CMTime(value: Int64(frame), timescale: 30)
+            accumulator.observe(.captureVideo, sourcePTS: pts, at: Double(frame) / 30)
+            accumulator.observe(.encodedVideo, sourcePTS: pts, at: Double(frame) / 30)
+        }
+        let snapshot = accumulator.close(at: 180)
+        XCTAssertEqual(snapshot.completed.count, 36)
+        XCTAssertEqual(snapshot.omittedCompletedWindowCount, 0)
+        XCTAssertNil(snapshot.omittedThroughMonotonicTime)
+    }
 }
 
 private let proofAttempt = UUID(uuidString: "12345678-1234-4234-9234-123456789ABC")!

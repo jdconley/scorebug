@@ -147,4 +147,5 @@ schemes:
       gatherCoverageData: true
       environmentVariables:
         SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
+        SCOREBUG_TEST_STREAM_HOLD_SECONDS: $(SCOREBUG_TEST_STREAM_HOLD_SECONDS)
         SCOREBUG_TEST_TOKEN: qa-phone-token-not-production

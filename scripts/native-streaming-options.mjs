@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+
+/** Called after continuity qualification of the known 30 fps source fixture. */
+export function qualifyNativeStreamingHold({ holdSeconds, savedFrames }) {
+  assert.ok(
+    Number.isSafeInteger(holdSeconds) && holdSeconds >= 12 && holdSeconds <= 180,
+    'Invalid hold duration',
+  );
+  assert.ok(Number.isSafeInteger(savedFrames) && savedFrames > 0, 'Invalid saved frame count');
+  const sourceDurationSeconds = savedFrames / 30;
+  assert.ok(
+    sourceDurationSeconds >= holdSeconds,
+    'Saved live coverage is shorter than the requested hold',
+  );
+  return sourceDurationSeconds;
+}
+
+/** Validated before creating native test resources; production has no hold override. */
+export function nativeStreamingOptions({ streaming, environment }) {
+  const raw = environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS;
+  if (raw === undefined) return { holdSeconds: 12, completedWindowLimit: 8, extended: false };
+  assert.ok(
+    streaming && environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
+    'Extended hold requires native streaming and the direct RTMP recorder',
+  );
+  const holdSeconds = Number(raw);
+  assert.ok(
+    typeof raw === 'string' &&
+      /^(0|[1-9]\d*)$/.test(raw) &&
+      Number.isSafeInteger(holdSeconds) &&
+      holdSeconds >= 12 &&
+      holdSeconds <= 180,
+    'Native streaming hold must be a canonical integer from 12 through 180 seconds',
+  );
+  return { holdSeconds, completedWindowLimit: 64, extended: true };
+}

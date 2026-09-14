@@ -81,7 +81,14 @@ import ScorebugStreaming
     init(storage: any CaptureSetupStorage, pendingStore: any PendingBroadcastStore,
          clientFactory: @escaping (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { SRTMediaPublisher(url: $0, observations: $1) },
-         observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) }) {
+         observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
+             #if DEBUG && targetEnvironment(simulator)
+             let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)
+             return try VideoFrameObservationOwner(scope: scope, completedWindowLimit: limit)
+             #else
+             return try VideoFrameObservationOwner(scope: scope)
+             #endif
+         }) {
         self.storage = storage; self.pendingStore = pendingStore
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
         self.observationFactory = observationFactory

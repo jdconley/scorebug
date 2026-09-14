@@ -15,13 +15,30 @@ import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
+import { nativeStreamingOptions, qualifyNativeStreamingHold } from './native-streaming-options.mjs';
+import { qualifyDirectRecorderDelivery } from './direct-recorder-qualification.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
+const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-14';
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
 const artifact = await mkdtemp(join(root, 'artifacts/qa/native-app-'));
+await writeFile(
+  join(artifact, 'configuration.json'),
+  JSON.stringify(
+    {
+      runtime,
+      deviceType,
+      streaming,
+      streamingOptions,
+      directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
+    },
+    null,
+    2,
+  ),
+);
 const { ffmpeg, ffprobe } = mediaTools();
 let simulator;
 let api;
@@ -306,6 +323,7 @@ try {
       'CODE_SIGNING_ALLOWED=YES',
       'CODE_SIGN_IDENTITY=-',
       `SCOREBUG_TEST_API_URL=${api.baseURL}`,
+      `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
     ],
     'workflow',
     { timeout: 600_000 },
@@ -388,7 +406,7 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let videoObservation, workerReportAge, archiveDiagnostics;
+  let videoObservation, workerReportAge, archiveDiagnostics, directRecorderDelivery;
   if (streaming) {
     assert.equal(states.length, 1, 'Observation fixture must own one recording');
     assert.equal(recordingFolders[0], states[0].id, 'Recording folder/status identity mismatch');
@@ -423,7 +441,22 @@ try {
       },
       archiveIDs,
       liveIDs: liveSegments.flat(),
+      completedWindowLimit: streamingOptions.completedWindowLimit,
     });
+    if (process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1') {
+      directRecorderDelivery = qualifyDirectRecorderDelivery({
+        recorder: JSON.parse(await readFile(join(artifact, 'direct-rtmp-recorder.json'), 'utf8')),
+        workerEvidence: JSON.parse(
+          await readFile(join(artifact, 'worker-terminal-evidence.json'), 'utf8'),
+        ),
+        videoObservation,
+        live,
+      });
+      directRecorderDelivery.sourceDurationSeconds = qualifyNativeStreamingHold({
+        holdSeconds: streamingOptions.holdSeconds,
+        savedFrames: directRecorderDelivery.savedFrames,
+      });
+    }
     workerReportAge = qualifyWorkerReportAge({ snapshot: observationSnapshot, decodedEvidence });
     await writeFile(
       join(artifact, 'worker-report-age-qualification.json'),
@@ -450,12 +483,14 @@ try {
       {
         runtime,
         deviceType,
+        streamingOptions,
         media,
         live,
         statuses: states,
         videoObservation,
         workerReportAge,
         archiveDiagnostics,
+        directRecorderDelivery,
       },
       null,
       2,

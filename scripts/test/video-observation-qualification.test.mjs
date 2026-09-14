@@ -76,6 +76,29 @@ test('maps rational fixture timestamps exactly, including source frame zero', ()
   assert.throws(() => fixtureFrameID({ ...pts(0), value: 7395 }), /decimal string/);
 });
 
+test('extended fixture history requires an explicit trusted limit and retains all quality gates', () => {
+  const f = fixture();
+  for (let i = 3; i < 10; i++)
+    f.snapshot.completed.push(window(i * 5, (i + 1) * 5, i * 150, (i + 1) * 150 - 1));
+  f.snapshot.current = window(50, 52, 1500, 1559, true);
+  f.snapshot.captureDetachedAt = 52;
+  f.archiveIDs = ids(0, 1709);
+  f.liveIDs = ids(120, 1559);
+  assert.throws(() => qualifyVideoObservation(f), /Bounded completed history/);
+  const result = qualifyVideoObservation({ ...f, completedWindowLimit: 64 });
+  assert.equal(result.windows.length, 11);
+  f.snapshot.completed[5].encodedVideo.callbackCount = '149';
+  assert.throws(() => qualifyVideoObservation({ ...f, completedWindowLimit: 64 }), /count/);
+});
+
+test('observation history limit cannot be widened arbitrarily', () => {
+  for (const completedWindowLimit of [0, 9, 65, Infinity, '64'])
+    assert.throws(
+      () => qualifyVideoObservation({ ...fixture(), completedWindowLimit }),
+      /history limit/,
+    );
+});
+
 test('uses full monotonic intervals and reports startup, drain, and legitimate GOP acquisition gap', () => {
   const result = qualifyVideoObservation(fixture());
   assert.equal(result.windows[0].captureVideo.fps, 18);

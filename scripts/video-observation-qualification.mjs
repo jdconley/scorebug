@@ -64,7 +64,14 @@ function range(first, last) {
 
 /** Offline fixture comparison, not a production loss estimator. All runtime
  * cadence uses the entire monotonic window, including startup and drain. */
-export function qualifyVideoObservation({ snapshot, expectedScope, archiveIDs, liveIDs }) {
+export function qualifyVideoObservation({
+  snapshot,
+  expectedScope,
+  archiveIDs,
+  liveIDs,
+  completedWindowLimit = 8,
+}) {
+  assert.ok([8, 64].includes(completedWindowLimit), 'Unsupported fixture history limit');
   assert.equal(snapshot.formatVersion, 1, 'Unsupported observation format');
   for (const key of ['recordingID', 'matchID', 'broadcastGeneration']) {
     assert.notEqual(expectedScope[key], undefined, `Missing expected scope ${key}`);
@@ -105,7 +112,7 @@ export function qualifyVideoObservation({ snapshot, expectedScope, archiveIDs, l
     finite(snapshot.current.encodedVideo.firstObservationTime, 'first encoded observation'),
   );
   assert.ok(
-    Array.isArray(snapshot.completed) && snapshot.completed.length <= 8,
+    Array.isArray(snapshot.completed) && snapshot.completed.length <= completedWindowLimit,
     'Bounded completed history required',
   );
   assert.ok(
