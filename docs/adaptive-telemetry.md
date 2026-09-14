@@ -52,3 +52,29 @@ Tests should inject complete windows, stale/duplicate reports, counter resets,
 clock changes, reconnects, invalid values, and absent metrics. Then replay measured
 impairment traces and compare recommendations with fully decoded output. Until those
 checks pass, the app remains on its qualified fixed 1080p30 live profile.
+
+## Local observation accumulator
+
+`ScorebugMedia/VideoFrameObservation.swift` now implements the isolated first
+checkpoint: immutable attempt/profile scope, separate capture and encoded stage
+aggregates, rational source-PTS comparison, and fixed half-open monotonic windows.
+Its bounded history coalesces empty gaps and reports evicted intervals. Counters
+saturate rather than wrap; epoch changes quarantine timestamp freshness until a
+new owner is created. Malformed timestamp evidence is local to its interval, while
+the snapshot retains lifetime invalidity evidence even after history eviction.
+
+The runtime owner samples system uptime inside its lock. The pure accumulator takes
+ordered caller times for deterministic tests. Clock seconds are bounded to
+`0...1e12`, window duration to `1/1024...86400` seconds, and completed history to
+`1...64` entries. Defaults are five-second windows and eight retained entries.
+Closure is explicit and terminal; the caller must close only after desired encoder
+drain. Old owner references never redirect observations to a new attempt.
+
+The 18 focused tests and all 107 Media package tests pass. Evidence is under
+`artifacts/qa/local-video-observation-*`, including behavioral red/green coverage for
+malformed CoreMedia timescales and concurrency-safe clock admission. The unsigned
+combined iPhone/Watch Release build also passes; its log is
+`artifacts/qa/local-video-observation-ios-release.log`. Independent specification
+and quality reviews approved this isolated checkpoint. This component
+is not connected to capture, VideoToolbox, polling, or the quality controller yet;
+it supplies no new production runtime metric merely by existing.

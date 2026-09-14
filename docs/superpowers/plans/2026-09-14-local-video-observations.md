@@ -26,6 +26,11 @@ Assign callbacks to fixed half-open windows using their own monotonic observatio
 time; rotate before counting a callback at or beyond a boundary. The existing health
 poll advances idle windows and reads snapshots, rather than determining which
 window owns a frame. Preserve empty intervals, startup delay, and polling gaps.
+The pure accumulator accepts explicit ordered times for deterministic tests. Its
+runtime lock owner samples a concrete monotonic clock inside the critical section
+for observation, polling, and closure. Caller-sampled timestamps from concurrent
+producers could otherwise acquire the lock out of order and falsely report a clock
+reversal. Do not invoke arbitrary clock closures while holding the owner lock.
 Bound the retained completed-window
 history and expose missing intervals explicitly. A first-to-last-frame duration
 must not replace the full interval when calculating cadence.
@@ -44,12 +49,18 @@ counter under its current name and meaning.
    clock reversal, idle windows, long gaps, delayed polls with callbacks on both
    sides of a boundary, exact-boundary ownership, and closed/replaced owners. Review this
    contract before connecting it to capture or the encoder.
+   Test concurrent owner callbacks and polling without false clock invalidation.
 2. Observe video at the capture callback before archive admission in
    `CaptureRecording.swift`. The existing publishing tap runs after admission and
    cannot stand in for capture observations. Attach an optional observer independently
    of publisher readiness, with identity-guarded detach. Test mixed audio/video,
    archive rejection, and unchanged archive failure/stop ordering with and without
    telemetry. No per-frame tasks, network waits, or changes to archive configuration.
+   Resolve one immutable attempt attachment for each callback before observation:
+   a concurrent publisher replacement must not count capture under the old owner
+   and route that same callback to the new publisher. An old attachment may reject
+   admission during teardown; preserve that boundary as a gap. Test replacement
+   between observation and archive admission without moving the archive branch.
 3. Add an optional synchronous callback at successful VideoToolbox compression
    completion in the pinned HaishinKit patch. Capture original input PTS immutably
    and validate output PTS. Plumb through codec/session and SRT construction without
@@ -72,3 +83,13 @@ Source-range correlation, full report-transit age, time-weighted live queue pres
 qualified usable video capacity, bitrate/profile application, impaired-network
 measurements, and sustained recording/streaming still precede adaptive enablement.
 The phone continues using fixed 1080p30 throughout this observation-only slice.
+
+## First checkpoint evidence
+
+The isolated accumulator and synchronized owner are implemented. All 18 focused
+tests and all 107 Media package tests pass, including boundary, gap, discontinuity,
+overflow, invalid clock, malformed timescale, and concurrent owner coverage. See
+[the telemetry contract](../../adaptive-telemetry.md) for exact bounds and evidence.
+The unsigned combined iPhone/Watch Release build passes, and independent
+specification and quality reviews approve checkpoint 1. Capture and encoder
+integration checkpoints remain open.
