@@ -1,7 +1,12 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import type { Logger } from './logger.js';
-import { DecodedVideoTelemetry, type DecodedVideoSnapshot } from './decoded-video.js';
+import {
+  DecodedVideoLifetime,
+  DecodedVideoTelemetry,
+  type DecodedVideoLifetimeSnapshot,
+  type DecodedVideoSnapshot,
+} from './decoded-video.js';
 
 export type PipelineSpec = {
   gameId: string;
@@ -133,7 +138,17 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
 /** FFmpeg output counters; these do not prove fresh frames reached the destination. */
 export type PipelineProgress = Readonly<{ frame: number; outTimeUs: number }>;
 
+export type PipelineTerminal = Readonly<{
+  decodedVideo: DecodedVideoLifetimeSnapshot;
+  telemetryEOF: boolean;
+  /** Null means the guardian never reported the encoder status. */
+  encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
+  outputProgress: PipelineProgress | null;
+}>;
+
 export type PipelineOptions = {
+  /** Optional test diagnostics, emitted once after all guardian pipes close. */
+  onTerminal?: (terminal: PipelineTerminal) => void;
   /** Monotonic milliseconds; telemetry never compares source PTS to this clock. */
   monotonicNow?: () => number;
   /** Called only for complete, non-regressing records with at least one changed counter. */
@@ -221,10 +236,38 @@ export function startPipeline(
   }
   const args = buildFfmpegArgs(spec);
   const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
+  const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
+  let telemetryEOF = false;
+  let outputProgress: PipelineProgress | null = null;
+  let terminalEmitted = false;
   let child: ChildProcess | undefined;
   let settled = false;
+  let guardianSpawnFailed = false;
   let stopping = false;
   let encoderExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const terminal = () => {
+    if (!lifetime || terminalEmitted) return;
+    terminalEmitted = true;
+    lifetime.end();
+    try {
+      options.onTerminal?.({
+        decodedVideo: lifetime.snapshot(),
+        telemetryEOF,
+        encoderExit: encoderExit ? { ...encoderExit } : null,
+        outputProgress: outputProgress ? { ...outputProgress } : null,
+      });
+    } catch {
+      // Diagnostics must never change shutdown, including a failing diagnostic logger.
+      try {
+        log.warn('ffmpeg_terminal_callback_failed', { gameId: spec.gameId });
+      } catch {}
+    }
+  };
+  const failedBeforeSpawn = () => {
+    decodedVideo.end();
+    terminal();
+    settle(null, null);
+  };
   let settle!: (code: number | null, signal: NodeJS.Signals | null) => void;
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     settle = (code, signal) => {
@@ -254,13 +297,21 @@ export function startPipeline(
     // Guardian IPC remains fd3; its fd4 becomes FFmpeg's telemetry fd3.
     // Always drain, including after invalid evidence and without an observer.
     const telemetry = child.stdio[4] as Readable;
-    telemetry.on('data', (chunk: Buffer) => decodedVideo.push(chunk));
-    telemetry.once('end', () => decodedVideo.end());
+    telemetry.on('data', (chunk: Buffer) => {
+      decodedVideo.push(chunk);
+      lifetime?.push(chunk);
+    });
+    telemetry.once('end', () => {
+      telemetryEOF = true;
+      decodedVideo.end();
+      lifetime?.end();
+    });
     // Drain diagnostics without retaining them: FFmpeg echoes credentialed URLs.
-    if (options.onProgress) {
+    if (options.onProgress || options.onTerminal) {
       child.stdout?.on(
         'data',
         progressReader((progress) => {
+          if (lifetime) outputProgress = { ...progress };
           try {
             options.onProgress?.(progress);
           } catch {
@@ -288,19 +339,21 @@ export function startPipeline(
     child.on('error', () => {
       // Neither the error object nor its message is safe to log (both can contain argv).
       log.error('ffmpeg_process_error', { gameId: spec.gameId });
-      if (!child?.pid) settle(null, null);
+      if (!child?.pid) guardianSpawnFailed = true;
     });
     child.once('close', () => {
       decodedVideo.end();
+      terminal();
       // Drain progress before resolving. Guardian death alone does not prove the
       // encoder exited: fail closed so the supervisor cannot overlap publishers.
       if (encoderExit) settle(encoderExit.code, encoderExit.signal);
+      else if (guardianSpawnFailed) settle(null, null);
       else if (!settled) log.error('ffmpeg_guardian_lost', { gameId: spec.gameId });
     });
     send({ type: 'start', binary: spec.ffmpegPath ?? 'ffmpeg', args, stopTimeoutMs });
   } catch {
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });
-    if (!child?.pid) settle(null, null);
+    if (!child?.pid) failedBeforeSpawn();
   }
 
   const alive = () => !settled && child?.exitCode === null && child.signalCode === null;

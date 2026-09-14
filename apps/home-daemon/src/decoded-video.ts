@@ -216,3 +216,73 @@ export class DecodedVideoTelemetry {
     };
   }
 }
+
+export type DecodedVideoLifetimeSnapshot = Readonly<{
+  acceptedFrames: number;
+  freshFrames: number;
+  duplicateFrames: number;
+  reorderedFrames: number;
+  /** First/last accepted PTS; highestPTS alone tracks the freshness watermark. */
+  firstPTS: number | null;
+  lastPTS: number | null;
+  highestPTS: number | null;
+  timeBase: '1/90000';
+  invalidReason: DecodedVideoInvalidReason | null;
+  ended: boolean;
+}>;
+
+/** Optional diagnostic reader: constant space, no clock or reporting-window dependence. */
+export class DecodedVideoLifetime {
+  private value: DecodedVideoLifetimeSnapshot = {
+    acceptedFrames: 0,
+    freshFrames: 0,
+    duplicateFrames: 0,
+    reorderedFrames: 0,
+    firstPTS: null,
+    lastPTS: null,
+    highestPTS: null,
+    timeBase: '1/90000',
+    invalidReason: null,
+    ended: false,
+  };
+  private readonly parser = new DecodedVideoParser(
+    (pts) => {
+      if (this.value.invalidReason !== null) return;
+      if (
+        !Number.isSafeInteger(this.value.acceptedFrames) ||
+        this.value.acceptedFrames >= Number.MAX_SAFE_INTEGER
+      ) {
+        this.value = { ...this.value, invalidReason: 'overflow' };
+        return;
+      }
+      const key =
+        this.value.highestPTS === null || pts > this.value.highestPTS
+          ? 'freshFrames'
+          : pts === this.value.highestPTS
+            ? 'duplicateFrames'
+            : 'reorderedFrames';
+      this.value = {
+        ...this.value,
+        acceptedFrames: this.value.acceptedFrames + 1,
+        [key]: this.value[key] + 1,
+        firstPTS: this.value.firstPTS ?? pts,
+        lastPTS: pts,
+        highestPTS: key === 'freshFrames' ? pts : this.value.highestPTS,
+      };
+    },
+    (reason) => {
+      this.value = { ...this.value, invalidReason: this.value.invalidReason ?? reason };
+    },
+  );
+  push(chunk: Buffer) {
+    this.parser.push(chunk);
+  }
+  end() {
+    if (this.value.ended) return;
+    this.parser.end();
+    this.value = Object.freeze({ ...this.value, ended: true });
+  }
+  snapshot(): DecodedVideoLifetimeSnapshot {
+    return { ...this.value };
+  }
+}

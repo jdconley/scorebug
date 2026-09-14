@@ -197,3 +197,63 @@ it.each(['0x10', '0b1', '0o7'])('rejects non-decimal diagnostic timestamp syntax
   expect(errors).toEqual(['numeric']);
   expect(values).toEqual([]);
 });
+
+it('retains lifetime decoder scalars including a partial final window and freezes at EOF', async () => {
+  const { DecodedVideoLifetime } = await import('../src/decoded-video.js');
+  const telemetry = new DecodedVideoLifetime();
+  telemetry.push(Buffer.from([9000, 12000, 12000, 3000].map((pts, i) => record(i, pts)).join('')));
+  telemetry.end();
+  const expected = {
+    acceptedFrames: 4,
+    freshFrames: 2,
+    duplicateFrames: 1,
+    reorderedFrames: 1,
+    firstPTS: 9000,
+    lastPTS: 3000,
+    highestPTS: 12000,
+    timeBase: '1/90000',
+    invalidReason: null,
+    ended: true,
+  };
+  expect(telemetry.snapshot()).toEqual(expected);
+  telemetry.push(Buffer.from(record(4, 90000)));
+  telemetry.end();
+  expect(telemetry.snapshot()).toEqual(expected);
+});
+
+it.each([
+  ['bad\n', 'framing'],
+  ['frame:1 pts:3 pts_time:0\n', 'incomplete'],
+  ['x'.repeat(1025), 'oversized'],
+  [record(1, Number.MAX_SAFE_INTEGER + 1), 'numeric'],
+])(
+  'latches lifetime parser invalidity while retaining prior accepted scalars (%#)',
+  async (suffix, reason) => {
+    const { DecodedVideoLifetime } = await import('../src/decoded-video.js');
+    const telemetry = new DecodedVideoLifetime();
+    telemetry.push(Buffer.from(record(0, 0) + suffix));
+    telemetry.end();
+    expect(telemetry.snapshot()).toMatchObject({
+      acceptedFrames: 1,
+      firstPTS: 0,
+      highestPTS: 0,
+      invalidReason: reason,
+      ended: true,
+    });
+  },
+);
+
+it('rejects unsafe lifetime count totals before incrementing', async () => {
+  const { DecodedVideoLifetime } = await import('../src/decoded-video.js');
+  const telemetry = new DecodedVideoLifetime();
+  telemetry.push(Buffer.from(record(0, 0)));
+  (telemetry as unknown as { value: { acceptedFrames: number } }).value.acceptedFrames =
+    Number.MAX_SAFE_INTEGER;
+  telemetry.push(Buffer.from(record(1, 1)));
+  telemetry.end();
+  expect(telemetry.snapshot()).toMatchObject({
+    acceptedFrames: Number.MAX_SAFE_INTEGER,
+    freshFrames: 1,
+    invalidReason: 'overflow',
+  });
+});

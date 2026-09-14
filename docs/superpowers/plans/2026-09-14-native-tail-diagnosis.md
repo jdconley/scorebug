@@ -120,3 +120,73 @@ Keep the 100 ms A/V tail gate and every frame/rate/archive gate unchanged. The e
 archive overflow remains unresolved; retain its diagnostics for future recurrence.
 No automatic quality adaptation or physical-device reliability claim follows from
 these short local runs.
+
+
+### Relay recording feasibility check
+
+An input-recording experiment was considered to compare source barcodes at relay
+receipt and worker output. MediaMTX supports inherited recording defaults, but
+`IngestRelay.ensure` explicitly sets and verifies `record: false` for native paths.
+Changing copied fixture path defaults would therefore produce no recording.
+Do not change that production provisioning contract merely for this experiment.
+Continue with the planned bounded transport-stop and worker-terminal evidence.
+
+## Bounded worker terminal evidence
+
+Implement as one bounded subagent task, followed by specification and quality
+review. Keep production media arguments, stop budgets, protocol snapshots and
+report freshness unchanged.
+
+- [x] Add an optional terminal observer to `startPipeline` in `pipeline.ts`.
+  When enabled, gather lifetime decoder scalar evidence independently from the
+  existing five-second telemetry: accepted/fresh/duplicate/reordered counts,
+  first/last/highest PTS at 1/90000, finite invalidity, and ended state. Retain no
+  per-frame history. Freeze at parser EOF. Preserve partial-window terminal frames
+  without changing `DecodedVideoTelemetry.snapshot()` semantics. A malformed,
+  incomplete, nonfinite, or overflowed measurement must remain invalid.
+- [x] Emit the terminal callback once after guardian close and telemetry drain,
+  before resolving actual encoder exit. Include whether telemetry EOF was observed,
+  actual encoder code/signal only when reported by guardian, and final validated
+  output progress. Guardian loss is unknown encoder exit and must still retain
+  terminal diagnostics without releasing the supervisor's existing fail-closed
+  wait. Callback exceptions cannot alter shutdown. Handle pre-spawn errors too.
+- [x] In the worker entry point, exact `SCOREBUG_TEST_WORKER_TERMINAL=1` enables
+  the observer. Scope its structured event with input gameId, generation and an
+  explicitly named worker-local pipeline ordinal (not supervisor attempt). Scope
+  pipeline log events the same way through an adapter. No credential, raw error,
+  URL or configuration fields. Ordinary worker behavior stays unchanged.
+- [x] In the native fixture, always enable that exact test flag for its owned
+  worker and drain stdout into a bounded strict JSON allowlist collector. Retain
+  stop-state reasons, scoped pipeline lifecycle events and terminal evidence;
+  discard other fields and raw lines. Bound pending line length and event count,
+  expose truncation/invalid diagnostics explicitly. Keep worker stderr ignored.
+  Write one manifest after worker close on success or cleanup failure, before
+  container removal. Join collection with worker shutdown and preserve original
+  runner errors. Use event order within the collector, never host-clock alignment.
+- [x] Red/green tests: partial-window terminal retention, duplicate/reorder and
+  invalid EOF, exact once callback including exceptions, actual exit vs guardian
+  loss, late telemetry/progress drain; collector bounds and field filtering,
+  scope and failure cleanup. Full worker/tool tests and typecheck, then reviews.
+- [ ] Run one isolated unchanged native qualification and compare lifetime
+  decoder counts/PTS span and output progress to offline source barcodes at sink.
+  Count evidence can distinguish decoder-vs-output losses, but cannot establish
+  an unqualified PTS mapping or prove upstream delivery. Add native transport
+  outcome evidence next only if localization remains insufficient.
+
+
+The worker-side implementation and fixture collector pass specification review.
+Diagnostics use a separate optional lifetime parser, keeping the production
+five-second snapshot unchanged. The fixture retains at most 256 events and one
+4,096-byte pending line. It persists after actual worker close and on failure
+cleanup; absent/truncated/invalid evidence remains explicit. Test-only warning
+and error events route to stdout, while raw stderr remains discarded. Worker-local
+pipeline ordinals do not claim to be supervisor attempt identifiers.
+
+Validation: 153 worker tests, 163 tool tests, worker type checking and diff checks
+pass. Evidence is under `artifacts/qa/worker-terminal-*`; final worker/typecheck
+logs use the `-review` suffix. Two review regressions caught diagnostic stderr
+routing and coercion of an array into a signal name; both have retained red/green
+logs. Both specification and code quality reviews approve. A third regression
+ensures the collector loads before the native runner builds protocol artifacts;
+its finite private allowlists have no generated-file dependency. The isolated
+native run is pending.

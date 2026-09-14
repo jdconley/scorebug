@@ -5,9 +5,14 @@ import { scoreFilePath } from './score-file.js';
 import { WorkerClient } from './worker-client.js';
 import { WorkerSupervisor } from './supervisor.js';
 import { WorkerReporter } from './worker-reporter.js';
+import { createWorkerTerminalDiagnostics, flushWorkerDiagnostics } from './worker-terminal.js';
 
 const config = loadConfig();
 const log = createLogger(config.LOG_LEVEL);
+const terminalDiagnostics = createWorkerTerminalDiagnostics(
+  log,
+  process.env.SCOREBUG_TEST_WORKER_TERMINAL,
+);
 const scoreFile = scoreFilePath(config.SCORE_DIR);
 const client = new WorkerClient(config.CONTROL_PLANE_URL, config.HOME_TOKEN, config.WORKER_ID);
 const reporter = new WorkerReporter(config.CONTROL_PLANE_URL, config.HOME_TOKEN, config.WORKER_ID);
@@ -16,8 +21,9 @@ const supervisor = new WorkerSupervisor({
   scoreFile,
   outputId: config.OUTPUT_ID,
   onState: (state) => log.info('worker_state', state),
-  start: (input, onProgress) =>
-    startPipeline(
+  start: (input, onProgress) => {
+    const diagnostics = terminalDiagnostics.scope(input);
+    return startPipeline(
       {
         gameId: input.gameId,
         pullUrl: input.readUrl,
@@ -29,9 +35,14 @@ const supervisor = new WorkerSupervisor({
         ffmpegPath: config.FFMPEG_PATH,
         fontPath: config.FONT_PATH,
       },
-      log,
-      { onProgress, stopTimeoutMs: 1000 },
-    ),
+      diagnostics.log,
+      {
+        onProgress,
+        stopTimeoutMs: 1000,
+        ...(diagnostics.onTerminal && { onTerminal: diagnostics.onTerminal }),
+      },
+    );
+  },
 });
 let stopping = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -69,6 +80,7 @@ const shutdown = async () => {
   clearTimeout(timer);
   clearTimeout(reportTimer);
   await supervisor.close();
+  if (terminalDiagnostics.enabled) await flushWorkerDiagnostics(process.stdout);
   process.exit(0);
 };
 process.on('SIGINT', () => void shutdown());

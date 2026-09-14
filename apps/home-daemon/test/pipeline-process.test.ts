@@ -428,3 +428,94 @@ it('drains large malformed telemetry with no observer and seals its invalid term
     await fixture.cleanup();
   }
 });
+
+it('emits one terminal after late pipe data and before actual exit resolves, retaining a partial decoder window', async () => {
+  const tail =
+    "setTimeout(() => { require('node:fs').writeSync(3, 'frame:0 pts:9000 pts_time:0.1\\nscorebug.source=1\\n'); process.stdout.write('frame=7\\nout_time_us=900\\nprogress=end\\nframe=99\\nout_time_us=999\\n'); }, 75);";
+  const fixture = await childFixture(`
+    require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(tail)}], { stdio: ['ignore', 1, 'ignore', 3] }).unref();
+    process.exitCode = 23;
+  `);
+  const terminal: unknown[] = [];
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      monotonicNow: () => 0,
+      onTerminal: (value) => terminal.push(value),
+    });
+    expect(await boundedExit(pipeline)).toEqual({ code: 23, signal: null });
+    expect(terminal).toEqual([
+      {
+        telemetryEOF: true,
+        encoderExit: { code: 23, signal: null },
+        outputProgress: { frame: 7, outTimeUs: 900 },
+        decodedVideo: {
+          acceptedFrames: 1,
+          freshFrames: 1,
+          duplicateFrames: 0,
+          reorderedFrames: 0,
+          firstPTS: 9000,
+          lastPTS: 9000,
+          highestPTS: 9000,
+          timeBase: '1/90000',
+          invalidReason: null,
+          ended: true,
+        },
+      },
+    ]);
+    expect(pipeline.snapshotDecodedVideo?.().completed).toBeNull();
+    pipeline.stop();
+    await pipeline.waitExit();
+    expect(terminal).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('contains terminal observer exceptions and handles encoder spawn failure', async () => {
+  const fixture = await childFixture('');
+  let calls = 0;
+  try {
+    fixture.spec.ffmpegPath += '-missing';
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      onTerminal: (value) => {
+        calls++;
+        expect(value).toMatchObject({
+          encoderExit: { code: null, signal: null },
+          telemetryEOF: true,
+          outputProgress: null,
+          decodedVideo: { ended: true, acceptedFrames: 0 },
+        });
+        throw new Error('TERMINAL_SECRET');
+      },
+    });
+    expect(await boundedExit(pipeline)).toEqual({ code: null, signal: null });
+    expect(calls).toBe(1);
+    expect(JSON.stringify(fixture.records)).not.toContain('TERMINAL_SECRET');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('reports unknown encoder status after guardian loss and pipe closure while waitExit stays fail closed', async () => {
+  const fixture = await childFixture(
+    "require('node:fs').writeFileSync(__filename + '.guardian', String(process.ppid)); setInterval(() => {}, 1000);",
+  );
+  const terminal: unknown[] = [];
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      onTerminal: (value) => terminal.push(value),
+    });
+    await fixture.ready();
+    process.kill(Number(await readFile(fixture.spec.ffmpegPath + '.guardian', 'utf8')), 'SIGKILL');
+    process.kill(Number(await readFile(join(fixture.dir, 'ready'), 'utf8')), 'SIGKILL');
+    await expect.poll(() => terminal.length).toBe(1);
+    expect(terminal[0]).toMatchObject({
+      encoderExit: null,
+      telemetryEOF: true,
+      decodedVideo: { ended: true },
+    });
+    expect(await boundedExit(pipeline)).toBe('timed out');
+  } finally {
+    await fixture.cleanup();
+  }
+});

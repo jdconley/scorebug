@@ -7,13 +7,14 @@ import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools } from './media-tools.mjs';
+import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
 export async function nativeStreamingFixture({ artifact, root, run }) {
   const names = [];
-  let worker, done;
+  let worker, done, workerEvidence;
   let matchID;
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
@@ -33,12 +34,16 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
     return value;
   }
   async function stopWorker() {
-    if (!worker) return;
-    worker.kill('SIGTERM');
+    if (!worker) {
+      await workerEvidence?.save();
+      return;
+    }
+    workerEvidence.signal('SIGTERM');
     await Promise.race([done, delay(5000)]);
-    if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
+    if (worker.exitCode === null && worker.signalCode === null) workerEvidence.signal('SIGKILL');
     await done;
     worker = undefined;
+    await workerEvidence.save();
   }
   async function stop() {
     const errors = [];
@@ -183,14 +188,18 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
               FFPROBE_PATH: ffprobe,
               FONT_PATH: font,
               LOG_LEVEL: 'info',
+              SCOREBUG_TEST_WORKER_TERMINAL: '1',
             },
-            stdio: ['ignore', 'ignore', 'ignore'],
+            stdio: ['ignore', 'pipe', 'ignore'],
           },
         );
-        done = new Promise((resolve) => {
-          worker.once('error', resolve);
-          worker.once('close', resolve);
-        });
+        workerEvidence = observeNativeWorkerEvidence(worker, (evidence) =>
+          writeFile(
+            join(artifact, 'worker-terminal-evidence.json'),
+            JSON.stringify(evidence, null, 2),
+          ),
+        );
+        done = workerEvidence.closed;
       },
       async collect() {
         await stopStatus();
