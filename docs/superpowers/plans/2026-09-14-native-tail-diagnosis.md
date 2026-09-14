@@ -121,7 +121,6 @@ archive overflow remains unresolved; retain its diagnostics for future recurrenc
 No automatic quality adaptation or physical-device reliability claim follows from
 these short local runs.
 
-
 ### Relay recording feasibility check
 
 An input-recording experiment was considered to compare source barcodes at relay
@@ -138,41 +137,40 @@ review. Keep production media arguments, stop budgets, protocol snapshots and
 report freshness unchanged.
 
 - [x] Add an optional terminal observer to `startPipeline` in `pipeline.ts`.
-  When enabled, gather lifetime decoder scalar evidence independently from the
-  existing five-second telemetry: accepted/fresh/duplicate/reordered counts,
-  first/last/highest PTS at 1/90000, finite invalidity, and ended state. Retain no
-  per-frame history. Freeze at parser EOF. Preserve partial-window terminal frames
-  without changing `DecodedVideoTelemetry.snapshot()` semantics. A malformed,
-  incomplete, nonfinite, or overflowed measurement must remain invalid.
+      When enabled, gather lifetime decoder scalar evidence independently from the
+      existing five-second telemetry: accepted/fresh/duplicate/reordered counts,
+      first/last/highest PTS at 1/90000, finite invalidity, and ended state. Retain no
+      per-frame history. Freeze at parser EOF. Preserve partial-window terminal frames
+      without changing `DecodedVideoTelemetry.snapshot()` semantics. A malformed,
+      incomplete, nonfinite, or overflowed measurement must remain invalid.
 - [x] Emit the terminal callback once after guardian close and telemetry drain,
-  before resolving actual encoder exit. Include whether telemetry EOF was observed,
-  actual encoder code/signal only when reported by guardian, and final validated
-  output progress. Guardian loss is unknown encoder exit and must still retain
-  terminal diagnostics without releasing the supervisor's existing fail-closed
-  wait. Callback exceptions cannot alter shutdown. Handle pre-spawn errors too.
+      before resolving actual encoder exit. Include whether telemetry EOF was observed,
+      actual encoder code/signal only when reported by guardian, and final validated
+      output progress. Guardian loss is unknown encoder exit and must still retain
+      terminal diagnostics without releasing the supervisor's existing fail-closed
+      wait. Callback exceptions cannot alter shutdown. Handle pre-spawn errors too.
 - [x] In the worker entry point, exact `SCOREBUG_TEST_WORKER_TERMINAL=1` enables
-  the observer. Scope its structured event with input gameId, generation and an
-  explicitly named worker-local pipeline ordinal (not supervisor attempt). Scope
-  pipeline log events the same way through an adapter. No credential, raw error,
-  URL or configuration fields. Ordinary worker behavior stays unchanged.
+      the observer. Scope its structured event with input gameId, generation and an
+      explicitly named worker-local pipeline ordinal (not supervisor attempt). Scope
+      pipeline log events the same way through an adapter. No credential, raw error,
+      URL or configuration fields. Ordinary worker behavior stays unchanged.
 - [x] In the native fixture, always enable that exact test flag for its owned
-  worker and drain stdout into a bounded strict JSON allowlist collector. Retain
-  stop-state reasons, scoped pipeline lifecycle events and terminal evidence;
-  discard other fields and raw lines. Bound pending line length and event count,
-  expose truncation/invalid diagnostics explicitly. Keep worker stderr ignored.
-  Write one manifest after worker close on success or cleanup failure, before
-  container removal. Join collection with worker shutdown and preserve original
-  runner errors. Use event order within the collector, never host-clock alignment.
+      worker and drain stdout into a bounded strict JSON allowlist collector. Retain
+      stop-state reasons, scoped pipeline lifecycle events and terminal evidence;
+      discard other fields and raw lines. Bound pending line length and event count,
+      expose truncation/invalid diagnostics explicitly. Keep worker stderr ignored.
+      Write one manifest after worker close on success or cleanup failure, before
+      container removal. Join collection with worker shutdown and preserve original
+      runner errors. Use event order within the collector, never host-clock alignment.
 - [x] Red/green tests: partial-window terminal retention, duplicate/reorder and
-  invalid EOF, exact once callback including exceptions, actual exit vs guardian
-  loss, late telemetry/progress drain; collector bounds and field filtering,
-  scope and failure cleanup. Full worker/tool tests and typecheck, then reviews.
+      invalid EOF, exact once callback including exceptions, actual exit vs guardian
+      loss, late telemetry/progress drain; collector bounds and field filtering,
+      scope and failure cleanup. Full worker/tool tests and typecheck, then reviews.
 - [x] Run one isolated unchanged native qualification and compare lifetime
-  decoder counts/PTS span and output progress to offline source barcodes at sink.
-  Count evidence can distinguish decoder-vs-output losses, but cannot establish
-  an unqualified PTS mapping or prove upstream delivery. Add native transport
-  outcome evidence next only if localization remains insufficient.
-
+      decoder counts/PTS span and output progress to offline source barcodes at sink.
+      Count evidence can distinguish decoder-vs-output losses, but cannot establish
+      an unqualified PTS mapping or prove upstream delivery. Add native transport
+      outcome evidence next only if localization remains insufficient.
 
 The worker-side implementation and fixture collector pass specification review.
 Diagnostics use a separate optional lifetime parser, keeping the production
@@ -190,7 +188,6 @@ logs. Both specification and code quality reviews approve. A third regression
 ensures the collector loads before the native runner builds protocol artifacts;
 its finite private allowlists have no generated-file dependency. The isolated
 native run is recorded below.
-
 
 ### Native terminal evidence at `4884734`
 
@@ -242,11 +239,11 @@ transparent loopback relay changes only its deliberate post-client-EOF delay,
 boundaries; all resulting sink files pass full A/V decode and barcode analysis.
 These are diagnostic experiments, not replacements for native qualification.
 
-| Replay | Video packets encoded / submitted | Saved frames, immediate EOF | Saved frames, delayed EOF |
-| --- | --- | --- | --- |
-| 10 seconds paced | 300 / 300 | 299 | 299 |
-| 10 seconds burst | 300 / 300 | 163 | 163 |
-| 4 seconds burst | 120 / 120 | 112 | 119 |
+| Replay           | Video packets encoded / submitted | Saved frames, immediate EOF | Saved frames, delayed EOF |
+| ---------------- | --------------------------------- | --------------------------- | ------------------------- |
+| 10 seconds paced | 300 / 300                         | 299                         | 299                       |
+| 10 seconds burst | 300 / 300                         | 163                         | 163                       |
+| 4 seconds burst  | 120 / 120                         | 112                         | 119                       |
 
 For the short burst, all four complete audio/video packet-stat files are byte-
 identical across cases (SHA-256 comparison retained). Each run forwards 38,543
@@ -288,34 +285,34 @@ Implement one bounded helper with specification and quality review. No applicati
 worker media policy, production relay provisioning, or acceptance-gate changes.
 
 - [x] Add `scripts/direct-rtmp-recorder.mjs`: own a single FFmpeg child listening
-  on an OS-selected, supplied loopback port. Use `-listen 1`, explicit video/audio
-  maps, stream copy, fragmented MP4, and non-overwrite output beneath the artifact
-  directory. Ignore raw stderr. Readiness must observe the actual owned PID listening
-  on exactly `127.0.0.1:port` with bounded `lsof`, without connecting a probe client
-  (which would consume the single publisher slot). Bound startup to five seconds.
+      on an OS-selected, supplied loopback port. Use `-listen 1`, explicit video/audio
+      maps, stream copy, fragmented MP4, and non-overwrite output beneath the artifact
+      directory. Ignore raw stderr. Readiness must observe the actual owned PID listening
+      on exactly `127.0.0.1:port` with bounded `lsof`, without connecting a probe client
+      (which would consume the single publisher slot). Bound startup to five seconds.
 - [x] Expose a URL and joined lifecycle: successful `finish()` waits for natural
-  EOF/child close after worker stop, bounded to five seconds, and requires exit 0,
-  no signal and a nonempty output. Timeout is failed evidence, not successful drain.
-  Cleanup `stop()` is idempotent and joins the owned process; TERM then bounded KILL
-  after two seconds if necessary. Preserve a small sanitized manifest exactly once
-  after close, including whether readiness was observed, actual code/signal and
-  fixture termination request. Startup failure must clean its own child before
-  rejecting. No detached tasks or ambient-process termination.
+      EOF/child close after worker stop, bounded to five seconds, and requires exit 0,
+      no signal and a nonempty output. Timeout is failed evidence, not successful drain.
+      Cleanup `stop()` is idempotent and joins the owned process; TERM then bounded KILL
+      after two seconds if necessary. Preserve a small sanitized manifest exactly once
+      after close, including whether readiness was observed, actual code/signal and
+      fixture termination request. Startup failure must clean its own child before
+      rejecting. No detached tasks or ambient-process termination.
 - [x] In `native-streaming-fixture.mjs`, exact
-  `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1` selects this receiver instead of the owned
-  MediaMTX sink. Keep the same owned SRT ingest, worker, scoring and media gates.
-  Await recorder readiness before worker startup; collect its MP4 only after worker
-  stop and receiver natural exit. Failure cleanup joins both children before
-  removing owned containers. With the flag absent, preserve the comparative
-  MediaMTX fixture. This is a local test endpoint, not a public authenticated server.
+      `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1` selects this receiver instead of the owned
+      MediaMTX sink. Keep the same owned SRT ingest, worker, scoring and media gates.
+      Await recorder readiness before worker startup; collect its MP4 only after worker
+      stop and receiver natural exit. Failure cleanup joins both children before
+      removing owned containers. With the flag absent, preserve the comparative
+      MediaMTX fixture. This is a local test endpoint, not a public authenticated server.
 - [x] Test readiness without network probing, early exit/spawn failure, startup
-  timeout, close-before-finish, repeated joins, natural EOF, explicit failure on
-  nonzero/signal/empty output, and TERM/KILL cleanup. Verify native selection through
-  the maintained fixture boundary where practical; full tool suite and both reviews.
-- [ ] Recheck all three replay MP4s for both video and audio packet completeness
-  against the publisher stats. Then one isolated native run with the flag enabled,
-  retaining complete source-frame, A/V, scoring, archive and terminal comparisons.
-  Preserve the previous sink's deficits and avoid claiming beyond this local scope.
+      timeout, close-before-finish, repeated joins, natural EOF, explicit failure on
+      nonzero/signal/empty output, and TERM/KILL cleanup. Verify native selection through
+      the maintained fixture boundary where practical; full tool suite and both reviews.
+- [x] Recheck all three replay MP4s for both video and audio packet completeness
+      against the publisher stats. Then one isolated native run with the flag enabled,
+      retaining complete source-frame, A/V, scoring, archive and terminal comparisons.
+      Preserve the previous sink's deficits and avoid claiming beyond this local scope.
 
 Implementation verification: 26 focused recorder tests and all 189 tool tests pass.
 Review caught and fixed a real Node execFile cancellation hang: AbortSignal can
@@ -351,3 +348,39 @@ track offset metadata. Only this test recorder gains `+delay_moov`; source and
 worker media arguments and acceptance thresholds are unchanged. The argument
 regression failed before the fix; all 189 tools pass after it (`offset-{red,green}`
 logs). Review cleared the bounded fix; another isolated native run is pending.
+
+### Passing independent-recorder native qualification
+
+`native-app-lyB1el` at efcda56 passes the maintained iPhone 14 / iOS 17.5 native
+streaming, scoring, archive/export, full A/V decode, cadence, sync, observation and
+worker-report-age gates. Command log: `direct-rtmp-recorder-native-offset.log`.
+`terminal-comparison.json` and its adjacent reproducible comparison script verify:
+
+- Clean archive: 1308 consecutive frames 0..1307, 30 fps, no source loss; A/V end
+  difference +4.000 ms. All 2616 samples accepted/written, zero rejected/dropped,
+  peak queue one item/3200 bytes, finished with complete diagnostic coverage.
+- Live: 894 consecutive frames 228..1121, about 30 fps, no interior source loss;
+  all 894 worker decoded/output-progress frames retained. Native encoded range
+  168..1121 contains 954 frames: the separately observed 60-frame acquisition
+  interval is explicit, and no encoded tail remains absent from the saved stream.
+- Live A/V marker maximum offset 65.25 ms; end difference +12.327 ms. The initial
+  978 ms audio lead is within the existing keyframe-acquisition allowance. Native
+  scoring changes 346 overlay pixels; both age proofs match independent API windows.
+- Recorder readiness observed, natural exit 0, no termination requested. Worker
+  pipeline DID receive SIGTERM and exited 255; telemetry ended with valid counts.
+  This is complete observed frame delivery, not a claim of natural FFmpeg EOF.
+  Worker wrapper exited 0; bounded terminal evidence has no invalid/oversized/omitted
+  events or incomplete line. All owned resources were cleaned up.
+
+This qualifies the opt-in recorder for this local short fixture. It does not resolve
+the earlier archive overflow, prove exact causes of every prior MediaMTX deficit,
+or establish sustained recording, real camera/Watch networking, higher profiles,
+adaptive behavior or additional GPU/cloud hosts.
+
+Next bounded work: use this qualified opt-in endpoint when investigating sustained
+native archive recording. First make frame-tail comparison a maintained assertion
+for that endpoint and add a bounded duration override to the native fixture without
+relaxing current media gates; then collect an isolated longer run with archive
+pressure diagnostics. Preserve failures and inspect pressure before changing queue
+limits or capture pacing. Physical pairing still requires an available device;
+continue simulator and portable-worker work while devices remain unavailable.

@@ -19,7 +19,7 @@ Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-w
 | Full FFmpeg      | `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`, 8.1.2; SRT, drawtext, VideoToolbox present |
 | XcodeGen         | 2.46.0 installed during milestone 0                                                    |
 | iOS runtimes     | Includes 17.5, 18.5, 26.2                                                              |
-| watchOS runtimes | Includes 10.0, 10.5, 11.5, and 26.2                                                   |
+| watchOS runtimes | Includes 10.0, 10.5, 11.5, and 26.2                                                    |
 | Device types     | iPhone 14, Ultra 2, Series 7 41 mm, and newer devices available                        |
 
 A three-second synthetic 1080p/30 VideoToolbox job completed 90 frames at about 8.9x
@@ -419,3 +419,26 @@ and private footage from logs. Preserve local artifacts for review without uploa
 Report separately: implementation present, automated test passed, simulated behavior,
 physical-device behavior, and platform qualification. No green unit suite substitutes
 for a recovered phone recording or sustained real-media test.
+
+## Independent native RTMP test recorder
+
+For terminal frame measurement, run the native streaming fixture with its qualified
+local FFmpeg receiver:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1 pnpm test:native-streaming
+```
+
+The exact flag selects an owned loopback RTMP receiver and retains the existing SRT
+ingest, worker and all media/scoring gates. With the flag absent, the comparative
+MediaMTX recording endpoint remains selected. The receiver stream-copies A/V into
+fragmented MP4 with initial track offsets preserved; collection requires natural
+exit 0 and a nonempty recording. Startup and cleanup join owned processes.
+`direct-rtmp-recorder.json` records readiness, exit and fixture termination status.
+This unauthenticated loopback endpoint is only a test fixture.
+
+The short iPhone 14 / iOS 17.5 qualification `native-app-lyB1el` saves all 894 worker
+video frames with no missing encoded tail and a complete clean local archive. It
+is not sustained or physical-device qualification. See the
+[native tail evidence](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
