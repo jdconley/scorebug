@@ -79,10 +79,16 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '-pix_fmt',
     'yuv420p',
   );
-  // Cap higher-rate sources without inflating a lower input cadence to the profile limit.
-  if (profile) video.push('-fpsmax', String(profile.fps));
+  // Preserve acquisition gaps on the common A/V timeline. Auto/CFR can pad
+  // early audio with duplicates of the first video frame; VFR never invents frames.
+  // Select at most one frame per cap interval, retaining source PTS. Half an
+  // input timebase tick prevents timestamp rounding from skipping boundary frames.
+  video.push('-fps_mode', 'vfr', '-enc_time_base:v', '-1');
+  const cap = profile
+    ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+TB/2)*${profile.fps}),floor((prev_selected_t-start_t+TB/2)*${profile.fps}))',`
+    : '';
   const filter = profile
-    ? `scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`
+    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`
     : drawtext;
 
   return [

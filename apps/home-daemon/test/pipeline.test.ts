@@ -54,7 +54,10 @@ it('selects real VideoToolbox without silent software fallback and applies the o
   expect(args).toContain('h264_videotoolbox');
   expect(args[args.indexOf('-allow_sw') + 1]).toBe('0');
   expect(args[args.indexOf('-b:v') + 1]).toBe('3000k');
-  expect(args[args.indexOf('-fpsmax') + 1]).toBe('30');
+  expect(args[args.indexOf('-fps_mode') + 1]).toBe('vfr');
+  expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('-1');
+  expect(args).not.toContain('-fpsmax');
+  expect(args[args.indexOf('-vf') + 1]).toContain('select=');
   expect(args).not.toContain('-r');
   expect(args[args.indexOf('-vf') + 1]).toContain('scale=1280:720');
   expect(args[args.indexOf('-vf') + 1]).toContain('expansion=none');

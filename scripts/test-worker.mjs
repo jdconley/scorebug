@@ -19,6 +19,7 @@ import {
 } from './media-frame-codes.mjs';
 import { sourceAudioExpression } from './media-sync.mjs';
 import { measureSoak } from './media-soak.mjs';
+import { qualifyWorkerTimestamps } from './test-worker-timestamps.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const encoder = process.argv[2] ?? 'software';
@@ -199,6 +200,11 @@ async function frameCodes(path, label) {
 
 try {
   await mkdir(artifact, { recursive: true });
+  const timestampResults = await qualifyWorkerTimestamps({ encoder });
+  await writeFile(join(artifact, 'timestamps.json'), JSON.stringify(timestampResults, null, 2));
+  console.log(
+    'Worker preserves acquisition gaps, source frame identity, and common A/V timestamps.',
+  );
   const profileScore = join(directory, 'profile-score.txt');
   await writeFile(profileScore, 'HOME 0-0 AWAY');
   const duplicated = join(directory, 'duplicated.mp4');
@@ -274,16 +280,32 @@ try {
     const probe = JSON.parse(
       await mediaCommand(
         ffprobe,
-        ['-v', 'error', '-select_streams', 'v:0', '-show_streams', '-of', 'json', destination],
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_frames',
+          '-show_entries',
+          'frame=best_effort_timestamp_time',
+          '-of',
+          'json',
+          destination,
+        ],
         'profile rate probe',
       ),
     );
-    const [numerator, denominator] = probe.streams[0].avg_frame_rate.split('/').map(Number);
-    assert.equal(
-      numerator / denominator,
-      Math.min(rate, 30),
-      'Profile changed lower input cadence or exceeded cap',
-    );
+    // VFR mux metadata can retain the input's nominal frame rate. Qualify the
+    // actual decoded frame count and presentation cadence instead.
+    const times = probe.frames.map((frame) => Number(frame.best_effort_timestamp_time));
+    const expectedRate = Math.min(rate, 30);
+    assert.equal(times.length, 2 * expectedRate, 'Profile changed source cadence or exceeded cap');
+    for (let index = 1; index < times.length; index++) {
+      assert.ok(
+        Math.abs(times[index] - times[index - 1] - 1 / expectedRate) <= 0.002,
+        'Profile encoded an unexpected presentation cadence',
+      );
+    }
   }
   console.log('Real encoder cadence: 60fps capped at 30; 25fps preserved.');
   const ingestPort = await port(true);
