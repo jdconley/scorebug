@@ -13,6 +13,7 @@ import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
+import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
@@ -26,6 +27,7 @@ let api;
 let proxy;
 let active;
 let interrupted = false;
+let nativeFailed = false;
 function killActive() {
   if (active?.pid) {
     try {
@@ -38,7 +40,12 @@ for (const signal of ['SIGINT', 'SIGTERM'])
     interrupted = true;
     killActive();
   });
-async function run(binary, args, name, { timeout = 120_000, cleanup = false } = {}) {
+async function run(
+  binary,
+  args,
+  name,
+  { timeout = 120_000, cleanup = false, logOutput = true } = {},
+) {
   if (interrupted && !cleanup) throw new Error('Native app validation interrupted');
   return await new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
@@ -70,7 +77,10 @@ async function run(binary, args, name, { timeout = 120_000, cleanup = false } = 
       clearTimeout(timer);
       active = undefined;
       try {
-        await writeFile(join(artifact, `${name}.log`), output + errors);
+        await writeFile(
+          join(artifact, `${name}.log`),
+          logOutput ? output + errors : `exit=${code}; timedOut=${timedOut}\n`,
+        );
         if (code !== 0)
           throw new Error(
             `${name} ${timedOut ? 'timed out' : `failed (${code})`}; see ${artifact}/${name}.log`,
@@ -434,6 +444,12 @@ try {
     `PASS: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
+  nativeFailed = true;
+  if (simulator) {
+    await preserveNativeFailureArtifacts({ simulator, artifact, run }).catch(() => {
+      console.warn('Secondary failure: native app evidence preservation could not finish.');
+    });
+  }
   if (streaming) {
     await run(
       'xcrun',
@@ -477,6 +493,11 @@ try {
       cleanupErrors.push(error);
     }
   }
-  if (cleanupErrors.length)
-    throw new AggregateError(cleanupErrors, 'Owned native validation cleanup failed');
+  if (cleanupErrors.length) {
+    if (nativeFailed)
+      console.warn(
+        `Secondary failure: ${cleanupErrors.length} owned native validation cleanup steps failed.`,
+      );
+    else throw new AggregateError(cleanupErrors, 'Owned native validation cleanup failed');
+  }
 }

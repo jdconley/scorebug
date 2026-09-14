@@ -39,6 +39,20 @@ separately; its native qualification gate remains open.
 - Test the whitelist, missing paths, symlinks, budgets, partial read/copy failure,
   and source preservation. Run tooling tests and review before committing.
 
+Checkpoint 1 is implemented and approved by specification and quality review.
+`scripts/native-failure-artifacts.mjs` copies into a fresh `failure-app-data-*`
+directory and writes an explicit best-effort manifest. Limits include ancestor
+inspections. The runner captures these files before owned simulator cleanup and
+retains the original native failure even when diagnostic collection or cleanup
+also fails. Fourteen focused tests and all 149 tooling tests pass, including a
+regression executing the actual runner catch/finally path. Syntax and diff checks
+pass. Logs: `artifacts/qa/native-failure-artifacts-{red,green,tools}.log`.
+
+No native media rerun has occurred since the initial overflow; first add the cause
+measurements below. These new preservation hooks cannot recover files already
+removed by the earlier run's cleanup, and copied fragments still need recovery and
+full decode before their media validity is established.
+
 ## Checkpoint 2: Capture bounded cause measurements
 
 Define a small, explicit DEBUG qualification snapshot with recording identity and
@@ -51,6 +65,33 @@ unbounded samples, credentials, or changes to media admission and retry policy.
 Design exact ownership, bounded aggregation, export timing and deterministic
 failure tests before implementation. Reuse the newly preserved QA/recording paths.
 Do not infer a cause from only a high-water mark or a successful later retry.
+
+Source inspection identifies the measurements needed for that design:
+
+- `FixtureCameraSource` waits for `began + frame/30` and generates the next immutable
+  frame/audio pair even when that deadline is already past. Measure deadline
+  lateness and generation time separately from callback/offer time. Preserve this
+  pacing behavior while measuring it; skipping or slowing frames would change the
+  experiment.
+- `RecordingSession.offer` is the only place that latches `.overflow`. Capture its
+  first rejected kind/retained bytes, admission reason and pre-cancellation queue
+  occupancy, not only the emptied mailbox visible later. Existing peak/accepted/
+  rejected/dropped statistics should accompany it.
+- `RecordingCore.run` retries `sink.append` on false, with a two-second deadline.
+  Measure time awaiting readiness separately from the duration of the synchronous
+  append call. A full producer queue may fail much earlier than that deadline.
+- `SegmentReceiver` synchronously hashes/persists/fsyncs segments. Measure segment
+  persistence duration as a separate consumer-side contributor; a slow append call
+  alone cannot establish whether disk or encoder readiness caused the stall.
+- Use one recording-scoped monotonic owner, short non-reentrant diagnostic locks,
+  bounded recent aggregation and an immutable first-failure snapshot. Never read
+  writer/disk state while holding capture/diagnostic locks. Export once after joined
+  recording shutdown under the explicit simulator qualification flag, into QA.
+
+These are measurement targets, not a completed implementation specification or
+an assertion that any one contributor caused the observed overflow. Before coding,
+review the minimum bounded schema, lock order and disabled-path behavior; test them
+with deterministic producer/consumer timing and controlled writer backpressure.
 
 ## Checkpoint 3: Reproduce, fix from evidence, and requalify
 

@@ -243,3 +243,5 @@ The unchanged 24 MiB queue bounds roughly a quarter-second of 1080p NV12 backlog
 No queue/profile limits changed in response. Preserve failed recordings and bounded
 queue/timing evidence before another qualification attempt. This checkpoint's
 running-app gate remains open; the source commit does not mark it complete.
+Continue with the [archive overflow diagnosis plan](2026-09-14-native-archive-overflow-diagnosis.md)
+before another native qualification attempt.

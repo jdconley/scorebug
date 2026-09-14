@@ -159,3 +159,10 @@ did not qualify shutdown, export, decoded media, or report age. The screenshot a
 app diagnostics are retained. More queue/timing evidence and failed-recording
 preservation are needed to distinguish encoder pressure from source scheduling;
 the unchanged queue limit must not be increased merely to make the run pass.
+The [diagnosis plan](superpowers/plans/2026-09-14-native-archive-overflow-diagnosis.md)
+tracks failure preservation, bounded cause measurements, and requalification.
+Failure preservation is now implemented and reviewed: the runner retains bounded
+copies of only recording/QA data with an explicit partial-copy manifest before
+deleting its owned simulator. It also preserves the original test error when
+diagnostics or cleanup fails. All 149 tooling tests pass (14 focused on this path).
+The earlier recording overflow remains unresolved; no later media pass is claimed.
