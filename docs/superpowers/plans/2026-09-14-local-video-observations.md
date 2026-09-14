@@ -77,6 +77,28 @@ counter under its current name and meaning.
    and drain intervals. Confirm telemetry does not alter archive admission or
    continuity. Obtain specification and quality reviews at each integration boundary.
 
+## Encoder callback boundary
+
+The SDK hook is optional and synchronous, supplied at stream construction and
+captured strongly with the scalar input PTS for each conversion. A fresh publisher
+and stream remain required for each attempt. The native completion callback may
+run before encoding returns or later on another thread. It must never read a
+replacement observer from mutable codec state or retain the raw input sample.
+
+Notify only for successful, non-dropped compression with a ready, single-sample
+compressed video buffer containing nonempty compressed data. Both input and output
+PTS must be numeric with positive timescales, share an epoch, and compare equal
+rationally. Ready zero-data marker buffers are not completed video frames.
+These checks govern diagnostics only; retain the existing media queue and failure
+behavior. Invoke the observer before downstream queue admission, so an encoded
+frame subsequently rejected by that queue still counts as encoded.
+
+The encoded-stage callback count therefore counts qualifying completion
+notifications, not every native callback or every rejected notification. Neither
+decompression nor compressed passthrough notifies this observer. Keep frame
+reordering disabled: native callbacks arrive in decode order, and changing that
+setting requires separate qualification of advancing-PTS interpretation.
+
 ## Remaining work after this slice
 
 Source-range correlation, full report-transit age, time-weighted live queue pressure,
@@ -91,5 +113,15 @@ tests and all 107 Media package tests pass, including boundary, gap, discontinui
 overflow, invalid clock, malformed timescale, and concurrent owner coverage. See
 [the telemetry contract](../../adaptive-telemetry.md) for exact bounds and evidence.
 The unsigned combined iPhone/Watch Release build passes, and independent
-specification and quality reviews approve checkpoint 1. Capture and encoder
-integration checkpoints remain open.
+specification and quality reviews approve checkpoint 1.
+
+## Capture integration evidence
+
+Checkpoint 2 connects the optional observer before archive admission and retains
+one attempt attachment across the callback. Replacement, detach, and closure
+invalidate old publication admission while keeping the old owner available for
+encoder drain. Eight new integration tests pass, including deterministic callback
+interleavings; all 115 Media package tests and the unsigned combined iPhone/Watch
+Release build pass. Logs are under `artifacts/qa/capture-video-observation-*`.
+Encoder and app/controller integration remain open; existing app calls supply no
+observer yet.

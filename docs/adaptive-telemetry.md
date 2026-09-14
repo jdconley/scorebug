@@ -75,6 +75,26 @@ The 18 focused tests and all 107 Media package tests pass. Evidence is under
 malformed CoreMedia timescales and concurrency-safe clock admission. The unsigned
 combined iPhone/Watch Release build also passes; its log is
 `artifacts/qa/local-video-observation-ios-release.log`. Independent specification
-and quality reviews approved this isolated checkpoint. This component
-is not connected to capture, VideoToolbox, polling, or the quality controller yet;
-it supplies no new production runtime metric merely by existing.
+and quality reviews approved this isolated checkpoint.
+
+## Capture callback integration
+
+Capture now resolves an immutable publishing attachment and observes ready video
+before archive admission. A rejected archive sample remains visible to the capture
+counter. Audio and direct publishing-tap offers do not count as capture video.
+An owner can attach while its publisher is still prepared or starting; observation
+rejection never gates either media branch.
+
+Replacement, detach, and tap closure synchronously invalidate the old attachment's
+publication admission. A callback already observed under the old owner cannot be
+rerouted to a new publisher. The old owner stays open for encoder drain, and the
+controller remains responsible for closing it afterward. The caller retains each
+publishing session through its awaited stop, as required by the publishing lifecycle.
+
+Eight new integration tests cover mixed audio/video, blocked startup, archive
+rejection and teardown parity, invalid/closed observers, source quiescence, and
+replacement/detach/close interleavings. All 115 Media tests and the unsigned combined
+iPhone/Watch Release build pass; evidence is under
+`artifacts/qa/capture-video-observation-*`. App construction still attaches no
+observation owner. VideoToolbox and polling integration remain open, and no new
+production runtime metric or adaptive setting is enabled yet.

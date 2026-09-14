@@ -137,8 +137,11 @@ private final class CaptureIngress: @unchecked Sendable {
     func offer(_ sample: CapturedMediaSample) -> Bool {
         lock.withLock {
             guard acceptsSamples, !closed else { return false }
+            // Count admitted capture callbacks before archival rejection can
+            // terminate this attempt. Keep one attachment across both branches.
+            let attachment = publishingTap?.beginCapture(sample)
             guard session.offer(sample) else { return session.snapshot.failure != nil }
-            publishingTap?.offer(sample)
+            attachment?.offer(sample)
             return false
         }
     }
