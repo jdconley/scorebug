@@ -13,6 +13,8 @@ apply to queued buffers; each consumer can additionally retain one delivered sam
 Invalid or oversized offers cannot evict valid queued work.
 
 The shared `RecordingSession` owns the archive queue and its single consumer.
+The fixture now drives it through the same [capture-source owner](native-capture-source.md)
+as the iPhone adapter, including explicit source-clock startup and callback quiescence.
 It preserves accepted work and rejects overflow explicitly. The
 fixture treats any archive rejection as failure. The live queue discards its oldest
 queued samples when full. Neither network setup nor publisher failure cancels the

@@ -18,6 +18,30 @@ private final class PublisherHealth: @unchecked Sendable {
     func fail() { lock.withLock { failed = true } }
 }
 
+/// The file reader is driven by the real-time loop below. This source exercises
+/// the same prepare/start/quiesce contract used by the iPhone camera adapter.
+private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private let origin: CMTime
+    private var callbacks: CaptureSourceCallbacks?
+    private var delivering = false
+    init(origin: CMTime) { self.origin = origin }
+    func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
+        lock.withLock { self.callbacks = callbacks }
+        return origin
+    }
+    func start() async throws { lock.withLock { delivering = true } }
+    func stop() async { lock.withLock { delivering = false; callbacks = nil } }
+    func submit(_ sample: CapturedMediaSample) -> Bool {
+        lock.withLock {
+            guard delivering, let callbacks else { return false }
+            callbacks.sample(sample)
+            return true
+        }
+    }
+    func fail() { lock.withLock { callbacks?.event(.failed) } }
+}
+
 @main struct DualOutputSmoke {
     static func main() async {
         do {
@@ -89,8 +113,10 @@ private final class PublisherHealth: @unchecked Sendable {
         let origin = min(firstVideo.presentationTimeStamp, firstAudio.presentationTimeStamp)
         let originSeconds = origin.seconds
         let archive = try SegmentedArchiveWriter(directory: directory)
-        let recording = try RecordingSession(sink: SegmentedArchiveSink(writer: archive))
-        try await recording.start(at: origin)
+        let archiveSession = try RecordingSession(sink: SegmentedArchiveSink(writer: archive))
+        let captureSource = FixtureCaptureSource(origin: origin)
+        let recording = CaptureRecording(source: captureSource, session: archiveSession)
+        try await recording.start()
         let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: 12 * 1024 * 1024, overflowPolicy: .dropOldest)
         let publisherTask = Task.detached {
             guard let url else {
@@ -174,7 +200,7 @@ private final class PublisherHealth: @unchecked Sendable {
                 let elapsed = buffer.presentationTimeStamp.seconds - originSeconds
                 try await ContinuousClock().sleep(until: started.advanced(by: .seconds(elapsed)))
                 let sample = try CapturedMediaSample(sampleBuffer: buffer, kind: isVideo ? .video : .audio)
-                guard recording.offer(sample) else { throw Failure.archiveOverflow }
+                guard captureSource.submit(sample), recording.snapshot.failure == nil else { throw Failure.archiveOverflow }
                 if url != nil { _ = liveQueue.offer(sample, bytes: sample.retainedByteCount) }
                 if isVideo {
                     capturedVideo += 1
@@ -202,7 +228,7 @@ private final class PublisherHealth: @unchecked Sendable {
                       "archiveRejected": recording.snapshot.queue.rejectedCount])
             try await publisherTask.value
         } catch {
-            recording.failCapture(reason: "Fixture source failed")
+            captureSource.fail()
             liveQueue.cancel(); publisherTask.cancel()
             _ = try? await recording.stop()
             _ = await publisherTask.result

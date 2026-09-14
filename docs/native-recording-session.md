@@ -33,14 +33,15 @@ stalled-receiver, and unavailable-receiver scenarios. See the
 [real media checks](native-dual-output.md). Deterministic session tests cover
 backpressure, queue bounds, concurrent stop, startup/failure races, and cancellation.
 
-The shared media package passes 60 tests, including 18 recording-session regressions
-and native NV12/PCM encoding. Repeated SRT validation also uncovered an upstream
+The shared media package passes 71 tests, including 18 recording-session regressions,
+11 capture-owner lifecycle tests, and native NV12/PCM encoding. Repeated SRT validation also uncovered an upstream
 startup audio-loss defect; it does not affect the clean archive. The streaming
 fixture correctly rejected runs that exceeded its coverage budget. The
 [local SDK correction](sdk-startup-patch.md) now passes all five real-media cases,
 including recording with a nonzero source clock.
 
-This is shared lifecycle code, not yet the camera application's capture adapter or
-recordings UI. AVFoundation camera setup, audio-route handling, app interruption
-reporting, on-device performance, and recovery/export presentation remain in
-milestone 3.
+The [capture owner and iPhone source](native-capture-source.md) now connect this
+session to an injectable source, with explicit camera startup, callback quiescence,
+and capture/audio interruption reporting. The camera application still needs to
+adopt the adapter and present recordings, recovery, playback, and export. Physical
+device performance and interruption behavior remain in milestone 3.

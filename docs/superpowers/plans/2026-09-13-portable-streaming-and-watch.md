@@ -230,8 +230,13 @@ gate while the archive remained complete. The [maintained local correction](../.
 now passes 35 vendor tests, three PCM clock tests, ARM64 Simulator/iPhone executable
 links, and all five real-media scenarios. Both normal streams retain frames 0–419;
 the nonzero-clock archive has no blank clock lead-in. Coverage and sync limits
-remain unchanged. Next: connect the recording lifecycle to an injectable capture
-source and the native app, then qualify production publishing and sustained load.
+remain unchanged. The [capture owner and iPhone adapter](../../native-capture-source.md)
+now provide an injectable source, explicit common-clock startup, callback quiescence
+before archive drain, and drop/interruption failure reporting. Eleven new lifecycle
+tests bring the shared media suite to 71 tests. Camera configuration runs off the
+UI thread and requires an explicit recording action for permissions. Next: adopt
+the adapter in the native app with Film/Score roles and recordings/recovery UI,
+then qualify Simulator workflows, production publishing, and sustained load.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.
