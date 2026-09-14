@@ -55,6 +55,24 @@ full decode before their media validity is established.
 
 ## Checkpoint 2: Capture bounded cause measurements
 
+The [diagnostic specification](../specs/2026-09-14-archive-pressure-diagnostics.md)
+now defines the implementation. Independent design review approved bounded completed
+span rings with active operations, with explicit count-based retention, atomic
+rejection occupancy, overlapping timing semantics, bounded persistence concurrency,
+and partial delegate work after cancellation. Routine diagnostic design choices
+remain within the user's authorized autonomous implementation scope.
+
+Implementation order:
+
+1. Add the DEBUG owner/snapshots and deterministic timing/bounds tests. Add atomic
+   mailbox rejection statistics, prepared session/writer attachments, and consumer/
+   persistence hooks with behavioral pressure regressions. Review this source boundary.
+2. Attach the fixture source and Film owner; join the QA export and retain it in
+   the native harness. Test scope, failure, disabled state and restart/export ordering.
+3. Finish package/model/tooling checks, Release exclusion and source reviews, then
+   run one isolated native reproduction with unchanged media gates. Continue to
+   checkpoint 3 based on actual measurements, not a successful retry alone.
+
 Define a small, explicit DEBUG qualification snapshot with recording identity and
 monotonic timing. Retain existing queue peak/accepted/rejected/dropped counts, plus
 enough producer scheduling and consumer readiness/append timing to distinguish a
