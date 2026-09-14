@@ -189,3 +189,10 @@ All replay evidence is under `native-app-24AFo1/rate-replay/`. The source is syn
 pixel noise, and encoder behavior on it must not be generalized to real sports
 footage. Repeat with archive/QA evidence before selecting changes to the workload,
 transport or encoder. Three-/ten-minute motion holds remain pending.
+
+The unchanged repeat at `6f1bcd5`, `native-app-KIC4hs`, also failed. Its archive
+passed all media checks with 1,190 consecutive frames at 30 fps, but live media
+failed A/V tail coverage and had damaged source identities. Preservation succeeded
+and retained complete archive/QA evidence. See the [failure-evidence details](2026-09-14-motion-failure-evidence.md)
+and the separate [structured calibration plan](2026-09-14-structured-motion-calibration.md).
+The original pixel-noise workload remains available as an unresolved overload case.

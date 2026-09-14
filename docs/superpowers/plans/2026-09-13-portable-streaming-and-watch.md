@@ -351,6 +351,11 @@ with visible live-image corruption, worker restarts and measured 46.278 Mbps out
 against a 6 Mbps request. Archive evidence preservation also failed during simulator
 teardown; a state transition race is suspected. Follow the [failure-evidence plan](2026-09-14-motion-failure-evidence.md)
 before longer motion runs or enabling adaptation.
+The unchanged repeat `native-app-KIC4hs` at `6f1bcd5` preserved a complete, clean
+1,190-frame local archive while live media failed A/V tail coverage and frame
+identity checks. Failure evidence preservation now works; its bounded shutdown
+retry is unit-tested. A separate [structured workload calibration](2026-09-14-structured-motion-calibration.md)
+is planned near the intended rates, preserving the original overload case.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 
