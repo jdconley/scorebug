@@ -33,6 +33,9 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         public let rejectedCount: Int
         public let droppedCount: Int
         public let rejectionReason: RejectionReason?
+        #if DEBUG
+        public internal(set) var rejectionStatistics: Statistics? = nil
+        #endif
     }
 
     /// Counts describe elements, and cumulative counters saturate at `Int.max`.
@@ -84,12 +87,7 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     }
 
     public var statistics: Statistics {
-        lock.withLock {
-            Statistics(currentItems: queue.count, currentBytes: queuedBytes,
-                       peakItems: peakItems, peakBytes: peakBytes,
-                       acceptedCount: acceptedCount, rejectedCount: rejectedCount,
-                       droppedCount: droppedCount, hasPendingConsumer: waiter != nil)
-        }
+        lock.withLock { statisticsLocked() }
     }
 
     /// Immediately admits or rejects the element; it never waits for a consumer.
@@ -213,7 +211,20 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
 
     private func reject(_ reason: RejectionReason) -> Admission {
         rejectedCount = Self.saturatingAdd(rejectedCount, 1)
+        #if DEBUG
+        var admission = Admission(acceptedCount: 0, rejectedCount: 1, droppedCount: 0, rejectionReason: reason)
+        admission.rejectionStatistics = statisticsLocked()
+        return admission
+        #else
         return Admission(acceptedCount: 0, rejectedCount: 1, droppedCount: 0, rejectionReason: reason)
+        #endif
+    }
+
+    private func statisticsLocked() -> Statistics {
+        Statistics(currentItems: queue.count, currentBytes: queuedBytes,
+                   peakItems: peakItems, peakBytes: peakBytes,
+                   acceptedCount: acceptedCount, rejectedCount: rejectedCount,
+                   droppedCount: droppedCount, hasPendingConsumer: waiter != nil)
     }
 
     private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {

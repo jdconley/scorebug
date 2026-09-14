@@ -73,6 +73,22 @@ Implementation order:
    run one isolated native reproduction with unchanged media gates. Continue to
    checkpoint 3 based on actual measurements, not a successful retry alone.
 
+Step 1 implementation adds the bounded DEBUG owner, atomic mailbox rejection
+statistics, and session/native persistence hooks. All 130 Media tests pass (101
+XCTest and 29 Swift Testing), including 39 focused owner/session/writer tests.
+Logs: `artifacts/qa/archive-pressure-core-{red,green,media}.log`. Independent
+specification and quality reviews approve this source boundary. The Media Release
+build also passes (`archive-pressure-core-release.log`). Fixture/Film ownership,
+joined export and harness collection are next; native qualification is still open.
+
+The actual storage gate exposed a runtime-specific test assumption: on this Mac,
+native cancellation waited for the gated persistence callback. The partial-close
+regression therefore uses a protocol-valid non-joining test sink around the actual
+native writer/receiver/store, then releases and cleans up native work. It proves
+diagnostics tolerate unfinished persistence without claiming that this Mac's native
+cancellation returns early. Counter saturation is tested through the shared helper;
+the owner's overflow-flag assignment is checked by source inspection.
+
 Define a small, explicit DEBUG qualification snapshot with recording identity and
 monotonic timing. Retain existing queue peak/accepted/rejected/dropped counts, plus
 enough producer scheduling and consumer readiness/append timing to distinguish a
@@ -106,10 +122,10 @@ Source inspection identifies the measurements needed for that design:
   writer/disk state while holding capture/diagnostic locks. Export once after joined
   recording shutdown under the explicit simulator qualification flag, into QA.
 
-These are measurement targets, not a completed implementation specification or
-an assertion that any one contributor caused the observed overflow. Before coding,
-review the minimum bounded schema, lock order and disabled-path behavior; test them
-with deterministic producer/consumer timing and controlled writer backpressure.
+These measurement targets are now defined by the reviewed diagnostic specification
+linked above. They do not establish which contributor caused the observed overflow.
+Verify the schema, lock order and disabled path with deterministic producer/consumer
+timing and controlled writer backpressure before the native reproduction.
 
 ## Checkpoint 3: Reproduce, fix from evidence, and requalify
 

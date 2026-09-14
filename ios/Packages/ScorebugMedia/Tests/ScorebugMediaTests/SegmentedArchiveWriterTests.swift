@@ -3,6 +3,91 @@ import XCTest
 @testable import ScorebugMedia
 
 @MainActor final class SegmentedArchiveWriterTests: XCTestCase {
+    #if DEBUG
+    func testDiagnosticsCaptureActualPersistenceAtPressureAndCloseBeforeLateDelegateEnd() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = PersistenceGate()
+        defer { gate.release() }
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "persist-pressure", now: clock.now)
+        let profile = ArchiveProfile(width: 320, height: 240, videoBitRate: 200_000, segmentDuration: 1)
+        let writer = try SegmentedArchiveWriter(directory: root, profile: profile, storeFailureInjection: { point in
+            if case .beforeCommit = point {
+                gate.blockOnce()
+                throw ArchiveWriterError.storageFailed
+            }
+        })
+        defer { gate.release(); writer.cancel() }
+        XCTAssertTrue(writer.attachArchivePressureDiagnostics(owner))
+        XCTAssertFalse(writer.attachArchivePressureDiagnostics(owner))
+        // Model the protocol-supported case where cancellation does not join the
+        // native delegate. This Mac's native cancelWriting may itself join it.
+        let session = try RecordingSession(sink: NonJoiningNativeSink(writer: writer), maxItems: 2)
+        XCTAssertTrue(session.attachArchivePressureDiagnostics(owner))
+        try await session.start(at: .zero)
+        XCTAssertFalse(writer.attachArchivePressureDiagnostics(ArchivePressureDiagnostics(recordingID: "late")))
+        var offered = 0
+        outer: for frame in 0..<90 {
+            for (buffer, kind) in [(try makeVideoSample(frame: frame, profile: profile), CapturedMediaSample.Kind.video),
+                                   (try makeAudioSample(frame: frame, profile: profile), CapturedMediaSample.Kind.audio)] {
+                if gate.entered { break outer }
+                XCTAssertTrue(session.offer(try CapturedMediaSample(sampleBuffer: buffer, kind: kind)))
+                offered += 1
+                let deadline = ContinuousClock.now + .seconds(5)
+                while session.snapshot.writtenSamples < offered && !gate.entered && ContinuousClock.now < deadline {
+                    await Task.yield()
+                }
+                XCTAssertTrue(session.snapshot.writtenSamples == offered || gate.entered)
+            }
+        }
+        XCTAssertTrue(gate.entered, "Actual AVAssetWriter delegate must reach the existing store failure-injection seam")
+        clock.advance(2)
+        let sample = try CapturedMediaSample(sampleBuffer: makeAudioSample(frame: 91, profile: profile), kind: .audio)
+        // The delegate is blocked in persistence; append readiness may or may not also be blocked.
+        for _ in 0..<100 where session.snapshot.failure == nil { _ = session.offer(sample) }
+        XCTAssertEqual(session.snapshot.failure, .overflow)
+        let failure = try XCTUnwrap(owner.snapshot.firstFailure)
+        XCTAssertEqual(failure.observations.activePersistences.count, 1)
+        XCTAssertEqual(failure.observations.activePersistences.first?.elapsed, 2)
+        XCTAssertNil(failure.observations.activePersistences.first?.result)
+        do { _ = try await session.stop(); XCTFail("Overflow must win") } catch {}
+        let closed = owner.close(snapshot: session.snapshot)
+        XCTAssertEqual(closed.profile, profile)
+        XCTAssertTrue(closed.coverage.persistence)
+        XCTAssertEqual(closed.observations.activePersistences.count, 1)
+        let reads = clock.reads
+        gate.release()
+        await fulfillment(of: [gate.exited], timeout: 5)
+        // Observe receiver failure only after store cleanup and the late diagnostic
+        // end have returned, so temporary-directory removal cannot race storage.
+        let delegateDeadline = ContinuousClock.now + .seconds(5)
+        while writer.snapshot.failure != .storageFailed && ContinuousClock.now < delegateDeadline { await Task.yield() }
+        XCTAssertEqual(writer.snapshot.failure, .storageFailed)
+        clock.advance(5)
+        XCTAssertEqual(owner.snapshot, closed)
+        XCTAssertEqual(owner.snapshot.firstFailure, failure)
+        XCTAssertEqual(clock.reads, reads)
+        // Complete real writer cleanup after releasing the storage callback.
+        writer.cancel()
+    }
+
+    func testUnattachedDiagnosticsClockIsNeverReadByNativeWriter() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "unused-writer", now: clock.now)
+        let reads = clock.reads
+        let writer = try SegmentedArchiveWriter(directory: root,
+            profile: ArchiveProfile(width: 320, height: 240, videoBitRate: 200_000, segmentDuration: 1))
+        try writer.start(at: .zero)
+        try await appendGeneratedMedia(to: writer)
+        _ = try await writer.finish()
+        XCTAssertEqual(clock.reads, reads)
+        XCTAssertFalse(owner.snapshot.coverage.persistence)
+    }
+    #endif
+
     func testFinishRejectsRecordingWithoutBothTracks() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -255,3 +340,31 @@ private final class FinishResult: @unchecked Sendable {
     var value: Result<RecoveredArchive, Error>? { lock.withLock { result } }
     func set(_ value: Result<RecoveredArchive, Error>) { lock.withLock { result = value } }
 }
+
+#if DEBUG
+private struct NonJoiningNativeSink: RecordingArchiveSink {
+    let writer: SegmentedArchiveWriter
+    func start(at timestamp: CMTime) throws { try writer.start(at: timestamp) }
+    func append(_ sample: CapturedMediaSample) throws -> Bool {
+        try writer.append(sample.sampleBuffer, isVideo: sample.kind == .video)
+    }
+    func finish() async throws -> RecoveredArchive { try await writer.finish() }
+    func cancel() {} // Permitted by the protocol: diagnostic close cannot assume delegate quiescence.
+}
+
+private final class PersistenceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didEnter = false
+    private let semaphore = DispatchSemaphore(value: 0)
+    let exited = XCTestExpectation(description: "persistence gate exited")
+    var entered: Bool { lock.withLock { didEnter } }
+    func blockOnce() {
+        let first = lock.withLock { let first = !didEnter; didEnter = true; return first }
+        if first {
+            XCTAssertEqual(semaphore.wait(timeout: .now() + 10), .success)
+            exited.fulfill()
+        }
+    }
+    func release() { semaphore.signal() }
+}
+#endif

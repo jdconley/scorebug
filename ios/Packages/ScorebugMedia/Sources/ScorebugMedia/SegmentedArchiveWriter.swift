@@ -102,6 +102,16 @@ public final class SegmentedArchiveWriter: @unchecked Sendable {
         self.finishCheckpoint = finishCheckpoint
     }
 
+    #if DEBUG
+    /// Attach once before startup; the receiver retains only this immutable owner reference.
+    @discardableResult public func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics) -> Bool {
+        lock.withLock {
+            guard state == .prepared else { return false }
+            return receiver.attachArchivePressureDiagnostics(owner, profile: profile)
+        }
+    }
+    #endif
+
     public var snapshot: ArchiveWriterSnapshot {
         lock.withLock {
             let storageFailed = receiver.failed
@@ -265,6 +275,16 @@ private final class SegmentReceiver: NSObject, AVAssetWriterDelegate, @unchecked
     let store: ArchiveSegmentStore
     private let lock = NSLock()
     private var failure = false
+    #if DEBUG
+    private var diagnostics: ArchivePressureDiagnostics?
+    func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics, profile: ArchiveProfile) -> Bool {
+        lock.withLock {
+            guard diagnostics == nil, owner.attachPersistence(profile: profile) else { return false }
+            diagnostics = owner
+            return true
+        }
+    }
+    #endif
     var failed: Bool { lock.withLock { failure } }
     init(store: ArchiveSegmentStore) { self.store = store }
 
@@ -274,7 +294,7 @@ private final class SegmentReceiver: NSObject, AVAssetWriterDelegate, @unchecked
         do {
             switch segmentType {
             case .initialization:
-                try store.append(data: data, kind: .initialization)
+                try persist(data: data, kind: .initialization)
             case .separable:
                 let times = (segmentReport?.trackReports ?? []).compactMap { track -> (Double, Double)? in
                     let start = track.earliestPresentationTimeStamp
@@ -285,10 +305,26 @@ private final class SegmentReceiver: NSObject, AVAssetWriterDelegate, @unchecked
                 }
                 let start = times.map(\.0).min()
                 let duration = start.flatMap { first in times.map(\.1).max().map { $0 - first } }
-                try store.append(data: data, kind: .media, startTime: start, duration: duration)
+                try persist(data: data, kind: .media, startTime: start, duration: duration)
             @unknown default:
                 throw ArchiveWriterError.encodingFailed
             }
         } catch { lock.withLock { failure = true } }
+    }
+
+    private func persist(data: Data, kind: ArchiveSegmentKind, startTime: Double? = nil, duration: Double? = nil) throws {
+        #if DEBUG
+        let diagnostics = lock.withLock { self.diagnostics }
+        let token = diagnostics?.persistenceStarted(kind: kind == .initialization ? .initialization : .media, bytes: data.count)
+        do {
+            try store.append(data: data, kind: kind, startTime: startTime, duration: duration)
+            diagnostics?.persistenceFinished(token, result: .success)
+        } catch {
+            diagnostics?.persistenceFinished(token, result: .failure)
+            throw error
+        }
+        #else
+        try store.append(data: data, kind: kind, startTime: startTime, duration: duration)
+        #endif
     }
 }

@@ -3,6 +3,109 @@ import XCTest
 @testable import ScorebugMedia
 
 @MainActor final class RecordingSessionTests: XCTestCase {
+    #if DEBUG
+    func testDiagnosticsFreezeExactOverflowWithBlockedAppendAndIgnoreLaterCompletion() async throws {
+        let gate = RecordingGate()
+        let sink = RecordingTestSink(appendGate: gate)
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "overflow", now: clock.now)
+        let sample = try audio(0)
+        let session = try RecordingSession(sink: sink, maxItems: 2, maxBytes: sample.retainedByteCount * 2)
+        XCTAssertTrue(session.attachArchivePressureDiagnostics(owner))
+        XCTAssertFalse(session.attachArchivePressureDiagnostics(owner))
+        try await session.start(at: .zero)
+        XCTAssertFalse(session.attachArchivePressureDiagnostics(ArchivePressureDiagnostics(recordingID: "late")))
+        XCTAssertTrue(session.offer(sample))
+        await gate.waitUntilEntered()
+        clock.advance(3)
+        XCTAssertTrue(session.offer(try audio(1)))
+        XCTAssertTrue(session.offer(try audio(2)))
+        XCTAssertFalse(session.offer(try audio(3)))
+        let frozen = try XCTUnwrap(owner.snapshot.firstFailure)
+        XCTAssertEqual(frozen.queue?.currentItems, "2")
+        XCTAssertEqual(frozen.queue?.currentBytes, "6400")
+        XCTAssertEqual(frozen.queue?.rejectedCount, "1")
+        XCTAssertEqual(frozen.queue?.droppedCount, "0")
+        XCTAssertEqual(frozen.rejection, "full")
+        XCTAssertEqual(frozen.sample?.pts.value, "3")
+        XCTAssertEqual(frozen.writtenSamples, "0")
+        XCTAssertEqual(frozen.observations.activeConsumer?.phase, .append)
+        XCTAssertEqual(frozen.observations.activeConsumer?.appendElapsed, 3)
+        XCTAssertEqual(frozen.observations.activeConsumer?.falseCount, "0")
+        XCTAssertNil(frozen.observations.activeConsumer?.readinessSince)
+        XCTAssertFalse(frozen.coverage.persistence)
+        clock.advance(4)
+        gate.release()
+        await assertFailure(session, .overflow)
+        let final = owner.close(snapshot: session.snapshot)
+        XCTAssertEqual(final.firstFailure, frozen)
+        XCTAssertEqual(final.terminal?.queue.currentItems, "0")
+        XCTAssertEqual(final.terminal?.queue.droppedCount, "2")
+        XCTAssertEqual(final.queueLimits?.maxItems, "2")
+        XCTAssertEqual(final.observations.audioAccepted, "3")
+        XCTAssertEqual(final.observations.audioRejected, "1")
+    }
+
+    func testDiagnosticsMeasureControlledRetryCallsAndWaitWithoutChangingOrder() async throws {
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "retry", now: clock.now)
+        let sink = RecordingTestSink(rejections: 2, appendAction: { clock.advance(1) })
+        let retry = RecordingRetryClock(now: { clock.origin.duration(to: clock.now()) }, sleep: { _ in clock.advance(2.5) })
+        let session = try RecordingSession(sink: sink, backpressureLimit: .seconds(20),
+            retryInterval: .seconds(2), retryClock: retry)
+        XCTAssertTrue(session.attachArchivePressureDiagnostics(owner))
+        try await session.start(at: .zero)
+        XCTAssertTrue(session.offer(try audio(0)))
+        XCTAssertTrue(session.offer(try audio(1)))
+        _ = try await session.stop()
+        let complete = owner.close(snapshot: session.snapshot).observations.consumers.completed
+        XCTAssertEqual(sink.attempts, [0, 0, 0, 1])
+        XCTAssertEqual(sink.values, [0, 1])
+        XCTAssertEqual(complete[0].appendElapsed, 3)
+        XCTAssertEqual(complete[0].appendMaximum, 1)
+        XCTAssertEqual(complete[0].retryWaitElapsed, 5)
+        XCTAssertEqual(complete[0].readinessElapsed, 7)
+        XCTAssertEqual(complete[0].attemptCount, "3")
+    }
+
+    func testDiagnosticsKeepOversleepPendingWaitAndAppendThrow() async throws {
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "oversleep", now: clock.now)
+        let sink = RecordingTestSink(rejections: 1)
+        let retry = RecordingRetryClock(now: { clock.origin.duration(to: clock.now()) }, sleep: { _ in clock.advance(3) })
+        let session = try RecordingSession(sink: sink, retryClock: retry)
+        XCTAssertTrue(session.attachArchivePressureDiagnostics(owner))
+        try await session.start(at: .zero)
+        XCTAssertTrue(session.offer(try audio(0)))
+        await assertFailure(session, .backpressureTimedOut)
+        let active = owner.snapshot.firstFailure?.observations.activeConsumer
+        XCTAssertEqual(sink.attempts, [0])
+        XCTAssertEqual(active?.phase, .retryWait)
+        XCTAssertEqual(active?.retryWaitElapsed, 3)
+        XCTAssertEqual(active?.appendElapsed, 0)
+        let failedOwner = ArchivePressureDiagnostics(recordingID: "throw", now: clock.now)
+        let throwing = try RecordingSession(sink: RecordingTestSink(failure: .append, appendAction: { clock.advance(2) }))
+        XCTAssertTrue(throwing.attachArchivePressureDiagnostics(failedOwner))
+        try await throwing.start(at: .zero)
+        XCTAssertTrue(throwing.offer(try audio(0)))
+        await assertFailure(throwing, .sinkFailed)
+        XCTAssertEqual(failedOwner.snapshot.firstFailure?.observations.activeConsumer?.appendElapsed, 2)
+        XCTAssertEqual(failedOwner.snapshot.firstFailure?.observations.activeConsumer?.lastAppendResult, .failure)
+    }
+
+    func testUnattachedDiagnosticsClockIsNeverReadBySession() async throws {
+        let clock = PressureClock()
+        let owner = ArchivePressureDiagnostics(recordingID: "unused", now: clock.now)
+        let initial = clock.reads
+        let session = try RecordingSession(sink: RecordingTestSink())
+        try await session.start(at: .zero)
+        XCTAssertTrue(session.offer(try audio(0)))
+        _ = try await session.stop()
+        XCTAssertEqual(clock.reads, initial)
+        XCTAssertFalse(owner.snapshot.coverage.session)
+    }
+    #endif
+
     func testOfflineStartDrainsInOrderAndStopIsIdempotent() async throws {
         let sink = RecordingTestSink()
         let session = try RecordingSession(sink: sink)
@@ -313,6 +416,7 @@ private final class RecordingTestSink: RecordingArchiveSink, @unchecked Sendable
     private var storedStartTime: CMTime?
     private var rejections: Int
     let failure: Failure?
+    let appendAction: (@Sendable () -> Void)?
     let startGate: RecordingGate?
     let appendGate: RecordingGate?
     let finishGate: RecordingAsyncGate?
@@ -323,7 +427,9 @@ private final class RecordingTestSink: RecordingArchiveSink, @unchecked Sendable
     var cancelCount: Int { lock.withLock { storedCancelCount } }
     var startTime: CMTime? { lock.withLock { storedStartTime } }
     init(rejections: Int = 0, failure: Failure? = nil, startGate: RecordingGate? = nil, appendGate: RecordingGate? = nil,
-         finishGate: RecordingAsyncGate? = nil, cancelGate: RecordingGate? = nil) {
+         finishGate: RecordingAsyncGate? = nil, cancelGate: RecordingGate? = nil,
+         appendAction: (@Sendable () -> Void)? = nil) {
+        self.appendAction = appendAction
         self.rejections = rejections; self.failure = failure
         self.startGate = startGate; self.appendGate = appendGate; self.finishGate = finishGate
         self.cancelGate = cancelGate
@@ -335,6 +441,7 @@ private final class RecordingTestSink: RecordingArchiveSink, @unchecked Sendable
     }
     func append(_ sample: CapturedMediaSample) throws -> Bool {
         appendGate?.block()
+        appendAction?()
         if failure == .append { throw ArchiveWriterError.encodingFailed }
         return lock.withLock {
             let value = Int(sample.sampleBuffer.presentationTimeStamp.value)

@@ -69,6 +69,12 @@ public final class RecordingSession: Sendable {
 
     deinit { core.cancel() }
     public var snapshot: RecordingSessionSnapshot { core.snapshot }
+    #if DEBUG
+    /// Attach once while prepared. The observer never changes recording policy.
+    @discardableResult public func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics) -> Bool {
+        core.attachArchivePressureDiagnostics(owner)
+    }
+    #endif
 
     /// Both tracks must use this explicit, shared source timestamp origin. Offers
     /// are rejected until startup succeeds; this instance can only start once.
@@ -108,6 +114,17 @@ private final class RecordingCore: @unchecked Sendable {
     private var task: Task<RecoveredArchive, Error>?
     private var sinkCancelled = false
     private var failureCancellationScheduled = false
+    #if DEBUG
+    private var diagnostics: ArchivePressureDiagnostics?
+    func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics) -> Bool {
+        lock.withLock {
+            guard state == .prepared, diagnostics == nil,
+                  owner.attachSession(maxItems: mailbox.maxItems, maxBytes: mailbox.maxBytes) else { return false }
+            diagnostics = owner
+            return true
+        }
+    }
+    #endif
 
     init(sink: any RecordingArchiveSink, maxItems: Int, maxBytes: Int,
          limit: Duration, interval: Duration, clock: RecordingRetryClock) throws {
@@ -138,10 +155,23 @@ private final class RecordingCore: @unchecked Sendable {
 
     func offer(_ sample: CapturedMediaSample) -> Bool {
         let accepted = lock.withLock {
-            guard state == .recording else { return false }
-            if mailbox.offer(sample, bytes: sample.retainedByteCount).acceptedCount == 1 { return true }
+            guard state == .recording else {
+                #if DEBUG
+                diagnostics?.observeOffer(kind: sample.kind == .video ? .video : .audio, accepted: false)
+                #endif
+                return false
+            }
+            let admission = mailbox.offer(sample, bytes: sample.retainedByteCount)
+            #if DEBUG
+            diagnostics?.observeOffer(kind: sample.kind == .video ? .video : .audio, accepted: admission.acceptedCount == 1)
+            #endif
+            if admission.acceptedCount == 1 { return true }
             failure = .overflow
             state = .failed
+            #if DEBUG
+            diagnostics?.freezeFailure(.overflow, rejection: admission.rejectionReason,
+                sample: .init(sample), queue: admission.rejectionStatistics, writtenSamples: writtenSamples)
+            #endif
             return false
         }
         if !accepted, lock.withLock({ failure != nil }) {
@@ -155,6 +185,10 @@ private final class RecordingCore: @unchecked Sendable {
         let changed = lock.withLock {
             guard state != .finished, failure == nil else { return false }
             failure = error; state = .failed
+            #if DEBUG
+            diagnostics?.freezeFailure(error, rejection: nil, sample: nil,
+                                       queue: mailbox.statistics, writtenSamples: writtenSamples)
+            #endif
             return true
         }
         if changed {
@@ -197,6 +231,22 @@ private final class RecordingCore: @unchecked Sendable {
 
     private func run(at timestamp: CMTime, ready: CheckedContinuation<Void, Error>) async throws -> RecoveredArchive {
         try await withTaskCancellationHandler {
+            #if DEBUG
+            let diagnostics = lock.withLock { self.diagnostics }
+            func append(_ sample: CapturedMediaSample) throws -> Bool {
+                diagnostics?.appendStarted()
+                do {
+                    let accepted = try sink.append(sample)
+                    diagnostics?.appendFinished(accepted ? .accepted : .notReady)
+                    return accepted
+                } catch {
+                    diagnostics?.appendFinished(.failure)
+                    throw error
+                }
+            }
+            #else
+            let append = sink.append
+            #endif
             var started = false
             do {
                 try checkFailure()
@@ -209,8 +259,11 @@ private final class RecordingCore: @unchecked Sendable {
                 ready.resume()
                 while let sample = try await mailbox.next() {
                     try checkFailure()
+                    #if DEBUG
+                    diagnostics?.consumerStarted(.init(sample))
+                    #endif
                     let deadline = clock.now() + limit
-                    while try !sink.append(sample) {
+                    while try !append(sample) {
                         try checkFailure()
                         let remaining = deadline - clock.now()
                         guard remaining > .zero else { throw RecordingSessionError.backpressureTimedOut }
@@ -221,7 +274,12 @@ private final class RecordingCore: @unchecked Sendable {
                         // sink has become ready in the meantime.
                         guard clock.now() < deadline else { throw RecordingSessionError.backpressureTimedOut }
                     }
-                    lock.withLock { writtenSamples += 1 }
+                    lock.withLock {
+                        writtenSamples += 1
+                        #if DEBUG
+                        diagnostics?.consumerWritten()
+                        #endif
+                    }
                 }
                 try checkFailure()
                 let archive = try await sink.finish()
