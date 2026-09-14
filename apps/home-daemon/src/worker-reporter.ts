@@ -2,14 +2,14 @@ import type { WorkerObservation } from '@scorebug/protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
-const session = z.object({ sessionId: identifier });
-const accepted = z.object({ accepted: z.literal(true) });
+const session = z.object({ sessionId: identifier, timingToken: identifier.optional() });
+const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
 
 /** Independent, bounded telemetry; failures never stop control polling or mutate intent. */
 export class WorkerReporter {
   private readonly base: URL;
-  private sessionId: string | undefined;
+  private session: z.infer<typeof session> | undefined;
   private sequence = 0;
   private inFlight: Promise<void> | undefined;
   constructor(
@@ -40,11 +40,17 @@ export class WorkerReporter {
       throw new Error('invalid_worker_report_configuration');
     this.base.pathname = this.base.pathname.replace(/\/$/, '') + '/';
   }
-  report(observation: WorkerObservation): Promise<void> {
-    if (!this.inFlight)
-      this.inFlight = this.publish(structuredClone(observation)).finally(() => {
-        this.inFlight = undefined;
-      });
+  report(sample: () => WorkerObservation | null): Promise<void> {
+    if (!this.inFlight) {
+      const deadline = performance.now() + this.timeout;
+      const signal = AbortSignal.timeout(this.timeout);
+      // Assign the shared promise before invoking a possibly reentrant supplier.
+      this.inFlight = Promise.resolve()
+        .then(() => this.publish(sample, signal, deadline))
+        .finally(() => {
+          this.inFlight = undefined;
+        });
+    }
     return this.inFlight;
   }
   private async post<T>(
@@ -68,6 +74,7 @@ export class WorkerReporter {
       throw new Error('worker_report_unavailable');
     }
     if (
+      path === 'observations' &&
       response.status === 409 &&
       z.object({ error: z.literal('worker_session_unknown') }).safeParse(value).success
     )
@@ -78,32 +85,52 @@ export class WorkerReporter {
     return parsed.data;
   }
   private async register(signal: AbortSignal): Promise<void> {
-    this.sessionId = (
-      await this.post('sessions', { workerId: this.workerId, runId: this.runId }, session, signal)
-    ).sessionId;
+    this.session = await this.post(
+      'sessions',
+      { workerId: this.workerId, runId: this.runId },
+      session,
+      signal,
+    );
   }
-  private async publish(observation: WorkerObservation): Promise<void> {
-    const signal = AbortSignal.timeout(this.timeout);
-    if (!this.sessionId) await this.register(signal);
-    const sequence = ++this.sequence;
-    const send = () =>
-      this.post(
-        'observations',
-        { workerId: this.workerId, sessionId: this.sessionId, sequence, observation },
-        accepted,
-        signal,
-      );
-    try {
-      await send();
-    } catch (error) {
-      if (!(error instanceof MissingSession)) throw error;
-      this.sessionId = undefined;
-      await this.register(signal);
+  private async publish(
+    sample: () => WorkerObservation | null,
+    signal: AbortSignal,
+    deadline: number,
+  ): Promise<void> {
+    const checkDeadline = () => {
+      // A synchronous supplier can prevent the abort timer from running on time.
+      if (signal.aborted || performance.now() >= deadline)
+        throw new Error('worker_report_unavailable');
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      checkDeadline();
+      if (!this.session) await this.register(signal);
+      checkDeadline();
+      const registered = this.session!;
+      let observation: WorkerObservation | null;
       try {
-        await send();
-      } catch (retry) {
-        if (retry instanceof MissingSession) throw new Error('worker_report_rejected');
-        throw retry;
+        observation = structuredClone(sample());
+      } catch {
+        throw new Error('worker_report_unavailable');
+      }
+      checkDeadline();
+      if (observation === null) return;
+      if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
+      const sequence = ++this.sequence;
+      try {
+        const acknowledgement = await this.post(
+          'observations',
+          { workerId: this.workerId, ...registered, sequence, observation },
+          accepted,
+          signal,
+        );
+        checkDeadline();
+        this.session = { ...registered, timingToken: acknowledgement.timingToken };
+        return;
+      } catch (error) {
+        if (!(error instanceof MissingSession)) throw error;
+        this.session = undefined;
+        if (attempt === 1) throw new Error('worker_report_rejected');
       }
     }
   }

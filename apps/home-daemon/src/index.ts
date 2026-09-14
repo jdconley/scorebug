@@ -38,16 +38,20 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let reportTimer: ReturnType<typeof setTimeout> | undefined;
 let reportingFailed = false;
 const report = async () => {
-  const observation = supervisor.observation();
-  if (observation) {
-    try {
-      await reporter.report(observation);
+  let sampledObservation = false;
+  try {
+    await reporter.report(() => {
+      const observation = supervisor.observation();
+      sampledObservation = observation !== null;
+      return observation;
+    });
+    if (sampledObservation) {
       if (reportingFailed) log.info('worker_reporting_recovered');
       reportingFailed = false;
-    } catch {
-      if (!reportingFailed) log.warn('worker_reporting_unavailable');
-      reportingFailed = true;
     }
+  } catch {
+    if (!reportingFailed) log.warn('worker_reporting_unavailable');
+    reportingFailed = true;
   }
   if (!stopping) reportTimer = setTimeout(() => void report(), 1000);
 };

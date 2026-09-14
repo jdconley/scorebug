@@ -68,6 +68,9 @@ register again and resample with a new report sequence. Never tag a previously
 sampled object with a newly received token. Null observations send no report.
 Coalescing, one total timeout, credential filtering, and legacy APIs remain supported.
 Update every production and fixture caller to supply observations at call time.
+Check the publish operation's monotonic elapsed deadline after the supplier returns
+as well as the abort signal: a blocked event loop can delay delivery of the abort.
+This prevents a late POST; it does not claim to preempt synchronous supplier code.
 
 Swift preserves the optional server field and provides an immutable
 `WorkerDecodedVideoFreshness` value from a scoped status response and local request
@@ -80,6 +83,15 @@ model, replace only through existing epoch/scope guards, and clear it wherever
 worker status clears or expires. Guard failed worker-status replies by the same
 epoch as successful replies, so a late failure cannot clear evidence or stop a
 replacement publisher. No policy activation.
+
+Use exact `Duration` arithmetic for native additions after validating the whole-ms
+server bound. Check remaining numeric budget before adding request duration or
+residence; summing large Doubles first can hide overflow. Reject read instants
+before receipt. Require both status and observation to be producing output, and
+reject an upper bound below the response's lower-bound window age. Keep zero-frame
+valid windows distinct from missing evidence: an age bound does not mean progress.
+For Film expiry tests, allow a supplied instant on the existing health-poll method
+with a production `.now` default; do not add another timer or sleep-based gate.
 
 ## Checkpoint 1: API timing provenance
 
@@ -112,12 +124,20 @@ Logs: `artifacts/qa/worker-report-age-api-{red,green,suite,protocol-build,typech
 `apps/home-daemon/test/worker-reporter.test.ts`, and callers found by
 `rg 'reporter\.report|\.report\(.*observation' scripts apps`.
 
-- [ ] Add failing tests with HTTP registration held until the fixture changes;
+- [x] Add failing tests with HTTP registration held until the fixture changes;
   the report must contain the later observation sampled after token receipt.
-- [ ] Cover missing-session resampling/new sequence, lost ACK token recovery,
+- [x] Cover missing-session resampling/new sequence, lost ACK token recovery,
   legacy responses, null/supplier failure, coalescing and nested-copy ownership.
-- [ ] Implement supplier-based reporting with optional tokens and preserved total
+- [x] Implement supplier-based reporting with optional tokens and preserved total
   timeout. Run focused/full worker tests and TypeScript checking. Review and commit.
+
+Checkpoint 2 passes 25 reporter tests and 132 total worker tests, with worker and
+protocol type checking. Both reviews approve the implementation. The production
+worker now samples inside the reporter's callback after registration/token receipt;
+API restart resamples with a new sequence. Null observations send no report and
+cannot log a reporting recovery. All asynchronous waits share one timeout, and
+the monotonic deadline also prevents a late POST after a slow synchronous sample.
+Logs: `artifacts/qa/worker-report-age-sampling-*`.
 
 ## Checkpoint 3: Native age and local integration evidence
 

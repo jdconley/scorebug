@@ -57,9 +57,16 @@ are checked before overflow. Legacy status responses retain their existing shape
 This API checkpoint passes 33 focused tests and the complete 240-test API suite,
 plus protocol build and type checking. The shared `worker-report-age-v1.json`
 fixture matches the complete deterministic HTTP response. Evidence is under
-`artifacts/qa/worker-report-age-api-*`. The maintained worker still needs to sample
-after token reception, and Swift still needs to add status-request and local
-residence time. Thus complete production report-age qualification remains open;
+`artifacts/qa/worker-report-age-api-*`. The maintained worker now samples through a
+synchronous supplier after token reception and resamples on session renewal with
+a new sequence. It preserves marker provenance across lost acknowledgments, copies
+the sample before asynchronous sending, and checks the total monotonic deadline
+after synchronous work. Null observations do not report or log recovery. All 25
+reporter tests and 132 total worker tests pass, as do worker/protocol type checking
+and both reviews. Logs are under `artifacts/qa/worker-report-age-sampling-*`.
+
+Swift still needs to add status-request and local residence time, followed by native
+qualification. Thus complete production report-age qualification remains open;
 see [the implementation plan](superpowers/plans/2026-09-14-worker-report-age.md).
 
 ## Qualification

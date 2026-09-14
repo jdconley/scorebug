@@ -192,6 +192,9 @@ numeric overflow cannot manufacture fresh evidence. This optional upper bound is
 separate from the existing lower-bound `completed.ageMs`.
 
 All 33 focused and 240 total API tests pass, including the shared HTTP golden
-fixture. Protocol build and type checking pass. Worker sampling-order changes,
-Swift request/local-residence accounting, and native qualification remain the next
-checkpoints. Automatic quality changes remain disabled.
+fixture. Protocol build and type checking pass. The worker now samples after
+registration/token receipt and resamples after session renewal; all 25 reporter
+tests and 132 total worker tests pass. Both API and worker checkpoints have passed
+specification and quality review. Swift request/local-residence accounting and
+native qualification remain the next checkpoint. Automatic quality changes remain
+disabled.

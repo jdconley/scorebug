@@ -318,7 +318,10 @@ this does not close the broader runtime tracking gate.
 The [report-age slice](2026-09-14-worker-report-age.md) now has its API foundation:
 bounded server timing tokens and conservative window-age upper bounds, with 33
 focused and 240 total API tests passing. Worker sampling order and native receipt
-accounting still need integration before this closes the report-transit gap.
+accounting are separate checkpoints. Sampling after token receipt and resampling
+on API restart now pass 25 reporter tests and 132 total worker tests. Native receipt
+accounting and qualification still need integration before this closes the
+report-transit gap.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 
