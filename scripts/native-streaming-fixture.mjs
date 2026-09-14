@@ -8,13 +8,15 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools } from './media-tools.mjs';
 import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
+import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
 export async function nativeStreamingFixture({ artifact, root, run }) {
   const names = [];
-  let worker, done, workerEvidence;
+  let worker, done, workerEvidence, directRecorder;
+  const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
   let matchID;
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
@@ -53,6 +55,11 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
     } catch (error) {
       errors.push(error);
     }
+    try {
+      await directRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
     for (const name of [...names].reverse()) {
       try {
         await run('docker', ['rm', '-f', name], `remove-${name}`, { cleanup: true });
@@ -71,7 +78,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
     for (const [kind, media, apiPort, name] of [
       ['ingest', ingestPort, relayPort, `scorebug-native-ingest-${randomUUID()}`],
       ['sink', sinkPort, sinkApiPort, sinkName],
-    ]) {
+    ].filter(([kind]) => !useDirectRecorder || kind !== 'sink')) {
       const config = join(artifact, `${kind}.yml`);
       await copyFile(join(root, `infra/local/${kind}.yml`), config);
       names.push(name);
@@ -108,6 +115,12 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
       }
       assert.ok(ready, `${kind} readiness`);
     }
+    if (useDirectRecorder)
+      directRecorder = await startDirectRTMPRecorder({
+        artifact,
+        ffmpeg: mediaTools().ffmpeg,
+        port: sinkPort,
+      });
     return {
       get matchID() {
         return matchID;
@@ -180,7 +193,9 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
               HOME_TOKEN: 'qa-home-token-not-production',
               WORKER_ID: 'mac',
               OUTPUT_ID: 'local-sink',
-              OUTPUT_URL: `rtmp://127.0.0.1:${sinkPort}/live/fixture?user=qa-worker&pass=qa-output-not-production`,
+              OUTPUT_URL:
+                directRecorder?.url ??
+                `rtmp://127.0.0.1:${sinkPort}/live/fixture?user=qa-worker&pass=qa-output-not-production`,
               ENCODER: 'videotoolbox',
               VIDEO_PROFILE: '1080p30',
               SCORE_DIR: join(artifact, 'worker'),
@@ -229,6 +244,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
           (await readFile(join(artifact, 'worker/score.txt'), 'utf8')).includes('HOME 1-0 AWAY'),
           'Worker did not receive the native scoring update',
         );
+        if (directRecorder) return [await directRecorder.finish()];
         // Stopping MediaMTX flushes its final fragmented MP4 before copying.
         await run('docker', ['stop', '-t', '10', sinkName], 'flush-sink');
         const directory = join(artifact, 'sink-recordings');

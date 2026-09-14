@@ -272,3 +272,56 @@ workflow against it. Keep the existing MediaMTX runs as comparative evidence. Do
 hide the deficit with sleeps or weaker gates. The earlier local archive overflow,
 sustained physical iPhone/Watch runs, source-clock qualification, adaptive profile
 transitions and additional worker-host qualification remain open.
+
+## Independent RTMP recorder qualification
+
+The standalone FFmpeg 8.1.2 listener prototype in
+`artifacts/qa/direct-rtmp-recorder-probe/` receives RTMP directly and stream-copies
+both tracks into fragmented MP4 (`+frag_keyframe+empty_moov`). It preserves every
+submitted video packet/source frame in paced 300-frame, short-burst 120-frame and
+burst 300-frame cases. Publisher and receiver exit 0 and all three recordings fully
+decode. `packet-completeness.json` also verifies all video/audio packet counts:
+300/432 paced, 120/174 short burst, and 300/432 burst. This establishes feasibility;
+native A/V alignment still needs explicit qualification.
+
+Implement one bounded helper with specification and quality review. No application,
+worker media policy, production relay provisioning, or acceptance-gate changes.
+
+- [x] Add `scripts/direct-rtmp-recorder.mjs`: own a single FFmpeg child listening
+  on an OS-selected, supplied loopback port. Use `-listen 1`, explicit video/audio
+  maps, stream copy, fragmented MP4, and non-overwrite output beneath the artifact
+  directory. Ignore raw stderr. Readiness must observe the actual owned PID listening
+  on exactly `127.0.0.1:port` with bounded `lsof`, without connecting a probe client
+  (which would consume the single publisher slot). Bound startup to five seconds.
+- [x] Expose a URL and joined lifecycle: successful `finish()` waits for natural
+  EOF/child close after worker stop, bounded to five seconds, and requires exit 0,
+  no signal and a nonempty output. Timeout is failed evidence, not successful drain.
+  Cleanup `stop()` is idempotent and joins the owned process; TERM then bounded KILL
+  after two seconds if necessary. Preserve a small sanitized manifest exactly once
+  after close, including whether readiness was observed, actual code/signal and
+  fixture termination request. Startup failure must clean its own child before
+  rejecting. No detached tasks or ambient-process termination.
+- [x] In `native-streaming-fixture.mjs`, exact
+  `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1` selects this receiver instead of the owned
+  MediaMTX sink. Keep the same owned SRT ingest, worker, scoring and media gates.
+  Await recorder readiness before worker startup; collect its MP4 only after worker
+  stop and receiver natural exit. Failure cleanup joins both children before
+  removing owned containers. With the flag absent, preserve the comparative
+  MediaMTX fixture. This is a local test endpoint, not a public authenticated server.
+- [x] Test readiness without network probing, early exit/spawn failure, startup
+  timeout, close-before-finish, repeated joins, natural EOF, explicit failure on
+  nonzero/signal/empty output, and TERM/KILL cleanup. Verify native selection through
+  the maintained fixture boundary where practical; full tool suite and both reviews.
+- [ ] Recheck all three replay MP4s for both video and audio packet completeness
+  against the publisher stats. Then one isolated native run with the flag enabled,
+  retaining complete source-frame, A/V, scoring, archive and terminal comparisons.
+  Preserve the previous sink's deficits and avoid claiming beyond this local scope.
+
+Implementation verification: 26 focused recorder tests and all 189 tool tests pass.
+Review caught and fixed a real Node execFile cancellation hang: AbortSignal can
+send TERM and clear the probe timeout, so cancellation explicitly kills the owned
+live probe and joins close. A real TERM-resistant child regression failed before
+the fix and passes after it. The readiness timeout reason is captured before
+cleanup; its exact-message regression also failed before the fix. Red/green logs:
+`artifacts/qa/direct-rtmp-recorder-review-{red,green}.log`; full suite:
+`artifacts/qa/direct-rtmp-recorder-tools-review.log`. Native qualification pending.
