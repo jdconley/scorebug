@@ -76,7 +76,8 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
         '-c',
         'copy',
         '-movflags',
-        '+frag_keyframe+empty_moov',
+        // Preserve the later first video timestamp when audio arrives before a keyframe.
+        '+frag_keyframe+empty_moov+delay_moov',
         '-f',
         'mp4',
         recording,

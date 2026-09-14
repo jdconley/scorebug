@@ -333,3 +333,21 @@ conversion. The exact-arguments regression failed before this fix; all 189 tools
 pass after it (`direct-rtmp-recorder-numeric-{red,green}.log`). Real helper smoke
 `direct-recorder-numeric-6I8KmL` observes readiness and joins cleanup. Review cleared
 the fix. No native media result was produced by the failed startup attempt.
+
+Second native attempt `native-app-mnP1kq` at d88f799 passed the UI/export flow
+and full A/V decode, but FAILED the existing video timestamp cadence check. The
+recorder exited naturally with code 0 and preserved all 893 decoded worker video
+frames (source IDs 198..1090). Its first video timestamp was 0, followed by 1.139;
+all later frame intervals matched source cadence. Archive terminal evidence shows
+2554 accepted/written samples, no reject/drop, and finished state. This is not an
+overall native qualification pass.
+
+The controlled offset replay `direct-recorder-offset-N10U41/results.json` isolates
+the recorder setting: `empty_moov` produces first video times 0/1.177/1.211, while
+adding `delay_moov` produces 1.144/1.177/1.211. Both retain 117 video and 237 audio
+frames and fully decode. FFmpeg documents delaying the initial moov until the first
+fragment at https://ffmpeg.org/ffmpeg-formats.html#Options-9; this allows initial
+track offset metadata. Only this test recorder gains `+delay_moov`; source and
+worker media arguments and acceptance thresholds are unchanged. The argument
+regression failed before the fix; all 189 tools pass after it (`offset-{red,green}`
+logs). Review cleared the bounded fix; another isolated native run is pending.

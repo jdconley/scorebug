@@ -74,7 +74,7 @@ test('readiness observes only the owned PID and exact loopback listener without 
       '-c',
       'copy',
       '-movflags',
-      '+frag_keyframe+empty_moov',
+      '+frag_keyframe+empty_moov+delay_moov',
       '-f',
       'mp4',
       join(f.artifact, 'sink-recordings/direct.mp4'),
