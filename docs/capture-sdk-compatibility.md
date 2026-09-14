@@ -3,7 +3,7 @@
 The isolated [probes](../tools/media-sdk-probe/README.md) now include macOS dual
 recording/SRT execution and full executable linking for ARM64 iOS Simulator and
 an unsigned generic iPhone destination with iOS 17 deployment.
-It pins HaishinKit **2.2.5**, revision `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`,
+It uses a [locally patched source subset](sdk-startup-patch.md) of HaishinKit **2.2.5**, revision `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`,
 and Logboard **2.6.0**. The original camera scaffold remains unchanged and unqualified.
 
 The pinned package declares iOS 15+/macOS 12+ and includes libsrt 1.5.4 for both
@@ -84,7 +84,10 @@ audio loss in the SDK's TS writer. It discards packets until both formats are kn
 and rebases each track independently. A failing run lost five additional initial
 AAC packets and exceeded the unchanged audio-coverage budget; decoded PCM comparison
 confirms the loss occurs at startup. See the [diagnosis](native-dual-output.md).
-This requires an SDK correction before production publishing integration.
+The maintained local SDK patch now passes all five real-media scenarios, including
+a nonzero source clock, with every first video frame retained and the original
+100 ms coverage/synchronization limits unchanged. Its 35 vendor tests, three PCM
+clock tests, and full ARM64 Simulator/iPhone executable links pass.
 Next are sustained load/reconnection tests and the actual camera lifecycle. iOS runtime media behavior,
 hardware camera interruptions, and physical-phone simultaneous encoding remain
 unverified.

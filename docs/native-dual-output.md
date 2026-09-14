@@ -1,7 +1,7 @@
 # Native recording and SRT compatibility experiment
 
 The Mac fixture feeds the same immutable NV12/PCM samples to two consumers:
-the shared segmented archive and HaishinKit 2.2.5 SRT publishing. It exercises
+the shared segmented archive and the locally patched HaishinKit 2.2.5 SRT publisher. It exercises
 actual AVFoundation encoders, an actual local SRT connection, and decoded outputs.
 The prototype camera app is not integrated yet.
 
@@ -38,10 +38,11 @@ This generates a 14-second, 1080p/30 source with visible frame identities and
 frequency-coded audio pulses. Each run owns its native processes and loopback UDP
 port and preserves evidence under `artifacts/qa/dual-output-*`.
 
-Four scenarios run: offline recording without a publisher, a normal local receiver,
-that receiver suspended after six seconds, and no receiver available. Every archive must retain all 420 source frames
+Five scenarios run: offline recording without a publisher, normal local receivers
+with zero-origin and 123.25-second source clocks, a receiver suspended after six
+seconds, and no receiver available. Every archive must retain all 420 source frames
 and export successfully. Normal streaming must meet the fresh-frame cadence gate,
-keep startup/final-frame gaps within one second, and demonstrate an encoded bitrate
+retain source frame zero, keep final-frame gaps within one second, and demonstrate an encoded bitrate
 decrease measured from received packets. Receiver failure must be reported separately
 while the archive finishes.
 
@@ -79,10 +80,18 @@ additional loss at shutdown.
 The pinned SDK's TS writer discards media until both encoded formats are known,
 then establishes separate first-packet timestamp origins for audio and video.
 Encoder startup ordering therefore changes audio loss and synchronization.
-Earlier successful runs do not establish reliable startup. A verified upstream
-fix or maintained patch with bounded startup buffering and a common timestamp
-origin is required before production publishing integration. Do not relax the
-coverage or sync gates to accommodate this defect.
+The [maintained local correction](sdk-startup-patch.md) now bounds startup buffering,
+preserves a common timestamp origin, registers subscriptions before publishing, and
+accepts the first video frame at timestamp zero. The PCM adapter also preserves
+host and sample clocks independently of the source timestamp timescale.
+
+The corrected five-case run (`dual-output-nHltS0`) passed every existing coverage
+and synchronization gate. Both normal streams retained all 420 fresh frames
+(IDs 0–419), with maximum measured A/V offsets of 65.38 ms and no frame loss.
+Their encoded rate fell from about 6.1 to 2.0 Mbps. Every archive retained all
+420 frames and full audio, including the nonzero-clock case with no blank clock
+lead-in. Peak process RSS across all cases stayed below 95 MiB. These are
+14-second Mac fixture results, not sustained or physical-device qualification.
 
 Native mailbox tests cover count/byte limits, actual object retention, cancellation,
 finish/drain, concurrent waiter rejection, and producer/cancellation races. The
@@ -95,6 +104,6 @@ x86_64 slice; ARM64 simulator linking is tested for this Mac. Library compilatio
 alone had not exposed either issue.
 
 Still required: sustained dual encoding, network loss/jitter/bandwidth shaping,
-SDK startup correction, reconnection, bounded production capture and publisher orchestration, the camera UI,
+reconnection, bounded production capture and publisher orchestration, the camera UI,
 Simulator app workflows, and physical iPhone qualification. Native Watch scoring
 remains a separate planned milestone.

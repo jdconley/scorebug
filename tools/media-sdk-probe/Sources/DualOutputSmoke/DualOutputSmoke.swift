@@ -23,7 +23,10 @@ private final class PublisherHealth: @unchecked Sendable {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             // Network exercise is deliberately restricted to an owned local sink.
-            guard args.count == 3 else { throw Failure.arguments }
+            guard args.count == 3 || args.count == 4 else { throw Failure.arguments }
+            let timestampOffset = args.count == 4 ? Double(args[3]) : 0
+            guard let timestampOffset, timestampOffset.isFinite,
+                  timestampOffset >= 0, timestampOffset <= 86_400 else { throw Failure.arguments }
             let url: URL?
             if args[2] == "record-only" { url = nil }
             else {
@@ -31,14 +34,40 @@ private final class PublisherHealth: @unchecked Sendable {
                       candidate.host == "127.0.0.1", candidate.port != nil else { throw Failure.arguments }
                 url = candidate
             }
-            try await run(source: URL(fileURLWithPath: args[0]), directory: URL(fileURLWithPath: args[1]), url: url)
+            try await run(source: URL(fileURLWithPath: args[0]), directory: URL(fileURLWithPath: args[1]),
+                          url: url, timestampOffset: timestampOffset)
         } catch {
             try? emit(["event": "failed", "reason": String(describing: error)])
             exit(1)
         }
     }
 
-    private static func run(source: URL, directory: URL, url: URL?) async throws {
+    private static func retimed(_ sample: CMSampleBuffer?, by offset: Double) throws -> CMSampleBuffer? {
+        guard let sample, offset != 0 else { return sample }
+        var count = 0
+        guard CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: 0, arrayToFill: nil,
+            entriesNeededOut: &count) == noErr, count > 0 else { throw Failure.reader }
+        var timing = Array(repeating: CMSampleTimingInfo(duration: .invalid,
+            presentationTimeStamp: .invalid, decodeTimeStamp: .invalid), count: count)
+        guard CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: count,
+            arrayToFill: &timing, entriesNeededOut: nil) == noErr else { throw Failure.reader }
+        let shift = CMTime(seconds: offset, preferredTimescale: 1_000_000_000)
+        for index in timing.indices {
+            timing[index].presentationTimeStamp = CMTimeConvertScale(timing[index].presentationTimeStamp + shift,
+                timescale: 1_000_000_000, method: .default)
+            if timing[index].decodeTimeStamp.isNumeric {
+                timing[index].decodeTimeStamp = CMTimeConvertScale(timing[index].decodeTimeStamp + shift,
+                    timescale: 1_000_000_000, method: .default)
+            }
+        }
+        var result: CMSampleBuffer?
+        guard CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sample,
+            sampleTimingEntryCount: count, sampleTimingArray: &timing, sampleBufferOut: &result) == noErr,
+            let result else { throw Failure.reader }
+        return result
+    }
+
+    private static func run(source: URL, directory: URL, url: URL?, timestampOffset: Double) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first,
               let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else { throw Failure.missingTracks }
@@ -54,8 +83,8 @@ private final class PublisherHealth: @unchecked Sendable {
         guard reader.canAdd(video), reader.canAdd(audio) else { throw Failure.reader }
         reader.add(video); reader.add(audio)
         guard reader.startReading() else { throw Failure.reader }
-        var nextVideo = video.copyNextSampleBuffer()
-        var nextAudio = audio.copyNextSampleBuffer()
+        var nextVideo = try retimed(video.copyNextSampleBuffer(), by: timestampOffset)
+        var nextAudio = try retimed(audio.copyNextSampleBuffer(), by: timestampOffset)
         guard let firstVideo = nextVideo, let firstAudio = nextAudio else { throw Failure.missingTracks }
         let origin = min(firstVideo.presentationTimeStamp, firstAudio.presentationTimeStamp)
         let originSeconds = origin.seconds
@@ -156,8 +185,8 @@ private final class PublisherHealth: @unchecked Sendable {
                                   "archiveQueueBytes": recording.snapshot.queue.currentBytes,
                                   "liveQueueBytes": liveQueue.statistics.currentBytes])
                     }
-                    nextVideo = video.copyNextSampleBuffer()
-                } else { nextAudio = audio.copyNextSampleBuffer() }
+                    nextVideo = try retimed(video.copyNextSampleBuffer(), by: timestampOffset)
+                } else { nextAudio = try retimed(audio.copyNextSampleBuffer(), by: timestampOffset) }
             }
             guard reader.status == .completed else { throw Failure.reader }
             liveQueue.finish()

@@ -117,9 +117,14 @@ async function analyze(path, label, requireComplete) {
     ['-v', 'error', '-xerror', '-i', path, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'],
     `${label} full decode`,
   );
-  const streams = JSON.parse(
-    await run(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', path], `${label} formats`),
-  ).streams;
+  const probe = JSON.parse(
+    await run(
+      ffprobe,
+      ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', path],
+      `${label} formats`,
+    ),
+  );
+  const streams = probe.streams;
   const video = streams.find((x) => x.codec_type === 'video');
   const audio = streams.find((x) => x.codec_type === 'audio');
   assert.equal(video?.codec_name, 'h264');
@@ -127,6 +132,13 @@ async function analyze(path, label, requireComplete) {
   assert.equal(video.height, 1080);
   assert.equal(audio?.codec_name, 'aac');
   assert.equal(Number(audio.sample_rate), 48000);
+  if (requireComplete) {
+    assert.ok(Math.abs(Number(probe.format.start_time)) <= 0.1, 'Export has a leading clock gap');
+    assert.ok(
+      Math.abs(Number(probe.format.duration) - 14) <= 0.1,
+      'Export duration must exclude the source clock origin',
+    );
+  }
   const codeFile = join(artifact, `${label}.codes`);
   await run(
     ffmpeg,
@@ -155,6 +167,7 @@ async function analyze(path, label, requireComplete) {
       'Archive lost or repeated source frames',
     );
   } else {
+    assert.equal(codes[0], 0, 'Normal fixture stream lost its first video sample');
     assert.ok(
       codes[0] <= 30 && codes.at(-1) >= 390,
       'Normal stream startup or final-frame gap exceeded one second',
@@ -325,11 +338,18 @@ try {
     'Fixture source',
   );
   const results = [];
-  for (const scenario of ['record-only', 'normal', 'stalled-receiver', 'no-receiver']) {
+  for (const scenario of [
+    'record-only',
+    'normal',
+    'normal-clock-offset',
+    'stalled-receiver',
+    'no-receiver',
+  ]) {
+    const normal = scenario.startsWith('normal');
     const port = await freePort();
     const live = join(artifact, `${scenario}.ts`);
     let receiver;
-    if (scenario === 'normal' || scenario === 'stalled-receiver') {
+    if (normal || scenario === 'stalled-receiver') {
       receiver = start(ffmpeg, [
         '-nostdin',
         '-v',
@@ -360,13 +380,15 @@ try {
     }
     const directory = join(artifact, `${scenario}-archive`);
     // SDK URI values use libsrt milliseconds; FFmpeg latency above uses microseconds.
-    const native = start(binary, [
+    const nativeArgs = [
       source,
       directory,
       scenario === 'record-only'
         ? 'record-only'
         : `srt://127.0.0.1:${port}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
-    ]);
+    ];
+    if (scenario === 'normal-clock-offset') nativeArgs.push('123.25');
+    const native = start(binary, nativeArgs);
     const memory = [];
     const started = performance.now();
     let nextMemory = 0;
@@ -423,11 +445,11 @@ try {
         'Offline recording must not start a publisher',
       );
     }
-    if (scenario === 'normal') {
+    if (normal) {
       assert.ok(native.events.some((x) => x.event === 'bitrate-changed'));
       const sent = native.events.find((x) => x.event === 'publisher-finished');
       assert.ok(sent?.sentBytes > 0 && sent.publishingBeforeStop);
-      liveResult = await analyze(live, 'normal-live', false);
+      liveResult = await analyze(live, `${scenario}-live`, false);
       bitrateChange = await measureBitrateChange(live);
     }
     if (scenario === 'no-receiver')

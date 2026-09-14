@@ -9,7 +9,7 @@ let package = Package(
         .library(name: "SDKProbe", targets: ["SDKProbe"])
     ],
     dependencies: [
-        .package(url: "https://github.com/HaishinKit/HaishinKit.swift.git", exact: "2.2.5"),
+        .package(path: "../../vendor/HaishinKit"),
         .package(path: "../../ios/Packages/ScorebugMedia")
     ],
     targets: [
@@ -18,8 +18,9 @@ let package = Package(
             "SDKProbe", .product(name: "ScorebugMedia", package: "ScorebugMedia")
         ]),
         .target(name: "SDKProbe", dependencies: [
-            .product(name: "HaishinKit", package: "HaishinKit.swift"),
-            .product(name: "SRTHaishinKit", package: "HaishinKit.swift")
-        ], linkerSettings: [.linkedLibrary("c++")])
+            .product(name: "HaishinKit", package: "HaishinKit"),
+            .product(name: "SRTHaishinKit", package: "HaishinKit")
+        ], linkerSettings: [.linkedLibrary("c++")]),
+        .testTarget(name: "SDKProbeTests", dependencies: ["SDKProbe"])
     ]
 )

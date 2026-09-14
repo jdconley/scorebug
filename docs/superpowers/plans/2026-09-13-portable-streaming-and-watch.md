@@ -226,8 +226,12 @@ Sustained congestion/reconnection and camera-app integration remain pending.
 Repeated validation exposed [SDK startup audio loss](../../native-dual-output.md):
 the TS writer discards early packets and rebases each track independently. One run
 lost five additional initial AAC packets and failed the unchanged 100 ms coverage
-gate while the archive remained complete. Correct this SDK behavior before advancing
-production publishing integration; a previously passing fixture is not sufficient.
+gate while the archive remained complete. The [maintained local correction](../../sdk-startup-patch.md)
+now passes 35 vendor tests, three PCM clock tests, ARM64 Simulator/iPhone executable
+links, and all five real-media scenarios. Both normal streams retain frames 0–419;
+the nonzero-clock archive has no blank clock lead-in. Coverage and sync limits
+remain unchanged. Next: connect the recording lifecycle to an injectable capture
+source and the native app, then qualify production publishing and sustained load.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.

@@ -36,7 +36,9 @@ backpressure, queue bounds, concurrent stop, startup/failure races, and cancella
 The shared media package passes 60 tests, including 18 recording-session regressions
 and native NV12/PCM encoding. Repeated SRT validation also uncovered an upstream
 startup audio-loss defect; it does not affect the clean archive. The streaming
-fixture intentionally fails when that defect exceeds its coverage budget.
+fixture correctly rejected runs that exceeded its coverage budget. The
+[local SDK correction](sdk-startup-patch.md) now passes all five real-media cases,
+including recording with a nonzero source clock.
 
 This is shared lifecycle code, not yet the camera application's capture adapter or
 recordings UI. AVFoundation camera setup, audio-route handling, app interruption

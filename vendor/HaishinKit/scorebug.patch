@@ -1,0 +1,396 @@
+--- a/HaishinKit/Sources/Codec/VideoCodec.swift
++++ b/HaishinKit/Sources/Codec/VideoCodec.swift
+@@ -28,7 +28,7 @@
+     private var startedAt: CMTime = .zero
+     private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
+     private var invalidateSession = true
+-    private var presentationTimeStamp: CMTime = .zero
++    private var presentationTimeStamp: CMTime?
+     private(set) var isRunning = false
+     private(set) var inputFormat: CMFormatDescription? {
+         didSet {
+@@ -97,13 +97,18 @@
+         guard startedAt <= presentationTimeStamp else {
+             return false
+         }
+-        guard self.presentationTimeStamp < presentationTimeStamp else {
++        // A stream has no previous frame until its first accepted input. Zero is a
++        // valid first PTS, including after restart and with a frame limiter enabled.
++        guard let previousTimeStamp = self.presentationTimeStamp else {
++            return true
++        }
++        guard previousTimeStamp < presentationTimeStamp else {
+             return false
+         }
+         guard Self.frameInterval < frameInterval else {
+             return true
+         }
+-        return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
++        return frameInterval <= presentationTimeStamp.seconds - previousTimeStamp.seconds
+     }
+ 
+     #if os(iOS) || os(tvOS) || os(visionOS)
+@@ -163,7 +168,7 @@
+         invalidateSession = true
+         inputFormat = nil
+         outputFormat = nil
+-        presentationTimeStamp = .zero
++        presentationTimeStamp = nil
+         continuation?.finish()
+         startedAt = .zero
+         #if os(iOS) || os(tvOS) || os(visionOS)
+--- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
++++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
+@@ -8,6 +8,17 @@
+ public actor SRTStream {
+     static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
+     static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
++
++    /// A latched transport muxer failure. Cleared when the stream is closed/reset.
++    public var muxerError: MuxerError? { writer.error }
++
++    public enum MuxerError: Swift.Error, Equatable, Sendable {
++        case invalidTimestamp
++        case invalidPayload
++        case startupPacketLimitExceeded
++        case startupByteLimitExceeded
++        case startupTimeLimitExceeded
++    }
+ 
+     /// The expected medias for transport stream.
+     public var expectedMedias: Set<AVMediaType> {
+@@ -57,8 +68,13 @@
+             }
+             return
+         }
++        // Install continuations before publishing becomes observable or accepting input.
++        let videoOutput = outgoing.videoOutputStream
++        let audioOutput = outgoing.audioOutputStream
++        let videoInput = outgoing.videoInputStream
++        let transportOutput = writer.output
++        outgoing.startRunning()
+         readyState = .publishing
+-        outgoing.startRunning()
+         if outgoing.videoInputFormat != nil {
+             writer.expectedMedias.insert(.video)
+         }
+@@ -69,22 +85,23 @@
+             logger.error("Please set expected media.")
+         }
+         Task {
+-            for await buffer in outgoing.videoOutputStream {
++            for await buffer in videoOutput {
+                 append(buffer)
+             }
+         }
+         Task {
+-            for await buffer in outgoing.audioOutputStream {
++            for await buffer in audioOutput {
+                 append(buffer.0, when: buffer.1)
+             }
+         }
+         Task {
+-            for await buffer in outgoing.videoInputStream {
++            for await buffer in videoInput {
+                 outgoing.append(video: buffer)
+             }
+         }
+         Task {
+-            for await data in writer.output {
++            for await data in transportOutput {
++                guard writer.error == nil else { break }
+                 await connection.send(data)
+             }
+         }
+--- a/SRTHaishinKit/Sources/TS/TSWriter.swift
++++ b/SRTHaishinKit/Sources/TS/TSWriter.swift
+@@ -1,6 +1,7 @@
+ import AVFoundation
+ import CoreMedia
+ import Foundation
++import HaishinKit
+ 
+ /// An object that represents writes MPEG-2 transport stream data.
+ final class TSWriter {
+@@ -26,6 +27,7 @@
+             var data = ESSpecificData()
+             data.streamType = audioFormat.formatDescription.streamType
+             data.elementaryPID = Self.defaultAudioPID
++            pmt.elementaryStreamSpecificData.removeAll { $0.elementaryPID == data.elementaryPID }
+             pmt.elementaryStreamSpecificData.append(data)
+             audioContinuityCounter = 0
+             writeProgramIfNeeded()
+@@ -40,6 +42,7 @@
+             var data = ESSpecificData()
+             data.streamType = videoFormat.streamType
+             data.elementaryPID = Self.defaultVideoPID
++            pmt.elementaryStreamSpecificData.removeAll { $0.elementaryPID == data.elementaryPID }
+             pmt.elementaryStreamSpecificData.append(data)
+             videoContinuityCounter = 0
+             writeProgramIfNeeded()
+@@ -68,8 +71,30 @@
+         }
+         return false
+     }
+-    private var videoTimeStamp: CMTime = .invalid
+-    private var audioTimeStamp: CMTime = .invalid
++    // PES data owns copied compressed bytes; codec buffers may be reused after append.
++    private struct PendingPacket {
++        var pes: PacketizedElementaryStream
++        let media: AVMediaType
++        let presentationTime: CMTime
++        let decodeTime: CMTime
++        let randomAccess: Bool
++        var time: CMTime { decodeTime.isValid ? decodeTime : presentationTime }
++    }
++
++    struct StartupLimits {
++        var packetCount = 256
++        var byteCount = 8 * 1024 * 1024
++        var mediaSpan: Double = 2
++    }
++
++    private(set) var error: SRTStream.MuxerError?
++    private let startupLimits: StartupLimits
++    private var pending: [PendingPacket] = []
++    private var pendingBytes = 0
++    private var initialMedias: Set<AVMediaType> = []
++    private var startupMinimum: CMTime = .invalid
++    private var startupMaximum: CMTime = .invalid
++    private var origin: CMTime = .invalid
+     private var clockTimeStamp: CMTime = .zero
+     private var segmentDuration: Double = TSWriter.defaultSegmentDuration
+     private var rotatedTimeStamp: CMTime = .zero
+@@ -82,59 +107,140 @@
+     }
+ 
+     /// Creates a new instance with segument duration.
+-    init(segmentDuration: Double = 2.0) {
++    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init()) {
+         self.segmentDuration = segmentDuration
+-    }
+-
+-    /// Appends a buffer.
++        self.startupLimits = startupLimits
++    }
++
++    /// Appends audio, retaining startup payloads until each required track arrives.
+     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+-        guard let audioBuffer = audioBuffer as? AVAudioCompressedBuffer, canWriteFor else {
+-            return
+-        }
+-        if audioTimeStamp == .invalid {
+-            audioTimeStamp = when.makeTime()
+-            if pcrPID == TSWriter.defaultAudioPID {
+-                clockTimeStamp = audioTimeStamp
+-            }
+-        }
+-        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
+-            pes.streamID = 192
+-            writePacketizedElementaryStream(
+-                TSWriter.defaultAudioPID,
+-                PES: pes,
+-                timeStamp: when.makeTime(),
+-                randomAccessIndicator: true
+-            )
+-        }
+-    }
+-
+-    /// Appends a buffer.
++        guard error == nil, let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
++        guard when.isHostTimeValid else { fail(.invalidTimestamp); return }
++        let timestamp = when.makeTime()
++        guard valid(timestamp) else { fail(.invalidTimestamp); return }
++        guard preflightTimes(timestamp, decodeTime: .invalid) else { return }
++        guard audioBuffer.byteLength > 0, audioBuffer.byteLength <= audioBuffer.byteCapacity,
++              audioBuffer.packetCount > 0,
++              AudioSpecificConfig(formatDescription: audioBuffer.format.formatDescription) != nil else { fail(.invalidPayload); return }
++        guard preflightPayload(Int(audioBuffer.byteLength)) else { return }
++        guard let pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: timestamp) else {
++            fail(.invalidPayload)
++            return
++        }
++        append(PendingPacket(pes: pes, media: .audio, presentationTime: timestamp,
++            decodeTime: .invalid, randomAccess: true))
++    }
++
++    /// Appends a compressed video buffer.
+     func append(_ sampleBuffer: CMSampleBuffer) {
+-        guard canWriteFor else {
+-            return
+-        }
+-        switch sampleBuffer.formatDescription?.mediaType {
+-        case .video:
+-            if videoTimeStamp == .invalid {
+-                videoTimeStamp = sampleBuffer.presentationTimeStamp
+-                if pcrPID == Self.defaultVideoPID {
+-                    clockTimeStamp = videoTimeStamp
+-                }
+-            }
+-            if var pes = PacketizedElementaryStream(sampleBuffer, timeStamp: videoTimeStamp) {
+-                let timestamp = sampleBuffer.decodeTimeStamp == .invalid ?
+-                    sampleBuffer.presentationTimeStamp : sampleBuffer.decodeTimeStamp
+-                pes.streamID = 224
+-                writePacketizedElementaryStream(
+-                    Self.defaultVideoPID,
+-                    PES: pes,
+-                    timeStamp: timestamp,
+-                    randomAccessIndicator: !sampleBuffer.isNotSync
+-                )
+-            }
+-        default:
+-            break
+-        }
++        guard error == nil, sampleBuffer.formatDescription?.mediaType == .video else { return }
++        let pts = sampleBuffer.presentationTimeStamp
++        let dts = sampleBuffer.decodeTimeStamp
++        guard valid(pts), dts == .invalid || valid(dts) else { fail(.invalidTimestamp); return }
++        guard preflightTimes(pts, decodeTime: dts) else { return }
++        guard let block = sampleBuffer.dataBuffer, block.dataLength > 0 else { fail(.invalidPayload); return }
++        let parameterBytes = sampleBuffer.formatDescription?.parameterSets.reduce(0) { $0 + $1.count + 4 } ?? 0
++        guard preflightPayload(block.dataLength + parameterBytes + 6) else { return }
++        guard let pes = PacketizedElementaryStream(sampleBuffer, timeStamp: min(pts, dts.isValid ? dts : pts)),
++              !pes.data.isEmpty else {
++            fail(.invalidPayload)
++            return
++        }
++        append(PendingPacket(pes: pes, media: .video, presentationTime: pts,
++            decodeTime: dts, randomAccess: !sampleBuffer.isNotSync))
++    }
++
++    private func valid(_ time: CMTime) -> Bool {
++        time.isNumeric && time.epoch == 0 && time.seconds.isFinite
++    }
++
++    // Bound timestamp arithmetic before the PES initializer converts seconds to Int64.
++    private func preflightTimes(_ pts: CMTime, decodeTime: CMTime) -> Bool {
++        let time = decodeTime.isValid ? decodeTime : pts
++        if origin.isValid {
++            let maximumSeconds = Double(Int64.max) / TSTimestamp.resolution - 1
++            guard time >= origin, pts >= origin,
++                  (pts - origin).seconds < maximumSeconds,
++                  (time - origin).seconds < maximumSeconds else {
++                fail(.invalidTimestamp)
++                return false
++            }
++        } else {
++            let low = startupMinimum.isValid ? min(startupMinimum, min(pts, time)) : min(pts, time)
++            let high = startupMaximum.isValid ? max(startupMaximum, max(pts, time)) : max(pts, time)
++            guard (high - low).seconds <= startupLimits.mediaSpan else {
++                fail(.startupTimeLimitExceeded)
++                return false
++            }
++        }
++        return true
++    }
++
++    // Reject oversized input before allocating a compressed payload copy.
++    private func preflightPayload(_ bytes: Int) -> Bool {
++        guard !origin.isValid else { return true }
++        guard pending.count < startupLimits.packetCount else { fail(.startupPacketLimitExceeded); return false }
++        guard bytes <= startupLimits.byteCount - pendingBytes else { fail(.startupByteLimitExceeded); return false }
++        return true
++    }
++
++    private func append(_ packet: PendingPacket) {
++        if origin.isValid {
++            emit(packet)
++            return
++        }
++        let minimum = min(packet.presentationTime, packet.time)
++        let maximum = max(packet.presentationTime, packet.time)
++        let low = startupMinimum.isValid ? min(startupMinimum, minimum) : minimum
++        let high = startupMaximum.isValid ? max(startupMaximum, maximum) : maximum
++        guard (high - low).seconds <= startupLimits.mediaSpan else { fail(.startupTimeLimitExceeded); return }
++        // Account for the owned PES payload and header, including ADTS/SPS/PPS bytes.
++        let bytes = packet.pes.data.count + 6 + (packet.pes.optionalPESHeader?.data.count ?? 0)
++        guard preflightPayload(bytes) else { return }
++        startupMinimum = low
++        startupMaximum = high
++        pendingBytes += bytes
++        pending.append(packet)
++        initialMedias.insert(packet.media)
++        guard canWriteFor, expectedMedias.isSubset(of: initialMedias) else { return }
++        origin = low
++        clockTimeStamp = origin
++        rotatedTimeStamp = origin
++        pcrPID = initialMedias.contains(.video) ? Self.defaultVideoPID : Self.defaultAudioPID
++        writeProgram()
++        let startup = pending
++        pending.removeAll(keepingCapacity: false)
++        pendingBytes = 0
++        for packet in startup { emit(packet) }
++    }
++
++    private func emit(_ packet: PendingPacket) {
++        guard error == nil else { return }
++        guard packet.time >= origin, packet.presentationTime >= origin,
++              (packet.presentationTime - origin).seconds < Double(Int64.max) / TSTimestamp.resolution,
++              (packet.time - origin).seconds < Double(Int64.max) / TSTimestamp.resolution else {
++            fail(.invalidTimestamp)
++            return
++        }
++        var pes = packet.pes
++        pes.optionalPESHeader = PESOptionalHeader()
++        pes.optionalPESHeader?.dataAlignmentIndicator = true
++        // Upstream adds the transport lead to PTS only. Apply the same lead to DTS
++        // so rebasing preserves the encoder's PTS minus DTS composition offset.
++        let decodeTime = packet.decodeTime.isValid ? packet.decodeTime + PESOptionalHeader.offset : .invalid
++        pes.optionalPESHeader?.setTimestamp(origin, presentationTimeStamp: packet.presentationTime,
++            decodeTimeStamp: decodeTime)
++        pes.streamID = packet.media == .audio ? 192 : 224
++        writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
++            PES: pes, timeStamp: packet.time, randomAccessIndicator: packet.randomAccess)
++    }
++
++    private func fail(_ failure: SRTStream.MuxerError) {
++        guard error == nil else { return }
++        error = failure
++        pending.removeAll(keepingCapacity: false)
++        pendingBytes = 0
++        continuation?.finish()
+     }
+ 
+     /// Clears the writer object for new transport stream.
+@@ -147,8 +253,13 @@
+         pat.programs.removeAll()
+         pat.programs = [1: Self.defaultPMTPID]
+         pmt = TSProgramMap()
+-        videoTimeStamp = .invalid
+-        audioTimeStamp = .invalid
++        origin = .invalid
++        startupMinimum = .invalid
++        startupMaximum = .invalid
++        pending.removeAll(keepingCapacity: false)
++        pendingBytes = 0
++        initialMedias.removeAll()
++        error = nil
+         clockTimeStamp = .zero
+         rotatedTimeStamp = .zero
+         expectedMedias.removeAll()
+@@ -189,6 +300,7 @@
+     }
+ 
+     private func write(_ data: Data) {
++        guard error == nil else { return }
+         continuation?.yield(data)
+     }
+ 
+@@ -208,7 +320,7 @@
+         guard !expectedMedias.isEmpty else {
+             return
+         }
+-        guard canWriteFor else {
++        guard canWriteFor, origin.isValid, error == nil else {
+             return
+         }
+         writeProgram()
+@@ -218,7 +330,7 @@
+         var PCR: UInt64?
+         let duration: Double = timestamp.seconds - clockTimeStamp.seconds
+         if pcrPID == PID && 0.02 <= duration {
+-            PCR = UInt64((timestamp.seconds - (PID == Self.defaultVideoPID ? videoTimeStamp : audioTimeStamp).seconds) * TSTimestamp.resolution)
++            PCR = UInt64((timestamp - origin).seconds * TSTimestamp.resolution)
+             clockTimeStamp = timestamp
+         }
+         var packets: [TSPacket] = []

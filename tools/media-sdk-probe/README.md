@@ -6,15 +6,20 @@ These isolated probes establish SDK compatibility before camera integration.
 SRT publisher through independent bounded queues. Its destination is restricted
 to an owned loopback receiver. Neither executable is the production camera app.
 The `record-only` destination skips publisher creation entirely; the conformance
-runner exercises this offline mode as well as three network scenarios.
+runner exercises this offline mode as well as normal streams with zero/nonzero
+source clocks, a stalled receiver, and an absent receiver.
 
-The package pins HaishinKit 2.2.5 and checks in its resolution, including Logboard
-2.6.0. HaishinKit supplies libsrt 1.5.4 with iPhone, Simulator, and Mac slices.
+The package uses the [maintained local HaishinKit 2.2.5 subset](../../vendor/HaishinKit/README.md),
+with exact Logboard 2.6.0 resolution and the unchanged checksummed libsrt 1.5.4
+binary. Original hashes, license, and the focused patch are retained. See the
+[startup and clock correction](../../docs/sdk-startup-patch.md).
 
 From the repository root:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
+swift test --package-path vendor/HaishinKit
+swift test --package-path tools/media-sdk-probe
 swift run --package-path tools/media-sdk-probe SDKSmoke
 pnpm test:dual-output
 cd tools/media-sdk-probe
@@ -45,3 +50,8 @@ did not establish executable link compatibility.
 See [the dual-output results](../../docs/native-dual-output.md) and
 [compatibility findings](../../docs/capture-sdk-compatibility.md) for the audio
 conversion requirement, buffer ownership, and remaining runtime checks.
+
+The corrected source passes 35 vendor tests and three PCM clock tests. The latest
+five-case run is `artifacts/qa/dual-output-nHltS0/results.json`; both normal streams
+retain all 420 source frames. Full corrected ARM64 Simulator and unsigned iPhone
+links pass with iOS 17 deployment (`sdk-startup-ios-*-build.log`).

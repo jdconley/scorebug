@@ -21,7 +21,8 @@ public actor SDKProbe {
     public func start(_ url: URL) async throws {
         try await connection.connect(url)
         await stream.publish()
-        guard await connection.connected, await stream.readyState == .publishing else {
+        guard await connection.connected, await stream.readyState == .publishing,
+              await stream.muxerError == nil else {
             throw ProbeError.notPublishing
         }
     }
@@ -39,7 +40,8 @@ public actor SDKProbe {
     public func isPublishing() async -> Bool {
         let connected = await connection.connected
         let publishing = await stream.readyState == .publishing
-        return connected && publishing
+        let muxerHealthy = await stream.muxerError == nil
+        return connected && publishing && muxerHealthy
     }
     public func stop() async { await stream.close(); await connection.close() }
 }
@@ -47,13 +49,21 @@ public actor SDKProbe {
 public func copyPCM(_ sample: CMSampleBuffer) -> (AVAudioPCMBuffer, AVAudioTime)? {
     guard let description = sample.formatDescription,
           CMFormatDescriptionGetMediaSubType(description) == kAudioFormatLinearPCM,
-          sample.numSamples > 0 else { return nil }
+          sample.numSamples > 0, sample.numSamples <= Int32.max else { return nil }
     let format = AVAudioFormat(cmAudioFormatDescription: description)
+    let pts = sample.presentationTimeStamp
+    guard pts.isNumeric, pts.epoch == 0, pts.seconds.isFinite, pts.seconds >= 0,
+          pts.seconds < AVAudioTime.seconds(forHostTime: UInt64.max),
+          format.sampleRate.isFinite, format.sampleRate > 0,
+          format.sampleRate <= Double(Int32.max), format.sampleRate.rounded() == format.sampleRate else { return nil }
+    let sampleTime = CMTimeConvertScale(pts, timescale: Int32(format.sampleRate), method: .default)
+    guard sampleTime.isNumeric, sampleTime.value >= 0 else { return nil }
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.numSamples)) else { return nil }
     buffer.frameLength = AVAudioFrameCount(sample.numSamples)
     guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0,
             frameCount: Int32(sample.numSamples), into: buffer.mutableAudioBufferList) == noErr else { return nil }
-    let pts = sample.presentationTimeStamp
-    guard pts.isNumeric, pts.timescale > 0 else { return nil }
-    return (buffer, AVAudioTime(sampleTime: pts.value, atRate: Double(pts.timescale)))
+    // The SDK anchors encoded audio to hostTime and interprets sampleTime at the
+    // PCM format's rate. Preserve both clocks even when capture uses another scale.
+    return (buffer, AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: pts.seconds),
+        sampleTime: sampleTime.value, atRate: format.sampleRate))
 }

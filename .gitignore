@@ -36,6 +36,9 @@ ios/**/*.xcuserstate
 ios/Pods/
 Package.resolved
 !tools/media-sdk-probe/Package.resolved
+!vendor/HaishinKit/Package.resolved
+vendor/HaishinKit/.build/
+vendor/HaishinKit/.swiftpm/
 tools/media-sdk-probe/.build/
 tools/media-sdk-probe/.swiftpm/
 tools/media-harness/.build/
