@@ -1,9 +1,34 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import type { WorkerObservation } from '@scorebug/protocol';
 import { createApp } from '../src/app.js';
 import { testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 
 const stores: MatchStore[] = [];
+it('accepts the exact shared Swift decoded-video observations', async () => {
+  const examples = JSON.parse(
+    readFileSync(
+      new URL('../../../packages/protocol/fixtures/decoded-video-v1.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  for (const example of Object.values(examples) as {
+    status: { observation: WorkerObservation };
+  }[]) {
+    const f = await fixture();
+    const observation = example.status.observation;
+    expect((await f.report({ ...f.body, observation })).status).toBe(200);
+    const actual = (await f.status()).status.observation;
+    if (observation.decodedVideo?.completed) {
+      expect(actual.decodedVideo.completed.ageMs).toBeGreaterThanOrEqual(
+        observation.decodedVideo.completed.ageMs,
+      );
+      actual.decodedVideo.completed.ageMs = observation.decodedVideo.completed.ageMs;
+    }
+    expect(actual).toEqual(observation);
+  }
+});
 afterEach(() => {
   stores.splice(0).forEach((store) => store.close());
   vi.useRealTimers();
@@ -378,4 +403,199 @@ it('hides old observations and rejects late reports after replacement of a runni
     ).status,
   ).toBe(200);
   expect((await f.status()).status).toMatchObject({ state: 'producing_output', generation: 2 });
+});
+
+const decoded = () => ({
+  completed: {
+    sequence: 1,
+    durationMs: 5000,
+    ageMs: 100,
+    firstPTS: 0,
+    lastPTS: 447000,
+    freshFrames: 150,
+    duplicateFrames: 0,
+    reorderedFrames: 0,
+    valid: true,
+  },
+  invalidReason: null,
+  ended: false,
+});
+
+it('carries decoded ingress windows and ages them without changing stored evidence or duplicate freshness', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const body = { ...f.body, observation: { ...f.body.observation, decodedVideo: decoded() } };
+  expect((await f.report(body)).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(100);
+  vi.advanceTimersByTime(1200);
+  vi.setSystemTime(Date.now() - 60_000);
+  const read = await f.status();
+  expect(read.status.observation.decodedVideo.completed.ageMs).toBe(1300);
+  read.status.observation.decodedVideo.completed.freshFrames = 999;
+  expect((await f.report(body)).status).toBe(200);
+  vi.advanceTimersByTime(800);
+  const next = await f.status();
+  expect(next.status.observation.decodedVideo.completed).toMatchObject({
+    ageMs: 2100,
+    freshFrames: 150,
+  });
+});
+
+it('rejects malformed decoded windows and raw data while retaining legacy and unknown observations', async () => {
+  const f = await fixture();
+  const malformed = [
+    { ...decoded(), raw: 'secret' },
+    { ...decoded(), invalidReason: 'secret' },
+    { ...decoded(), ended: 'false' },
+    ...[
+      { sequence: 0 },
+      { durationMs: 4000 },
+      { ageMs: -1 },
+      { ageMs: Number.MAX_SAFE_INTEGER + 1 },
+      { firstPTS: 1.5 },
+      { lastPTS: Number.MAX_SAFE_INTEGER + 1 },
+      { freshFrames: -1 },
+      { duplicateFrames: 0.1 },
+      { reorderedFrames: Number.MAX_SAFE_INTEGER + 1 },
+      { firstPTS: null },
+      { lastPTS: -1 },
+      { freshFrames: 0 },
+      { valid: false },
+      { raw: 'secret' },
+    ].map((patch) => ({ ...decoded(), completed: { ...decoded().completed, ...patch } })),
+  ];
+  for (const decodedVideo of malformed) {
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, decodedVideo } })).status,
+    ).toBe(400);
+  }
+  expect((await f.report()).status).toBe(200);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: {
+          ...f.body.observation,
+          decodedVideo: { completed: null, invalidReason: null, ended: false },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 3,
+        observation: {
+          ...f.body.observation,
+          decodedVideo: { completed: null, invalidReason: 'numeric', ended: false },
+        },
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it('rejects changed completed windows, regressions and recovery of terminal decoder evidence within one attempt', async () => {
+  const f = await fixture();
+  const report = (decodedVideo: unknown, sequence = 2, attempt = 1) =>
+    f.report({
+      ...f.body,
+      sequence,
+      observation: { ...f.body.observation, attempt, decodedVideo },
+    });
+  const first = decoded();
+  expect((await report(first, 1)).status).toBe(200);
+  for (const patch of [
+    { freshFrames: 149 },
+    { firstPTS: 1 },
+    { lastPTS: 448000 },
+    { ageMs: 99 },
+    { duplicateFrames: 1 },
+    { reorderedFrames: 1 },
+  ]) {
+    expect((await report({ ...first, completed: { ...first.completed, ...patch } })).status).toBe(
+      409,
+    );
+  }
+  const second = {
+    ...first,
+    completed: { ...first.completed, sequence: 2, ageMs: 0, firstPTS: 450000, lastPTS: 897000 },
+  };
+  expect((await report(second)).status).toBe(200);
+  expect((await report(first, 3)).status).toBe(409);
+  // An absent optional field cannot erase the anti-regression watermark.
+  expect((await f.report({ ...f.body, sequence: 3 })).status).toBe(200);
+  expect((await report(first, 4)).status).toBe(409);
+  const failed = {
+    ...second,
+    invalidReason: 'framing',
+    ended: true,
+    completed: { ...second.completed, valid: false, ageMs: 100 },
+  };
+  expect((await report(failed, 4)).status).toBe(200);
+  expect((await report(second, 5)).status).toBe(409);
+  // New worker attempt gets a new collector and can restart all decoder counters.
+  expect((await report(first, 5, 2)).status).toBe(200);
+});
+
+it('cannot make the same decoder window younger with newer report sequence numbers', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const body = { ...f.body, observation: { ...f.body.observation, decodedVideo: decoded() } };
+  expect((await f.report(body)).status).toBe(200);
+  vi.advanceTimersByTime(1200);
+  expect((await f.report({ ...body, sequence: 2 })).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(1300);
+  // Dropping the optional field must not reset the known window age either.
+  expect((await f.report({ ...f.body, sequence: 3 })).status).toBe(200);
+  vi.advanceTimersByTime(800);
+  expect((await f.report({ ...body, sequence: 4 })).status).toBe(200);
+  expect((await f.status()).status.observation.decodedVideo.completed.ageMs).toBe(2100);
+});
+
+it('preserves nested observations against mutation on both input and direct reads', async () => {
+  const f = await fixture();
+  const body = {
+    ...f.body,
+    observation: {
+      ...f.body.observation,
+      state: 'producing_output' as const,
+      decodedVideo: decoded(),
+    },
+  };
+  f.observations.report(body);
+  body.observation.decodedVideo.completed.freshFrames = 999;
+  const first = f.observations.status('match');
+  expect(first.status.observation?.decodedVideo?.completed?.freshFrames).toBe(150);
+  first.status.observation!.decodedVideo!.completed!.freshFrames = 999;
+  expect(
+    f.observations.status('match').status.observation?.decodedVideo?.completed?.freshFrames,
+  ).toBe(150);
+});
+
+it('retains fresh PTS range across zero-progress windows and rejects a later source rewind', async () => {
+  const f = await fixture();
+  const report = (video: unknown, sequence: number) =>
+    f.report({ ...f.body, sequence, observation: { ...f.body.observation, decodedVideo: video } });
+  expect((await report(decoded(), 1)).status).toBe(200);
+  const empty = {
+    ...decoded(),
+    completed: {
+      ...decoded().completed,
+      sequence: 2,
+      ageMs: 0,
+      firstPTS: null,
+      lastPTS: null,
+      freshFrames: 0,
+    },
+  };
+  expect((await report(empty, 2)).status).toBe(200);
+  const rewind = { ...decoded(), completed: { ...decoded().completed, sequence: 3 } };
+  expect((await report(rewind, 3)).status).toBe(409);
+  const resumed = {
+    ...decoded(),
+    completed: { ...decoded().completed, sequence: 3, firstPTS: 900000, lastPTS: 1347000 },
+  };
+  expect((await report(resumed, 3)).status).toBe(200);
 });

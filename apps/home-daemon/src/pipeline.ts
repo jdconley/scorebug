@@ -1,5 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import type { Logger } from './logger.js';
+import { DecodedVideoTelemetry, type DecodedVideoSnapshot } from './decoded-video.js';
 
 export type PipelineSpec = {
   gameId: string;
@@ -18,6 +20,8 @@ export type PipelineHandle = {
   spec: PipelineSpec;
   stop: () => void;
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  /** Decoder ingress only; PTS ticks use 1/90000. Fresh pipeline means fresh scope. */
+  snapshotDecodedVideo?: () => DecodedVideoSnapshot;
 };
 
 function filterPath(value: string): string {
@@ -90,6 +94,11 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   const filter = profile
     ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`
     : drawtext;
+  // A sink-only side branch observes every decoder frame without changing the
+  // live branch's timebase (the cap uses its rounding tolerance). The simple
+  // graph still has exactly one external input and one output.
+  const telemetry =
+    "metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]";
 
   return [
     '-hide_banner',
@@ -107,7 +116,7 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '-map',
     '0:a:0',
     '-vf',
-    filter,
+    telemetry + filter,
     ...video,
     '-c:a',
     'aac',
@@ -125,6 +134,8 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
 export type PipelineProgress = Readonly<{ frame: number; outTimeUs: number }>;
 
 export type PipelineOptions = {
+  /** Monotonic milliseconds; telemetry never compares source PTS to this clock. */
+  monotonicNow?: () => number;
   /** Called only for complete, non-regressing records with at least one changed counter. */
   onProgress?: (progress: PipelineProgress) => void;
   /** Grace period before SIGKILL, in milliseconds (0–60000). Defaults to 5000. */
@@ -209,6 +220,7 @@ export function startPipeline(
     throw new RangeError('stopTimeoutMs must be an integer from 0 to 60000');
   }
   const args = buildFfmpegArgs(spec);
+  const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
   let child: ChildProcess | undefined;
   let settled = false;
   let stopping = false;
@@ -237,8 +249,13 @@ export function startPipeline(
   try {
     child = fork(new URL('./pipeline-guardian.mjs', import.meta.url), [], {
       execArgv: [],
-      stdio: ['ignore', 'pipe', 'ignore', 'ipc'],
+      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe'],
     });
+    // Guardian IPC remains fd3; its fd4 becomes FFmpeg's telemetry fd3.
+    // Always drain, including after invalid evidence and without an observer.
+    const telemetry = child.stdio[4] as Readable;
+    telemetry.on('data', (chunk: Buffer) => decodedVideo.push(chunk));
+    telemetry.once('end', () => decodedVideo.end());
     // Drain diagnostics without retaining them: FFmpeg echoes credentialed URLs.
     if (options.onProgress) {
       child.stdout?.on(
@@ -274,6 +291,7 @@ export function startPipeline(
       if (!child?.pid) settle(null, null);
     });
     child.once('close', () => {
+      decodedVideo.end();
       // Drain progress before resolving. Guardian death alone does not prove the
       // encoder exited: fail closed so the supervisor cannot overlap publishers.
       if (encoderExit) settle(encoderExit.code, encoderExit.signal);
@@ -294,5 +312,6 @@ export function startPipeline(
       send({ type: 'stop' });
     },
     waitExit: () => exit,
+    snapshotDecodedVideo: () => decodedVideo.snapshot(),
   };
 }

@@ -125,6 +125,13 @@ export class WorkerSupervisor {
     if (state.state === 'idle' || state.gameId === undefined || state.generation === undefined)
       return null;
     const active = this.active;
+    let decodedVideo: WorkerObservation['decodedVideo'];
+    try {
+      const snapshot = active?.handle.snapshotDecodedVideo?.();
+      if (snapshot) decodedVideo = structuredClone(snapshot);
+    } catch {
+      // Measurement failure is unknown evidence, never an encoder/control failure.
+    }
     return {
       gameId: state.gameId,
       generation: state.generation,
@@ -134,6 +141,7 @@ export class WorkerSupervisor {
       frame: active?.progress?.frame ?? null,
       outTimeUs: active?.progress?.outTimeUs ?? null,
       scoreRevision: active?.input.scoreRevision ?? null,
+      ...(decodedVideo ? { decodedVideo } : {}),
     };
   }
 

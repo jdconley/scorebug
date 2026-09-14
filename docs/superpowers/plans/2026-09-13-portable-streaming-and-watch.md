@@ -299,6 +299,12 @@ media yet; missing runtime telemetry, profile transitions, impairment, and soak
 qualification remain open. The rolling five-second output gate is separate from
 the controller's deterministic 1–5-second input windows.
 
+The [worker decoder measurements](../../worker-decoded-video.md) now pass software,
+VideoToolbox, and CPU-container timestamp qualifications. Optional bounded windows
+travel through the authenticated API to Swift models with per-attempt regression
+guards and monotonic age. Capture/encoder correlation and report-transit age remain
+open, so the broader fresh-frame tracking item and adaptive enablement stay pending.
+
 ## Milestone 5: Watch scoring and complete simulator workflows
 
 [Networking design notes](../../watch-networking-design.md) map the existing shared

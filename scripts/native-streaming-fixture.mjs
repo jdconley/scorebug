@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { createSocket } from 'node:dgram';
-import { copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools } from './media-tools.mjs';
@@ -13,6 +13,12 @@ import { scoringTestToken } from './scoring-test-server.mjs';
 export async function nativeStreamingFixture({ artifact, root, run }) {
   const names = [];
   let worker, done;
+  let statusTask, statusAbort, statusError;
+  const decodedWindows = new Map();
+  async function stopStatus() {
+    statusAbort?.abort();
+    await statusTask;
+  }
   async function port(udp = false) {
     const socket = udp ? createSocket('udp4') : createServer();
     await new Promise((resolve, reject) => {
@@ -34,6 +40,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
   }
   async function stop() {
     const errors = [];
+    await stopStatus();
     try {
       await stopWorker();
     } catch (error) {
@@ -125,6 +132,27 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
           signal: AbortSignal.timeout(5000),
         });
         assert.ok(response.ok, `Create fixture match: ${response.status}`);
+        const created = await response.json();
+        // One owned request at a time, bounded history, and joined on every exit.
+        // Keep only numeric evidence; credentials never enter artifacts.
+        statusAbort = new AbortController();
+        statusTask = (async () => {
+          while (!statusAbort.signal.aborted) {
+            const result = await fetch(
+              `${baseURL}/v1/matches/${created.snapshot.id}/media/status`,
+              {
+                headers: { authorization: `Bearer ${created.credential.token}` },
+                signal: AbortSignal.any([statusAbort.signal, AbortSignal.timeout(1500)]),
+              },
+            );
+            assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
+            const { status } = await result.json();
+            recordDecodedVideoEvidence(decodedWindows, status);
+            await delay(500, undefined, { signal: statusAbort.signal });
+          }
+        })().catch((error) => {
+          if (!statusAbort.signal.aborted) statusError = error;
+        });
         const { ffmpeg, ffprobe, font } = mediaTools();
         worker = spawn(
           process.execPath,
@@ -159,6 +187,28 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
         });
       },
       async collect() {
+        await stopStatus();
+        if (statusError) throw statusError;
+        const evidence = [...decodedWindows.values()];
+        await writeFile(
+          join(artifact, 'decoded-video-status.json'),
+          JSON.stringify(evidence, null, 2),
+        );
+        assert.ok(
+          evidence.every((sample) => sample.invalidReason === null && sample.completed.valid),
+          'Native stream produced invalid decoder telemetry',
+        );
+        assert.ok(
+          evidence.filter(
+            ({ ended, completed: window }) =>
+              !ended &&
+              window.durationMs === 5000 &&
+              window.freshFrames >= 120 &&
+              window.duplicateFrames === 0 &&
+              window.reorderedFrames === 0,
+          ).length >= 2,
+          'Native stream must report at least two complete decoder windows at >=24 fresh FPS',
+        );
         await stopWorker();
         assert.ok(
           (await readFile(join(artifact, 'worker/score.txt'), 'utf8')).includes('HOME 1-0 AWAY'),
@@ -186,5 +236,28 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
   } catch (error) {
     await stop();
     throw error;
+  }
+}
+
+export function recordDecodedVideoEvidence(decodedWindows, status) {
+  const observation = status.observation;
+  const video = observation?.decodedVideo;
+  assert.ok(
+    !video || (video.invalidReason === null && (!video.completed || video.completed.valid)),
+    'Native stream produced invalid decoder telemetry',
+  );
+  if (video?.completed && status.state === 'producing_output') {
+    const key = `${observation.generation}:${observation.attempt}:${video.completed.sequence}`;
+    if (!decodedWindows.has(key)) {
+      assert.ok(decodedWindows.size < 64, 'Decoder evidence exceeded fixture bound');
+      decodedWindows.set(
+        key,
+        structuredClone({
+          generation: observation.generation,
+          attempt: observation.attempt,
+          ...video,
+        }),
+      );
+    }
   }
 }

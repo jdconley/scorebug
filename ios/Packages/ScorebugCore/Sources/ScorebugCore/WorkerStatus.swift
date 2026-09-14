@@ -42,14 +42,16 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
     public var frame: Int?
     public var outTimeUs: Int?
     public var scoreRevision: Int?
+    public var decodedVideo: DecodedVideoSnapshot?
 
     public init(gameId: String, generation: Int, state: WorkerState, reason: WorkerReason?, attempt: Int,
-                frame: Int?, outTimeUs: Int?, scoreRevision: Int?) {
+                frame: Int?, outTimeUs: Int?, scoreRevision: Int?, decodedVideo: DecodedVideoSnapshot? = nil) {
         self.gameId = gameId; self.generation = generation; self.state = state; self.reason = reason
         self.attempt = attempt; self.frame = frame; self.outTimeUs = outTimeUs; self.scoreRevision = scoreRevision
+        self.decodedVideo = decodedVideo
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, decodedVideo }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(gameId, forKey: .gameId)
@@ -60,6 +62,7 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
         try container.encode(frame, forKey: .frame)
         try container.encode(outTimeUs, forKey: .outTimeUs)
         try container.encode(scoreRevision, forKey: .scoreRevision)
+        try container.encodeIfPresent(decodedVideo, forKey: .decodedVideo)
     }
 }
 

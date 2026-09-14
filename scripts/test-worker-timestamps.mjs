@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { buildFfmpegArgs } from '../apps/home-daemon/src/pipeline.ts';
+import { DecodedVideoParser } from '../apps/home-daemon/src/decoded-video.ts';
 import { mediaTools } from './media-tools.mjs';
 import {
   sourceFrameCodeFilter,
@@ -16,6 +17,36 @@ import {
 const execute = promisify(execFile);
 async function run(binary, args) {
   return execute(binary, args, { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
+}
+
+/** Explicit finite-fixture helper: use the production fd3, never parse stderr. */
+export async function runInstrumentedWorker(binary, args) {
+  const pts = [];
+  let invalid;
+  const parser = new DecodedVideoParser(
+    (value) => {
+      assert.ok(pts.length < 10_000, 'Finite fixture exceeded frame bound');
+      pts.push(value);
+    },
+    (reason) => {
+      invalid = reason;
+    },
+  );
+  const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'ignore', 'pipe'] });
+  child.stdio[3].on('data', (chunk) => parser.push(chunk));
+  const timeout = setTimeout(() => child.kill('SIGKILL'), 20_000);
+  try {
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    parser.end();
+    assert.equal(code, 0, 'Instrumented worker failed');
+    assert.equal(invalid, undefined, 'Invalid decoder telemetry');
+    return pts;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Explicit media qualification: no FFmpeg dependency in the default unit suite. */
@@ -78,7 +109,44 @@ export async function qualifyWorkerTimestamps({
         encoder,
         profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
       });
-      await run(ffmpeg, workerArgs);
+      const decodedPTS = await runInstrumentedWorker(ffmpeg, workerArgs);
+      const sourceCodes = Array.from({ length: 3 * inputFPS }, (_, index) => index).filter(
+        (code) => !gap || code < 30 || code > 41,
+      );
+      assert.equal(
+        decodedPTS.length,
+        sourceCodes.length,
+        'Telemetry must observe every decoded frame before the cap',
+      );
+      const sourceProbe = JSON.parse(
+        (
+          await run(ffprobe, [
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_frames',
+            '-show_entries',
+            'frame=best_effort_timestamp_time',
+            '-of',
+            'json',
+            source,
+          ])
+        ).stdout,
+      );
+      assert.deepEqual(
+        decodedPTS,
+        sourceProbe.frames.map((frame) =>
+          Math.round(Number(frame.best_effort_timestamp_time) * 90000),
+        ),
+        'Telemetry must rescale the actual decoded source PTS to the nearest 90 kHz tick',
+      );
+      for (let index = 0; index < decodedPTS.length; index++) {
+        assert.ok(
+          Math.abs(decodedPTS[index] / 90000 - (lead + sourceCodes[index] / inputFPS)) < 0.001,
+          'Decoder telemetry must preserve source PTS within source-container rounding',
+        );
+      }
       await run(ffmpeg, [
         '-v',
         'error',
@@ -184,6 +252,9 @@ export async function qualifyWorkerTimestamps({
       );
       results.push({
         encoder,
+        decodedFrames: decodedPTS.length,
+        decodedFirstPTS: decodedPTS[0],
+        decodedLastPTS: decodedPTS.at(-1),
         sourceAudioTailSeconds: tail,
         inputFPS,
         gap,

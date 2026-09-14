@@ -55,6 +55,7 @@ it('settles a missing binary without an unhandled error or a pending exit', asyn
     createLogger('error'),
   );
   expect(await boundedExit(pipeline)).toEqual({ code: null, signal: null });
+  expect(pipeline.snapshotDecodedVideo?.().ended).toBe(true);
   pipeline.stop();
 });
 
@@ -131,6 +132,7 @@ it('escalates an ignored TERM to KILL and keeps repeated stop calls idempotent',
 
 it('reaps an encoder that ignores TERM after its worker is killed abruptly', async () => {
   const fixture = await childFixture(`
+    require('node:fs').writeSync(3, 'frame:0 pts:0 pts_time:0\\nscorebug.source=1\\n');
     process.on('SIGTERM', () => require('node:fs').writeFileSync(__filename + '.term', 'received'));
     setInterval(() => {}, 1000);
   `);
@@ -374,6 +376,54 @@ it('keeps supervising when a progress observer throws and does not log its error
       message: 'ffmpeg_progress_callback_failed',
       gameId: 'fixture',
     });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('routes dedicated telemetry independently of progress and drains the terminal record before exit', async () => {
+  const fixture = await childFixture(`
+    process.stdout.write('frame=9\\nout_time_us=9\\nprogress=end\\n');
+    require('node:fs').writeSync(3, 'frame:0 pts:9000 pts_time:0.1\\nscorebug.source=1\\n');
+    process.stderr.write('SECRET_DIAGNOSTIC');
+  `);
+  let time = 0;
+  const progress: unknown[] = [];
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      monotonicNow: () => {
+        const value = time;
+        time += 5000;
+        return value;
+      },
+      onProgress: (value) => progress.push(value),
+    });
+    expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
+    expect(progress).toEqual([{ frame: 9, outTimeUs: 9 }]);
+    expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
+      ended: true,
+      invalidReason: null,
+      completed: { freshFrames: 1, firstPTS: 9000, lastPTS: 9000 },
+    });
+    expect(JSON.stringify(fixture.records)).not.toContain('SECRET_DIAGNOSTIC');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('drains large malformed telemetry with no observer and seals its invalid terminal evidence', async () => {
+  const fixture = await childFixture(
+    `require('node:fs').writeSync(3, 'PRIVATE_URL'.repeat(100000));`,
+  );
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log);
+    expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
+    expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
+      ended: true,
+      invalidReason: 'oversized',
+      completed: null,
+    });
+    expect(JSON.stringify(fixture.records)).not.toContain('PRIVATE_URL');
   } finally {
     await fixture.cleanup();
   }

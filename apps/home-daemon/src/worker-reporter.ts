@@ -42,7 +42,7 @@ export class WorkerReporter {
   }
   report(observation: WorkerObservation): Promise<void> {
     if (!this.inFlight)
-      this.inFlight = this.publish({ ...observation }).finally(() => {
+      this.inFlight = this.publish(structuredClone(observation)).finally(() => {
         this.inFlight = undefined;
       });
     return this.inFlight;

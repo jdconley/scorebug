@@ -19,7 +19,7 @@ import {
 } from './media-frame-codes.mjs';
 import { sourceAudioExpression } from './media-sync.mjs';
 import { measureSoak } from './media-soak.mjs';
-import { qualifyWorkerTimestamps } from './test-worker-timestamps.mjs';
+import { qualifyWorkerTimestamps, runInstrumentedWorker } from './test-worker-timestamps.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const encoder = process.argv[2] ?? 'software';
@@ -263,7 +263,7 @@ try {
       'profile source',
     );
     const destination = join(directory, `profile-${rate}.flv`);
-    await mediaCommand(
+    await runInstrumentedWorker(
       ffmpeg,
       buildFfmpegArgs({
         gameId: 'profile',
@@ -275,7 +275,6 @@ try {
         fontPath: font,
         profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
       }),
-      'profile cadence',
     );
     const probe = JSON.parse(
       await mediaCommand(

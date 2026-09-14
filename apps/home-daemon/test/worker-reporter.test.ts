@@ -133,3 +133,32 @@ it('rejects credentialed or non-HTTP control URLs before making requests', () =>
       'invalid_worker_report_configuration',
     );
 });
+
+it('copies nested decoder evidence before suspended registration', async () => {
+  const f = await fixture((path) => ({
+    body: path.endsWith('sessions') ? { sessionId: 'one' } : { accepted: true },
+    delay: 20,
+  }));
+  const mutable = {
+    ...observation,
+    decodedVideo: {
+      completed: {
+        sequence: 1,
+        durationMs: 5000 as const,
+        ageMs: 100,
+        firstPTS: 0,
+        lastPTS: 447000,
+        freshFrames: 150,
+        duplicateFrames: 0,
+        reorderedFrames: 0,
+        valid: true,
+      },
+      invalidReason: null,
+      ended: false,
+    },
+  };
+  const pending = f.reporter.report(mutable);
+  mutable.decodedVideo.completed.freshFrames = 999;
+  await pending;
+  expect(f.requests[1]!.body.observation.decodedVideo.completed.freshFrames).toBe(150);
+});

@@ -47,3 +47,19 @@ test('Swift and TypeScript consume the same canonical media contract fixture', (
   );
   assert.deepEqual(JSON.parse(swift), JSON.parse(canonical));
 });
+
+test('Swift and TypeScript consume the same decoded video status fixture', () => {
+  const fixture = 'decoded-video-v1.json';
+  const canonical = readFileSync(
+    new URL(`../../packages/protocol/fixtures/${fixture}`, import.meta.url),
+    'utf8',
+  );
+  const swift = readFileSync(
+    new URL(
+      `../../ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/${fixture}`,
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.deepEqual(JSON.parse(swift), JSON.parse(canonical));
+});

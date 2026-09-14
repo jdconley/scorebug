@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
+  type DecodedVideoSnapshot,
   type WorkerMediaStatusResponse,
   type WorkerObservation,
   type WorkerObservationRequest,
@@ -29,6 +30,9 @@ type Report = {
   counters: Counters;
   observedAt: number;
   receivedAt: number;
+  decodedVideo?: DecodedVideoSnapshot;
+  lastDecodedPTS?: number;
+  decodedAge?: { sequence: number; ageMs: number; at: number };
 };
 type Session = { runId: string; sessionId: string; report?: Report };
 type Worker = { current: Session; retiredRuns: Set<string>; retiredSessions: Set<string> };
@@ -100,14 +104,69 @@ export class WorkerObservations {
         counters[key] = after ?? before;
       }
     }
+    const sameAttempt = previous?.observation.attempt === observation.attempt;
+    const beforeVideo = sameAttempt ? previous?.decodedVideo : undefined;
+    const afterVideo = observation.decodedVideo;
+    let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
+    if (beforeVideo && afterVideo) {
+      if (
+        (beforeVideo.ended && !afterVideo.ended) ||
+        (beforeVideo.invalidReason !== null &&
+          beforeVideo.invalidReason !== afterVideo.invalidReason)
+      )
+        throw new WorkerObservationError('observation_conflict');
+      const before = beforeVideo.completed,
+        after = afterVideo.completed;
+      if (before) {
+        if (!after || after.sequence < before.sequence)
+          throw new WorkerObservationError('observation_conflict');
+        if (after.sequence === before.sequence) {
+          const { ageMs: beforeAge, valid: beforeValid, ...beforeContent } = before;
+          const { ageMs: afterAge, valid: afterValid, ...afterContent } = after;
+          if (
+            canonical(beforeContent) !== canonical(afterContent) ||
+            afterAge < beforeAge ||
+            (!beforeValid && afterValid)
+          )
+            throw new WorkerObservationError('observation_conflict');
+        } else if (
+          after.firstPTS !== null &&
+          lastDecodedPTS !== undefined &&
+          after.firstPTS <= lastDecodedPTS
+        ) {
+          throw new WorkerObservationError('observation_conflict');
+        }
+      }
+    }
+    if (afterVideo?.completed?.lastPTS !== null && afterVideo?.completed?.lastPTS !== undefined)
+      lastDecodedPTS = afterVideo.completed.lastPTS;
+    const receivedAt = this.monotonic();
+    let decodedAge = sameAttempt ? previous?.decodedAge : undefined;
+    if (afterVideo?.completed) {
+      const window = afterVideo.completed;
+      const knownAge =
+        decodedAge?.sequence === window.sequence
+          ? decodedAge.ageMs + Math.max(0, receivedAt - decodedAge.at)
+          : 0;
+      decodedAge = {
+        sequence: window.sequence,
+        ageMs: Math.min(Number.MAX_SAFE_INTEGER, Math.max(window.ageMs, knownAge)),
+        at: receivedAt,
+      };
+    }
     const now = this.now();
     worker.current.report = {
       sequence: body.sequence,
       request,
-      observation: { ...observation },
+      observation: structuredClone(observation),
       counters,
       observedAt: now,
-      receivedAt: this.monotonic(),
+      receivedAt,
+      ...(afterVideo || beforeVideo
+        ? { decodedVideo: structuredClone(afterVideo ?? beforeVideo!) }
+        : {}),
+      ...(lastDecodedPTS !== undefined ? { lastDecodedPTS } : {}),
+      ...(decodedAge ? { decodedAge } : {}),
     };
     return { accepted: true, serverTime: new Date(now).toISOString() };
   }
@@ -136,11 +195,25 @@ export class WorkerObservations {
       return { status: { ...base, state: 'unknown' }, serverTime };
     // Wall time describes receipt provenance; only monotonic elapsed time determines freshness.
     const remaining = WORKER_OBSERVATION_TTL_MS - (this.monotonic() - report.receivedAt);
+    const observation = structuredClone(report.observation);
+    if (observation.decodedVideo?.completed) {
+      const completed = observation.decodedVideo.completed;
+      const known = report.decodedAge;
+      completed.ageMs = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        Math.max(
+          completed.ageMs,
+          known?.sequence === completed.sequence
+            ? known.ageMs + Math.max(0, this.monotonic() - known.at)
+            : completed.ageMs,
+        ),
+      );
+    }
     return {
       status: {
         ...base,
         state: remaining <= 0 ? 'stale' : report.observation.state,
-        observation: { ...report.observation },
+        observation,
         observedAt: new Date(report.observedAt).toISOString(),
         // Translate remaining freshness into the current wall clock for remote clients.
         expiresAt: new Date(now + Math.max(0, remaining)).toISOString(),

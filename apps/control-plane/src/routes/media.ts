@@ -2,7 +2,12 @@ import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { WORKER_STATES, WORKER_REASONS, type MatchCredential } from '@scorebug/protocol';
+import {
+  WORKER_STATES,
+  WORKER_REASONS,
+  DECODED_VIDEO_INVALID_REASONS,
+  type MatchCredential,
+} from '@scorebug/protocol';
 import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
@@ -13,6 +18,35 @@ import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js'
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const pts = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
+const decodedVideo = z
+  .object({
+    completed: z
+      .object({
+        sequence: sequence.min(1),
+        durationMs: z.literal(5000),
+        ageMs: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        firstPTS: pts.nullable(),
+        lastPTS: pts.nullable(),
+        freshFrames: sequence,
+        duplicateFrames: sequence,
+        reorderedFrames: sequence,
+        valid: z.boolean(),
+      })
+      .strict()
+      .refine((w) => {
+        if (!Number.isSafeInteger(w.freshFrames + w.duplicateFrames + w.reorderedFrames))
+          return false;
+        if (w.freshFrames === 0) return w.firstPTS === null && w.lastPTS === null;
+        if (w.firstPTS === null || w.lastPTS === null) return false;
+        return w.freshFrames === 1 ? w.firstPTS === w.lastPTS : w.firstPTS < w.lastPTS;
+      })
+      .nullable(),
+    invalidReason: z.enum(DECODED_VIDEO_INVALID_REASONS).nullable(),
+    ended: z.boolean(),
+  })
+  .strict()
+  .refine((v) => v.completed === null || v.completed.valid === (v.invalidReason === null));
 const report = z
   .object({
     recordingId: id,
@@ -156,6 +190,7 @@ export function workerRoutes(
               frame: sequence.nullable(),
               outTimeUs: sequence.nullable(),
               scoreRevision: sequence.nullable(),
+              decodedVideo: decodedVideo.optional(),
             })
             .strict()
             .refine(
@@ -166,7 +201,16 @@ export function workerRoutes(
         })
         .strict(),
     ),
-    (c) => c.json(observations.report(c.req.valid('json'))),
+    (c) => {
+      const body = c.req.valid('json');
+      const { decodedVideo, ...observation } = body.observation;
+      return c.json(
+        observations.report({
+          ...body,
+          observation: { ...observation, ...(decodedVideo ? { decodedVideo } : {}) },
+        }),
+      );
+    },
   );
   app.get('/snapshot', zValidator('query', z.object({ workerId: id }).strict()), (c) =>
     c.json({

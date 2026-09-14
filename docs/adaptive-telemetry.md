@@ -4,15 +4,16 @@ The [pure quality policy](adaptive-quality-policy.md) is implemented separately 
 Existing diagnostics establish useful local facts, but they do not yet provide a
 complete fresh-frame/capacity window for safe upward adaptation.
 
-| Existing observation                    | What it measures                                                     | Missing evidence                                                                           |
-| --------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video       | Video encoding completion, unique frames, transport receipt, playback                      |
-| Publishing mailbox occupancy/drops      | Bounded raw sample queue, including audio and video                  | Time-weighted occupancy and per-kind/source-PTS loss                                       |
-| `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes       | Unique video delivery and usable video capacity; transmitted bytes include retransmissions |
-| SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering | A qualified capacity estimator and receiver/worker frame timing                            |
-| `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                       | Proof of unique source frames or destination receipt                                       |
-| Native test barcode/audio analysis      | Offline decoded identities and A/V alignment in the owned sink       | A production runtime observation channel                                                   |
-| Archive export validation               | Fully decoded completed/recovered local segments                     | Live congestion; archive health is an independent signal                                   |
+| Existing observation                    | What it measures                                                                                              | Missing evidence                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
+| Publishing mailbox occupancy/drops      | Bounded raw sample queue, including audio and video                                                           | Time-weighted occupancy and per-kind/source-PTS loss                                                     |
+| `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
+| SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
+| `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
+| `WorkerObservation.decodedVideo`        | Five-second decoder/filter-ingress windows, strictly advancing PTS, duplicate/reordered counts and invalidity | Image-content uniqueness, viewer receipt, full report-transit age, correlation with capture and encoding |
+| Native test barcode/audio analysis      | Offline decoded identities and A/V alignment in the owned sink                                                | A production runtime observation channel                                                                 |
+| Archive export validation               | Fully decoded completed/recovered local segments                                                              | Live congestion; archive health is an independent signal                                                 |
 
 ## Integration contract
 
@@ -24,7 +25,7 @@ complete fresh-frame/capacity window for safe upward adaptation.
    and bounded aggregate counters. Capture callbacks may update constant-size state;
    they must not create a task per sample, wait on network I/O, or keep an unbounded
    frame history. Duplicate/reordered PTS must not inflate a fresh-frame count.
-3. Measure decoded source cadence at the worker with a bounded parser/aggregation
+3. The [worker decoder observation](worker-decoded-video.md) now measures decoded source cadence at the worker with a bounded parser/aggregation
    path. Carry a source-time interval and observation age with every count. FFmpeg
    output progress alone cannot be relabeled as source freshness. Specify whether
    each observation is worker ingress, worker output, or destination receipt.

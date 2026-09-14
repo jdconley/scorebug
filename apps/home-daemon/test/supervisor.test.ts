@@ -425,3 +425,27 @@ describe('WorkerSupervisor', () => {
     expect(r.start).toHaveBeenCalledTimes(1);
   });
 });
+
+it('reports only the current pipeline decoder snapshot and isolates observer failure from control', async () => {
+  const r = rig();
+  await r.supervisor.tick();
+  await flush();
+  const snapshot = { completed: null, invalidReason: null, ended: false };
+  r.children[0]!.handle.snapshotDecodedVideo = () => snapshot;
+  const report = r.supervisor.observation();
+  expect(report?.decodedVideo).toEqual(snapshot);
+  report!.decodedVideo!.ended = true;
+  expect(snapshot.ended).toBe(false);
+  r.children[0]!.handle.snapshotDecodedVideo = () => {
+    throw new Error('PRIVATE_URL');
+  };
+  expect(() => r.supervisor.observation()).not.toThrow();
+  expect(r.supervisor.observation()?.decodedVideo).toBeUndefined();
+  expect(r.children[0]!.stops).toBe(0);
+  r.set(null);
+  const stopping = r.supervisor.tick();
+  r.children[0]!.exit();
+  await stopping;
+  expect(r.supervisor.observation()).toBeNull();
+  await r.supervisor.close();
+});

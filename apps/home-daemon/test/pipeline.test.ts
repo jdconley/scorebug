@@ -75,3 +75,18 @@ it('rejects invalid output profiles before spawning FFmpeg', () => {
       }),
     ).toThrow('invalid_video_profile');
 });
+
+it('observes fixed-timebase decoder ingress before cap and strips an exact fixed marker', () => {
+  const args = buildFfmpegArgs({
+    ...baseSpec,
+    nvenc: false,
+    profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
+  });
+  const vf = args[args.indexOf('-vf') + 1]!;
+  expect(vf).toContain(
+    'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,',
+  );
+  expect(vf).toContain(
+    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]select=",
+  );
+});

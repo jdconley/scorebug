@@ -73,7 +73,8 @@ process.on('message', (message) => {
   try {
     // Inherit the output descriptor directly: a broken worker pipe cannot crash
     // the guardian before it kills/reaps the encoder. Diagnostics contain URLs.
-    encoder = spawn(request.binary, request.args, { stdio: ['ignore', 'inherit', 'ignore'] });
+    // Parent fd4 is telemetry, separate from this guardian's IPC on fd3.
+    encoder = spawn(request.binary, request.args, { stdio: ['ignore', 'inherit', 'ignore', 4] });
     encoder.on('error', () => {
       report({ event: 'process_error' });
       if (!encoder?.pid) finish(null, null);
