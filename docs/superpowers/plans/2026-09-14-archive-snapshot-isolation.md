@@ -22,7 +22,7 @@ segment durability, queue budgets, capture pacing, or encoding profiles.
 - [x] Observe red/green; verify duration progression and storage failure behavior,
   snapshot semantics, cancellation/finalization races and synchronous durability.
   Run full Media and Film suites, then independent spec and quality reviews.
-- [ ] Record evidence and commit the reviewed fix. Run an isolated short native
+- [x] Record evidence and commit the reviewed fix. Run an isolated short native
   workflow, then the 600-second hold if the short run passes. Retain and analyze any
   failure without weakening a gate. Passing a deterministic lock regression alone
   does not prove all native persistence stalls have been eliminated.
@@ -90,3 +90,50 @@ existing integrity check. Replaying the actual 122 retained samples now matches
 both native age proofs (sequences 121/122), with no unmatched proofs. The original
 run remains failed in both post-run summaries. Specification and independent quality reviews approve with no findings.
 A new complete 600-second run is pending.
+
+## Complete ten-minute repeat: pass
+
+`native-app-6o9S2U` at `a49408c` passes the complete maintained 600-second workflow,
+including native UI actions, post-stream recording, export, full A/V decode,
+source-frame checks, direct delivery, all observation windows and both age proofs.
+The runner exits0 and cleans up its owned simulator/receiver/worker resources.
+
+| Measurement | Archive | Live |
+| --- | --- | --- |
+| Consecutive source frames | 18947 (0–18946) | 18532 (229–18760) |
+| Source duration | 631.567 seconds | 617.733 seconds |
+| Fresh cadence | 30 fps | 30 fps |
+| Missing frames within saved interval | 0 | 0 |
+| Maximum A/V marker offset | 0.021 ms | 65.917 ms |
+| Audio end minus video end | +5.334 ms | +25.138 ms |
+
+Archive diagnostics are closed with valid full coverage: 37894 samples accepted and
+written, zero rejected/dropped samples, no first failure and terminal state finished.
+The queue peak is one 3200-byte audio packet. Native capture observes 168–18760;
+encoder coverage begins 169. Capture 168 precedes encoder coverage; acquisition 169–228
+is explicit, and every encoded frame from 229 through 18760 is saved. All source
+frames remain in the clean archive. The archive continues 186 frames past live.
+
+All 125 native observation windows survive without eviction; 122 steady windows show
+30 fps for capture and encoder. Both native report-age proofs match independently
+collected API windows 121/122. Native scoring changes 340 comparison pixels. Worker
+encoder and direct receiver exit 0 naturally, wrapper exit 0, valid worker EOF, and
+all 18532 decoder/output-progress frames are present in the live file.
+
+Bounded retained histories contain 32 producer / 64 consumer / 32 persistence records,
+with 18915/37830/285 earlier records omitted. Tail-only maxima are 2.131 ms producer
+lateness, 6.160 ms generation, 0.036 ms callback, 0.114 ms append and 3.445 ms persistence.
+These are not whole-run latency maxima. No claim is made that every possible native
+persistence stall is eliminated. The deterministic snapshot lock path is fixed and
+this complete native configuration passes.
+
+Evidence: `results.json`, `archive-diagnostics.json`, `video-observation.json`,
+`worker-report-age-qualification.json`, `worker-terminal-evidence.json`,
+`direct-rtmp-recorder.json`, `pressure-summary.json`, and its reproducible
+`summarize-pressure.py` in the run directory. Original failures are retained.
+
+Actual archive/live container rates remain about 0.126/0.102 Mbps, so this is a low
+encoded-payload simulator qualification. Continue with the reviewed
+[motion workload plan](2026-09-14-native-motion-load-validation.md). Higher bitrate,
+physical camera/Watch networking, thermal endurance, adaptive quality and other
+worker hosts remain open.

@@ -484,3 +484,15 @@ a status-read lock dependency is now the focused regression target. See the
 and [snapshot isolation plan](2026-09-14-archive-snapshot-isolation.md). The long
 qualification remains failed. This simple fixture also compresses far below the
 configured bitrate, so motion-heavy and physical-camera load tests remain required.
+
+The complete ten-minute repeat now passes: `native-app-6o9S2U` at `a49408c` retains
+all 18947 clean archive frames and all 18532 worker frames through the final encoded
+frame, at 30 fps. All 37894 archive samples are written with zero rejection/drop;
+native scoring, post-stream recording, export, A/V, observation and age proofs pass.
+The work fixes a deterministic status-read/writer-lock dependency and a separate
+long-run validator capacity mismatch; it does not prove all possible persistence
+stalls are eliminated. Full evidence and retained failed runs are in the
+[snapshot isolation plan](2026-09-14-archive-snapshot-isolation.md#complete-ten-minute-repeat-pass).
+The reviewed [motion workload plan](2026-09-14-native-motion-load-validation.md) is
+next because current actual encoded payload rates are far below configured rates.
+Physical phone/Watch, adaptive quality and other hosts remain unqualified.

@@ -58,3 +58,13 @@ worker frame, but the intended hold/stop/continuation workflow did not complete.
 Task 3 is executed and analyzed, not passed. See the [overflow evidence and next
 regression](2026-09-14-native-archive-overflow-diagnosis.md#ten-minute-reproduction-with-recoverable-evidence).
 No ten-minute reliability or physical-device qualification is claimed.
+
+## Final repeat
+
+The subsequent complete run `native-app-6o9S2U` at `a49408c` passes the 600-second
+workflow after the independently reproduced writer snapshot lock dependency and
+separate report-age collector bound were corrected. Archive 18947 and live 18532
+frames are consecutive at 30 fps; no archive rejection/drop occurs, the complete
+encoded live tail is saved, and native scoring/export/A/V/observation/age checks
+pass. See the [snapshot isolation evidence](2026-09-14-archive-snapshot-isolation.md#complete-ten-minute-repeat-pass)
+for exact scope, precursor failures, counters and remaining workload limitations.
