@@ -9,7 +9,7 @@
   "homepage": "https://scorebug.live",
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "pnpm -r build",
@@ -19,6 +19,7 @@
     "test:container": "node scripts/test-container.mjs",
     "test:local": "node scripts/test-local.mjs",
     "test:apple": "node scripts/test-apple.mjs",
+    "test:scoring": "node scripts/test-scoring.mjs",
     "doctor": "node scripts/doctor.mjs",
     "dev:api": "node --env-file=infra/local/.env.example apps/control-plane/node_modules/tsx/dist/cli.mjs apps/control-plane/src/index.ts",
     "local:up": "docker compose -f docker-compose.dev.yml up -d",

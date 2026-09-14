@@ -7,6 +7,6 @@ let package = Package(
     products: [.library(name: "ScorebugCore", targets: ["ScorebugCore"])],
     targets: [
         .target(name: "ScorebugCore"),
-        .testTarget(name: "ScorebugCoreTests", dependencies: ["ScorebugCore"]),
+        .testTarget(name: "ScorebugCoreTests", dependencies: ["ScorebugCore"], resources: [.copy("Fixtures")]),
     ]
 )

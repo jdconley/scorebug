@@ -88,8 +88,10 @@ check(
 if (!mediaOnly) {
   check(
     'node',
-    Number(process.versions.node.split('.')[0]) >= 22,
-    `${process.execPath}: ${process.version}`,
+    Number(process.versions.node.split('.')[0]) > 22 ||
+      (Number(process.versions.node.split('.')[0]) === 22 &&
+        Number(process.versions.node.split('.')[1]) >= 13),
+    `${process.execPath}: ${process.version} (requires Node 22.13+ for built-in SQLite)`,
   );
   const pnpm = await command('pnpm', ['--version']);
   check(

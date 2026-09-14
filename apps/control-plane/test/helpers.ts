@@ -15,6 +15,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     INGEST_PORT: 8890,
     LOG_LEVEL: 'error',
     CORS_ORIGINS: '*',
+    DATABASE_PATH: ':memory:',
     ...overrides,
   };
 }

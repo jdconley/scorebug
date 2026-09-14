@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startScoringTestServer } from './scoring-test-server.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +9,11 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '26.2';
 const runtimeID = `com.apple.CoreSimulator.SimRuntime.iOS-${runtime.replaceAll('.', '-')}`;
-let simulator;
+const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-15';
+const simulators = [];
+const twoPhones = process.argv.includes('--two-phones');
+let api;
+let databaseDirectory;
 let activeProcess;
 let interrupted = false;
 
@@ -71,6 +79,25 @@ try {
     '--scratch-path',
     'ios/.build/core',
   ]);
+  await run(
+    'xcodebuild',
+    [
+      '-project',
+      'ios/ScorebugScoring.xcodeproj',
+      '-scheme',
+      'ScorebugScoringModelTests',
+      '-configuration',
+      'Debug',
+      '-derivedDataPath',
+      'ios/DerivedData/ScoringModel',
+      '-destination',
+      'platform=macOS',
+      'test',
+      'CODE_SIGNING_ALLOWED=YES',
+      'CODE_SIGN_IDENTITY=-',
+    ],
+    { timeout: 600_000 },
+  );
   const common = [
     '-project',
     'ios/ScorebugScoring.xcodeproj',
@@ -93,6 +120,8 @@ try {
     ],
     { timeout: 600_000 },
   );
+  databaseDirectory = await mkdtemp(join(tmpdir(), 'scorebug-apple-'));
+  api = await startScoringTestServer(join(databaseDirectory, 'matches.sqlite'));
   const runtimes = JSON.parse(
     await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], { capture: true }),
   );
@@ -101,41 +130,61 @@ try {
       `Install iOS ${runtime} in Xcode, or set SCOREBUG_IOS_RUNTIME to an installed version`,
     );
   }
-  simulator = await run(
-    'xcrun',
-    [
-      'simctl',
-      'create',
-      `Scorebug Scoring Smoke ${randomUUID()}`,
-      'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
-      runtimeID,
-    ],
-    { capture: true },
-  );
-  console.log(`Dedicated Scorebug simulator: ${simulator}`);
-  await run(
-    'xcodebuild',
-    [
-      ...common,
-      '-destination',
-      `platform=iOS Simulator,id=${simulator}`,
-      '-destination-timeout',
-      '60',
-      '-parallel-testing-enabled',
-      'NO',
-      '-maximum-concurrent-test-simulator-destinations',
-      '1',
-      '-resultBundlePath',
-      `ios/build/scoring-${randomUUID()}.xcresult`,
-      'test',
-      'CODE_SIGNING_ALLOWED=NO',
-    ],
-    { timeout: 600_000 },
+  async function createSimulator(role) {
+    const id = await run(
+      'xcrun',
+      [
+        'simctl',
+        'create',
+        `Scorebug Scoring ${role} ${randomUUID()}`,
+        `com.apple.CoreSimulator.SimDeviceType.${deviceType}`,
+        runtimeID,
+      ],
+      { capture: true },
+    );
+    simulators.push(id);
+    console.log(`Dedicated Scorebug simulator (${role}): ${id}`);
+    return id;
+  }
+  async function testSimulator(id, scenario) {
+    await run(
+      'xcodebuild',
+      [
+        ...common,
+        '-destination',
+        `platform=iOS Simulator,id=${id}`,
+        '-destination-timeout',
+        '60',
+        '-parallel-testing-enabled',
+        'NO',
+        '-maximum-concurrent-test-simulator-destinations',
+        '1',
+        '-resultBundlePath',
+        `ios/build/scoring-${scenario}-${randomUUID()}.xcresult`,
+        'test',
+        `SCOREBUG_TEST_API_URL=${api.baseURL}`,
+        `SCOREBUG_TEST_SCENARIO=${scenario}`,
+        'CODE_SIGNING_ALLOWED=YES',
+        'CODE_SIGN_IDENTITY=-',
+      ],
+      { timeout: 600_000 },
+    );
+  }
+  const first = await createSimulator('A');
+  if (twoPhones) {
+    await testSimulator(first, 'create');
+    const second = await createSimulator('B');
+    await testSimulator(second, 'join');
+    await testSimulator(first, 'observe');
+  } else {
+    await testSimulator(first, 'lifecycle');
+  }
+  console.log(
+    `PASS: shared Swift tests, unsigned iOS 17 deployment build, and native scoring ${twoPhones ? 'across two phone simulators' : 'lifecycle'}.`,
   );
   console.log(
-    'PASS: shared Swift tests, unsigned iOS 17 deployment build, and native scoring setup UI smoke.',
+    'Camera/SRT, Watch, and physical-device behavior remain separate qualification gates.',
   );
-  console.log('This does not validate scoring, camera/SRT, Watch, or physical devices.');
 } catch (error) {
   console.error(error.message);
   console.error(
@@ -143,7 +192,9 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  if (simulator) {
+  if (api) await api.stop();
+  if (databaseDirectory) await rm(databaseDirectory, { recursive: true, force: true });
+  for (const simulator of simulators) {
     const devices = await run('xcrun', ['simctl', 'list', 'devices', '--json'], {
       capture: true,
       cleanup: true,

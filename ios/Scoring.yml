@@ -29,6 +29,9 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Scorebug Scorer
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+      configs:
+        Debug:
+          INFOPLIST_FILE: Resources/Scoring-Debug.plist
     dependencies:
       - package: ScorebugCore
   ScorebugScoringUITests:
@@ -43,7 +46,27 @@ targets:
         TARGETED_DEVICE_FAMILY: '1'
     dependencies:
       - target: ScorebugScoring
+  ScorebugScoringModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Sources/ScorebugScoring/ScoringModel.swift
+      - path: ModelTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.scoring.modeltests
+    dependencies:
+      - package: ScorebugCore
 schemes:
+  ScorebugScoringModelTests:
+    build:
+      targets:
+        ScorebugScoringModelTests: all
+    test:
+      targets:
+        - ScorebugScoringModelTests
   ScorebugScoring:
     build:
       targets:
@@ -52,3 +75,7 @@ schemes:
       targets:
         - ScorebugScoringUITests
       gatherCoverageData: true
+      environmentVariables:
+        SCOREBUG_TEST_API_URL: $(SCOREBUG_TEST_API_URL)
+        SCOREBUG_TEST_SCENARIO: $(SCOREBUG_TEST_SCENARIO)
+        SCOREBUG_TEST_TOKEN: qa-phone-token-not-production

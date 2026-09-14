@@ -5,14 +5,16 @@ An iPhone films and keeps a clean local recording. Score from its paired Apple W
 or the native Scorebug app on another iPhone, including a watch paired to that iPhone. A portable worker adds the score and sends the broadcast
 to YouTube.
 
-> Status: working scoring prototype and partial streaming implementation. Not yet
-> ready for a real game. Milestone 0 adds repeatable local checks and a native scoring setup harness; full native scoring and media remain planned.
+> Status: durable native iPhone scoring is validated in simulators, including
+> joining from a second phone and recovery after relaunch. Reliable recording,
+> streaming integration, and the watch app remain in progress. Not ready for a real game.
 
 ## Current plan
 
 - [Architecture and requirements](docs/architecture.md)
 - [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 - [Local, simulator, phone, and watch validation](docs/local-testing.md)
+- [Native scoring API progress](docs/native-scoring-api.md)
 - [Milestone 0 verification results](docs/milestone-0-results.md)
 
 The plan prioritizes reliable local recording, adaptive live quality with a measured
@@ -24,7 +26,7 @@ older phones; support the current OS and two prior release generations.
 ## Components
 
 ```text
-ios/                    iPhone app; native phone scoring and watch target planned
+ios/                    Native iPhone scorer; camera scaffold and planned watch app
 apps/scoring/           Legacy PWA prototype; superseded by native scoring
 apps/control-plane/     Hono API and game state
 apps/home-daemon/       Broadcast worker (name retained from initial implementation)
@@ -39,7 +41,7 @@ features require the implementation and validation described in the plan.
 
 ## Development
 
-Node 22+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript apps.
+Node 22.13+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript apps.
 
 ```sh
 pnpm install --frozen-lockfile

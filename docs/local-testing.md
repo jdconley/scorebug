@@ -1,8 +1,9 @@
 # Local validation and device qualification
 
 Plan prepared September 13, 2026; milestone 0 validated September 14 UTC.
-The environment checks and native setup harness now run. The full media pipeline,
-functional native scoring, watch app, and qualification suites remain to be implemented.
+Environment checks and the native scoring lifecycle now run. Durable match API and
+client recovery details are in [native scoring progress](native-scoring-api.md).
+The full media pipeline, watch app, and device qualification remain to be implemented.
 Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
 
 ## What is available on this Mac
@@ -12,7 +13,7 @@ Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-w
 | Machine          | MacBook Pro, Apple M4 Max, 128 GB RAM, arm64                                           |
 | OS / Xcode       | macOS 26.6.2 / default Xcode 26.6; scoped Xcode 26.2 used for builds                   |
 | Docker           | Desktop Linux VM, aarch64, Engine 29.2.1                                               |
-| Node             | 25.9.0 in final checks; repository/CI targets Node 22+                                 |
+| Node             | 25.9.0 in final checks; repository/CI targets Node 22.13+                              |
 | pnpm             | Repository pins 9.15.0                                                                 |
 | Default FFmpeg   | 8.1.2; has VideoToolbox, but lacks SRT and drawtext                                    |
 | Full FFmpeg      | `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`, 8.1.2; SRT, drawtext, VideoToolbox present |
@@ -28,7 +29,7 @@ hardware/filter capability only: no SRT, long soak, phone encoding, or YouTube c
 
 ## Reproducible milestone 0 commands
 
-From a fresh checkout, install Node 22+, pnpm 9.15.0, Docker Desktop, and a full
+From a fresh checkout, install Node 22.13+, pnpm 9.15.0, Docker Desktop, and a full
 FFmpeg build with SRT, drawtext, a working H.264 encoder, and a readable font.
 For Apple tests, install full Xcode, XcodeGen, and the requested iOS runtime.
 
@@ -42,6 +43,7 @@ pnpm run doctor
 pnpm test:container
 pnpm test:local
 pnpm test:apple
+pnpm test:scoring
 ```
 
 Use **`pnpm run doctor`**, because `pnpm doctor` invokes pnpm's own built-in doctor.
@@ -62,7 +64,10 @@ DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer SCOREBUG_IOS_RUN
 The doctor checks tool availability; `test:apple` is the actual build/destination
 gate. The runner creates, tests, and removes its own iPhone simulator. Existing
 simulators are untouched. Results remain in ignored `ios/build/*.xcresult`.
-The UI currently validates an address only; it does not connect or score.
+The UI exercises create, scoring, relaunch recovery, undo, tied-set rejection, and
+match end against an owned API/database. Add `--two-phones` for native join/takeover
+and cross-device observation. Simulator builds use ad hoc signing for real Keychain
+access. Watch and media validation are separate gates.
 
 `test:container` builds and starts the final server image on a random loopback
 port, verifies health and authentication, then removes its temporary container and

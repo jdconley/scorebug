@@ -43,4 +43,5 @@ Package.resolved
 # coverage / test artifacts
 coverage/
 artifacts/
+data/
 .nyc_output/

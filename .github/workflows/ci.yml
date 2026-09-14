@@ -34,6 +34,9 @@ jobs:
       - name: test
         run: pnpm test
 
+      - name: real scoring API process recovery
+        run: pnpm test:scoring
+
       - name: build
         run: pnpm -r build
 

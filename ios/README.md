@@ -1,6 +1,6 @@
 # Scorebug iOS
 
-## Native scorer foundation (milestone 0)
+## Native scorer (milestone 1 in progress)
 
 `Scoring.yml` generates a separate **ScorebugScoring** app and XCUITest target.
 It builds only `Sources/ScorebugScoring` and the local `Packages/ScorebugCore`
@@ -8,13 +8,17 @@ Swift package. It does not resolve or link the camera app, HaishinKit, or SRT.
 The iPhone deployment baseline is iOS 17.0; the shared package also declares
 watchOS 10.0 for later native Watch work.
 
-The SwiftUI screen validates the syntax of a control-plane address. HTTPS is
-accepted for public servers; HTTP is accepted only for localhost, loopback,
-private IPv4 LAN addresses, and `.local` hostnames. Base paths are preserved;
-credentials, query strings, fragments, and invalid ports are rejected. This is
-address validation only: no requests, persistence, authentication, match creation,
-joining, scoring, or Watch app are implemented by this harness. Those follow in
-milestones 1 and 5. The default simulator address is `http://localhost:18787`.
+The SwiftUI screen connects to the durable match API, creates or joins the active
+match, scores, undoes actions, ends sets/matches, and takes over scoring explicitly.
+Keychain stores setup and credentials. A durable command outbox checks server
+receipts after network failure or relaunch before retrying the original action.
+Pending actions and conflicts require resolution before another point is sent.
+
+HTTPS is accepted for public servers; HTTP is accepted only for localhost, loopback,
+private IPv4 LAN addresses, and `.local` hostnames. Debug builds enable local-network
+ATS access. Base paths are preserved; credentials in URLs, query strings, fragments,
+and invalid ports are rejected. The default simulator address is
+`http://localhost:18787`. See [the API and recovery contract](../docs/native-scoring-api.md).
 
 Install full Xcode with an iOS SDK and simulator runtime, plus XcodeGen:
 
@@ -22,12 +26,20 @@ Install full Xcode with an iOS SDK and simulator runtime, plus XcodeGen:
 brew install xcodegen
 # From the repository root; defaults to the installed iOS 26.2 simulator runtime.
 pnpm test:apple
+# Create on phone A, join/take over/end on phone B, observe on phone A:
+pnpm test:apple --two-phones
 # Choose another installed runtime, including an older supported iOS version.
 SCOREBUG_IOS_RUNTIME=17.5 pnpm test:apple
+# Exercise the required iPhone 14 screen size with an installed runtime:
+SCOREBUG_IOS_RUNTIME=18.5 SCOREBUG_IOS_DEVICE_TYPE=iPhone-14 pnpm test:apple
 ```
 
-The runner creates an iPhone 15 simulator named **Scorebug Scoring Smoke** with a
-unique suffix, runs the smoke test, then shuts down and deletes only that device.
+The runner first runs shared Swift tests and the production scoring-model tests
+on macOS 14+, then builds the iPhone app and exercises its UI.
+
+The runner creates dedicated iPhone 15 simulators with unique **Scorebug Scoring**
+names, runs the native workflow, then shuts down and deletes only those devices.
+It also owns a temporary SQLite database and real API bound to a random loopback port.
 It does not use or reset existing simulators. Each build/test command has a ten
 minute timeout. Results remain under `ios/build/*.xcresult` and generated projects,
 Swift build products, and DerivedData are ignored.
@@ -49,24 +61,17 @@ xcodebuild -project ios/ScorebugScoring.xcodeproj -scheme ScorebugScoring \
   -configuration Debug -derivedDataPath ios/DerivedData/Scoring \
   -destination 'generic/platform=iOS' build \
   CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=17.0
-SCORING_SIMULATOR_ID=$(xcrun simctl create 'Scorebug Scoring Manual' \
-  com.apple.CoreSimulator.SimDeviceType.iPhone-15 \
-  com.apple.CoreSimulator.SimRuntime.iOS-26-2)
-xcodebuild -project ios/ScorebugScoring.xcodeproj -scheme ScorebugScoring \
-  -configuration Debug -derivedDataPath ios/DerivedData/Scoring \
-  -destination "platform=iOS Simulator,id=$SCORING_SIMULATOR_ID" \
-  -destination-timeout 60 -parallel-testing-enabled NO \
-  -maximum-concurrent-test-simulator-destinations 1 test CODE_SIGNING_ALLOWED=NO
-xcrun simctl shutdown "$SCORING_SIMULATOR_ID"
-xcrun simctl delete "$SCORING_SIMULATOR_ID"
+# Run UI tests through pnpm test:apple; it supplies the owned API URL and token.
 ```
 
-The UI test resets camera/microphone authorization, launches the native scorer,
-and validates the address without any permission dialog. No camera or microphone
-usage descriptions are present in the scorer app. An unsigned generic device
-build checks compilation at the iOS 17 baseline; it is not physical-device testing
-or an SRT/capture pass. To inspect the app interactively, open
-`ios/ScorebugScoring.xcodeproj` and choose a dedicated Scorebug simulator.
+The UI test resets camera/microphone authorization and exercises native scoring
+without any permission dialog. No camera or microphone usage descriptions are
+present in this app. Simulator UI builds use local ad hoc signing because Keychain
+access fails with error -34018 when signing is disabled. No signing team is needed.
+The unsigned generic build checks iOS 17 compilation, not physical-device behavior.
+To inspect interactively, start `pnpm dev:api`, open
+`ios/ScorebugScoring.xcodeproj`, and choose a dedicated Scorebug simulator.
+Use the development token from `infra/local/.env.example` only for local tests.
 
 ## Camera app scaffold (media integration pending)
 

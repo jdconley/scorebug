@@ -107,16 +107,16 @@ new `ios/Sources/Scorebug/Scoring/`, `ios/Sources/Scorebug/UI/ContentView.swift`
 - [ ] Define public snapshots, command envelopes, revision/conflict responses, recording
       association, source status, desired broadcast state, worker generation, and reports.
       Add JSON fixtures consumed by both TypeScript and Swift tests.
-- [ ] Implement SQLite migrations and transactions for matches, scoring authority,
+- [x] Implement SQLite migrations and transactions for matches, scoring authority,
       command IDs/results, and revisions. Keep stream secrets out of scoring responses.
 - [ ] Add active-match discovery, role-based join, capture credential retrieval, and
       worker snapshot/reconciliation. Separate game creation from recording/publishing.
-- [ ] Make point/undo/end-set/end-match commands idempotent. Check duplicate IDs before
+- [x] Make point/undo/end-set/end-match commands idempotent. Check duplicate IDs before
       revision checks. Record explicit overrides; reject tied sets and invalid winners.
-- [ ] Implement configurable set/match rules, including deciding set and win-by-two.
-- [ ] Build full native SwiftUI Score mode: create/join match, teams/rules, point buttons,
+- [x] Implement configurable set/match rules, including deciding set and win-by-two.
+- [x] Build full native SwiftUI Score mode: create/join match, teams/rules, point buttons,
       undo, set/match completion, and status. Scoring requires no camera permission.
-- [ ] Restore native app sessions from server state; serialize commands and persist the
+- [x] Restore native app sessions from server state; serialize commands and persist the
       outbox. Display pending actions and stale/conflict reconciliation. Keep failed end
       requests visible. Enforce single scorer with explicit takeover.
 - [ ] Test duplicate delivery, acknowledgment loss, restart between apply/reply,
@@ -126,6 +126,8 @@ new `ios/Sources/Scorebug/Scoring/`, `ios/Sources/Scorebug/UI/ContentView.swift`
 create a match, join from the second native app, score, terminate/relaunch, reconnect,
 undo, take over scoring, and end the match without invoking a camera or browser.
 **Exit:** no lost/double points or unrecoverable active-game lockout; restarts preserve state.
+
+**In progress:** [Native scoring API and recovery evidence](../../native-scoring-api.md).
 
 ## Milestone 2: Real local media through a portable worker
 
