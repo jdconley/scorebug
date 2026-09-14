@@ -12,7 +12,8 @@ consumer without allocating a task for each captured sample. Item and byte limit
 apply to queued buffers; each consumer can additionally retain one delivered sample.
 Invalid or oversized offers cannot evict valid queued work.
 
-The archive queue preserves accepted work and rejects overflow explicitly. The
+The shared `RecordingSession` owns the archive queue and its single consumer.
+It preserves accepted work and rejects overflow explicitly. The
 fixture treats any archive rejection as failure. The live queue discards its oldest
 queued samples when full. Neither network setup nor publisher failure cancels the
 archive consumer. Capturing does not wait for publisher work or archive snapshots.
@@ -37,8 +38,8 @@ This generates a 14-second, 1080p/30 source with visible frame identities and
 frequency-coded audio pulses. Each run owns its native processes and loopback UDP
 port and preserves evidence under `artifacts/qa/dual-output-*`.
 
-Three scenarios run: a normal local receiver, that receiver suspended after six
-seconds, and no receiver available. Every archive must retain all 420 source frames
+Four scenarios run: offline recording without a publisher, a normal local receiver,
+that receiver suspended after six seconds, and no receiver available. Every archive must retain all 420 source frames
 and export successfully. Normal streaming must meet the fresh-frame cadence gate,
 keep startup/final-frame gaps within one second, and demonstrate an encoded bitrate
 decrease measured from received packets. Receiver failure must be reported separately
@@ -65,6 +66,24 @@ normal SRT output contained 419 fresh frames (source IDs 1–419) at 30 fps, wit
 maximum measured A/V offset of 34.69 ms. Encoded video rate decreased from about
 6.13 Mbps to 1.96 Mbps. Peak RSS stayed below 96 MiB across the three short runs.
 
+Repeated runs exposed an SDK startup defect. In `dual-output-SLQYfb`, the clean
+archive still retained all 420 video frames and complete audio, but SRT audio
+ended 121.3 ms before video and correctly failed the unchanged 100 ms coverage
+gate. All 672,000 input PCM samples were submitted, with no live-mailbox drops.
+Compared with passing `dual-output-QeX2sO`, five initial AAC packets were lost.
+After decoder warmup, the failed clip's PCM exactly matches the passing clip's
+suffix through the final sample. Every identified audio marker shifts by the
+same 106.7 ms. This identifies startup loss and timestamp rebasing, rather than
+additional loss at shutdown.
+
+The pinned SDK's TS writer discards media until both encoded formats are known,
+then establishes separate first-packet timestamp origins for audio and video.
+Encoder startup ordering therefore changes audio loss and synchronization.
+Earlier successful runs do not establish reliable startup. A verified upstream
+fix or maintained patch with bounded startup buffering and a common timestamp
+origin is required before production publishing integration. Do not relax the
+coverage or sync gates to accommodate this defect.
+
 Native mailbox tests cover count/byte limits, actual object retention, cancellation,
 finish/drain, concurrent waiter rejection, and producer/cancellation races. The
 Thread Sanitizer runner crashed before running tests, so there is no sanitizer
@@ -76,6 +95,6 @@ x86_64 slice; ARM64 simulator linking is tested for this Mac. Library compilatio
 alone had not exposed either issue.
 
 Still required: sustained dual encoding, network loss/jitter/bandwidth shaping,
-reconnection, bounded production capture and publisher orchestration, the camera UI,
+SDK startup correction, reconnection, bounded production capture and publisher orchestration, the camera UI,
 Simulator app workflows, and physical iPhone qualification. Native Watch scoring
 remains a separate planned milestone.

@@ -23,8 +23,9 @@ network dependency.
   A storage error latches; the store does not discard existing completed bundles.
 - The writer serializes access and retains its segment delegate. A `false` append
   result means the caller still owns the sample and must retry or explicitly fail
-  recording. The fixture holds at most one pending sample per track and bounds
-  its retries. Production capture queues are a separate remaining task.
+  recording. The archive-only fixture holds at most one pending sample per track
+  and bounds its retries. The shared [recording session](native-recording-session.md)
+  adds bounded callback admission and a single archive consumer for app integration.
 - `ArchiveExporter` assembles fragments, remuxes to a standard MP4 without
   reencoding, and fully decodes the video and audio before publishing the file.
   It uses an exclusive destination, checks temporary-space requirements, supports

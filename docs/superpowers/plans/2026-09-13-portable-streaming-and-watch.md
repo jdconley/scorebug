@@ -217,15 +217,25 @@ Short normal, suspended-receiver, and unavailable-receiver cases preserve all
 archive video frames and audio. Received bitrate changes from about 6.13 to
 1.96 Mbps without reconfiguring recording. Full ARM64 simulator/iPhone linking
 requires the now-declared C++ runtime; the resolved Intel simulator slice lacks
-SRT symbols. Sustained congestion/reconnection and production integration remain pending.
+SRT symbols. The reusable [recording session](../../native-recording-session.md)
+now owns offline startup, bounded sample admission, ordered retries, failure latching,
+and graceful stop through an injectable archive sink. The fixture uses this same
+session and also exercises recording without creating a publisher.
+Sustained congestion/reconnection and camera-app integration remain pending.
+
+Repeated validation exposed [SDK startup audio loss](../../native-dual-output.md):
+the TS writer discards early packets and rebases each track independently. One run
+lost five additional initial AAC packets and failed the unchanged 100 ms coverage
+gate while the archive remained complete. Correct this SDK behavior before advancing
+production publishing integration; a previously passing fixture is not sufficient.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.
 The reviewed 14-second native run retained all 420 fresh video frames with a maximum
 0.71 ms measured A/V offset. Five forced terminations recovered playable media;
-the largest measured tail-loss bound was 2.60 seconds. All 42 shared media tests and generic
-iOS 17 simulator/device builds pass. Camera integration, bounded
-production capture orchestration, app recovery UI, and phone runtime media remain pending.
+the largest measured tail-loss bound was 2.60 seconds. Shared media unit tests and generic
+iOS 17 simulator/device builds cover the native core. Camera integration,
+production publishing orchestration, app recovery UI, and phone runtime media remain pending.
 
 ## Milestone 4: Adaptive quality and measurable reliability
 

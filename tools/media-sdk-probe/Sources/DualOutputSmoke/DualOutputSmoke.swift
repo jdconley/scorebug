@@ -3,24 +3,13 @@ import Foundation
 import ScorebugMedia
 import SDKProbe
 
-// This fixture only retains immutable decoded samples. Neither consumer modifies
-// the source buffers; the audio adapter creates its own PCM storage before send.
-private struct Sample: @unchecked Sendable {
-    let buffer: CMSampleBuffer
-    let isVideo: Bool
-    var bytes: Int {
-        if let pixel = buffer.imageBuffer { return CVPixelBufferGetDataSize(pixel) }
-        return buffer.dataBuffer.map(CMBlockBufferGetDataLength) ?? 0
-    }
-}
-
 private func emit(_ value: [String: Any]) throws {
     var data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
     data.append(10)
     try FileHandle.standardOutput.write(contentsOf: data)
 }
 
-private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, backpressure, pcm }
+private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, pcm }
 
 private final class PublisherHealth: @unchecked Sendable {
     private let lock = NSLock()
@@ -34,8 +23,14 @@ private final class PublisherHealth: @unchecked Sendable {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             // Network exercise is deliberately restricted to an owned local sink.
-            guard args.count == 3, let url = URL(string: args[2]), url.scheme == "srt",
-                  url.host == "127.0.0.1", url.port != nil else { throw Failure.arguments }
+            guard args.count == 3 else { throw Failure.arguments }
+            let url: URL?
+            if args[2] == "record-only" { url = nil }
+            else {
+                guard let candidate = URL(string: args[2]), candidate.scheme == "srt",
+                      candidate.host == "127.0.0.1", candidate.port != nil else { throw Failure.arguments }
+                url = candidate
+            }
             try await run(source: URL(fileURLWithPath: args[0]), directory: URL(fileURLWithPath: args[1]), url: url)
         } catch {
             try? emit(["event": "failed", "reason": String(describing: error)])
@@ -43,7 +38,7 @@ private final class PublisherHealth: @unchecked Sendable {
         }
     }
 
-    private static func run(source: URL, directory: URL, url: URL) async throws {
+    private static func run(source: URL, directory: URL, url: URL?) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first,
               let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else { throw Failure.missingTracks }
@@ -65,26 +60,15 @@ private final class PublisherHealth: @unchecked Sendable {
         let origin = min(firstVideo.presentationTimeStamp, firstAudio.presentationTimeStamp)
         let originSeconds = origin.seconds
         let archive = try SegmentedArchiveWriter(directory: directory)
-        try archive.start(at: origin)
-        let archiveQueue = try BoundedMailbox<Sample>(maxItems: 24, maxBytes: 24 * 1024 * 1024, overflowPolicy: .rejectNew)
-        let liveQueue = try BoundedMailbox<Sample>(maxItems: 8, maxBytes: 12 * 1024 * 1024, overflowPolicy: .dropOldest)
-        let archiveTask = Task.detached {
-            do {
-                while let sample = try await archiveQueue.next() {
-                    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-                    while try !archive.append(sample.buffer, isVideo: sample.isVideo) {
-                        guard ContinuousClock.now < deadline else { throw Failure.backpressure }
-                        try await Task.sleep(for: .milliseconds(1))
-                    }
-                }
-                return try await archive.finish()
-            } catch {
-                archiveQueue.cancel()
-                archive.cancel()
-                throw error
-            }
-        }
+        let recording = try RecordingSession(sink: SegmentedArchiveSink(writer: archive))
+        try await recording.start(at: origin)
+        let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: 12 * 1024 * 1024, overflowPolicy: .dropOldest)
         let publisherTask = Task.detached {
+            guard let url else {
+                liveQueue.cancel()
+                try emit(["event": "publisher-disabled"])
+                return
+            }
             let publisher = SDKProbe()
             var publishedVideo = 0
             var publishedAudio = 0
@@ -113,18 +97,18 @@ private final class PublisherHealth: @unchecked Sendable {
                     }
                 }
                 while let sample = try await liveQueue.next() {
-                    if !changed && sample.buffer.presentationTimeStamp.seconds - originSeconds >= 5 {
+                    if !changed && sample.sampleBuffer.presentationTimeStamp.seconds - originSeconds >= 5 {
                         try await publisher.setBitRate(2_000_000)
                         changed = true
                         try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000])
                     }
-                    if sample.isVideo {
-                        await publisher.video(sample.buffer)
+                    if sample.kind == .video {
+                        await publisher.video(sample.sampleBuffer)
                         publishedVideo += 1
                     } else {
-                        guard let (pcm, when) = copyPCM(sample.buffer) else { throw Failure.pcm }
+                        guard let (pcm, when) = copyPCM(sample.sampleBuffer) else { throw Failure.pcm }
                         await publisher.audio(pcm, when: when)
-                        publishedAudio += sample.buffer.numSamples
+                        publishedAudio += sample.sampleBuffer.numSamples
                     }
                 }
                 guard !health.isFailed else { throw SDKProbe.ProbeError.notPublishing }
@@ -160,39 +144,38 @@ private final class PublisherHealth: @unchecked Sendable {
                 let buffer = isVideo ? nextVideo! : nextAudio!
                 let elapsed = buffer.presentationTimeStamp.seconds - originSeconds
                 try await ContinuousClock().sleep(until: started.advanced(by: .seconds(elapsed)))
-                let sample = Sample(buffer: buffer, isVideo: isVideo)
-                guard archiveQueue.offer(sample, bytes: sample.bytes).acceptedCount == 1 else { throw Failure.archiveOverflow }
-                _ = liveQueue.offer(sample, bytes: sample.bytes)
+                let sample = try CapturedMediaSample(sampleBuffer: buffer, kind: isVideo ? .video : .audio)
+                guard recording.offer(sample) else { throw Failure.archiveOverflow }
+                if url != nil { _ = liveQueue.offer(sample, bytes: sample.retainedByteCount) }
                 if isVideo {
                     capturedVideo += 1
                     let wall = started.duration(to: .now).components
                     maximumSourceLag = max(maximumSourceLag, Double(wall.seconds) + Double(wall.attoseconds) / 1e18 - elapsed)
                     if capturedVideo % 30 == 0 {
                         try emit(["event": "capturing", "sourceSeconds": elapsed,
-                                  "archiveQueueBytes": archiveQueue.statistics.currentBytes,
+                                  "archiveQueueBytes": recording.snapshot.queue.currentBytes,
                                   "liveQueueBytes": liveQueue.statistics.currentBytes])
                     }
                     nextVideo = video.copyNextSampleBuffer()
                 } else { nextAudio = audio.copyNextSampleBuffer() }
             }
             guard reader.status == .completed else { throw Failure.reader }
-            archiveQueue.finish()
             liveQueue.finish()
-            let recovered = try await archiveTask.value
+            let recovered = try await recording.stop()
             let status = archive.snapshot
             try emit(["event": "archive-finished", "videoFrames": status.videoFrames,
                       "audioSamples": status.audioSamples, "segments": recovered.segments.count,
-                      "archivePeakBytes": archiveQueue.statistics.peakBytes,
+                      "archivePeakBytes": recording.snapshot.queue.peakBytes,
                       "livePeakBytes": liveQueue.statistics.peakBytes,
                       "liveDroppedSamples": liveQueue.statistics.droppedCount,
                       "liveRejectedSamples": liveQueue.statistics.rejectedCount,
                       "maximumSourceLagSeconds": maximumSourceLag,
-                      "archiveRejected": archiveQueue.statistics.rejectedCount])
+                      "archiveRejected": recording.snapshot.queue.rejectedCount])
             try await publisherTask.value
         } catch {
-            archiveQueue.cancel(); liveQueue.cancel()
-            archiveTask.cancel(); publisherTask.cancel()
-            _ = await archiveTask.result
+            recording.failCapture(reason: "Fixture source failed")
+            liveQueue.cancel(); publisherTask.cancel()
+            _ = try? await recording.stop()
             _ = await publisherTask.result
             throw error
         }

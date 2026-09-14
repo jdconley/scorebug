@@ -78,8 +78,13 @@ The [native archive fixture](native-archive.md) now exercises valid H.264/AAC
 encoding, fragment completion/recovery, and full-decode MP4 export on macOS.
 It runs independently of the SDK and is also used by the dual-output fixture.
 
-The synthetic simultaneous archive/SRT experiment now passes normal, unavailable,
-and suspended local receiver cases. Next are production orchestration, sustained
-load/reconnection tests, and the actual camera lifecycle. iOS runtime media behavior,
+The synthetic simultaneous archive/SRT experiment has passing normal, unavailable,
+and suspended local receiver runs, but repeated validation exposed variable initial
+audio loss in the SDK's TS writer. It discards packets until both formats are known
+and rebases each track independently. A failing run lost five additional initial
+AAC packets and exceeded the unchanged audio-coverage budget; decoded PCM comparison
+confirms the loss occurs at startup. See the [diagnosis](native-dual-output.md).
+This requires an SDK correction before production publishing integration.
+Next are sustained load/reconnection tests and the actual camera lifecycle. iOS runtime media behavior,
 hardware camera interruptions, and physical-phone simultaneous encoding remain
 unverified.

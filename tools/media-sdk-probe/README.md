@@ -5,6 +5,8 @@ These isolated probes establish SDK compatibility before camera integration.
 `DualOutputSmoke` feeds decoded fixture samples to the shared archive and a real
 SRT publisher through independent bounded queues. Its destination is restricted
 to an owned loopback receiver. Neither executable is the production camera app.
+The `record-only` destination skips publisher creation entirely; the conformance
+runner exercises this offline mode as well as three network scenarios.
 
 The package pins HaishinKit 2.2.5 and checks in its resolution, including Logboard
 2.6.0. HaishinKit supplies libsrt 1.5.4 with iPhone, Simulator, and Mac slices.

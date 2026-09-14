@@ -325,11 +325,11 @@ try {
     'Fixture source',
   );
   const results = [];
-  for (const scenario of ['normal', 'stalled-receiver', 'no-receiver']) {
+  for (const scenario of ['record-only', 'normal', 'stalled-receiver', 'no-receiver']) {
     const port = await freePort();
     const live = join(artifact, `${scenario}.ts`);
     let receiver;
-    if (scenario !== 'no-receiver') {
+    if (scenario === 'normal' || scenario === 'stalled-receiver') {
       receiver = start(ffmpeg, [
         '-nostdin',
         '-v',
@@ -363,7 +363,9 @@ try {
     const native = start(binary, [
       source,
       directory,
-      `srt://127.0.0.1:${port}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
+      scenario === 'record-only'
+        ? 'record-only'
+        : `srt://127.0.0.1:${port}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
     ]);
     const memory = [];
     const started = performance.now();
@@ -413,6 +415,14 @@ try {
     const archiveResult = await analyze(exported, `${scenario}-archive`, true);
     let liveResult;
     let bitrateChange;
+    if (scenario === 'record-only') {
+      assert.equal(finished.livePeakBytes, 0);
+      assert.deepEqual(
+        native.events.filter((x) => x.event.startsWith('publisher-')).map((x) => x.event),
+        ['publisher-disabled'],
+        'Offline recording must not start a publisher',
+      );
+    }
     if (scenario === 'normal') {
       assert.ok(native.events.some((x) => x.event === 'bitrate-changed'));
       const sent = native.events.find((x) => x.event === 'publisher-finished');
