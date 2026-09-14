@@ -19,7 +19,7 @@ Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-w
 | Full FFmpeg      | `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`, 8.1.2; SRT, drawtext, VideoToolbox present |
 | XcodeGen         | 2.46.0 installed during milestone 0                                                    |
 | iOS runtimes     | Includes 17.5, 18.5, 26.2                                                              |
-| watchOS runtimes | Includes 10.5 and 26.2; watchOS 11 coverage needs a runtime download                   |
+| watchOS runtimes | Includes 10.0, 10.5, 11.5, and 26.2                                                   |
 | Device types     | iPhone 14, Ultra 2, Series 7 41 mm, and newer devices available                        |
 
 A three-second synthetic 1080p/30 VideoToolbox job completed 90 frames at about 8.9x
@@ -287,7 +287,7 @@ xcrun simctl pair "$SCOREBUG_SIM_WATCH" "$SCOREBUG_SIM_PHONE"
 
 These device types/runtimes exist locally; the example was not executed during planning.
 Build the compatibility matrix with OS-supported pairs: iOS 17/watchOS 10, iOS 18/watchOS
-11, and iOS 26/watchOS 26. Install the missing watchOS 11 runtime during setup. Add Ultra 2
+11, and iOS 26/watchOS 26. watchOS 11.5 is now installed and its native UI run passes. Add Ultra 2
 and small SE layouts. Test with the newest available minor runtime before release, even
 though 26.2 is the installed current-generation runtime used for initial local work.
 
@@ -310,6 +310,12 @@ expiring setup and creates/removes only its own simulator. Directly invoking the
 scheme without that setup is not a complete test command. See the
 [native Watch evidence and limitations](native-watch-app.md). The vendored SRT
 simulator binary requires ARM64; use Apple Silicon simulator destinations.
+
+`pnpm test:paired-watch` is the separate real-companion/recording probe. It owns its
+simulators and API, requires actual WatchConnectivity setup, and decodes the exported
+archive. The older simulator pair currently fails companion registration; this is
+an open qualification gate, not a passing command. See the linked Watch evidence
+for artifacts, runtime selectors, and the distinction from injected setup tests.
 
 Recording tests: initialization segment durability; termination during a segment and
 between file rename/manifest update; no disk space; append/finalize errors; interrupted

@@ -59,6 +59,22 @@ The same workflow also passed on Ultra 2/watchOS 26.2 at
 `artifacts/qa/native-watch-cTLRUw`. Both runs checked all six command receipts and
 outcomes; scoring/restoration screenshots were inspected on both sizes.
 
+Series 7 41 mm/watchOS 11.5 also passed at `artifacts/qa/native-watch-LAbbIq`,
+including all six command receipts, Keychain relaunch recovery, and inspected
+scoring/restoration screenshots. Xcode 26.2 installed this runtime using its build
+number, without an architecture flag:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+  xcodebuild -downloadPlatform watchOS -buildVersion 22T572
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+  SCOREBUG_WATCH_RUNTIME=11.5 pnpm test:native-watch
+```
+
+The earlier marketing-version download attempts failed. An initial test invocation
+also selected the machine's default Xcode and failed destination discovery before
+testing; the passing invocation explicitly scoped Xcode 26.2.
+
 Final model checks pass: Watch 27, Core 110, phone setup 9, native phone scoring 19,
 and filming/control 37. The combined unsigned Release phone/Watch build passes;
 the Watch binary includes arm64 and arm64_32 and excludes the simulator setup key.
@@ -73,11 +89,47 @@ ordering, and one-action reservation during passive polling. Independent reviews
 cover both specification and code quality; final review fixes are recorded with
 their red/green evidence in `artifacts/qa/`.
 
+## Real companion and recording probe
+
+`pnpm test:paired-watch` creates its own paired iPhone 14/iOS 17.5 and Series 7
+41 mm/watchOS 10.5 simulators. It builds both apps, preinstalls them sequentially,
+then runs concurrent native UI tests against an isolated API. The phone starts a
+local archive before companion setup. The Watch must advertise its real identity,
+receive and accept the phone's offer, take over, score, undo, score again, and end
+the match. The phone must keep recording afterward and export a clean file.
+
+A pass requires the actual WatchConnectivity handshake, five exact accepted Watch
+command receipts, no broadcast commands, and full A/V decode of the exported
+1080p archive. Every fixture barcode must be contiguous and cadence at least 24 fps.
+The probe never injects Watch setup as a fallback. Failure logs include bounded,
+redacted system installation/activation state before owned devices are removed.
+
+The initial run (`artifacts/qa/paired-watch-2A4VYL`) failed before setup transfer.
+The preinstallation run (`artifacts/qa/paired-watch-5B7lNY`) also failed: phone
+WatchConnectivity reported the Watch installed and reachable, but the Watch reported
+its companion missing and ACX error 43, "App database is out of sync." No pairing
+or scoring command reached the API. These runs do not qualify simultaneous Watch
+scoring and recording. The build-time bundle identifiers matched on both sides.
+The same probe on iPhone 15/iOS 26.2 and Ultra 2/watchOS 26.2
+(`artifacts/qa/paired-watch-nIPx7o`) also failed before pairing; the Watch system
+service again reported ACX error 43. Changing runtime generation did not resolve it.
+
+A final installation-isolation experiment (`artifacts/qa/paired-watch-PY5rc9`)
+preinstalled both apps and both UI test runners, then used Xcode's documented
+`UseDestinationArtifacts` test configuration. Both destinations were rejected
+before testing: Xcode requires a physical iOS device for that mode. The unusable
+simulator option was removed; its source and generated configurations remain in
+the experiment artifact. No production pairing changes were made from these
+simulator failures. Physical companion exchange remains unqualified.
+
+Use `SCOREBUG_IOS_RUNTIME`, `SCOREBUG_WATCH_RUNTIME`, `SCOREBUG_IOS_DEVICE_TYPE`, and
+`SCOREBUG_WATCH_DEVICE_TYPE` to select another installed pair; the artifact records
+the chosen configuration. Simulator evidence does not replace physical routing and
+suspension tests. Apple's [WatchConnectivity sample](https://developer.apple.com/documentation/watchconnectivity/transferring-data-with-watch-connectivity)
+explicitly calls for a physical iPhone and Watch.
+
 ## Remaining qualification
 
-- Complete watchOS 11 runtime coverage. The installed Xcode 26.2 download command
-  reported 11.5 (ARM64 and universal) and 11.4 universal unavailable; the earlier and
-  current-generation native runtime passes do not replace this missing check.
 - Exercise actual companion exchange with paired simulators and physical devices.
 - Verify Watch A while its paired phone films, and Watch B through another phone.
 - Test wrist suspension, cellular/Wi-Fi/paired-route changes, and dropped replies

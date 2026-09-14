@@ -318,6 +318,11 @@ setup adapters](../../native-watch-app.md) are implemented. The first normal-pol
 Series 7 41 mm/watchOS 10.5 UI run passed real redemption, scoring, rejection,
 Keychain relaunch recovery, and end-match. Its initial setup was injected; actual
 companion exchange and complete media workflows remain open.
+The real companion/recording probe now exists, but both the iOS 17.5/watchOS 10.5
+and iOS 26.2/watchOS 26.2 pairs fail before setup transfer with a Watch simulator
+companion-database error. Sequential preinstallation did not resolve it; Xcode's
+no-reinstallation mode rejects simulator destinations. See the native Watch evidence
+for exact artifacts. These failures leave the paired workflow gate open.
 
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
@@ -325,9 +330,9 @@ new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
 
 - [x] Add a watchOS target independent of camera/media dependencies and a companion
       setup/join flow within the full native iPhone app. Keep Film and Score roles separate.
-- [ ] Set iOS 17/watchOS 10 deployment targets and availability-guard newer APIs.
+- [x] Set iOS 17/watchOS 10 deployment targets and availability-guard newer APIs.
       Test Series 7 41 mm and Ultra 2 layouts, plus an SE-sized screen. Add watchOS 11
-      runtime coverage; that release generation is not currently installed on this Mac.
+      runtime coverage. Series 7 41 mm/watchOS 11.5 passed at `artifacts/qa/native-watch-LAbbIq`.
 - [x] Implement HTTP(S) scoring and snapshot refresh on wake. Use scoped Keychain
       credentials and an expiring pairing code; optionally transfer setup with WatchConnectivity.
 - [x] Add home/away score, set/match display, undo, confirmed/pending states, retry,

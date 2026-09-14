@@ -66,8 +66,8 @@ Expected native files: `ios/Sources/ScorebugWatch/`,
 Native source and the direct-HTTP simulator milestone are implemented and independently
 reviewed. See [native Watch app](../../native-watch-app.md) for per-runtime artifacts,
 model test totals, and exact limitations. Series 7 41 mm/watchOS 10.5, Ultra 2/watchOS
-26.2, and SE 40 mm/watchOS 10.0 pass the native UI workflow including real Keychain
+26.2, Series 7 41 mm/watchOS 11.5, and SE 40 mm/watchOS 10.0 pass the native UI workflow including real Keychain
 relaunch recovery. Companion setup is implemented but actual paired exchange and
-simultaneous paired-phone recording remain the next qualification step. watchOS 11
-runtime coverage remains open after the installed Xcode download catalog rejected
-the requested 11.5/11.4 variants.
+simultaneous paired-phone recording remain the next qualification step. The watchOS
+11.5 runtime installed using build selector 22T572 without an architecture flag;
+the passing native UI evidence is `artifacts/qa/native-watch-LAbbIq`.

@@ -3,6 +3,8 @@
 The [pure quality policy](adaptive-quality-policy.md) is implemented separately from runtime enablement.
 Existing diagnostics establish useful local facts, but they do not yet provide a
 complete fresh-frame/capacity window for safe upward adaptation.
+The next [local observation implementation slice](superpowers/plans/2026-09-14-local-video-observations.md)
+adds capture and actual encoder-completion measurements while retaining fixed live settings.
 
 | Existing observation                    | What it measures                                                                                              | Missing evidence                                                                                         |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

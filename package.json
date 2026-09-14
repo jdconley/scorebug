@@ -35,7 +35,8 @@
     "format:check": "prettier --check .",
     "test:native-app": "node scripts/test-native-app.mjs",
     "test:native-streaming": "node scripts/test-native-app.mjs --streaming",
-    "test:native-watch": "node scripts/test-native-watch.mjs"
+    "test:native-watch": "node scripts/test-native-watch.mjs",
+    "test:paired-watch": "node scripts/test-paired-watch.mjs"
   },
   "devDependencies": {
     "prettier": "^3.3.3",
