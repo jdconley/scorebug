@@ -1,0 +1,233 @@
+import { createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
+import { z } from 'zod';
+import type { BroadcastSelection } from '@scorebug/protocol';
+
+const pathPattern = /^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$/;
+const identifier = /^[A-Za-z0-9_-]{1,128}$/;
+export type IngestGrant = {
+  path: string;
+  publishPassphrase: string;
+  readPassphrase: string;
+  publishUrl: string;
+  readUrl: string;
+};
+export type SourceObservation = { ready: boolean; inboundBytes: number; tracks: string[] };
+
+/** Deterministic capabilities survive API restart, but change with every broadcast generation. */
+export function deriveIngestGrant(
+  installationSecret: string,
+  gameId: string,
+  selection: BroadcastSelection,
+  generation: number,
+  host: string,
+  port: number,
+): IngestGrant {
+  if (
+    installationSecret.length < 16 ||
+    ![
+      gameId,
+      selection.workerId,
+      selection.outputId,
+      selection.captureDeviceId,
+      selection.recordingId,
+    ].every((value) => identifier.test(value)) ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1 ||
+    !(isIP(host) || /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host)) ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535
+  )
+    throw new Error('invalid_ingest_identity');
+  const hmac = (domain: string, identity = '') =>
+    createHmac('sha256', installationSecret)
+      .update(JSON.stringify(['scorebug-ingest-v1', domain, identity]))
+      .digest('hex');
+  const identity = JSON.stringify([
+    gameId,
+    selection.workerId,
+    selection.outputId,
+    selection.captureDeviceId,
+    selection.recordingId,
+    generation,
+  ]);
+  const path = `scorebug-${hmac('installation').slice(0, 16)}-${hmac('path', identity).slice(0, 32)}`;
+  const publishPassphrase = hmac('publish', identity),
+    readPassphrase = hmac('read', identity);
+  const url = (action: string, passphrase: string) => {
+    const result = new URL(`srt://${isIP(host) === 6 ? `[${host}]` : host}:${port}`);
+    result.searchParams.set('streamid', `${action}:${path}`);
+    result.searchParams.set('passphrase', passphrase);
+    result.searchParams.set('pkt_size', '1316');
+    return result.toString();
+  };
+  return {
+    path,
+    publishPassphrase,
+    readPassphrase,
+    publishUrl: url('publish', publishPassphrase),
+    readUrl: url('read', readPassphrase),
+  };
+}
+
+const observation = z.object({
+  online: z.boolean(),
+  available: z.boolean(),
+  inboundBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  source: z.object({ type: z.string() }).nullable(),
+  tracks2: z.array(
+    z.object({
+      codec: z.enum([
+        'AV1',
+        'VP9',
+        'VP8',
+        'H265',
+        'H264',
+        'MPEG-4 Video',
+        'MPEG-1/2 Video',
+        'M-JPEG',
+        'Opus',
+        'FLAC',
+        'Vorbis',
+        'MPEG-4 Audio',
+        'MPEG-4 Audio LATM',
+        'MPEG-1/2 Audio',
+        'AC3',
+        'Speex',
+        'G726',
+        'G722',
+        'G711',
+        'LPCM',
+        'MPEG-TS',
+        'KLV',
+        'Generic',
+      ]),
+    }),
+  ),
+});
+
+/** Private MediaMTX v1.21 API adapter. Never includes remote bodies or credentialed URLs in errors. */
+export class IngestRelay {
+  private readonly base: URL;
+  private readonly authorization: string;
+  private readonly timeoutMs: number;
+  constructor(options: { apiUrl: string; username: string; password: string; timeoutMs?: number }) {
+    try {
+      this.base = new URL(options.apiUrl);
+    } catch {
+      throw new Error('invalid_relay_configuration');
+    }
+    this.timeoutMs = options.timeoutMs ?? 2000;
+    if (
+      !['http:', 'https:'].includes(this.base.protocol) ||
+      this.base.username ||
+      this.base.password ||
+      this.base.search ||
+      this.base.hash ||
+      !options.username ||
+      options.username.includes(':') ||
+      !options.password ||
+      !Number.isInteger(this.timeoutMs) ||
+      this.timeoutMs < 1 ||
+      this.timeoutMs > 30_000
+    )
+      throw new Error('invalid_relay_configuration');
+    this.base.pathname = this.base.pathname.replace(/\/$/, '') + '/';
+    this.authorization = `Basic ${Buffer.from(`${options.username}:${options.password}`).toString('base64')}`;
+  }
+  private path(path: string): string {
+    if (!pathPattern.test(path)) throw new Error('invalid_relay_path');
+    return path;
+  }
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: unknown }> {
+    try {
+      const response = await fetch(new URL(path, this.base), {
+        method,
+        headers: { authorization: this.authorization, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+        redirect: 'error',
+      });
+      // Error bodies may contain credentials. Do not parse or propagate them.
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { status: response.status, body: null };
+      }
+      return { status: response.status, body: await response.json() };
+    } catch {
+      throw new Error('relay_unavailable');
+    }
+  }
+  async ensure(grant: IngestGrant): Promise<void> {
+    const path = this.path(grant.path);
+    if (
+      ![grant.publishPassphrase, grant.readPassphrase].every((value) =>
+        /^[a-f0-9]{64}$/.test(value),
+      ) ||
+      grant.publishPassphrase === grant.readPassphrase
+    )
+      throw new Error('invalid_ingest_credentials');
+    const config = {
+      source: 'publisher',
+      overridePublisher: false,
+      alwaysAvailable: false,
+      record: false,
+      srtPublishPassphrase: grant.publishPassphrase,
+      srtReadPassphrase: grant.readPassphrase,
+    };
+    const verify = (body: unknown) => {
+      if (
+        !body ||
+        typeof body !== 'object' ||
+        !Object.entries(config).every(
+          ([key, value]) => (body as Record<string, unknown>)[key] === value,
+        )
+      )
+        throw new Error('relay_path_conflict');
+    };
+    const existing = await this.request('GET', `v3/config/paths/get/${path}`);
+    if (existing.status === 200) {
+      verify(existing.body);
+      return;
+    }
+    if (existing.status !== 404) throw new Error(`relay_http_${existing.status}`);
+    const added = await this.request('POST', `v3/config/paths/add/${path}`, config);
+    if (added.status === 200) return;
+    // An identical concurrent provisioner may have created the path after our read.
+    if (added.status === 400) {
+      const raced = await this.request('GET', `v3/config/paths/get/${path}`);
+      if (raced.status === 200) {
+        verify(raced.body);
+        return;
+      }
+    }
+    throw new Error(`relay_http_${added.status}`);
+  }
+  async remove(path: string): Promise<void> {
+    const result = await this.request('DELETE', `v3/config/paths/delete/${this.path(path)}`);
+    if (![200, 404].includes(result.status)) throw new Error(`relay_http_${result.status}`);
+  }
+  async status(path: string): Promise<SourceObservation> {
+    const response = await this.request('GET', `v3/paths/get/${this.path(path)}`);
+    if (response.status === 404) return { ready: false, inboundBytes: 0, tracks: [] };
+    if (response.status !== 200) throw new Error(`relay_http_${response.status}`);
+    const parsed = observation.safeParse(response.body);
+    if (!parsed.success) throw new Error('relay_invalid_response');
+    const value = parsed.data;
+    return {
+      ready:
+        value.online &&
+        value.available &&
+        value.source?.type === 'srtConn' &&
+        value.inboundBytes > 0 &&
+        value.tracks2.length > 0,
+      inboundBytes: value.inboundBytes,
+      tracks: value.tracks2.map((track) => track.codec),
+    };
+  }
+}

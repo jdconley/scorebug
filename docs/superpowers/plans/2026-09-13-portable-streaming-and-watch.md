@@ -162,6 +162,10 @@ not assertions that FFmpeg arguments merely contain an encoder name.
 **Exit:** ten-minute local audio/video run, changing scores, no secrets in captured logs,
 recovery within ten seconds after a reachable source returns in the test environment.
 
+**In progress:** [Real SRT access and process supervision evidence](../../relay-conformance.md).
+Explicit provisioning/revocation passes real audio/video tests; native credential
+routes, automatic relay reconciliation, and the durable worker consumer remain.
+
 ## Milestone 3: iPhone recording core and streaming adapter
 
 **Files:** `ios/Project.yml`, `ios/Sources/Scorebug/Capture/{CameraSession,ArchiveWriter}.swift`,

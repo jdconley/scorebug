@@ -9,6 +9,14 @@ moq: false
 srt: true
 srtAddress: :8890
 authInternalUsers:
+  # Native paths are created by the control plane with distinct, mandatory SRT
+  # publish/read encryption passphrases. No other media protocol is enabled.
+  - user: any
+    permissions:
+      - action: publish
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
+      - action: read
+        path: '~^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$'
   - user: qa-publisher
     pass: qa-publish-not-production
     permissions:

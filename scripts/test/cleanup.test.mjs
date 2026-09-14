@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
-async function fixture(script, mode, port = '') {
+async function fixture(script, mode, port = '', cwd = process.cwd()) {
   const dir = mkdtempSync(join(tmpdir(), 'scorebug-cleanup-'));
   const binary = join(dir, 'docker');
   const log = join(dir, 'calls.jsonl');
@@ -30,8 +30,15 @@ if (args[0] === 'rm' && process.env.QA_MODE === 'remove-failure') { console.erro
     const result = await new Promise((resolve) => {
       const child = spawn(
         process.execPath,
-        [script, ...(script.includes('container') ? ['--image', 'qa-existing-image'] : [])],
+        [
+          ...(script.includes('relay')
+            ? [join(process.cwd(), 'apps/control-plane/node_modules/tsx/dist/cli.mjs')]
+            : []),
+          join(process.cwd(), script),
+          ...(script.includes('container') ? ['--image', 'qa-existing-image'] : []),
+        ],
         {
+          cwd,
           env: {
             ...process.env,
             PATH: `${dir}${delimiter}${process.env.PATH}`,
@@ -83,7 +90,29 @@ test('successful HTTP checks cannot hide a failed container cleanup', async () =
   }
 });
 
-for (const script of ['scripts/test-container.mjs', 'scripts/test-local.mjs']) {
+test('relay startup failure still removes its uniquely owned container', async () => {
+  const result = await fixture('scripts/test-relay.mjs', 'partial');
+  assert.equal(result.code, 1);
+  assert.ok(result.calls.some((args) => args[0] === 'rm' && args[2].startsWith('scorebug-relay-')));
+});
+
+test('relay validation loads its fixture when invoked from the control-plane workspace', async () => {
+  const result = await fixture(
+    'scripts/test-relay.mjs',
+    'partial',
+    '',
+    join(process.cwd(), 'apps/control-plane'),
+  );
+  assert.equal(result.code, 1);
+  assert.ok(result.calls.some((args) => args[0] === 'run'));
+  assert.ok(result.calls.some((args) => args[0] === 'rm' && args[2].startsWith('scorebug-relay-')));
+});
+
+for (const script of [
+  'scripts/test-container.mjs',
+  'scripts/test-local.mjs',
+  'scripts/test-relay.mjs',
+]) {
   test(`${script} handles cancellation with owned teardown`, async () => {
     const result = await fixture(script, 'cancel');
     assert.equal(

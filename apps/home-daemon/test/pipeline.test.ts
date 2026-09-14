@@ -38,3 +38,9 @@ describe('buildFfmpegArgs', () => {
     expect(filter).toContain('reload=1');
   });
 });
+
+it('requests machine-readable output progress with terminal stats disabled', () => {
+  const args = buildFfmpegArgs({ ...baseSpec, nvenc: false });
+  expect(args[args.indexOf('-progress') + 1]).toBe('pipe:1');
+  expect(args).toContain('-nostats');
+});

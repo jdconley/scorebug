@@ -18,6 +18,7 @@
     "test:tools": "node --test scripts/test/*.test.mjs",
     "test:container": "node scripts/test-container.mjs",
     "test:local": "node scripts/test-local.mjs",
+    "test:relay": "pnpm --filter @scorebug/control-plane exec tsx ../../scripts/test-relay.mjs",
     "test:apple": "node scripts/test-apple.mjs",
     "test:scoring": "node scripts/test-scoring.mjs",
     "doctor": "node scripts/doctor.mjs",
