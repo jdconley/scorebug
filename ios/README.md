@@ -81,8 +81,11 @@ The sample forwarding into SRT is incomplete, and the archive writer's raw-buffe
 passthrough assumptions do not establish a reliable recording. The previous
 crash-safety and simultaneous streaming claims are unverified.
 
-Milestone 3 will validate the HaishinKit version and replace the recording path
-with encoded, recoverable local segments. Milestone 5 adds the native watch app.
+The shared [native archive core](../docs/native-archive.md) now passes Mac fixture
+encoding, crash recovery, and MP4 export checks, and compiles for generic iOS
+simulator/device destinations. It is not yet integrated into this camera scaffold.
+Milestone 3 continues with simultaneous archive/SRT and capture integration.
+Milestone 5 adds the native watch app.
 See the [architecture](../docs/architecture.md) and
 [delivery plan](../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
 

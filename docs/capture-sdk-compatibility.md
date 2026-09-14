@@ -42,6 +42,14 @@ created before SDK ingress. The app needs retained capture delegates, bounded
 publisher mailboxes with one consumer each, and separately serialized archive
 ownership. `@preconcurrency import` is not proof of safe sample ownership.
 
+Further source inspection finds default unbounded `AsyncStream` queues in both
+`TSWriter.output` and the socket's outgoing data path. A bounded app mailbox alone
+does not establish a bound for the whole publishing pipeline. The next experiment
+must include a stalled receiver and memory/queue observations, and verify finite
+socket-send deadlines and shutdown before this SDK is accepted for production.
+[TS writer source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/TS/TSWriter.swift),
+[socket source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/SRT/SRTSocket.swift).
+
 ## Recording correction and next experiment
 
 The camera scaffold requests raw NV12 video. Its writer currently treats that as
@@ -51,9 +59,13 @@ result, and preserve a shared timestamp origin. It must isolate recording from
 publishing, including offline operation and publisher bitrate changes.
 [Apple's writer input contract](<https://developer.apple.com/documentation/avfoundation/avassetwriterinput/init(mediatype:outputsettings:)>).
 
+The [native archive fixture](native-archive.md) now exercises valid H.264/AAC
+encoding, fragment completion/recovery, and full-decode MP4 export on macOS.
+It runs independently of the SDK; simultaneous publishing remains unverified.
+
 The next slice is a synthetic NV12/PCM source feeding both a separately encoded
 archive and an SRT adapter with these verified signatures. Fully decode both outputs,
 measure synchronization, change publisher bitrate while recording continues, and
-exercise shutdown/failure paths. Then add segment completion/recovery and actual
-camera lifecycle. Buffer pressure, active bitrate changes, crash recovery, iOS runtime
-behavior, and simultaneous encoding performance remain unverified.
+exercise shutdown/failure paths. Then integrate the actual camera lifecycle.
+Buffer pressure, active bitrate changes, iOS runtime behavior, and simultaneous
+encoding performance remain unverified.

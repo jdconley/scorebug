@@ -213,6 +213,14 @@ passes macOS execution and generic iOS simulator/device compilation at deploymen
 target 17.0. It verifies actor/settings/PCM method signatures and package slices.
 The synthetic dual-output media experiment and production integration remain pending.
 
+The shared [native archive core and Mac fixture](../../native-archive.md) now encode
+clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.
+The reviewed 14-second native run retained all 420 fresh video frames with a maximum
+0.71 ms measured A/V offset. Five forced terminations recovered playable media;
+the largest measured tail-loss bound was 2.60 seconds. All 31 native tests and generic
+iOS 17 simulator/device builds pass. Camera integration, bounded
+production capture queues, app recovery UI, and simultaneous SRT remain pending.
+
 ## Milestone 4: Adaptive quality and measurable reliability
 
 **Files:** new `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,

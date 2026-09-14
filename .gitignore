@@ -38,6 +38,9 @@ Package.resolved
 !tools/media-sdk-probe/Package.resolved
 tools/media-sdk-probe/.build/
 tools/media-sdk-probe/.swiftpm/
+tools/media-harness/.build/
+tools/media-harness/.swiftpm/
+ios/Packages/ScorebugMedia/.build/
 
 # runtime
 /tmp/score.txt
