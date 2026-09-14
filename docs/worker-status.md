@@ -88,6 +88,6 @@ TypeScript loader to resolve production modules. When editing shared protocol so
 during a dev/watch session, rebuild the protocol or restart that command.
 
 Current logs are under `artifacts/qa/worker-status-*` and
-`artifacts/qa/native-worker-status-ios*.log`. Sustained media qualification, native
-recording/publishing, adaptive quality, Watch workflows, and physical-device testing
-remain required.
+`artifacts/qa/native-worker-status-ios*.log`. The [ten-minute local 720p30 qualification](media-soak.md) now passes. Native
+recording/publishing, sustained higher profiles, adaptive quality, Watch workflows,
+and physical-device testing remain required.

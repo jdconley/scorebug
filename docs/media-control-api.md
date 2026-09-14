@@ -79,7 +79,7 @@ with native matches.
   Coverage includes ownership, ordering, rejected operations, schema migration,
   independent SQLite connections, and rollback when receipt persistence fails.
 - The complete workspace suite passes 180 API tests, 81 worker tests,
-  13 tooling tests, and one plain-Node protocol import test. Typecheck, production
+  39 tooling tests, and one plain-Node protocol import test. Typecheck, production
   build, formatting, and the production server container startup check pass.
 - Shared Swift passes 50 tests, including 11 media contract/client tests.
   TypeScript and Swift consume identical `media-v1.json` wire fixtures.

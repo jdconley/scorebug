@@ -17,13 +17,28 @@ import {
   frameCodeReadFilter,
   decodeFrameCodes,
 } from './media-frame-codes.mjs';
+import { sourceAudioExpression } from './media-sync.mjs';
+import { measureSoak } from './media-soak.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const encoder = process.argv[2] ?? 'software';
 assert.ok(['software', 'videotoolbox'].includes(encoder), 'Choose software or videotoolbox');
+const soakOption = process.argv[3];
+assert.ok(!soakOption || /^--soak-seconds=\d+$/.test(soakOption), 'Use --soak-seconds=600');
+assert.ok(process.argv.length <= 4, 'Unexpected worker test arguments');
+const soakSeconds = soakOption ? Number(soakOption.split('=')[1]) : 0;
+assert.ok(
+  !soakOption || (soakSeconds >= 12 && soakSeconds <= 1200),
+  'Soak must be 12–1200 seconds',
+);
 const checkCancellation = cancellation();
 const directory = await mkdtemp(join(tmpdir(), 'scorebug-worker-'));
-const artifact = join(root, 'artifacts', 'qa', `native-worker-${encoder}`);
+const artifact = join(
+  root,
+  'artifacts',
+  'qa',
+  `native-worker-${encoder}${soakSeconds ? `-soak-${soakSeconds}` : ''}`,
+);
 const names = [];
 const children = new Set();
 const crashDescendants = new Map();
@@ -478,9 +493,9 @@ try {
     '-f',
     'lavfi',
     '-i',
-    'sine=frequency=1000:sample_rate=48000',
+    sourceAudioExpression(),
     '-t',
-    '300',
+    String(300 + soakSeconds),
     '-vf',
     `drawbox=x=0:y=600:w=iw:h=120:color=black:t=fill,${sourceFrameCodeFilter}`,
     '-c:v',
@@ -581,11 +596,83 @@ try {
   assert.ok(recoveryMs < 10_000, `Source recovery took ${Math.round(recoveryMs)} ms`);
   await currentScoreClip('source-recovered');
   console.log(`Source loss recovered to output in ${Math.round(recoveryMs)} ms.`);
+  let finalRevision = score.snapshot.revision;
+  if (soakSeconds) {
+    const path = join(artifact, 'soak.mp4');
+    const recorder = start(ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      '-i',
+      outputUrl,
+      '-t',
+      String(soakSeconds + 2),
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a:0',
+      '-c',
+      'copy',
+      path,
+    ]);
+    const startedAt = performance.now();
+    const initialAttempt = (await workerStatus()).observation.attempt;
+    let changedDuringSoak = false;
+    let nextLog = 0;
+    while (!recorder.exited) {
+      checkCancellation();
+      const elapsed = (performance.now() - startedAt) / 1000;
+      assert.ok(elapsed < soakSeconds + 20, 'Soak capture timed out');
+      assert.ok(!publisher.exited && !worker.exited, 'Source or worker exited during soak');
+      const reported = await workerStatus();
+      assert.equal(reported.state, 'producing_output', 'Worker became unavailable during soak');
+      assert.equal(reported.observation.attempt, initialAttempt, 'Encoder restarted during soak');
+      if (!changedDuringSoak && elapsed >= soakSeconds / 2) {
+        const result = await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
+          commandId: 'soak-point',
+          gameId: matchId,
+          deviceId: 'scorer',
+          expectedRevision: finalRevision,
+          scorerEpoch: 1,
+          issuedAt: new Date().toISOString(),
+          operation: { type: 'award_point', side: 'home' },
+        });
+        finalRevision = result.snapshot.revision;
+        changedDuringSoak = true;
+      }
+      if (elapsed >= nextLog) {
+        console.log(
+          `Soak ${Math.floor(elapsed)}/${soakSeconds}s: worker encoding, attempt ${initialAttempt}.`,
+        );
+        nextLog += 30;
+      }
+      await delay(500);
+    }
+    assert.equal(recorder.code, 0, 'Soak capture failed');
+    assert.ok(changedDuringSoak, 'Soak missed score update');
+    const finalOverlay = await clip('soak-final-score');
+    const metrics = await measureSoak({
+      path,
+      directory,
+      ffmpeg,
+      ffprobe,
+      seconds: soakSeconds,
+      initialOverlay: changed,
+      finalOverlay,
+    });
+    await writeFile(
+      join(artifact, 'soak-metrics.json'),
+      JSON.stringify({ encoder, profile: '720p30', ...metrics }, null, 2) + '\n',
+    );
+    console.log(
+      `Soak passed: ${metrics.freshFps.toFixed(2)} fresh fps; max A/V offset ${(metrics.sync.maxAbsOffset * 1000).toFixed(1)} ms.`,
+    );
+  }
   await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
     commandId: 'end',
     gameId: matchId,
     deviceId: 'scorer',
-    expectedRevision: score.snapshot.revision,
+    expectedRevision: finalRevision,
     scorerEpoch: 1,
     issuedAt: new Date().toISOString(),
     operation: { type: 'end_match', reason: 'Local media validation complete' },

@@ -61,6 +61,9 @@ NVENC only when an explicit encoder was not provided.
 pnpm --filter @scorebug/home-daemon test
 pnpm test:worker software
 pnpm test:worker videotoolbox
+# Ten-minute continuous capture, fresh-frame and A/V synchronization checks:
+pnpm test:worker software --soak-seconds=600
+pnpm test:worker videotoolbox --soak-seconds=600
 ```
 
 The media harness owns its API, two uniquely named MediaMTX containers, and synthetic
@@ -90,3 +93,5 @@ Use reachable container-network addresses instead of `127.0.0.1` for services
 outside the container. NVENC requires a compatible NVIDIA host/driver and container
 toolkit, `ENCODER=nvenc`, and `--gpus all`. An encoder listing alone does not prove
 that encoding works; qualify the actual media pipeline on that host before use.
+
+See [sustained media qualification](../../docs/media-soak.md) for measurement rules and limits.

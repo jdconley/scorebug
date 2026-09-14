@@ -110,7 +110,7 @@ failure, progress parsing, and credential-safe logs. Harness tests also cover
 partial container startup and cancellation cleanup. CI is configured to run the
 real relay test on Linux; a local Mac pass is not Linux host qualification.
 
-The complete workspace passes 180 API tests, 81 worker tests, 13 tooling tests,
+The complete workspace passes 180 API tests, 81 worker tests, 39 tooling tests,
 and one plain-Node protocol import test, plus typecheck, production build, and formatting. Production server container
 startup and the four-exit native scoring recovery test also pass with this integration.
 
@@ -141,3 +141,7 @@ qualification. Independently killing the guardian remains a fail-closed case req
 host-level cleanup, not a confirmed encoder exit. The default Linux arm64 CPU image
 has separate compiled-pipeline/startup/decode/stop evidence. See the
 [worker runbook](../apps/home-daemon/README.md).
+
+The optional [ten-minute local qualification](media-soak.md) now passes for both
+software and VideoToolbox at 720p30, including continuous score changes, full decode,
+fresh-frame windows, and source-identified A/V synchronization.
