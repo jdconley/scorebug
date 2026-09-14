@@ -131,8 +131,9 @@ undo, take over scoring, and end the match without invoking a camera or browser.
 Recording associations, broadcast commands, and the selected-worker snapshot endpoint
 are implemented and restart-tested: [media control evidence](../../media-control-api.md).
 Relay credential retrieval, source observation, and automatic relay reconciliation
-are now integrated. Observed worker status and the actual worker consumer remain
-before this milestone is complete.
+are now integrated. The worker now consumes durable native assignments and current
+scores. Observed worker status in the API/native UI and remaining adversarial
+integration cases are still required before this milestone is complete.
 
 ## Milestone 2: Real local media through a portable worker
 
@@ -165,7 +166,13 @@ recovery within ten seconds after a reachable source returns in the test environ
 
 **In progress:** [Real SRT access and process supervision evidence](../../relay-conformance.md).
 Provisioning/revocation and native credential routes pass real audio/video tests;
-automatic relay reconciliation is connected. The durable worker consumer remains.
+automatic relay reconciliation is connected. The durable worker consumer now passes
+short local CPU and VideoToolbox runs: initial score, point changes without encoder
+restart, graceful worker restart, API outage lease/recovery, and match-end shutdown.
+Source-frame barcodes distinguish fresh frames from muxed/duplicated frames. See
+[worker runbook](../../../apps/home-daemon/README.md). This does not complete the
+ten-minute/audio-sync qualification, abrupt worker crash, source-loss recovery,
+capability negotiation, or native status reporting gates.
 
 ## Milestone 3: iPhone recording core and streaming adapter
 

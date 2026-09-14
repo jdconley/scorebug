@@ -1,13 +1,16 @@
 import { z } from 'zod';
 
 const schema = z.object({
-  CONTROL_PLANE_WS: z.string().url(),
+  CONTROL_PLANE_URL: z.string().url(),
   HOME_TOKEN: z.string().min(16),
-  RTMP_TARGET: z.string().min(8),
-  NVENC_ENABLED: z
+  WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  OUTPUT_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  OUTPUT_URL: z
     .string()
-    .default('true')
-    .transform((v) => v.toLowerCase() === 'true'),
+    .url()
+    .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol)),
+  ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
+  VIDEO_PROFILE: z.enum(['720p30', '1080p30', '2160p30']).default('1080p30'),
   FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
   FFPROBE_PATH: z.string().min(1).default('ffprobe'),
   FONT_PATH: z.string().min(1).default('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
@@ -18,5 +21,14 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return schema.parse(env);
+  return schema.parse({
+    ...env,
+    ENCODER: env.ENCODER ?? (env.NVENC_ENABLED?.toLowerCase() === 'true' ? 'nvenc' : 'software'),
+  });
 }
+
+export const videoProfiles = {
+  '720p30': { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
+  '1080p30': { width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },
+  '2160p30': { width: 3840, height: 2160, fps: 30, bitrateKbps: 18000 },
+} as const;

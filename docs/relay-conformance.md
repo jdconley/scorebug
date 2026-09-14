@@ -83,9 +83,9 @@ the durable desired state for retry and return a visible error. No recording rep
 is changed by relay reconciliation.
 
 Revocation is asynchronous. If the relay management API is unreachable, an existing
-SRT connection can remain alive until management access recovers. The future worker
-consumer must also stop on lost control/expired assignment; this checkpoint does
-not claim that behavior. Keep the installation secret stable: changing it creates
+SRT connection can remain alive until management access recovers. The native worker
+now stops output after five seconds without a validated control snapshot, and
+waits for fresh control before restarting. Keep the installation secret stable: changing it creates
 a different namespace, so deliberate secret rotation must also retire old paths.
 Relay inventory is bounded to 1,000 configured paths; larger or malformed inventory
 fails closed rather than returning a partial result.
@@ -99,9 +99,9 @@ logs because they can contain stream credentials.
 
 An optional progress callback parses bounded, complete, monotonic FFmpeg output
 frame/time counters. These counters do not prove delivery freshness or remote
-playback. The old worker entry point still uses the legacy WebSocket lifecycle and
-does not yet consume the durable match assignment or this callback for truthful
-live status; that replacement remains required.
+playback. The worker entry point now consumes durable native assignments, handles
+initial/current scores, and uses these counters for a ten-second output watchdog.
+States are logged locally; API/native UI status reporting remains required.
 
 Focused verification passes 14 relay adapter tests, 25 lifecycle tests, 6 route tests,
 and 20 pipeline argument/process
@@ -110,6 +110,28 @@ failure, progress parsing, and credential-safe logs. Harness tests also cover
 partial container startup and cancellation cleanup. CI is configured to run the
 real relay test on Linux; a local Mac pass is not Linux host qualification.
 
-The complete workspace passes 169 API tests, 28 worker tests, and 12 tooling tests,
+The complete workspace passes 169 API tests, 68 worker tests, and 12 tooling tests,
 plus typecheck, production build, and formatting. Production server container
 startup and the four-exit native scoring recovery test also pass with this integration.
+
+## Native worker short media check
+
+`pnpm test:worker software` and `pnpm test:worker videotoolbox` pass on this Mac
+with FFmpeg 8.1.2. Both produce 1280×720 H.264/AAC clips at approximately 30 decoded
+fps, with at least 24 distinct source frame IDs per second. A binary counter in
+the source image measures freshness independently of lossy compression; an
+adversarial 12fps source duplicated to 30fps is correctly recognized as only 36
+fresh frames in a three-second clip. Separate real encoder checks cap 60fps at
+30 while preserving a 25fps input.
+
+Decoded images show initial HOME 0–0 AWAY and HOME 1–0 AWAY after a native scoring
+command; the encoder does not restart for the point. Graceful worker restart and
+forced API exit/recovery return to the current score. An API outage stops output
+on the control lease while the independent synthetic publisher stays connected.
+Match end stops output and revokes publishing without changing recording metadata.
+
+Artifacts: `artifacts/qa/native-worker-{software,videotoolbox}/` contains playable
+clips and inspected stills; adjacent `.log` files record the runs. All owned runtime
+resources were removed. These short checks do not establish audio synchronization,
+ten-minute stability, abrupt worker-crash cleanup, native status reporting, physical
+recording, or NVENC/other-host qualification. See the [worker runbook](../apps/home-daemon/README.md).

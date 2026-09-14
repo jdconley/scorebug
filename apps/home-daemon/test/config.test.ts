@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 
 const base = {
-  CONTROL_PLANE_WS: 'ws://localhost:18787/home/ws',
+  CONTROL_PLANE_URL: 'http://localhost:18787',
   HOME_TOKEN: 'test-only-home-token',
-  RTMP_TARGET: 'rtmp://localhost:11935/live',
+  WORKER_ID: 'mac',
+  OUTPUT_ID: 'local-sink',
+  OUTPUT_URL: 'rtmp://localhost:11935/live/fixture',
 };
 
 describe('media tool configuration', () => {
@@ -23,5 +25,19 @@ describe('media tool configuration', () => {
   });
   it('rejects empty explicit binary paths', () => {
     expect(() => loadConfig({ ...base, FFMPEG_PATH: '' })).toThrow();
+  });
+  it('defaults to portable software and requires explicit native worker identity/output', () => {
+    expect(loadConfig(base)).toMatchObject({
+      ENCODER: 'software',
+      VIDEO_PROFILE: '1080p30',
+      WORKER_ID: 'mac',
+      OUTPUT_ID: 'local-sink',
+    });
+    expect(() => loadConfig({ ...base, OUTPUT_URL: 'file:///private/file' })).toThrow();
+    expect(() => loadConfig({ ...base, WORKER_ID: '' })).toThrow();
+  });
+  it('accepts VideoToolbox and preserves the legacy NVENC selection when explicit', () => {
+    expect(loadConfig({ ...base, ENCODER: 'videotoolbox' }).ENCODER).toBe('videotoolbox');
+    expect(loadConfig({ ...base, NVENC_ENABLED: 'true' }).ENCODER).toBe('nvenc');
   });
 });

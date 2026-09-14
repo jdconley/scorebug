@@ -1,62 +1,75 @@
-# @scorebug/home-daemon
+# Native broadcast worker
 
-Runs on the home box. Opens a single outbound WebSocket to the control plane and:
+The worker polls the durable native API for its selected match, retrieves a
+generation-bound SRT read credential, and checks the assignment again before using
+it. FFmpeg scales the video, burns in the current score, and publishes audio/video
+to the configured RTMP(S) destination. Score changes rewrite the text file
+atomically without restarting FFmpeg.
 
-- On `start_game`: spawns ffmpeg to pull SRT from the VPS, draw the score over it, and push RTMPS to YouTube.
-- On `score_update` / `callout`: atomically rewrites `${SCORE_DIR}/score.txt` so ffmpeg's `drawtext reload=1` picks it up.
-- On `end_game`: SIGTERMs ffmpeg (SIGKILL after 5s grace).
-- On WS drop: exponential backoff reconnect.
+The worker waits for an observed source before starting. Changing the assignment,
+ending the match, losing control access for five seconds, or losing output progress
+for ten seconds stops the encoder. Shutdown waits for process exit, with a one-second
+SIGTERM grace before SIGKILL. Retries are limited to three starts per match/generation
+in a rolling minute. A recovered API resumes the current assignment.
 
-The home is the **source of truth** for pipeline state. The control plane mirrors what we report.
+`producing_output` in local logs means FFmpeg's frame and timestamp counters have
+advanced. It does not establish delivery to viewers or sustained fresh-frame rate.
+Worker observations are not yet sent back to the native app. The old WebSocket
+client remains unused legacy code.
 
-## Develop (CPU-only, no Docker)
+## Run locally
 
-```sh
-cp .env.example .env       # set CONTROL_PLANE_WS, HOME_TOKEN, NVENC_ENABLED=false
-pnpm install
-pnpm --filter @scorebug/home-daemon dev
-```
-
-You need `ffmpeg` on `$PATH` for the dev path. Any recent ffmpeg works for libx264.
-
-## Build the Docker image
-
-```sh
-# From the repo root
-docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
-```
-
-## Run with NVENC (Linux or Windows WSL2)
-
-Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) inside the host (or inside WSL2 on Windows with Docker Desktop's WSL2 backend).
+From the repository root, start the fixtures and API using the main README, then
+copy `apps/home-daemon/.env.example` to `apps/home-daemon/.env` and set the executable
+and font paths for this machine. The example sends only to the local fixture.
+`WORKER_ID` and `OUTPUT_ID` must match the broadcast selection. Each worker needs a
+separate score directory, and one worker process should use each worker ID.
 
 ```sh
-docker run --rm \
-  --gpus all \
-  --env-file apps/home-daemon/.env \
-  scorebug/home-daemon
+pnpm install --frozen-lockfile
+node --env-file=apps/home-daemon/.env apps/home-daemon/node_modules/tsx/dist/cli.mjs apps/home-daemon/src/index.ts
 ```
 
-## Run without NVENC (CPU fallback)
+FFmpeg needs SRT, drawtext, AAC, and the selected H.264 encoder. On this Mac,
+`ffmpeg-full` provides those capabilities. `ENCODER=videotoolbox` requires native
+macOS hardware encoding and explicitly disables silent software fallback.
 
-```sh
-docker run --rm \
-  -e NVENC_ENABLED=false \
-  --env-file apps/home-daemon/.env \
-  scorebug/home-daemon
-```
+| Profile   | Canvas      | Video bitrate target | Maximum fps |
+| --------- | ----------- | -------------------- | ----------- |
+| `720p30`  | 1280 × 720  | 3 Mbps               | 30          |
+| `1080p30` | 1920 × 1080 | 6 Mbps               | 30          |
+| `2160p30` | 3840 × 2160 | 18 Mbps              | 30          |
 
-## Test
+Profiles preserve aspect ratio with padding. A lower input frame rate stays lower;
+these are manual presets, not adaptive quality or guarantees of the 24fps goal.
+Audio is AAC at 128 Kbps. Capability qualification and adaptation remain planned.
+If `ENCODER` is omitted, software is the default; legacy `NVENC_ENABLED=true` selects
+NVENC only when an explicit encoder was not provided.
+
+## Local validation
 
 ```sh
 pnpm --filter @scorebug/home-daemon test
+pnpm test:worker software
+pnpm test:worker videotoolbox
 ```
 
-## Verifying NVENC is available inside the container
+The media harness owns its API, two uniquely named MediaMTX containers, and synthetic
+source. It uses loopback ports and public fixture credentials, captures and decodes
+short clips, checks fresh test-pattern frames and changing overlay pixels, and tests
+worker restart, control-outage shutdown, recovery, and match end. Clips and images
+are retained under `artifacts/qa/native-worker-<encoder>`; owned runtime resources
+are removed. This is a short integration check, not the ten-minute qualification
+gate, a real phone recording test, or an external broadcast test.
+
+## Linux container
 
 ```sh
-docker run --rm --gpus all scorebug/home-daemon \
-  ffmpeg -hide_banner -encoders 2>&1 | grep nvenc
+docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
+docker run --rm --env-file apps/home-daemon/.env scorebug/home-daemon
 ```
 
-If the output is empty, the toolkit isn't passing the GPU through — fix that before running real games.
+Use reachable container-network addresses instead of `127.0.0.1` for services
+outside the container. NVENC requires a compatible NVIDIA host/driver and container
+toolkit, `ENCODER=nvenc`, and `--gpus all`. An encoder listing alone does not prove
+that encoding works; qualify the actual media pipeline on that host before use.

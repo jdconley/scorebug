@@ -8,6 +8,8 @@ export type PipelineSpec = {
   publishUrl: string;
   scoreFile: string;
   nvenc: boolean;
+  encoder?: 'software' | 'videotoolbox' | 'nvenc';
+  profile?: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
   fontPath?: string;
 };
@@ -28,33 +30,60 @@ function filterPath(value: string): string {
  * every frame thanks to `reload=1`; the daemon updates that file atomically.
  */
 export function buildFfmpegArgs(spec: PipelineSpec): string[] {
+  const profile = spec.profile;
+  if (
+    profile &&
+    (!Number.isInteger(profile.width) ||
+      profile.width < 2 ||
+      profile.width > 7680 ||
+      profile.width % 2 ||
+      !Number.isInteger(profile.height) ||
+      profile.height < 2 ||
+      profile.height > 4320 ||
+      profile.height % 2 ||
+      !Number.isInteger(profile.fps) ||
+      profile.fps < 1 ||
+      profile.fps > 60 ||
+      !Number.isInteger(profile.bitrateKbps) ||
+      profile.bitrateKbps < 100 ||
+      profile.bitrateKbps > 100000)
+  )
+    throw new Error('invalid_video_profile');
+  const ratio = (profile?.height ?? 1080) / 1080;
   const drawtext = [
     `drawtext=textfile=${filterPath(spec.scoreFile)}`,
     'reload=1',
+    'expansion=none',
     'fontcolor=white',
-    'fontsize=42',
+    `fontsize=${Math.max(14, Math.round(42 * ratio))}`,
     'box=1',
     'boxcolor=black@0.55',
-    'boxborderw=18',
-    'x=40',
-    'y=h-100',
+    `boxborderw=${Math.round(18 * ratio)}`,
+    `x=${Math.round(40 * ratio)}`,
+    `y=h-${Math.round(100 * ratio)}`,
     `fontfile=${filterPath(spec.fontPath ?? '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')}`,
   ].join(':');
 
-  const video = spec.nvenc
-    ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-b:v', '6000k', '-g', '60']
-    : [
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-tune',
-        'zerolatency',
-        '-b:v',
-        '6000k',
-        '-g',
-        '60',
-      ];
+  const encoder = spec.encoder ?? (spec.nvenc ? 'nvenc' : 'software');
+  const video =
+    encoder === 'videotoolbox'
+      ? ['-c:v', 'h264_videotoolbox', '-allow_sw', '0', '-realtime', '1', '-bf', '0']
+      : encoder === 'nvenc'
+        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll']
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
+  video.push(
+    '-b:v',
+    `${profile?.bitrateKbps ?? 6000}k`,
+    '-g',
+    String((profile?.fps ?? 30) * 2),
+    '-pix_fmt',
+    'yuv420p',
+  );
+  // Cap higher-rate sources without inflating a lower input cadence to the profile limit.
+  if (profile) video.push('-fpsmax', String(profile.fps));
+  const filter = profile
+    ? `scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`
+    : drawtext;
 
   return [
     '-hide_banner',
@@ -67,8 +96,12 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '+genpts',
     '-i',
     spec.pullUrl,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0',
     '-vf',
-    drawtext,
+    filter,
     ...video,
     '-c:a',
     'aac',

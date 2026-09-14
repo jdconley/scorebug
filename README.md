@@ -17,6 +17,7 @@ to YouTube.
 - [Native scoring API progress](docs/native-scoring-api.md)
 - [Media control API and recovery evidence](docs/media-control-api.md)
 - [Real SRT relay access and process supervision](docs/relay-conformance.md)
+- [Native worker setup and local media checks](apps/home-daemon/README.md)
 - [Milestone 0 verification results](docs/milestone-0-results.md)
 
 The plan prioritizes reliable local recording, adaptive live quality with a measured
@@ -54,6 +55,7 @@ pnpm run doctor
 pnpm test:container
 pnpm test:local
 pnpm test:relay
+pnpm test:worker software
 ```
 
 Start the isolated fixtures with `pnpm local:up` and the local API with

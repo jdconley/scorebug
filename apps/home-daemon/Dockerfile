@@ -1,7 +1,7 @@
 # Linux image — runs on any Linux host. NVENC requires the NVIDIA Container
 # Toolkit at run time (`docker run --gpus all ...`); on Windows that means
-# Docker Desktop with WSL2 + the NVIDIA WSL driver. Set NVENC_ENABLED=false
-# to fall back to libx264 for dev or CPU-only hosts.
+# Docker Desktop with WSL2 + the NVIDIA WSL driver. Set ENCODER=software
+# for libx264 on CPU-only hosts, or ENCODER=nvenc on a qualified NVIDIA host.
 #
 # Built from the repo root so the workspace layout is visible:
 #   docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .

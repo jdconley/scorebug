@@ -44,3 +44,31 @@ it('requests machine-readable output progress with terminal stats disabled', () 
   expect(args[args.indexOf('-progress') + 1]).toBe('pipe:1');
   expect(args).toContain('-nostats');
 });
+it('selects real VideoToolbox without silent software fallback and applies the output canvas', () => {
+  const args = buildFfmpegArgs({
+    ...baseSpec,
+    nvenc: false,
+    encoder: 'videotoolbox',
+    profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
+  });
+  expect(args).toContain('h264_videotoolbox');
+  expect(args[args.indexOf('-allow_sw') + 1]).toBe('0');
+  expect(args[args.indexOf('-b:v') + 1]).toBe('3000k');
+  expect(args[args.indexOf('-fpsmax') + 1]).toBe('30');
+  expect(args).not.toContain('-r');
+  expect(args[args.indexOf('-vf') + 1]).toContain('scale=1280:720');
+  expect(args[args.indexOf('-vf') + 1]).toContain('expansion=none');
+});
+it('lets explicit software selection override the legacy NVENC flag', () => {
+  expect(buildFfmpegArgs({ ...baseSpec, nvenc: true, encoder: 'software' })).toContain('libx264');
+});
+it('rejects invalid output profiles before spawning FFmpeg', () => {
+  for (const width of [0, 1279, Infinity])
+    expect(() =>
+      buildFfmpegArgs({
+        ...baseSpec,
+        nvenc: false,
+        profile: { width, height: 720, fps: 30, bitrateKbps: 3000 },
+      }),
+    ).toThrow('invalid_video_profile');
+});
