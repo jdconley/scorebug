@@ -89,6 +89,20 @@ diagnostics tolerate unfinished persistence without claiming that this Mac's nat
 cancellation returns early. Counter saturation is tested through the shared helper;
 the owner's overflow-flag assignment is checked by source inspection.
 
+Step 2 now attaches the same owner to Film's prepared session, simulator source and
+native writer. Its closed snapshot exports atomically inside the joined stop task,
+and the native runner retains and checks the actual recording identity, closure,
+coverage and bounded shape. Existing cancellation before session creation still
+creates no source or diagnostic owner. Partial timing remains explicit evidence.
+
+All 71 Film/model tests and 155 tooling tests pass. A deterministic Swift encoding
+matches the retained JSON fixture used by JavaScript tests. The unsigned combined
+iPhone/Watch Release build passes; both binaries exclude the diagnostic symbols
+and fixture markers checked. Logs are `artifacts/qa/archive-pressure-integration-*`,
+including `release-exclusion.json`. Independent specification and quality reviews
+approve step 2. The native reproduction and report-age gate remain open; no
+overflow fix is claimed.
+
 Define a small, explicit DEBUG qualification snapshot with recording identity and
 monotonic timing. Retain existing queue peak/accepted/rejected/dropped counts, plus
 enough producer scheduling and consumer readiness/append timing to distinguish a

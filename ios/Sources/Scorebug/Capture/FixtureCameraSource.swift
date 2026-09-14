@@ -13,6 +13,16 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
     private var callbacks: CaptureSourceCallbacks?
     private var pump: Task<Void, Never>?
     private var used = false
+    private var archivePressureDiagnostics: ArchivePressureDiagnostics?
+
+    /// One owner may attach before prepare, without changing the capture protocol.
+    @discardableResult func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics) -> Bool {
+        lock.withLock {
+            guard !used, archivePressureDiagnostics == nil, owner.attachProducer() else { return false }
+            archivePressureDiagnostics = owner
+            return true
+        }
+    }
     init(profile: ArchiveProfile = .init(), failAfterFrames: Int? = nil) {
         self.profile = profile; self.failAfterFrames = failAfterFrames
     }
@@ -32,20 +42,26 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
         try lock.withLock {
             guard pump == nil, let callbacks else { throw FixtureError.state }
             let profile = profile, origin = origin, failAfterFrames = failAfterFrames
+            let diagnostics = archivePressureDiagnostics
             pump = Task.detached {
                 let began = ContinuousClock.now
                 do {
                     var frame = 0
                     while true {
                         try Task.checkCancellation()
-                        try await ContinuousClock().sleep(until: began + .seconds(Double(frame) / 30))
+                        let deadline = began + .seconds(Double(frame) / 30)
+                        try await ContinuousClock().sleep(until: deadline)
                         if let failAfterFrames, frame >= failAfterFrames { callbacks.event(.interrupted); return }
+                        diagnostics?.beginFrame(index: Int64(frame), deadline: deadline)
                         let samples = try autoreleasepool {
                             (try Self.video(frame: frame, profile: profile, origin: origin),
                              try Self.audio(frame: frame, origin: origin))
                         }
+                        diagnostics?.generationFinished()
+                        diagnostics?.callbacksStarted()
                         callbacks.sample(try CapturedMediaSample(sampleBuffer: samples.0, kind: .video))
                         callbacks.sample(try CapturedMediaSample(sampleBuffer: samples.1, kind: .audio))
+                        diagnostics?.callbacksFinished()
                         frame += 1
                     }
                 } catch is CancellationError {} catch { callbacks.event(.failed) }

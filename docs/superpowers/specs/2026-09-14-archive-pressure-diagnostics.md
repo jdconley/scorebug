@@ -26,6 +26,11 @@ evidence that its contribution was zero. Keep existing factories and public medi
 protocols intact. Do not store media, buffer references, paths, credentials, or raw
 error messages in observations.
 
+Preserve Film's existing startup cancellation guard after `library.begin`. If it
+rejects startup before a capture session is owned, do not create a source or invent
+a terminal session for diagnostics. That early cancellation has no diagnostic
+owner/export; failures after recorder ownership still close and export normally.
+
 Enable automatically only under DEBUG simulator compilation and the existing exact
 `SCOREBUG_TEST_VIDEO_OBSERVATIONS=1` flag. Mac tests may explicitly inject an owner,
 clock and writer. Release excludes the types, hooks and exporter. An absent owner

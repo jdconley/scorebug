@@ -1,3 +1,4 @@
+import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -329,7 +330,7 @@ try {
   const source = join(container, 'Library/Application Support/Scorebug/Recordings');
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });
-  let observationSnapshot;
+  let observationSnapshot, archiveDiagnosticsSnapshot;
   if (streaming) {
     const observationPath = join(artifact, 'video-observation.json');
     await cp(
@@ -338,6 +339,13 @@ try {
       { errorOnExist: true, force: false },
     );
     observationSnapshot = JSON.parse(await readFile(observationPath, 'utf8'));
+    const archiveDiagnosticsPath = join(artifact, 'archive-diagnostics.json');
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/archive-diagnostics.json'),
+      archiveDiagnosticsPath,
+      { errorOnExist: true, force: false },
+    );
+    archiveDiagnosticsSnapshot = JSON.parse(await readFile(archiveDiagnosticsPath, 'utf8'));
   }
   const exports = (await readdir(join(saved, 'Exports'))).filter((name) => name.endsWith('.mp4'));
   assert.ok(exports.length >= (streaming ? 1 : 2), 'Expected completed and recovered MP4 exports');
@@ -380,10 +388,14 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let videoObservation, workerReportAge;
+  let videoObservation, workerReportAge, archiveDiagnostics;
   if (streaming) {
     assert.equal(states.length, 1, 'Observation fixture must own one recording');
     assert.equal(recordingFolders[0], states[0].id, 'Recording folder/status identity mismatch');
+    archiveDiagnostics = validateArchiveDiagnostics({
+      snapshot: archiveDiagnosticsSnapshot,
+      recordingID: states[0].id,
+    });
     const decodedEvidence = JSON.parse(
       await readFile(join(artifact, 'decoded-video-status.json'), 'utf8'),
     );
@@ -435,7 +447,16 @@ try {
   await writeFile(
     join(artifact, 'results.json'),
     JSON.stringify(
-      { runtime, deviceType, media, live, statuses: states, videoObservation, workerReportAge },
+      {
+        runtime,
+        deviceType,
+        media,
+        live,
+        statuses: states,
+        videoObservation,
+        workerReportAge,
+        archiveDiagnostics,
+      },
       null,
       2,
     ),

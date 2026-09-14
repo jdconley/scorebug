@@ -1,0 +1,114 @@
+{
+  "closed": true,
+  "coverage": {
+    "persistence": true,
+    "persistenceComplete": true,
+    "producer": true,
+    "session": true
+  },
+  "firstFailure": {
+    "coverage": {
+      "persistence": true,
+      "persistenceComplete": true,
+      "producer": true,
+      "session": true
+    },
+    "detectedAt": 0,
+    "observations": {
+      "activePersistences": [],
+      "audioAccepted": "0",
+      "audioRejected": "0",
+      "consumers": {
+        "completed": [],
+        "omittedCount": "0"
+      },
+      "omittedActivePersistences": "0",
+      "persistences": {
+        "completed": [],
+        "omittedCount": "0"
+      },
+      "producers": {
+        "completed": [],
+        "omittedCount": "0"
+      },
+      "videoAccepted": "0",
+      "videoRejected": "0"
+    },
+    "queue": {
+      "acceptedCount": "0",
+      "currentBytes": "0",
+      "currentItems": "0",
+      "droppedCount": "0",
+      "hasPendingConsumer": false,
+      "peakBytes": "0",
+      "peakItems": "0",
+      "rejectedCount": "0"
+    },
+    "reason": "cancelled",
+    "validity": {
+      "counterOverflow": false,
+      "invalidSequence": false,
+      "invalidToken": false,
+      "timingValid": true
+    },
+    "writtenSamples": "0"
+  },
+  "formatVersion": 1,
+  "observations": {
+    "activePersistences": [],
+    "audioAccepted": "0",
+    "audioRejected": "0",
+    "consumers": {
+      "completed": [],
+      "omittedCount": "0"
+    },
+    "omittedActivePersistences": "0",
+    "persistences": {
+      "completed": [],
+      "omittedCount": "0"
+    },
+    "producers": {
+      "completed": [],
+      "omittedCount": "0"
+    },
+    "videoAccepted": "0",
+    "videoRejected": "0"
+  },
+  "observedAt": 0,
+  "profile": {
+    "audioBitRate": 128000,
+    "audioChannels": 1,
+    "audioSampleRate": 48000,
+    "framesPerSecond": 30,
+    "height": 240,
+    "segmentDuration": 2,
+    "videoBitRate": 12000000,
+    "width": 320
+  },
+  "queueLimits": {
+    "maxBytes": "25165824",
+    "maxItems": "24"
+  },
+  "recordingID": "encoded-fixture",
+  "terminal": {
+    "failure": "cancelled",
+    "queue": {
+      "acceptedCount": "0",
+      "currentBytes": "0",
+      "currentItems": "0",
+      "droppedCount": "0",
+      "hasPendingConsumer": false,
+      "peakBytes": "0",
+      "peakItems": "0",
+      "rejectedCount": "0"
+    },
+    "state": "failed",
+    "writtenSamples": "0"
+  },
+  "validity": {
+    "counterOverflow": false,
+    "invalidSequence": false,
+    "invalidToken": false,
+    "timingValid": true
+  }
+}

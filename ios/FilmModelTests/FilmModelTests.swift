@@ -189,14 +189,15 @@ final class FilmTestSource: CaptureSource, @unchecked Sendable {
     private var callbacks: CaptureSourceCallbacks?
     private var stops = 0
     let gate: FilmTestGate?
-    init(gate: FilmTestGate? = nil) { self.gate = gate }
+    let failOnStart: Bool
+    init(gate: FilmTestGate? = nil, failOnStart: Bool = false) { self.gate = gate; self.failOnStart = failOnStart }
     var stopCount: Int { lock.withLock { stops } }
     func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
         lock.withLock { self.callbacks = callbacks }
         if let gate { await gate.enter() }
         return .zero
     }
-    func start() async throws {}
+    func start() async throws { if failOnStart { throw CocoaError(.fileReadUnknown) } }
     func stop() async { lock.withLock { stops += 1; callbacks = nil } }
     func interrupt() { lock.withLock { callbacks }?.event(.interrupted) }
     func send(_ sample: CapturedMediaSample) { lock.withLock { callbacks }?.sample(sample) }

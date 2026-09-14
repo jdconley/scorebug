@@ -42,6 +42,26 @@ struct CurrentCapture: Sendable {
     private var startup: Task<Void, Error>?
     private var shutdown: Task<Void, Never>?
     private var readingDuration = false
+    #if DEBUG
+    // Automatic diagnostics are restricted to the explicitly flagged simulator
+    // fixture. Mac tests inject both dependencies without changing public factories.
+    var archivePressureFactory: ((String) -> ArchivePressureDiagnostics)? = {
+        #if targetEnvironment(simulator)
+        guard ArchivePressureFixture.requested(environment: ProcessInfo.processInfo.environment) else { return nil }
+        return { ArchivePressureDiagnostics(recordingID: $0) }
+        #else
+        return nil
+        #endif
+    }()
+    var archivePressureWriter: ((ArchivePressureDiagnostics.Snapshot) async throws -> Void)? = {
+        #if targetEnvironment(simulator)
+        return { try await ArchivePressureFixture.writeClosed($0) }
+        #else
+        return nil
+        #endif
+    }()
+    private var archivePressureDiagnostics: ArchivePressureDiagnostics?
+    #endif
 
     init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
          sourceFactory: @escaping () -> any CaptureSource,
@@ -75,7 +95,16 @@ struct CurrentCapture: Sendable {
             captureSession = (source as? IOSCameraCaptureSource)?.previewSession
             #endif
             let tap = PublishingTap()
-            let capture = CaptureRecording(source: source, session: try RecordingSession(sink: created.sink), publishingTap: tap)
+            let session = try RecordingSession(sink: created.sink)
+            #if DEBUG
+            if let owner = archivePressureFactory?(created.id), owner.snapshot.recordingID == created.id {
+                archivePressureDiagnostics = owner
+                session.attachArchivePressureDiagnostics(owner)
+                (source as? FixtureCameraSource)?.attachArchivePressureDiagnostics(owner)
+                (created.sink as? SegmentedArchiveSink)?.writer.attachArchivePressureDiagnostics(owner)
+            }
+            #endif
+            let capture = CaptureRecording(source: source, session: session, publishingTap: tap)
             recorder = capture
             try await capture.start()
             guard state == .starting else { throw RecordingSessionError.cancelled }
@@ -111,15 +140,31 @@ struct CurrentCapture: Sendable {
             var failure: String?
             if case .failure(let error) = setup { failure = describe(error) }
             if wasStarting, failure == nil { failure = "Recording stopped before capture was ready." }
+            #if DEBUG
+            var closedDiagnostics: ArchivePressureDiagnostics.Snapshot?
+            #endif
             if let recorder {
                 do { _ = try await recorder.stop() }
                 catch { failure = describe(error) }
+                #if DEBUG
+                // Freeze before metrics/storage reads can wait on unrelated I/O.
+                closedDiagnostics = archivePressureDiagnostics?.close(snapshot: recorder.snapshot)
+                #endif
                 await updateCounters(recorder)
             }
             if let draft {
                 do { try await library.finish(id: draft.id, failure: failure) }
                 catch { failure = error.localizedDescription }
             }
+            #if DEBUG
+            if let closedDiagnostics, closedDiagnostics.recordingID == draft?.id,
+               let writer = archivePressureWriter {
+                // Export remains part of this joined stop. A diagnostic I/O error
+                // must never replace the recording outcome or permit early restart.
+                try? await writer(closedDiagnostics)
+            }
+            archivePressureDiagnostics = nil
+            #endif
             self.recorder = nil
             draft = nil
             startup = nil
