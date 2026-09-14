@@ -2,6 +2,7 @@
 import VideoToolbox
 import HaishinKit
 import SRTHaishinKit
+import ScorebugMedia
 
 /// SRT encoding/transport adapter shared by the app and local qualification tools.
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
@@ -12,9 +13,15 @@ public actor SRTPublisher {
     private let stream: SRTStream
     private let stopPolicy: SRTStopPolicy
     public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
-    public init(stopPolicy: SRTStopPolicy = .init()) {
+    public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil) {
         self.stopPolicy = stopPolicy
-        stream = SRTStream(connection: connection)
+        // Immutable ownership prevents late native completions from reaching a
+        // later publishing attempt. Observe synchronously without retaining media.
+        let observer: VideoEncoderCompletionObserver?
+        if let observations {
+            observer = { sourcePTS, _ in observations.observe(.encodedVideo, sourcePTS: sourcePTS) }
+        } else { observer = nil }
+        stream = SRTStream(connection: connection, encoderCompletionObserver: observer)
     }
     public func configure() async throws {
         try await stream.setVideoSettings(VideoCodecSettings(

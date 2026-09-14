@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import ScorebugCore
 import ScorebugMedia
@@ -202,7 +203,7 @@ import XCTest
         let pending = CaptureMemoryPending()
         let model = CaptureStreamingModel(storage: CaptureMemoryStorage(captureSetup()), pendingStore: pending,
             clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
-            publisherFactory: { _ in CaptureTestPublisher() })
+            publisherFactory: { _, _ in CaptureTestPublisher() })
         await model.restore()
         pending.fails = true
         model.captureChanged(captureContext())
@@ -360,12 +361,235 @@ import XCTest
         XCTAssertTrue(model.canStart)
     }
 
+    func testCaptureCallbacksAreObservedDuringPublisherStartupBeforeReadiness() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher(gate: gate)
+        var owners: [VideoFrameObservationOwner] = []
+        let model = makeModel(server: server, publisherFactory: { _, owner in
+            owners.append(try XCTUnwrap(owner)); return publisher
+        })
+        await model.restore()
+        let source = FilmTestSource()
+        let film = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { source }, sinkFactory: testArchiveSink)
+        film.onCaptureChanged = { model.captureChanged($0) }
+        await film.start()
+        let context = try XCTUnwrap(film.currentCapture)
+        source.send(try streamingVideo(0)) // Before publish access: outside the measured interval.
+        let starting = Task { await model.startStreaming() }
+        await gate.waitUntilEntered()
+        let owner = try XCTUnwrap(owners.first)
+        source.send(try streamingVideo(1))
+        source.send(try streamingVideo(2))
+        model.pollLocalHealth()
+        let snapshot = try XCTUnwrap(model.videoObservation)
+        XCTAssertEqual(snapshot.scope.recordingID, context.id)
+        XCTAssertEqual(snapshot.scope.matchID, "game-1")
+        XCTAssertEqual(snapshot.scope.broadcastGeneration, 1)
+        XCTAssertEqual(snapshot.scope.appliedProfileRevision, 1)
+        XCTAssertEqual(snapshot.scope, owner.snapshot.scope)
+        XCTAssertEqual(snapshot.current.captureVideo.callbackCount, 2)
+        XCTAssertEqual(snapshot.current.encodedVideo.callbackCount, 0)
+        XCTAssertEqual(snapshot.current.captureVideo.firstSourcePTS, CMTime(value: 1, timescale: 30))
+        XCTAssertFalse(snapshot.isClosed)
+        XCTAssertEqual(model.localState, .starting)
+        let appends = await publisher.appendCount
+        XCTAssertEqual(appends, 0)
+        XCTAssertEqual(model.sentSamples, 0)
+        await gate.release()
+        await starting.value
+        XCTAssertEqual(model.localState, .publishing)
+        source.send(try streamingVideo(3))
+        await publisher.waitForAppends(1)
+        model.pollLocalHealth()
+        XCTAssertEqual(model.videoObservation?.current.captureVideo.callbackCount, 3)
+        await model.stopStreaming()
+        XCTAssertEqual(film.state, .recording)
+        await film.stop()
+        XCTAssertEqual(film.recordings.first?.status, .completed)
+    }
+
+    func testCaptureStopDuringStartupDetachesImmediatelyAndClosesOnlyAfterJoinedStop() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = CaptureTestServer()
+        let startupGate = FilmTestGate(), stopGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(gate: startupGate, stopGate: stopGate)
+        var capturedOwner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, publisherFactory: { _, owner in capturedOwner = owner; return publisher })
+        await model.restore()
+        let source = FilmTestSource()
+        let film = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { source }, sinkFactory: testArchiveSink)
+        film.onCaptureChanged = { model.captureChanged($0) }
+        await film.start()
+        let starting = Task { await model.startStreaming() }
+        await startupGate.waitUntilEntered()
+        let owner = try XCTUnwrap(capturedOwner)
+        source.send(try streamingVideo(1))
+        // The same synchronous callback FilmModel uses must detach before archive shutdown.
+        model.captureChanged(nil)
+        source.send(try streamingVideo(2))
+        XCTAssertEqual(owner.snapshot.current.captureVideo.callbackCount, 1)
+        XCTAssertFalse(owner.snapshot.isClosed)
+        await stopGate.waitUntilEntered()
+        owner.observe(.encodedVideo, sourcePTS: CMTime(value: 1, timescale: 30))
+        await startupGate.release()
+        XCTAssertFalse(owner.snapshot.isClosed)
+        await stopGate.release()
+        await starting.value
+        await model.stopStreaming() // Joins the teardown even after the action completed.
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertNil(model.activeRecordingID)
+        XCTAssertEqual(model.videoObservation?.isClosed, true)
+        XCTAssertEqual(model.videoObservation?.current.captureVideo.callbackCount, 1)
+        XCTAssertEqual(model.videoObservation?.current.encodedVideo.callbackCount, 1)
+        let ready = await publisher.isPublishing
+        XCTAssertFalse(ready)
+        XCTAssertFalse(owner.observe(.encodedVideo, sourcePTS: CMTime(value: 2, timescale: 30)))
+        await film.stop()
+        XCTAssertEqual(film.recordings.first?.status, .completed)
+    }
+
+    func testGatedEncoderStopKeepsOldOwnerOpenAndRestartUsesFreshScope() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let first = CaptureTestPublisher(stopGate: gate), second = CaptureTestPublisher()
+        var owners: [VideoFrameObservationOwner] = []
+        let model = makeModel(server: server, publisherFactory: { _, owner in
+            owners.append(try XCTUnwrap(owner)); return owners.count == 1 ? first : second
+        })
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        let old = try XCTUnwrap(owners.first)
+        let stopping = Task { await model.stopStreaming() }
+        await gate.waitUntilEntered()
+        XCTAssertFalse(model.canStart)
+        await model.startStreaming()
+        XCTAssertEqual(owners.count, 1)
+        XCTAssertFalse(old.snapshot.isClosed)
+        XCTAssertTrue(old.observe(.encodedVideo, sourcePTS: .zero))
+        await gate.release()
+        await stopping.value
+        let final = try XCTUnwrap(model.videoObservation)
+        XCTAssertTrue(final.isClosed)
+        XCTAssertEqual(final.scope, old.snapshot.scope)
+        XCTAssertEqual(final.current.encodedVideo.callbackCount, 1)
+        XCTAssertFalse(old.observe(.encodedVideo, sourcePTS: CMTime(value: 1, timescale: 30)))
+        XCTAssertTrue(model.canStart)
+        await model.startStreaming()
+        XCTAssertEqual(owners.count, 2)
+        let fresh = owners[1]
+        XCTAssertFalse(fresh === old)
+        XCTAssertNotEqual(fresh.snapshot.scope.publishingAttemptID, final.scope.publishingAttemptID)
+        XCTAssertGreaterThan(fresh.snapshot.scope.broadcastGeneration, final.scope.broadcastGeneration)
+        XCTAssertEqual(model.videoObservation?.current.encodedVideo.callbackCount, 0)
+        XCTAssertFalse(old.observe(.encodedVideo, sourcePTS: CMTime(value: 2, timescale: 30)))
+        old.close()
+        model.pollLocalHealth()
+        XCTAssertEqual(model.videoObservation?.scope, fresh.snapshot.scope)
+        XCTAssertEqual(model.videoObservation?.current.encodedVideo.callbackCount, 0)
+        XCTAssertEqual(model.videoObservation?.isClosed, false)
+        await model.stopStreaming()
+        XCTAssertTrue(fresh.snapshot.isClosed)
+    }
+
+    func testClosedCaptureTapRejectsStartupAndStillClosesCreatedOwner() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let film = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { FilmTestSource() }, sinkFactory: testArchiveSink)
+        await film.start()
+        let closedContext = try XCTUnwrap(film.currentCapture)
+        await film.stop()
+        let server = CaptureTestServer()
+        let publisher = CaptureTestPublisher()
+        var owner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, publisherFactory: { _, observations in owner = observations; return publisher })
+        await model.restore()
+        model.captureChanged(closedContext)
+        await model.startStreaming()
+        await model.stopStreaming()
+        XCTAssertEqual(model.videoObservation?.isClosed, true)
+        XCTAssertEqual(owner?.snapshot.isClosed, true)
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 0)
+        let stopped = await publisher.terminated
+        XCTAssertTrue(stopped)
+    }
+
+    func testThrowingPublisherFactoryClosesOrphanedOwner() async throws {
+        let server = CaptureTestServer()
+        var owner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, publisherFactory: { _, observations in
+            owner = observations; throw URLError(.cannotConnectToHost)
+        })
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertFalse(model.needsStorageRetry)
+        XCTAssertEqual(owner?.snapshot.isClosed, true)
+        XCTAssertEqual(model.videoObservation?.isClosed, true)
+        XCTAssertEqual(model.videoObservation?.scope, owner?.snapshot.scope)
+        await model.stopStreaming()
+    }
+
+    func testUnavailableObservationDoesNotFailPublisherArchiveOrStorage() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = CaptureTestServer()
+        let publisher = CaptureTestPublisher()
+        var receivedNil = false
+        let model = makeModel(server: server, publisherFactory: { _, owner in
+            receivedNil = owner == nil; return publisher
+        }, observationFactory: { _ in throw VideoFrameObservationError.invalidConfiguration })
+        await model.restore()
+        let source = FilmTestSource()
+        let film = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { source }, sinkFactory: testArchiveSink)
+        film.onCaptureChanged = { model.captureChanged($0) }
+        await film.start()
+        await model.startStreaming()
+        XCTAssertTrue(receivedNil)
+        XCTAssertEqual(model.localState, .publishing)
+        source.send(try streamingVideo(1))
+        await publisher.waitForAppends(1)
+        model.pollLocalHealth()
+        XCTAssertNil(model.videoObservation)
+        XCTAssertFalse(model.needsStorageRetry)
+        await model.stopStreaming()
+        XCTAssertNil(model.videoObservation)
+        XCTAssertEqual(film.state, .recording)
+        await film.stop()
+        XCTAssertEqual(film.recordings.first?.status, .completed)
+    }
+
+    func testAttemptFailureBeforePublishAccessClearsPreviousDiagnostics() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        await model.stopStreaming()
+        XCTAssertEqual(model.videoObservation?.isClosed, true)
+        await server.setOffline(true)
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertNil(model.videoObservation)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertFalse(model.needsStorageRetry)
+    }
+
     private func makeModel(server: CaptureTestServer, saved: SavedCaptureSetup? = captureSetup(),
                            storage: CaptureMemoryStorage? = nil,
-                           publisher: CaptureTestPublisher = CaptureTestPublisher()) -> CaptureStreamingModel {
+                           publisher: CaptureTestPublisher = CaptureTestPublisher(),
+                           publisherFactory: ((URL, VideoFrameObservationOwner?) throws -> any MediaPublisher)? = nil,
+                           observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) }) -> CaptureStreamingModel {
         CaptureStreamingModel(storage: storage ?? CaptureMemoryStorage(saved), pendingStore: CaptureMemoryPending(),
                               clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
-                              publisherFactory: { _ in publisher })
+                              publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory)
     }
 }
 
@@ -390,6 +614,7 @@ final class CaptureMemoryPending: PendingBroadcastStore, @unchecked Sendable {
 actor CaptureTestPublisher: MediaPublisher {
     var isPublishing = false
     var startCount = 0
+    var appendCount = 0
     var terminated = false
     let gate: FilmTestGate?
     let stopGate: FilmTestGate?
@@ -400,7 +625,12 @@ actor CaptureTestPublisher: MediaPublisher {
         guard !terminated else { throw CancellationError() }
         isPublishing = true
     }
-    func append(_ sample: CapturedMediaSample) async throws {}
+    func append(_ sample: CapturedMediaSample) async throws { appendCount += 1 }
+    func waitForAppends(_ count: Int) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while appendCount < count, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(appendCount, count)
+    }
     func failHealth() { isPublishing = false }
     func stop() async {
         guard !terminated else { return }
@@ -469,7 +699,8 @@ actor CaptureTestServer {
             else { return (Data("{\"error\":\"command_not_found\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!) }
         } else if path.hasSuffix("/publish") {
             if let publishGate { await publishGate.enter() }
-            data = try JSONSerialization.data(withJSONObject: ["gameId": "game-1", "recordingId": "recording-1", "generation": broadcast.generation, "publishUrl": "srt://localhost:19000?streamid=test", "serverTime": time])
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            data = try JSONSerialization.data(withJSONObject: ["gameId": "game-1", "recordingId": body["recordingId"]!, "generation": broadcast.generation, "publishUrl": "srt://localhost:19000?streamid=test", "serverTime": time])
         } else if path.hasSuffix("/status") {
             if let statusGate { await statusGate.enter() }
             data = try JSONEncoder().encode(WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time))
@@ -482,4 +713,20 @@ actor CaptureTestServer {
 private func matchSnapshot() throws -> MatchSnapshot {
     let json = ##"{"id":"game-1","createdAt":"2026-09-14T00:00:00Z","revision":0,"teams":{"home":{"name":"Home","shortName":"HOM","color":"#112233"},"away":{"name":"Away","shortName":"AWY","color":"#445566"}},"rules":{"bestOf":3,"pointsToWin":25,"decidingPointsToWin":15,"winBy":2,"pointCap":null},"score":{"home":0,"away":0,"set":1,"homeSets":0,"awaySets":0},"completedSets":[],"status":"active","endReason":null,"canUndo":false,"scorer":{"deviceId":"scorer-1","epoch":1},"broadcast":{"desired":"stopped","generation":0}}"##
     return try JSONDecoder().decode(MatchSnapshot.self, from: Data(json.utf8))
+}
+
+private func streamingVideo(_ frame: Int64) throws -> CapturedMediaSample {
+    var pixel: CVPixelBuffer?
+    XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixel), kCVReturnSuccess)
+    let buffer = try XCTUnwrap(pixel)
+    var format: CMVideoFormatDescription?
+    XCTAssertEqual(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+        imageBuffer: buffer, formatDescriptionOut: &format), noErr)
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: CMTime(value: frame, timescale: 30), decodeTimeStamp: .invalid)
+    var sample: CMSampleBuffer?
+    XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
+        imageBuffer: buffer, formatDescription: try XCTUnwrap(format), sampleTiming: &timing,
+        sampleBufferOut: &sample), noErr)
+    return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .video)
 }

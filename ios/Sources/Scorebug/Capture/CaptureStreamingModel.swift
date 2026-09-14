@@ -21,6 +21,10 @@ import ScorebugStreaming
     @Published private(set) var commandState: BroadcastCoordinatorState?
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var sentSamples = 0
+    /// One bounded current or latest closed attempt. Counts are local callback
+    /// evidence; a starting snapshot establishes neither applied settings nor readiness.
+    @Published private(set) var videoObservation: VideoFrameObservationSnapshot?
+    private var diagnosticAttemptID: UUID?
     @Published private(set) var activeRecordingID: String?
     private var workerEpoch = UUID()
     private var workerFreshness: WorkerStatusFreshness?
@@ -31,7 +35,7 @@ import ScorebugStreaming
     }
     private var restored = false
     private var current: CurrentCapture?
-    private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int)?
+    private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?)?
     private var coordinator: BroadcastCommandCoordinator?
     private var action: Task<Void, Never>?
     private var actionID: UUID?
@@ -46,7 +50,8 @@ import ScorebugStreaming
     private let storage: any CaptureSetupStorage
     private let pendingStore: any PendingBroadcastStore
     private let clientFactory: (ScoringEndpoint) -> MatchHTTPClient
-    private let publisherFactory: (URL) throws -> any MediaPublisher
+    private let publisherFactory: (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher
+    private let observationFactory: (VideoFrameObservationScope) throws -> VideoFrameObservationOwner
 
     convenience init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Scorebug", isDirectory: true)
@@ -54,9 +59,11 @@ import ScorebugStreaming
     }
     init(storage: any CaptureSetupStorage, pendingStore: any PendingBroadcastStore,
          clientFactory: @escaping (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
-         publisherFactory: @escaping (URL) throws -> any MediaPublisher = { SRTMediaPublisher(url: $0) }) {
+         publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { SRTMediaPublisher(url: $0, observations: $1) },
+         observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) }) {
         self.storage = storage; self.pendingStore = pendingStore
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
+        self.observationFactory = observationFactory
     }
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && !controlBusy && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
@@ -140,6 +147,7 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy, publishing == nil, let context = current else { return }
         busy = true
         let attempt = UUID(); epoch = attempt; actionID = attempt
+        diagnosticAttemptID = attempt; videoObservation = nil
         localState = .starting; message = nil; clearWorker()
         let task = Task { [self] in
             do {
@@ -166,11 +174,25 @@ import ScorebugStreaming
                 let client = try clientForSetup()
                 let access = try await client.publishAccess(recordingId: context.id, generation: broadcast.generation, credential: credential)
                 try check(context, attempt)
-                let session = try PublishingSession(publisher: publisherFactory(access.publishUrl))
-                publishing = (context, session, broadcast.generation)
+                // Measurement starts after the earlier control-plane requests, but
+                // includes encoder/transport startup. Revision 1 identifies the existing
+                // fixed 1080p30 configuration; it does not assert that startup applied it.
+                let scope = VideoFrameObservationScope(recordingID: context.id, matchID: credential.gameId,
+                    broadcastGeneration: broadcast.generation, publishingAttemptID: attempt, appliedProfileRevision: 1)
+                // Unavailable diagnostics must not fail publishing, archive or storage.
+                let observations = try? observationFactory(scope)
+                videoObservation = observations?.snapshot
+                let session: PublishingSession
+                do {
+                    session = try PublishingSession(publisher: publisherFactory(access.publishUrl, observations))
+                } catch {
+                    videoObservation = observations?.close()
+                    throw error
+                }
+                publishing = (context, session, broadcast.generation, attempt, observations)
+                guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()
                 try check(context, attempt)
-                guard context.tap.attach(session) else { throw CaptureControlError.recordingStopped }
                 localState = .publishing
                 shouldStopOwnedBroadcast = false
                 message = "Sending camera media. Worker output is reported separately."
@@ -270,6 +292,7 @@ import ScorebugStreaming
     func pollLocalHealth() {
         if workerFreshness?.isFresh() == false { workerState = .stale; workerFreshness = nil }
         guard let publishing else { return }
+        videoObservation = publishing.observations?.poll()
         let snapshot = publishing.session.snapshot
         sentSamples = snapshot.sentSamples
         if snapshot.failure != nil || snapshot.state == .stopped {
@@ -318,12 +341,17 @@ import ScorebugStreaming
             publishing.context.tap.detach(publishing.session)
             publishing.session.cancel()
             let session = publishing.session
+            let observations = publishing.observations, attempt = publishing.attempt
             let id = UUID()
             teardownID = id
             publisherStopping = true
             publisherTeardown = Task { [self] in
                 await session.stop()
+                // Drain completion owns closure, even when an old task can no longer
+                // publish diagnostics. Normal stop changes epoch before this returns.
+                let final = observations?.close()
                 if teardownID == id {
+                    if diagnosticAttemptID == attempt { videoObservation = final }
                     publisherStopping = false
                     publisherTeardown = nil
                     teardownID = nil

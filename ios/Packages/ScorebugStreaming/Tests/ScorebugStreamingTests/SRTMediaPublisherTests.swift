@@ -1,8 +1,54 @@
 import Foundation
+import ScorebugMedia
 import XCTest
 @testable import ScorebugStreaming
 
 final class SRTMediaPublisherTests: XCTestCase {
+    func testNativeObservationOwnerCanConfigureAndStopWithoutOpeningTransport() async throws {
+        let owner = try VideoFrameObservationOwner(scope: .init(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1))
+        let adapter = SRTPublisher(observations: owner)
+        try await adapter.configure()
+        await adapter.stop()
+        XCTAssertEqual(owner.snapshot.current.encodedVideo.callbackCount, 0)
+        XCTAssertFalse(owner.snapshot.isClosed, "The controller owns closure after joined publisher shutdown")
+        owner.close()
+    }
+
+    func testMediaPublisherAcceptsOptionalOwnerWithoutOpeningTransport() async throws {
+        let owner = try VideoFrameObservationOwner(scope: .init(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1))
+        let url = try XCTUnwrap(URL(string: "srt://localhost:19000"))
+        for observation in [nil, owner] {
+            let publisher = SRTMediaPublisher(url: url, observations: observation)
+            let publishing = await publisher.isPublishing
+            XCTAssertFalse(publishing)
+            await publisher.stop()
+            XCTAssertEqual(owner.snapshot.current.encodedVideo.callbackCount, 0)
+            XCTAssertFalse(owner.snapshot.isClosed)
+        }
+        // Existing source callers need no diagnostic argument.
+        let legacy = SRTMediaPublisher(url: url)
+        await legacy.stop()
+        owner.close()
+    }
+
+    func testMediaPublisherRetainsItsImmutableOwnerThroughTheNativeStream() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        var owner: VideoFrameObservationOwner? = try VideoFrameObservationOwner(scope: scope)
+        weak var retainedOwner = owner
+        let publisher = SRTMediaPublisher(url: try XCTUnwrap(URL(string: "srt://localhost:19000")), observations: owner)
+        owner = nil
+        XCTAssertNotNil(retainedOwner, "The immutable SDK observer must strongly retain this exact attempt owner")
+        await publisher.stop()
+        let snapshot = try XCTUnwrap(retainedOwner?.snapshot)
+        XCTAssertEqual(snapshot.scope, scope)
+        XCTAssertFalse(snapshot.isClosed, "Only the controller closes after joined shutdown")
+        retainedOwner?.close()
+        withExtendedLifetime(publisher) {}
+    }
+
     func testStopDuringConfigurationCannotStartConnectionLater() async throws {
         let fixture = AdapterFixture(gated: .configure)
         let publisher = SRTMediaPublisher(operations: await fixture.operations())

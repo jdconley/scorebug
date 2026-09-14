@@ -199,6 +199,7 @@ final class FilmTestSource: CaptureSource, @unchecked Sendable {
     func start() async throws {}
     func stop() async { lock.withLock { stops += 1; callbacks = nil } }
     func interrupt() { lock.withLock { callbacks }?.event(.interrupted) }
+    func send(_ sample: CapturedMediaSample) { lock.withLock { callbacks }?.sample(sample) }
 }
 
 actor FilmTestGate {

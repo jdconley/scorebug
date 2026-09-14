@@ -127,6 +127,20 @@ Compare those bounded windows to the existing fully decoded barcode/audio fixtur
 including startup and drain intervals, without inferring loss from unaligned stage
 counts.
 
+The qualification exporter should write one atomic, credential-free JSON snapshot
+only for an explicitly enabled DEBUG simulator fixture after shutdown. Preserve
+64-bit counters and CMTime value/epoch as decimal strings, with numeric timescale
+and flags. The runner copies this artifact alongside the already decoded archive
+and live frame barcodes. Require closed, valid, correctly scoped evidence and
+explicitly reject incomplete retained history for this short qualification run.
+Use the fixture's exact `123.25 + frame/30` source clock to align window PTS bounds
+with decoded barcode IDs. Compare only source ranges covered by the live output;
+the worker can legitimately acquire a later GOP, so early encoded frames cannot be
+silently labeled worker loss. Report startup/acquisition and final drain intervals
+separately, keep their full monotonic durations, and require stable completed
+windows to sustain at least 24 fps. This offline fixture comparison does not enable
+production loss estimation or automatic quality changes.
+
 ## Remaining work after this slice
 
 Source-range correlation, full report-transit age, time-weighted live queue pressure,
@@ -161,5 +175,15 @@ above. All 76 SDK tests pass, including actual encode/decode, SRT final drain,
 passthrough exclusion, and queue-rejection ordering. The unsigned combined
 iPhone/Watch Release build passes. The SDK patch preserves all 162 original hashes
 and an exact reverse/forward round trip. Logs are under
-`artifacts/qa/encoder-completion-observation-*`. App/controller wiring and local
-fixed-profile measurement qualification remain open.
+`artifacts/qa/encoder-completion-observation-*`.
+
+## Runtime wiring evidence
+
+Checkpoint 4 shares one optional owner from model startup through the native SDK
+callback, polls it synchronously, and retains the closed snapshot after joined
+shutdown. Unavailable/orphaned observers and stale attempts are handled without
+changing archive or publishing admission. All 44 Film model tests, 16 Streaming
+tests, and the unsigned combined iPhone/Watch Release build pass. The read-only
+model property for qualification is `videoObservation`. Logs are under
+`artifacts/qa/runtime-video-observation-*`. Local fixed-profile measurement
+qualification remains open; no adaptive settings are enabled.

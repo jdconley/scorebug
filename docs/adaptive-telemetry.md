@@ -3,12 +3,13 @@
 The [pure quality policy](adaptive-quality-policy.md) is implemented separately from runtime enablement.
 Existing diagnostics establish useful local facts, but they do not yet provide a
 complete fresh-frame/capacity window for safe upward adaptation.
-The next [local observation implementation slice](superpowers/plans/2026-09-14-local-video-observations.md)
-adds capture and actual encoder-completion measurements while retaining fixed live settings.
+The [local observation implementation slice](superpowers/plans/2026-09-14-local-video-observations.md)
+now connects capture and actual encoder-completion measurements while retaining fixed live settings.
 
 | Existing observation                    | What it measures                                                                                              | Missing evidence                                                                                         |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
+| `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Source-range correlation, image-content uniqueness, usable capacity, remote receipt, and local fixture qualification |
 | Publishing mailbox occupancy/drops      | Bounded raw sample queue, including audio and video                                                           | Time-weighted occupancy and per-kind/source-PTS loss                                                     |
 | `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
@@ -95,8 +96,7 @@ Eight new integration tests cover mixed audio/video, blocked startup, archive
 rejection and teardown parity, invalid/closed observers, source quiescence, and
 replacement/detach/close interleavings. All 115 Media tests and the unsigned combined
 iPhone/Watch Release build pass; evidence is under
-`artifacts/qa/capture-video-observation-*`. App construction still attaches no
-observation owner.
+`artifacts/qa/capture-video-observation-*`.
 
 ## Native encoder completion hook
 
@@ -117,5 +117,27 @@ Tests cover actual encoding/decompression, SRT construction and drain, passthrou
 delayed observer isolation, invalid outputs, and notification before queue failure.
 The maintained patch verifies all 162 original upstream hashes and an exact round
 trip. Evidence is under `artifacts/qa/encoder-completion-observation-*`.
-App/controller wiring and polling remain open, so these optional hooks still supply
-no production runtime metric and automatic quality changes remain disabled.
+
+## Runtime attempt ownership
+
+The app now constructs one optional observation owner after validated publish access
+and attaches it before awaiting publisher startup. The same owner reaches the native
+encoder callback through `SRTMediaPublisher` and `SRTPublisher`. Its interval includes
+encoder/transport startup, but not earlier broadcast/access requests. Fixed profile
+revision 1 identifies the existing configuration; a starting snapshot does not prove
+that configuration or readiness has succeeded.
+
+`CaptureStreamingModel.videoObservation` updates synchronously in the existing local
+health loop and retains one bounded closed snapshot after shutdown. Detach is
+immediate; closure follows joined publisher shutdown so delayed encoder output stays
+with the closing attempt. A separate diagnostic identity prevents an old final
+snapshot from replacing a newer attempt's measurements. A new start clears prior
+diagnostics, including when it fails before access. Unavailable diagnostics leave
+publishing usable; failed publisher construction closes its orphaned owner.
+
+All 44 Film model tests, 16 Streaming package tests, and the unsigned combined
+iPhone/Watch Release build pass. Evidence is under
+`artifacts/qa/runtime-video-observation-*`, including a retention regression that
+fails when SDK observer forwarding is removed. These tests establish lifecycle and
+ownership, not end-to-end media results. Fixed-profile simulator qualification is
+the next checkpoint; automatic quality changes remain disabled.

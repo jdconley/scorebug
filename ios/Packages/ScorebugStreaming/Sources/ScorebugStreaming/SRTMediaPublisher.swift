@@ -18,8 +18,8 @@ public actor SRTMediaPublisher: MediaPublisher {
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
-    public init(url: URL, stopPolicy: SRTStopPolicy = .init()) {
-        let adapter = SRTPublisher(stopPolicy: stopPolicy)
+    public init(url: URL, stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil) {
+        let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations)
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
