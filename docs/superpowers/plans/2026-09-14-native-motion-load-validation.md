@@ -72,3 +72,59 @@ a separate physical-device gate.
 
 The conditional prerequisite now passes in `native-app-6o9S2U` at `a49408c`.
 Independent design review approves this direction; implementation has not started.
+
+## Implementation contract
+
+Choose `SCOREBUG_TEST_MOTION_FIXTURE=1` as the only enabled spelling; absent means
+barcode. Other values fail runner validation before resource creation. Motion mode
+requires streaming and the direct receiver. Record `fixtureWorkload` (`barcode` or
+`motion`) in configuration and results. Pass only the validated flag through
+`ios/Project.yml` and `NativeStreamingTests` to the DEBUG simulator app. Release and
+physical source selection remain unchanged. Native-side malformed nonempty values
+must also fail instead of selecting a different workload silently.
+
+Swift source work: `ios/Sources/Scorebug/Capture/FixtureCameraSource.swift`, a focused
+`FixtureMotionPattern.swift` helper if useful, `ios/FilmModelTests/FixtureCameraSourceTests.swift`,
+`ios/Sources/Scorebug/App.swift`, `ios/AppUITests/NativeStreamingTests.swift`, and
+`ios/Project.yml`. Prepare eight deterministic tightly packed NV12 texture frames,
+using one fixed seed and legal video-range luma/chroma. Bound their combined
+retained bytes to 32 MiB, checking dimensions and multiplication before allocation.
+Reject an oversized motion profile; do not alter production profile validation.
+Only the central vertical region from one-third through five-sixths of the image
+may change. At 1080p this leaves the complete barcode and 750×120 scoring crop at
+(0,930) unchanged. Preserve default barcode fixture pixels exactly. Copy texture
+rows into newly allocated pixel buffers, respecting actual plane strides. Generate
+textures during prepare, before the pump's capture clock begins; no per-frame noise
+generator or mutable shared output buffers. Content is an encoding stress case.
+
+Tooling work: add `nativeFixtureWorkload({streaming,environment})` to
+`scripts/native-streaming-options.mjs`, its tests in
+`scripts/test/native-streaming-options.test.mjs`, and wire the result in
+`scripts/test-native-app.mjs`. Add `scripts/video-payload-rate.mjs` and
+`scripts/test/video-payload-rate.test.mjs` for `measureVideoPayloadRate({streams,packets})`.
+Use ffprobe stream index/type/time_base and packet stream_index/pts/duration/size,
+with strict finite safe-integer/rational validation and exactly one video stream.
+Audio packet bytes never count. Reject empty video, missing/invalid timestamps,
+nonpositive size/duration, duplicate/regressed video PTS, and no complete window.
+
+Report per-window packet-start attribution: a packet's entire payload belongs to
+the five-second interval containing its PTS. Use a common absolute media timeline,
+not independently reset audio/video times. Only intervals fully covered from first
+video PTS through last video PTS+duration are measured. Partial leading/trailing
+intervals are excluded and their packet/byte counts reported explicitly. Preserve
+gaps as low/zero payload windows rather than filling or silently skipping them.
+Bound output to 128 windows and reject larger ranges. Report selected video stream,
+timebase, coverage, excluded boundary counts, per-window bytes/packets/Mbps and
+aggregate/min/max measured rates. These are encoded media payload rates, not wire
+throughput or image-quality scores. Existing frame/cadence gates remain separate.
+
+TDD examples: audio size changes never alter video rates;150 video packets×1000bytes
+at 30 fps form one 5-second window at 0.24 Mbps; a late first PTS excludes its partial
+window; an internal gap remains present; invalid data and 129 windows fail. Source
+tests compare repeated seeds and central-frame differences, exact default barcode
+pixels, all static crop pixels, prior emitted buffer content after later callbacks,
+PTS/audio order and stop join. Run source red/green, full Film tests, focused/full
+tools, Release build and independent specification/quality reviews before any
+isolated native calibration. Coordinate builds/tests to avoid concurrent media
+qualification. Start with default short hold; keep 6/3 Mbps as calibration observations
+until actual measured demand and generator timing are reviewed.
