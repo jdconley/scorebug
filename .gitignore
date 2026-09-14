@@ -35,6 +35,9 @@ ios/**/xcuserdata/
 ios/**/*.xcuserstate
 ios/Pods/
 Package.resolved
+!tools/media-sdk-probe/Package.resolved
+tools/media-sdk-probe/.build/
+tools/media-sdk-probe/.swiftpm/
 
 # runtime
 /tmp/score.txt

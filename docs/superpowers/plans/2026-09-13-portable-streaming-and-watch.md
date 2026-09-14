@@ -206,6 +206,11 @@ media tests; Simulator UI tests with injected capture; five forced-termination r
 **Exit:** fixture archive remains playable after network failure and forced termination,
 with measured tail loss at most five seconds. This is not yet phone hardware qualification.
 
+**In progress:** the isolated [HaishinKit 2.2.5 compatibility probe](../../capture-sdk-compatibility.md)
+passes macOS execution and generic iOS simulator/device compilation at deployment
+target 17.0. It verifies actor/settings/PCM method signatures and package slices.
+The synthetic dual-output media experiment and production integration remain pending.
+
 ## Milestone 4: Adaptive quality and measurable reliability
 
 **Files:** new `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,
