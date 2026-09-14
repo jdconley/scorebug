@@ -5,10 +5,12 @@ recording/SRT execution and full executable linking for ARM64 iOS Simulator and
 an unsigned generic iPhone destination with iOS 17 deployment.
 It uses a [locally patched source subset](sdk-startup-patch.md) of HaishinKit **2.2.5**, revision `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`,
 and Logboard **2.6.0**. The [native app](native-film-app.md) now records offline;
-production SRT publishing is not yet connected to its camera source.
+production SRT publishing is not yet connected to its camera source. The tested
+adapter now lives in `ios/Packages/ScorebugStreaming`; the probe forwards to it.
 
-The pinned package declares iOS 15+/macOS 12+ and includes libsrt 1.5.4 for both
-platforms. No camera session or physical device has been exercised. The
+The upstream package declares iOS 15+/macOS 12+; Scorebug's maintained subset and
+adapter target iOS 17+/macOS 13+, with libsrt 1.5.4 for both platforms.
+No physical camera session or device has been exercised. The
 [dual-output fixture](native-dual-output.md) validates actual Mac encoding and SRT.
 [Package source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/Package.swift).
 
@@ -46,12 +48,13 @@ created before SDK ingress. The app needs retained capture delegates, bounded
 publisher mailboxes with one consumer each, and separately serialized archive
 ownership. `@preconcurrency import` is not proof of safe sample ownership.
 
-Further source inspection finds default unbounded `AsyncStream` queues in both
-`TSWriter.output` and the socket's outgoing data path. A bounded app mailbox alone
-does not establish a bound for the whole publishing pipeline. Short stalled-receiver
-tests pass with bounded app queues, finite socket deadlines, and RSS observations.
-Sustained congestion, recovery, and SDK buffer behavior still need qualification
-before production acceptance.
+The upstream codec, TS writer, and socket publishing queues were unbounded.
+The maintained patch now adds [explicit queue limits and terminal failure handling](sdk-publishing-bounds.md),
+including failures while a peer is idle and safe overlapping connection lifetimes.
+Its named retained-payload ceilings total 110.5 MiB; framework and working allocations
+are excluded. Final five-case media qualification retains all archive frames, with
+peak process RSS below 96 MiB. Sustained congestion, automatic recovery, and higher
+profiles still need qualification before production acceptance.
 [TS writer source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/TS/TSWriter.swift),
 [socket source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/SRT/SRTSocket.swift).
 
@@ -88,7 +91,9 @@ confirms the loss occurs at startup. See the [diagnosis](native-dual-output.md).
 The maintained local SDK patch now passes all five real-media scenarios, including
 a nonzero source clock, with every first video frame retained and the original
 100 ms coverage/synchronization limits unchanged. Its 35 vendor tests, three PCM
-clock tests, and full ARM64 Simulator/iPhone executable links pass.
-Next are sustained load/reconnection tests and the actual camera lifecycle. iOS runtime media behavior,
+clock tests, and full ARM64 Simulator/iPhone executable links pass. The subsequent
+queue/failure patch passes 57 vendor tests and the same five-case media gates
+(`dual-output-ZCjJBF/results.json`), plus final ARM64 Simulator/iPhone links.
+Next are the native publishing lifecycle and sustained load/reconnection tests. iOS runtime streaming behavior,
 hardware camera interruptions, and physical-phone simultaneous encoding remain
 unverified.

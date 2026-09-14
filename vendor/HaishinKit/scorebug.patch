@@ -1,15 +1,156 @@
+--- a/HaishinKit/Sources/Codec/AudioCodec.swift
++++ b/HaishinKit/Sources/Codec/AudioCodec.swift
+@@ -20,8 +20,15 @@
+         return audioConverter?.outputFormat
+     }
+ 
+-    @AsyncStreamedFlow
+-    var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)>
++    var failure = PublishingFailureLatch()
++    var outputLimits = PublishingQueue<(AVAudioBuffer, AVAudioTime)>.Limits(count: 64, bytesPerItem: 64 * 1024)
++    private var outputQueue: PublishingQueue<(AVAudioBuffer, AVAudioTime)>?
++    var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
++        outputQueue?.finish()
++        let queue = PublishingQueue<(AVAudioBuffer, AVAudioTime)>(boundary: "audio codec", limits: outputLimits, failure: failure)
++        outputQueue = queue
++        return queue.stream
++    }
+ 
+     /// This instance is running to process(true) or not(false).
+     private(set) var isRunning = false
+@@ -47,6 +54,12 @@
+     private var outputBuffers: [AVAudioBuffer] = []
+     private var audioConverter: AVAudioConverter?
+     private var inputBuffersCursor = AudioCodec.defaultInputBuffersCursor
++
++    private let makeConverter: (AVAudioFormat, AVAudioFormat) -> AVAudioConverter?
++
++    init(makeConverter: @escaping (AVAudioFormat, AVAudioFormat) -> AVAudioConverter? = { AVAudioConverter(from: $0, to: $1) }) {
++        self.makeConverter = makeConverter
++    }
+ 
+     func append(_ sampleBuffer: CMSampleBuffer) {
+         guard isRunning else {
+@@ -82,7 +95,10 @@
+ 
+     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+         inputFormat = audioBuffer.format
+-        guard let audioConverter, isRunning else {
++        guard isRunning, failure.error == nil else { return }
++        guard let audioConverter else {
++            failure.fail(.codecFailed(status: -50))
++            outputQueue?.finish()
+             return
+         }
+         var error: NSError?
+@@ -120,14 +136,18 @@
+             case .haveData:
+                 if audioTime.hasAnchor {
+                     audioTime.advanced(AVAudioFramePosition(audioConverter.outputFormat.streamDescription.pointee.mFramesPerPacket))
+-                    _outputStream.yield((outputBuffer, audioTime.at))
+-                } else {
+-                    _outputStream.yield((outputBuffer, audioTime.at))
+-                }
++                }
++                let bytes = UnsafeMutableAudioBufferListPointer(outputBuffer.mutableAudioBufferList)
++                    .reduce(0) { $0 + Int($1.mDataByteSize) }
++                guard outputQueue?.yield((outputBuffer, audioTime.at), byteCount: bytes) == true else { return }
+                 inputBuffersCursor += 1
+                 if inputBuffersCursor == inputBuffers.count {
+                     inputBuffersCursor = Self.defaultInputBuffersCursor
+                 }
++            case .error:
++                failure.fail(.codecFailed(status: Int32(clamping: error?.code ?? -1)))
++                outputQueue?.finish()
++                releaseOutputBuffer(outputBuffer)
+             default:
+                 releaseOutputBuffer(outputBuffer)
+             }
+@@ -154,7 +174,7 @@
+             let outputFormat = settings.format.makeOutputAudioFormat(inputFormat, sampleRate: settings.sampleRate, channelMap: settings.channelMap) else {
+             return nil
+         }
+-        let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
++        let converter = makeConverter(inputFormat, outputFormat)
+         settings.apply(converter, oldValue: nil)
+         if inputFormat.formatDescription.mediaSubType == .linearPCM {
+             ringBuffer = AudioRingBuffer(inputFormat)
+@@ -211,6 +231,6 @@
+             return
+         }
+         isRunning = false
+-        _outputStream.finish()
++        outputQueue?.finish()
+     }
+ }
+--- a/HaishinKit/Sources/Codec/VTSessionConvertible.swift
++++ b/HaishinKit/Sources/Codec/VTSessionConvertible.swift
+@@ -3,6 +3,11 @@
+ import VideoToolbox
+ 
+ enum VTSessionError: Swift.Error {
++    var status: OSStatus {
++        switch self {
++        case .failedToCreate(let status), .failedToPrepare(let status), .failedToConvert(let status): return status
++        }
++    }
+     case failedToCreate(status: OSStatus)
+     case failedToPrepare(status: OSStatus)
+     case failedToConvert(status: OSStatus)
+@@ -11,7 +16,7 @@
+ protocol VTSessionConvertible {
+     func setOption(_ option: VTSessionOption) -> OSStatus
+     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
+-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws
+     func invalidate()
+ }
+ 
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -28,7 +28,7 @@
+@@ -19,16 +19,19 @@
+         }
+     }
+     var passthrough = true
++    var failure = PublishingFailureLatch()
++    var outputLimits = PublishingQueue<CMSampleBuffer>.Limits(count: 8, bytesPerItem: 2 * 1024 * 1024)
+     var outputStream: AsyncStream<CMSampleBuffer> {
+-        AsyncStream { continuation in
+-            self.continuation = continuation
+-        }
++        continuation?.finish()
++        let queue = PublishingQueue<CMSampleBuffer>(boundary: "video codec", limits: outputLimits, failure: failure)
++        continuation = queue
++        return queue.stream
+     }
+     var frameInterval = VideoCodec.frameInterval
      private var startedAt: CMTime = .zero
-     private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
+-    private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
++    private var continuation: PublishingQueue<CMSampleBuffer>?
      private var invalidateSession = true
 -    private var presentationTimeStamp: CMTime = .zero
 +    private var presentationTimeStamp: CMTime?
      private(set) var isRunning = false
      private(set) var inputFormat: CMFormatDescription? {
          didSet {
-@@ -97,13 +97,18 @@
+@@ -48,7 +51,7 @@
+     private(set) var outputFormat: CMFormatDescription?
+ 
+     func append(_ sampleBuffer: CMSampleBuffer) {
+-        guard isRunning else {
++        guard isRunning, failure.error == nil else {
+             return
+         }
+         do {
+@@ -72,6 +75,7 @@
+                 }
+             }
+         } catch {
++            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
+             logger.warn(error)
+         }
+     }
+@@ -97,13 +101,18 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -30,7 +171,7 @@
      }
  
      #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -163,7 +168,7 @@
+@@ -163,7 +172,7 @@
          invalidateSession = true
          inputFormat = nil
          outputFormat = nil
@@ -39,9 +180,514 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
+--- a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
++++ b/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
+@@ -9,7 +9,7 @@
+ 
+ extension VTCompressionSession: VTSessionConvertible {
+     @inline(__always)
+-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
+         guard let imageBuffer = sampleBuffer.imageBuffer else {
+             return
+         }
+@@ -21,9 +21,13 @@
+             duration: sampleBuffer.duration,
+             frameProperties: nil,
+             infoFlagsOut: &flags,
+-            outputHandler: { _, _, sampleBuffer in
+-                if let sampleBuffer {
+-                    continuation?.yield(sampleBuffer)
++            outputHandler: { status, _, sampleBuffer in
++                guard status == noErr, let sampleBuffer else {
++                    continuation?.fail(.codecFailed(status: status == noErr ? -1 : status))
++                    return
++                }
++                do {
++                    continuation?.yield(sampleBuffer, byteCount: sampleBuffer.dataBuffer?.dataLength ?? sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? 0)
+                 }
+             }
+         )
+--- a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
++++ b/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
+@@ -8,7 +8,7 @@
+     ]
+ 
+     @inline(__always)
+-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
+         var flagsOut: VTDecodeInfoFlags = []
+         var _: VTEncodeInfoFlags = []
+         let status = VTDecompressionSessionDecodeFrame(
+@@ -47,7 +47,8 @@
+                     sampleBufferOut: &sampleBuffer
+                 )
+                 if let sampleBuffer {
+-                    continuation?.yield(sampleBuffer)
++                    // The publishing byte limit applies to compressed outputs only.
++                    continuation?.yield(sampleBuffer, byteCount: 0)
+                 }
+             }
+         )
+--- a/HaishinKit/Sources/Stream/OutgoingStream.swift
++++ b/HaishinKit/Sources/Stream/OutgoingStream.swift
+@@ -65,6 +65,11 @@
+         }
+     }
+ 
++    package func setPublishingFailure(_ failure: PublishingFailureLatch) {
++        videoCodec.failure = failure
++        audioCodec.failure = failure
++    }
++
+     /// Create a new instance.
+     package init() {
+     }
+--- a/SRTHaishinKit/Sources/SRT/SRTConnection.swift
++++ b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
+@@ -30,6 +30,13 @@
+         }
+     }
+ 
++    /// First terminal publishing failure; reset on a new connect attempt.
++    @Published public private(set) var publishingError: PublishingError?
++    private var generation: UInt64 = 0
++    private var closing = false
++    private var failureTask: Task<Void, Never>?
++    private var monitorTask: Task<Void, Never>?
++    private var receiveTask: Task<Void, Never>?
+     private var socket: SRTSocket?
+     private var streams: [SRTStream] = []
+     private var listener: SRTSocket?
+@@ -37,13 +44,15 @@
+ 
+     /// Creates an object.
+     public init() {
+-        srt_startup()
+         socket = SRTSocket()
++    }
++
++    init(socket: SRTSocket) {
++        self.socket = socket
+     }
+ 
+     deinit {
+         streams.removeAll()
+-        srt_cleanup()
+     }
+ 
+     /// Gets a SRTSocketOption.
+@@ -79,91 +88,123 @@
+         guard let url = SRTSocketURL(uri) else {
+             throw Error.unsupportedUri(uri)
+         }
++        guard !closing, !connected, self.uri == nil else { throw Error.invalidState }
++        generation &+= 1
++        let session = generation
++        publishingError = nil
++        self.uri = uri
++        let openingSocket = socket ?? SRTSocket()
++        socket = openingSocket
+         do {
+-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Swift.Error>) in
+-                Task {
+-                    do {
+-                        try await socket?.open(url)
+-                        self.uri = uri
+-                        switch url.mode {
+-                        case .caller:
+-                            break
+-                        case .listener:
+-                            listener = socket
+-                            socket = try await listener?.accept(url.options)
+-                            await listener?.stopRunning()
+-                            listener = nil
+-                        case .rendezvous:
+-                            break
+-                        }
+-                        connected = await socket?.status == .connected
+-                        continuation.resume()
+-                    } catch {
+-                        socket = SRTSocket()
+-                        continuation.resume(throwing: error)
+-                    }
++            try await openingSocket.open(url)
++            guard generation == session else {
++                await openingSocket.stopRunning()
++                throw Error.invalidState
++            }
++            if url.mode == .listener {
++                listener = openingSocket
++                let accepted = try await openingSocket.accept(url.options)
++                guard generation == session else {
++                    await accepted.stopRunning()
++                    throw Error.invalidState
+                 }
+-            }
+-            Task {
+-                guard let socket else {
+-                    return
++                socket = accepted
++                await openingSocket.stopRunning()
++                listener = nil
++            }
++            guard generation == session, let activeSocket = socket else { throw Error.invalidState }
++            connected = await activeSocket.status == .connected
++            guard generation == session else { throw Error.invalidState }
++            observeFailure(of: activeSocket, generation: session)
++            monitorTask = Task {
++                let monitor = await activeSocket.makeNetworkMonitor()
++                guard generation == session, !Task.isCancelled else { return }
++                networkMonitor = monitor
++                await monitor.startRunning()
++                for await event in await monitor.event {
++                    guard generation == session, !Task.isCancelled else { break }
++                    for stream in streams { await stream.dispatch(event) }
+                 }
+-                let networkMonitor = await socket.makeNetworkMonitor()
+-                self.networkMonitor = networkMonitor
+-                await networkMonitor.startRunning()
+-                for await event in await networkMonitor.event {
+-                    for stream in streams {
+-                        await stream.dispatch(event)
+-                    }
+-                }
+-            }
+-        } catch let error as SRTSocket.Error {
+-            switch error {
+-            case .rejected(let reason):
+-                throw Error.failedToConnect(reason)
+-            default:
+-                throw Error.invalidState
++                await monitor.stopRunning()
+             }
+         } catch {
++            await openingSocket.stopRunning()
++            if generation == session {
++                self.uri = nil
++                connected = false
++                socket = SRTSocket()
++            }
++            if case SRTSocket.Error.rejected(let reason) = error { throw Error.failedToConnect(reason) }
+             throw Error.invalidState
+         }
+     }
+ 
+-    /// Closes a connection.
++    private func observeFailure(of socket: SRTSocket, generation session: UInt64) {
++        failureTask?.cancel()
++        failureTask = Task {
++            for await failure in await socket.failureEvents {
++                guard generation == session, !Task.isCancelled else { return }
++                await failPublishing(failure, generation: session)
++                return
++            }
++        }
++    }
++
++    /// Closes a connection, invalidating session work before awaiting external actors.
+     public func close() async {
+-        guard uri != nil else {
+-            return
+-        }
+-        await networkMonitor?.stopRunning()
++        guard !closing else { return }
++        closing = true
++        defer { closing = false }
++        generation &+= 1
++        connected = false
++        uri = nil
++        failureTask?.cancel()
++        failureTask = nil
++        monitorTask?.cancel()
++        monitorTask = nil
++        receiveTask?.cancel()
++        receiveTask = nil
++        let oldMonitor = networkMonitor
+         networkMonitor = nil
+-        for stream in streams {
+-            await stream.close()
+-        }
+-        await socket?.stopRunning()
+-        socket = nil
+-        await listener?.stopRunning()
++        let oldSocket = socket
++        let oldListener = listener
++        socket = SRTSocket()
+         listener = nil
+-        uri = nil
+-        connected = false
+-        socket = SRTSocket()
+-    }
+-
+-    func send(_ data: Data) async {
++        for stream in streams { await stream.close() }
++        await oldMonitor?.stopRunning()
++        await oldSocket?.stopRunning()
++        await oldListener?.stopRunning()
++    }
++
++    func publishingSession() -> UInt64? { connected && !closing ? generation : nil }
++
++    func failPublishing(_ failure: PublishingError, generation session: UInt64) async {
++        guard generation == session else { return }
++        if publishingError == nil { publishingError = failure }
++        await close()
++    }
++
++    func send(_ data: Data, generation session: UInt64) async {
++        guard generation == session else { return }
+         do {
+-            try await socket?.send(data)
++            guard connected, let socket else { return }
++            try await socket.send(data)
+         } catch {
+-            await close()
++            guard generation == session else { return }
++            await failPublishing((error as? PublishingError) ?? .transportWriteFailed, generation: session)
+         }
+     }
+ 
+     func recv() {
+-        Task {
+-            guard let socket else {
+-                return
+-            }
++        let session = generation
++        receiveTask?.cancel()
++        receiveTask = Task {
++            guard let socket else { return }
+             for await data in await socket.inputs {
++                guard generation == session, !Task.isCancelled else { return }
+                 await streams.first?.doInput(data)
+             }
++            guard generation == session else { return }
+             await close()
+         }
+     }
+--- a/SRTHaishinKit/Sources/SRT/SRTSocket.swift
++++ b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
+@@ -2,6 +2,12 @@
+ import HaishinKit
+ import libsrt
+ import Logboard
++
++// libSRT cleanup is process-global: per-connection cleanup invalidates other live sockets.
++// Keep initialization process-scoped; individual socket lifetimes still close descriptors.
++enum SRTRuntime {
++    static let started: Int32 = srt_startup()
++}
+ 
+ final actor SRTSocket {
+     static let payloadSize: Int = 1316
+@@ -79,52 +85,86 @@
+     }
+ 
+     var status: Status {
+-        .init(srt_getsockstate(socket)) ?? .unknown
++        if let statusProvider { return statusProvider() }
++        if sender != nil, isRunning { return .connected }
++        return .init(srt_getsockstate(socket)) ?? .unknown
+     }
+ 
+     private(set) var isRunning = false
+     private var perf: CBytePerfMon = .init()
+     private var socket: SRTSOCKET = SRT_INVALID_SOCK
+-    private var outputs: AsyncStream<Data>.Continuation? {
+-        didSet {
+-            oldValue?.finish()
+-        }
+-    }
++    private var outputQueue: PublishingQueue<Data>?
++    private let outputLimits: PublishingQueue<Data>.Limits
++    private let sender: (@Sendable (Data) -> Int32)?
++    private let statusProvider: (@Sendable () -> Status)?
++    private var senderTask: Task<Void, Never>?
++    private var generation: UInt64 = 0
++    private let failure = PublishingFailureLatch()
++    var publishingError: PublishingError? { failure.error }
++    var failureEvents: AsyncStream<PublishingError> { failure.events }
+     private var connected: Bool {
+         status == .connected
+     }
+     private var windowSizeC: Int32 = 1024 * 4
+     private lazy var incomingBuffer: Data = .init(count: Int(windowSizeC))
+ 
+-    init() {
++    init(outputLimits: PublishingQueue<Data>.Limits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
++         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil) {
++        self.outputLimits = outputLimits
++        self.sender = sender
++        self.statusProvider = statusProvider
++        _ = SRTRuntime.started
+         socket = srt_create_socket()
+     }
+ 
+     init(socket: SRTSOCKET, options: [SRTSocketOption]) async throws {
++        self.outputLimits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024)
++        self.sender = nil
++        self.statusProvider = nil
+         self.socket = socket
+         guard configure(options, restriction: .post) else {
+             throw makeSocketError()
+         }
++        try enforceTimeouts(includeConnect: false)
+         if incomingBuffer.count < windowSizeC {
+             incomingBuffer = .init(count: Int(windowSizeC))
+         }
+     }
+ 
++    deinit {
++        if socket != SRT_INVALID_SOCK { srt_close(socket) }
++    }
++
+     func getSocketOption(_ name: SRTSocketOption.Name) throws -> SRTSocketOption {
+         return try SRTSocketOption(name: name, socket: socket)
+     }
+ 
+     func setSocketOption(_ option: SRTSocketOption) throws {
++        if ["conntimeo", "sndtimeo", "rcvtimeo"].contains(option.name.rawValue) {
++            let limit = option.name.rawValue == "conntimeo" ? 3000 : 500
++            guard option.intValue > 0 && option.intValue <= limit else { throw Error.illegalState("Timeout exceeds publishing bound") }
++        }
+         try option.setSockflag(socket)
+     }
+ 
++    func enforceTimeouts(includeConnect: Bool = true) throws {
++        let names: [SRTSocketOption.Name] = includeConnect ? [.conntimeo, .sndtimeo, .rcvtimeo] : [.sndtimeo, .rcvtimeo]
++        for name in names {
++            let cap = name.rawValue == "conntimeo" ? 3000 : 500
++            let current = try getSocketOption(name).intValue
++            try SRTSocketOption(name: name, value: current > 0 ? min(current, cap) : cap).setSockflag(socket)
++        }
++    }
++
+     func open(_ url: SRTSocketURL) async throws {
++        if sender != nil { await startRunning(); return }
+         if socket == SRT_INVALID_SOCK {
+             throw makeSocketError()
+         }
+         guard configure(url.options, restriction: .pre) else {
+             throw makeSocketError()
+         }
++        try enforceTimeouts()
+         let status: Int32 = try {
+             switch url.mode {
+             case .caller:
+@@ -163,6 +203,7 @@
+             guard configure(url.options, restriction: .post) else {
+                 throw makeSocketError()
+             }
++            try enforceTimeouts(includeConnect: false)
+             if incomingBuffer.count < windowSizeC {
+                 incomingBuffer = .init(count: Int(windowSizeC))
+             }
+@@ -189,11 +230,9 @@
+     }
+ 
+     func send(_ data: Data) throws {
+-        guard connected else {
+-            throw Error.notConnected
+-        }
+-        for data in data.chunk(Self.payloadSize) {
+-            outputs?.yield(data)
++        guard isRunning, connected || sender != nil else { throw Error.notConnected }
++        guard let outputQueue, outputQueue.yield(data, byteCount: data.count) else {
++            throw failure.error ?? PublishingError.outputTerminated(boundary: "SRT socket")
+         }
+     }
+ 
+@@ -234,6 +273,7 @@
+ 
+     @inline(__always)
+     private func sendmsg(_ data: Data) -> Int32 {
++        if let sender { return sender(data) }
+         return data.withUnsafeBytes { pointer in
+             guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
+                 return SRT_ERROR
+@@ -256,38 +296,58 @@
+ extension SRTSocket: AsyncRunner {
+     // MARK: AsyncRunner
+     func startRunning() async {
+-        guard !isRunning else {
+-            return
+-        }
+-        let stream = AsyncStream<Data> { continuation in
+-            self.outputs = continuation
+-        }
+-        Task {
+-            for await data in stream {
+-                let result = sendmsg(data)
+-                if result == -1 {
+-                    await stopRunning()
+-                }
+-            }
+-        }
++        guard !isRunning, failure.error == nil else { return }
++        generation &+= 1
++        let session = generation
++        let queue = PublishingQueue<Data>(boundary: "SRT socket", limits: outputLimits, failure: failure)
++        outputQueue = queue
+         isRunning = true
++        senderTask = Task {
++            for await data in queue.stream {
++                // Copy only one datagram at a time. Yield between finite synchronous sends
++                // so close is never queued behind an entire large transport buffer.
++                for offset in stride(from: 0, to: data.count, by: Self.payloadSize) {
++                    guard !Task.isCancelled, isRunning, generation == session, failure.error == nil else { return }
++                    let chunk = data.subdata(in: offset..<min(offset + Self.payloadSize, data.count))
++                    guard sendmsg(chunk) == chunk.count else {
++                        failure.fail(.transportWriteFailed)
++                        await stopRunning()
++                        return
++                    }
++                    await Task.yield()
++                }
++            }
++        }
+     }
+ 
+     func stopRunning() async {
+-        guard isRunning else {
+-            return
+-        }
+-        srt_close(socket)
+-        socket = SRT_INVALID_SOCK
+-        outputs = nil
++        generation &+= 1
+         isRunning = false
++        senderTask?.cancel()
++        senderTask = nil
++        outputQueue?.finish()
++        outputQueue = nil
++        failure.finish()
++        if socket != SRT_INVALID_SOCK {
++            srt_close(socket)
++            socket = SRT_INVALID_SOCK
++        }
+     }
+ }
+ 
+ extension SRTSocket: NetworkTransportReporter {
+     // MARK: NetworkTransportReporter
+     func makeNetworkTransportReport() -> NetworkTransportReport {
+-        _ = bstats()
++        let result = bstats()
++        if isRunning {
++            switch status {
++            case .broken, .closing, .closed, .nonexist:
++                failure.fail(.transportWriteFailed)
++            case .connected where result == SRT_ERROR && sender == nil:
++                failure.fail(.transportWriteFailed)
++            default: break
++            }
++        }
+         let performanceData = self.performanceData
+         return .init(
+             queueBytesOut: Int(performanceData.byteSndBuf),
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,17 @@
+@@ -8,6 +8,26 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -50,19 +696,45 @@
 +    public var muxerError: MuxerError? { writer.error }
 +
 +    public enum MuxerError: Swift.Error, Equatable, Sendable {
++        case payloadByteLimitExceeded
++        case outputByteLimitExceeded
++        case outputQueueLimitExceeded
 +        case invalidTimestamp
 +        case invalidPayload
 +        case startupPacketLimitExceeded
 +        case startupByteLimitExceeded
 +        case startupTimeLimitExceeded
 +    }
++
++    /// First terminal publishing failure; retained through close and reset by publish.
++    public var publishingError: PublishingError? { failure.error ?? writer.failure.error }
++    private var failure = PublishingFailureLatch()
++    private var generation: UInt64 = 0
++    private var publishingTasks: [Task<Void, Never>] = []
  
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -57,8 +68,13 @@
+@@ -45,7 +65,7 @@
+     ///
+     /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
+     public func publish(_ name: String? = "") async {
+-        guard let connection, await connection.connected else {
++        guard let connection, let connectionSession = await connection.publishingSession() else {
+             return
+         }
+         guard name != nil else {
+@@ -57,8 +77,21 @@
              }
              return
          }
++        guard readyState == .idle else { return }
++        generation &+= 1
++        let session = generation
++        failure = PublishingFailureLatch()
++        writer.failure = failure
++        outgoing.setPublishingFailure(failure)
++        // Raw video may skip stale frames before compression; compressed queues fail.
++        if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }
 +        // Install continuations before publishing becomes observable or accepting input.
 +        let videoOutput = outgoing.videoOutputStream
 +        let audioOutput = outgoing.audioOutputStream
@@ -74,34 +746,113 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -69,22 +85,23 @@
+@@ -68,26 +101,39 @@
+         if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
-         Task {
+-        Task {
 -            for await buffer in outgoing.videoOutputStream {
-+            for await buffer in videoOutput {
-                 append(buffer)
-             }
-         }
-         Task {
+-                append(buffer)
+-            }
+-        }
+-        Task {
 -            for await buffer in outgoing.audioOutputStream {
-+            for await buffer in audioOutput {
-                 append(buffer.0, when: buffer.1)
-             }
-         }
-         Task {
+-                append(buffer.0, when: buffer.1)
+-            }
+-        }
+-        Task {
 -            for await buffer in outgoing.videoInputStream {
-+            for await buffer in videoInput {
-                 outgoing.append(video: buffer)
-             }
-         }
-         Task {
+-                outgoing.append(video: buffer)
+-            }
+-        }
+-        Task {
 -            for await data in writer.output {
-+            for await data in transportOutput {
-+                guard writer.error == nil else { break }
-                 await connection.send(data)
-             }
-         }
+-                await connection.send(data)
+-            }
+-        }
++        publishingTasks = [
++            Task {
++                for await buffer in videoOutput {
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    append(buffer)
++                }
++            },
++            Task {
++                for await buffer in audioOutput {
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    append(buffer.0, when: buffer.1)
++                }
++            },
++            Task {
++                for await buffer in videoInput {
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    outgoing.append(video: buffer)
++                }
++            },
++            Task {
++                for await data in transportOutput {
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    await connection.send(data, generation: connectionSession)
++                }
++            },
++            Task { [failure] in
++                for await error in failure.events {
++                    guard generation == session, !Task.isCancelled else { return }
++                    await connection.failPublishing(error, generation: connectionSession)
++                    return
++                }
++            }
++        ]
+     }
+ 
+     /// Playback streaming audio and video from server.
+@@ -118,14 +164,15 @@
+ 
+     /// Stops playing or publishing and makes available other uses.
+     public func close() async {
+-        guard readyState != .idle else {
+-            return
+-        }
++        generation &+= 1
++        for task in publishingTasks { task.cancel() }
++        publishingTasks.removeAll()
++        outgoing.stopRunning()
++        failure.finish()
+         writer.clear()
+         reader.clear()
+-        outgoing.stopRunning()
+-        Task { await incoming.stopRunning() }
+         readyState = .idle
++        await incoming.stopRunning()
+     }
+ 
+     /// Sets the expected media.
+@@ -157,9 +204,11 @@
+     }
+ 
+     public func append(_ sampleBuffer: CMSampleBuffer) {
++        guard publishingError == nil else { return }
+         switch sampleBuffer.formatDescription?.mediaType {
+         case .video:
+             if sampleBuffer.formatDescription?.isCompressed == true {
++                guard readyState == .publishing else { return }
+                 writer.videoFormat = sampleBuffer.formatDescription
+                 writer.append(sampleBuffer)
+             } else {
+@@ -172,11 +221,13 @@
+     }
+ 
+     public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
++        guard publishingError == nil else { return }
+         switch audioBuffer {
+         case let audioBuffer as AVAudioPCMBuffer:
+             outgoing.append(audioBuffer, when: when)
+             outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
+         case let audioBuffer as AVAudioCompressedBuffer:
++            guard readyState == .publishing else { return }
+             writer.audioFormat = audioBuffer.format
+             writer.append(audioBuffer, when: when)
+         default:
 --- a/SRTHaishinKit/Sources/TS/TSWriter.swift
 +++ b/SRTHaishinKit/Sources/TS/TSWriter.swift
 @@ -1,6 +1,7 @@
@@ -112,7 +863,27 @@
  
  /// An object that represents writes MPEG-2 transport stream data.
  final class TSWriter {
-@@ -26,6 +27,7 @@
+@@ -11,10 +12,15 @@
+     static let defaultSegmentDuration: Double = 2
+     /// An asynchronous sequence for writing data.
+     public var output: AsyncStream<Data> {
+-        AsyncStream { continuation in
+-            self.continuation = continuation
+-        }
+-    }
++        outputQueue?.finish()
++        let queue = PublishingQueue<Data>(boundary: "transport muxer", limits: outputLimits, failure: failure)
++        outputQueue = queue
++        return queue.stream
++    }
++    var failure = PublishingFailureLatch()
++    private var outputQueue: PublishingQueue<Data>?
++    private let outputLimits: PublishingQueue<Data>.Limits
++    private let maximumPayloadBytes: Int
+     /// Specifies the exptected medias = [.video, .audio].
+     var expectedMedias: Set<AVMediaType> = []
+     /// Specifies the audio format.
+@@ -26,6 +32,7 @@
              var data = ESSpecificData()
              data.streamType = audioFormat.formatDescription.streamType
              data.elementaryPID = Self.defaultAudioPID
@@ -120,7 +891,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              audioContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -40,6 +42,7 @@
+@@ -40,6 +47,7 @@
              var data = ESSpecificData()
              data.streamType = videoFormat.streamType
              data.elementaryPID = Self.defaultVideoPID
@@ -128,7 +899,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              videoContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -68,8 +71,30 @@
+@@ -68,73 +76,178 @@
          }
          return false
      }
@@ -161,12 +932,21 @@
      private var clockTimeStamp: CMTime = .zero
      private var segmentDuration: Double = TSWriter.defaultSegmentDuration
      private var rotatedTimeStamp: CMTime = .zero
-@@ -82,59 +107,140 @@
-     }
- 
+     private var audioContinuityCounter: UInt8 = 0
+     private var videoContinuityCounter: UInt8 = 0
+-    private var continuation: AsyncStream<Data>.Continuation? {
+-        didSet {
+-            oldValue?.finish()
+-        }
+-    }
+-
      /// Creates a new instance with segument duration.
 -    init(segmentDuration: Double = 2.0) {
-+    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init()) {
++    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
++         outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
++         maximumPayloadBytes: Int = 2 * 1024 * 1024) {
++        self.outputLimits = outputLimits
++        self.maximumPayloadBytes = maximumPayloadBytes
          self.segmentDuration = segmentDuration
 -    }
 -
@@ -205,6 +985,8 @@
 +        guard audioBuffer.byteLength > 0, audioBuffer.byteLength <= audioBuffer.byteCapacity,
 +              audioBuffer.packetCount > 0,
 +              AudioSpecificConfig(formatDescription: audioBuffer.format.formatDescription) != nil else { fail(.invalidPayload); return }
++        // ADTS has a 13-bit frame length including its seven-byte header.
++        guard audioBuffer.byteLength <= 8191 - 7 else { fail(.payloadByteLimitExceeded); return }
 +        guard preflightPayload(Int(audioBuffer.byteLength)) else { return }
 +        guard let pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: timestamp) else {
 +            fail(.invalidPayload)
@@ -286,6 +1068,7 @@
 +
 +    // Reject oversized input before allocating a compressed payload copy.
 +    private func preflightPayload(_ bytes: Int) -> Bool {
++        guard bytes <= maximumPayloadBytes else { fail(.payloadByteLimitExceeded); return false }
 +        guard !origin.isValid else { return true }
 +        guard pending.count < startupLimits.packetCount else { fail(.startupPacketLimitExceeded); return false }
 +        guard bytes <= startupLimits.byteCount - pendingBytes else { fail(.startupByteLimitExceeded); return false }
@@ -348,11 +1131,12 @@
 +        error = failure
 +        pending.removeAll(keepingCapacity: false)
 +        pendingBytes = 0
-+        continuation?.finish()
++        outputQueue?.finish()
++        self.failure.fail(.muxerFailed(reason: String(describing: failure)))
      }
  
      /// Clears the writer object for new transport stream.
-@@ -147,8 +253,13 @@
+@@ -147,12 +260,20 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
@@ -368,15 +1152,27 @@
          clockTimeStamp = .zero
          rotatedTimeStamp = .zero
          expectedMedias.removeAll()
-@@ -189,6 +300,7 @@
+-        continuation = nil
++        outputQueue?.finish()
++        outputQueue = nil
++        failure.finish()
++        failure = PublishingFailureLatch()
+     }
+ 
+     private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, timeStamp: CMTime, randomAccessIndicator: Bool) {
+@@ -189,7 +310,10 @@
      }
  
      private func write(_ data: Data) {
+-        continuation?.yield(data)
 +        guard error == nil else { return }
-         continuation?.yield(data)
++        if let outputQueue, !outputQueue.yield(data, byteCount: data.count) {
++            fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
++        }
      }
  
-@@ -208,7 +320,7 @@
+     private func writeProgram() {
+@@ -208,7 +332,7 @@
          guard !expectedMedias.isEmpty else {
              return
          }
@@ -385,7 +1181,7 @@
              return
          }
          writeProgram()
-@@ -218,7 +330,7 @@
+@@ -218,7 +342,7 @@
          var PCR: UInt64?
          let duration: Double = timestamp.seconds - clockTimeStamp.seconds
          if pcrPID == PID && 0.02 <= duration {
@@ -394,3 +1190,120 @@
              clockTimeStamp = timestamp
          }
          var packets: [TSPacket] = []
+--- a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
++++ b/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
+@@ -5,6 +5,9 @@
+ @testable import SRTHaishinKit
+ 
+ @Suite actor SRTSocketOptionTests {
++    // Raw sockets share the SDK process runtime.
++    init() { _ = SRTRuntime.started }
++
+     @Test func parseUri() async {
+         guard
+             let url = SRTSocketURL(URL(string: "srt://localhost:9000?passphrase=1234&streamid=5678&latency=1935&sndsyn=1&transtype=file")) else {
+--- /dev/null
++++ b/HaishinKit/Sources/Util/PublishingQueue.swift
+@@ -0,0 +1,102 @@
++import Foundation
++
++/// A terminal failure of a named publishing boundary. No compressed media is silently dropped.
++public enum PublishingError: Swift.Error, Equatable, Sendable {
++    case queueCapacityExceeded(boundary: String)
++    case itemSizeExceeded(boundary: String, bytes: Int, limit: Int)
++    case outputTerminated(boundary: String)
++    case codecFailed(status: Int32)
++    case muxerFailed(reason: String)
++    case transportWriteFailed
++}
++
++/// One event per session, synchronously latched even from VideoToolbox callbacks.
++package final class PublishingFailureLatch: @unchecked Sendable {
++    private let lock = NSLock()
++    private var storedError: PublishingError?
++    package let events: AsyncStream<PublishingError>
++    private let continuation: AsyncStream<PublishingError>.Continuation
++
++    package init() {
++        (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(1))
++    }
++
++    package var error: PublishingError? { lock.withLock { storedError } }
++
++    package func fail(_ error: PublishingError) {
++        lock.withLock {
++            guard storedError == nil else { return }
++            storedError = error
++            continuation.yield(error)
++            continuation.finish()
++        }
++    }
++
++    package func finish() { continuation.finish() }
++}
++
++/// Count bound plus an independent pre-yield byte limit. Limits cover retained queue items,
++/// not VideoToolbox/AVAudioConverter/libSRT internal allocations or producer-owned input.
++package final class PublishingQueue<Element: Sendable>: @unchecked Sendable {
++    package struct Limits: Sendable {
++        package var count: Int
++        package var bytesPerItem: Int
++        package init(count: Int, bytesPerItem: Int) {
++            precondition(count > 0 && bytesPerItem > 0)
++            self.count = count
++            self.bytesPerItem = bytesPerItem
++        }
++    }
++
++    package let stream: AsyncStream<Element>
++    private let continuation: AsyncStream<Element>.Continuation
++    private let lock = NSLock()
++    private var finished = false
++    private let boundary: String
++    private let limits: Limits
++    private let failure: PublishingFailureLatch
++
++    package init(boundary: String, limits: Limits, failure: PublishingFailureLatch) {
++        self.boundary = boundary
++        self.limits = limits
++        self.failure = failure
++        (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.count))
++    }
++
++    @discardableResult package func yield(_ element: Element, byteCount: Int) -> Bool {
++        lock.withLock {
++            guard !finished, failure.error == nil else { return false }
++            guard byteCount >= 0, byteCount <= limits.bytesPerItem else {
++                terminate(.itemSizeExceeded(boundary: boundary, bytes: byteCount, limit: limits.bytesPerItem))
++                return false
++            }
++            switch continuation.yield(element) {
++            case .enqueued: return true
++            case .dropped: terminate(.queueCapacityExceeded(boundary: boundary))
++            case .terminated: terminate(.outputTerminated(boundary: boundary))
++            @unknown default: terminate(.outputTerminated(boundary: boundary))
++            }
++            return false
++        }
++    }
++
++    package func fail(_ error: PublishingError) {
++        lock.withLock {
++            guard !finished else { return }
++            terminate(error)
++        }
++    }
++
++    package func finish() {
++        lock.withLock {
++            finished = true
++            continuation.finish()
++        }
++    }
++
++    private func terminate(_ error: PublishingError) {
++        finished = true
++        failure.fail(error)
++        continuation.finish()
++    }
++}

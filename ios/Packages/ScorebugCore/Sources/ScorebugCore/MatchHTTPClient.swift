@@ -77,6 +77,30 @@ public struct MatchHTTPClient: Sendable {
                        body: JSONEncoder().encode(report))
     }
 
+    /// Request access only for the current recording and broadcast generation.
+    /// The caller must still check its own lifecycle after this await: a matching
+    /// response can arrive after the local recording has stopped.
+    public func publishAccess(recordingId: String, generation: Int, credential: MatchCredential) async throws -> PublishAccess {
+        struct Request: Encodable { let recordingId: String; let generation: Int }
+        struct Response: Decodable {
+            let gameId: String
+            let generation: Int
+            let recordingId: String
+            let publishUrl: String
+            let serverTime: String
+        }
+        let response: Response = try await send(path: [credential.gameId, "media", "publish"], method: "POST", token: credential.token,
+                                               body: JSONEncoder().encode(Request(recordingId: recordingId, generation: generation)))
+        guard response.gameId == credential.gameId, response.recordingId == recordingId, response.generation == generation,
+              let components = URLComponents(string: response.publishUrl), components.scheme == "srt",
+              let host = components.host, !host.isEmpty,
+              let port = components.port, (1...65535).contains(port),
+              components.user == nil, components.password == nil, components.fragment == nil,
+              let url = components.url else { throw MatchClientError.invalidResponse }
+        return PublishAccess(gameId: response.gameId, generation: response.generation, recordingId: response.recordingId,
+                             publishUrl: url, serverTime: response.serverTime)
+    }
+
     /// Installation authorization controls publishing; a 409 is a normal domain outcome.
     public func executeBroadcast(_ command: BroadcastCommand, installationToken: String) async throws -> BroadcastOutcome {
         try await send(path: [command.gameId, "media", "commands"], method: "POST", token: installationToken,

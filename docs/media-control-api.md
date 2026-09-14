@@ -67,6 +67,14 @@ unconfigured relay access returns 503. The existing public match/media snapshots
 still contain no stream URLs or credentials. Source readiness is not worker output
 health. See [relay reconciliation and limits](relay-conformance.md).
 
+The native `MatchHTTPClient.publishAccess` uses the scoped capture credential and
+checks that the returned match, recording, and generation match the request. It
+accepts an SRT host with an explicit valid port and rejects userinfo and fragments.
+`PublishAccess` is held in memory; descriptions and reflection redact its URL.
+Callers must also recheck their local lifecycle after awaiting access: recording
+can stop while a valid server response is in flight. Errors, including a changed
+generation or unavailable relay, do not imply publishing has started.
+
 Schema version 2 adds recording, broadcast, and receipt tables to the existing
 match database. Migration preserves scoring state, credentials, and receipts.
 See the [native API runbook](native-scoring-api.md) for durable volume and secret

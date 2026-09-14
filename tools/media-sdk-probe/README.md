@@ -9,7 +9,8 @@ The `record-only` destination skips publisher creation entirely; the conformance
 runner exercises this offline mode as well as normal streams with zero/nonzero
 source clocks, a stalled receiver, and an absent receiver.
 
-The package uses the [maintained local HaishinKit 2.2.5 subset](../../vendor/HaishinKit/README.md),
+The probe forwards to the production [ScorebugStreaming adapter](../../ios/Packages/ScorebugStreaming/README.md),
+which uses the [maintained local HaishinKit 2.2.5 subset](../../vendor/HaishinKit/README.md),
 with exact Logboard 2.6.0 resolution and the unchanged checksummed libsrt 1.5.4
 binary. Original hashes, license, and the focused patch are retained. See the
 [startup and clock correction](../../docs/sdk-startup-patch.md).
@@ -51,7 +52,9 @@ See [the dual-output results](../../docs/native-dual-output.md) and
 [compatibility findings](../../docs/capture-sdk-compatibility.md) for the audio
 conversion requirement, buffer ownership, and remaining runtime checks.
 
-The corrected source passes 35 vendor tests and three PCM clock tests. The latest
-five-case run is `artifacts/qa/dual-output-nHltS0/results.json`; both normal streams
-retain all 420 source frames. Full corrected ARM64 Simulator and unsigned iPhone
-links pass with iOS 17 deployment (`sdk-startup-ios-*-build.log`).
+The current source passes 57 vendor tests and three PCM clock tests. The latest
+five-case run is `artifacts/qa/dual-output-ZCjJBF/results.json`; both normal streams
+retain all 420 source frames and every archive remains complete. Peak process RSS
+is below 96 MiB. Full ARM64 Simulator and unsigned iPhone links pass with iOS 17
+deployment (`sdk-bounded-*-final-build.log`). See the
+[bounded publishing contract](../../docs/sdk-publishing-bounds.md) for scope and limits.

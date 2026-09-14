@@ -13,12 +13,21 @@ public actor SRTStream {
     public var muxerError: MuxerError? { writer.error }
 
     public enum MuxerError: Swift.Error, Equatable, Sendable {
+        case payloadByteLimitExceeded
+        case outputByteLimitExceeded
+        case outputQueueLimitExceeded
         case invalidTimestamp
         case invalidPayload
         case startupPacketLimitExceeded
         case startupByteLimitExceeded
         case startupTimeLimitExceeded
     }
+
+    /// First terminal publishing failure; retained through close and reset by publish.
+    public var publishingError: PublishingError? { failure.error ?? writer.failure.error }
+    private var failure = PublishingFailureLatch()
+    private var generation: UInt64 = 0
+    private var publishingTasks: [Task<Void, Never>] = []
 
     /// The expected medias for transport stream.
     public var expectedMedias: Set<AVMediaType> {
@@ -56,7 +65,7 @@ public actor SRTStream {
     ///
     /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
     public func publish(_ name: String? = "") async {
-        guard let connection, await connection.connected else {
+        guard let connection, let connectionSession = await connection.publishingSession() else {
             return
         }
         guard name != nil else {
@@ -68,6 +77,14 @@ public actor SRTStream {
             }
             return
         }
+        guard readyState == .idle else { return }
+        generation &+= 1
+        let session = generation
+        failure = PublishingFailureLatch()
+        writer.failure = failure
+        outgoing.setPublishingFailure(failure)
+        // Raw video may skip stale frames before compression; compressed queues fail.
+        if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }
         // Install continuations before publishing becomes observable or accepting input.
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
@@ -84,27 +101,39 @@ public actor SRTStream {
         if writer.expectedMedias.isEmpty {
             logger.error("Please set expected media.")
         }
-        Task {
-            for await buffer in videoOutput {
-                append(buffer)
+        publishingTasks = [
+            Task {
+                for await buffer in videoOutput {
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    append(buffer)
+                }
+            },
+            Task {
+                for await buffer in audioOutput {
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    append(buffer.0, when: buffer.1)
+                }
+            },
+            Task {
+                for await buffer in videoInput {
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    outgoing.append(video: buffer)
+                }
+            },
+            Task {
+                for await data in transportOutput {
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    await connection.send(data, generation: connectionSession)
+                }
+            },
+            Task { [failure] in
+                for await error in failure.events {
+                    guard generation == session, !Task.isCancelled else { return }
+                    await connection.failPublishing(error, generation: connectionSession)
+                    return
+                }
             }
-        }
-        Task {
-            for await buffer in audioOutput {
-                append(buffer.0, when: buffer.1)
-            }
-        }
-        Task {
-            for await buffer in videoInput {
-                outgoing.append(video: buffer)
-            }
-        }
-        Task {
-            for await data in transportOutput {
-                guard writer.error == nil else { break }
-                await connection.send(data)
-            }
-        }
+        ]
     }
 
     /// Playback streaming audio and video from server.
@@ -135,14 +164,15 @@ public actor SRTStream {
 
     /// Stops playing or publishing and makes available other uses.
     public func close() async {
-        guard readyState != .idle else {
-            return
-        }
+        generation &+= 1
+        for task in publishingTasks { task.cancel() }
+        publishingTasks.removeAll()
+        outgoing.stopRunning()
+        failure.finish()
         writer.clear()
         reader.clear()
-        outgoing.stopRunning()
-        Task { await incoming.stopRunning() }
         readyState = .idle
+        await incoming.stopRunning()
     }
 
     /// Sets the expected media.
@@ -174,9 +204,11 @@ extension SRTStream: _Stream {
     }
 
     public func append(_ sampleBuffer: CMSampleBuffer) {
+        guard publishingError == nil else { return }
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
+                guard readyState == .publishing else { return }
                 writer.videoFormat = sampleBuffer.formatDescription
                 writer.append(sampleBuffer)
             } else {
@@ -189,11 +221,13 @@ extension SRTStream: _Stream {
     }
 
     public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+        guard publishingError == nil else { return }
         switch audioBuffer {
         case let audioBuffer as AVAudioPCMBuffer:
             outgoing.append(audioBuffer, when: when)
             outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
         case let audioBuffer as AVAudioCompressedBuffer:
+            guard readyState == .publishing else { return }
             writer.audioFormat = audioBuffer.format
             writer.append(audioBuffer, when: when)
         default:

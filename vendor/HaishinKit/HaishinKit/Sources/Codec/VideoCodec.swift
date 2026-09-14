@@ -19,14 +19,17 @@ final class VideoCodec {
         }
     }
     var passthrough = true
+    var failure = PublishingFailureLatch()
+    var outputLimits = PublishingQueue<CMSampleBuffer>.Limits(count: 8, bytesPerItem: 2 * 1024 * 1024)
     var outputStream: AsyncStream<CMSampleBuffer> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
+        continuation?.finish()
+        let queue = PublishingQueue<CMSampleBuffer>(boundary: "video codec", limits: outputLimits, failure: failure)
+        continuation = queue
+        return queue.stream
     }
     var frameInterval = VideoCodec.frameInterval
     private var startedAt: CMTime = .zero
-    private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
+    private var continuation: PublishingQueue<CMSampleBuffer>?
     private var invalidateSession = true
     private var presentationTimeStamp: CMTime?
     private(set) var isRunning = false
@@ -48,7 +51,7 @@ final class VideoCodec {
     private(set) var outputFormat: CMFormatDescription?
 
     func append(_ sampleBuffer: CMSampleBuffer) {
-        guard isRunning else {
+        guard isRunning, failure.error == nil else {
             return
         }
         do {
@@ -72,6 +75,7 @@ final class VideoCodec {
                 }
             }
         } catch {
+            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
             logger.warn(error)
         }
     }

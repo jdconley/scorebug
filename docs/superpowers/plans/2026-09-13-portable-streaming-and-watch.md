@@ -181,11 +181,9 @@ media pipeline; other hosts and GPU drivers remain unqualified.
 
 ## Milestone 3: iPhone recording core and streaming adapter
 
-**Files:** `ios/Project.yml`, `ios/Sources/Scorebug/Capture/{CameraSession,ArchiveWriter}.swift`,
-`ios/Sources/Scorebug/UI/ContentView.swift`,
-`ios/Sources/Scorebug/ControlPlaneAPI/ControlPlaneClient.swift`,
-extend `ios/Packages/ScorebugCore/`, `ios/Tests/`, `ios/UITests/` from milestone 1,
-and native macOS `tools/media-harness/` sharing the media core where supported.
+**Files:** `ios/Project.yml`, `ios/Sources/Scorebug/`,
+`ios/Packages/{ScorebugCore,ScorebugMedia,ScorebugStreaming}/`, `ios/Tests/`, `ios/UITests/`,
+and native macOS `tools/media-harness/` and `tools/media-sdk-probe/` sharing the media core.
 
 - [x] Run the HaishinKit compatibility experiment described in the architecture.
       Record exact dependency version, toolchain, API calls, supported platforms, and
@@ -221,7 +219,11 @@ SRT symbols. The reusable [recording session](../../native-recording-session.md)
 now owns offline startup, bounded sample admission, ordered retries, failure latching,
 and graceful stop through an injectable archive sink. The fixture uses this same
 session and also exercises recording without creating a publisher.
-Sustained congestion/reconnection and camera-app integration remain pending.
+The [native Film/Score/Recordings app](../../native-film-app.md) now records offline,
+preserves native scoring while filming, recovers after termination, and exports
+and plays validated MP4s. Its workflows pass on iOS 17.5, 18.5, and 26.2 Simulators;
+physical camera behavior remains unqualified. Production publishing integration,
+capture-role reporting, and sustained congestion/reconnection remain pending.
 
 Repeated validation exposed [SDK startup audio loss](../../native-dual-output.md):
 the TS writer discards early packets and rebases each track independently. One run

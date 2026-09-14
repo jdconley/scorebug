@@ -8,7 +8,7 @@ extension VTDecompressionSession: VTSessionConvertible {
     ]
 
     @inline(__always)
-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
         var flagsOut: VTDecodeInfoFlags = []
         var _: VTEncodeInfoFlags = []
         let status = VTDecompressionSessionDecodeFrame(
@@ -47,7 +47,8 @@ extension VTDecompressionSession: VTSessionConvertible {
                     sampleBufferOut: &sampleBuffer
                 )
                 if let sampleBuffer {
-                    continuation?.yield(sampleBuffer)
+                    // The publishing byte limit applies to compressed outputs only.
+                    continuation?.yield(sampleBuffer, byteCount: 0)
                 }
             }
         )

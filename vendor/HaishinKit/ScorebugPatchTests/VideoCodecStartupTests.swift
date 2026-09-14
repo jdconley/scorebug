@@ -62,4 +62,31 @@ import VideoToolbox
             CMTime(value: 1, timescale: 60), frameTime, frameTime, CMTime(value: 1, timescale: 60)])
         #expect(output == [.zero, frameTime])
     }
+    @Test func compressedOutputOverflowIsTerminalAndFreshSessionRecovers() async throws {
+        let codec = VideoCodec()
+        codec.settings = VideoCodecSettings(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false)
+        codec.outputLimits = .init(count: 1, bytesPerItem: 2 * 1024 * 1024)
+        let frames: [CMTime] = [.zero, CMTime(value: 1, timescale: 30)]
+        let accepted = try await encode(codec, timestamps: frames)
+        #expect(accepted == [.zero])
+        #expect(codec.failure.error == .queueCapacityExceeded(boundary: "video codec"))
+        // OutgoingStream supplies a fresh latch before every publishing session.
+        codec.failure = PublishingFailureLatch()
+        codec.outputLimits = .init(count: 2, bytesPerItem: 2 * 1024 * 1024)
+        #expect(try await encode(codec, timestamps: frames) == frames)
+        #expect(codec.failure.error == nil)
+    }
+
+    @Test func compressedCallbackChecksPerItemBytes() async throws {
+        let codec = VideoCodec()
+        codec.settings = VideoCodecSettings(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false)
+        codec.outputLimits = .init(count: 2, bytesPerItem: 1)
+        #expect(try await encode(codec, timestamps: [.zero]).isEmpty)
+        guard case .itemSizeExceeded(let boundary, let bytes, let limit) = codec.failure.error else {
+            Issue.record("Expected compressed byte limit failure")
+            return
+        }
+        #expect(boundary == "video codec" && bytes > 1 && limit == 1)
+    }
+
 }

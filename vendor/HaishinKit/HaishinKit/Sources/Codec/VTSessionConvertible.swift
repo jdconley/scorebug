@@ -3,6 +3,11 @@ import Foundation
 import VideoToolbox
 
 enum VTSessionError: Swift.Error {
+    var status: OSStatus {
+        switch self {
+        case .failedToCreate(let status), .failedToPrepare(let status), .failedToConvert(let status): return status
+        }
+    }
     case failedToCreate(status: OSStatus)
     case failedToPrepare(status: OSStatus)
     case failedToConvert(status: OSStatus)
@@ -11,7 +16,7 @@ enum VTSessionError: Swift.Error {
 protocol VTSessionConvertible {
     func setOption(_ option: VTSessionOption) -> OSStatus
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws
     func invalidate()
 }
 

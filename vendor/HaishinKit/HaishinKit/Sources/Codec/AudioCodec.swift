@@ -20,8 +20,15 @@ final class AudioCodec {
         return audioConverter?.outputFormat
     }
 
-    @AsyncStreamedFlow
-    var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)>
+    var failure = PublishingFailureLatch()
+    var outputLimits = PublishingQueue<(AVAudioBuffer, AVAudioTime)>.Limits(count: 64, bytesPerItem: 64 * 1024)
+    private var outputQueue: PublishingQueue<(AVAudioBuffer, AVAudioTime)>?
+    var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
+        outputQueue?.finish()
+        let queue = PublishingQueue<(AVAudioBuffer, AVAudioTime)>(boundary: "audio codec", limits: outputLimits, failure: failure)
+        outputQueue = queue
+        return queue.stream
+    }
 
     /// This instance is running to process(true) or not(false).
     private(set) var isRunning = false
@@ -47,6 +54,12 @@ final class AudioCodec {
     private var outputBuffers: [AVAudioBuffer] = []
     private var audioConverter: AVAudioConverter?
     private var inputBuffersCursor = AudioCodec.defaultInputBuffersCursor
+
+    private let makeConverter: (AVAudioFormat, AVAudioFormat) -> AVAudioConverter?
+
+    init(makeConverter: @escaping (AVAudioFormat, AVAudioFormat) -> AVAudioConverter? = { AVAudioConverter(from: $0, to: $1) }) {
+        self.makeConverter = makeConverter
+    }
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning else {
@@ -82,7 +95,10 @@ final class AudioCodec {
 
     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
         inputFormat = audioBuffer.format
-        guard let audioConverter, isRunning else {
+        guard isRunning, failure.error == nil else { return }
+        guard let audioConverter else {
+            failure.fail(.codecFailed(status: -50))
+            outputQueue?.finish()
             return
         }
         var error: NSError?
@@ -120,14 +136,18 @@ final class AudioCodec {
             case .haveData:
                 if audioTime.hasAnchor {
                     audioTime.advanced(AVAudioFramePosition(audioConverter.outputFormat.streamDescription.pointee.mFramesPerPacket))
-                    _outputStream.yield((outputBuffer, audioTime.at))
-                } else {
-                    _outputStream.yield((outputBuffer, audioTime.at))
                 }
+                let bytes = UnsafeMutableAudioBufferListPointer(outputBuffer.mutableAudioBufferList)
+                    .reduce(0) { $0 + Int($1.mDataByteSize) }
+                guard outputQueue?.yield((outputBuffer, audioTime.at), byteCount: bytes) == true else { return }
                 inputBuffersCursor += 1
                 if inputBuffersCursor == inputBuffers.count {
                     inputBuffersCursor = Self.defaultInputBuffersCursor
                 }
+            case .error:
+                failure.fail(.codecFailed(status: Int32(clamping: error?.code ?? -1)))
+                outputQueue?.finish()
+                releaseOutputBuffer(outputBuffer)
             default:
                 releaseOutputBuffer(outputBuffer)
             }
@@ -154,7 +174,7 @@ final class AudioCodec {
             let outputFormat = settings.format.makeOutputAudioFormat(inputFormat, sampleRate: settings.sampleRate, channelMap: settings.channelMap) else {
             return nil
         }
-        let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+        let converter = makeConverter(inputFormat, outputFormat)
         settings.apply(converter, oldValue: nil)
         if inputFormat.formatDescription.mediaSubType == .linearPCM {
             ringBuffer = AudioRingBuffer(inputFormat)
@@ -211,6 +231,6 @@ extension AudioCodec: Runner {
             return
         }
         isRunning = false
-        _outputStream.finish()
+        outputQueue?.finish()
     }
 }

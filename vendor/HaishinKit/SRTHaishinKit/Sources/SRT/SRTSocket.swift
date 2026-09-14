@@ -3,6 +3,12 @@ import HaishinKit
 import libsrt
 import Logboard
 
+// libSRT cleanup is process-global: per-connection cleanup invalidates other live sockets.
+// Keep initialization process-scoped; individual socket lifetimes still close descriptors.
+enum SRTRuntime {
+    static let started: Int32 = srt_startup()
+}
+
 final actor SRTSocket {
     static let payloadSize: Int = 1316
 
@@ -79,35 +85,54 @@ final actor SRTSocket {
     }
 
     var status: Status {
-        .init(srt_getsockstate(socket)) ?? .unknown
+        if let statusProvider { return statusProvider() }
+        if sender != nil, isRunning { return .connected }
+        return .init(srt_getsockstate(socket)) ?? .unknown
     }
 
     private(set) var isRunning = false
     private var perf: CBytePerfMon = .init()
     private var socket: SRTSOCKET = SRT_INVALID_SOCK
-    private var outputs: AsyncStream<Data>.Continuation? {
-        didSet {
-            oldValue?.finish()
-        }
-    }
+    private var outputQueue: PublishingQueue<Data>?
+    private let outputLimits: PublishingQueue<Data>.Limits
+    private let sender: (@Sendable (Data) -> Int32)?
+    private let statusProvider: (@Sendable () -> Status)?
+    private var senderTask: Task<Void, Never>?
+    private var generation: UInt64 = 0
+    private let failure = PublishingFailureLatch()
+    var publishingError: PublishingError? { failure.error }
+    var failureEvents: AsyncStream<PublishingError> { failure.events }
     private var connected: Bool {
         status == .connected
     }
     private var windowSizeC: Int32 = 1024 * 4
     private lazy var incomingBuffer: Data = .init(count: Int(windowSizeC))
 
-    init() {
+    init(outputLimits: PublishingQueue<Data>.Limits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
+         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil) {
+        self.outputLimits = outputLimits
+        self.sender = sender
+        self.statusProvider = statusProvider
+        _ = SRTRuntime.started
         socket = srt_create_socket()
     }
 
     init(socket: SRTSOCKET, options: [SRTSocketOption]) async throws {
+        self.outputLimits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024)
+        self.sender = nil
+        self.statusProvider = nil
         self.socket = socket
         guard configure(options, restriction: .post) else {
             throw makeSocketError()
         }
+        try enforceTimeouts(includeConnect: false)
         if incomingBuffer.count < windowSizeC {
             incomingBuffer = .init(count: Int(windowSizeC))
         }
+    }
+
+    deinit {
+        if socket != SRT_INVALID_SOCK { srt_close(socket) }
     }
 
     func getSocketOption(_ name: SRTSocketOption.Name) throws -> SRTSocketOption {
@@ -115,16 +140,31 @@ final actor SRTSocket {
     }
 
     func setSocketOption(_ option: SRTSocketOption) throws {
+        if ["conntimeo", "sndtimeo", "rcvtimeo"].contains(option.name.rawValue) {
+            let limit = option.name.rawValue == "conntimeo" ? 3000 : 500
+            guard option.intValue > 0 && option.intValue <= limit else { throw Error.illegalState("Timeout exceeds publishing bound") }
+        }
         try option.setSockflag(socket)
     }
 
+    func enforceTimeouts(includeConnect: Bool = true) throws {
+        let names: [SRTSocketOption.Name] = includeConnect ? [.conntimeo, .sndtimeo, .rcvtimeo] : [.sndtimeo, .rcvtimeo]
+        for name in names {
+            let cap = name.rawValue == "conntimeo" ? 3000 : 500
+            let current = try getSocketOption(name).intValue
+            try SRTSocketOption(name: name, value: current > 0 ? min(current, cap) : cap).setSockflag(socket)
+        }
+    }
+
     func open(_ url: SRTSocketURL) async throws {
+        if sender != nil { await startRunning(); return }
         if socket == SRT_INVALID_SOCK {
             throw makeSocketError()
         }
         guard configure(url.options, restriction: .pre) else {
             throw makeSocketError()
         }
+        try enforceTimeouts()
         let status: Int32 = try {
             switch url.mode {
             case .caller:
@@ -163,6 +203,7 @@ final actor SRTSocket {
             guard configure(url.options, restriction: .post) else {
                 throw makeSocketError()
             }
+            try enforceTimeouts(includeConnect: false)
             if incomingBuffer.count < windowSizeC {
                 incomingBuffer = .init(count: Int(windowSizeC))
             }
@@ -189,11 +230,9 @@ final actor SRTSocket {
     }
 
     func send(_ data: Data) throws {
-        guard connected else {
-            throw Error.notConnected
-        }
-        for data in data.chunk(Self.payloadSize) {
-            outputs?.yield(data)
+        guard isRunning, connected || sender != nil else { throw Error.notConnected }
+        guard let outputQueue, outputQueue.yield(data, byteCount: data.count) else {
+            throw failure.error ?? PublishingError.outputTerminated(boundary: "SRT socket")
         }
     }
 
@@ -234,6 +273,7 @@ final actor SRTSocket {
 
     @inline(__always)
     private func sendmsg(_ data: Data) -> Int32 {
+        if let sender { return sender(data) }
         return data.withUnsafeBytes { pointer in
             guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
                 return SRT_ERROR
@@ -256,38 +296,58 @@ final actor SRTSocket {
 extension SRTSocket: AsyncRunner {
     // MARK: AsyncRunner
     func startRunning() async {
-        guard !isRunning else {
-            return
-        }
-        let stream = AsyncStream<Data> { continuation in
-            self.outputs = continuation
-        }
-        Task {
-            for await data in stream {
-                let result = sendmsg(data)
-                if result == -1 {
-                    await stopRunning()
+        guard !isRunning, failure.error == nil else { return }
+        generation &+= 1
+        let session = generation
+        let queue = PublishingQueue<Data>(boundary: "SRT socket", limits: outputLimits, failure: failure)
+        outputQueue = queue
+        isRunning = true
+        senderTask = Task {
+            for await data in queue.stream {
+                // Copy only one datagram at a time. Yield between finite synchronous sends
+                // so close is never queued behind an entire large transport buffer.
+                for offset in stride(from: 0, to: data.count, by: Self.payloadSize) {
+                    guard !Task.isCancelled, isRunning, generation == session, failure.error == nil else { return }
+                    let chunk = data.subdata(in: offset..<min(offset + Self.payloadSize, data.count))
+                    guard sendmsg(chunk) == chunk.count else {
+                        failure.fail(.transportWriteFailed)
+                        await stopRunning()
+                        return
+                    }
+                    await Task.yield()
                 }
             }
         }
-        isRunning = true
     }
 
     func stopRunning() async {
-        guard isRunning else {
-            return
-        }
-        srt_close(socket)
-        socket = SRT_INVALID_SOCK
-        outputs = nil
+        generation &+= 1
         isRunning = false
+        senderTask?.cancel()
+        senderTask = nil
+        outputQueue?.finish()
+        outputQueue = nil
+        failure.finish()
+        if socket != SRT_INVALID_SOCK {
+            srt_close(socket)
+            socket = SRT_INVALID_SOCK
+        }
     }
 }
 
 extension SRTSocket: NetworkTransportReporter {
     // MARK: NetworkTransportReporter
     func makeNetworkTransportReport() -> NetworkTransportReport {
-        _ = bstats()
+        let result = bstats()
+        if isRunning {
+            switch status {
+            case .broken, .closing, .closed, .nonexist:
+                failure.fail(.transportWriteFailed)
+            case .connected where result == SRT_ERROR && sender == nil:
+                failure.fail(.transportWriteFailed)
+            default: break
+            }
+        }
         let performanceData = self.performanceData
         return .init(
             queueBytesOut: Int(performanceData.byteSndBuf),

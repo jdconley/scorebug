@@ -30,6 +30,13 @@ public actor SRTConnection: NetworkConnection {
         }
     }
 
+    /// First terminal publishing failure; reset on a new connect attempt.
+    @Published public private(set) var publishingError: PublishingError?
+    private var generation: UInt64 = 0
+    private var closing = false
+    private var failureTask: Task<Void, Never>?
+    private var monitorTask: Task<Void, Never>?
+    private var receiveTask: Task<Void, Never>?
     private var socket: SRTSocket?
     private var streams: [SRTStream] = []
     private var listener: SRTSocket?
@@ -37,13 +44,15 @@ public actor SRTConnection: NetworkConnection {
 
     /// Creates an object.
     public init() {
-        srt_startup()
         socket = SRTSocket()
+    }
+
+    init(socket: SRTSocket) {
+        self.socket = socket
     }
 
     deinit {
         streams.removeAll()
-        srt_cleanup()
     }
 
     /// Gets a SRTSocketOption.
@@ -79,91 +88,123 @@ public actor SRTConnection: NetworkConnection {
         guard let url = SRTSocketURL(uri) else {
             throw Error.unsupportedUri(uri)
         }
+        guard !closing, !connected, self.uri == nil else { throw Error.invalidState }
+        generation &+= 1
+        let session = generation
+        publishingError = nil
+        self.uri = uri
+        let openingSocket = socket ?? SRTSocket()
+        socket = openingSocket
         do {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Swift.Error>) in
-                Task {
-                    do {
-                        try await socket?.open(url)
-                        self.uri = uri
-                        switch url.mode {
-                        case .caller:
-                            break
-                        case .listener:
-                            listener = socket
-                            socket = try await listener?.accept(url.options)
-                            await listener?.stopRunning()
-                            listener = nil
-                        case .rendezvous:
-                            break
-                        }
-                        connected = await socket?.status == .connected
-                        continuation.resume()
-                    } catch {
-                        socket = SRTSocket()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-            Task {
-                guard let socket else {
-                    return
-                }
-                let networkMonitor = await socket.makeNetworkMonitor()
-                self.networkMonitor = networkMonitor
-                await networkMonitor.startRunning()
-                for await event in await networkMonitor.event {
-                    for stream in streams {
-                        await stream.dispatch(event)
-                    }
-                }
-            }
-        } catch let error as SRTSocket.Error {
-            switch error {
-            case .rejected(let reason):
-                throw Error.failedToConnect(reason)
-            default:
+            try await openingSocket.open(url)
+            guard generation == session else {
+                await openingSocket.stopRunning()
                 throw Error.invalidState
             }
+            if url.mode == .listener {
+                listener = openingSocket
+                let accepted = try await openingSocket.accept(url.options)
+                guard generation == session else {
+                    await accepted.stopRunning()
+                    throw Error.invalidState
+                }
+                socket = accepted
+                await openingSocket.stopRunning()
+                listener = nil
+            }
+            guard generation == session, let activeSocket = socket else { throw Error.invalidState }
+            connected = await activeSocket.status == .connected
+            guard generation == session else { throw Error.invalidState }
+            observeFailure(of: activeSocket, generation: session)
+            monitorTask = Task {
+                let monitor = await activeSocket.makeNetworkMonitor()
+                guard generation == session, !Task.isCancelled else { return }
+                networkMonitor = monitor
+                await monitor.startRunning()
+                for await event in await monitor.event {
+                    guard generation == session, !Task.isCancelled else { break }
+                    for stream in streams { await stream.dispatch(event) }
+                }
+                await monitor.stopRunning()
+            }
         } catch {
+            await openingSocket.stopRunning()
+            if generation == session {
+                self.uri = nil
+                connected = false
+                socket = SRTSocket()
+            }
+            if case SRTSocket.Error.rejected(let reason) = error { throw Error.failedToConnect(reason) }
             throw Error.invalidState
         }
     }
 
-    /// Closes a connection.
-    public func close() async {
-        guard uri != nil else {
-            return
+    private func observeFailure(of socket: SRTSocket, generation session: UInt64) {
+        failureTask?.cancel()
+        failureTask = Task {
+            for await failure in await socket.failureEvents {
+                guard generation == session, !Task.isCancelled else { return }
+                await failPublishing(failure, generation: session)
+                return
+            }
         }
-        await networkMonitor?.stopRunning()
-        networkMonitor = nil
-        for stream in streams {
-            await stream.close()
-        }
-        await socket?.stopRunning()
-        socket = nil
-        await listener?.stopRunning()
-        listener = nil
-        uri = nil
-        connected = false
-        socket = SRTSocket()
     }
 
-    func send(_ data: Data) async {
+    /// Closes a connection, invalidating session work before awaiting external actors.
+    public func close() async {
+        guard !closing else { return }
+        closing = true
+        defer { closing = false }
+        generation &+= 1
+        connected = false
+        uri = nil
+        failureTask?.cancel()
+        failureTask = nil
+        monitorTask?.cancel()
+        monitorTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        let oldMonitor = networkMonitor
+        networkMonitor = nil
+        let oldSocket = socket
+        let oldListener = listener
+        socket = SRTSocket()
+        listener = nil
+        for stream in streams { await stream.close() }
+        await oldMonitor?.stopRunning()
+        await oldSocket?.stopRunning()
+        await oldListener?.stopRunning()
+    }
+
+    func publishingSession() -> UInt64? { connected && !closing ? generation : nil }
+
+    func failPublishing(_ failure: PublishingError, generation session: UInt64) async {
+        guard generation == session else { return }
+        if publishingError == nil { publishingError = failure }
+        await close()
+    }
+
+    func send(_ data: Data, generation session: UInt64) async {
+        guard generation == session else { return }
         do {
-            try await socket?.send(data)
+            guard connected, let socket else { return }
+            try await socket.send(data)
         } catch {
-            await close()
+            guard generation == session else { return }
+            await failPublishing((error as? PublishingError) ?? .transportWriteFailed, generation: session)
         }
     }
 
     func recv() {
-        Task {
-            guard let socket else {
-                return
-            }
+        let session = generation
+        receiveTask?.cancel()
+        receiveTask = Task {
+            guard let socket else { return }
             for await data in await socket.inputs {
+                guard generation == session, !Task.isCancelled else { return }
                 await streams.first?.doInput(data)
             }
+            guard generation == session else { return }
             await close()
         }
     }

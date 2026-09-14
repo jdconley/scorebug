@@ -12,10 +12,15 @@ final class TSWriter {
     static let defaultSegmentDuration: Double = 2
     /// An asynchronous sequence for writing data.
     public var output: AsyncStream<Data> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
+        outputQueue?.finish()
+        let queue = PublishingQueue<Data>(boundary: "transport muxer", limits: outputLimits, failure: failure)
+        outputQueue = queue
+        return queue.stream
     }
+    var failure = PublishingFailureLatch()
+    private var outputQueue: PublishingQueue<Data>?
+    private let outputLimits: PublishingQueue<Data>.Limits
+    private let maximumPayloadBytes: Int
     /// Specifies the exptected medias = [.video, .audio].
     var expectedMedias: Set<AVMediaType> = []
     /// Specifies the audio format.
@@ -100,14 +105,12 @@ final class TSWriter {
     private var rotatedTimeStamp: CMTime = .zero
     private var audioContinuityCounter: UInt8 = 0
     private var videoContinuityCounter: UInt8 = 0
-    private var continuation: AsyncStream<Data>.Continuation? {
-        didSet {
-            oldValue?.finish()
-        }
-    }
-
     /// Creates a new instance with segument duration.
-    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init()) {
+    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
+         outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
+         maximumPayloadBytes: Int = 2 * 1024 * 1024) {
+        self.outputLimits = outputLimits
+        self.maximumPayloadBytes = maximumPayloadBytes
         self.segmentDuration = segmentDuration
         self.startupLimits = startupLimits
     }
@@ -122,6 +125,8 @@ final class TSWriter {
         guard audioBuffer.byteLength > 0, audioBuffer.byteLength <= audioBuffer.byteCapacity,
               audioBuffer.packetCount > 0,
               AudioSpecificConfig(formatDescription: audioBuffer.format.formatDescription) != nil else { fail(.invalidPayload); return }
+        // ADTS has a 13-bit frame length including its seven-byte header.
+        guard audioBuffer.byteLength <= 8191 - 7 else { fail(.payloadByteLimitExceeded); return }
         guard preflightPayload(Int(audioBuffer.byteLength)) else { return }
         guard let pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: timestamp) else {
             fail(.invalidPayload)
@@ -178,6 +183,7 @@ final class TSWriter {
 
     // Reject oversized input before allocating a compressed payload copy.
     private func preflightPayload(_ bytes: Int) -> Bool {
+        guard bytes <= maximumPayloadBytes else { fail(.payloadByteLimitExceeded); return false }
         guard !origin.isValid else { return true }
         guard pending.count < startupLimits.packetCount else { fail(.startupPacketLimitExceeded); return false }
         guard bytes <= startupLimits.byteCount - pendingBytes else { fail(.startupByteLimitExceeded); return false }
@@ -240,7 +246,8 @@ final class TSWriter {
         error = failure
         pending.removeAll(keepingCapacity: false)
         pendingBytes = 0
-        continuation?.finish()
+        outputQueue?.finish()
+        self.failure.fail(.muxerFailed(reason: String(describing: failure)))
     }
 
     /// Clears the writer object for new transport stream.
@@ -263,7 +270,10 @@ final class TSWriter {
         clockTimeStamp = .zero
         rotatedTimeStamp = .zero
         expectedMedias.removeAll()
-        continuation = nil
+        outputQueue?.finish()
+        outputQueue = nil
+        failure.finish()
+        failure = PublishingFailureLatch()
     }
 
     private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, timeStamp: CMTime, randomAccessIndicator: Bool) {
@@ -301,7 +311,9 @@ final class TSWriter {
 
     private func write(_ data: Data) {
         guard error == nil else { return }
-        continuation?.yield(data)
+        if let outputQueue, !outputQueue.yield(data, byteCount: data.count) {
+            fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
+        }
     }
 
     private func writeProgram() {

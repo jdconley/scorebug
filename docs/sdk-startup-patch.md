@@ -9,7 +9,8 @@ See the [original measurements](native-dual-output.md).
 Scorebug now keeps a [local source subset](../vendor/HaishinKit/README.md), retaining
 the upstream license, revision, and original file hashes. It includes the base
 and SRT modules needed by the probe, with the same checksummed libsrt binary and
-an exact Logboard version. The local modifications are limited to three SDK files:
+an exact Logboard version. The initial startup correction changed three SDK files;
+the subsequent [publishing queue changes](sdk-publishing-bounds.md) extend this patch:
 
 - `TSWriter` copies compressed startup payloads until every expected track has
   supplied actual media. Startup is limited to 256 packets, 8 MiB of owned PES
@@ -61,6 +62,6 @@ deployment using Xcode 26.2.
 
 The startup span is a media-time limit. A wall-clock watchdog for a capture source
 that stops producing entirely belongs in the production publishing coordinator.
-The SDK's later transport queues still need sustained congestion/reconnect work;
-this patch does not establish a bound for every SDK allocation. No destination,
+The SDK's later transport queues now have [separate limits and failure handling](sdk-publishing-bounds.md);
+sustained congestion/reconnect qualification remains. Neither patch establishes a bound for every SDK allocation. No destination,
 phone camera, or watch runtime is qualified by these source-level fixes.

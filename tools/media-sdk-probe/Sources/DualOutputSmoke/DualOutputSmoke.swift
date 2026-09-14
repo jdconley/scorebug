@@ -166,7 +166,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                         publishedAudio += sample.sampleBuffer.numSamples
                     }
                 }
-                guard !health.isFailed else { throw SDKProbe.ProbeError.notPublishing }
+                guard !health.isFailed else { throw SDKProbe.PublisherError.notPublishing }
                 // Allow the final encoded packets to reach the local sink; this
                 // interval is part of the experiment, not an SDK flush guarantee.
                 try await Task.sleep(for: .seconds(1))

@@ -1,5 +1,19 @@
 import Foundation
 
+/// Generation-scoped publishing capability. Keep in memory, separate from public media
+/// snapshots; diagnostic descriptions deliberately exclude the credentialed URL.
+public struct PublishAccess: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public let gameId: String
+    public let generation: Int
+    public let recordingId: String
+    public let publishUrl: URL
+    public let serverTime: String
+
+    public var description: String { "PublishAccess(<redacted>)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: EmptyCollection<Mirror.Child>()) }
+}
+
 public enum RecordingStatus: String, Codable, Equatable, Sendable {
     case recording, stopped, interrupted
 }

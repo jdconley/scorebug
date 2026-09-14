@@ -5,6 +5,9 @@ import libsrt
 @testable import SRTHaishinKit
 
 @Suite actor SRTSocketOptionTests {
+    // Raw sockets share the SDK process runtime.
+    init() { _ = SRTRuntime.started }
+
     @Test func parseUri() async {
         guard
             let url = SRTSocketURL(URL(string: "srt://localhost:9000?passphrase=1234&streamid=5678&latency=1935&sndsyn=1&transtype=file")) else {

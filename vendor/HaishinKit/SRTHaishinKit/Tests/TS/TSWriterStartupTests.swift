@@ -21,11 +21,11 @@ import Testing
         AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: seconds))
     }
 
-    private func video(_ seconds: Double, dts: CMTime = .invalid) throws -> CMSampleBuffer {
+    private func video(_ seconds: Double, dts: CMTime = .invalid, payloadBytes: Int = 6) throws -> CMSampleBuffer {
         var format: CMVideoFormatDescription?
         #expect(CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_H264,
             width: 16, height: 16, extensions: nil, formatDescriptionOut: &format) == noErr)
-        let bytes: [UInt8] = [0, 0, 0, 2, 0x65, 0x7a]
+        let bytes: [UInt8] = [0, 0, 0, 2, 0x65, 0x7a] + Array(repeating: 0, count: payloadBytes - 6)
         var block: CMBlockBuffer?
         #expect(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
             blockLength: bytes.count, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
@@ -206,11 +206,15 @@ import Testing
         #expect(abs(pts(vp) - pts(vp, offset: 14) - 22_500) <= 1)
     }
 
-    @Test func publicStreamExposesMuxerFailure() async {
-        let stream = SRTStream(connection: .init())
+    @Test func publicStreamExposesMuxerFailure() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
         await stream.setExpectedMedias([.audio, .video])
+        await stream.publish()
         await stream.append(audio(), when: AVAudioTime(sampleTime: 0, atRate: 48_000))
-        #expect(await stream.muxerError == .invalidTimestamp)
+        #expect(await stream.publishingError == .muxerFailed(reason: "invalidTimestamp"))
+        await connection.close()
     }
 
     @Test func unsupportedAudioDescriptionFailsInsteadOfWritingZeroPayload() async {
@@ -239,4 +243,56 @@ import Testing
         writer.append(v)
         #expect(writer.error == .startupTimeLimitExceeded)
     }
+    @Test func stalledTransportConsumerFailsInsteadOfGrowingForever() {
+        let writer = TSWriter()
+        let output = writer.output
+        writer.expectedMedias = [.audio]
+        let a = audio()
+        writer.audioFormat = a.format
+        for index in 0..<300 { writer.append(a, when: time(10 + Double(index) / 48)) }
+        #expect(writer.error != nil)
+        withExtendedLifetime(output) {}
+    }
+
+    @Test func oversizedPayloadAfterStartupFailsBeforeCopy() {
+        let writer = TSWriter()
+        let output = writer.output
+        writer.expectedMedias = [.audio]
+        let a = audio()
+        writer.audioFormat = a.format
+        writer.append(a, when: time(10))
+        let oversized = AVAudioCompressedBuffer(format: a.format, packetCapacity: 1,
+            maximumPacketSize: 9 * 1024 * 1024)
+        oversized.byteLength = 9 * 1024 * 1024
+        oversized.packetCount = 1
+        writer.append(oversized, when: time(10.1))
+        #expect(writer.error != nil)
+        withExtendedLifetime(output) {}
+    }
+
+    @Test(arguments: [false, true])
+    func tinyTransportOutputLimitsFailExplicitly(byteLimit: Bool) {
+        let writer = TSWriter(outputLimits: .init(count: 1, bytesPerItem: byteLimit ? 1 : 4096))
+        let output = writer.output
+        writer.expectedMedias = [.audio]
+        let a = audio()
+        writer.audioFormat = a.format
+        writer.append(a, when: time(10))
+        #expect(writer.error == (byteLimit ? .outputByteLimitExceeded : .outputQueueLimitExceeded))
+        withExtendedLifetime(output) {}
+    }
+
+    @Test func videoPayloadLimitStillAppliesAfterCommonOriginIsKnown() throws {
+        let writer = TSWriter(maximumPayloadBytes: 32)
+        let output = writer.output
+        writer.expectedMedias = [.video]
+        let first = try video(10)
+        writer.videoFormat = first.formatDescription
+        writer.append(first)
+        #expect(writer.error == nil)
+        writer.append(try video(10.1, payloadBytes: 64))
+        #expect(writer.error == .payloadByteLimitExceeded)
+        withExtendedLifetime(output) {}
+    }
+
 }

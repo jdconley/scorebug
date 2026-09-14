@@ -65,6 +65,11 @@ package final class OutgoingStream {
         }
     }
 
+    package func setPublishingFailure(_ failure: PublishingFailureLatch) {
+        videoCodec.failure = failure
+        audioCodec.failure = failure
+    }
+
     /// Create a new instance.
     package init() {
     }
