@@ -11,15 +11,19 @@ struct FixtureMotionPattern: Sendable {
     static let maximumRetainedBytes = 32 * 1024 * 1024
     static let seed: UInt64 = 0x5343_4f52_4542_5547
     enum Failure: Error { case flag, capacity, buffer }
+    enum Pattern: Sendable { case pixelNoise, blocks16 }
     let retainedBytes: Int
     private let width: Int
     private let height: Int
     private let textures: [Data]
 
-    static func enabled(_ flag: String?) throws -> Bool {
-        guard let flag, !flag.isEmpty else { return false }
-        guard flag == "1" else { throw Failure.flag }
-        return true
+    static func selection(_ flag: String?) throws -> Pattern? {
+        switch flag {
+        case nil, "": return nil
+        case "1": return .pixelNoise
+        case "blocks16": return .blocks16
+        default: throw Failure.flag
+        }
     }
 
     static func retainedByteCount(profile: ArchiveProfile) throws -> Int {
@@ -32,7 +36,7 @@ struct FixtureMotionPattern: Sendable {
         return total
     }
 
-    init(profile: ArchiveProfile, seed: UInt64 = Self.seed) throws {
+    init(profile: ArchiveProfile, seed: UInt64 = Self.seed, pattern: Pattern = .pixelNoise) throws {
         // Complete validation and checked multiplication before the first allocation.
         retainedBytes = try Self.retainedByteCount(profile: profile)
         let width = profile.width, height = profile.height
@@ -61,10 +65,41 @@ struct FixtureMotionPattern: Sendable {
                         }
                     }
                 }
+                if case .blocks16 = pattern {
+                    Self.formBlocks16(in: bytes, width: width, height: height)
+                }
             }
             prepared.append(texture)
         }
         textures = prepared
+    }
+
+    /// Transform each disjoint cell after generating the original noise, preserving
+    /// its RNG progression. Keep only center scalars; no second image allocation.
+    private static func formBlocks16(in bytes: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int) {
+        for plane in 0..<2 {
+            let rows = Self.rows(height: height, plane: plane)
+            let offset = plane == 0 ? 0 : width * height
+            let components = plane == 0 ? 1 : 2
+            let cellHeight = 16 / components
+            for top in stride(from: rows.lowerBound, to: rows.upperBound, by: cellHeight) {
+                let bottom = min(top + cellHeight, rows.upperBound)
+                let centerRow = top + (bottom - top) / 2
+                for left in stride(from: 0, to: width, by: 16) {
+                    let right = min(left + 16, width)
+                    let centerColumn = left + ((right - left) / components / 2) * components
+                    let center = offset + centerRow * width + centerColumn
+                    let first = bytes[center]
+                    let second = plane == 1 ? bytes[center + 1] : 0
+                    for row in top..<bottom {
+                        for column in stride(from: left, to: right, by: components) {
+                            bytes[offset + row * width + column] = first
+                            if plane == 1 { bytes[offset + row * width + column + 1] = second }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Caller owns and has locked a newly allocated destination pixel buffer.

@@ -28,6 +28,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
+// Keep the exact validated mode through the Xcode/UITest/app boundary.
+const fixtureMotionFlag = process.env.SCOREBUG_TEST_MOTION_FIXTURE ?? '';
 const streamingBudget = nativeStreamingTestBudget(streamingOptions.holdSeconds);
 const decodedWindowLimit = streamingOptions.completedWindowLimit === 128 ? 128 : 64;
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
@@ -370,7 +372,7 @@ try {
       'CODE_SIGN_IDENTITY=-',
       `SCOREBUG_TEST_API_URL=${api.baseURL}`,
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
-      `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureWorkload === 'motion' ? '1' : ''}`,
+      `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
     ],
     'workflow',
     { timeout: streamingBudget.workflowTimeoutMs },

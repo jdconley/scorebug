@@ -20,7 +20,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let motionFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? ""
         if !motionFlag.isEmpty {
-            XCTAssertEqual(motionFlag, "1", "Malformed native motion fixture flag")
+            XCTAssertTrue(["1", "blocks16"].contains(motionFlag), "Malformed native motion fixture flag")
             app.launchEnvironment["SCOREBUG_TEST_MOTION_FIXTURE"] = motionFlag
         }
         app.launch()

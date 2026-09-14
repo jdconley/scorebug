@@ -7,53 +7,57 @@ final class FixtureMotionPatternTests: XCTestCase {
     func testMotionPreservesBarcodeAndStaticRegionsInStridePaddedFrames() async throws {
         let profile = ArchiveProfile(width: 322, height: 242)
         let baseline = try await capture(profile: profile, flag: nil, frames: 10)
-        let motion = try await capture(profile: profile, flag: "1", frames: 10)
-        let repeated = try await capture(profile: profile, flag: "1", frames: 10)
-        XCTAssertEqual(motion.count, 20)
-        let videos = motion.filter { $0.kind == .video }
-        XCTAssertEqual(Set(videos.map { ObjectIdentifier($0.sample.imageBuffer!) }).count, 10)
-        for (index, entry) in motion.enumerated() {
-            XCTAssertEqual(entry.kind, index.isMultiple(of: 2) ? .video : .audio)
-            let pts = CMTime(value: 7_395, timescale: 60) + CMTime(value: Int64(index / 2), timescale: 30)
-            XCTAssertEqual(CMTimeCompare(entry.sample.presentationTimeStamp, pts), 0)
-            XCTAssertEqual(entry.bytes, repeated[index].bytes, "Fixed seed reproduces each complete frame/sample")
-            if entry.kind == .audio {
-                XCTAssertEqual(entry.sample.numSamples, 1600)
-                XCTAssertEqual(entry.bytes, baseline[index].bytes)
-                continue
+        for flag in ["1", "blocks16"] {
+            let motion = try await capture(profile: profile, flag: flag, frames: 10)
+            let repeated = try await capture(profile: profile, flag: flag, frames: 10)
+            XCTAssertEqual(motion.count, 20)
+            let videos = motion.filter { $0.kind == .video }
+            XCTAssertEqual(Set(videos.map { ObjectIdentifier($0.sample.imageBuffer!) }).count, 10)
+            for (index, entry) in motion.enumerated() {
+                XCTAssertEqual(entry.kind, index.isMultiple(of: 2) ? .video : .audio)
+                let pts = CMTime(value: 7_395, timescale: 60) + CMTime(value: Int64(index / 2), timescale: 30)
+                XCTAssertEqual(CMTimeCompare(entry.sample.presentationTimeStamp, pts), 0)
+                XCTAssertEqual(entry.bytes, repeated[index].bytes, "Fixed seed reproduces each complete frame/sample")
+                if entry.kind == .audio {
+                    XCTAssertEqual(entry.sample.numSamples, 1600)
+                    XCTAssertEqual(entry.bytes, baseline[index].bytes)
+                    continue
+                }
+                let pixel = try XCTUnwrap(entry.sample.imageBuffer)
+                XCTAssertEqual(CVPixelBufferGetPixelFormatType(pixel), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                XCTAssertEqual(CMTimeCompare(entry.sample.duration, CMTime(value: 1, timescale: 30)), 0)
+                XCTAssertEqual(try packedBytes(entry.sample), entry.bytes, "Published buffers remain immutable after later callbacks")
+                XCTAssertTrue(entry.bytes.prefix(profile.width * profile.height).allSatisfy { (16...235).contains($0) })
+                XCTAssertTrue(entry.bytes.suffix(profile.width * profile.height / 2).allSatisfy { (16...240).contains($0) })
+                assertStaticRegions(entry.bytes, equalTo: baseline[index].bytes, profile: profile)
+                let middle = profile.width * (profile.height / 3)..<profile.width * (profile.height * 5 / 6)
+                XCTAssertNotEqual(entry.bytes[middle], baseline[index].bytes[middle])
             }
-            let pixel = try XCTUnwrap(entry.sample.imageBuffer)
-            XCTAssertEqual(CVPixelBufferGetPixelFormatType(pixel), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-            XCTAssertEqual(CMTimeCompare(entry.sample.duration, CMTime(value: 1, timescale: 30)), 0)
-            XCTAssertEqual(try packedBytes(entry.sample), entry.bytes, "Published buffers remain immutable after later callbacks")
-            XCTAssertTrue(entry.bytes.prefix(profile.width * profile.height).allSatisfy { (16...235).contains($0) })
-            XCTAssertTrue(entry.bytes.suffix(profile.width * profile.height / 2).allSatisfy { (16...240).contains($0) })
-            assertStaticRegions(entry.bytes, equalTo: baseline[index].bytes, profile: profile)
             let middle = profile.width * (profile.height / 3)..<profile.width * (profile.height * 5 / 6)
-            XCTAssertNotEqual(entry.bytes[middle], baseline[index].bytes[middle])
+            XCTAssertNotEqual(videos[0].bytes[middle], videos[1].bytes[middle])
+            XCTAssertEqual(videos[0].bytes[middle], videos[8].bytes[middle], "Eight prepared textures repeat without per-frame noise")
         }
-        let middle = profile.width * (profile.height / 3)..<profile.width * (profile.height * 5 / 6)
-        XCTAssertNotEqual(videos[0].bytes[middle], videos[1].bytes[middle])
-        XCTAssertEqual(videos[0].bytes[middle], videos[8].bytes[middle], "Eight prepared textures repeat without per-frame noise")
     }
 
     func test1080MotionLeavesEntireScoreComparisonCropAndBarcodeUnchanged() async throws {
         let profile = ArchiveProfile()
         let baseline = try await capture(profile: profile, flag: "", frames: 2)
-        let motion = try await capture(profile: profile, flag: "1", frames: 2)
-        for index in [0, 2] {
-            assertStaticRegions(motion[index].bytes, equalTo: baseline[index].bytes, profile: profile)
-            for row in 930..<1050 {
-                let crop = row * profile.width..<row * profile.width + 750
-                XCTAssertEqual(motion[index].bytes[crop], baseline[index].bytes[crop])
+        for flag in ["1", "blocks16"] {
+            let motion = try await capture(profile: profile, flag: flag, frames: 2)
+            for index in [0, 2] {
+                assertStaticRegions(motion[index].bytes, equalTo: baseline[index].bytes, profile: profile)
+                for row in 930..<1050 {
+                    let crop = row * profile.width..<row * profile.width + 750
+                    XCTAssertEqual(motion[index].bytes[crop], baseline[index].bytes[crop])
+                }
+                for row in 465..<525 {
+                    let crop = profile.width * profile.height + row * profile.width..<profile.width * profile.height + row * profile.width + 750
+                    XCTAssertEqual(motion[index].bytes[crop], baseline[index].bytes[crop])
+                }
+                let middle = 360 * profile.width..<900 * profile.width
+                let changed = zip(motion[index].bytes[middle], baseline[index].bytes[middle]).filter { $0 != $1 }.count
+                XCTAssertGreaterThan(changed, middle.count * 9 / 10)
             }
-            for row in 465..<525 {
-                let crop = profile.width * profile.height + row * profile.width..<profile.width * profile.height + row * profile.width + 750
-                XCTAssertEqual(motion[index].bytes[crop], baseline[index].bytes[crop])
-            }
-            let middle = 360 * profile.width..<900 * profile.width
-            let changed = zip(motion[index].bytes[middle], baseline[index].bytes[middle]).filter { $0 != $1 }.count
-            XCTAssertGreaterThan(changed, middle.count * 9 / 10)
         }
     }
 
@@ -75,8 +79,50 @@ final class FixtureMotionPatternTests: XCTestCase {
         }
     }
 
+    func testOriginalPixelNoiseRetainsAllEightGoldenFrames() async throws {
+        let samples = try await capture(profile: ArchiveProfile(width: 320, height: 240), flag: "1", frames: 8)
+        // FNV-1a hashes frozen from the original seeded NV12 bytes, including barcode.
+        let expected: [UInt64] = [9754500401044041835, 17350363353757607773, 17177234079050148462, 1392486495599061200, 1654758401096518209, 6444238829700876399, 10121231613917591992, 9976858573007654949]
+        let hashes = samples.filter { $0.kind == .video }.map { entry in
+            entry.bytes.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }
+        }
+        XCTAssertEqual(hashes, expected)
+    }
+
+    func testBlocks16UsesOriginalCenterSamplesIncludingClippedCellsAndOddBandBoundaries() async throws {
+        for profile in [ArchiveProfile(width: 322, height: 244), ArchiveProfile()] {
+            let noise = try await capture(profile: profile, flag: "1", frames: 2)
+            let blocks = try await capture(profile: profile, flag: "blocks16", frames: 2)
+            for index in [0, 2] {
+                let original = noise[index].bytes
+                var expected = original
+                // Resolve each output byte independently to its cell's source center.
+                for plane in 0..<2 {
+                    let lower = plane == 0 ? profile.height / 3 : (profile.height / 3 + 1) / 2
+                    let upper = plane == 0 ? profile.height * 5 / 6 : (profile.height * 5 / 6) / 2
+                    let offset = plane == 0 ? 0 : profile.width * profile.height
+                    let cellRows = plane == 0 ? 16 : 8
+                    let components = plane == 0 ? 1 : 2
+                    for row in lower..<upper {
+                        let cellTop = lower + (row - lower) / cellRows * cellRows
+                        let sourceRow = cellTop + min(cellRows, upper - cellTop) / 2
+                        for column in 0..<profile.width {
+                            let cellLeft = column / 16 * 16
+                            let component = column % components
+                            let cellSamples = min(16, profile.width - cellLeft) / components
+                            let sourceColumn = cellLeft + cellSamples / 2 * components + component
+                            expected[offset + row * profile.width + column] = original[offset + sourceRow * profile.width + sourceColumn]
+                        }
+                    }
+                }
+                XCTAssertEqual(blocks[index].bytes, expected, "Every Y byte and independent UV pair must match its original center sample")
+                XCTAssertNotEqual(blocks[index].bytes, original)
+            }
+        }
+    }
+
     func testMalformedMotionFlagFailsPrepareAndCannotStart() async throws {
-        for flag in ["0", "true", "01", " 1", "1 ", "\n1"] {
+        for flag in ["0", "true", "01", " 1", "1 ", "\n1", "blocks", "blocks8", "Blocks16", " blocks16", "blocks16 "] {
             let source = FixtureCameraSource(profile: ArchiveProfile(width: 320, height: 240), motionFlag: flag)
             do {
                 _ = try await source.prepare(callbacks: CaptureSourceCallbacks(sample: { _ in XCTFail("Unexpected sample") }, event: { _ in XCTFail("Unexpected event") }))
@@ -91,12 +137,14 @@ final class FixtureMotionPatternTests: XCTestCase {
         let profile = ArchiveProfile(width: 7680, height: 4320)
         XCTAssertNoThrow(try profile.validate())
         let callbacks = CaptureSourceCallbacks(sample: { _ in }, event: { _ in })
-        let motion = FixtureCameraSource(profile: profile, motionFlag: "1")
-        do { _ = try await motion.prepare(callbacks: callbacks); XCTFail("Oversized motion textures accepted") } catch {}
+        for flag in ["1", "blocks16"] {
+            let motion = FixtureCameraSource(profile: profile, motionFlag: flag)
+            do { _ = try await motion.prepare(callbacks: callbacks); XCTFail("Oversized motion textures accepted") } catch {}
+            await motion.stop()
+        }
         let baseline = FixtureCameraSource(profile: profile)
         _ = try await baseline.prepare(callbacks: callbacks)
         await baseline.stop()
-        await motion.stop()
     }
 
     func testPackedTextureBudgetChecksBeforeAllocationAndSeedChangesPixels() throws {
@@ -108,24 +156,26 @@ final class FixtureMotionPatternTests: XCTestCase {
             XCTAssertThrowsError(try FixtureMotionPattern.retainedByteCount(profile: profile))
         }
         let profile = ArchiveProfile(width: 320, height: 240)
-        let a = try FixtureMotionPattern(profile: profile, seed: 7)
-        let b = try FixtureMotionPattern(profile: profile, seed: 7)
-        let c = try FixtureMotionPattern(profile: profile, seed: 8)
-        XCTAssertEqual(a.retainedBytes, 921_600)
-        func pixels(_ pattern: FixtureMotionPattern) throws -> Data {
-            var pixel: CVPixelBuffer?
-            XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, profile.width, profile.height,
-                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pixel), kCVReturnSuccess)
-            let buffer = try XCTUnwrap(pixel)
-            CVPixelBufferLockBaseAddress(buffer, [])
-            defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-            for plane in 0..<2 { memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), 0, CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)) }
-            try pattern.copyMiddle(into: buffer, frame: 0)
-            let base = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(buffer, 0))
-            return Data(bytes: base, count: CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) * profile.height)
+        for pattern in [FixtureMotionPattern.Pattern.pixelNoise, .blocks16] {
+            let a = try FixtureMotionPattern(profile: profile, seed: 7, pattern: pattern)
+            let b = try FixtureMotionPattern(profile: profile, seed: 7, pattern: pattern)
+            let c = try FixtureMotionPattern(profile: profile, seed: 8, pattern: pattern)
+            XCTAssertEqual(a.retainedBytes, 921_600)
+            func pixels(_ pattern: FixtureMotionPattern) throws -> Data {
+                var pixel: CVPixelBuffer?
+                XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, profile.width, profile.height,
+                    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &pixel), kCVReturnSuccess)
+                let buffer = try XCTUnwrap(pixel)
+                CVPixelBufferLockBaseAddress(buffer, [])
+                defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+                for plane in 0..<2 { memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), 0, CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)) }
+                try pattern.copyMiddle(into: buffer, frame: 0)
+                let base = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(buffer, 0))
+                return Data(bytes: base, count: CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) * profile.height)
+            }
+            XCTAssertEqual(try pixels(a), try pixels(b))
+            XCTAssertNotEqual(try pixels(a), try pixels(c))
         }
-        XCTAssertEqual(try pixels(a), try pixels(b))
-        XCTAssertNotEqual(try pixels(a), try pixels(c))
     }
 
     private func capture(profile: ArchiveProfile, flag: String?, frames: Int) async throws -> [MotionLedger.Entry] {

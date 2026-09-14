@@ -35,7 +35,9 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             try profile.validate()
             guard profile.framesPerSecond == 30, profile.audioSampleRate == 48_000,
                   profile.audioChannels == 1 else { throw FixtureError.format }
-            if try FixtureMotionPattern.enabled(motionFlag) { motion = try FixtureMotionPattern(profile: profile) }
+            if let pattern = try FixtureMotionPattern.selection(motionFlag) {
+                motion = try FixtureMotionPattern(profile: profile, pattern: pattern)
+            }
             used = true
             self.callbacks = callbacks
             return origin

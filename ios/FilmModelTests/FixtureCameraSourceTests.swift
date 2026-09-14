@@ -14,7 +14,7 @@ final class FixtureCameraSourceTests: XCTestCase {
     }
 
     func testDiagnosticHooksPreserveIndicesPTSAndCallbackOrder() async throws {
-        for motionFlag in [nil, "1"] as [String?] {
+        for motionFlag in [nil, "1", "blocks16"] as [String?] {
             let profile = ArchiveProfile(width: 320, height: 240)
             let source = FixtureCameraSource(profile: profile, failAfterFrames: 3, motionFlag: motionFlag)
             let diagnostics = ArchivePressureDiagnostics(recordingID: "fixture")
@@ -81,7 +81,7 @@ final class FixtureCameraSourceTests: XCTestCase {
     }
 
     func testSimulatorSourceProducesExportableRealMediaAndStops() async throws {
-        for motionFlag in [nil, "1"] as [String?] {
+        for motionFlag in [nil, "1", "blocks16"] as [String?] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
             defer { try? FileManager.default.removeItem(at: root) }

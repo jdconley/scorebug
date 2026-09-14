@@ -50,10 +50,13 @@ export function nativeStreamingTestBudget(holdSeconds) {
 export function nativeFixtureWorkload({ streaming, environment }) {
   const raw = environment.SCOREBUG_TEST_MOTION_FIXTURE;
   if (raw === undefined) return 'barcode';
-  assert.equal(raw, '1', 'Motion fixture requires the exact opt-in 1');
+  assert.ok(
+    raw === '1' || raw === 'blocks16',
+    'Motion fixture requires exact opt-in 1 or blocks16',
+  );
   assert.ok(
     streaming && environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     'Motion fixture requires native streaming and the direct RTMP recorder',
   );
-  return 'motion';
+  return raw === 'blocks16' ? 'motion-blocks16' : 'motion';
 }
