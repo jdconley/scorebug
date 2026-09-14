@@ -1,0 +1,71 @@
+# Native live tail diagnosis
+
+> Use bounded subagent implementation tasks with specification and quality reviews.
+> Keep native qualification isolated from builds and other media tests.
+
+## Evidence
+
+At `5f564db`, isolated native run `artifacts/qa/native-app-9V41qA` completed the
+iPhone 14/iOS 17.5 UI workflow and clean archive export. The unchanged live A/V end
+coverage gate failed: video ends at 29.451333 s, while decoded audio covers through
+29.559002 s, a 107.669 ms difference against a 100 ms budget. Last audio PTS plus
+packet duration differs from the sample-count endpoint by only 0.182 ms, so coverage
+arithmetic does not explain the failure.
+
+Native capture/encoder observations cover source frames 169–1098. The sink contains
+867 consecutive frames 229–1095; three terminal encoded frames are missing. Their
+100 ms nominal duration explains the gap except for 7.669 ms. Encoder completion
+does not prove SRT receipt, downstream decoding, or output delivery. Earlier passing
+run `native-app-PzWmTp` used the same 44.1 kHz live pipeline with only a 3.687 ms tail.
+
+The native SDK finish path drains raw input, VideoToolbox completion, compressed
+output, the muxer, and transport. SRT's bounded stop policy waits for local queue
+drain and peer latency plus 500 ms within a three-second budget. Its stop outcome
+is available on `SRTPublisher` but is not retained in the native artifact. Worker
+stdout/stderr are discarded by the fixture, and collected decoder history excludes
+terminal/stopping observations. These omissions limit localization.
+
+## First discriminating check: control stop ordering
+
+Code inspection identifies a possible race, not proof of this run's cause:
+
+- `CaptureStreamingModel.stopStreaming()` sets `shouldStopOwnedBroadcast` before
+  awaiting publisher teardown. Its explicit final `pollControl()` waits for teardown,
+  but an independent periodic poll can enter while teardown is still pending.
+- `pollControl()` can submit the owned stop command without a publisher-drain check.
+  A poll already awaiting recovery may also resume after stop begins; an entry-only
+  guard needs scrutiny under MainActor reentrancy.
+- Removing assignment/source readiness makes the worker stop FFmpeg and relay
+  reconciliation removes obsolete paths. Those operations can truncate downstream
+  media if requested before the local sender completes its bounded finish.
+
+First add a deterministic regression with a gated publisher finish and an observable
+fake control server. Exercise a poll started during teardown and a poll already
+awaiting recovery when stop begins. Establish whether either submits a local owned
+stop before finish is released. Preserve stop ownership, stale-selection protection,
+pending-command recovery, startup cancellation, and repeated-stop joining.
+
+If that regression confirms an ordering defect, design the smallest ownership-safe
+barrier and test that the stop proceeds after the existing bounded finish settles,
+including failure. Do not add sleeps, extend transport budgets, or block clean local
+recording on network work. Review and run full relevant model/core suites and the
+combined Release build before an unchanged isolated native rerun. A passing rerun
+would support the fix but would not by itself prove the race caused `9V41qA`.
+
+## If tail localization remains unresolved
+
+Retain small, bounded, sanitized evidence across the stop boundary: native transport
+stop outcome, local broadcast-stop timing, worker stop reason/exit outcome, and a
+terminal decoder observation with last PTS. Design exact identity/clock semantics
+before instrumentation; do not compare unsynchronized host clocks or dump credentials
+and raw worker configuration. Preserve existing source pacing and media policies.
+
+If terminal decoder coverage reaches the final native frame but the sink does not,
+investigate worker encoding/output drain. If decoder coverage ends early, distinguish
+SRT delivery, relay revocation and control shutdown. Direct sink finalization remains
+a possibility, although the runner already stops MediaMTX before copying its MP4.
+
+Keep the 100 ms A/V tail gate and every frame/rate/archive gate unchanged. The earlier
+archive overflow remains unresolved; retain its diagnostics for future recurrence.
+No automatic quality adaptation or physical-device reliability claim follows from
+these short local runs.

@@ -150,3 +150,40 @@ fix and a behavioral regression; obtain source reviews and run relevant checks.
 Then repeat the unchanged recording/streaming/scoring/export/media gates and the
 report-age comparison. A later pass does not erase this failure or establish
 sustained recording reliability. Hardware, impairment and soak gates remain open.
+
+### Instrumented native run: archive completed, live tail failed
+
+The isolated run `artifacts/qa/native-app-9V41qA` at `5f564db` used iPhone 14/iOS
+17.5 and the local Mac VideoToolbox worker. The native UI workflow passed, but the
+runner exited 1 during live media analysis: audio/video end coverage differed by
+107.669 ms, exceeding the unchanged 100 ms limit. This is not a native qualification
+pass. Log: `artifacts/qa/archive-pressure-native.log`.
+
+The archive overflow did not recur. Diagnostics are closed, valid and fully covered,
+with 2,620 accepted/written samples, zero rejected/dropped samples, and peak queue
+occupancy of one item/3,200 bytes. Archive decode contains 1,310 consecutive source
+frames 0–1309 at 30 fps; its A/V end difference is 1.334 ms. The final bounded
+producer/consumer histories contain only their retained tail, so their small delays
+cannot explain the earlier failed run. All 23 persistence spans were retained; the
+maximum measured persistence duration is 6.738 ms. No overflow fix is established.
+
+Separate post-run checks against the saved files found:
+
+- Live video has 867 consecutive source frames 229–1095 at approximately 30 fps,
+  with no missing frames inside that acquired interval. Native capture and encoder
+  observations both contain frames 169–1098; the final three encoded frames are
+  absent from the sink. Three nominal frames account for 100 ms of the tail gap.
+- Live steady marker offset is at most 65.25 ms. Five complete steady observation
+  windows match 750 decoded frames; their encoder rates are 29.8–30.2 fps. The
+  final partial window includes shutdown and is reported separately.
+- Both worker-age helper proof windows match independently collected API windows.
+  These historical helper checks pass independently; the complete native gate
+  remains failed because of the live tail.
+- Native scoring changed 341 thresholded overlay pixels. The failure preservation
+  manifest is complete: all 52 copied files match the normal collection by SHA-256.
+
+Evidence: `post-run-independent-checks.json`, `failure-copy-verification.json`,
+`archive-diagnostics.json`, `video-observation.json`, and the media/probe files in
+that run directory. Post-run checks do not replace the runner's failed result.
+
+Continue with the [native tail diagnosis](2026-09-14-native-tail-diagnosis.md).
