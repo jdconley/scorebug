@@ -14,9 +14,9 @@ enum VideoObservationFixture {
     static func completedWindowLimit(environment: [String: String]) -> Int {
         guard requested(environment: environment),
               let raw = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"],
-              let hold = Int(raw), String(hold) == raw, (12...180).contains(hold)
+              let hold = Int(raw), String(hold) == raw, (12...600).contains(hold)
         else { return 8 }
-        return 64
+        return hold > 180 ? 128 : 64
     }
 
     static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = []) throws -> Data {

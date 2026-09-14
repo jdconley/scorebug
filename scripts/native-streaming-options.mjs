@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 /** Called after continuity qualification of the known 30 fps source fixture. */
 export function qualifyNativeStreamingHold({ holdSeconds, savedFrames }) {
   assert.ok(
-    Number.isSafeInteger(holdSeconds) && holdSeconds >= 12 && holdSeconds <= 180,
+    Number.isSafeInteger(holdSeconds) && holdSeconds >= 12 && holdSeconds <= 600,
     'Invalid hold duration',
   );
   assert.ok(Number.isSafeInteger(savedFrames) && savedFrames > 0, 'Invalid saved frame count');
@@ -29,8 +29,19 @@ export function nativeStreamingOptions({ streaming, environment }) {
       /^(0|[1-9]\d*)$/.test(raw) &&
       Number.isSafeInteger(holdSeconds) &&
       holdSeconds >= 12 &&
-      holdSeconds <= 180,
-    'Native streaming hold must be a canonical integer from 12 through 180 seconds',
+      holdSeconds <= 600,
+    'Native streaming hold must be a canonical integer from 12 through 600 seconds',
   );
-  return { holdSeconds, completedWindowLimit: 64, extended: true };
+  return { holdSeconds, completedWindowLimit: holdSeconds > 180 ? 128 : 64, extended: true };
+}
+
+export function nativeStreamingTestBudget(holdSeconds) {
+  assert.ok(
+    Number.isSafeInteger(holdSeconds) && holdSeconds >= 12 && holdSeconds <= 600,
+    'Invalid hold duration',
+  );
+  return {
+    workflowTimeoutMs: 600_000 + Math.max(0, holdSeconds - 180) * 1000,
+    testExecutionAllowanceSeconds: holdSeconds > 180 ? holdSeconds + 180 : null,
+  };
 }

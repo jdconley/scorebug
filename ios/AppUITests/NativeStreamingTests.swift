@@ -14,7 +14,7 @@ final class NativeStreamingTests: XCTestCase {
         if !rawHold.isEmpty {
             let parsed = try XCTUnwrap(Int(rawHold))
             XCTAssertEqual(String(parsed), rawHold)
-            XCTAssertTrue((12...180).contains(parsed))
+            XCTAssertTrue((12...600).contains(parsed))
             holdSeconds = parsed
             app.launchEnvironment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = rawHold
         }

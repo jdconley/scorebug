@@ -71,7 +71,7 @@ export function qualifyVideoObservation({
   liveIDs,
   completedWindowLimit = 8,
 }) {
-  assert.ok([8, 64].includes(completedWindowLimit), 'Unsupported fixture history limit');
+  assert.ok([8, 64, 128].includes(completedWindowLimit), 'Unsupported fixture history limit');
   assert.equal(snapshot.formatVersion, 1, 'Unsupported observation format');
   for (const key of ['recordingID', 'matchID', 'broadcastGeneration']) {
     assert.notEqual(expectedScope[key], undefined, `Missing expected scope ${key}`);

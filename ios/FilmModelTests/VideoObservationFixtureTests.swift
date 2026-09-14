@@ -48,12 +48,30 @@ final class VideoObservationFixtureTests: XCTestCase {
     func testExtendedHistoryRequiresExplicitFixtureAndCanonicalBoundedHold() {
         XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: [:]), 8)
         XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180"]), 8)
-        for raw in ["", " 180", "0180", "+180", "180.0", "11", "181", "NaN"] {
+        for raw in ["", " 180", "0180", "+180", "180.0", "11", "601", "NaN"] {
             XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": raw]), 8)
         }
         for raw in ["12", "90", "180"] {
             XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": raw]), 64)
         }
+        for raw in ["181", "600"] {
+            XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": raw]), 128)
+        }
+    }
+
+    func testExtendedFixtureRetainsTenMinutesWithoutEviction() throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match", broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let limit = VideoObservationFixture.completedWindowLimit(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "600"])
+        var accumulator = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0, completedWindowLimit: limit)
+        for frame in 0..<18000 {
+            let pts = CMTime(value: Int64(frame), timescale: 30)
+            accumulator.observe(.captureVideo, sourcePTS: pts, at: Double(frame) / 30)
+            accumulator.observe(.encodedVideo, sourcePTS: pts, at: Double(frame) / 30)
+        }
+        let snapshot = accumulator.close(at: 600)
+        XCTAssertEqual(snapshot.completed.count, 120)
+        XCTAssertEqual(snapshot.omittedCompletedWindowCount, 0)
+        XCTAssertNil(snapshot.omittedThroughMonotonicTime)
     }
 
     func testExtendedFixtureRetainsThreeMinutesWithoutEviction() throws {

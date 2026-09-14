@@ -133,13 +133,79 @@ struct VideoFrameObservationTests {
                 try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0, windowDuration: duration)
             }
         }
-        for limit in [0, 65, Int.max] {
+        for limit in [-1, 0, 129, 130, Int.max] {
             #expect(throws: VideoFrameObservationError.invalidConfiguration) {
                 try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0, completedWindowLimit: limit)
             }
         }
         let zero = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
         #expect(zero.snapshot.current.monotonicStart == 0)
+    }
+
+    @Test func explicitHistoryRetainsTenMinutesOfSamplesThenEvictsAt128Windows() throws {
+        var value = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0,
+            completedWindowLimit: 128)
+        for window in 0..<130 {
+            for frame in 0..<150 {
+                let sourceFrame = Int64(window * 150 + frame)
+                let time = Double(window * 5) + Double(frame) / 30
+                let captured = value.observe(.captureVideo, sourcePTS: pts(sourceFrame), at: time)
+                let encoded = value.observe(.encodedVideo, sourcePTS: pts(sourceFrame), at: time)
+                #expect(captured && encoded)
+            }
+            value.poll(at: Double((window + 1) * 5))
+            if window == 119 || window == 127 {
+                let snapshot = value.snapshot
+                #expect(snapshot.completed.count == window + 1)
+                #expect(snapshot.omittedCompletedWindowCount == 0)
+                #expect(snapshot.omittedThroughMonotonicTime == nil)
+                #expect(snapshot.completed.first?.monotonicStart == 0)
+                #expect(snapshot.completed.last?.monotonicEnd == Double((window + 1) * 5))
+                #expect(snapshot.completed.allSatisfy {
+                    !$0.isPartial && !$0.isCoalescedEmptyGap && $0.coveredWindowCount == 1
+                        && $0.captureVideo.callbackCount == 150 && $0.encodedVideo.callbackCount == 150
+                        && $0.captureVideo.advancingSourcePTSCount == 150
+                        && $0.encodedVideo.advancingSourcePTSCount == 150
+                })
+            }
+        }
+        let snapshot = value.close(at: 650)
+        #expect(snapshot.completed.count == 128)
+        #expect(snapshot.omittedCompletedWindowCount == 2)
+        #expect(snapshot.omittedThroughMonotonicTime == 10)
+        #expect(snapshot.completed.map(\.monotonicStart) == (2..<130).map { Double($0 * 5) })
+        #expect(snapshot.completed.last?.monotonicEnd == 650)
+        #expect(snapshot.completed.first?.captureVideo.firstSourcePTS == pts(300))
+        #expect(snapshot.completed.last?.encodedVideo.lastSourcePTS == pts(19_499))
+        #expect(snapshot.current.captureVideo.callbackCount == 0)
+        #expect(snapshot.current.encodedVideo.callbackCount == 0)
+        #expect(snapshot.current.isClosed)
+        #expect(snapshot.invalidity.isEmpty)
+        #expect(snapshot.rejectedClockOperationCount == 0)
+    }
+
+    @Test func defaultHistoryStillRetainsOnlyEightSampledWindows() throws {
+        var value = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
+        for window in 0..<10 {
+            value.observe(.captureVideo, sourcePTS: pts(Int64(window)), at: Double(window * 5))
+            value.poll(at: Double((window + 1) * 5))
+        }
+        let snapshot = value.snapshot
+        #expect(snapshot.windowDuration == 5)
+        #expect(snapshot.completed.count == 8)
+        #expect(snapshot.completed.map(\.monotonicStart) == (2..<10).map { Double($0 * 5) })
+        #expect(snapshot.completed.allSatisfy { $0.captureVideo.callbackCount == 1 && !$0.isCoalescedEmptyGap })
+        #expect(snapshot.omittedCompletedWindowCount == 2)
+        #expect(snapshot.omittedThroughMonotonicTime == 10)
+    }
+
+    @Test func supportsExplicitHistoryBoundsThrough128() throws {
+        for limit in [1, 64, 65, 128] {
+            let value = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0,
+                completedWindowLimit: limit)
+            #expect(value.snapshot.completed.isEmpty)
+            #expect(value.snapshot.omittedCompletedWindowCount == 0)
+        }
     }
 
     @Test func countersSaturateAndRemainInvalidAcrossRotation() throws {

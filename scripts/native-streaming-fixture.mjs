@@ -13,7 +13,8 @@ import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
-export async function nativeStreamingFixture({ artifact, root, run }) {
+export async function nativeStreamingFixture({ artifact, root, run, decodedWindowLimit = 64 }) {
+  assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   const names = [];
   let worker, done, workerEvidence, directRecorder;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
@@ -171,7 +172,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
             );
             assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
             const { status } = await result.json();
-            recordDecodedVideoEvidence(decodedWindows, status);
+            recordDecodedVideoEvidence(decodedWindows, status, decodedWindowLimit);
             await delay(500, undefined, { signal: statusAbort.signal });
           }
         })().catch((error) => {
@@ -270,7 +271,8 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
   }
 }
 
-export function recordDecodedVideoEvidence(decodedWindows, status) {
+export function recordDecodedVideoEvidence(decodedWindows, status, decodedWindowLimit = 64) {
+  assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   const observation = status.observation;
   const video = observation?.decodedVideo;
   assert.ok(
@@ -304,7 +306,10 @@ export function recordDecodedVideoEvidence(decodedWindows, status) {
       if (prior.decodedVideoAgeUpperBoundMs == null && sample.decodedVideoAgeUpperBoundMs != null)
         decodedWindows.set(key, sample);
     } else {
-      assert.ok(decodedWindows.size < 64, 'Decoder evidence exceeded fixture bound');
+      assert.ok(
+        decodedWindows.size < decodedWindowLimit,
+        'Decoder evidence exceeded fixture bound',
+      );
       decodedWindows.set(key, sample);
     }
   }

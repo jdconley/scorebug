@@ -15,12 +15,17 @@ import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
-import { nativeStreamingOptions, qualifyNativeStreamingHold } from './native-streaming-options.mjs';
+import {
+  nativeStreamingOptions,
+  nativeStreamingTestBudget,
+  qualifyNativeStreamingHold,
+} from './native-streaming-options.mjs';
 import { qualifyDirectRecorderDelivery } from './direct-recorder-qualification.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const streamingBudget = nativeStreamingTestBudget(streamingOptions.holdSeconds);
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-14';
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -33,6 +38,7 @@ await writeFile(
       deviceType,
       streaming,
       streamingOptions,
+      streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
     null,
@@ -281,7 +287,13 @@ try {
     `iOS ${runtime} runtime unavailable`,
   );
   await run('pnpm', ['--filter', '@scorebug/protocol', 'build'], 'protocol');
-  if (streaming) proxy = await nativeStreamingFixture({ artifact, root, run });
+  if (streaming)
+    proxy = await nativeStreamingFixture({
+      artifact,
+      root,
+      run,
+      decodedWindowLimit: streamingOptions.completedWindowLimit === 128 ? 128 : 64,
+    });
   api = await startScoringTestServer(join(artifact, 'matches.sqlite'), proxy?.environment);
   if (proxy) await proxy.startWorker(api.baseURL);
   await run('xcodegen', ['generate', '--spec', 'ios/Project.yml'], 'generate');
@@ -318,6 +330,16 @@ try {
       '1',
       '-resultBundlePath',
       resultBundle,
+      ...(streamingBudget.testExecutionAllowanceSeconds === null
+        ? []
+        : [
+            '-test-timeouts-enabled',
+            'YES',
+            '-default-test-execution-time-allowance',
+            String(streamingBudget.testExecutionAllowanceSeconds),
+            '-maximum-test-execution-time-allowance',
+            String(streamingBudget.testExecutionAllowanceSeconds),
+          ]),
       'test',
       `-only-testing:ScorebugAppUITests/${streaming ? 'NativeStreamingTests' : 'NativeRecordingTests'}`,
       'CODE_SIGNING_ALLOWED=YES',
@@ -326,7 +348,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
     ],
     'workflow',
-    { timeout: 600_000 },
+    { timeout: streamingBudget.workflowTimeoutMs },
   );
   // Xcode may shut its destination down after tests; boot the same owned device
   // to inspect the app container rather than rerunning or losing its recordings.
@@ -484,6 +506,7 @@ try {
         runtime,
         deviceType,
         streamingOptions,
+        streamingBudget,
         media,
         live,
         statuses: states,

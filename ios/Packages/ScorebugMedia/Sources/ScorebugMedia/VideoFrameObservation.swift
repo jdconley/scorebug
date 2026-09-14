@@ -143,7 +143,7 @@ public struct VideoFrameObservationSnapshot: Sendable {
 /// Equal monotonic times are allowed. Each callback supplies its own clock value.
 ///
 /// Legal clock values are finite seconds in 0...1e12; duration is 1/1024...86400
-/// seconds, history limit 1...64. These bounds keep index arithmetic representable
+/// seconds, history limit 1...128. These bounds keep index arithmetic representable
 /// and avoid windows below clock precision. Out-of-range, reversed, or nonfinite
 /// clocks reject the operation and sticky-invalidate the owner, preserving PTS.
 ///
@@ -180,7 +180,7 @@ public struct VideoFrameObservationAccumulator: Sendable {
          windowDuration: Double, completedWindowLimit: Int, counterLimit: UInt64) throws {
         guard Self.legalClock(monotonicAnchor), windowDuration.isFinite,
               (1.0 / 1024...86400).contains(windowDuration),
-              (1...64).contains(completedWindowLimit), counterLimit > 0
+              (1...128).contains(completedWindowLimit), counterLimit > 0
         else { throw VideoFrameObservationError.invalidConfiguration }
         self.scope = scope
         anchor = monotonicAnchor

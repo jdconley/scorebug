@@ -22,7 +22,7 @@ test('saved source coverage must include the complete requested hold', () => {
       /frame/,
     );
 });
-for (const value of ['12', '90', '180']) {
+for (const value of ['12', '90', '180', '181', '600']) {
   test(`explicit ${value}-second hold uses bounded extended evidence`, () => {
     assert.deepEqual(
       options.nativeStreamingOptions({
@@ -32,11 +32,15 @@ for (const value of ['12', '90', '180']) {
           SCOREBUG_TEST_STREAM_HOLD_SECONDS: value,
         },
       }),
-      { holdSeconds: Number(value), completedWindowLimit: 64, extended: true },
+      {
+        holdSeconds: Number(value),
+        completedWindowLimit: Number(value) > 180 ? 128 : 64,
+        extended: true,
+      },
     );
   });
 }
-for (const value of ['', ' 90', '90 ', '090', '+90', '9e1', '90.0', '11', '181', '-1', 'NaN']) {
+for (const value of ['', ' 90', '90 ', '090', '+90', '9e1', '90.0', '11', '601', '-1', 'NaN']) {
   test(`rejects malformed or unbounded hold ${JSON.stringify(value)}`, () => {
     assert.throws(
       () =>
@@ -67,4 +71,29 @@ test('extended hold requires streaming and exact direct recorder selection', () 
         /requires/i,
       );
     }
+});
+
+test('ten-minute source coverage cannot pass with a shorter saved stream', () => {
+  assert.equal(options.qualifyNativeStreamingHold({ holdSeconds: 600, savedFrames: 18000 }), 600);
+  assert.throws(
+    () => options.qualifyNativeStreamingHold({ holdSeconds: 600, savedFrames: 17999 }),
+    /shorter/,
+  );
+});
+test('workflow and XCTest budgets extend only beyond the existing hold bound', () => {
+  for (const holdSeconds of [12, 180])
+    assert.deepEqual(options.nativeStreamingTestBudget(holdSeconds), {
+      workflowTimeoutMs: 600000,
+      testExecutionAllowanceSeconds: null,
+    });
+  assert.deepEqual(options.nativeStreamingTestBudget(181), {
+    workflowTimeoutMs: 601000,
+    testExecutionAllowanceSeconds: 361,
+  });
+  assert.deepEqual(options.nativeStreamingTestBudget(600), {
+    workflowTimeoutMs: 1020000,
+    testExecutionAllowanceSeconds: 780,
+  });
+  for (const value of [11, 601, Infinity, '600', 600.5])
+    assert.throws(() => options.nativeStreamingTestBudget(value), /hold/);
 });

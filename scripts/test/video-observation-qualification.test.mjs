@@ -238,3 +238,23 @@ test('explicit capture detach inside a full window preserves its lower cadence w
   f.snapshot.captureDetachedAt = 25;
   assert.throws(() => qualifyVideoObservation(f), /24 fps/);
 });
+
+test('ten-minute observation history requires128 and preserves continuity and eviction checks', () => {
+  const f = fixture();
+  for (let i = 3; i < 120; i++)
+    f.snapshot.completed.push(window(i * 5, (i + 1) * 5, i * 150, (i + 1) * 150 - 1));
+  f.snapshot.current = window(600, 602, 18000, 18059, true);
+  f.snapshot.captureDetachedAt = 602;
+  f.archiveIDs = ids(0, 18209);
+  f.liveIDs = ids(120, 18059);
+  assert.throws(
+    () => qualifyVideoObservation({ ...f, completedWindowLimit: 64 }),
+    /Bounded completed history/,
+  );
+  assert.equal(qualifyVideoObservation({ ...f, completedWindowLimit: 128 }).windows.length, 121);
+  f.snapshot.omittedCompletedWindowCount = '1';
+  assert.throws(() => qualifyVideoObservation({ ...f, completedWindowLimit: 128 }), /evicted/);
+  f.snapshot.omittedCompletedWindowCount = '0';
+  f.snapshot.completed.splice(70, 1);
+  assert.throws(() => qualifyVideoObservation({ ...f, completedWindowLimit: 128 }), /contiguous/);
+});
