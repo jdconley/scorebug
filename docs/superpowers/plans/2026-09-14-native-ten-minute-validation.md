@@ -1,0 +1,41 @@
+# Ten-minute native validation plan
+
+> **For agentic workers:** Use superpowers:subagent-driven-development for the independent bounded core-observer change and specification/quality reviews. Reuse existing agents only when session capacity prevents fresh agents.
+
+**Goal:** Qualify a 600-second simultaneous native recording and streaming hold on this Mac, preserving full video-window evidence and every existing media/delivery gate.
+
+**Architecture:** Keep the production observer default at eight windows. Extend its explicit configurable ceiling from 64 to 128, and select 128 only for DEBUG simulator holds over 180 seconds. The test-only API evidence collector also accepts an explicit 128-window bound. This avoids adding periodic file I/O to the archive-pressure workload. Existing short and three-minute configurations remain unchanged.
+
+**Tech stack:** Swift bounded observation accumulator, XCTest/UI tests, Node test runner, existing local native publishing/recording and VideoToolbox worker/direct RTMP receiver.
+
+## Design decision and scope
+
+The previous goal turn made verified progress: the 180-second hold passed with complete archive/live video, 39 steady 30 fps windows and no archive rejection/drop. It does not complete the ten-minute requirement or resolve the prior archive overflow.
+
+Two approaches were considered: an incremental snapshot journal with periodic I/O, or a modest larger bounded observation capacity. Choose 128 windows: 120 cover the requested ten minutes, leaving eight for startup/drain. If startup overruns that capacity, zero-eviction checks still fail; no history is silently discarded. This changes the accepted optional core capacity, but default production runtime behavior, five-second windows, media queues, recording, encoding and adaptive policy remain unchanged. Test capacities are trusted configuration inputs, not supplied by an artifact.
+
+The 600-second hold exceeds the old 600-second outer command deadline. Long holds therefore use a workflow deadline of `600000 + (holdSeconds - 180) * 1000` ms and explicit XCTest allowance `holdSeconds + 180` seconds; existing holds retain their existing outer deadline and XCTest settings. Current export and per-media-operation limits remain unchanged unless actual timing evidence requires adjustment. All children remain owned and joined; no external systems or broadcasts are touched.
+
+## Task 1: Core bounded history
+
+Files: `ios/Packages/ScorebugMedia/Sources/ScorebugMedia/VideoFrameObservation.swift` and `Tests/ScorebugMediaTests/VideoFrameObservationTests.swift`.
+
+- [ ] Add failing tests: an explicit 128-window accumulator retains 600 seconds of five-second windows without eviction, then evicts deterministically at its bound with accurate omitted count/time; the default still retains eight; zero and 129+ are rejected. Observe actual samples so coalesced empty gaps cannot stand in for history.
+- [ ] Change only the constructor's supported range from `1...64` to `1...128`. Run focused red/green tests and the complete Media suite. Parent performs both reviews and Release checks. Do not modify cadence, counters, rotation, scope or core defaults.
+
+## Task 2: Ten-minute fixture wiring
+
+Files: `scripts/native-streaming-options.mjs` and tests; `scripts/native-streaming-fixture.mjs` and `scripts/test/native-decoded-evidence.test.mjs`; `scripts/video-observation-qualification.mjs` and tests; `scripts/test-native-app.mjs`; `ios/AppUITests/NativeStreamingTests.swift`; `ios/Sources/Scorebug/Capture/VideoObservationFixture.swift`; `ios/FilmModelTests/VideoObservationFixtureTests.swift`.
+
+- [ ] Fail-first options tests extend canonical holds to 12..600. Absent remains hold12/history8; explicit holds through180 retain64; 181..600 choose128; 601 and malformed/nonstreaming/non-direct inputs fail. `qualifyNativeStreamingHold` accepts the same bounded duration and still requires at least hold*30 saved source frames.
+- [ ] Add `nativeStreamingTestBudget(holdSeconds)` returning `{workflowTimeoutMs, testExecutionAllowanceSeconds}`: 12..180 =>600000/null, 181..600 =>600000+(hold-180)*1000 / hold+180. Validate canonical numeric bounds; test default, boundaries and invalid values. Runner uses the outer deadline and, for nonnull allowance, Xcode's documented test-timeout flags. Persist budgets with configuration/results before resources.
+- [ ] Extend Swift UI parsing and explicit DEBUG history selection to600, retaining64 through180 and using128 above. Preserve strict finite duration baseline, monotonic elapsed hold, active recording/publisher/worker checks and post-stream archive continuation. Add fixture history tests for full600-second retention.
+- [ ] Extend JS observation qualification's trusted allowed limits to8/64/128, preserving all zero-eviction, scope, continuity and cadence checks. Add a >64-window fixture that fails without128, passes with128, and still rejects a missing middle frame/window or eviction.
+- [ ] Add `decodedWindowLimit = 64` argument to the native proxy fixture and collector. Only64/128 are accepted before resources; pass128 only for the validated long hold. Tests prove default bound64, explicit128 capacity and failure at129, including immutable reuse and invalid telemetry checks at the larger bound. Do not change the production API/status history.
+- [ ] Run focused/full tools, Film tests and Media tests, generic iOS Release build and arm64 simulator UI build. Complete specification and independent quality review; commit the reviewed revision before media qualification.
+
+## Task 3: Isolated ten-minute pressure run
+
+- [ ] Run one owned iPhone14/iOS17.5 native fixture with direct receiver and `SCOREBUG_TEST_STREAM_HOLD_SECONDS=600`. No concurrent builds/tests/media work. Wait on the actual live session; retain failures and cleanup all owned resources.
+- [ ] Inspect actual results: >=600 seconds monotonic hold and source coverage, all archive frames, complete live decoded/encoded tail, all five-second observation windows, A/V markers/end coverage, scoring/export, scope and age proofs. Inspect archive first failure and lifetime queue counts plus retained timing/omission limits; distinguish actual worker and receiver exits.
+- [ ] Save exact revision, configuration and measured result. A pass is this synthetic local simulator configuration only; real camera/Watch routes, earlier overflow attribution, adaptive quality and other worker hosts remain open. If it fails, use retained artifacts to determine the next corrective action without weakening a gate.
