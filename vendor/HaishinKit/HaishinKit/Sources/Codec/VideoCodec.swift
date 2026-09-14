@@ -80,6 +80,14 @@ final class VideoCodec {
         }
     }
 
+    /// Capture after raw input drains. The caller runs this off its stream actor
+    /// so callbacks can be consumed concurrently within the existing queue bound.
+    /// Only terminal invalidation may overlap the captured native session.
+    func makeCompletion() -> @Sendable () -> Void {
+        let completion = VideoCompletion(session: session, output: continuation, failure: failure)
+        return { completion.run() }
+    }
+
     func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
         switch mode {
         case .compression:
@@ -179,5 +187,20 @@ extension VideoCodec: Runner {
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
         #endif
+    }
+}
+
+/// Native VideoToolbox sessions support callback completion and invalidation;
+/// this immutable owner transfers no mutable VideoCodec state off its actor.
+private struct VideoCompletion: @unchecked Sendable {
+    let session: (any VTSessionConvertible)?
+    let output: PublishingQueue<CMSampleBuffer>?
+    let failure: PublishingFailureLatch
+    func run() {
+        if let session {
+            let status = session.completeFrames()
+            if status != noErr { failure.fail(.codecFailed(status: status)) }
+        }
+        output?.finish()
     }
 }

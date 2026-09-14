@@ -57,6 +57,10 @@ extension VTDecompressionSession: VTSessionConvertible {
         }
     }
 
+    func completeFrames() -> OSStatus {
+        VTDecompressionSessionWaitForAsynchronousFrames(self)
+    }
+
     func invalidate() {
         VTDecompressionSessionInvalidate(self)
     }

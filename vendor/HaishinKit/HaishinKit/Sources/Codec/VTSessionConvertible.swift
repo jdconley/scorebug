@@ -17,6 +17,7 @@ protocol VTSessionConvertible {
     func setOption(_ option: VTSessionOption) -> OSStatus
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
     func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws
+    func completeFrames() -> OSStatus
     func invalidate()
 }
 

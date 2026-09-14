@@ -5,7 +5,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`. The original BSD-3-Clause notice is in
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
-`scorebug.patch` is the diff against that revision for the 11 modified upstream
+`scorebug.patch` is the diff against that revision for the 12 modified upstream
 files and the added `PublishingQueue.swift` primitive. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
@@ -17,6 +17,10 @@ The C++ runtime is explicitly linked. Upstream RTMP, RTC, MoQT, examples, doc
 plugins, and the large base-module test assets are omitted. SRT protocol tests
 are retained except the upstream connection tests that launch unjoined tasks
 on fixed ports. Scorebug's real network tests own and clean up their endpoints.
+
+The native app also exposed an SRT URL parser defect: percent-encoded stream IDs
+were sent literally and rejected by the relay. Query items now decode exactly
+once through URLComponents; an encoded delimiter/passphrase regression covers it.
 
 The local copy corrects the experimentally demonstrated startup media loss in
 the TS writer and bounds the compressed publishing queues. Overflow, codec, and

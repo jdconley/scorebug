@@ -250,6 +250,15 @@ final class TSWriter {
         self.failure.fail(.muxerFailed(reason: String(describing: failure)))
     }
 
+    /// End transport output after both compressed input consumers have drained.
+    /// Retain muxer state until the transport consumer accepts its final payload.
+    func finishOutput() {
+        // Accepted PES cannot disappear just because another expected track
+        // never arrived before stop. No valid common-origin stream was emitted.
+        guard pending.isEmpty else { fail(.incompleteStartup); return }
+        outputQueue?.finish()
+    }
+
     /// Clears the writer object for new transport stream.
     func clear() {
         audioFormat = nil

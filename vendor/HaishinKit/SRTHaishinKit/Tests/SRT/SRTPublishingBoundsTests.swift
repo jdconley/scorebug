@@ -40,7 +40,7 @@ import Testing
         await stream.setExpectedMedias([.video])
         await stream.publish()
         #expect(await connection.connected)
-        try await socket.send(Data([1]))
+        try? await socket.send(Data([1]))
         let deadline = ContinuousClock.now + .seconds(2)
         while await connection.connected && ContinuousClock.now < deadline { await Task.yield() }
         #expect(await connection.publishingError == .transportWriteFailed)
@@ -91,7 +91,7 @@ import Testing
     }
 
     @Test func socketOversizeIsRejectedBeforeChunking() async {
-        let socket = SRTSocket(outputLimits: .init(count: 1, bytesPerItem: 2), sender: { Int32($0.count) })
+        let socket = SRTSocket(maxPayloadBytes: 2, sender: { Int32($0.count) })
         await socket.startRunning()
         do {
             try await socket.send(Data([1, 2, 3]))
@@ -127,6 +127,65 @@ import Testing
         #expect(recorder.sizes == [1316, 1316, 1316, 52])
     }
 
+    @Test func completedSendBackpressuresStartupBurst() async throws {
+        let recorder = BytesRecorder()
+        let socket = SRTSocket(sender: { recorder.append($0); return Int32($0.count) })
+        await socket.startRunning()
+        let keyframe = Data(repeating: 17, count: 256 * 1024)
+        try await socket.send(keyframe)
+        #expect(recorder.bytes.count == keyframe.count, "Return only after this bounded payload reaches the transport")
+        for _ in 0..<32 { try await socket.send(Data(repeating: 33, count: 188)) }
+        #expect(await socket.publishingError == nil)
+        #expect(recorder.bytes.count == keyframe.count + 32 * 188)
+        await socket.stopRunning()
+    }
+
+    @Test func stopInterruptsInFlightChunkingAndRejectsLateCompletion() async throws {
+        let recorder = BytesRecorder()
+        let socket = SRTSocket(sender: { recorder.append($0); return Int32($0.count) })
+        await socket.startRunning()
+        let send = Task { try await socket.send(Data(repeating: 7, count: 2 * 1024 * 1024)) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while recorder.byteCount == 0, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(recorder.byteCount > 0)
+        await socket.stopRunning()
+        do { try await send.value; Issue.record("Stopped send must not succeed") } catch {}
+        #expect(recorder.byteCount < 2 * 1024 * 1024)
+        let stoppedBytes = recorder.byteCount
+        do { try await socket.send(Data([9])); Issue.record("Closed socket accepted media") } catch {}
+        #expect(recorder.byteCount == stoppedBytes)
+    }
+
+    @Test func cancelledPartialSendFailsTerminally() async throws {
+        let recorder = BytesRecorder()
+        let socket = SRTSocket(sender: { recorder.append($0); return Int32($0.count) })
+        await socket.startRunning()
+        let send = Task { try await socket.send(Data(repeating: 7, count: 2 * 1024 * 1024)) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while recorder.byteCount == 0, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(recorder.byteCount > 0)
+        send.cancel()
+        do { try await send.value; Issue.record("Cancelled send must not succeed") } catch is CancellationError {}
+        #expect(await socket.publishingError == .outputTerminated(boundary: "SRT socket cancelled send"))
+        #expect(await socket.isRunning == false)
+        #expect(recorder.byteCount < 2 * 1024 * 1024)
+    }
+
+    @Test func overlappingSendFailsInsteadOfInterleavingTransportBytes() async throws {
+        let recorder = BytesRecorder()
+        let socket = SRTSocket(sender: { recorder.append($0); return Int32($0.count) })
+        await socket.startRunning()
+        let first = Task { try await socket.send(Data(repeating: 7, count: 2 * 1024 * 1024)) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while recorder.byteCount == 0, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(recorder.byteCount > 0)
+        do { try await socket.send(Data([9])); Issue.record("Concurrent transport send accepted") } catch {}
+        do { try await first.value; Issue.record("Failed publishing session succeeded") } catch {}
+        #expect(await socket.publishingError == .queueCapacityExceeded(boundary: "SRT socket concurrent send"))
+        #expect(!recorder.bytes.contains(9))
+        await socket.stopRunning()
+    }
+
     @Test func socketTimeoutDefaultsAreFinite() async throws {
         let socket = SRTSocket()
         try await socket.enforceTimeouts()
@@ -140,6 +199,7 @@ import Testing
 private final class BytesRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var chunks: [Data] = []
+    var byteCount: Int { lock.withLock { chunks.reduce(0) { $0 + $1.count } } }
     var bytes: Data { lock.withLock { chunks.reduce(into: Data()) { $0.append($1) } } }
     var sizes: [Int] { lock.withLock { chunks.map(\.count) } }
     func append(_ bytes: Data) { lock.withLock { chunks.append(bytes) } }

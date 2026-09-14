@@ -36,6 +36,10 @@ extension VTCompressionSession: VTSessionConvertible {
         }
     }
 
+    func completeFrames() -> OSStatus {
+        VTCompressionSessionCompleteFrames(self, untilPresentationTimeStamp: .invalid)
+    }
+
     func invalidate() {
         VTCompressionSessionInvalidate(self)
     }

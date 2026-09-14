@@ -7,18 +7,12 @@ struct SRTSocketURL {
     static let defaultPort: Int = 9710
 
     private static func getQueryItems(_ url: URL) -> [String: String] {
-        let url = url.absoluteString
-        if !url.contains("?") {
-            return [:]
-        }
-        let queryString = url.split(separator: "?")[1]
-        let queries = queryString.split(separator: "&")
+        // Native control-plane grants use normal percent-encoded URL query
+        // values. Decode each item exactly once, after separating delimiters.
+        let queries = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         var paramsReturn: [String: String] = [:]
-        for q in queries {
-            let query = q.split(separator: "=", maxSplits: 1)
-            if query.count == 2 {
-                paramsReturn[String(query[0])] = String(query[1])
-            }
+        for query in queries {
+            if let value = query.value { paramsReturn[query.name] = value }
         }
         return paramsReturn
     }

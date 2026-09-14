@@ -77,6 +77,27 @@ import VideoToolbox
         #expect(codec.failure.error == nil)
     }
 
+    @Test func completionDrainsDelayedEncoderBurstWithoutIncreasingOutputBound() async throws {
+        let codec = VideoCodec()
+        codec.settings = VideoCodecSettings(videoSize: CGSize(width: 64, height: 64),
+            profileLevel: kVTProfileLevel_H264_High_AutoLevel as String, allowFrameReordering: false)
+        let output = codec.outputStream
+        let consuming = Task.detached {
+            var timestamps: [CMTime] = []
+            for await sample in output { timestamps.append(sample.presentationTimeStamp) }
+            return timestamps
+        }
+        codec.startRunning()
+        let expected = (0..<20).map { CMTime(value: Int64($0), timescale: 30) }
+        for timestamp in expected { codec.append(try frame(timestamp)) }
+        let complete = codec.makeCompletion()
+        await Task.detached { complete() }.value
+        codec.stopRunning()
+        #expect(await consuming.value == expected)
+        #expect(codec.failure.error == nil)
+        #expect(codec.outputLimits.count == 8)
+    }
+
     @Test func compressedCallbackChecksPerItemBytes() async throws {
         let codec = VideoCodec()
         codec.settings = VideoCodecSettings(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false)

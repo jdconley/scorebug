@@ -21,6 +21,13 @@ import libsrt
         #expect(options.first { $0.name == .transtype }?.stringValue == SRTT_FILE.rawValue.description)
     }
 
+    @Test func percentEncodedNativeGrant() throws {
+        let url = try #require(SRTSocketURL(URL(string: "srt://127.0.0.1:19000?streamid=publish%3Ascorebug-test&passphrase=a%26b%3Dc%2520%2Bz&mode=caller#ignored")))
+        #expect(url.options.first { $0.name == .streamid }?.stringValue == "publish:scorebug-test")
+        #expect(url.options.first { $0.name == .passphrase }?.stringValue == "a&b=c%20+z")
+        #expect(url.mode == .caller)
+    }
+
     @Test func string() throws {
         let socket = srt_create_socket()
         let expect = try SRTSocketOption(name: .streamid, value: "hello")

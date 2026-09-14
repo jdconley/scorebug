@@ -4,6 +4,7 @@ import Foundation
 /// An object that provides a stream ingest feature.
 package final class OutgoingStream {
     package private(set) var isRunning = false
+    private var inputFinished = false
 
     /// The asynchronous sequence for audio output.
     package var audioOutputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
@@ -76,6 +77,7 @@ package final class OutgoingStream {
 
     /// Appends a sample buffer for publish.
     package func append(_ sampleBuffer: CMSampleBuffer) {
+        guard !inputFinished else { return }
         switch sampleBuffer.formatDescription?.mediaType {
         case .audio:
             audioInputFormat = sampleBuffer.formatDescription
@@ -90,9 +92,20 @@ package final class OutgoingStream {
 
     /// Appends a sample buffer for publish.
     package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+        guard !inputFinished else { return }
         audioInputFormat = audioBuffer.format.formatDescription
         audioCodec.append(audioBuffer, when: when)
     }
+
+    /// Ends ingress, preserving already queued raw video and complete AAC packets.
+    /// Raw-video consumer must drain before makeVideoCompletion is invoked.
+    package func finishInput() {
+        inputFinished = true
+        videoInputContinuation = nil
+        audioCodec.stopRunning()
+    }
+
+    package func makeVideoCompletion() -> @Sendable () -> Void { videoCodec.makeCompletion() }
 
     /// Appends a video buffer.
     package func append(video sampleBuffer: CMSampleBuffer) {
@@ -106,12 +119,14 @@ extension OutgoingStream: Runner {
         guard !isRunning else {
             return
         }
+        inputFinished = false
         videoCodec.startRunning()
         audioCodec.startRunning()
         isRunning = true
     }
 
     package func stopRunning() {
+        inputFinished = true
         guard isRunning else {
             return
         }

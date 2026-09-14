@@ -93,11 +93,10 @@ final actor SRTSocket {
     private(set) var isRunning = false
     private var perf: CBytePerfMon = .init()
     private var socket: SRTSOCKET = SRT_INVALID_SOCK
-    private var outputQueue: PublishingQueue<Data>?
-    private let outputLimits: PublishingQueue<Data>.Limits
+    private var sendingGeneration: UInt64?
+    private let maxPayloadBytes: Int
     private let sender: (@Sendable (Data) -> Int32)?
     private let statusProvider: (@Sendable () -> Status)?
-    private var senderTask: Task<Void, Never>?
     private var generation: UInt64 = 0
     private let failure = PublishingFailureLatch()
     var publishingError: PublishingError? { failure.error }
@@ -108,9 +107,10 @@ final actor SRTSocket {
     private var windowSizeC: Int32 = 1024 * 4
     private lazy var incomingBuffer: Data = .init(count: Int(windowSizeC))
 
-    init(outputLimits: PublishingQueue<Data>.Limits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
+    init(maxPayloadBytes: Int = 2 * 1024 * 1024 + 64 * 1024,
          sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil) {
-        self.outputLimits = outputLimits
+        precondition(maxPayloadBytes > 0)
+        self.maxPayloadBytes = maxPayloadBytes
         self.sender = sender
         self.statusProvider = statusProvider
         _ = SRTRuntime.started
@@ -118,7 +118,7 @@ final actor SRTSocket {
     }
 
     init(socket: SRTSOCKET, options: [SRTSocketOption]) async throws {
-        self.outputLimits = .init(count: 8, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024)
+        self.maxPayloadBytes = 2 * 1024 * 1024 + 64 * 1024
         self.sender = nil
         self.statusProvider = nil
         self.socket = socket
@@ -229,10 +229,46 @@ final actor SRTSocket {
         }
     }
 
-    func send(_ data: Data) throws {
+    /// One bounded payload at a time. The existing transport consumer awaits
+    /// acceptance, so a normal startup burst cannot outrun a second socket queue.
+    func send(_ data: Data) async throws {
         guard isRunning, connected || sender != nil else { throw Error.notConnected }
-        guard let outputQueue, outputQueue.yield(data, byteCount: data.count) else {
-            throw failure.error ?? PublishingError.outputTerminated(boundary: "SRT socket")
+        if let error = failure.error { throw error }
+        guard data.count <= maxPayloadBytes else {
+            let error = PublishingError.itemSizeExceeded(boundary: "SRT socket", bytes: data.count, limit: maxPayloadBytes)
+            failure.fail(error)
+            throw error
+        }
+        guard sendingGeneration == nil else {
+            let error = PublishingError.queueCapacityExceeded(boundary: "SRT socket concurrent send")
+            failure.fail(error)
+            throw error
+        }
+        let session = generation
+        sendingGeneration = session
+        defer { if sendingGeneration == session { sendingGeneration = nil } }
+        do {
+            for offset in stride(from: 0, to: data.count, by: Self.payloadSize) {
+                try Task.checkCancellation()
+                guard isRunning, generation == session else { throw Error.notConnected }
+                if let error = failure.error { throw error }
+                let chunk = data.subdata(in: offset..<min(offset + Self.payloadSize, data.count))
+                guard sendmsg(chunk) == chunk.count else {
+                    failure.fail(.transportWriteFailed)
+                    await stopRunning()
+                    throw PublishingError.transportWriteFailed
+                }
+                // Every synchronous libsrt send has a finite timeout. Yield after
+                // each datagram so close never waits behind a whole large payload.
+                await Task.yield()
+            }
+            try Task.checkCancellation()
+            guard isRunning, generation == session else { throw Error.notConnected }
+            if let error = failure.error { throw error }
+        } catch is CancellationError {
+            failure.fail(.outputTerminated(boundary: "SRT socket cancelled send"))
+            await stopRunning()
+            throw CancellationError()
         }
     }
 
@@ -298,35 +334,13 @@ extension SRTSocket: AsyncRunner {
     func startRunning() async {
         guard !isRunning, failure.error == nil else { return }
         generation &+= 1
-        let session = generation
-        let queue = PublishingQueue<Data>(boundary: "SRT socket", limits: outputLimits, failure: failure)
-        outputQueue = queue
         isRunning = true
-        senderTask = Task {
-            for await data in queue.stream {
-                // Copy only one datagram at a time. Yield between finite synchronous sends
-                // so close is never queued behind an entire large transport buffer.
-                for offset in stride(from: 0, to: data.count, by: Self.payloadSize) {
-                    guard !Task.isCancelled, isRunning, generation == session, failure.error == nil else { return }
-                    let chunk = data.subdata(in: offset..<min(offset + Self.payloadSize, data.count))
-                    guard sendmsg(chunk) == chunk.count else {
-                        failure.fail(.transportWriteFailed)
-                        await stopRunning()
-                        return
-                    }
-                    await Task.yield()
-                }
-            }
-        }
     }
 
     func stopRunning() async {
         generation &+= 1
         isRunning = false
-        senderTask?.cancel()
-        senderTask = nil
-        outputQueue?.finish()
-        outputQueue = nil
+        sendingGeneration = nil
         failure.finish()
         if socket != SRT_INVALID_SOCK {
             srt_close(socket)
