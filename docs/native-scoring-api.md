@@ -4,7 +4,9 @@ The `/v1/matches` API now stores native matches, scoring authority, command rece
 and score history in SQLite. The native SwiftUI scorer creates/joins matches, scores,
 undoes actions, ends sets/matches, and restores its session. The shared Swift outbox
 persists uncertain commands and reconciles receipts. Full milestone 1 is still in
-progress: worker reconciliation/capture association remain to be integrated.
+progress: recording associations and durable broadcast intent are implemented, but
+relay credentials, observed worker status, and the actual worker consumer still
+need integration. See the [media control API](media-control-api.md).
 
 ## Run locally
 
@@ -30,6 +32,10 @@ Back up the database with SQLite-aware tools or after stopping the API.
 process. It creates/scores a match over real HTTP, force-kills and restarts the API,
 checks the exact original receipt and score, transfers authority to a second
 scoring device, force-kills/restarts again, and verifies that authority survived.
+It then associates a recording, requests a broadcast, restarts a third time, and
+verifies the selected worker can retrieve the assignment and original receipt.
+After ending the match, a fourth restart verifies the broadcast stays stopped
+while the recording association remains unchanged.
 It removes only its process and temporary files. This tests server process recovery,
 not a native UI or a video pipeline.
 
@@ -106,8 +112,9 @@ or explicit match end. Match end requires a reason and is terminal.
 The legacy `/games` API remains an in-memory prototype for existing scaffolds.
 It does not share the new native match lifecycle yet; do not mix both APIs in one
 session. Native match creation needs no YouTube key and starts no recording or
-broadcast. Worker desired-state replay, publishing credentials, and recording
-association are later integration steps. The native scoring app remains independent
+broadcast. Recording associations, broadcast commands, and a selected-worker snapshot
+endpoint now share the durable lifecycle. Publishing credentials and the actual
+worker consumer remain integration steps. The native scoring app remains independent
 of the unfinished camera/media project. Watch UI and route integration follow later.
 
 ## Native validation
@@ -135,12 +142,13 @@ confirmation during an in-flight refresh. Production storage remains Keychain-on
 
 ## Evidence for this checkpoint
 
-- TypeScript: 61 API/rules/store tests, 14 worker tests, and 8 local-tool tests pass;
+- TypeScript: 124 API/rules/store tests, 14 worker tests, and 9 local-tool tests pass;
   workspace typecheck and production build pass.
-- Real API: `pnpm test:scoring` passes after two forced process exits, preserving
-  score, exact receipts, scoped credentials, and scorer takeover.
-- Shared Swift: 34 tests pass, including failure-preserving atomic outbox writes,
-  receipt-first replay, clock/context expiry, and command serialization.
+- Real API: `pnpm test:scoring` passes after four forced process exits, preserving
+  score, exact receipts, scoped credentials, scorer takeover, recording association,
+  broadcast selection, and the terminal broadcast stop after match end.
+- Shared Swift: 45 tests pass, including failure-preserving atomic outbox writes,
+  receipt-first replay, clock/context expiry, command serialization, and media client contracts.
 - Scoring model: 13 hostless macOS tests pass, including secure-read failure,
   credential-scope changes, uncertain creation, and truthful recovery feedback.
 - Native UI: three stages across two dedicated iPhone 15 simulators pass on iOS
@@ -152,6 +160,6 @@ confirmation during an in-flight refresh. Production storage remains Keychain-on
 
 These tests do not yet simulate two people tapping simultaneously through two
 real UI processes, actual watch connectivity, or camera/streaming performance.
-The remaining milestone 1 integration connects durable match identity to capture
-association and worker desired-state reconciliation; the legacy publishing
+The remaining milestone 1 integration connects durable match identity to publishing
+credentials and actual worker reconciliation/status; the legacy publishing
 scaffold currently still has a separate in-memory lifecycle.

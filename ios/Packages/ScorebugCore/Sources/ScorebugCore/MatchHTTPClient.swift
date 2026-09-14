@@ -64,6 +64,29 @@ public struct MatchHTTPClient: Sendable {
         }
     }
 
+    public func mediaSnapshot(credential: MatchCredential) async throws -> MediaSnapshotResponse {
+        try await send(path: [credential.gameId, "media"], token: credential.token)
+    }
+
+    public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
+        try await send(path: [credential.gameId, "media", "recordings"], method: "POST", token: credential.token,
+                       body: JSONEncoder().encode(report))
+    }
+
+    /// Installation authorization controls publishing; a 409 is a normal domain outcome.
+    public func executeBroadcast(_ command: BroadcastCommand, installationToken: String) async throws -> BroadcastOutcome {
+        try await send(path: [command.gameId, "media", "commands"], method: "POST", token: installationToken,
+                       body: JSONEncoder().encode(command), additionalStatuses: [409])
+    }
+
+    public func broadcastReceipt(gameId: String, commandId: String, installationToken: String) async throws -> BroadcastOutcome? {
+        do {
+            return try await send(path: [gameId, "media", "commands", commandId], token: installationToken)
+        } catch MatchClientError.http(status: 404, code: "command_not_found") {
+            return nil
+        }
+    }
+
     private func send<Response: Decodable>(path: [String], method: String = "GET", token: String,
                                           body: Data? = nil, additionalStatuses: Set<Int> = []) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1").appendingPathComponent("matches")

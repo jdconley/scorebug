@@ -15,6 +15,7 @@ to YouTube.
 - [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 - [Local, simulator, phone, and watch validation](docs/local-testing.md)
 - [Native scoring API progress](docs/native-scoring-api.md)
+- [Media control API and recovery evidence](docs/media-control-api.md)
 - [Milestone 0 verification results](docs/milestone-0-results.md)
 
 The plan prioritizes reliable local recording, adaptive live quality with a measured

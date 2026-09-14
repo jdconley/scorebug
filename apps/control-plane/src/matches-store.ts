@@ -11,6 +11,8 @@ import type {
   ScoringState,
   Teams,
 } from '@scorebug/protocol';
+import { canonical } from './canonical-json.js';
+import { MediaStore } from './media-store.js';
 import { applyScoringOperation, initialScoringState, ScoringError } from './scoring.js';
 
 export type CreateMatch = { id: string; deviceId: string; teams: Teams; rules: MatchRules };
@@ -24,16 +26,6 @@ export class MatchStoreError extends Error {
   }
 }
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value !== null && typeof value === 'object')
-    return `{${Object.entries(value)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`)
-      .join(',')}}`;
-  return JSON.stringify(value);
-}
 function snapshot(match: StoredMatch): MatchSnapshot {
   return {
     id: match.id,
@@ -54,6 +46,7 @@ function snapshot(match: StoredMatch): MatchSnapshot {
 /** Synchronous transactions serialize all commands, including competing processes. */
 export class MatchStore {
   private readonly db: DatabaseSync;
+  readonly media: MediaStore;
   private closed = false;
   constructor(
     path: string,
@@ -68,7 +61,7 @@ export class MatchStore {
         'PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;',
       );
       const version = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-      if (version.user_version > 1) throw new MatchStoreError('unsupported_database_version');
+      if (version.user_version > 2) throw new MatchStoreError('unsupported_database_version');
       this.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS matches(id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL);
@@ -77,8 +70,22 @@ export class MatchStore {
             role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, PRIMARY KEY(game_id, device_id, role));
           CREATE TABLE IF NOT EXISTS commands(game_id TEXT NOT NULL REFERENCES matches(id), device_id TEXT NOT NULL,
             command_id TEXT NOT NULL, request TEXT NOT NULL, outcome TEXT NOT NULL, PRIMARY KEY(game_id, device_id, command_id));
-          PRAGMA user_version=1;
+
         `);
+        MediaStore.migrate(this.db);
+        this.db.exec('PRAGMA user_version=2;');
+      });
+      this.media = new MediaStore(this.db, {
+        transaction: (body) => this.transaction(body),
+        match: (id) => this.get(id),
+        active: () => this.active(),
+        updateBroadcast: (id, broadcast) => {
+          const match = this.load(id);
+          match.broadcast = { desired: broadcast.desired, generation: broadcast.generation };
+          match.revision++;
+          this.save(match);
+        },
+        now: this.now,
       });
     } catch (error) {
       this.db.close();
@@ -232,8 +239,10 @@ export class MatchStore {
           if (command.operation.type === 'take_over')
             match.scorer = { deviceId: command.deviceId, epoch: match.scorer.epoch + 1 };
           else match.scoring = applyScoringOperation(match.scoring, match.rules, command.operation);
-          if (match.scoring.status === 'ended')
+          if (match.scoring.status === 'ended') {
             match.broadcast = { desired: 'stopped', generation: match.broadcast.generation + 1 };
+            this.media.stopForMatchEndWithinTransaction(match.id, match.broadcast.generation);
+          }
           match.revision++;
           this.save(match);
         } catch (cause) {

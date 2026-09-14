@@ -1,0 +1,86 @@
+{
+  "snapshotResponse": {
+    "snapshot": {
+      "gameId": "match",
+      "recordings": [
+        {
+          "gameId": "match",
+          "deviceId": "phone",
+          "recordingId": "archive-1",
+          "startedAt": "2026-09-14T03:00:00.000Z",
+          "updatedAt": "2026-09-14T03:00:00.000Z",
+          "status": "recording",
+          "sequence": 0
+        }
+      ],
+      "broadcast": {
+        "desired": "stopped",
+        "generation": 0,
+        "selection": null
+      }
+    },
+    "serverTime": "2026-09-14T03:00:00.000Z"
+  },
+  "recordingReport": {
+    "recordingId": "archive-1",
+    "sequence": 0,
+    "status": "recording",
+    "startedAt": "2026-09-14T03:00:00.000Z"
+  },
+  "recordingResponse": {
+    "recording": {
+      "gameId": "match",
+      "deviceId": "phone",
+      "recordingId": "archive-1",
+      "startedAt": "2026-09-14T03:00:00.000Z",
+      "updatedAt": "2026-09-14T03:00:00.000Z",
+      "status": "recording",
+      "sequence": 0
+    },
+    "serverTime": "2026-09-14T03:00:00.000Z"
+  },
+  "command": {
+    "commandId": "start-1",
+    "gameId": "match",
+    "expectedGeneration": 0,
+    "issuedAt": "2026-09-14T03:00:00.000Z",
+    "operation": {
+      "type": "start",
+      "selection": {
+        "workerId": "mac",
+        "outputId": "local-sink",
+        "captureDeviceId": "phone",
+        "recordingId": "archive-1"
+      }
+    }
+  },
+  "outcome": {
+    "commandId": "start-1",
+    "accepted": true,
+    "error": null,
+    "snapshot": {
+      "gameId": "match",
+      "recordings": [
+        {
+          "gameId": "match",
+          "deviceId": "phone",
+          "recordingId": "archive-1",
+          "startedAt": "2026-09-14T03:00:00.000Z",
+          "updatedAt": "2026-09-14T03:00:00.000Z",
+          "status": "recording",
+          "sequence": 0
+        }
+      ],
+      "broadcast": {
+        "desired": "running",
+        "generation": 1,
+        "selection": {
+          "workerId": "mac",
+          "outputId": "local-sink",
+          "captureDeviceId": "phone",
+          "recordingId": "archive-1"
+        }
+      }
+    }
+  }
+}

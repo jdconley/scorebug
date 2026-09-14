@@ -102,6 +102,81 @@ try {
   assert.equal(final.snapshot.scorer.deviceId, 'watch-b');
   assert.equal(final.snapshot.scorer.epoch, 2);
   assert.equal(final.snapshot.score.home, 1);
+  const capture = await request(base, '/v1/matches/recovery-game/join', token, {
+    deviceId: 'phone-a',
+    role: 'capture',
+  });
+  await request(base, '/v1/matches/recovery-game/media/recordings', capture.credential.token, {
+    recordingId: 'clean-archive',
+    sequence: 0,
+    status: 'recording',
+    startedAt: new Date().toISOString(),
+  });
+  const broadcastCommand = {
+    commandId: 'start-broadcast',
+    gameId: 'recovery-game',
+    expectedGeneration: 0,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'local-fixture',
+        outputId: 'local-sink',
+        captureDeviceId: 'phone-a',
+        recordingId: 'clean-archive',
+      },
+    },
+  };
+  const broadcast = await request(
+    base,
+    '/v1/matches/recovery-game/media/commands',
+    token,
+    broadcastCommand,
+  );
+  assert.equal(broadcast.snapshot.broadcast.generation, 1);
+  await stop();
+  base = await start();
+  const worker = await request(
+    base,
+    '/v1/worker/snapshot?workerId=local-fixture',
+    'qa-home-token-not-production',
+  );
+  assert.equal(worker.assignment.match.score.home, 1);
+  assert.equal(worker.assignment.match.scorer.deviceId, 'watch-b');
+  assert.deepEqual(worker.assignment.media.broadcast, broadcast.snapshot.broadcast);
+  assert.deepEqual(
+    await request(base, '/v1/matches/recovery-game/media/commands', token, broadcastCommand),
+    broadcast,
+  );
+  const ended = await request(base, '/v1/matches/recovery-game/commands', joined.credential.token, {
+    commandId: 'end-after-recovery',
+    gameId: 'recovery-game',
+    deviceId: 'watch-b',
+    expectedRevision: worker.assignment.match.revision,
+    scorerEpoch: 2,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'end_match', reason: 'Local fixture complete' },
+  });
+  assert.equal(ended.snapshot.broadcast.desired, 'stopped');
+  await stop();
+  base = await start();
+  assert.equal(
+    (
+      await request(
+        base,
+        '/v1/worker/snapshot?workerId=local-fixture',
+        'qa-home-token-not-production',
+      )
+    ).assignment,
+    null,
+  );
+  const media = await request(base, '/v1/matches/recovery-game/media', capture.credential.token);
+  assert.equal(
+    media.snapshot.recordings[0].status,
+    'recording',
+    'Remote match end must not stop the independent recording association',
+  );
+  assert.equal(media.snapshot.broadcast.generation, 2);
   checkCancellation();
 } catch (error) {
   console.error(error);
@@ -112,5 +187,5 @@ try {
 }
 if (!process.exitCode)
   console.log(
-    'PASS: real HTTP scoring survives two forced API process exits; credentials, score, takeover and exact command receipts recover.',
+    'PASS: real HTTP scoring and media control survive four forced API exits; score, authority, receipts, recording association and broadcast intent recover.',
   );

@@ -8,6 +8,7 @@ import { gamesRoutes } from './routes/games.js';
 import { internalRoutes } from './routes/internal.js';
 import { MatchStore } from './matches-store.js';
 import { matchesRoutes } from './routes/matches.js';
+import { workerRoutes } from './routes/media.js';
 
 export type AppDeps = {
   config: Config;
@@ -45,6 +46,7 @@ export function createApp(
 
   app.route('/games', gamesRoutes({ config, store, bus, log }));
   app.route('/v1/matches', matchesRoutes(config, matches));
+  app.route('/v1/worker', workerRoutes(config, matches));
   app.route('/internal', internalRoutes({ config, store, log }));
 
   app.onError((err, c) => {

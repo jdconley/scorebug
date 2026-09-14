@@ -128,6 +128,10 @@ undo, take over scoring, and end the match without invoking a camera or browser.
 **Exit:** no lost/double points or unrecoverable active-game lockout; restarts preserve state.
 
 **In progress:** [Native scoring API and recovery evidence](../../native-scoring-api.md).
+Recording associations, broadcast commands, and the selected-worker snapshot endpoint
+are implemented and restart-tested: [media control evidence](../../media-control-api.md).
+This is control state only; publishing credentials, observed source/worker status,
+and the actual worker consumer remain before this milestone is complete.
 
 ## Milestone 2: Real local media through a portable worker
 

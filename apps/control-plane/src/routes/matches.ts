@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { MatchCredential } from '@scorebug/protocol';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
+import { mediaRoutes } from './media.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
 const id = z
@@ -70,6 +71,10 @@ type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
 export function matchesRoutes(config: Config, store: MatchStore) {
   const app = new Hono<Env>();
+  app.use('*', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    await next();
+  });
   const bootstrap = bearer(config.PHONE_TOKEN, 'installation');
   const scoped = createMiddleware<Env>(async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer (.+)$/i)?.[1] ?? '';
@@ -122,6 +127,7 @@ export function matchesRoutes(config: Config, store: MatchStore) {
     const outcome = store.receipt(credential.gameId, credential.deviceId, c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
+  app.route('/:id/media', mediaRoutes(config, store));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)
       return c.json(
