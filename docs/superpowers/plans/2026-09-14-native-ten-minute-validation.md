@@ -36,9 +36,9 @@ Files: `scripts/native-streaming-options.mjs` and tests; `scripts/native-streami
 
 ## Task 3: Isolated ten-minute pressure run
 
-- [ ] Run one owned iPhone14/iOS17.5 native fixture with direct receiver and `SCOREBUG_TEST_STREAM_HOLD_SECONDS=600`. No concurrent builds/tests/media work. Wait on the actual live session; retain failures and cleanup all owned resources.
-- [ ] Inspect actual results: >=600 seconds monotonic hold and source coverage, all archive frames, complete live decoded/encoded tail, all five-second observation windows, A/V markers/end coverage, scoring/export, scope and age proofs. Inspect archive first failure and lifetime queue counts plus retained timing/omission limits; distinguish actual worker and receiver exits.
-- [ ] Save exact revision, configuration and measured result. A pass is this synthetic local simulator configuration only; real camera/Watch routes, earlier overflow attribution, adaptive quality and other worker hosts remain open. If it fails, use retained artifacts to determine the next corrective action without weakening a gate.
+- [x] Run one owned iPhone 14/iOS 17.5 native fixture with direct receiver and `SCOREBUG_TEST_STREAM_HOLD_SECONDS=600`. No concurrent builds/tests/media work. Wait on the actual live session; retain failures and cleanup all owned resources.
+- [x] Inspect actual results: >=600 seconds monotonic hold and source coverage, all archive frames, complete live decoded/encoded tail, all five-second observation windows, A/V markers/end coverage, scoring/export, scope and age proofs. Inspect archive first failure and lifetime queue counts plus retained timing/omission limits; distinguish actual worker and receiver exits.
+- [x] Save exact revision, configuration and measured result. A pass is this synthetic local simulator configuration only; real camera/Watch routes, earlier overflow attribution, adaptive quality and other worker hosts remain open. If it fails, use retained artifacts to determine the next corrective action without weakening a gate.
 
 
 ## Implementation verification
@@ -51,5 +51,10 @@ build logs are retained as `artifacts/qa/native-ten-minute-*.log`. The fixture's
 history failed the new ten-minute retention regression (112 evictions); its revised
 bounded selection passes without eviction. No quality thresholds were weakened.
 
-The isolated 600-second media run is pending. No longer-run or physical-device
-claim follows from these implementation tests.
+The isolated 600-second attempt `native-app-GyuAnW` at `a2ac272` failed with archive
+queue overflow at 616.840 seconds of recording. Failure artifacts are complete.
+Recovery yields 616 seconds of consecutive 30 fps archive video; live retains every
+worker frame, but the intended hold/stop/continuation workflow did not complete.
+Task 3 is executed and analyzed, not passed. See the [overflow evidence and next
+regression](2026-09-14-native-archive-overflow-diagnosis.md#ten-minute-reproduction-with-recoverable-evidence).
+No ten-minute reliability or physical-device qualification is claimed.

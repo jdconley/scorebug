@@ -473,3 +473,14 @@ zero rejected/dropped samples. The earlier overflow remains unexplained. See the
 [sustained native plan](2026-09-14-native-sustained-validation.md) for evidence,
 explicit acquisition/initial encoder coverage, history limits and ten-minute next
 steps. No adaptive/hardware/Watch or remote-host qualification is implied.
+
+The 600-second attempt `native-app-GyuAnW` at `a2ac272` reproduces archive overflow
+at 616.840 seconds of recording. Complete failure evidence survives; recovery gives
+616 seconds of consecutive 30 fps video, while 25 accepted terminal video frames
+are absent from the recovered archive. Live retains every worker frame through its
+last encoded frame. A half-second persistence overlaps a blocked archive append;
+a status-read lock dependency is now the focused regression target. See the
+[overflow evidence](2026-09-14-native-archive-overflow-diagnosis.md#ten-minute-reproduction-with-recoverable-evidence)
+and [snapshot isolation plan](2026-09-14-archive-snapshot-isolation.md). The long
+qualification remains failed. This simple fixture also compresses far below the
+configured bitrate, so motion-heavy and physical-camera load tests remain required.

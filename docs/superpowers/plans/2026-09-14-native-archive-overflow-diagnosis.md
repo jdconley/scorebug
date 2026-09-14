@@ -203,3 +203,56 @@ first failure. The earlier overflow does not recur. Diagnostic histories remain
 bounded, so retained tail timing maxima do not explain the earlier failed run.
 See the [sustained qualification](2026-09-14-native-sustained-validation.md) for
 complete evidence and the still-required ten-minute and physical-device tests.
+
+## Ten-minute reproduction with recoverable evidence
+
+The isolated iPhone 14/iOS 17.5 run `native-app-GyuAnW` at `a2ac272` fails at
+616.840 seconds of recording, before its requested post-scoring 600-second hold
+completes. This is a recording overflow, not a test deadline failure. The retained
+failure-copy manifest is complete (623 files); all diagnostic coverage flags are
+true, timing is valid, and counter/token/sequence validity checks report no error.
+The first failure freezes before cancellation; terminal counters remain separate.
+
+A 30,795-byte segment persistence call takes 513.985 ms. A concurrent video append
+for source frame 18496 takes 488.372 ms and returns accepted only 0.314 ms after that
+persistence ends. During the stall, eight raw video buffers and nine audio packets
+occupy 24,946,560 bytes. Rejected frame 18505 would exceed the unchanged 24 MiB byte
+limit. The preceding 32 producer starts are at most 2.200 ms late; these observations
+support normal 30 fps arrivals, not a catch-up burst. They do not identify an exact
+filesystem operation or establish whether the writer lock or AVFoundation blocked.
+At terminal cancellation, 37010 samples were accepted, 36993 written, one queue
+insertion rejected, and 17 queued samples dropped.
+
+Independent post-failure recovery and FFmpeg checks preserve the failed verdict:
+
+- Archive export verifies segment hashes, remuxes, and decodes all samples without
+  altering the original bundles. Independent FFmpeg A/V decoding and barcodes find
+  18480 consecutive video frames 0–18479 (616 seconds at 30 fps). Audio ends 44.0 ms
+  before video; 307 matched markers have maximum offset 0.021 ms. Accepted video
+  frames 18480–18504 (25 frames, 0.833 seconds) are not in the recovered archive.
+  Rejected frame 18505 is also absent.
+- Live contains 18307 consecutive frames 198–18504 at 30 fps, all worker decoded and
+  output-progress frames including the final encoded frame. Maximum marker offset
+  is 65.917 ms; audio ends 23.293 ms after video. Native capture observes 138–18505 and
+  encoder 138–18504; frames 138–197 are the 60-frame acquisition interval. All 123
+  native observation windows are retained without eviction. These partial checks
+  do not certify the intended stream-stop/archive-continuation workflow.
+- Worker encoder and owned direct recorder exit 0 naturally, with valid worker EOF;
+  the wrapper subsequently exits 0 during fixture cleanup. No encoder tail is
+  missing from this direct receiver.
+
+Evidence and reproducible analysis are under `artifacts/qa/native-app-GyuAnW/recovery/`:
+`analyze.mjs`, `analysis.json`, `summarize-pressure.py`, and `pressure-summary.json`.
+The analysis explicitly records `qualificationPassed:false`. The archive/live
+container averages are only 0.126/0.102 Mbps: this simple moving-barcode fixture is
+not a high-bitrate sports-camera workload, despite configured 12/6 Mbps encoders.
+
+The concrete lock path to regress first is
+`FilmModel.durationReader → writer.snapshot → writer lock → store.segments → store lock`.
+Store append holds its lock during hashing, synchronized writes and manifest commit.
+Health polling every 500 ms can therefore hold the writer lock while waiting for
+storage, blocking append independently of native encoder readiness. Detached
+polling protects MainActor but does not break that dependency. The focused
+[snapshot isolation plan](2026-09-14-archive-snapshot-isolation.md) tests this path;
+after it is fixed, repeat native qualification before attributing the entire
+observed overflow to it. Queue limits and synchronous durability remain unchanged.
