@@ -47,3 +47,46 @@ the Watch app, succeeds. Logs are retained as `artifacts/qa/archive-snapshot-*.l
 Specification and independent quality reviews approve with no remaining findings.
 Native qualification is pending. These tests prove the specific lock dependency is removed; the
 ten-minute native overflow remains unqualified until a new run is measured.
+
+## Native qualification after the fix
+
+The short run `native-app-OCNlMh` at `da73cdb` passes all native gates: 1296 clean
+archive frames (43.2 seconds), 901 live frames through the final encoded frame,
+zero rejected/dropped archive samples, native scoring, A/V timing, shutdown,
+continued recording, export and age proofs. Both encoder and direct receiver exit 0
+naturally. All 2592 archive samples are written.
+
+The 600-second run `native-app-0xF97D` at the same revision passes its native UI test,
+all media/observation and direct-delivery checks, then fails the report-age validator:
+that separate helper still hardcodes 64 collector windows. The run retained 122 valid
+windows, within the collector's explicitly configured 128 limit. The original run
+remains failed; post-run checks do not replace it.
+
+Its archive finishes with all 37944 samples written, zero rejects/drops and no first
+failure. It contains 18972 consecutive frames 0–18971 (632.4 seconds); live contains
+18550 consecutive frames 204–18753 (618.333 seconds) through the final native encoded
+frame. Native capture 143 precedes encoder coverage 144–18753; acquisition 144–203 is
+explicit. All 123 steady five-second windows report 30 fps for both stages. Archive
+A/V end difference is +4 ms; live is +23.197 ms, with maximum marker offset 65.25 ms. Native
+scoring changes 342 overlay pixels. Both encoder and recorder exit 0 naturally.
+
+Retained tail timings: maximum persistence 40.291 ms, append 0.251 ms, producer start
+lateness 2.223 ms. These describe only bounded retained histories, not omitted earlier
+operations. Evidence: `post-run-checks.mjs`, `post-run-independent-checks.json`,
+`summarize-pressure.py`, and `pressure-summary.json` in the run directory; both JSON
+summaries explicitly retain `qualificationPassed:false`.
+
+Next fix: give the report-age qualifier an explicit trusted collector limit 64/128,
+keep its default 64, and pass the same validated limit from the native runner as the
+collector uses. Regress >64 evidence with explicit 128, rejection at 129, unsupported
+limits, and unchanged adversarial identity/scope/telemetry checks. Review and run
+all tooling tests, then repeat the native 600-second workflow on the committed fix.
+Do not truncate the evidence or weaken age-proof checks to make this run pass.
+
+The capacity correction now passes 65 focused tests and 292 full tooling tests.
+The recorded red run fails 21 new assertions under the old implementation; the
+updated qualifier accepts only trusted 64/128 configuration and preserves every
+existing integrity check. Replaying the actual 122 retained samples now matches
+both native age proofs (sequences 121/122), with no unmatched proofs. The original
+run remains failed in both post-run summaries. Specification and independent quality reviews approve with no findings.
+A new complete 600-second run is pending.

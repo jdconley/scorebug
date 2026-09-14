@@ -80,19 +80,21 @@ const duration = (seconds, attoseconds) => ({
   seconds: String(seconds),
   attoseconds: String(attoseconds),
 });
-function fixture() {
+function fixture(windowCount = 2) {
   const scope = {
     recordingID: 'recording',
     matchID: 'game',
     broadcastGeneration: 3,
     publishingAttemptID: '12345678-1234-4234-9234-123456789abc',
   };
-  const decodedEvidence = [1, 2].map((sequence) => {
-    const samples = new Map();
-    recordDecodedVideoEvidence(samples, status(sequence));
-    return [...samples.values()][0];
-  });
-  const proofs = decodedEvidence.map((sample) => ({
+  const decodedEvidence = Array.from({ length: windowCount }, (_, index) => index + 1).map(
+    (sequence) => {
+      const samples = new Map();
+      recordDecodedVideoEvidence(samples, status(sequence));
+      return [...samples.values()][0];
+    },
+  );
+  const proofs = decodedEvidence.slice(-2).map((sample) => ({
     recordingID: scope.recordingID,
     publishingAttemptID: scope.publishingAttemptID,
     ...structuredClone(sample),
@@ -276,3 +278,141 @@ test('rejects missing local recording scope even when both proofs also omit it',
   for (const proof of f.snapshot.workerReportAgeProofs) delete proof.recordingID;
   assert.throws(() => qualifyWorkerReportAge(f), /scope/);
 });
+
+test('keeps the collector qualification default at 64 windows', () => {
+  assert.equal(qualifyWorkerReportAge(fixture(64)).matchedWindowCount, 2);
+  assert.throws(() => qualifyWorkerReportAge(fixture(65)), /bounded collector/);
+  assert.throws(
+    () => qualifyWorkerReportAge({ ...fixture(65), decodedWindowLimit: 64 }),
+    /bounded collector/,
+  );
+});
+
+test('qualifies 128 independent windows only with a trusted explicit collector limit', () => {
+  const f = fixture(128);
+  assert.throws(() => qualifyWorkerReportAge(f), /bounded collector/);
+  f.snapshot.decodedWindowLimit = 128;
+  f.snapshot.completedWindowLimit = 128;
+  f.decodedEvidence.decodedWindowLimit = 128;
+  assert.throws(() => qualifyWorkerReportAge(f), /bounded collector/);
+  const result = qualifyWorkerReportAge({ ...f, decodedWindowLimit: 128 });
+  assert.equal(result.matchedWindowCount, 2);
+  assert.deepEqual(
+    result.matchedWindows.map((window) => window.sequence),
+    [127, 128],
+  );
+  assert.throws(
+    () => qualifyWorkerReportAge({ ...fixture(129), decodedWindowLimit: 128 }),
+    /bounded collector/,
+  );
+});
+
+for (const decodedWindowLimit of [
+  0,
+  8,
+  63,
+  65,
+  127,
+  129,
+  Infinity,
+  NaN,
+  '128',
+  null,
+  [],
+  {},
+  true,
+]) {
+  test(`rejects unsupported trusted collector limit ${JSON.stringify(decodedWindowLimit)} before reading artifacts`, () => {
+    const unreadable = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('Artifact must not be read');
+        },
+      },
+    );
+    assert.throws(
+      () =>
+        qualifyWorkerReportAge({
+          snapshot: unreadable,
+          decodedEvidence: unreadable,
+          decodedWindowLimit,
+        }),
+      /Unsupported decoded window limit/,
+    );
+  });
+}
+
+for (const [name, mutate, message] of [
+  [
+    'invalid unmatched late telemetry',
+    (f) => {
+      f.decodedEvidence[125].invalidReason = 'numeric';
+    },
+    /validity/,
+  ],
+  [
+    'invalid matched late telemetry',
+    (f) => {
+      f.decodedEvidence[127].completed.valid = false;
+    },
+    /validity/,
+  ],
+  [
+    'changed matched immutable content',
+    (f) => {
+      f.decodedEvidence[127].completed.lastPTS++;
+    },
+    /immutable/,
+  ],
+  [
+    'changed reused late API identity',
+    (f) => {
+      f.decodedEvidence[125] = structuredClone(f.decodedEvidence[124]);
+      f.decodedEvidence[125].completed.lastPTS++;
+    },
+    /immutable/,
+  ],
+  [
+    'invalid late API bound',
+    (f) => {
+      f.decodedEvidence[127].decodedVideoAgeUpperBoundMs = 100;
+    },
+    /lower/,
+  ],
+  [
+    'unsafe late sequence',
+    (f) => {
+      f.decodedEvidence[125].completed.sequence = Number.MAX_SAFE_INTEGER + 1;
+    },
+    /safe/,
+  ],
+  [
+    'crossed native scope',
+    (f) => {
+      f.snapshot.workerReportAgeProofs[1].generation++;
+    },
+    /scope/,
+  ],
+  [
+    'crossed all matching API scope',
+    (f) => {
+      f.decodedEvidence[126].attempt++;
+      f.decodedEvidence[127].attempt++;
+    },
+    /independent bounded/,
+  ],
+  [
+    'corrupt helper arithmetic',
+    (f) => {
+      f.snapshot.workerReportAgeProofs[1].helperAgeUpperBound.attoseconds = '1';
+    },
+    /exact/,
+  ],
+]) {
+  test(`explicit 128-window qualification still rejects ${name}`, () => {
+    const f = { ...fixture(128), decodedWindowLimit: 128 };
+    mutate(f);
+    assert.throws(() => qualifyWorkerReportAge(f), message);
+  });
+}

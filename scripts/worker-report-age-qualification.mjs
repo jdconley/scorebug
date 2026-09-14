@@ -102,7 +102,9 @@ function validateSample(sample, requireBound) {
   }
 }
 
-export function qualifyWorkerReportAge({ snapshot, decodedEvidence }) {
+export function qualifyWorkerReportAge({ snapshot, decodedEvidence, decodedWindowLimit = 64 }) {
+  // Trusted runner configuration only; no artifact field can expand this bound.
+  assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoded window limit');
   const proofs = snapshot?.workerReportAgeProofs;
   assert.ok(
     Array.isArray(proofs) && proofs.length === 2,
@@ -146,7 +148,7 @@ export function qualifyWorkerReportAge({ snapshot, decodedEvidence }) {
     'Proof history must be ordered distinct windows',
   );
   assert.ok(
-    Array.isArray(decodedEvidence) && decodedEvidence.length <= 64,
+    Array.isArray(decodedEvidence) && decodedEvidence.length <= decodedWindowLimit,
     'Invalid bounded collector evidence',
   );
   const samples = new Map();

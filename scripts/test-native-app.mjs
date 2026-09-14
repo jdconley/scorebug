@@ -26,6 +26,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const streamingBudget = nativeStreamingTestBudget(streamingOptions.holdSeconds);
+const decodedWindowLimit = streamingOptions.completedWindowLimit === 128 ? 128 : 64;
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-14';
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -292,7 +293,7 @@ try {
       artifact,
       root,
       run,
-      decodedWindowLimit: streamingOptions.completedWindowLimit === 128 ? 128 : 64,
+      decodedWindowLimit,
     });
   api = await startScoringTestServer(join(artifact, 'matches.sqlite'), proxy?.environment);
   if (proxy) await proxy.startWorker(api.baseURL);
@@ -479,7 +480,11 @@ try {
         savedFrames: directRecorderDelivery.savedFrames,
       });
     }
-    workerReportAge = qualifyWorkerReportAge({ snapshot: observationSnapshot, decodedEvidence });
+    workerReportAge = qualifyWorkerReportAge({
+      snapshot: observationSnapshot,
+      decodedEvidence,
+      decodedWindowLimit,
+    });
     await writeFile(
       join(artifact, 'worker-report-age-qualification.json'),
       JSON.stringify(workerReportAge, null, 2),
