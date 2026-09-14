@@ -110,7 +110,7 @@ failure, progress parsing, and credential-safe logs. Harness tests also cover
 partial container startup and cancellation cleanup. CI is configured to run the
 real relay test on Linux; a local Mac pass is not Linux host qualification.
 
-The complete workspace passes 169 API tests, 68 worker tests, and 12 tooling tests,
+The complete workspace passes 169 API tests, 72 worker tests, and 12 tooling tests,
 plus typecheck, production build, and formatting. Production server container
 startup and the four-exit native scoring recovery test also pass with this integration.
 
@@ -125,13 +125,19 @@ fresh frames in a three-second clip. Separate real encoder checks cap 60fps at
 30 while preserving a 25fps input.
 
 Decoded images show initial HOME 0–0 AWAY and HOME 1–0 AWAY after a native scoring
-command; the encoder does not restart for the point. Graceful worker restart and
-forced API exit/recovery return to the current score. An API outage stops output
+command; the encoder does not restart for the point. Worker SIGKILL and
+forced API exit/recovery return to the current score. The IPC guardian terminates
+and reaps the encoder after worker death; it reports actual encoder exit status.
+Source-loss recovery also restores the current score, with local output returning
+in roughly six to seven seconds in the short runs. An API outage stops output
 on the control lease while the independent synthetic publisher stays connected.
 Match end stops output and revokes publishing without changing recording metadata.
 
 Artifacts: `artifacts/qa/native-worker-{software,videotoolbox}/` contains playable
 clips and inspected stills; adjacent `.log` files record the runs. All owned runtime
 resources were removed. These short checks do not establish audio synchronization,
-ten-minute stability, abrupt worker-crash cleanup, native status reporting, physical
-recording, or NVENC/other-host qualification. See the [worker runbook](../apps/home-daemon/README.md).
+ten-minute stability, native status reporting, physical recording, or NVENC/other-host
+qualification. Independently killing the guardian remains a fail-closed case requiring
+host-level cleanup, not a confirmed encoder exit. The default Linux arm64 CPU image
+has separate compiled-pipeline/startup/decode/stop evidence. See the
+[worker runbook](../apps/home-daemon/README.md).

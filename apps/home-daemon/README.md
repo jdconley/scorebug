@@ -12,6 +12,12 @@ for ten seconds stops the encoder. Shutdown waits for process exit, with a one-s
 SIGTERM grace before SIGKILL. Retries are limited to three starts per match/generation
 in a rolling minute. A recovered API resumes the current assignment.
 
+A small IPC guardian owns FFmpeg and reaps it if the worker is forcibly killed.
+Exit reporting preserves the encoder's actual status. If the guardian itself is
+independently killed, the worker cannot confirm encoder exit and will not start a
+replacement; that exceptional case still needs host-level cleanup. One worker
+process per worker ID remains required; this is not a distributed fencing mechanism.
+
 `producing_output` in local logs means FFmpeg's frame and timestamp counters have
 advanced. It does not establish delivery to viewers or sustained fresh-frame rate.
 Worker observations are not yet sent back to the native app. The old WebSocket
@@ -57,7 +63,8 @@ pnpm test:worker videotoolbox
 The media harness owns its API, two uniquely named MediaMTX containers, and synthetic
 source. It uses loopback ports and public fixture credentials, captures and decodes
 short clips, checks fresh test-pattern frames and changing overlay pixels, and tests
-worker restart, control-outage shutdown, recovery, and match end. Clips and images
+worker SIGKILL/descendant cleanup, control-outage shutdown, source loss/recovery,
+current-score restoration, and match end. Clips and images
 are retained under `artifacts/qa/native-worker-<encoder>`; owned runtime resources
 are removed. This is a short integration check, not the ten-minute qualification
 gate, a real phone recording test, or an external broadcast test.
@@ -67,7 +74,14 @@ gate, a real phone recording test, or an external broadcast test.
 ```sh
 docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
 docker run --rm --env-file apps/home-daemon/.env scorebug/home-daemon
+pnpm test:worker-container scorebug/home-daemon
 ```
+
+The default image uses Node 22/Debian and software encoding with a small init
+process, without a CUDA runtime requirement. Its native arm64 build on this Mac
+passes worker startup, actual compiled-pipeline H.264/AAC encoding with overlay,
+full decoding, and graceful stop while Docker networking is disabled. That check
+does not qualify network transport, GPU encoding, or other host architectures.
 
 Use reachable container-network addresses instead of `127.0.0.1` for services
 outside the container. NVENC requires a compatible NVIDIA host/driver and container

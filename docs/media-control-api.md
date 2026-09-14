@@ -78,7 +78,7 @@ with native matches.
 - 49 pure media state tests, 10 persistence tests, and 4 HTTP route tests pass.
   Coverage includes ownership, ordering, rejected operations, schema migration,
   independent SQLite connections, and rollback when receipt persistence fails.
-- The complete workspace suite passes 169 API tests, 68 worker tests,
+- The complete workspace suite passes 169 API tests, 72 worker tests,
   and 12 tooling tests. Typecheck, production build, formatting, and the actual
   production server container startup check pass.
 - Shared Swift passes 45 tests, including 11 media contract/client tests.
@@ -92,5 +92,5 @@ with native matches.
 These results do not qualify recording, SRT, FFmpeg output, watch networking, or
 physical devices. Relay credential retrieval and short native worker media runs
 now have [separate integration evidence](../apps/home-daemon/README.md).
-Next work includes observed worker status, abrupt crash recovery, source-loss
-injection, and the full local media qualification gate.
+Next work includes observed worker status and the full local media qualification
+gate. The worker media harness now also exercises abrupt worker crash and source loss.

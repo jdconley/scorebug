@@ -26,6 +26,7 @@ const directory = await mkdtemp(join(tmpdir(), 'scorebug-worker-'));
 const artifact = join(root, 'artifacts', 'qa', `native-worker-${encoder}`);
 const names = [];
 const children = new Set();
+const crashDescendants = new Map();
 const { ffmpeg, ffprobe, font } = mediaTools();
 let api;
 let worker;
@@ -88,6 +89,23 @@ async function stop(item) {
     await Promise.race([item.done, delay(2000)]);
   }
   assert.ok(item.exited, 'Owned process did not exit');
+}
+async function rememberDescendants(pid) {
+  const result = await command('pgrep', ['-P', String(pid)], 2000);
+  if (!result.ok && result.error !== '1') throw new Error('Owned descendant inventory failed');
+  for (const line of result.stdout.trim().split('\n')) {
+    const childPid = Number(line);
+    if (!Number.isSafeInteger(childPid) || childPid <= 1) continue;
+    const identity = await processIdentity(childPid);
+    if (!identity) continue;
+    crashDescendants.set(childPid, identity);
+    await rememberDescendants(childPid);
+  }
+}
+async function processIdentity(pid) {
+  const result = await command('ps', ['-p', String(pid), '-o', 'lstart='], 2000);
+  if (!result.ok && result.error !== '1') throw new Error('Owned process identity unavailable');
+  return result.stdout.trim();
 }
 async function fixture(kind, mediaPort, apiPort) {
   const name = `scorebug-worker-${kind}-${randomUUID()}`;
@@ -434,7 +452,7 @@ try {
   worker = startWorker();
   await until(() => worker.output.includes('waiting_source'), 'worker waits for source');
   assert.equal((await sinkState()).ready, false);
-  const publisher = start(ffmpeg, [
+  const publisherArgs = [
     '-v',
     'error',
     '-re',
@@ -468,7 +486,8 @@ try {
     '-f',
     'mpegts',
     access.publishUrl,
-  ]);
+  ];
+  let publisher = start(ffmpeg, publisherArgs);
   await ready();
   const initial = await clip('initial-zero');
   const score = await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
@@ -485,9 +504,13 @@ try {
     'authoritative score update',
   );
   const changed = await clip('point-one');
-  let changedPixels = 0;
-  for (let i = 0; i < initial.length; i++)
-    if (initial[i] > 180 !== changed[i] > 180) changedPixels++;
+  const pixelDistance = (a, b) => {
+    assert.equal(a.length, b.length);
+    let distance = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] > 180 !== b[i] > 180) distance++;
+    return distance;
+  };
+  const changedPixels = pixelDistance(initial, changed);
   assert.ok(changedPixels > 20, 'Score update did not change burned-in overlay pixels');
   assert.equal(
     worker.output.split('ffmpeg_spawning').length - 1,
@@ -495,18 +518,46 @@ try {
     'Score update restarted encoder',
   );
   console.log('Native point updated overlay pixels without restarting the encoder.');
-  await stop(worker);
-  assert.equal(worker.code, 0, 'Worker did not shut down gracefully');
-  await until(async () => !(await sinkState()).ready, 'worker shutdown removes output');
+  const currentScoreClip = async (label) => {
+    const recovered = await clip(label);
+    assert.ok(
+      pixelDistance(changed, recovered) < pixelDistance(initial, recovered) / 2,
+      `${label} did not recover the current burned-in score`,
+    );
+  };
+  await rememberDescendants(worker.child.pid);
+  assert.ok(crashDescendants.size, 'No owned encoder descendants found before crash');
+  worker.child.kill('SIGKILL');
+  await until(async () => !(await sinkState()).ready, 'worker crash removes output', 5000);
+  await until(
+    async () => {
+      for (const [pid, identity] of crashDescendants)
+        if ((await processIdentity(pid)) === identity) return false;
+      return true;
+    },
+    'worker crash reaps encoder and guardian',
+    5000,
+  );
+  crashDescendants.clear();
+  await until(() => worker.exited, 'worker crash exit');
   worker = startWorker();
   await ready();
-  await clip('worker-restarted');
+  await currentScoreClip('worker-crash-recovered');
   await api.stop();
   await until(async () => !(await sinkState()).ready, 'control lease stops stale output', 10_000);
   assert.ok(!publisher.exited, 'Control outage stopped the independent source');
   api = await startScoringTestServer(database, { ...environment, PORT: apiPort });
   await ready();
-  await clip('api-recovered');
+  await currentScoreClip('api-recovered');
+  await stop(publisher);
+  await until(async () => !(await sinkState()).ready, 'source loss stops output');
+  const sourceReturned = performance.now();
+  publisher = start(ffmpeg, publisherArgs);
+  await ready();
+  const recoveryMs = performance.now() - sourceReturned;
+  assert.ok(recoveryMs < 10_000, `Source recovery took ${Math.round(recoveryMs)} ms`);
+  await currentScoreClip('source-recovered');
+  console.log(`Source loss recovered to output in ${Math.round(recoveryMs)} ms.`);
   await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
     commandId: 'end',
     gameId: matchId,
@@ -520,7 +571,9 @@ try {
   await until(() => publisher.exited, 'match end revokes input');
   const media = await request(`/v1/matches/${matchId}/media`, capture.credential.token);
   assert.equal(media.snapshot.recordings[0].status, 'recording');
-  console.log('Worker restart, API outage lease, recovery, and match-end stop verified.');
+  console.log(
+    'Worker SIGKILL, source loss, API outage lease, recovery, and match-end stop verified.',
+  );
 } catch (error) {
   console.error(error.message);
   if (worker) console.error(worker.output);
@@ -545,6 +598,17 @@ try {
       process.exitCode = 1;
     }
   }
+  // Only descendants inventoried from this owned worker before its deliberate crash.
+  // A failing crash test must not leave its encoder alive after fixtures are removed.
+  for (const [pid, identity] of [...crashDescendants].reverse())
+    await cleanup(async () => {
+      if ((await processIdentity(pid)) !== identity) return;
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    }, 'crash descendant');
   await cleanup(() => rm(directory, { recursive: true, force: true }), 'temporary files');
 }
 if (!process.exitCode)

@@ -149,7 +149,7 @@ new `infra/local/`, `scripts/media-fixture.sh`, and `scripts/test-media.mjs`.
       Add real connection tests for valid/invalid publish and read credentials and revocation.
 - [ ] Wait for source readiness; reconcile late/restarted workers; reject stale
       generation commands. Report actual first frames/output progress and failures.
-- [ ] Fix process supervision: spawn errors, awaited async handlers, serialized
+- [x] Fix process supervision: spawn errors, awaited async handlers, serialized
       lifecycle changes, bounded restarts, and SIGTERM/SIGKILL based on process exit.
 - [ ] Render initial 0–0 and scaled overlay placement for every qualified resolution.
       Use packaged/configured fonts instead of a hardcoded Linux font path on macOS.
@@ -168,11 +168,13 @@ recovery within ten seconds after a reachable source returns in the test environ
 Provisioning/revocation and native credential routes pass real audio/video tests;
 automatic relay reconciliation is connected. The durable worker consumer now passes
 short local CPU and VideoToolbox runs: initial score, point changes without encoder
-restart, graceful worker restart, API outage lease/recovery, and match-end shutdown.
+restart, worker SIGKILL/encoder cleanup, API outage lease/recovery, source-loss
+recovery, current-score restoration, and match-end shutdown.
 Source-frame barcodes distinguish fresh frames from muxed/duplicated frames. See
 [worker runbook](../../../apps/home-daemon/README.md). This does not complete the
-ten-minute/audio-sync qualification, abrupt worker crash, source-loss recovery,
-capability negotiation, or native status reporting gates.
+ten-minute/audio-sync qualification, capability negotiation, or native status
+reporting gates. The Linux arm64 CPU container also starts and runs the compiled
+media pipeline; other hosts and GPU drivers remain unqualified.
 
 ## Milestone 3: iPhone recording core and streaming adapter
 

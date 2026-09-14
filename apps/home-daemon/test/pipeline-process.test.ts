@@ -1,6 +1,7 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { buildFfmpegArgs, startPipeline } from '../src/pipeline.js';
 import { createLogger, type Logger } from '../src/logger.js';
@@ -71,6 +72,7 @@ async function childFixture(body: string) {
     records.push({ message, ...meta });
   const log: Logger = { debug: record, info: record, warn: record, error: record };
   return {
+    dir,
     spec: {
       gameId: 'fixture',
       pullUrl: 'srt://user:PULL_PASSWORD@host:8890?passphrase=QUERY_SECRET',
@@ -122,6 +124,96 @@ it('escalates an ignored TERM to KILL and keeps repeated stop calls idempotent',
     expect(fixture.records.filter((entry) => entry.message === 'ffmpeg_sigterm')).toHaveLength(1);
     expect(fixture.records.filter((entry) => entry.message === 'ffmpeg_sigkill')).toHaveLength(1);
     expect(fixture.records.filter((entry) => entry.message === 'ffmpeg_exited')).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('reaps an encoder that ignores TERM after its worker is killed abruptly', async () => {
+  const fixture = await childFixture(`
+    process.on('SIGTERM', () => require('node:fs').writeFileSync(__filename + '.term', 'received'));
+    setInterval(() => {}, 1000);
+  `);
+  const workerPath = join(fixture.dir, 'worker.mjs');
+  await writeFile(
+    workerPath,
+    `
+    import { startPipeline } from ${JSON.stringify(new URL('../src/pipeline.ts', import.meta.url).href)};
+    const noop = () => {};
+    startPipeline(${JSON.stringify(fixture.spec)}, { debug: noop, info: noop, warn: noop, error: noop }, { stopTimeoutMs: 50 });
+    setInterval(() => {}, 1000);
+  `,
+  );
+  const worker = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), workerPath], {
+    stdio: 'ignore',
+  });
+  const exited = new Promise((resolve) => worker.once('exit', resolve));
+  try {
+    await fixture.ready();
+    const pid = Number(await readFile(join(fixture.dir, 'ready'), 'utf8'));
+    worker.kill('SIGKILL');
+    await exited;
+    await expect
+      .poll(async () => readFile(fixture.spec.ffmpegPath + '.term', 'utf8'), { timeout: 1500 })
+      .toBe('received');
+    await expect
+      .poll(
+        () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { timeout: 1500 },
+      )
+      .toBe(false);
+  } finally {
+    worker.kill('SIGKILL');
+    await fixture.cleanup();
+  }
+});
+
+it('honors stop before the guardian has spawned its encoder', async () => {
+  const fixture = await childFixture('setInterval(() => {}, 1000);');
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, { stopTimeoutMs: 50 });
+    pipeline.stop();
+    pipeline.stop();
+    expect(await boundedExit(pipeline)).toMatchObject({ code: null, signal: 'SIGTERM' });
+    expect(fixture.records.filter((entry) => entry.message === 'ffmpeg_exited')).toHaveLength(1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('does not report encoder exit when only its guardian has been killed', async () => {
+  const fixture = await childFixture(`
+    require('node:fs').writeFileSync(__filename + '.guardian', String(process.ppid));
+    setInterval(() => {}, 1000);
+  `);
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log);
+    await fixture.ready();
+    const guardianPid = Number(await readFile(fixture.spec.ffmpegPath + '.guardian', 'utf8'));
+    const encoderPid = Number(await readFile(join(fixture.dir, 'ready'), 'utf8'));
+    expect(guardianPid).not.toBe(process.pid);
+    process.kill(guardianPid, 'SIGKILL');
+    expect(await boundedExit(pipeline)).toBe('timed out');
+    expect(() => process.kill(encoderPid, 0)).not.toThrow();
+    expect(fixture.records.some((entry) => entry.message === 'ffmpeg_exited')).toBe(false);
+    pipeline.stop();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('returns the encoder failure code rather than the guardian success code', async () => {
+  const fixture = await childFixture('process.exitCode = 23;');
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log);
+    expect(await boundedExit(pipeline)).toEqual({ code: 23, signal: null });
   } finally {
     await fixture.cleanup();
   }

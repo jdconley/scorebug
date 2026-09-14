@@ -100,3 +100,5 @@ jobs:
           push: false
           load: true
           tags: scorebug/home-daemon:ci
+      - name: run compiled worker and real software pipeline in final image
+        run: node scripts/test-worker-container.mjs scorebug/home-daemon:ci

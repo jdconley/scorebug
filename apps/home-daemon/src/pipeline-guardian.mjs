@@ -1,0 +1,86 @@
+// @ts-check
+import { spawn } from 'node:child_process';
+
+/** @type {import('node:child_process').ChildProcess | undefined} */
+let encoder;
+let started = false;
+let stopping = false;
+let finished = false;
+let stopTimeoutMs = 5000;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let killTimer;
+
+function disconnect() {
+  if (process.connected) process.disconnect();
+}
+
+/** @param {Record<string, unknown>} message */
+function report(message, last = false) {
+  if (!process.connected || !process.send) return;
+  try {
+    process.send(message, (error) => {
+      if (last) disconnect();
+      else if (error) stop();
+    });
+  } catch {
+    if (last) disconnect();
+    else stop();
+  }
+}
+
+/** @param {number | null} code @param {NodeJS.Signals | null} signal */
+function finish(code, signal) {
+  if (finished) return;
+  finished = true;
+  clearTimeout(killTimer);
+  // A guardian exit is never substituted for the encoder's actual exit status.
+  report({ event: 'exit', code, signal }, true);
+}
+
+function alive() {
+  return !finished && encoder?.exitCode === null && encoder.signalCode === null;
+}
+
+function stop() {
+  if (stopping || finished) return;
+  stopping = true;
+  if (!alive()) return;
+  report({ event: 'sigterm' });
+  encoder?.kill('SIGTERM');
+  killTimer = setTimeout(() => {
+    if (!alive()) return;
+    report({ event: 'sigkill' });
+    encoder?.kill('SIGKILL');
+  }, stopTimeoutMs);
+}
+
+// Install parent-loss handling before accepting any request to create an encoder.
+process.on('disconnect', stop);
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);
+process.on('message', (message) => {
+  const request =
+    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number }} */ (
+      message
+    );
+  if (request.type === 'stop') {
+    stop();
+    return;
+  }
+  if (request.type !== 'start' || started || stopping || !process.connected) return;
+  started = true;
+  stopTimeoutMs = request.stopTimeoutMs;
+  try {
+    // Inherit the output descriptor directly: a broken worker pipe cannot crash
+    // the guardian before it kills/reaps the encoder. Diagnostics contain URLs.
+    encoder = spawn(request.binary, request.args, { stdio: ['ignore', 'inherit', 'ignore'] });
+    encoder.on('error', () => {
+      report({ event: 'process_error' });
+      if (!encoder?.pid) finish(null, null);
+    });
+    encoder.once('exit', finish);
+  } catch {
+    report({ event: 'spawn_failed' });
+    finish(null, null);
+  }
+});

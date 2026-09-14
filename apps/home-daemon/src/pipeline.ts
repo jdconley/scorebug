@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
 import type { Logger } from './logger.js';
 
 export type PipelineSpec = {
@@ -206,21 +206,33 @@ export function startPipeline(
   let child: ChildProcess | undefined;
   let settled = false;
   let stopping = false;
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let encoderExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   let settle!: (code: number | null, signal: NodeJS.Signals | null) => void;
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     settle = (code, signal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(killTimer);
       log.info('ffmpeg_exited', { gameId: spec.gameId, code, signal });
       resolve({ code, signal });
     };
   });
+  const send = (message: Record<string, unknown>) => {
+    if (!child?.connected) return;
+    try {
+      child.send(message, (error) => {
+        if (error) log.error('ffmpeg_guardian_connection_failed', { gameId: spec.gameId });
+      });
+    } catch {
+      log.error('ffmpeg_guardian_connection_failed', { gameId: spec.gameId });
+    }
+  };
 
   log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
   try {
-    child = spawn(spec.ffmpegPath ?? 'ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    child = fork(new URL('./pipeline-guardian.mjs', import.meta.url), [], {
+      execArgv: [],
+      stdio: ['ignore', 'pipe', 'ignore', 'ipc'],
+    });
     // Drain diagnostics without retaining them: FFmpeg echoes credentialed URLs.
     if (options.onProgress) {
       child.stdout?.on(
@@ -236,16 +248,35 @@ export function startPipeline(
     } else {
       child.stdout?.resume();
     }
-    child.stderr?.resume();
+    child.on('message', (message: unknown) => {
+      const event = message as {
+        event: string;
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      };
+      if (event.event === 'exit') {
+        encoderExit = { code: event.code, signal: event.signal };
+      } else if (event.event === 'sigterm' || event.event === 'sigkill') {
+        log.info(`ffmpeg_${event.event}`, { gameId: spec.gameId });
+      } else if (event.event === 'process_error' || event.event === 'spawn_failed') {
+        log.error(`ffmpeg_${event.event}`, { gameId: spec.gameId });
+      }
+    });
     child.on('error', () => {
       // Neither the error object nor its message is safe to log (both can contain argv).
       log.error('ffmpeg_process_error', { gameId: spec.gameId });
       if (!child?.pid) settle(null, null);
     });
-    child.once('exit', settle);
+    child.once('close', () => {
+      // Drain progress before resolving. Guardian death alone does not prove the
+      // encoder exited: fail closed so the supervisor cannot overlap publishers.
+      if (encoderExit) settle(encoderExit.code, encoderExit.signal);
+      else if (!settled) log.error('ffmpeg_guardian_lost', { gameId: spec.gameId });
+    });
+    send({ type: 'start', binary: spec.ffmpegPath ?? 'ffmpeg', args, stopTimeoutMs });
   } catch {
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });
-    settle(null, null);
+    if (!child?.pid) settle(null, null);
   }
 
   const alive = () => !settled && child?.exitCode === null && child.signalCode === null;
@@ -254,13 +285,7 @@ export function startPipeline(
     stop: () => {
       if (stopping || !alive()) return;
       stopping = true;
-      log.info('ffmpeg_sigterm', { gameId: spec.gameId });
-      child?.kill('SIGTERM');
-      killTimer = setTimeout(() => {
-        if (!alive()) return;
-        log.info('ffmpeg_sigkill', { gameId: spec.gameId });
-        child?.kill('SIGKILL');
-      }, stopTimeoutMs);
+      send({ type: 'stop' });
     },
     waitExit: () => exit,
   };
