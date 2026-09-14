@@ -1,0 +1,65 @@
+{
+  "issued": {
+    "pairingId": "40000000-0000-4000-8000-000000000001",
+    "gameId": "10000000-0000-4000-8000-000000000001",
+    "watchDeviceId": "30000000-0000-4000-8000-000000000001",
+    "role": "score",
+    "pairingToken": "h4x9JD8Nf5U3ddjoSHyqWIRpChDJox2DlTvfVBirh7I",
+    "expiresAt": "2026-09-14T01:05:00.000Z",
+    "serverTime": "2026-09-14T01:00:00.000Z"
+  },
+  "redeemed": {
+    "pairingId": "40000000-0000-4000-8000-000000000001",
+    "redemptionId": "50000000-0000-4000-8000-000000000001",
+    "credential": {
+      "gameId": "10000000-0000-4000-8000-000000000001",
+      "deviceId": "30000000-0000-4000-8000-000000000001",
+      "role": "score",
+      "token": "zIfosyNrXPjNbQQyUcIUzb-85XX9Th0AOkrqMepUY-w"
+    },
+    "snapshot": {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-09-14T01:00:00.000Z",
+      "revision": 0,
+      "teams": {
+        "home": {
+          "name": "Home",
+          "shortName": "H",
+          "color": "#112233"
+        },
+        "away": {
+          "name": "Away",
+          "shortName": "A",
+          "color": "#445566"
+        }
+      },
+      "rules": {
+        "bestOf": 3,
+        "pointsToWin": 25,
+        "decidingPointsToWin": 15,
+        "winBy": 2,
+        "pointCap": null
+      },
+      "score": {
+        "home": 0,
+        "away": 0,
+        "set": 1,
+        "homeSets": 0,
+        "awaySets": 0
+      },
+      "completedSets": [],
+      "status": "active",
+      "endReason": null,
+      "canUndo": false,
+      "scorer": {
+        "deviceId": "20000000-0000-4000-8000-000000000001",
+        "epoch": 1
+      },
+      "broadcast": {
+        "desired": "stopped",
+        "generation": 0
+      }
+    },
+    "serverTime": "2026-09-14T01:00:00.000Z"
+  }
+}

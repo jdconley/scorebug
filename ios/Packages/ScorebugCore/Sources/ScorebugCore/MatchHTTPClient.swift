@@ -39,6 +39,20 @@ public struct MatchHTTPClient: Sendable {
         try await send(path: ["active"], token: installationToken)
     }
 
+    public func issueWatchPairing(gameId: String, request: WatchPairingIssueRequest,
+                                  installationToken: String) async throws -> WatchPairingIssued {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return try await send(path: [gameId, "watch-pairings"], method: "POST", token: installationToken,
+                              body: encoder.encode(request))
+    }
+
+    public func redeemWatchPairing(gameId: String, pairingId: String, pairingToken: String,
+                                   recoveryKey: String, request: WatchPairingRedeemRequest) async throws -> WatchPairingRedeemed {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return try await send(path: [gameId, "watch-pairings", pairingId, "redeem"], method: "POST", token: pairingToken,
+                              body: encoder.encode(request), pairingRecoveryKey: recoveryKey)
+    }
+
     public func join(gameId: String, deviceId: String, role: MatchRole,
                      installationToken: String) async throws -> MatchSessionResponse {
         struct Join: Encodable { let deviceId: String; let role: MatchRole }
@@ -116,7 +130,8 @@ public struct MatchHTTPClient: Sendable {
     }
 
     private func send<Response: Decodable>(path: [String], method: String = "GET", token: String,
-                                          body: Data? = nil, additionalStatuses: Set<Int> = []) async throws -> Response {
+                                          body: Data? = nil, additionalStatuses: Set<Int> = [],
+                                          pairingRecoveryKey: String? = nil) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1").appendingPathComponent("matches")
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
         // from being redirected by a slash, percent escape, or dot segment.
@@ -132,6 +147,7 @@ public struct MatchHTTPClient: Sendable {
         request.httpMethod = method
         request.httpBody = body
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let pairingRecoveryKey { request.setValue(pairingRecoveryKey, forHTTPHeaderField: "X-Scorebug-Pairing-Recovery") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await transport(request)

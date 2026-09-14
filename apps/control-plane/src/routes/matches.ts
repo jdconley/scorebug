@@ -7,6 +7,7 @@ import type { MatchCredential } from '@scorebug/protocol';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
+import { watchPairingRoutes } from './watch-pairings.js';
 import type { RelayLifecycle } from '../relay-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
@@ -134,6 +135,7 @@ export function matchesRoutes(
     const outcome = store.receipt(credential.gameId, credential.deviceId, c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
+  app.route('/:id/watch-pairings', watchPairingRoutes(config, store));
   app.route('/:id/media', mediaRoutes(config, store, relayLifecycle, observations));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)

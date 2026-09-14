@@ -89,3 +89,16 @@ then Watch B/phone B while phone A films. Use Series 7 41 mm, Ultra 2, and SE la
 Companion command fallback, Wi-Fi/cellular handoff, real wrist suspension, and
 physical-device reliability require their own qualification; Core tests and
 simulator networking do not certify those routes.
+
+## Foundation implementation status
+
+Server contracts/routes, transactional issuance/redemption, and the shared Swift
+client/setup coordinator are implemented and independently reviewed. The database
+also commits observed unused expiry permanently, preventing a later clock rollback
+from reviving a discarded attempt. Canonical 32-byte recovery keys are validated on
+both sides. See [qualification evidence](../../watch-pairing-foundation.md).
+
+Native phone issuance persistence, device Keychain adapters, companion envelopes,
+the watchOS target, and the user-facing Watch scoring flow remain the next slice.
+The shared coordinator's single-owner/quiescent-scoring precondition must be upheld
+by those native models; it is not a cross-process lock on app configuration.

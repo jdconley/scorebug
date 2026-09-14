@@ -311,6 +311,11 @@ open, so the broader fresh-frame tracking item and adaptive enablement stay pend
 client to direct/companion routes and distinguish Simulator protocol coverage from
 physical paired-device transfer and suspension tests.
 
+The [pairing foundation](../../watch-pairing-foundation.md) now supplies distinct
+Watch credentials and durable setup recovery. Real Swift HTTP scoring passed after
+a lost pairing reply and API/client restart. Native Watch UI and companion setup
+adapters remain pending, so the complete simulator/Watch items below stay open.
+
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
 `ios/WatchTests/`, `ios/WatchUITests/`, and native iPhone scoring tests from milestone 1.

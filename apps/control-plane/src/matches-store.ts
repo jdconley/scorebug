@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +10,10 @@ import type {
   MatchSnapshot,
   ScoringState,
   Teams,
+  WatchPairingIssueRequest,
+  WatchPairingRedeemRequest,
+  WatchPairingIssued,
+  WatchPairingRedeemed,
 } from '@scorebug/protocol';
 import { canonical } from './canonical-json.js';
 import { MediaStore } from './media-store.js';
@@ -26,6 +30,21 @@ export class MatchStoreError extends Error {
   }
 }
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
+const matchesDigest = (stored: string, token: string) =>
+  /^[a-f0-9]{64}$/.test(stored) &&
+  timingSafeEqual(Buffer.from(stored, 'hex'), Buffer.from(digest(token), 'hex'));
+type PairingRow = {
+  game_id: string;
+  pairing_id: string;
+  watch_device_id: string;
+  request: string;
+  token_hash: string;
+  expires_at: number;
+  expired: number;
+  redemption_request: string | null;
+  recovery_hash: string | null;
+  credential_hash: string | null;
+};
 function snapshot(match: StoredMatch): MatchSnapshot {
   return {
     id: match.id,
@@ -61,7 +80,7 @@ export class MatchStore {
         'PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;',
       );
       const version = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-      if (version.user_version > 2) throw new MatchStoreError('unsupported_database_version');
+      if (version.user_version > 4) throw new MatchStoreError('unsupported_database_version');
       this.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS matches(id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL);
@@ -70,10 +89,21 @@ export class MatchStore {
             role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, PRIMARY KEY(game_id, device_id, role));
           CREATE TABLE IF NOT EXISTS commands(game_id TEXT NOT NULL REFERENCES matches(id), device_id TEXT NOT NULL,
             command_id TEXT NOT NULL, request TEXT NOT NULL, outcome TEXT NOT NULL, PRIMARY KEY(game_id, device_id, command_id));
+          CREATE TABLE IF NOT EXISTS watch_pairings(game_id TEXT NOT NULL REFERENCES matches(id), pairing_id TEXT NOT NULL,
+            watch_device_id TEXT NOT NULL, request TEXT NOT NULL, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL,
+            redemption_request TEXT, recovery_hash TEXT, credential_hash TEXT,
+            expired INTEGER NOT NULL DEFAULT 0 CHECK(expired IN (0,1)), PRIMARY KEY(game_id,pairing_id));
 
         `);
         MediaStore.migrate(this.db);
-        this.db.exec('PRAGMA user_version=2;');
+        // Development v3 databases already contain pairing receipts. Add the terminal
+        // expiry flag in place, without replacing rows or losing uncertain redemptions.
+        const pairingColumns = this.db.prepare('PRAGMA table_info(watch_pairings)').all();
+        if (!pairingColumns.some((column) => column.name === 'expired'))
+          this.db.exec(
+            'ALTER TABLE watch_pairings ADD COLUMN expired INTEGER NOT NULL DEFAULT 0 CHECK(expired IN (0,1))',
+          );
+        this.db.exec('PRAGMA user_version=4;');
       });
       this.media = new MediaStore(this.db, {
         transaction: (body) => this.transaction(body),
@@ -169,19 +199,172 @@ export class MatchStore {
   ): MatchCredential {
     return this.transaction(() => {
       this.load(gameId);
-      // Stable per-role token makes lost create/join replies safe to retry. The
-      // installation secret stays outside SQLite; only its token digest is stored.
-      const token = createHmac('sha256', this.credentialKey)
-        .update(canonical(['scorebug-scoped-credential-v1', gameId, deviceId, role]))
-        .digest('base64url');
-      this.db
-        .prepare(
-          `INSERT INTO credentials(game_id,device_id,role,token_hash) VALUES(?,?,?,?)
-        ON CONFLICT(game_id,device_id,role) DO UPDATE SET token_hash=excluded.token_hash`,
-        )
-        .run(gameId, deviceId, role, digest(token));
-      return { gameId, deviceId, role, token };
+      return this.issueCredentialWithinTransaction(gameId, deviceId, role);
     });
+  }
+  private credential(
+    gameId: string,
+    deviceId: string,
+    role: MatchCredential['role'],
+  ): MatchCredential {
+    // Existing installation-authorized joins retain their stable token domain.
+    const token = createHmac('sha256', this.credentialKey)
+      .update(canonical(['scorebug-scoped-credential-v1', gameId, deviceId, role]))
+      .digest('base64url');
+    return { gameId, deviceId, role, token };
+  }
+  private issueCredentialWithinTransaction(
+    gameId: string,
+    deviceId: string,
+    role: MatchCredential['role'],
+    preserveExisting = false,
+  ): MatchCredential {
+    const credential = this.credential(gameId, deviceId, role);
+    if (preserveExisting) {
+      const existing = this.db
+        .prepare('SELECT token_hash FROM credentials WHERE game_id=? AND device_id=? AND role=?')
+        .get(gameId, deviceId, role) as { token_hash: string } | undefined;
+      if (existing && !matchesDigest(existing.token_hash, credential.token))
+        throw new MatchStoreError('pairing_credential_changed');
+    }
+    this.db
+      .prepare(
+        `INSERT INTO credentials(game_id,device_id,role,token_hash) VALUES(?,?,?,?)
+        ON CONFLICT(game_id,device_id,role) DO UPDATE SET token_hash=excluded.token_hash`,
+      )
+      .run(gameId, deviceId, role, digest(credential.token));
+    return credential;
+  }
+  private pairing(gameId: string, pairingId: string): PairingRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM watch_pairings WHERE game_id=? AND pairing_id=?')
+      .get(gameId, pairingId) as PairingRow | undefined;
+  }
+  private pairingToken(
+    gameId: string,
+    pairingId: string,
+    watchDeviceId: string,
+    expiresAt: number,
+  ): string {
+    return createHmac('sha256', this.credentialKey)
+      .update(canonical(['scorebug-watch-pairing-v1', gameId, pairingId, watchDeviceId, expiresAt]))
+      .digest('base64url');
+  }
+  authenticateWatchPairing(gameId: string, pairingId: string, token: string): boolean {
+    const row = this.pairing(gameId, pairingId);
+    return !!row && matchesDigest(row.token_hash, token);
+  }
+  issueWatchPairing(gameId: string, input: WatchPairingIssueRequest): WatchPairingIssued {
+    return this.transaction(() => {
+      const request = canonical(input);
+      const existing = this.pairing(gameId, input.pairingId);
+      let expiresAt: number;
+      if (existing) {
+        if (existing.request !== request) throw new MatchStoreError('pairing_id_reused');
+        expiresAt = existing.expires_at;
+      } else {
+        if (this.load(gameId).scoring.status !== 'active') throw new MatchStoreError('match_ended');
+        const { count } = this.db
+          .prepare('SELECT COUNT(*) AS count FROM watch_pairings WHERE game_id=?')
+          .get(gameId) as { count: number };
+        if (count >= 64) throw new MatchStoreError('pairing_limit');
+        expiresAt = this.now() + 300000;
+      }
+      const pairingToken = this.pairingToken(
+        gameId,
+        input.pairingId,
+        input.watchDeviceId,
+        expiresAt,
+      );
+      if (existing && !matchesDigest(existing.token_hash, pairingToken))
+        throw new MatchStoreError('pairing_key_changed');
+      if (!existing)
+        this.db
+          .prepare(
+            'INSERT INTO watch_pairings(game_id,pairing_id,watch_device_id,request,token_hash,expires_at) VALUES(?,?,?,?,?,?)',
+          )
+          .run(
+            gameId,
+            input.pairingId,
+            input.watchDeviceId,
+            request,
+            digest(pairingToken),
+            expiresAt,
+          );
+      return {
+        ...input,
+        gameId,
+        role: 'score',
+        pairingToken,
+        expiresAt: new Date(expiresAt).toISOString(),
+        serverTime: new Date(this.now()).toISOString(),
+      };
+    });
+  }
+  redeemWatchPairing(
+    gameId: string,
+    pairingId: string,
+    token: string,
+    recoveryKey: string,
+    input: WatchPairingRedeemRequest,
+  ): WatchPairingRedeemed {
+    const outcome = this.transaction<WatchPairingRedeemed | null>(() => {
+      const row = this.pairing(gameId, pairingId);
+      if (!row || !matchesDigest(row.token_hash, token)) throw new MatchStoreError('unauthorized');
+      const request = canonical(input);
+      let credential: MatchCredential;
+      if (row.redemption_request !== null) {
+        // Receipt first: expiry/match end cannot erase an uncertain committed redemption.
+        if (
+          row.redemption_request !== request ||
+          !row.recovery_hash ||
+          !matchesDigest(row.recovery_hash, recoveryKey)
+        )
+          throw new MatchStoreError('pairing_redemption_conflict');
+        credential = this.credential(gameId, row.watch_device_id, 'score');
+        if (
+          !row.credential_hash ||
+          !matchesDigest(row.credential_hash, credential.token) ||
+          !this.authenticate(gameId, credential.token)
+        )
+          throw new MatchStoreError('pairing_credential_changed');
+      } else {
+        if (row.expired || this.now() >= row.expires_at) {
+          if (!row.expired)
+            this.db
+              .prepare('UPDATE watch_pairings SET expired=1 WHERE game_id=? AND pairing_id=?')
+              .run(gameId, pairingId);
+          // Return through COMMIT: throwing here would roll back definitive expiry.
+          return null;
+        }
+        if (
+          !matchesDigest(
+            row.token_hash,
+            this.pairingToken(gameId, pairingId, row.watch_device_id, row.expires_at),
+          )
+        )
+          throw new MatchStoreError('pairing_key_changed');
+        if (this.load(gameId).scoring.status !== 'active') throw new MatchStoreError('match_ended');
+        if (input.deviceId !== row.watch_device_id)
+          throw new MatchStoreError('pairing_device_mismatch');
+        credential = this.issueCredentialWithinTransaction(gameId, input.deviceId, 'score', true);
+        this.db
+          .prepare(
+            'UPDATE watch_pairings SET redemption_request=?,recovery_hash=?,credential_hash=? WHERE game_id=? AND pairing_id=?',
+          )
+          .run(request, digest(recoveryKey), digest(credential.token), gameId, pairingId);
+      }
+      return {
+        pairingId,
+        redemptionId: input.redemptionId,
+        credential,
+        snapshot: snapshot(this.load(gameId)),
+        serverTime: new Date(this.now()).toISOString(),
+      };
+    });
+    // Only a durable terminal expiry permits a client to discard uncertain intent.
+    if (outcome === null) throw new MatchStoreError('pairing_expired');
+    return outcome;
   }
   authenticate(gameId: string, token: string): Omit<MatchCredential, 'token'> | undefined {
     const row = this.db

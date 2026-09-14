@@ -1,9 +1,10 @@
 # Native Watch networking design notes
 
-This prepares the Watch milestone; it does not claim that a Watch app or transport
-has been implemented. The existing ScorebugCore client already accepts an injected
-request transport, and its durable command coordinator owns command identity and
-receipt reconciliation independently of the iPhone UI.
+The [pairing foundation](watch-pairing-foundation.md) now provides server issuance,
+redemption, and durable Watch setup recovery through the shared Swift HTTP client.
+The Watch app and native companion adapters remain to be connected. ScorebugCore's
+durable command coordinator owns command identity and receipt reconciliation
+independently of the iPhone UI.
 
 ## Platform behavior
 
