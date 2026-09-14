@@ -9,6 +9,7 @@ import {
   decodeFixtureBarcodes,
   qualifyVideoObservation,
 } from './video-observation-qualification.mjs';
+import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
@@ -369,7 +370,7 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let videoObservation;
+  let videoObservation, workerReportAge;
   if (streaming) {
     assert.equal(states.length, 1, 'Observation fixture must own one recording');
     assert.equal(recordingFolders[0], states[0].id, 'Recording folder/status identity mismatch');
@@ -401,6 +402,11 @@ try {
       archiveIDs,
       liveIDs: liveSegments.flat(),
     });
+    workerReportAge = qualifyWorkerReportAge({ snapshot: observationSnapshot, decodedEvidence });
+    await writeFile(
+      join(artifact, 'worker-report-age-qualification.json'),
+      JSON.stringify(workerReportAge, null, 2),
+    );
   }
   await mkdir(join(artifact, 'attachments'));
   await run(
@@ -419,7 +425,7 @@ try {
   await writeFile(
     join(artifact, 'results.json'),
     JSON.stringify(
-      { runtime, deviceType, media, live, statuses: states, videoObservation },
+      { runtime, deviceType, media, live, statuses: states, videoObservation, workerReportAge },
       null,
       2,
     ),

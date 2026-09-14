@@ -320,8 +320,15 @@ bounded server timing tokens and conservative window-age upper bounds, with 33
 focused and 240 total API tests passing. Worker sampling order and native receipt
 accounting are separate checkpoints. Sampling after token receipt and resampling
 on API restart now pass 25 reporter tests and 132 total worker tests. Native receipt
-accounting and qualification still need integration before this closes the
+and local-residence accounting now pass 119 Core and 50 Film model tests, the
+arm64_32 watchOS 10 Core build, the combined unsigned iPhone/Watch Release build,
+and both reviews. Running-app qualification remains before this closes the
 report-transit gap.
+The native proof exporter/comparator now passes 58 Film model and 135 tooling
+tests, Release compilation and both reviews. Its first isolated run
+(`native-app-mIqwM3`) failed because the archive queue overflowed at 34.90 seconds.
+Preserving failed media and diagnosing bounded queue/timing evidence is the next
+priority before completing the native age gate or enabling adaptive profiles.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 

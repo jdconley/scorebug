@@ -217,7 +217,7 @@ and lifecycle clearing, unbounded-to-bounded collector upgrades, differing valid
 ages, one unmatched latest proof, and no independent matches. Prefer a separate
 `worker-report-age-qualification.mjs` validator so existing frame gates stay intact.
 
-- [ ] Export bounded, credential-free evidence that the actual native helper accepts
+- [x] Export bounded, credential-free evidence that the actual native helper accepts
   a scoped server upper bound and adds request/residence time. Reuse the explicit
   DEBUG simulator flag and joined shutdown export; no per-frame I/O or new UI.
 - [ ] Require bounded-age evidence in the maintained native fixture while preserving
@@ -225,3 +225,21 @@ ages, one unmatched latest proof, and no independent matches. Prefer a separate
   isolated native streaming qualification, with no concurrent media/build jobs.
 - [ ] Record exact outcomes and remaining adaptive gates in the telemetry contract,
   worker decoder documentation, and parent plan. Review and commit.
+
+Checkpoint 4 source passes 58 Film model tests, all 135 tooling tests (including
+41 focused age-qualification cases), the combined unsigned iPhone/Watch Release
+build, and specification/quality reviews. Release excludes fixture markers.
+Both stream-stop and recording-stop preserve the old attempt's proof array before
+clearing, and restart remains blocked until export joins. Logs use
+`artifacts/qa/native-worker-report-age-proof-*`.
+
+The first isolated native run, `artifacts/qa/native-app-mIqwM3`, failed before
+qualification: the archive queue overflowed at 34.90 seconds, clearing capture and
+publishing. The UI then timed out looking for Stop Streaming. Native scoring had
+reached the worker, but stop/export, full media decode and report-age qualification
+did not run. The failure screenshot and app diagnostics establish the overflow;
+they do not distinguish encoder backpressure from a simulator scheduling burst.
+The unchanged 24 MiB queue bounds roughly a quarter-second of 1080p NV12 backlog.
+No queue/profile limits changed in response. Preserve failed recordings and bounded
+queue/timing evidence before another qualification attempt. This checkpoint's
+running-app gate remains open; the source commit does not mark it complete.

@@ -695,6 +695,136 @@ import XCTest
         XCTAssertFalse(model.needsStorageRetry)
     }
 
+    func testPollRecordsActualHelperReturnAndClearsProofOnLatestUnusableOrExpiry() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        model.workerReportAgeProofsEnabled = true
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let scope = try XCTUnwrap(model.videoObservation?.scope)
+        for invalid in ["nil", "invalid", "expired"] {
+            await server.setStatusOverride(workerAgeResponse())
+            await model.pollControl()
+            let proof = try XCTUnwrap(model.workerReportAgeProofHistory.proofs.first)
+            XCTAssertEqual(proof.recordingID, "recording-1")
+            XCTAssertEqual(proof.publishingAttemptID, scope.publishingAttemptID.uuidString)
+            XCTAssertEqual(proof.gameId, "game-1")
+            XCTAssertEqual(proof.generation, 1)
+            XCTAssertEqual(proof.workerId, "worker-1")
+            XCTAssertEqual(proof.attempt, 2)
+            XCTAssertEqual(proof.completed.sequence, 7)
+            XCTAssertEqual(proof.decodedVideoAgeUpperBoundMs, 550)
+            XCTAssertNotEqual(proof.requestDuration.attoseconds, "0")
+            if invalid == "expired" { model.pollLocalHealth(at: ContinuousClock.now + .seconds(5)) }
+            else {
+                var latest = workerAgeResponse(bound: invalid == "nil" ? nil : 550)
+                if invalid == "invalid" { latest.status.observation?.decodedVideo?.invalidReason = .numeric }
+                await server.setStatusOverride(latest); await model.pollControl()
+            }
+            XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        }
+        await model.stopStreaming()
+    }
+
+    func testProofRecordingRequiresFlagAndActiveAttemptAndClearsAcrossStopRestartAndRemoteMismatch() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server, publisherFactory: { _, _ in CaptureTestPublisher() })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse()); await model.pollControl()
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        model.workerReportAgeProofsEnabled = true
+        await model.pollControl()
+        let old = try XCTUnwrap(model.workerReportAgeProofHistory.proofs.first)
+        var next = workerAgeResponse(); next.status.observation?.decodedVideo?.completed?.sequence = 8
+        await server.setStatusOverride(next); await model.pollControl()
+        XCTAssertEqual(model.workerReportAgeProofHistory.proofs.map { $0.completed.sequence }, [7, 8])
+        var mismatch = workerAgeResponse(); mismatch.status.workerId = "other"
+        await server.setStatusOverride(mismatch); await model.pollControl()
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await server.setStatusOverride(workerAgeResponse()); await model.pollControl()
+        XCTAssertEqual(model.workerReportAgeProofHistory.proofs.count, 1)
+        await model.stopStreaming()
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await model.pollControl()
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await model.startStreaming()
+        var new = workerAgeResponse(); new.status.generation = 3; new.status.observation?.generation = 3
+        await server.setStatusOverride(new); await model.pollControl()
+        let restarted = try XCTUnwrap(model.workerReportAgeProofHistory.proofs.first)
+        XCTAssertNotEqual(old.publishingAttemptID, restarted.publishingAttemptID)
+        XCTAssertEqual(restarted.generation, 3)
+        model.captureChanged(nil)
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await model.stopStreaming()
+    }
+
+    func testRecordingScopeChangeImmediatelyClearsProofAndCannotPollOldPublisherIntoNewRecording() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        model.workerReportAgeProofsEnabled = true
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse()); await model.pollControl()
+        XCTAssertEqual(model.workerReportAgeProofHistory.proofs.count, 1)
+        model.captureChanged(CurrentCapture(id: "recording-2", startedAt: "2026-09-14T00:00:01Z", tap: PublishingTap()))
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await model.pollControl()
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        await model.stopStreaming()
+    }
+
+    func testStreamAndCaptureStopExportImmutableSnapshotBeforeHistoryClear() async throws {
+        for stopCapture in [false, true] {
+            let server = CaptureTestServer()
+            let model = makeModel(server: server)
+            model.workerReportAgeProofsEnabled = true
+            var exported: [WorkerReportAgeProof]?
+            var closed: VideoFrameObservationSnapshot?
+            model.videoObservationFixtureWriter = { snapshot, detached, proofs in
+                XCTAssertTrue(snapshot.isClosed)
+                XCTAssertGreaterThanOrEqual(detached, snapshot.monotonicAnchor)
+                exported = proofs; closed = snapshot
+            }
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            await server.setStatusOverride(workerAgeResponse()); await model.pollControl()
+            let beforeStop = model.workerReportAgeProofHistory.proofs
+            XCTAssertEqual(beforeStop.count, 1)
+            if stopCapture { model.captureChanged(nil) }
+            await model.stopStreaming()
+            XCTAssertEqual(exported, beforeStop)
+            XCTAssertEqual(exported?.first?.publishingAttemptID, closed?.scope.publishingAttemptID.uuidString)
+            XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        }
+    }
+
+    func testFixtureExportIsJoinedBeforePublishingCanRestart() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server, publisherFactory: { _, _ in CaptureTestPublisher() })
+        model.workerReportAgeProofsEnabled = true
+        let gate = FilmTestGate()
+        var exported: [WorkerReportAgeProof] = []
+        model.videoObservationFixtureWriter = { _, _, proofs in
+            exported = proofs
+            await gate.enter()
+        }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse()); await model.pollControl()
+        let beforeStop = model.workerReportAgeProofHistory.proofs
+        let stopping = Task { await model.stopStreaming() }
+        await gate.waitUntilEntered()
+        XCTAssertEqual(exported, beforeStop)
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        XCTAssertFalse(model.canStart)
+        await model.startStreaming()
+        XCTAssertEqual(model.videoObservation?.scope.publishingAttemptID.uuidString, beforeStop.first?.publishingAttemptID)
+        await gate.release(); await stopping.value
+        XCTAssertTrue(model.canStart)
+        model.videoObservationFixtureWriter = nil
+        await model.startStreaming()
+        XCTAssertNotEqual(model.videoObservation?.scope.publishingAttemptID.uuidString, beforeStop.first?.publishingAttemptID)
+        XCTAssertTrue(model.workerReportAgeProofHistory.proofs.isEmpty)
+        XCTAssertEqual(exported, beforeStop)
+        await model.stopStreaming()
+    }
+
     private func workerAgeResponse(bound: Double? = 550) -> WorkerMediaStatusResponse {
         let window = DecodedVideoWindow(sequence: 7, durationMs: 5000, ageMs: 250, firstPTS: 0, lastPTS: 447000,
                                        freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)

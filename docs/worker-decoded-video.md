@@ -65,9 +65,23 @@ after synchronous work. Null observations do not report or log recovery. All 25
 reporter tests and 132 total worker tests pass, as do worker/protocol type checking
 and both reviews. Logs are under `artifacts/qa/worker-report-age-sampling-*`.
 
-Swift still needs to add status-request and local residence time, followed by native
-qualification. Thus complete production report-age qualification remains open;
-see [the implementation plan](superpowers/plans/2026-09-14-worker-report-age.md).
+Swift now retains the optional upper bound and adds the full status request and
+local ContinuousClock residence with exact checked Duration arithmetic. Immutable
+evidence retains its match/generation/worker/attempt/window identity and expires
+with process status. Missing, invalid, contradictory, ended or overflowing evidence
+is unknown. Film clears it on lifecycle changes and ignores obsolete status errors
+after Stop. All 119 Core and 50 Film model tests pass, as do the arm64_32 watchOS 10
+Core and combined unsigned iPhone/Watch Release builds. Both reviews approve;
+logs are under `artifacts/qa/native-worker-report-age-*`.
+
+Running-app report-age qualification remains open; see
+[the implementation plan](superpowers/plans/2026-09-14-worker-report-age.md).
+
+The native proof exporter/comparator is implemented and reviewed, with 58 Film
+model and 135 tooling tests passing. Its first isolated simulator attempt
+(`native-app-mIqwM3`) failed due to a local recording queue overflow at 34.90 seconds,
+before stop/export and media/report-age validation. That failure remains open;
+it is not evidence that the report-age path or recording reliability is qualified.
 
 ## Qualification
 

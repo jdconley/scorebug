@@ -2,8 +2,9 @@
 
 The native Film tab connects capture to the shared match, publishes through a local
 SRT relay and worker, and keeps the clean local recording independent. The native
-Score tab can score while capture runs. Automatic reconnection, adaptive profiles,
-Watch UI/networking, and physical camera qualification remain subsequent work.
+Score tab can score while capture runs. The [native Watch app](native-watch-app.md)
+also supports scoring, with separate simulator evidence. Automatic reconnection,
+adaptive profiles, physical Watch networking, and camera qualification remain open.
 
 ## Reproduce locally
 
@@ -142,3 +143,19 @@ iPhone/Watch Release build pass; both source reviews approve the integration.
 See [the telemetry contract](adaptive-telemetry.md) for remaining production clock
 mapping and adaptive-quality requirements. This short simulator run does not
 qualify physical camera, WatchConnectivity, sustained load, or automatic profiles.
+
+## Report-age qualification attempt
+
+The DEBUG fixture now also retains two scoped proofs of the actual native worker
+age helper's execution. The harness checks exact request/residence additions and
+matches at least one window to independently collected bounded API evidence. All
+58 Film model and 135 tooling tests pass, as does the combined unsigned iPhone/Watch
+Release build; both source reviews approve.
+
+The first isolated attempt (`native-app-mIqwM3`) failed when the local recording
+queue overflowed at 34.90 seconds. Capture and publishing then stopped, so the UI
+could not find Stop Streaming. The worker had received HOME 1–0 AWAY, but this run
+did not qualify shutdown, export, decoded media, or report age. The screenshot and
+app diagnostics are retained. More queue/timing evidence and failed-recording
+preservation are needed to distinguish encoder pressure from source scheduling;
+the unchanged queue limit must not be increased merely to make the run pass.

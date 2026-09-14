@@ -6,8 +6,12 @@ test('qualification rejects later invalidation of an already observed window in 
   for (const state of ['producing_output', 'retrying', 'stale']) {
     const windows = new Map();
     const status = {
+      gameId: 'game',
+      generation: 1,
+      workerId: 'worker',
       state: 'producing_output',
       observation: {
+        gameId: 'game',
         generation: 1,
         attempt: 1,
         decodedVideo: {

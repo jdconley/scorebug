@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools } from './media-tools.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
+import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
 export async function nativeStreamingFixture({ artifact, root, run }) {
@@ -139,7 +140,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
         const created = await response.json();
         matchID = created.snapshot.id;
         // One owned request at a time, bounded history, and joined on every exit.
-        // Keep only numeric evidence; credentials never enter artifacts.
+        // Keep only scoped scalar evidence; credentials never enter artifacts.
         statusAbort = new AbortController();
         statusTask = (async () => {
           while (!statusAbort.signal.aborted) {
@@ -251,18 +252,35 @@ export function recordDecodedVideoEvidence(decodedWindows, status) {
     !video || (video.invalidReason === null && (!video.completed || video.completed.valid)),
     'Native stream produced invalid decoder telemetry',
   );
-  if (video?.completed && status.state === 'producing_output') {
-    const key = `${observation.generation}:${observation.attempt}:${video.completed.sequence}`;
-    if (!decodedWindows.has(key)) {
-      assert.ok(decodedWindows.size < 64, 'Decoder evidence exceeded fixture bound');
-      decodedWindows.set(
-        key,
-        structuredClone({
-          generation: observation.generation,
-          attempt: observation.attempt,
-          ...video,
-        }),
+  if (video?.completed) {
+    assert.equal(observation.gameId, status.gameId, 'Decoder game scope mismatch');
+    assert.equal(observation.generation, status.generation, 'Decoder generation scope mismatch');
+    const sample = structuredClone({
+      gameId: status.gameId,
+      generation: observation.generation,
+      workerId: status.workerId,
+      attempt: observation.attempt,
+      decodedVideoAgeUpperBoundMs: status.decodedVideoAgeUpperBoundMs ?? null,
+      ...video,
+    });
+    const key = remoteWindowIdentity(sample);
+    const prior = decodedWindows.get(key);
+    if (prior) {
+      assert.deepEqual(
+        immutableWindow(sample.completed),
+        immutableWindow(prior.completed),
+        'Reused decoder identity changed immutable window content',
       );
+    }
+    // Stopping/ended observations still undergo invalidity and immutable-reuse
+    // checks, but cannot replace the usable sample this collector witnessed.
+    if (status.state !== 'producing_output' || video.ended) return;
+    if (prior) {
+      if (prior.decodedVideoAgeUpperBoundMs == null && sample.decodedVideoAgeUpperBoundMs != null)
+        decodedWindows.set(key, sample);
+    } else {
+      assert.ok(decodedWindows.size < 64, 'Decoder evidence exceeded fixture bound');
+      decodedWindows.set(key, sample);
     }
   }
 }

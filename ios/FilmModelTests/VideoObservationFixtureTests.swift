@@ -1,5 +1,6 @@
 import CoreMedia
 import Foundation
+import ScorebugCore
 import ScorebugMedia
 import XCTest
 
@@ -42,5 +43,77 @@ final class VideoObservationFixtureTests: XCTestCase {
         XCTAssertFalse(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "true"]))
         XCTAssertFalse(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "0"]))
         XCTAssertTrue(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1"]))
+    }
+}
+
+private let proofAttempt = UUID(uuidString: "12345678-1234-4234-9234-123456789ABC")!
+private func proofScope(recording: String = "recording", attempt: UUID = proofAttempt, game: String = "game", generation: Int = 3) -> VideoFrameObservationScope {
+    .init(recordingID: recording, matchID: game, broadcastGeneration: generation,
+          publishingAttemptID: attempt, appliedProfileRevision: 1)
+}
+
+
+final class WorkerReportAgeProofTests: XCTestCase {
+    private func proof(sequence: Int64 = 1, scope: VideoFrameObservationScope = proofScope(),
+                       worker: String = "worker", attempt: Int = 2, residence: Duration = .nanoseconds(789)) throws -> WorkerReportAgeProof {
+        let received = ContinuousClock.now
+        let request = Duration.milliseconds(123)
+        let window = DecodedVideoWindow(sequence: sequence, durationMs: 5000, ageMs: 250,
+            firstPTS: 0, lastPTS: 447000, freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)
+        let response = WorkerMediaStatusResponse(status: .init(gameId: scope.matchID, generation: scope.broadcastGeneration, workerId: worker,
+            state: .producingOutput, observation: .init(gameId: scope.matchID, generation: scope.broadcastGeneration, state: .producingOutput,
+            reason: nil, attempt: attempt, frame: nil, outTimeUs: nil, scoreRevision: nil,
+            decodedVideo: .init(completed: window, invalidReason: nil, ended: false)), observedAt: nil,
+            expiresAt: "2040-01-01T00:00:05Z", decodedVideoAgeUpperBoundMs: 550), serverTime: "2040-01-01T00:00:00Z")
+        let helper = try XCTUnwrap(WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: request))
+        let actual = helper.ageUpperBound(at: received.advanced(by: residence))
+        return try XCTUnwrap(WorkerReportAgeProof(scope: scope, helper: helper, serverUpperBoundMs: 550,
+            requestDuration: request, residenceDuration: residence, helperAgeUpperBound: actual))
+    }
+
+    func testHistoryReplacesSameSequenceAdvancesAtTwoAndResetsOnRewind() throws {
+        var history = WorkerReportAgeProofHistory()
+        history.record(try proof())
+        history.record(try proof(residence: .microseconds(2)))
+        XCTAssertEqual(history.proofs.count, 1)
+        XCTAssertEqual(history.proofs.first?.residenceDuration.attoseconds, "2000000000000")
+        history.record(try proof(sequence: 2)); history.record(try proof(sequence: 3))
+        XCTAssertEqual(history.proofs.map { $0.completed.sequence }, [2, 3])
+        history.record(try proof(sequence: 1))
+        XCTAssertEqual(history.proofs.map { $0.completed.sequence }, [1])
+    }
+
+    func testHistoryResetsForLocalOrRemoteScopeAndNilOrLifecycleClear() throws {
+        for replacement in [try proof(scope: proofScope(recording: "other")),
+                            try proof(scope: proofScope(attempt: UUID())),
+                            try proof(worker: "other"), try proof(attempt: 3),
+                            try proof(scope: proofScope(game: "other")),
+                            try proof(scope: proofScope(generation: 4))] {
+            var history = WorkerReportAgeProofHistory()
+            history.record(try proof()); history.record(try proof(sequence: 2)); history.record(replacement)
+            XCTAssertEqual(history.proofs, [replacement])
+            history.record(nil)
+            XCTAssertTrue(history.proofs.isEmpty)
+            history.record(replacement); history.clear()
+            XCTAssertTrue(history.proofs.isEmpty)
+        }
+    }
+
+    func testExportPreservesActualExactDurationReturnAndImmutableWindow() throws {
+        let evidence = try proof(residence: Duration(secondsComponent: 0, attosecondsComponent: 789123456789))
+        var accumulator = try VideoFrameObservationAccumulator(scope: proofScope(), monotonicAnchor: 0)
+        let data = try VideoObservationFixture.data(for: accumulator.close(at: 1), captureDetachedAt: 1,
+            workerReportAgeProofs: [evidence])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let proofs = try XCTUnwrap(json["workerReportAgeProofs"] as? [[String: Any]])
+        XCTAssertEqual(proofs.count, 1)
+        let p = proofs[0]
+        XCTAssertEqual(p["evaluatedAt"] as? String, "pollControl")
+        XCTAssertEqual(p["decodedVideoAgeUpperBoundMs"] as? Int64, 550)
+        XCTAssertEqual(p["requestDuration"] as? [String: String], ["seconds": "0", "attoseconds": "123000000000000000"])
+        XCTAssertEqual(p["residenceDuration"] as? [String: String], ["seconds": "0", "attoseconds": "789123456789"])
+        XCTAssertEqual(p["helperAgeUpperBound"] as? [String: String], ["seconds": "0", "attoseconds": "673000789123456789"])
+        XCTAssertTrue(p["invalidReason"] is NSNull)
+        XCTAssertEqual((p["completed"] as? [String: Any])?["freshFrames"] as? Int, 150)
     }
 }

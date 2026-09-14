@@ -195,6 +195,19 @@ All 33 focused and 240 total API tests pass, including the shared HTTP golden
 fixture. Protocol build and type checking pass. The worker now samples after
 registration/token receipt and resamples after session renewal; all 25 reporter
 tests and 132 total worker tests pass. Both API and worker checkpoints have passed
-specification and quality review. Swift request/local-residence accounting and
-native qualification remain the next checkpoint. Automatic quality changes remain
-disabled.
+specification and quality review. Swift now adds the full status request and local
+ContinuousClock residence with exact checked Duration arithmetic, preserving
+immutable window scope and process TTL. Unusable bounds remain unknown, and old
+status failures cannot overwrite post-Stop state. All 119 Core and 50 Film model
+tests pass, together with the arm64_32 watchOS 10 Core and combined unsigned
+iPhone/Watch Release builds. Both native reviews approve. Running-app qualification
+is the remaining report-age checkpoint; automatic quality changes remain disabled.
+
+The DEBUG native proof exporter and independent API comparator now pass 58 Film
+model and 135 tooling tests, the combined unsigned iPhone/Watch Release build,
+and both reviews. Proof durations are compared exactly using decimal Duration
+components and BigInt; different API poll ages are not assumed equal. The first
+isolated native attempt (`native-app-mIqwM3`) encountered an archive queue overflow
+at 34.90 seconds, before stop/export and qualification completed. The run remains
+failed. Queue/timing diagnosis takes precedence over claiming a complete age path;
+no queue limit, quality policy, or media acceptance gate has been relaxed.

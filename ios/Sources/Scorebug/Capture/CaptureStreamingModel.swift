@@ -25,6 +25,26 @@ import ScorebugStreaming
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
     @Published private(set) var videoObservation: VideoFrameObservationSnapshot?
+    #if DEBUG
+    // Explicit simulator fixture flag; Mac unit tests opt in by injection.
+    var workerReportAgeProofsEnabled: Bool = {
+        #if targetEnvironment(simulator)
+        VideoObservationFixture.requested(environment: ProcessInfo.processInfo.environment)
+        #else
+        false
+        #endif
+    }()
+    private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
+    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof]) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        return { snapshot, detached, proofs in
+            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs)
+        }
+        #else
+        return nil
+        #endif
+    }()
+    #endif
     private var diagnosticAttemptID: UUID?
     @Published private(set) var activeRecordingID: String?
     private var workerEpoch = UUID()
@@ -105,6 +125,11 @@ import ScorebugStreaming
         let previous = current
         current = context
         activeRecordingID = context?.id
+        #if DEBUG
+        // A closing capture snapshots its old attempt in detachPublisher before
+        // clearing; a replacement recording cannot inherit live proof history.
+        if context != nil, previous?.id != context?.id { workerReportAgeProofHistory.clear() }
+        #endif
         if context == nil {
             epoch = UUID()
             action?.cancel()
@@ -290,6 +315,21 @@ import ScorebugStreaming
             let requestDuration = requestStart.duration(to: received)
             workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+            #if DEBUG
+            if workerReportAgeProofsEnabled, let publishing, localState == .publishing,
+               publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+               let scope = publishing.observations?.snapshot.scope {
+                // One evaluation instant, one call to the actual helper. Preserve
+                // its return; export must never recompute or imply current age.
+                let evaluated = ContinuousClock.now
+                let actualAge = workerDecodedVideoFreshness?.ageUpperBound(at: evaluated)
+                workerReportAgeProofHistory.record(WorkerReportAgeProof(scope: scope,
+                    helper: workerDecodedVideoFreshness,
+                    serverUpperBoundMs: response.status.decodedVideoAgeUpperBoundMs,
+                    requestDuration: requestDuration, residenceDuration: received.duration(to: evaluated),
+                    helperAgeUpperBound: actualAge))
+            } else { workerReportAgeProofHistory.clear() }
+            #endif
             workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
             clearWorker()
@@ -302,6 +342,9 @@ import ScorebugStreaming
     func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
         if workerFreshness?.isFresh(at: instant) == false {
             workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil
+            #if DEBUG
+            workerReportAgeProofHistory.clear()
+            #endif
         }
         guard let publishing else { return }
         videoObservation = publishing.observations?.poll()
@@ -351,11 +394,13 @@ import ScorebugStreaming
     private func detachPublisher() {
         if let publishing {
             publishing.context.tap.detach(publishing.session)
-            #if DEBUG && targetEnvironment(simulator)
-            // Qualification boundary only: the final callback is not evidence of
-            // detach, because treating it as one could hide a capture stall.
-            let captureDetachedAt = VideoObservationFixture.requested(environment: ProcessInfo.processInfo.environment)
-                ? ProcessInfo.processInfo.systemUptime : nil
+            #if DEBUG
+            // Production fixture I/O defaults only on explicitly enabled simulators.
+            // Tests may inject an in-memory writer to exercise this same joined boundary.
+            let fixtureWriter = workerReportAgeProofsEnabled ? videoObservationFixtureWriter : nil
+            // A final callback cannot establish capture detach or hide a stall.
+            let captureDetachedAt = fixtureWriter == nil ? nil : ProcessInfo.processInfo.systemUptime
+            let workerReportAgeProofs = workerReportAgeProofHistory.proofs
             #endif
             publishing.session.cancel()
             let session = publishing.session
@@ -371,9 +416,9 @@ import ScorebugStreaming
                 if teardownID == id {
                     if diagnosticAttemptID == attempt {
                         videoObservation = final
-                        #if DEBUG && targetEnvironment(simulator)
-                        if let final, let captureDetachedAt {
-                            await VideoObservationFixture.writeClosed(final, captureDetachedAt: captureDetachedAt)
+                        #if DEBUG
+                        if let final, let captureDetachedAt, let fixtureWriter {
+                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs)
                         }
                         #endif
                     }
@@ -387,6 +432,9 @@ import ScorebugStreaming
     }
     private func clearWorker() {
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil
+        #if DEBUG
+        workerReportAgeProofHistory.clear()
+        #endif
     }
     private func reserveStopOwnership(_ id: String) throws {
         guard var saved = setup else { throw CaptureControlError.noSetup }
