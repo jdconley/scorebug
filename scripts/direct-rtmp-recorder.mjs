@@ -162,7 +162,7 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
       const controller = new AbortController();
       const pendingProbe = probe(
         'lsof',
-        ['-a', '-p', String(child.pid), `-iTCP:${port}`, '-sTCP:LISTEN', '-Fn'],
+        ['-nP', '-a', '-p', String(child.pid), `-iTCP:${port}`, '-sTCP:LISTEN', '-Fn'],
         {
           timeout: Math.max(1, Math.min(250, Math.ceil(remaining))),
           killSignal: 'SIGKILL',

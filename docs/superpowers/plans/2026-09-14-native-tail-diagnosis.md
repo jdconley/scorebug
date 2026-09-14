@@ -325,3 +325,11 @@ the fix and passes after it. The readiness timeout reason is captured before
 cleanup; its exact-message regression also failed before the fix. Red/green logs:
 `artifacts/qa/direct-rtmp-recorder-review-{red,green}.log`; full suite:
 `artifacts/qa/direct-rtmp-recorder-tools-review.log`. Native qualification pending.
+
+First native attempt `native-app-WPajX2` stopped at recorder readiness before app
+launch. macOS lsof rendered `localhost` instead of numeric loopback. An isolated
+owned-listener probe confirmed the cause; `-nP` now disables name and service
+conversion. The exact-arguments regression failed before this fix; all 189 tools
+pass after it (`direct-rtmp-recorder-numeric-{red,green}.log`). Real helper smoke
+`direct-recorder-numeric-6I8KmL` observes readiness and joins cleanup. Review cleared
+the fix. No native media result was produced by the failed startup attempt.

@@ -82,7 +82,15 @@ test('readiness observes only the owned PID and exact loopback listener without 
     options: { stdio: 'ignore' },
   });
   assert.equal(f.calls[1].file, 'lsof');
-  assert.deepEqual(f.calls[1].args, ['-a', '-p', '4242', '-iTCP:19359', '-sTCP:LISTEN', '-Fn']);
+  assert.deepEqual(f.calls[1].args, [
+    '-nP',
+    '-a',
+    '-p',
+    '4242',
+    '-iTCP:19359',
+    '-sTCP:LISTEN',
+    '-Fn',
+  ]);
   assert.ok(f.calls[1].options.timeout > 0 && f.calls[1].options.timeout <= 250);
   await recorder.stop();
   assert.deepEqual(await f.manifest(), {
