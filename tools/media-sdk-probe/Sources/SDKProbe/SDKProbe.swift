@@ -4,6 +4,7 @@ import HaishinKit
 import SRTHaishinKit
 
 public actor SDKProbe {
+    public enum ProbeError: Error { case notPublishing }
     private let connection = SRTConnection()
     private let stream: SRTStream
     public init() { stream = SRTStream(connection: connection) }
@@ -15,10 +16,14 @@ public actor SDKProbe {
             expectedFrameRate: 30))
         try await stream.setAudioSettings(AudioCodecSettings(bitRate: 128_000))
         await stream.setExpectedMedias([.video, .audio])
+        await stream.setVideoInputBufferCounts(4)
     }
     public func start(_ url: URL) async throws {
         try await connection.connect(url)
         await stream.publish()
+        guard await connection.connected, await stream.readyState == .publishing else {
+            throw ProbeError.notPublishing
+        }
     }
     public func video(_ sample: CMSampleBuffer) async { await stream.append(sample) }
     public func audio(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) async { await stream.append(buffer, when: when) }
@@ -30,6 +35,11 @@ public actor SDKProbe {
     public func metrics() async -> (Double, Int32, UInt64)? {
         guard let stats = await connection.performanceData else { return nil }
         return (stats.msRTT, stats.pktSndDropTotal, stats.byteSentTotal)
+    }
+    public func isPublishing() async -> Bool {
+        let connected = await connection.connected
+        let publishing = await stream.readyState == .publishing
+        return connected && publishing
     }
     public func stop() async { await stream.close(); await connection.close() }
 }

@@ -1,0 +1,448 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createSocket } from 'node:dgram';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { command, mediaTools } from './media-tools.mjs';
+import { cancellation } from './cancellation.mjs';
+import {
+  sourceFrameCodeFilter,
+  frameCodeReadFilter,
+  decodeFrameCodes,
+} from './media-frame-codes.mjs';
+import {
+  sourceAudioExpression,
+  analyzeMediaSync,
+  assertMediaSync,
+  assertMediaCoverage,
+} from './media-sync.mjs';
+import { measureFreshCadence } from './media-soak.mjs';
+
+assert.equal(process.platform, 'darwin', 'Native dual-output qualification requires macOS');
+const root = fileURLToPath(new URL('..', import.meta.url));
+const checkCancellation = cancellation();
+const { ffmpeg, ffprobe } = mediaTools();
+await mkdir(join(root, 'artifacts/qa'), { recursive: true });
+const artifact = await mkdtemp(join(root, 'artifacts/qa/dual-output-'));
+const binary = join(root, 'tools/media-sdk-probe/.build/debug/DualOutputSmoke');
+const archiveBinary = join(root, 'tools/media-harness/.build/debug/ArchiveHarness');
+const children = new Set();
+async function run(binary, args, label, timeout = 60_000) {
+  checkCancellation();
+  const result = await command(binary, args, timeout);
+  assert.ok(
+    result.ok,
+    `${label} failed (${result.error ?? 'unknown'}): ${(result.stdout + result.stderr).slice(-4000)}`,
+  );
+  return result.stdout;
+}
+function start(binary, args) {
+  const child = spawn(binary, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  const item = {
+    child,
+    exited: false,
+    code: null,
+    output: '',
+    error: '',
+    events: [],
+    pending: '',
+    stopped: false,
+  };
+  children.add(item);
+  child.stdout.on('data', (chunk) => {
+    item.output = (item.output + chunk).slice(-128_000);
+    item.pending += chunk;
+    let newline;
+    while ((newline = item.pending.indexOf('\n')) >= 0) {
+      const line = item.pending.slice(0, newline);
+      item.pending = item.pending.slice(newline + 1);
+      try {
+        item.events.push(JSON.parse(line));
+      } catch {}
+    }
+  });
+  child.stderr.on('data', (chunk) => {
+    item.error = (item.error + chunk).slice(-32_000);
+  });
+  item.done = new Promise((resolve) => {
+    const finish = (code) => {
+      if (item.exited) return;
+      item.exited = true;
+      item.code = code;
+      children.delete(item);
+      resolve();
+    };
+    child.once('error', () => finish(null));
+    child.once('close', finish);
+  });
+  return item;
+}
+async function until(predicate, label, timeout = 30_000) {
+  const deadline = performance.now() + timeout;
+  while (performance.now() < deadline) {
+    checkCancellation();
+    if (await predicate()) return;
+    await delay(20);
+  }
+  throw new Error(`Timed out: ${label}`);
+}
+async function stop(item) {
+  if (!item || item.exited) return;
+  if (item.stopped) {
+    item.child.kill('SIGCONT');
+    item.stopped = false;
+  }
+  item.child.kill('SIGINT');
+  await Promise.race([item.done, delay(2000)]);
+  if (!item.exited) item.child.kill('SIGKILL');
+  await Promise.race([item.done, delay(2000)]);
+  assert.ok(item.exited, 'Owned native test process did not exit');
+}
+async function freePort() {
+  const socket = createSocket('udp4');
+  await new Promise((resolve, reject) => {
+    socket.once('error', reject);
+    socket.bind(0, '127.0.0.1', resolve);
+  });
+  const port = socket.address().port;
+  await new Promise((resolve) => socket.close(resolve));
+  return port;
+}
+
+async function analyze(path, label, requireComplete) {
+  await run(
+    ffmpeg,
+    ['-v', 'error', '-xerror', '-i', path, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'],
+    `${label} full decode`,
+  );
+  const streams = JSON.parse(
+    await run(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', path], `${label} formats`),
+  ).streams;
+  const video = streams.find((x) => x.codec_type === 'video');
+  const audio = streams.find((x) => x.codec_type === 'audio');
+  assert.equal(video?.codec_name, 'h264');
+  assert.equal(video.width, 1920);
+  assert.equal(video.height, 1080);
+  assert.equal(audio?.codec_name, 'aac');
+  assert.equal(Number(audio.sample_rate), 48000);
+  const codeFile = join(artifact, `${label}.codes`);
+  await run(
+    ffmpeg,
+    [
+      '-v',
+      'error',
+      '-y',
+      '-i',
+      path,
+      '-an',
+      '-vf',
+      frameCodeReadFilter,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      codeFile,
+    ],
+    `${label} frame identities`,
+  );
+  const codes = decodeFrameCodes(await readFile(codeFile));
+  if (requireComplete) {
+    assert.equal(codes.length, 420, 'Archive must retain all source frames');
+    assert.ok(
+      codes.every((code, i) => code === i),
+      'Archive lost or repeated source frames',
+    );
+  } else {
+    assert.ok(
+      codes[0] <= 30 && codes.at(-1) >= 390,
+      'Normal stream startup or final-frame gap exceeded one second',
+    );
+  }
+  const frames = async (selector, fields) =>
+    JSON.parse(
+      await run(
+        ffprobe,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          selector,
+          '-show_frames',
+          '-show_entries',
+          `frame=${fields}`,
+          '-of',
+          'json',
+          path,
+        ],
+        `${label} timestamps`,
+      ),
+    ).frames;
+  const videoTimes = (await frames('v:0', 'best_effort_timestamp_time')).map((x) =>
+    Number(x.best_effort_timestamp_time),
+  );
+  const cadence = measureFreshCadence(codes, videoTimes);
+  const audioFrames = await frames('a:0', 'best_effort_timestamp_time,nb_samples');
+  const audioStartTime = Number(audioFrames[0].best_effort_timestamp_time);
+  let sampleCount = 0;
+  for (const frame of audioFrames) {
+    assert.ok(
+      Math.abs(Number(frame.best_effort_timestamp_time) - audioStartTime - sampleCount / 48000) <
+        0.002,
+      `${label} audio discontinuity`,
+    );
+    sampleCount += frame.nb_samples;
+  }
+  const coverage = assertMediaCoverage({
+    videoTimes,
+    audioStartTime,
+    audioSampleCount: sampleCount,
+    sampleRate: 48000,
+  });
+  const raw = join(artifact, `${label}.audio`);
+  await run(
+    ffmpeg,
+    ['-v', 'error', '-y', '-i', path, '-vn', '-ac', '1', '-ar', '48000', '-f', 'f32le', raw],
+    `${label} PCM`,
+  );
+  const bytes = await readFile(raw);
+  assert.equal(bytes.length, sampleCount * 4);
+  const sync = analyzeMediaSync({
+    codes,
+    videoTimes,
+    audioSamples: new Float32Array(bytes.buffer, bytes.byteOffset, sampleCount),
+    sampleRate: 48000,
+    audioStartTime,
+  });
+  assertMediaSync(sync);
+  return {
+    frames: codes.length,
+    firstCode: codes[0],
+    lastCode: codes.at(-1),
+    cadence,
+    coverage,
+    sync,
+  };
+}
+
+async function measureBitrateChange(path) {
+  const packets = JSON.parse(
+    await run(
+      ffprobe,
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_packets',
+        '-show_entries',
+        'packet=pts_time,size',
+        '-of',
+        'json',
+        path,
+      ],
+      'Live encoded video bitrate',
+    ),
+  ).packets;
+  const origin = Number(packets[0].pts_time);
+  const rates = [
+    [1, 4],
+    [7, 12],
+  ].map(
+    ([start, end]) =>
+      (packets
+        .filter((packet) => {
+          const time = Number(packet.pts_time) - origin;
+          return time >= start && time < end;
+        })
+        .reduce((sum, packet) => sum + Number(packet.size), 0) *
+        8) /
+      (end - start),
+  );
+  assert.ok(
+    rates[0] > 4_000_000 && rates[1] > 1_000_000,
+    'Encoded video rate was unexpectedly low',
+  );
+  assert.ok(rates[1] / rates[0] < 0.6, 'Live bitrate change did not affect encoded output');
+  return {
+    beforeBitsPerSecond: rates[0],
+    afterBitsPerSecond: rates[1],
+    ratio: rates[1] / rates[0],
+  };
+}
+
+try {
+  await run(
+    'swift',
+    ['build', '--package-path', 'tools/media-sdk-probe', '--product', 'DualOutputSmoke'],
+    'Dual output build',
+    180_000,
+  );
+  await run(
+    'swift',
+    ['build', '--package-path', 'tools/media-harness'],
+    'Archive export harness build',
+    120_000,
+  );
+  const source = join(artifact, 'source.mp4');
+  await run(
+    ffmpeg,
+    [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=1920x1080:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      sourceAudioExpression(),
+      '-t',
+      '14',
+      '-vf',
+      `drawbox=x=0:y=900:w=iw:h=180:color=black:t=fill,${sourceFrameCodeFilter}`,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-b:v',
+      '12000k',
+      '-g',
+      '60',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-ar',
+      '48000',
+      '-b:a',
+      '128k',
+      source,
+    ],
+    'Fixture source',
+  );
+  const results = [];
+  for (const scenario of ['normal', 'stalled-receiver', 'no-receiver']) {
+    const port = await freePort();
+    const live = join(artifact, `${scenario}.ts`);
+    let receiver;
+    if (scenario !== 'no-receiver') {
+      receiver = start(ffmpeg, [
+        '-nostdin',
+        '-v',
+        'warning',
+        '-y',
+        '-i',
+        `srt://127.0.0.1:${port}?mode=listener&latency=120000&timeout=5000000`,
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a:0',
+        '-c',
+        'copy',
+        '-f',
+        'mpegts',
+        live,
+      ]);
+      await until(async () => {
+        assert.ok(!receiver.exited, `Receiver failed: ${receiver.error}`);
+        return (
+          await command(
+            '/usr/sbin/lsof',
+            ['-nP', '-a', '-p', String(receiver.child.pid), `-iUDP:${port}`],
+            2000,
+          )
+        ).ok;
+      }, 'owned UDP listener');
+    }
+    const directory = join(artifact, `${scenario}-archive`);
+    // SDK URI values use libsrt milliseconds; FFmpeg latency above uses microseconds.
+    const native = start(binary, [
+      source,
+      directory,
+      `srt://127.0.0.1:${port}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
+    ]);
+    const memory = [];
+    const started = performance.now();
+    let nextMemory = 0;
+    await until(
+      async () => {
+        const elapsed = (performance.now() - started) / 1000;
+        if (scenario === 'stalled-receiver' && !receiver.stopped && elapsed >= 6) {
+          assert.ok(!receiver.exited, receiver.error);
+          assert.ok(receiver.child.kill('SIGSTOP'));
+          receiver.stopped = true;
+        }
+        if (!native.exited && elapsed >= nextMemory) {
+          const rss = await command(
+            '/bin/ps',
+            ['-p', String(native.child.pid), '-o', 'rss='],
+            2000,
+          );
+          if (rss.ok) memory.push({ elapsed, bytes: Number(rss.stdout.trim()) * 1024 });
+          nextMemory = elapsed + 0.5;
+        }
+        return native.exited;
+      },
+      `${scenario} native completion`,
+      35_000,
+    );
+    await writeFile(join(artifact, `${scenario}.log`), native.output + native.error);
+    await writeFile(join(artifact, `${scenario}-memory.json`), JSON.stringify(memory, null, 2));
+    assert.equal(native.code, 0, native.output + native.error);
+    const finished = native.events.find((x) => x.event === 'archive-finished');
+    assert.ok(finished, 'Archive did not report finalization');
+    assert.equal(finished.videoFrames, 420);
+    assert.equal(finished.audioSamples, 672000);
+    assert.equal(finished.archiveRejected, 0);
+    assert.ok(
+      finished.maximumSourceLagSeconds <= 0.25,
+      'Fixture producer fell behind real time by more than 250 ms',
+    );
+    assert.ok(finished.archivePeakBytes <= 24 * 1024 * 1024);
+    assert.ok(finished.livePeakBytes <= 12 * 1024 * 1024);
+    const peakRSS = Math.max(...memory.map((x) => x.bytes));
+    assert.ok(peakRSS < 512 * 1024 * 1024, `Native memory exceeded 512 MiB: ${peakRSS}`);
+    await stop(receiver);
+    if (receiver) await writeFile(join(artifact, `${scenario}-receiver.log`), receiver.error);
+    const exported = join(artifact, `${scenario}-archive.mp4`);
+    await run(archiveBinary, ['export', directory, exported], `${scenario} archive export`);
+    const archiveResult = await analyze(exported, `${scenario}-archive`, true);
+    let liveResult;
+    let bitrateChange;
+    if (scenario === 'normal') {
+      assert.ok(native.events.some((x) => x.event === 'bitrate-changed'));
+      const sent = native.events.find((x) => x.event === 'publisher-finished');
+      assert.ok(sent?.sentBytes > 0 && sent.publishingBeforeStop);
+      liveResult = await analyze(live, 'normal-live', false);
+      bitrateChange = await measureBitrateChange(live);
+    }
+    if (scenario === 'no-receiver')
+      assert.ok(native.events.some((x) => x.event === 'publisher-failed'));
+    if (scenario === 'stalled-receiver') {
+      assert.ok(native.events.some((x) => x.event === 'publisher-started'));
+      assert.ok(
+        native.events.some((x) => x.event === 'publisher-failed'),
+        'Stalled stream did not report failure',
+      );
+    }
+    results.push({
+      scenario,
+      archive: archiveResult,
+      live: liveResult,
+      bitrateChange,
+      counters: finished,
+      peakRSS,
+    });
+    console.log(
+      `${scenario}: archive ${archiveResult.frames} fresh frames; peak RSS ${(peakRSS / 1024 / 1024).toFixed(1)} MiB.`,
+    );
+  }
+  await writeFile(join(artifact, 'results.json'), JSON.stringify(results, null, 2));
+  console.log(`PASS: native dual output; evidence in ${artifact}`);
+} finally {
+  for (const child of [...children]) await stop(child);
+}

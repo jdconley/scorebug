@@ -1,13 +1,14 @@
 # Capture and SRT SDK compatibility
 
-The isolated [compile probe](../tools/media-sdk-probe/README.md) passed on macOS,
-iOS Simulator, and an unsigned generic iPhone destination with iOS 17 deployment.
+The isolated [probes](../tools/media-sdk-probe/README.md) now include macOS dual
+recording/SRT execution and full executable linking for ARM64 iOS Simulator and
+an unsigned generic iPhone destination with iOS 17 deployment.
 It pins HaishinKit **2.2.5**, revision `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`,
 and Logboard **2.6.0**. The original camera scaffold remains unchanged and unqualified.
 
 The pinned package declares iOS 15+/macOS 12+ and includes libsrt 1.5.4 for both
-platforms. These are package/build findings; no camera session, active encoder,
-SRT connection, or physical device was exercised by this probe.
+platforms. No camera session or physical device has been exercised. The
+[dual-output fixture](native-dual-output.md) validates actual Mac encoding and SRT.
 [Package source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/Package.swift).
 
 ## API findings that affect the implementation
@@ -24,13 +25,15 @@ The `CMSampleBuffer` append overload handles **video only**. Passing raw audio t
 it silently omits audio. PCM requires an owned `AVAudioPCMBuffer` and `AVAudioTime`,
 then the separate `append(_:when:)` overload. The probe compiles a source-format
 preserving copy with `CMSampleBufferCopyPCMDataIntoAudioBufferList` and carries the
-sample's presentation timestamp into the audio time. Runtime sample integrity and
-cross-actor buffer ownership still need fixture tests.
+sample's presentation timestamp into the audio time. The Mac fixture now validates
+source-frame identities, decoded audio coverage, and A/V alignment through this path.
 [SRT stream source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/SRT/SRTStream.swift).
 
 Changing video bitrate uses the current settings and their setter. Source inspection
-shows bitrate alone can update an existing compression session; the probe verifies
-the call signature but does not establish live adaptation behavior.
+shows bitrate alone can update an existing compression session. The fixture measures
+the received video rate dropping from approximately 6.13 Mbps to 1.96 Mbps while
+the independently encoded archive retains every source frame. This establishes a
+manual bitrate change, not an adaptive quality policy.
 
 The connection's performance data includes cumulative sent bytes, packet drops,
 loss/retransmission, RTT, bandwidth estimate, and send-buffer size/time. These are
@@ -44,13 +47,25 @@ ownership. `@preconcurrency import` is not proof of safe sample ownership.
 
 Further source inspection finds default unbounded `AsyncStream` queues in both
 `TSWriter.output` and the socket's outgoing data path. A bounded app mailbox alone
-does not establish a bound for the whole publishing pipeline. The next experiment
-must include a stalled receiver and memory/queue observations, and verify finite
-socket-send deadlines and shutdown before this SDK is accepted for production.
+does not establish a bound for the whole publishing pipeline. Short stalled-receiver
+tests pass with bounded app queues, finite socket deadlines, and RSS observations.
+Sustained congestion, recovery, and SDK buffer behavior still need qualification
+before production acceptance.
 [TS writer source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/TS/TSWriter.swift),
 [socket source](https://github.com/HaishinKit/HaishinKit.swift/blob/2.2.5/SRTHaishinKit/Sources/SRT/SRTSocket.swift).
 
-## Recording correction and next experiment
+The SDK URI passes socket options directly to libsrt: `latency=120` is milliseconds.
+FFmpeg's corresponding URI option uses microseconds (`latency=120000`). The fixture
+also supplies finite connection, send, and peer-idle timeouts through SDK-supported
+option names; FFmpeg does not accept all the same names.
+
+Full executable linking exposed two gaps missed by library compilation: the consumer
+must link `libc++`, and the resolved libsrt archive's advertised x86_64 simulator
+slice lacks SRT function symbols. The package now declares the C++ runtime; this
+Mac's ARM64 simulator and the ARM64 iPhone executable link successfully. Intel
+simulator linking remains unsupported with this resolved binary.
+
+## Recording correction and integration work
 
 The camera scaffold requests raw NV12 video. Its writer currently treats that as
 compressed H.264 pass-through with nil output settings. The replacement must
@@ -61,11 +76,10 @@ publishing, including offline operation and publisher bitrate changes.
 
 The [native archive fixture](native-archive.md) now exercises valid H.264/AAC
 encoding, fragment completion/recovery, and full-decode MP4 export on macOS.
-It runs independently of the SDK; simultaneous publishing remains unverified.
+It runs independently of the SDK and is also used by the dual-output fixture.
 
-The next slice is a synthetic NV12/PCM source feeding both a separately encoded
-archive and an SRT adapter with these verified signatures. Fully decode both outputs,
-measure synchronization, change publisher bitrate while recording continues, and
-exercise shutdown/failure paths. Then integrate the actual camera lifecycle.
-Buffer pressure, active bitrate changes, iOS runtime behavior, and simultaneous
-encoding performance remain unverified.
+The synthetic simultaneous archive/SRT experiment now passes normal, unavailable,
+and suspended local receiver cases. Next are production orchestration, sustained
+load/reconnection tests, and the actual camera lifecycle. iOS runtime media behavior,
+hardware camera interruptions, and physical-phone simultaneous encoding remain
+unverified.

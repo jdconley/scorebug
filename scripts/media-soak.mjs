@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { command } from './media-tools.mjs';
 import { decodeFrameCodes, frameCodeReadFilter } from './media-frame-codes.mjs';
-import { analyzeMediaSync, assertMediaSync } from './media-sync.mjs';
+import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 
 export function measureFreshCadence(codes, times) {
   assert.ok(codes.length === times.length && codes.length >= 180, 'Insufficient frame samples');
@@ -199,6 +199,16 @@ export async function measureSoak({
     'Decoded audio sample count disagrees with timestamps',
   );
   const audioSamples = new Float32Array(bytes.buffer, bytes.byteOffset, sampleCount);
+  const coverage = assertMediaCoverage({
+    videoTimes,
+    audioStartTime,
+    audioSampleCount: sampleCount,
+    sampleRate,
+    // This collector joins an already-running stream and may receive audio
+    // before its next two-second keyframe. Extra leading audio is not loss;
+    // late audio onset and missing audio tail still have the 100 ms budget.
+    maxAudioLeadSeconds: 2.1,
+  });
   const sync = analyzeMediaSync({ codes, videoTimes, audioSamples, sampleRate, audioStartTime });
   assertMediaSync(sync);
   assert.ok(
@@ -247,5 +257,5 @@ export async function measureSoak({
     distance(ending, finalOverlay) < distance(ending, initialOverlay) / 2,
     'Soak final score incorrect',
   );
-  return { ...cadence, sync, scoreChanged: true };
+  return { ...cadence, coverage, sync, scoreChanged: true };
 }

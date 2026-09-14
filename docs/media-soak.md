@@ -45,6 +45,14 @@ local A/V offset budget is 100 ms. It is a test acceptance threshold, not a clai
 about perceptual lip-sync standards or end-to-end viewer latency. Reported offsets
 remain limited by source, codec, and container timestamp precision.
 
+Decoded track coverage is checked separately from pulse synchronization, so a
+truncated audio track cannot pass by matching only its surviving pulses. Audio
+must cover the video's beginning and end within 100 ms. Because this collector
+joins an already-running stream, it permits up to 2.1 seconds of extra leading
+audio while waiting for the next two-second video keyframe. That exception does
+not permit missing audio; native recording and direct SDK fixtures retain the
+100 ms limit at both ends.
+
 A native API point changes the score halfway through capture. Decoded overlay
 pixels near the beginning and end must match their corresponding reference scores.
 The worker must report output throughout capture without increasing its encoder
@@ -81,6 +89,10 @@ precision; they do not imply equivalent measurement precision on real camera med
 
 Detailed evidence is in `artifacts/qa/worker-soak-software-600.log`,
 `artifacts/qa/worker-soak-videotoolbox-600.log`, and each encoder's `soak-metrics.json`.
+The retained 600-second clips also passed the subsequently added decoded coverage
+check: extra leading audio was 527/690 ms and audio ended 26.8/22.8 ms before video
+for software/VideoToolbox respectively. The endpoint measurements are retained in
+`artifacts/qa/worker-600-decoded-coverage-recheck.json`.
 
 ## Negative controls
 

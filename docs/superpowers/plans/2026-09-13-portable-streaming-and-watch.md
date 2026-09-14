@@ -187,7 +187,7 @@ media pipeline; other hosts and GPU drivers remain unqualified.
 extend `ios/Packages/ScorebugCore/`, `ios/Tests/`, `ios/UITests/` from milestone 1,
 and native macOS `tools/media-harness/` sharing the media core where supported.
 
-- [ ] Run the HaishinKit compatibility experiment described in the architecture.
+- [x] Run the HaishinKit compatibility experiment described in the architecture.
       Record exact dependency version, toolchain, API calls, supported platforms, and
       buffer/bitrate/statistics behavior. Pin resolution and add iOS simulator/device builds.
 - [ ] Extract testable capture-source, archive-sink, publishing, and clock interfaces;
@@ -200,7 +200,7 @@ and native macOS `tools/media-harness/` sharing the media core where supported.
       relaunch scan/recovery, playback/export, and safe storage-reserve handling.
 - [ ] Add camera role joining, truthful status, archive health/space, and explicit
       recording stop. Remote match end cannot silently discard a recording.
-- [ ] Feed timestamped motion/audio fixtures through real archive code. Kill the
+- [x] Feed timestamped motion/audio fixtures through real archive code. Kill the
       harness during writes at multiple boundaries; recover/export and fully decode.
 
 **Checks:** Swift unit/fixture tests; iOS simulator/device compilation; native macOS
@@ -211,15 +211,21 @@ with measured tail loss at most five seconds. This is not yet phone hardware qua
 **In progress:** the isolated [HaishinKit 2.2.5 compatibility probe](../../capture-sdk-compatibility.md)
 passes macOS execution and generic iOS simulator/device compilation at deployment
 target 17.0. It verifies actor/settings/PCM method signatures and package slices.
-The synthetic dual-output media experiment and production integration remain pending.
+The [native dual-output experiment](../../native-dual-output.md) now exercises
+simultaneous 1080p recording and SRT through independent bounded ingress queues.
+Short normal, suspended-receiver, and unavailable-receiver cases preserve all
+archive video frames and audio. Received bitrate changes from about 6.13 to
+1.96 Mbps without reconfiguring recording. Full ARM64 simulator/iPhone linking
+requires the now-declared C++ runtime; the resolved Intel simulator slice lacks
+SRT symbols. Sustained congestion/reconnection and production integration remain pending.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.
 The reviewed 14-second native run retained all 420 fresh video frames with a maximum
 0.71 ms measured A/V offset. Five forced terminations recovered playable media;
-the largest measured tail-loss bound was 2.60 seconds. All 31 native tests and generic
+the largest measured tail-loss bound was 2.60 seconds. All 42 shared media tests and generic
 iOS 17 simulator/device builds pass. Camera integration, bounded
-production capture queues, app recovery UI, and simultaneous SRT remain pending.
+production capture orchestration, app recovery UI, and phone runtime media remain pending.
 
 ## Milestone 4: Adaptive quality and measurable reliability
 

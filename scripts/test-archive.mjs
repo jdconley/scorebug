@@ -12,7 +12,12 @@ import {
   frameCodeReadFilter,
   decodeFrameCodes,
 } from './media-frame-codes.mjs';
-import { sourceAudioExpression, analyzeMediaSync, assertMediaSync } from './media-sync.mjs';
+import {
+  sourceAudioExpression,
+  analyzeMediaSync,
+  assertMediaSync,
+  assertMediaCoverage,
+} from './media-sync.mjs';
 import { measureFreshCadence } from './media-soak.mjs';
 
 assert.equal(
@@ -142,8 +147,6 @@ async function analyze(path, label, full = false) {
     `${label} lost or repeated source frames inside completed fragments`,
   );
   const result = { frames: codes.length, sourceEnd: (codes.at(-1) + 1) / 30 };
-  if (!full) return result;
-  assert.equal(codes.length, 420, 'Normal archive did not preserve all input video frames');
   const videoFrames = JSON.parse(
     await run(
       ffprobe,
@@ -163,7 +166,13 @@ async function analyze(path, label, full = false) {
     ),
   ).frames;
   const videoTimes = videoFrames.map((frame) => Number(frame.best_effort_timestamp_time));
-  result.cadence = measureFreshCadence(codes, videoTimes);
+  assert.equal(videoTimes.length, codes.length);
+  for (let i = 1; i < videoTimes.length; i++) {
+    assert.ok(
+      Math.abs(videoTimes[i] - videoTimes[i - 1] - 1 / 30) <= 0.002,
+      'Recovered video has a timestamp discontinuity',
+    );
+  }
   const audioFrames = JSON.parse(
     await run(
       ffprobe,
@@ -191,6 +200,15 @@ async function analyze(path, label, full = false) {
     );
     samples += frame.nb_samples;
   }
+  result.coverage = assertMediaCoverage({
+    videoTimes,
+    audioStartTime,
+    audioSampleCount: samples,
+    sampleRate: 48000,
+  });
+  if (!full) return result;
+  assert.equal(codes.length, 420, 'Normal archive did not preserve all input video frames');
+  result.cadence = measureFreshCadence(codes, videoTimes);
   const rawAudio = join(artifact, `${label}-audio.f32`);
   await run(
     ffmpeg,

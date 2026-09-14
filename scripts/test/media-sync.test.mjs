@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeMediaSync, assertMediaSync, sourceAudioExpression } from '../media-sync.mjs';
+import {
+  analyzeMediaSync,
+  assertMediaSync,
+  assertMediaCoverage,
+  sourceAudioExpression,
+} from '../media-sync.mjs';
 
 function fixture({
   offset = 0,
@@ -151,4 +156,134 @@ test('rejects transient PTS corruption between otherwise synchronized markers', 
   // Recover gradually before the next pulse without regressing presentation PTS.
   for (let i = 285; i < 300; i++) input.videoTimes[i] += (0.433 * (300 - i)) / 15;
   assert.throws(() => analyzeMediaSync(input), /cadence|source.*timestamp/i);
+});
+
+function coverageFixture({ start = 0, duration = 14 } = {}) {
+  return {
+    videoTimes: Array.from({ length: duration * 30 }, (_, i) => start + i / 30),
+    audioStartTime: start,
+    audioSampleCount: duration * 48000,
+    sampleRate: 48000,
+  };
+}
+
+for (const start of [0, 93.5, -2.5]) {
+  test(`coverage uses decoded endpoints on the common ${start}s PTS timeline`, () => {
+    const result = assertMediaCoverage(coverageFixture({ start }));
+    assert.equal(result.videoStartTime, start);
+    assert.equal(result.videoEndTime, start + 14);
+    assert.equal(result.audioStartTime, start);
+    assert.equal(result.audioEndTime, start + 14);
+    assert.equal(result.startOffset, 0);
+    assert.equal(result.endOffset, 0);
+    assert.equal(result.toleranceSeconds, 0.1);
+    assert.equal(result.maxAudioLeadSeconds, 0.1);
+  });
+}
+
+test('coverage allows bounded AAC leading and trailing padding', () => {
+  const input = coverageFixture();
+  input.audioStartTime -= 1024 / 48000;
+  input.audioSampleCount += 2048;
+  const result = assertMediaCoverage(input);
+  assert.ok(Math.abs(result.startOffset + 1024 / 48000) < 1e-12);
+  assert.ok(Math.abs(result.endOffset - 1024 / 48000) < 1e-12);
+});
+
+test('coverage rejects seven seconds of audio against fourteen seconds of video even when markers pass', () => {
+  const input = fixture({ duration: 14 });
+  input.audioSamples = input.audioSamples.slice(0, 7 * input.sampleRate);
+  assert.doesNotThrow(() => assertMediaSync(analyzeMediaSync(input)));
+  assert.throws(
+    () => assertMediaCoverage({ ...input, audioSampleCount: input.audioSamples.length }),
+    /coverage.*end/i,
+  );
+});
+
+for (const edge of ['start', 'end']) {
+  test(`coverage rejects 250 ms of missing ${edge} audio`, () => {
+    const input = coverageFixture();
+    input.audioSampleCount -= 0.25 * input.sampleRate;
+    if (edge === 'start') input.audioStartTime += 0.25;
+    assert.throws(() => assertMediaCoverage(input), new RegExp(`coverage.*${edge}`, 'i'));
+  });
+}
+
+test('coverage honors the supplied frame rate and tolerance', () => {
+  const input = {
+    videoTimes: [10, 10.25],
+    audioStartTime: 10,
+    audioSampleCount: 24000,
+    sampleRate: 48000,
+    framesPerSecond: 4,
+    toleranceSeconds: 0,
+  };
+  assert.equal(assertMediaCoverage(input).videoEndTime, 10.5);
+  input.audioSampleCount += 2400;
+  assert.throws(() => assertMediaCoverage(input), /coverage.*end/i);
+  assert.doesNotThrow(() => assertMediaCoverage({ ...input, toleranceSeconds: 0.06 }));
+});
+
+for (const [field, invalidValues] of Object.entries({
+  videoTimes: [[], [NaN], [Infinity], [-Infinity], [0, 0], [1, 0], [0, NaN], null],
+  audioStartTime: [NaN, Infinity, -Infinity, undefined],
+  audioSampleCount: [NaN, Infinity, -Infinity, 0, -1, 1.5, undefined],
+  sampleRate: [NaN, Infinity, -Infinity, 0, -1, 48000.5, undefined],
+  framesPerSecond: [NaN, Infinity, -Infinity, 0, -1, 30.5],
+  toleranceSeconds: [NaN, Infinity, -Infinity, -0.1],
+  maxAudioLeadSeconds: [NaN, Infinity, -Infinity, -0.1],
+})) {
+  test(`coverage rejects invalid ${field}`, () => {
+    for (const value of invalidValues) {
+      assert.throws(
+        () => assertMediaCoverage({ ...coverageFixture(), [field]: value }),
+        /Invalid|finite|monotonic/i,
+        `${field}: ${String(value)}`,
+      );
+    }
+  });
+}
+
+test('collector audio lead allowance accepts extra audio before the first video keyframe', () => {
+  const input = coverageFixture({ start: 0.6 });
+  input.audioStartTime = 0;
+  input.audioSampleCount += 0.6 * input.sampleRate;
+  assert.throws(() => assertMediaCoverage(input), /coverage.*start/i);
+  const result = assertMediaCoverage({ ...input, maxAudioLeadSeconds: 2.1 });
+  assert.equal(result.startOffset, -0.6);
+  assert.equal(result.maxAudioLeadSeconds, 2.1);
+});
+
+test('collector audio lead allowance rejects audio beyond its explicit budget', () => {
+  const input = coverageFixture({ start: 2.2 });
+  input.audioStartTime = 0;
+  input.audioSampleCount += 2.2 * input.sampleRate;
+  assert.throws(
+    () => assertMediaCoverage({ ...input, maxAudioLeadSeconds: 2.1 }),
+    /coverage.*start.*2100 ms/i,
+  );
+});
+
+for (const [edge, missingSeconds] of [
+  ['start', 0.25],
+  ['end', 0.25],
+  ['end', 7],
+]) {
+  test(`collector audio lead allowance still rejects ${missingSeconds}s missing ${edge} audio`, () => {
+    const input = coverageFixture();
+    input.audioSampleCount -= missingSeconds * input.sampleRate;
+    if (edge === 'start') input.audioStartTime += missingSeconds;
+    assert.throws(
+      () => assertMediaCoverage({ ...input, maxAudioLeadSeconds: 2.1 }),
+      new RegExp(`coverage.*${edge}.*100 ms`, 'i'),
+    );
+  });
+}
+
+test('audio lead allowance defaults to the selected coverage tolerance', () => {
+  const input = coverageFixture();
+  input.audioStartTime -= 0.125;
+  input.audioSampleCount += 0.125 * input.sampleRate;
+  const result = assertMediaCoverage({ ...input, toleranceSeconds: 0.25 });
+  assert.equal(result.maxAudioLeadSeconds, 0.25);
 });

@@ -185,3 +185,76 @@ export function assertMediaSync(metrics, { maxAbsOffset = 0.1 } = {}) {
   }
   return metrics;
 }
+
+/**
+ * Require decoded audio and video to cover the same common PTS interval.
+ * PCM sample count measures actual decoded coverage; overlapping markers alone
+ * cannot detect a missing audio head or tail. The default budget allows bounded
+ * AAC padding. Live collectors that join before the next video keyframe may
+ * explicitly allow extra leading audio, without allowing missing audio. Keep
+ * this check alongside assertMediaSync's marker checks.
+ */
+export function assertMediaCoverage({
+  videoTimes,
+  audioStartTime,
+  audioSampleCount,
+  sampleRate,
+  framesPerSecond = SOURCE_FPS,
+  toleranceSeconds = 0.1,
+  maxAudioLeadSeconds = toleranceSeconds,
+}) {
+  if (
+    !Number.isInteger(videoTimes?.length) ||
+    videoTimes.length < 1 ||
+    !Number.isFinite(audioStartTime) ||
+    !Number.isSafeInteger(audioSampleCount) ||
+    audioSampleCount < 1 ||
+    !Number.isSafeInteger(sampleRate) ||
+    sampleRate < 1 ||
+    !Number.isSafeInteger(framesPerSecond) ||
+    framesPerSecond < 1 ||
+    !Number.isFinite(toleranceSeconds) ||
+    toleranceSeconds < 0 ||
+    !Number.isFinite(maxAudioLeadSeconds) ||
+    maxAudioLeadSeconds < 0
+  ) {
+    throw new Error('Invalid media coverage timestamps, sample count, rates, or tolerance');
+  }
+  for (let i = 0; i < videoTimes.length; i++) {
+    if (!Number.isFinite(videoTimes[i])) {
+      throw new Error('Media coverage video timestamps must be finite');
+    }
+    if (i && videoTimes[i] <= videoTimes[i - 1]) {
+      throw new Error('Media coverage video timestamps must be strictly monotonic');
+    }
+  }
+  const videoStartTime = videoTimes[0];
+  const videoEndTime = videoTimes[videoTimes.length - 1] + 1 / framesPerSecond;
+  const audioEndTime = audioStartTime + audioSampleCount / sampleRate;
+  const startOffset = audioStartTime - videoStartTime;
+  const endOffset = audioEndTime - videoEndTime;
+  if (![videoEndTime, audioEndTime, startOffset, endOffset].every(Number.isFinite)) {
+    throw new Error('Invalid non-finite media coverage endpoints or differences');
+  }
+  for (const [edge, offset] of [
+    ['start', startOffset],
+    ['end', endOffset],
+  ]) {
+    const budget = edge === 'start' && offset < 0 ? maxAudioLeadSeconds : toleranceSeconds;
+    if (Math.abs(offset) > budget) {
+      throw new Error(
+        `Audio/video coverage ${edge} difference ${(offset * 1000).toFixed(1)} ms exceeds ${budget * 1000} ms budget`,
+      );
+    }
+  }
+  return {
+    videoStartTime,
+    videoEndTime,
+    audioStartTime,
+    audioEndTime,
+    startOffset,
+    endOffset,
+    toleranceSeconds,
+    maxAudioLeadSeconds,
+  };
+}

@@ -1,8 +1,10 @@
-# HaishinKit compatibility probe
+# HaishinKit compatibility probes
 
-This isolated compile probe establishes method signatures and linking before the
-camera integration is rebuilt. It is not the production publisher or archive.
-It neither captures media nor connects to a network.
+These isolated probes establish SDK compatibility before camera integration.
+`SDKSmoke` checks method signatures without capture or networking.
+`DualOutputSmoke` feeds decoded fixture samples to the shared archive and a real
+SRT publisher through independent bounded queues. Its destination is restricted
+to an owned loopback receiver. Neither executable is the production camera app.
 
 The package pins HaishinKit 2.2.5 and checks in its resolution, including Logboard
 2.6.0. HaishinKit supplies libsrt 1.5.4 with iPhone, Simulator, and Mac slices.
@@ -12,12 +14,13 @@ From the repository root:
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
 swift run --package-path tools/media-sdk-probe SDKSmoke
+pnpm test:dual-output
 cd tools/media-sdk-probe
-xcodebuild -scheme SDKProbe -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath ../../artifacts/qa/media-sdk-probe/DerivedData \
+xcodebuild -scheme DualOutputSmoke -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath ../../artifacts/qa/dual-output-simulator ARCHS=arm64 \
   IPHONEOS_DEPLOYMENT_TARGET=17.0 CODE_SIGNING_ALLOWED=NO build
-xcodebuild -scheme SDKProbe -destination 'generic/platform=iOS' \
-  -derivedDataPath ../../artifacts/qa/media-sdk-probe/DerivedData \
+xcodebuild -scheme DualOutputSmoke -destination 'generic/platform=iOS' \
+  -derivedDataPath ../../artifacts/qa/dual-output-device \
   IPHONEOS_DEPLOYMENT_TARGET=17.0 CODE_SIGNING_ALLOWED=NO build
 ```
 
@@ -31,5 +34,12 @@ new package location failed in imported SDK modules; the precise cache cause is
 unproven. Keep each package's default `.build` directory or use a dedicated scratch.
 This does not establish runtime behavior on iOS 17.
 
-See [the compatibility findings](../../docs/capture-sdk-compatibility.md) for the
-audio conversion requirement, actor/buffer ownership, and remaining runtime checks.
+Full executable linking additionally requires `libc++`, now declared in the
+package. The resolved libsrt 1.5.4 archive advertises an Intel simulator slice but
+has no SRT function symbols in that slice; its full x86_64 link fails. The ARM64
+simulator destination above matches this Mac. The previous x86_64 library compile
+did not establish executable link compatibility.
+
+See [the dual-output results](../../docs/native-dual-output.md) and
+[compatibility findings](../../docs/capture-sdk-compatibility.md) for the audio
+conversion requirement, buffer ownership, and remaining runtime checks.
