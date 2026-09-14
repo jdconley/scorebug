@@ -1,0 +1,54 @@
+# Native scoring harness: deliberately independent of Project.yml and its media packages.
+# Generate: xcodegen generate --spec ios/Scoring.yml
+name: ScorebugScoring
+options:
+  bundleIdPrefix: live.scorebug
+  deploymentTarget:
+    iOS: '17.0'
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: '5.10'
+    MARKETING_VERSION: '0.0.1'
+    CURRENT_PROJECT_VERSION: '1'
+packages:
+  ScorebugCore:
+    path: Packages/ScorebugCore
+targets:
+  ScorebugScoring:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/ScorebugScoring
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.scoring
+        PRODUCT_NAME: ScorebugScoring
+        TARGETED_DEVICE_FAMILY: '1'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Scorebug Scorer
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    dependencies:
+      - package: ScorebugCore
+  ScorebugScoringUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.scoring.uitests
+        TARGETED_DEVICE_FAMILY: '1'
+    dependencies:
+      - target: ScorebugScoring
+schemes:
+  ScorebugScoring:
+    build:
+      targets:
+        ScorebugScoring: all
+    test:
+      targets:
+        - ScorebugScoringUITests
+      gatherCoverageData: true

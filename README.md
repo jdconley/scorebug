@@ -1,87 +1,67 @@
 # Scorebug
 
-Open-source live streaming of kids' volleyball games with a graphical scoreboard overlay, run by one parent from the stands.
+Live streaming of volleyball games with a scoreboard, operated from the stands.
+An iPhone films and keeps a clean local recording. Score from its paired Apple Watch
+or the native Scorebug app on another iPhone, including a watch paired to that iPhone. A portable worker adds the score and sends the broadcast
+to YouTube.
 
-One parent points a phone at the court. Another (or the same one) taps a scoreboard from the stands. The broadcast handles itself.
+> Status: working scoring prototype and partial streaming implementation. Not yet
+> ready for a real game. Milestone 0 adds repeatable local checks and a native scoring setup harness; full native scoring and media remain planned.
 
-> Status: early scaffolding. Not yet operational.
+## Current plan
 
-## What it does
+- [Architecture and requirements](docs/architecture.md)
+- [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+- [Local, simulator, phone, and watch validation](docs/local-testing.md)
+- [Milestone 0 verification results](docs/milestone-0-results.md)
 
-- iPhone captures 1080p, encodes H.264 at 5–6 Mbps, and publishes via **SRT** to a $5/mo VPS.
-- The VPS runs **MediaMTX** as a relay and notifies a control plane.
-- A **home machine** (already-on, with an NVIDIA GPU) pulls the SRT stream, composites a scoreboard overlay with **FFmpeg + NVENC**, and pushes **RTMPS** to YouTube Live.
-- A small **PWA** lets you tap the score from your phone in the stands; updates land on the overlay within a beat.
-- The iPhone keeps a full-resolution local archive (fragmented MP4, never re-encoded) for after the game.
+The plan prioritizes reliable local recording, adaptive live quality with a measured
+24 fps floor during viable connectivity, watch scoring, and a worker that runs on
+home or cloud systems. Qualify the Mac first, physical phone/watch next, and other
+worker hosts afterward. Target iPhone 14 and newer, with capability-based support for
+older phones; support the current OS and two prior release generations.
 
-Glass-to-glass latency target: ~5–10s.
+## Components
 
-## Why
-
-Existing options:
-
-- Paid SaaS: $30–100+/mo, no source access.
-- OBS + manual scoreboard: needs someone at a laptop the whole game.
-
-Scorebug aims to be free to fork, ~$5/mo to operate, and runnable by one parent.
-
-## Architecture (v1)
-
-```
-iPhone (HaishinKit, SRT)  ──►  VPS  ──►  Home machine  ──►  YouTube Live
-                              MediaMTX     FFmpeg+NVENC      RTMPS
-                              Hono API     Overlay (HTML)
-                                  ▲
-                                  │ REST / WS
-Phone PWA (scoring) ──────────────┘
+```text
+ios/                    iPhone app; native phone scoring and watch target planned
+apps/scoring/           Legacy PWA prototype; superseded by native scoring
+apps/control-plane/     Hono API and game state
+apps/home-daemon/       Broadcast worker (name retained from initial implementation)
+packages/protocol/      Shared TypeScript contracts
+docs/                   Design and validation plans
+infra/vps/              Initial deployment configuration; repairs planned
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the full picture, including the protocol, security model, and v2 upgrade path (Smelter + Rive overlay, kill/dig/block callouts).
+The initial overlay is FFmpeg text. Animated graphics and player callouts are later
+work; there is no separate overlay app yet. Local recording and portable/watch
+features require the implementation and validation described in the plan.
 
-## Layout
+## Development
 
-```
-scorebug/
-├── apps/
-│   ├── control-plane/   # Hono API on the VPS — game state, WS to home
-│   ├── home-daemon/     # WS client on home box — spawns ffmpeg/Smelter
-│   ├── overlay/         # Transparent 1920x1080 HTML scoreboard
-│   └── scoring/         # PWA: big buttons, taps the score
-├── packages/
-│   ├── protocol/        # Shared TS types — HomeMessage, Score, etc.
-│   └── eslint-config/
-├── ios/                 # Native capture app (Swift, AVFoundation, HaishinKit)
-├── docs/
-└── Justfile             # Cross-language task runner
-```
-
-iOS lives at the top level, not in `apps/`, because Swift and pnpm workspaces don't share anything.
-
-## Requirements
-
-- Node 22+ and pnpm 9+ for the TS apps
-- [just](https://github.com/casey/just) for task running
-- Xcode 16+ for the iOS app (iOS 17+ target)
-- A home box with NVIDIA GPU (NVENC) for compositing
-- A small VPS for ingest + control plane (we use Hetzner CPX11 in Hillsboro)
-
-## Quickstart
+Node 22+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript apps.
 
 ```sh
-pnpm install
-just --list
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm run doctor
+pnpm test:container
+pnpm test:local
 ```
 
-Apps and per-app run commands will be filled in as scaffolds land.
+Start the isolated fixtures with `pnpm local:up` and the local API with
+`pnpm dev:api`. Use `pnpm local:down` when finished.
 
-## Domain
+For `pnpm test:apple` and Apple development, see the validation runbook's Xcode, XcodeGen, and simulator
+matrix. On this Mac use the installed `ffmpeg-full` binary for SRT and text overlays;
+the default `ffmpeg` lacks those capabilities. Native macOS workers can use
+VideoToolbox; a GPU is not required for lower-profile CPU operation.
 
-`scorebug.live` — production.
+The original production hostname is `scorebug.live`; deployment remains unverified.
+Hosts and endpoints are configurable rather than fixed product requirements.
 
-## License
+## License and security
 
-[MIT](LICENSE) © Conley Chaos LLC.
-
-## Security
-
-Disclosures: security@scorebug.live.
+[MIT](LICENSE) © Conley Chaos LLC. See [SECURITY.md](SECURITY.md) for disclosures.

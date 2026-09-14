@@ -1,18 +1,26 @@
-# Local-dev stack. Boots just the things that are awkward to run on the host:
-# MediaMTX (SRT relay) so an iPhone can publish to your laptop for testing.
-#
-# Run control-plane, home-daemon, and scoring via `pnpm <app> dev` directly.
-#
-#   docker compose -f docker-compose.dev.yml up
-#
-# Then start the control plane with `INTERNAL_TOKEN` matching the value below.
+name: scorebug-qa
 
+# Local fixtures only. These credentials are public test values.
 services:
-  mediamtx:
-    image: bluenviron/mediamtx:latest
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      MTX_INTERNAL_TOKEN: dev-internal-token-1234567890abcdef
+  ingest:
+    image: bluenviron/mediamtx:1.21.0
+    ports:
+      - '127.0.0.1:18890:8890/udp'
+      - '127.0.0.1:19997:9997'
     volumes:
-      - ./infra/vps/mediamtx.yml:/mediamtx.yml:ro
+      - ./infra/local/ingest.yml:/mediamtx.yml:ro
+      - ingest-recordings:/recordings
+    stop_grace_period: 10s
+  sink:
+    image: bluenviron/mediamtx:1.21.0
+    ports:
+      - '127.0.0.1:11935:1935'
+      - '127.0.0.1:19998:9997'
+    volumes:
+      - ./infra/local/sink.yml:/mediamtx.yml:ro
+      - sink-recordings:/recordings
+    stop_grace_period: 10s
+
+volumes:
+  ingest-recordings:
+  sink-recordings:

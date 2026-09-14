@@ -43,6 +43,8 @@ const client: ControlPlaneClient = new ControlPlaneClient(
               publishUrl: `${config.RTMP_TARGET}/${msg.youtubeStreamKey}`,
               scoreFile,
               nvenc: config.NVENC_ENABLED,
+              ffmpegPath: config.FFMPEG_PATH,
+              fontPath: config.FONT_PATH,
             },
             log,
           );

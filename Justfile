@@ -18,7 +18,19 @@ typecheck:
     pnpm -r typecheck
 
 test:
-    pnpm -r test
+    pnpm test
+
+doctor:
+    pnpm run doctor
+
+test-container:
+    pnpm test:container
+
+test-local:
+    pnpm test:local
+
+test-apple:
+    pnpm test:apple
 
 format:
     pnpm format

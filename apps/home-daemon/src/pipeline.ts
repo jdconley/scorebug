@@ -8,6 +8,8 @@ export type PipelineSpec = {
   publishUrl: string;
   scoreFile: string;
   nvenc: boolean;
+  ffmpegPath?: string;
+  fontPath?: string;
 };
 
 export type PipelineHandle = {
@@ -16,13 +18,18 @@ export type PipelineHandle = {
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 };
 
+function filterPath(value: string): string {
+  // First escape the option value, then the enclosing filter graph. No shell is used.
+  return value.replace(/[\\':]/g, '\\$&').replace(/[\\'\[\],;]/g, '\\$&');
+}
+
 /**
  * Build the ffmpeg argv for a single game. `drawtext` reads `scoreFile` on
  * every frame thanks to `reload=1`; the daemon updates that file atomically.
  */
 export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   const drawtext = [
-    `drawtext=textfile=${spec.scoreFile}`,
+    `drawtext=textfile=${filterPath(spec.scoreFile)}`,
     'reload=1',
     'fontcolor=white',
     'fontsize=42',
@@ -31,7 +38,7 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     'boxborderw=18',
     'x=40',
     'y=h-100',
-    'fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    `fontfile=${filterPath(spec.fontPath ?? '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')}`,
   ].join(':');
 
   const video = spec.nvenc
@@ -75,7 +82,9 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
 export function startPipeline(spec: PipelineSpec, log: Logger): PipelineHandle {
   const args = buildFfmpegArgs(spec);
   log.info('ffmpeg_spawning', { gameId: spec.gameId, nvenc: spec.nvenc });
-  const child: ChildProcess = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child: ChildProcess = spawn(spec.ffmpegPath ?? 'ffmpeg', args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   child.stdout?.on('data', (b: Buffer) =>
     log.debug('ffmpeg_stdout', { line: b.toString().trim() }),
