@@ -4,6 +4,26 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
+    func testCaptureContextExistsOnlyWhileRecordingAndClearsBeforeShutdown() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { FilmTestSource() }, sinkFactory: testArchiveSink)
+        var transitions: [String?] = []
+        model.onCaptureChanged = { transitions.append($0?.id) }
+        XCTAssertNil(model.currentCapture)
+        await model.start()
+        let first = try XCTUnwrap(model.currentCapture)
+        XCTAssertFalse(first.startedAt.isEmpty)
+        await model.stop()
+        XCTAssertNil(model.currentCapture)
+        XCTAssertEqual(transitions.count, 2)
+        XCTAssertNil(transitions.last!)
+        await model.start()
+        XCTAssertNotEqual(model.currentCapture?.id, first.id)
+        XCTAssertFalse(model.currentCapture?.tap === first.tap)
+        await model.stop()
+    }
+
     func testConstructionAndRefreshDoNotCreateSourceAndRecordingWorksWithoutServer() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -10,7 +10,12 @@ public actor SRTPublisher {
     public enum PublisherError: Error { case notPublishing }
     private let connection = SRTConnection()
     private let stream: SRTStream
-    public init() { stream = SRTStream(connection: connection) }
+    private let stopPolicy: SRTStopPolicy
+    public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
+    public init(stopPolicy: SRTStopPolicy = .init()) {
+        self.stopPolicy = stopPolicy
+        stream = SRTStream(connection: connection)
+    }
     public func configure() async throws {
         try await stream.setVideoSettings(VideoCodecSettings(
             videoSize: CGSize(width: 1920, height: 1080), bitRate: 6_000_000,
@@ -49,7 +54,38 @@ public actor SRTPublisher {
         let transportHealthy = await connection.publishingError == nil
         return connected && publishing && muxerHealthy && streamHealthy && transportHealthy
     }
-    public func stop() async { await stream.close(); await connection.close() }
+    public func stop() async {
+        lastStopOutcome = await stopPolicy.run(operations: .init(
+            isPublishing: { await self.isPublishing() },
+            finish: { await self.stream.finish(timeout: $0) },
+            snapshot: { await self.stopSnapshot() },
+            close: {
+                await self.stream.close()
+                await self.connection.close()
+            }))
+    }
+
+    private func stopSnapshot() async -> SRTStopPolicy.Snapshot? {
+        // finish() normally leaves the stream idle. Its terminal errors and the
+        // connection remain meaningful; isPublishing() would be false here.
+        guard await connection.connected, await stream.muxerError == nil,
+              await stream.publishingError == nil, await connection.publishingError == nil else {
+            return .init(healthy: false, unacknowledgedPackets: 0, peerLatencyMilliseconds: 0)
+        }
+        do {
+            // Fresh socket options; performanceData is only refreshed once a second.
+            guard let packets = try await connection.getSocketOption(.snddata),
+                  let latency = try await connection.getSocketOption(.peerlatency) else { return nil }
+            // Socket reads suspend this actor. A close may have replaced the
+            // socket since the first health check, so recheck before accepting it.
+            guard await connection.connected, await stream.muxerError == nil,
+                  await stream.publishingError == nil, await connection.publishingError == nil else {
+                return .init(healthy: false, unacknowledgedPackets: 0, peerLatencyMilliseconds: 0)
+            }
+            return .init(healthy: true, unacknowledgedPackets: packets.intValue,
+                         peerLatencyMilliseconds: latency.intValue)
+        } catch { return nil }
+    }
 }
 
 public func copyPCM(_ sample: CMSampleBuffer) -> (AVAudioPCMBuffer, AVAudioTime)? {

@@ -3,8 +3,8 @@
 The Mac fixture feeds the same immutable NV12/PCM samples to two consumers:
 the shared segmented archive and the locally patched HaishinKit 2.2.5 SRT publisher. It exercises
 actual AVFoundation encoders, an actual local SRT connection, and decoded outputs.
-The [native app](native-film-app.md) uses the archive/capture lifecycle for offline
-recording; production SRT publishing is not yet connected to that app.
+The [native app](native-film-app.md) uses the same archive/capture lifecycle and
+production SRT adapter, with separate [native workflow qualification](native-streaming-qualification.md).
 
 ## Boundaries and ownership
 
@@ -26,10 +26,11 @@ Archive encoding stays at 1080p/30, H.264 12 Mbps and AAC 48 kHz/128 kbps. Live 
 starts at 6 Mbps and changes to 2 Mbps after five source seconds. The archive's
 profile never changes in response to that setting.
 
-The SDK video input queue is set to four frames. Its internal transport-stream and
-socket output queues do not expose hard size limits. The probe sets finite socket
-deadlines and observes whole-process memory, but these short tests do not prove
-every SDK allocation is bounded. Longer congestion and recovery tests remain required.
+The SDK video input queue is set to four frames. Compressed output, transport-stream
+output, and startup payloads now have explicit [SDK queue bounds](sdk-publishing-bounds.md);
+socket sends apply direct bounded backpressure. Native encoder, driver, and OS
+allocations are outside those logical payload limits. Longer congestion and recovery
+tests remain required.
 
 ## Repeatable checks
 
@@ -106,8 +107,18 @@ The resolved Intel simulator archive is missing SRT symbols despite advertising 
 x86_64 slice; ARM64 simulator linking is tested for this Mac. Library compilation
 alone had not exposed either issue.
 
+The final production-stop run (`dual-output-6FUFL0`) passes all five scenarios with
+no extra probe sleep after input ends. All archives retain 420 frames and 672,000
+PCM samples; both normal live outputs retain frames 0–419 at 30 fresh fps. Their
+encoded rates fall from approximately 6.1 to 2.0 Mbps. Peak RSS is 97.5 MiB and
+maximum source scheduling lag is 11.2 ms, within the unchanged 250 ms gate.
+An earlier run (`dual-output-vhcdqH`) preserved every archive frame but failed that
+scheduling gate at 271.8 ms while other build work was active. The isolated rerun
+passed; this does not establish tolerance of arbitrary host contention.
+
 Still required: sustained dual encoding, network loss/jitter/bandwidth shaping,
-reconnection, bounded production publisher orchestration, camera-role registration,
-and physical iPhone qualification. Offline Simulator app workflows now have a separate
+reconnection, adaptive quality, and physical iPhone qualification. Production
+publisher orchestration and capture-role registration are integrated.
+Offline Simulator app workflows have a separate
 [native app validation runner](native-film-app.md). Native Watch scoring
 remains a separate planned milestone.

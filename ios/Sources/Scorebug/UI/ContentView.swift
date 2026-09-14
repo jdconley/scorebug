@@ -5,16 +5,19 @@ import UIKit
 
 struct ContentView: View {
     @ObservedObject var film: FilmModel
+    @ObservedObject var streaming: CaptureStreamingModel
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         tabs
             .task(id: scenePhase) { await monitorRecording() }
+            .task(id: scenePhase) { await monitorStreamingControl() }
+            .task(id: scenePhase) { await monitorStreamingHealth() }
             .onChange(of: film.state) { _, state in updateIdleTimer(state) }
             .onChange(of: scenePhase) { _, phase in stopIfBackgrounded(phase) }
     }
     private var tabs: some View {
         TabView {
-            FilmView(model: film).tabItem { Label("Film", systemImage: "video") }
+            FilmView(model: film, streaming: streaming).tabItem { Label("Film", systemImage: "video") }
             NativeScoringView().tabItem { Label("Score", systemImage: "sportscourt") }
             RecordingsView(model: film).tabItem { Label("Recordings", systemImage: "rectangle.stack") }
         }
@@ -25,6 +28,21 @@ struct ContentView: View {
         while !Task.isCancelled {
             await film.pollHealth()
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+        }
+    }
+    @MainActor private func monitorStreamingControl() async {
+        guard scenePhase == .active else { return }
+        await streaming.restore()
+        while !Task.isCancelled {
+            await streaming.pollControl()
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        }
+    }
+    @MainActor private func monitorStreamingHealth() async {
+        guard scenePhase == .active else { return }
+        while !Task.isCancelled {
+            streaming.pollLocalHealth()
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
         }
     }
     @MainActor private func updateIdleTimer(_ state: FilmModel.State) {
@@ -38,6 +56,7 @@ struct ContentView: View {
 
 private struct FilmView: View {
     @ObservedObject var model: FilmModel
+    @ObservedObject var streaming: CaptureStreamingModel
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -72,6 +91,7 @@ private struct FilmView: View {
                         Text("You can switch to Score while recording. Keep the app open to continue filming.")
                             .font(.callout).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
+                    StreamingControlsView(model: streaming)
                     if let message = model.message {
                         Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("film.message")

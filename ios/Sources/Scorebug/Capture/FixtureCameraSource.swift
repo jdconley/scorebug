@@ -95,6 +95,12 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             let sample else { throw FixtureError.buffer }
         return sample
     }
+    /// Short, frequency-coded bursts align the decoded audio with the visible frame barcode.
+    static func markerPCM(at time: Double) -> Int16 {
+        guard time.truncatingRemainder(dividingBy: 2) < 0.2 else { return 0 }
+        let frequency = 1000.0 + 20.0 * floor(time / 2.0)
+        return Int16(16383.5 * sin(2.0 * Double.pi * frequency * time))
+    }
     private static func audio(frame: Int, origin: CMTime) throws -> CMSampleBuffer {
         let count = 1600
         var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
@@ -111,7 +117,7 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             let block else { throw FixtureError.buffer }
         let pcm: [Int16] = (0..<count).map { sample in
             let time = Double(frame * count + sample) / 48_000
-            return Int16(sin(time * 2 * .pi * 440) * 4_000)
+            return markerPCM(at: time)
         }
         let status = pcm.withUnsafeBytes { data in
             CMBlockBufferReplaceDataBytes(with: data.baseAddress!, blockBuffer: block,

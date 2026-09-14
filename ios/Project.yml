@@ -18,6 +18,8 @@ packages:
     path: Packages/ScorebugCore
   ScorebugMedia:
     path: Packages/ScorebugMedia
+  ScorebugStreaming:
+    path: Packages/ScorebugStreaming
 targets:
   Scorebug:
     type: application
@@ -53,6 +55,7 @@ targets:
     dependencies:
       - package: ScorebugCore
       - package: ScorebugMedia
+      - package: ScorebugStreaming
   ScorebugAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -77,6 +80,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.film.modeltests
     dependencies:
       - package: ScorebugMedia
+      - package: ScorebugStreaming
+      - package: ScorebugCore
 schemes:
   ScorebugFilmModelTests:
     build:

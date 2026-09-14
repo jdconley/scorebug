@@ -9,24 +9,34 @@ or process RSS have a mathematical upper bound.
 
 ## Named retained payload limits
 
-| Boundary | Buffered items | Maximum logical bytes per item | Retained payload ceiling |
-| --- | ---: | ---: | ---: |
-| VideoCodec compressed output | 8 | 2 MiB | 16 MiB |
-| AudioCodec output | 64 | 64 KiB | 4 MiB |
-| TSWriter output | 32 | 2 MiB + 64 KiB | 66 MiB |
-| SRTSocket pending transport buffers | 8 | 2 MiB + 64 KiB | 16.5 MiB |
-| TSWriter startup PES collection | 256 | Also subject to the 2 MiB payload preflight | 8 MiB aggregate |
+| Boundary                        | Buffered items |              Maximum logical bytes per item | Retained payload ceiling |
+| ------------------------------- | -------------: | ------------------------------------------: | -----------------------: |
+| VideoCodec compressed output    |              8 |                                       2 MiB |                   16 MiB |
+| AudioCodec output               |             64 |                                      64 KiB |                    4 MiB |
+| TSWriter output                 |             32 |                              2 MiB + 64 KiB |                   66 MiB |
+| TSWriter startup PES collection |            256 | Also subject to the 2 MiB payload preflight |          8 MiB aggregate |
 
-The sum of these retained logical payload ceilings is **110.5 MiB**. Startup also
+The sum of these retained logical payload ceilings is **94 MiB**. Startup also
 has the existing two-second media-span limit. A 2 MiB compressed video item leaves
 more than two seconds of nominal 6 Mbps data for an individual keyframe. The extra
 64 KiB at the transport boundaries allows MPEG-TS packet/header expansion. This is
 a conservative admission ceiling, not an estimate of normal occupancy.
 
-Each consumer can additionally hold one dequeued item. The TS writer constructs
+Each consumer can additionally hold one dequeued item. The socket retains no
+second queue: its awaited send holds at most one 2 MiB + 64 KiB payload plus one
+1,316-byte datagram copy. The TS writer constructs
 bounded-size PES/TS arrays and copies before yielding. Socket sending copies only
 one 1,316-byte datagram at a time, preserving order, and yields between datagrams.
 It no longer eagerly creates an array of every datagram for an input buffer.
+
+Actual native startup exposed an overflow in the former eight-item socket queue:
+a valid muxer startup burst could outrun datagram sending on a healthy local link.
+The existing TS consumer now awaits acceptance of each bounded payload. This
+backpressure keeps the existing upstream queue limits and removes the redundant
+socket queue and sender task. Concurrent internal sends fail explicitly instead of
+interleaving packet bytes. Cancellation of a partial send is terminal; close and
+late completions are guarded by socket generation. Success means libsrt accepted
+the bytes, not that a viewer received them.
 
 CMSampleBuffer/AVAudioBuffer object overhead and backing capacity, codec internals,
 framework pools, raw video, operating-system buffers, libSRT queues, producer-owned
@@ -118,19 +128,22 @@ they do not broadcast externally. Existing startup/timestamp regression tests re
 
 Red/green and provenance reconstruction logs are under `artifacts/qa/sdk-*.log`.
 The real-media five-case conformance harness and native device/simulator links are
-separate qualification checks. The final run at
-`artifacts/qa/dual-output-ZCjJBF/results.json` passes offline, normal, nonzero-clock,
+separate qualification checks. The final production-stop run at
+`artifacts/qa/dual-output-6FUFL0/results.json` passed offline, normal, nonzero-clock,
 stalled-receiver, and absent-receiver scenarios. All archives retain frames 0–419
 and complete audio; both normal streams retain all 420 frames at 30 fresh fps.
-Maximum measured live A/V offset is 65.38 ms; peak process RSS is 95.81 MiB.
+Its peak process RSS was 97.5 MiB, with no extra post-input probe sleep.
 Original 100 ms coverage/synchronization, 24 fps floor, source-loss, queue, and
 bitrate-change gates remain unchanged. Full ARM64 Simulator and unsigned iPhone
 links pass with iOS 17 deployment (`sdk-bounded-*-final-build.log`).
 
-The SDK suite passes 57 tests and the shared adapter passes three PCM clock tests.
+The SDK suite passes 69 tests, including native grant URL decoding, socket
+backpressure, and graceful finish regressions. The shared adapter retains its
+three PCM clock tests.
 Spec and code-quality reviews approve this scope. Remaining targeted race tests
-include saturated socket admission, closing during a deliberately delayed finite
-send, and restarting while old codec output is queued. These are separate from
+include restarting while old codec output is queued. The finish suite now covers
+closing during a deliberately delayed finite libsrt call. Startup-burst backpressure, concurrent-send
+rejection, cancellation and close during chunking now have focused tests. These are separate from
 the passing generic queue, stale-generation, and live overload checks.
 
 Original upstream provenance is recorded in `vendor/HaishinKit/upstream-files.json`;
@@ -141,3 +154,32 @@ Verify the patch independently of repository HEAD with
 `python3 vendor/HaishinKit/verify-scorebug-patch.py`. The verifier reverses the
 maintained patch in a temporary copy, checks all 162 original hashes, reapplies
 it, and checks every copied source/test byte against the current vendor tree.
+
+## Graceful codec and transport acceptance
+
+`SRTStream.finish()` closes raw ingress, drains retained raw video, completes
+VideoToolbox frames off the stream actor while compressed consumers run, drains
+compressed output, and then drains the TS queue through awaited socket sends.
+The existing queue limits are unchanged. Incomplete expected-track startup fails
+explicitly instead of silently discarding retained PES packets. Every finish
+waiter joins one task whose state cleanup completes before any waiter returns.
+
+The two-second cooperative deadline aborts the drain and joins owned tasks;
+`close()` remains the immediate abort path. Native codec completion and
+invalidation still depend on VideoToolbox returning, since those platform calls
+have no hard timeout. They do not run on the capture callback or archive queue.
+The finite slow-send test exceeds its one-millisecond requested deadline only by
+the in-flight native-call delay, then terminates without resurrecting input.
+
+Tests verify final admitted video PTS, a 20-frame encoder-completion burst using
+the unchanged eight-item compressed queue, missing-track failure, concurrent and
+cancelled finish callers, immediate abort, and republishing as soon as a joining
+caller returns. The maintained patch still verifies all 162 original hashes.
+
+This guarantees the tested codec/muxer/libSRT acceptance path, not delivery to a
+remote application. Native qualification exposed subsequent receiver-buffer loss
+at relay shutdown. The app now supplies the remaining portion of its three-second
+total stop budget to SDK finish, then waits for current sender occupancy, negotiated
+peer latency, and a configurable 500 ms downstream allowance. This production policy
+passes [native end-to-end qualification](native-streaming-qualification.md); elapsed
+allowance still does not acknowledge remote delivery.

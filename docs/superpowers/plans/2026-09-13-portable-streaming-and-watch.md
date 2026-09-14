@@ -188,15 +188,15 @@ and native macOS `tools/media-harness/` and `tools/media-sdk-probe/` sharing the
 - [x] Run the HaishinKit compatibility experiment described in the architecture.
       Record exact dependency version, toolchain, API calls, supported platforms, and
       buffer/bitrate/statistics behavior. Pin resolution and add iOS simulator/device builds.
-- [ ] Extract testable capture-source, archive-sink, publishing, and clock interfaces;
+- [x] Extract testable capture-source, archive-sink, publishing, and clock interfaces;
       use fixture samples in Simulator and real AVFoundation capture on hardware.
-- [ ] Implement independent recording/publishing states and recording-first operation.
+- [x] Implement independent recording/publishing states and recording-first operation.
       Offline recording must not invoke game creation as a prerequisite.
-- [ ] Replace raw passthrough assumptions with valid encoding. Retain delegates and
+- [x] Replace raw passthrough assumptions with valid encoding. Retain delegates and
       serialize writer access. Bound each queue and protect archive writes from live congestion.
 - [x] Implement initialization/media segment storage, atomic completion, manifest,
       relaunch scan/recovery, playback/export, and safe storage-reserve handling.
-- [ ] Add camera role joining, truthful status, archive health/space, and explicit
+- [x] Add camera role joining, truthful status, archive health/space, and explicit
       recording stop. Remote match end cannot silently discard a recording.
 - [x] Feed timestamped motion/audio fixtures through real archive code. Kill the
       harness during writes at multiple boundaries; recover/export and fully decode.
@@ -222,8 +222,12 @@ session and also exercises recording without creating a publisher.
 The [native Film/Score/Recordings app](../../native-film-app.md) now records offline,
 preserves native scoring while filming, recovers after termination, and exports
 and plays validated MP4s. Its workflows pass on iOS 17.5, 18.5, and 26.2 Simulators;
-physical camera behavior remains unqualified. Production publishing integration,
-capture-role reporting, and sustained congestion/reconnection remain pending.
+physical camera behavior remains unqualified. The
+[native publishing integration](2026-09-14-native-publishing.md) now connects capture-role
+reporting and native streaming controls. The complete native workflow passes on
+iOS 17.5, 18.5, and 26.2, including decoded archive/live output and shutdown tails; see
+[qualification evidence](../../native-streaming-qualification.md). Sustained
+congestion/reconnection and adaptive quality remain pending.
 
 Repeated validation exposed [SDK startup audio loss](../../native-dual-output.md):
 the TS writer discards early packets and rebases each track independently. One run
@@ -241,17 +245,19 @@ UI thread and requires an explicit recording action for permissions. The
 this source and the shared archive. Simulator workflows cover offline recording,
 actual native scoring during capture, stop/relaunch, interrupted recovery, export,
 and advancing playback. Model/library tests include slow-disk metrics and scan
-exclusion so disk work does not block scoring or compete with capture. Next:
-production publisher orchestration, capture-role registration, sustained load,
-and physical-phone qualification.
+exclusion so disk work does not block scoring or compete with capture. Production
+publisher orchestration and capture-role registration are integrated, with 68 Core,
+89 Media, 69 SDK, 13 Streaming, and 37 Film model tests passing. Next: adaptive
+quality/reconnection, sustained load, native Watch scoring, and physical qualification.
 
 The shared [native archive core and Mac fixture](../../native-archive.md) now encode
 clean 1080p/30 H.264/AAC, commit recoverable fragments, and export a standard MP4.
 The reviewed 14-second native run retained all 420 fresh video frames with a maximum
 0.71 ms measured A/V offset. Five forced terminations recovered playable media;
 the largest measured tail-loss bound was 2.60 seconds. Shared media unit tests and generic
-iOS 17 simulator/device builds cover the native core. Camera integration,
-production publishing orchestration, app recovery UI, and phone runtime media remain pending.
+iOS 17 simulator/device builds cover the native core. Camera integration, production
+publishing orchestration, and app recovery UI are implemented; phone runtime media
+and sustained operation remain unqualified.
 
 ## Milestone 4: Adaptive quality and measurable reliability
 

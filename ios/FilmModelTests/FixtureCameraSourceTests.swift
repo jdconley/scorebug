@@ -3,6 +3,15 @@ import ScorebugMedia
 import XCTest
 
 final class FixtureCameraSourceTests: XCTestCase {
+    func testAudioMarkersHaveSilenceBetweenDistinctTimedBursts() {
+        XCTAssertEqual(FixtureCameraSource.markerPCM(at: 0.5), 0)
+        XCTAssertEqual(FixtureCameraSource.markerPCM(at: 1.99), 0)
+        let firstTime = 1.0 / 48_000
+        XCTAssertEqual(FixtureCameraSource.markerPCM(at: firstTime), Int16(0.5 * 32767 * sin(2 * .pi * 1000 * firstTime)))
+        let secondTime = 2 + firstTime
+        XCTAssertEqual(FixtureCameraSource.markerPCM(at: secondTime), Int16(0.5 * 32767 * sin(2 * .pi * 1020 * secondTime)))
+    }
+
     func testSimulatorSourceProducesExportableRealMediaAndStops() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)

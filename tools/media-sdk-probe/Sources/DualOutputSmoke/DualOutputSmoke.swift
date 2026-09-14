@@ -167,9 +167,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                     }
                 }
                 guard !health.isFailed else { throw SDKProbe.PublisherError.notPublishing }
-                // Allow the final encoded packets to reach the local sink; this
-                // interval is part of the experiment, not an SDK flush guarantee.
-                try await Task.sleep(for: .seconds(1))
+                // Production stop owns finalization. No extra harness delay may
+                // hide codec or receiver-buffer loss at shutdown.
                 let status = await publisher.metrics()
                 let publishing = await publisher.isPublishing()
                 monitor?.cancel()

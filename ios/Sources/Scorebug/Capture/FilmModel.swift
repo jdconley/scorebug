@@ -3,9 +3,18 @@ import Combine
 import Foundation
 import ScorebugMedia
 
+struct CurrentCapture: Sendable {
+    let id: String
+    let startedAt: String
+    let tap: PublishingTap
+}
+
 /// Offline recording has no dependency on match setup, credentials or a server.
 @MainActor final class FilmModel: ObservableObject {
     enum State: String { case idle, starting, recording, stopping, failed }
+    @Published private(set) var currentCapture: CurrentCapture?
+    var onCaptureChanged: ((CurrentCapture?) -> Void)?
+    var onCaptureFinished: ((CurrentCapture, Bool) -> Void)?
     @Published private(set) var state: State = .idle
     @Published private(set) var message: String?
     @Published private(set) var recordings: [RecordingEntry] = []
@@ -65,9 +74,14 @@ import ScorebugMedia
             #if os(iOS)
             captureSession = (source as? IOSCameraCaptureSource)?.previewSession
             #endif
-            let capture = CaptureRecording(source: source, session: try RecordingSession(sink: created.sink))
+            let tap = PublishingTap()
+            let capture = CaptureRecording(source: source, session: try RecordingSession(sink: created.sink), publishingTap: tap)
             recorder = capture
             try await capture.start()
+            guard state == .starting else { throw RecordingSessionError.cancelled }
+            let context = CurrentCapture(id: created.id, startedAt: ISO8601DateFormatter().string(from: Date()), tap: tap)
+            currentCapture = context
+            onCaptureChanged?(context)
         }
         startup = pending
         let result = await pending.result
@@ -88,6 +102,9 @@ import ScorebugMedia
         guard canStop else { return }
         let wasStarting = state == .starting
         state = .stopping
+        let endedCapture = currentCapture
+        currentCapture = nil
+        onCaptureChanged?(nil)
         if wasStarting { recorder?.cancel() }
         let pending = Task {
             let setup = await startup?.result
@@ -109,6 +126,7 @@ import ScorebugMedia
             #if os(iOS)
             captureSession = nil
             #endif
+            if let endedCapture { onCaptureFinished?(endedCapture, failure != nil) }
             state = failure == nil ? .idle : .failed
             message = failure ?? "Recording saved on this device."
             await refreshRecordings()
