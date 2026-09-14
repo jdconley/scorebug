@@ -8,6 +8,7 @@ final class NativeStreamingTests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["SCOREBUG_TEST_API_URL"] = endpoint
         app.launchEnvironment["SCOREBUG_TEST_TOKEN"] = "qa-phone-token-not-production"
+        app.launchEnvironment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] = "1"
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

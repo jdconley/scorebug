@@ -307,10 +307,14 @@ open, so the broader fresh-frame tracking item and adaptive enablement stay pend
 The [local observation slice](2026-09-14-local-video-observations.md) now includes
 the bounded accumulator, capture hook before archive admission, and actual
 VideoToolbox completion hook wired through each app publishing attempt. All 115
-Media package tests, 76 SDK tests, 16 Streaming tests, 44 Film model tests, and the
-unsigned combined iPhone/Watch Release build pass. Fixed-profile local measurement
-qualification and production source-range correlation remain open; this does not
-close the broader runtime tracking gate.
+Media package tests, 76 SDK tests, 16 Streaming tests, 46 Film model tests, and the
+unsigned combined iPhone/Watch Release build pass. Fixed-profile native measurement
+qualification passes on iPhone 14/iOS 17.5 at `artifacts/qa/native-app-PzWmTp`:
+1,300 consecutive archive frames, 891 consecutive acquired live frames at 30 fps,
+and five steady observation windows matching 750 decoded frames exactly. Startup
+acquisition and two absent encoded tail frames remain explicit in the report.
+Production source-range correlation and the other adaptive inputs remain open;
+this does not close the broader runtime tracking gate.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 

@@ -13,6 +13,7 @@ import { scoringTestToken } from './scoring-test-server.mjs';
 export async function nativeStreamingFixture({ artifact, root, run }) {
   const names = [];
   let worker, done;
+  let matchID;
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
   async function stopStatus() {
@@ -102,6 +103,9 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
       assert.ok(ready, `${kind} readiness`);
     }
     return {
+      get matchID() {
+        return matchID;
+      },
       environment: {
         RELAY_API_URL: `http://127.0.0.1:${relayPort}`,
         RELAY_API_USERNAME: 'qa-admin',
@@ -133,6 +137,7 @@ export async function nativeStreamingFixture({ artifact, root, run }) {
         });
         assert.ok(response.ok, `Create fixture match: ${response.status}`);
         const created = await response.json();
+        matchID = created.snapshot.id;
         // One owned request at a time, bounded history, and joined on every exit.
         // Keep only numeric evidence; credentials never enter artifacts.
         statusAbort = new AbortController();

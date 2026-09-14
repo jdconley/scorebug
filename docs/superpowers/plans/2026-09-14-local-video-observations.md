@@ -138,7 +138,12 @@ with decoded barcode IDs. Compare only source ranges covered by the live output;
 the worker can legitimately acquire a later GOP, so early encoded frames cannot be
 silently labeled worker loss. Report startup/acquisition and final drain intervals
 separately, keep their full monotonic durations, and require stable completed
-windows to sustain at least 24 fps. This offline fixture comparison does not enable
+windows to sustain at least 24 fps. Export the DEBUG fixture's explicit capture
+detach time as well: a completed window can straddle shutdown, just as startup can
+span multiple windows. Only full windows after both stages first observe media and
+before capture detaches qualify as steady. Label the final partial interval
+without claiming its entire duration was drain. Keep mixed windows in the report.
+This offline fixture comparison does not enable
 production loss estimation or automatic quality changes.
 
 ## Remaining work after this slice
@@ -185,5 +190,27 @@ shutdown. Unavailable/orphaned observers and stale attempts are handled without
 changing archive or publishing admission. All 44 Film model tests, 16 Streaming
 tests, and the unsigned combined iPhone/Watch Release build pass. The read-only
 model property for qualification is `videoObservation`. Logs are under
-`artifacts/qa/runtime-video-observation-*`. Local fixed-profile measurement
-qualification remains open; no adaptive settings are enabled.
+`artifacts/qa/runtime-video-observation-*`. The next checkpoint below covers local
+fixed-profile measurement qualification; no adaptive settings are enabled.
+
+## Fixed-profile qualification evidence
+
+Checkpoint 5 passes at `artifacts/qa/native-app-PzWmTp` on iPhone 14/iOS 17.5 with
+the local Mac VideoToolbox worker. The DEBUG simulator exporter preserves exact
+scalar scope, timestamps, counters, and explicit capture detach time. The runner
+retains startup and shutdown windows and compares only source ranges covered by
+fully decoded live output. It rejects missing, invalid, stale, or truncated evidence.
+
+Capture and encoder each observed 953 consecutive frames. Five steady five-second
+windows sustained 30 capture fps and 29.8–30.2 encoded fps, with all 750 encoded
+frames in those windows present in live output. The complete archive has 1,300
+consecutive frames; live has 891 consecutive acquired frames at approximately
+30 fps. Maximum live A/V offset is 65.58 ms and tail offset is 3.69 ms. The report
+preserves the 60-frame acquisition gap and two absent encoded tail frames. Recording
+continues for 184 source frames after the final live frame.
+
+All 46 Film model tests, 32 focused JavaScript tests, and the unsigned combined
+iPhone/Watch Release build pass. Both integration reviews approve the source.
+All five observation-slice checkpoints are complete. The production clock mapping
+and broader adaptive-quality gates listed above remain open; the app still uses
+fixed 1080p30.

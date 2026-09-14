@@ -117,3 +117,28 @@ Capture and live profiles remain fixed at 1080p30. These short local results do 
 qualify higher resolutions, sustained thermal behavior, cellular handoff, Watch
 operation, or workers on other machines. ARM64 Simulator linking is supported on
 this Mac; the pinned SDK's Intel Simulator slice still lacks required SRT symbols.
+
+## Native capture and encoder observation regression
+
+The observation-enabled iPhone 14/iOS 17.5 run `native-app-PzWmTp` passes the same
+native recording, streaming, scoring, stream-stop, and export workflow. Both MP4s
+are fully decoded. The archive contains all 1,300 frames (0–1299); live contains
+891 consecutive acquired frames (225–1115) at approximately 30 fresh fps. Live
+maximum steady A/V offset is 65.58 ms, tail offset is 3.69 ms, and the score overlay
+changes. The archive continues for 184 source frames after live output ends.
+
+The runner now also collects one explicitly gated DEBUG simulator snapshot after
+publisher shutdown. Capture and encoder each observe 953 consecutive source frames.
+Five fully active five-second windows report 30 capture fps and 29.8–30.2 encoded
+fps; all 750 encoded frames in those windows match decoded live identities. The
+report retains startup and final partial windows, the 60-frame acquisition gap,
+and two encoded tail frames absent from the sink. The explicit capture-detach time
+distinguishes mixed shutdown windows from fully active windows without shortening
+their reported elapsed time.
+
+The fixture exporter is excluded from Release and writes no per-frame data.
+All 46 Film model tests, 32 focused JavaScript tests, and the unsigned combined
+iPhone/Watch Release build pass; both source reviews approve the integration.
+See [the telemetry contract](adaptive-telemetry.md) for remaining production clock
+mapping and adaptive-quality requirements. This short simulator run does not
+qualify physical camera, WatchConnectivity, sustained load, or automatic profiles.

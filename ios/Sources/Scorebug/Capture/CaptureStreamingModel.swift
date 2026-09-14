@@ -339,6 +339,12 @@ import ScorebugStreaming
     private func detachPublisher() {
         if let publishing {
             publishing.context.tap.detach(publishing.session)
+            #if DEBUG && targetEnvironment(simulator)
+            // Qualification boundary only: the final callback is not evidence of
+            // detach, because treating it as one could hide a capture stall.
+            let captureDetachedAt = VideoObservationFixture.requested(environment: ProcessInfo.processInfo.environment)
+                ? ProcessInfo.processInfo.systemUptime : nil
+            #endif
             publishing.session.cancel()
             let session = publishing.session
             let observations = publishing.observations, attempt = publishing.attempt
@@ -351,7 +357,14 @@ import ScorebugStreaming
                 // publish diagnostics. Normal stop changes epoch before this returns.
                 let final = observations?.close()
                 if teardownID == id {
-                    if diagnosticAttemptID == attempt { videoObservation = final }
+                    if diagnosticAttemptID == attempt {
+                        videoObservation = final
+                        #if DEBUG && targetEnvironment(simulator)
+                        if let final, let captureDetachedAt {
+                            await VideoObservationFixture.writeClosed(final, captureDetachedAt: captureDetachedAt)
+                        }
+                        #endif
+                    }
                     publisherStopping = false
                     publisherTeardown = nil
                     teardownID = nil

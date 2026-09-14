@@ -35,6 +35,11 @@ now connects capture and actual encoder-completion measurements while retaining 
 4. Correlate source-loss counts over the same source-time range. Keep acquisition
    and restart gaps visible as gaps; do not compare unrelated windows or exclude
    outage time from reports. Archive losses remain separate from live losses.
+   The SDK transport writer rebases PTS against its common A/V startup origin and
+   adds a 0.1-second lead before quantizing to 90 kHz. Local source PTS and worker
+   decoder PTS therefore need an explicit, attempt-scoped clock mapping, including
+   qualification of demux normalization and timestamp wrap. Numeric equality or
+   the first frame observed by a worker that joined later cannot establish it.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof
@@ -139,5 +144,39 @@ All 44 Film model tests, 16 Streaming package tests, and the unsigned combined
 iPhone/Watch Release build pass. Evidence is under
 `artifacts/qa/runtime-video-observation-*`, including a retention regression that
 fails when SDK observer forwarding is removed. These tests establish lifecycle and
-ownership, not end-to-end media results. Fixed-profile simulator qualification is
-the next checkpoint; automatic quality changes remain disabled.
+ownership; the native fixture evidence below covers end-to-end media results.
+Automatic quality changes remain disabled.
+
+## Fixed-profile native observation qualification
+
+`artifacts/qa/native-app-PzWmTp` passes the complete iPhone 14/iOS 17.5 native
+workflow with the Mac VideoToolbox worker. The explicitly enabled DEBUG simulator
+export writes one bounded, closed, credential-free observation snapshot after
+publisher shutdown. Exact decimal counters and rational PTS survive JSON export.
+The runner checks recording/match/generation scope against independently collected
+workflow evidence and aligns source ranges using the fixture's encoded frame IDs.
+
+Capture and encoder each observed 953 consecutive source frames (165–1117).
+Five fully active five-second windows measured 30 capture fps and 29.8–30.2 encoded
+fps. Their 750 encoded frames match the fully decoded live frame IDs exactly.
+Startup and shutdown windows retain their complete elapsed time; the explicit
+capture-detach time prevents shutdown duration from being treated as a capture
+stall. The final partial window remains reported, including its 22.27 capture fps.
+
+The archive has all 1,300 frames (0–1299). Acquired live output has 891 consecutive
+frames (225–1115), approximately 30 fresh fps, maximum steady A/V offset 65.58 ms,
+and a 3.69 ms tail offset. Sixty early encoded frames precede live acquisition;
+two encoded tail frames are absent from the sink. These are reported separately,
+not hidden by the aligned-window comparison. The archive extends 184 frames beyond
+live output, including 182 beyond the observation interval.
+
+All 46 Film model tests, 32 focused qualification/decoder-evidence JavaScript tests,
+and the unsigned combined iPhone/Watch Release build pass. Specification and quality
+reviews approve the fixture integration. Evidence logs are under
+`artifacts/qa/video-observation-qualification-*`; the native run's `results.json`
+contains all window phases, counts, ranges, and comparison exclusions.
+
+This fixture-specific offline alignment does not supply a production source-clock
+mapping or loss estimator. Report-transit age, qualified capacity and queue pressure,
+verified profile application, impairment, and sustained hardware testing remain
+required before adaptive enablement.

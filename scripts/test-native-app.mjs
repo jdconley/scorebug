@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { mediaTools } from './media-tools.mjs';
+import {
+  decodeFixtureBarcodes,
+  qualifyVideoObservation,
+} from './video-observation-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
@@ -314,6 +318,16 @@ try {
   const source = join(container, 'Library/Application Support/Scorebug/Recordings');
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });
+  let observationSnapshot;
+  if (streaming) {
+    const observationPath = join(artifact, 'video-observation.json');
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/video-observation.json'),
+      observationPath,
+      { errorOnExist: true, force: false },
+    );
+    observationSnapshot = JSON.parse(await readFile(observationPath, 'utf8'));
+  }
   const exports = (await readdir(join(saved, 'Exports'))).filter((name) => name.endsWith('.mp4'));
   assert.ok(exports.length >= (streaming ? 1 : 2), 'Expected completed and recovered MP4 exports');
   const media = [];
@@ -338,8 +352,10 @@ try {
     }
   }
   const states = [];
+  const recordingFolders = [];
   for (const entry of await readdir(saved, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === 'Exports') continue;
+    recordingFolders.push(entry.name);
     states.push(
       JSON.parse(await readFile(join(saved, entry.name, 'recording-status.json'), 'utf8')),
     );
@@ -353,6 +369,39 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
+  let videoObservation;
+  if (streaming) {
+    assert.equal(states.length, 1, 'Observation fixture must own one recording');
+    assert.equal(recordingFolders[0], states[0].id, 'Recording folder/status identity mismatch');
+    const decodedEvidence = JSON.parse(
+      await readFile(join(artifact, 'decoded-video-status.json'), 'utf8'),
+    );
+    const generations = [...new Set(decodedEvidence.map((item) => item.generation))];
+    assert.equal(generations.length, 1, 'Fixture requires one observed publishing generation');
+    assert.ok(
+      Number.isSafeInteger(generations[0]) && generations[0] > 0,
+      'Missing publishing generation evidence',
+    );
+    // Container is created for this run and its scope must match the owned match,
+    // finalized archive and generation actually observed during publishing.
+    const archiveIDs = decodeFixtureBarcodes(await readFile(join(artifact, 'frames-0.gray')));
+    const liveSegments = await Promise.all(
+      live.map(async (_, index) =>
+        decodeFixtureBarcodes(await readFile(join(artifact, `frames-live-${index}.gray`))),
+      ),
+    );
+    liveSegments.sort((a, b) => a[0] - b[0]);
+    videoObservation = qualifyVideoObservation({
+      snapshot: observationSnapshot,
+      expectedScope: {
+        recordingID: states[0].id,
+        matchID: proxy.matchID,
+        broadcastGeneration: generations[0],
+      },
+      archiveIDs,
+      liveIDs: liveSegments.flat(),
+    });
+  }
   await mkdir(join(artifact, 'attachments'));
   await run(
     'xcrun',
@@ -369,7 +418,11 @@ try {
   );
   await writeFile(
     join(artifact, 'results.json'),
-    JSON.stringify({ runtime, deviceType, media, live, statuses: states }, null, 2),
+    JSON.stringify(
+      { runtime, deviceType, media, live, statuses: states, videoObservation },
+      null,
+      2,
+    ),
   );
   console.log(
     `PASS: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
