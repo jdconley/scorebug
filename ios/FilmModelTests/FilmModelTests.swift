@@ -205,10 +205,20 @@ final class FilmTestSource: CaptureSource, @unchecked Sendable {
 
 actor FilmTestGate {
     private var entered = false
+    private var released = false
     private var continuation: CheckedContinuation<Void, Never>?
-    func enter() async { entered = true; await withCheckedContinuation { continuation = $0 } }
+    func enter() async {
+        entered = true
+        guard !released else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
     func waitUntilEntered() async { while !entered { await Task.yield() } }
-    func release() { continuation?.resume(); continuation = nil }
+    func waitUntilEntered(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !entered, ContinuousClock.now < deadline { await Task.yield() }
+        return entered
+    }
+    func release() { released = true; continuation?.resume(); continuation = nil }
 }
 
 /// Simulates a storage lock without blocking test cleanup indefinitely on a regression.

@@ -52,6 +52,37 @@ recording on network work. Review and run full relevant model/core suites and th
 combined Release build before an unchanged isolated native rerun. A passing rerun
 would support the fix but would not by itself prove the race caused `9V41qA`.
 
+### Deterministic reproduction and selected barrier
+
+Both controlled schedules reproduced the ordering defect. While publisher finish
+was still gated, the fake server had received `start, stop`, its desired state was
+stopped, and the event trace was `publisher.finish.entered, server.stop`. Releasing
+the gate appended `publisher.finish.completed`. The focused run failed eight
+ordering assertions across two tests, with no unexpected failures. Evidence:
+`artifacts/qa/native-stop-order-red.log`. Production code was unchanged for that run.
+
+Keep early stop intent and coordinator startup invalidation. Defer `pollControl`
+while `publisherStopping` is true, and recheck after report flushing and recovery
+awaits before acting on stop intent. Retain the existing selection/ownership checks
+and pending receipt/retry logic. `controlBusy` already prevents a replacement
+publisher while polling is suspended. An established publisher is created only
+after pending commands are resolved; no new coordinator API is needed to handle
+an invented pending-stop/publishing combination. Check again after any relevant
+pending-discard await before submission. Add coverage for capture-driven teardown
+and eventual single stop after finish settles, then run full model/Core regressions.
+
+This fixes a deterministically reproduced control-ordering defect. Attribution of
+the native run's three missing terminal frames still requires the unchanged rerun
+and, if necessary, the additional measurements below.
+
+The barrier is implemented and independently approved by specification and quality
+reviews. Three focused ordering tests, two relaunch tests, all 74 Film/model tests,
+and all 119 Core tests pass. The unsigned combined iPhone/Watch Release build passes.
+Two older relaunch fixtures now explicitly join shutdown before exercising their
+unchanged acknowledgment/ownership assertions. The initial full-suite failure is
+retained in `native-stop-order-film-before-fixture-join.log`; final evidence is in
+`artifacts/qa/native-stop-order-{green,relaunch,film,core,release}.log`.
+
 ## If tail localization remains unresolved
 
 Retain small, bounded, sanitized evidence across the stop boundary: native transport

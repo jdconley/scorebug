@@ -370,7 +370,7 @@ import XCTest
         await model.startStreaming()
         model.captureChanged(nil)
         await server.setFailMedia(true)
-        await model.pollControl()
+        await model.stopStreaming()
         XCTAssertTrue(storage.value?.reports.isEmpty == true, "Terminal report was acknowledged before media lookup failed")
         let relaunched = makeModel(server: server, storage: storage)
         await relaunched.restore()
@@ -415,6 +415,109 @@ import XCTest
         XCTAssertTrue(model.canStart)
     }
 
+    func testIndependentPollDefersOwnedStopUntilPublisherFinishCompletes() async throws {
+        let trace = CaptureStopOrderTrace()
+        let server = CaptureTestServer(stopOrderTrace: trace)
+        let finishGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(stopGate: finishGate, stopOrderTrace: trace)
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+
+        let stopping = Task { await model.stopStreaming() }
+        let finishEntered = await finishGate.waitUntilEntered(timeout: .seconds(2))
+        XCTAssertTrue(finishEntered, "Publisher finish must be pending before the independent poll")
+        if finishEntered {
+            await model.pollControl()
+            let operations = await server.operations
+            let desired = await server.broadcast.desired
+            XCTAssertEqual(operations, ["start"], "Control stop must wait for publisher finish: \(trace.events)")
+            XCTAssertEqual(desired, .running)
+            XCTAssertEqual(trace.events, ["publisher.finish.entered"])
+        }
+        await finishGate.release()
+        await stopping.value
+        let operations = await server.operations
+        let desired = await server.broadcast.desired
+        XCTAssertEqual(operations, ["start", "stop"])
+        XCTAssertEqual(desired, .stopped)
+        XCTAssertEqual(trace.events, ["publisher.finish.entered", "publisher.finish.completed", "server.stop"])
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+    }
+
+    func testInFlightRecoveryDefersOwnedStopUntilPublisherFinishCompletes() async throws {
+        let trace = CaptureStopOrderTrace()
+        let server = CaptureTestServer(stopOrderTrace: trace)
+        let recoveryGate = FilmTestGate(), finishGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(stopGate: finishGate, stopOrderTrace: trace)
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+
+        await server.setSnapshotGate(recoveryGate)
+        let polling = Task { await model.pollControl() }
+        let recoveryEntered = await recoveryGate.waitUntilEntered(timeout: .seconds(2))
+        XCTAssertTrue(recoveryEntered, "The poll must already be suspended in snapshot recovery")
+        let stopping = Task { await model.stopStreaming() }
+        let finishEntered = await finishGate.waitUntilEntered(timeout: .seconds(2))
+        XCTAssertTrue(finishEntered, "Publisher finish must be pending before recovery resumes")
+        await recoveryGate.release()
+        await polling.value
+        if recoveryEntered && finishEntered {
+            let operations = await server.operations
+            let desired = await server.broadcast.desired
+            XCTAssertEqual(operations, ["start"], "Resumed recovery must wait for publisher finish: \(trace.events)")
+            XCTAssertEqual(desired, .running)
+            XCTAssertEqual(trace.events, ["publisher.finish.entered"])
+        }
+        await finishGate.release()
+        await stopping.value
+        let operations = await server.operations
+        let desired = await server.broadcast.desired
+        XCTAssertEqual(operations, ["start", "stop"])
+        XCTAssertEqual(desired, .stopped)
+        XCTAssertEqual(trace.events, ["publisher.finish.entered", "publisher.finish.completed", "server.stop"])
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+    }
+
+    func testCaptureEndDefersTerminalControlUntilPublisherFinishCompletes() async throws {
+        let trace = CaptureStopOrderTrace()
+        let server = CaptureTestServer(stopOrderTrace: trace)
+        let finishGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(stopGate: finishGate, stopOrderTrace: trace)
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+
+        model.captureChanged(nil)
+        let finishEntered = await finishGate.waitUntilEntered(timeout: .seconds(2))
+        XCTAssertTrue(finishEntered)
+        if finishEntered {
+            await model.pollControl()
+            let operations = await server.operations
+            let desired = await server.broadcast.desired
+            let statuses = await server.reports.map(\.status)
+            XCTAssertEqual(operations, ["start"], "Capture end must wait for publisher finish: \(trace.events)")
+            XCTAssertEqual(desired, .running)
+            XCTAssertEqual(statuses, [.recording], "The capture terminal report should remain queued while finish is pending")
+        }
+        await finishGate.release()
+        await model.stopStreaming()
+        await model.pollControl()
+        let operations = await server.operations
+        let statuses = await server.reports.map(\.status)
+        XCTAssertEqual(operations, ["start", "stop"], "Later polls must not duplicate the owned stop")
+        XCTAssertEqual(statuses, [.recording, .stopped])
+        XCTAssertEqual(trace.events, ["publisher.finish.entered", "publisher.finish.completed", "server.stop"])
+        XCTAssertNil(model.activeRecordingID)
+    }
+
     func testCaptureFailureReportsInterruptedAfterArchiveOutcome() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -443,7 +546,7 @@ import XCTest
         await model.startStreaming()
         model.captureChanged(nil)
         await server.setRejectStop()
-        await model.pollControl()
+        await model.stopStreaming()
         XCTAssertEqual(storage.value?.stopRecordingIDs, ["recording-1"])
         let relaunched = makeModel(server: server, storage: storage)
         await relaunched.restore()
@@ -865,6 +968,13 @@ final class CaptureMemoryPending: PendingBroadcastStore, @unchecked Sendable {
     func load() throws -> PendingBroadcastCommand? { if fails { throw URLError(.cannotWriteToFile) }; return value }
     func save(_ value: PendingBroadcastCommand?) throws { if fails { throw URLError(.cannotWriteToFile) }; self.value = value }
 }
+/// A shared synchronous history observes ordering without adding suspension points.
+final class CaptureStopOrderTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var history: [String] = []
+    var events: [String] { lock.withLock { history } }
+    func record(_ event: String) { lock.withLock { history.append(event) } }
+}
 actor CaptureTestPublisher: MediaPublisher {
     var isPublishing = false
     var startCount = 0
@@ -872,7 +982,10 @@ actor CaptureTestPublisher: MediaPublisher {
     var terminated = false
     let gate: FilmTestGate?
     let stopGate: FilmTestGate?
-    init(gate: FilmTestGate? = nil, stopGate: FilmTestGate? = nil) { self.gate = gate; self.stopGate = stopGate }
+    let stopOrderTrace: CaptureStopOrderTrace?
+    init(gate: FilmTestGate? = nil, stopGate: FilmTestGate? = nil, stopOrderTrace: CaptureStopOrderTrace? = nil) {
+        self.gate = gate; self.stopGate = stopGate; self.stopOrderTrace = stopOrderTrace
+    }
     func start() async throws {
         startCount += 1
         if let gate { await gate.enter() }
@@ -889,10 +1002,16 @@ actor CaptureTestPublisher: MediaPublisher {
     func stop() async {
         guard !terminated else { return }
         terminated = true; isPublishing = false
+        stopOrderTrace?.record("publisher.finish.entered")
         if let stopGate { await stopGate.enter() }
+        stopOrderTrace?.record("publisher.finish.completed")
     }
 }
 actor CaptureTestServer {
+    let stopOrderTrace: CaptureStopOrderTrace?
+    init(stopOrderTrace: CaptureStopOrderTrace? = nil) { self.stopOrderTrace = stopOrderTrace }
+    var snapshotGate: FilmTestGate?
+    func setSnapshotGate(_ value: FilmTestGate) { snapshotGate = value }
     var requestCount = 0
     var operations: [String] = []
     var reports: [RecordingReport] = []
@@ -946,7 +1065,9 @@ actor CaptureTestServer {
             }
             switch command.operation {
             case .start(let selection): broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: selection); operations.append("start")
-            case .stop: broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
+            case .stop:
+                stopOrderTrace?.record("server.stop")
+                broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil); operations.append("stop")
             }
             let result = BroadcastOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: snapshot())
             receipts[command.commandId] = result
@@ -965,7 +1086,11 @@ actor CaptureTestServer {
             if let statusGate { await statusGate.enter() }
             if failure { throw URLError(.networkConnectionLost) }
             data = try JSONEncoder().encode(response)
-        } else { data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(), serverTime: time)) }
+        } else {
+            // Gate one snapshot only so submit's ownership refresh remains independent.
+            if let snapshotGate { self.snapshotGate = nil; await snapshotGate.enter() }
+            data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(), serverTime: time))
+        }
         return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
     func snapshot() -> MediaSnapshot { .init(gameId: "game-1", recordings: [], broadcast: broadcast) }

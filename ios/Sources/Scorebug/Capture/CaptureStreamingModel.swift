@@ -260,21 +260,25 @@ import ScorebugStreaming
     func pollControl() async {
         if needsStorageRetry && setup == nil { restored = false }
         await restore()
-        guard !busy, !controlBusy, let setup, setup.credential != nil else { return }
+        // Defer the owned broadcast stop until publisher finish settles. Each
+        // control await can reenter a local stop on MainActor.
+        guard !busy, !controlBusy, !publisherStopping, let setup, setup.credential != nil else { return }
         controlBusy = true
         defer { controlBusy = false }
         do {
             try persist()
             if coordinator == nil { try makeCoordinator() }
             try await flushReports()
-            guard let coordinator else { return }
+            guard !publisherStopping, let coordinator else { return }
             var state = try await coordinator.recover(activeRecordingId: shouldStopOwnedBroadcast ? nil : current?.id)
+            guard !publisherStopping else { return }
             commandState = state
             if shouldStopOwnedBroadcast {
                 if state.pending != nil {
                     do { state = try await coordinator.discardExpired(); commandState = state }
                     catch BroadcastCoordinatorError.notExpired { return }
                 }
+                guard !publisherStopping else { return }
                 if state.pending == nil, let selection = state.snapshot?.broadcast.selection,
                    state.snapshot?.broadcast.desired == .running, selection.captureDeviceId == setup.deviceId,
                    ownedRecordingIDs.contains(selection.recordingId) {
