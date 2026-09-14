@@ -9,6 +9,8 @@ import { internalRoutes } from './routes/internal.js';
 import { MatchStore } from './matches-store.js';
 import { matchesRoutes } from './routes/matches.js';
 import { workerRoutes } from './routes/media.js';
+import { IngestRelay } from './ingest.js';
+import { RelayLifecycle } from './relay-lifecycle.js';
 
 export type AppDeps = {
   config: Config;
@@ -16,6 +18,8 @@ export type AppDeps = {
   bus: HomeBus;
   log: Logger;
   matches: MatchStore;
+  relay: Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> | undefined;
+  relayLifecycle: RelayLifecycle | undefined;
 };
 
 export function createApp(
@@ -26,6 +30,39 @@ export function createApp(
   const store = overrides.store ?? new GameStore();
   const bus = overrides.bus ?? new HomeBus(log);
   const matches = overrides.matches ?? new MatchStore(config.DATABASE_PATH, config.PHONE_TOKEN);
+  const relay =
+    overrides.relay ??
+    (config.RELAY_API_URL
+      ? new IngestRelay({
+          apiUrl: config.RELAY_API_URL,
+          username: config.RELAY_API_USERNAME!,
+          password: config.RELAY_API_PASSWORD!,
+        })
+      : undefined);
+  const relayLifecycle =
+    overrides.relayLifecycle ??
+    (relay
+      ? new RelayLifecycle(
+          relay,
+          {
+            installationSecret: config.PHONE_TOKEN,
+            host: config.INGEST_HOST,
+            port: config.INGEST_PORT,
+          },
+          () => {
+            const match = matches.active();
+            if (!match) return null;
+            const broadcast = matches.media.get(match.id).broadcast;
+            return broadcast.desired === 'running' && broadcast.selection
+              ? {
+                  gameId: match.id,
+                  generation: broadcast.generation,
+                  selection: broadcast.selection,
+                }
+              : null;
+          },
+        )
+      : undefined);
 
   const app = new Hono();
 
@@ -45,8 +82,8 @@ export function createApp(
   app.get('/healthz', (c) => c.json({ ok: true, home: bus.isConnected() }));
 
   app.route('/games', gamesRoutes({ config, store, bus, log }));
-  app.route('/v1/matches', matchesRoutes(config, matches));
-  app.route('/v1/worker', workerRoutes(config, matches));
+  app.route('/v1/matches', matchesRoutes(config, matches, relayLifecycle));
+  app.route('/v1/worker', workerRoutes(config, matches, relayLifecycle));
   app.route('/internal', internalRoutes({ config, store, log }));
 
   app.onError((err, c) => {
@@ -54,5 +91,5 @@ export function createApp(
     return c.json({ error: 'internal' }, 500);
   });
 
-  return { app, config, store, bus, log, matches };
+  return { app, config, store, bus, log, matches, relay, relayLifecycle };
 }

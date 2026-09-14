@@ -6,6 +6,7 @@ import type { MatchCredential } from '@scorebug/protocol';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
 import { mediaRoutes } from './media.js';
+import type { RelayLifecycle } from '../relay-lifecycle.js';
 import { MatchStore, MatchStoreError } from '../matches-store.js';
 
 const id = z
@@ -69,7 +70,7 @@ const command = z
   .strict();
 type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
-export function matchesRoutes(config: Config, store: MatchStore) {
+export function matchesRoutes(config: Config, store: MatchStore, relayLifecycle?: RelayLifecycle) {
   const app = new Hono<Env>();
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -127,7 +128,7 @@ export function matchesRoutes(config: Config, store: MatchStore) {
     const outcome = store.receipt(credential.gameId, credential.deviceId, c.req.param('commandId'));
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
-  app.route('/:id/media', mediaRoutes(config, store));
+  app.route('/:id/media', mediaRoutes(config, store, relayLifecycle));
   app.onError((error, c) => {
     if (error instanceof MatchStoreError)
       return c.json(

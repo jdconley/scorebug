@@ -5,8 +5,9 @@ and score history in SQLite. The native SwiftUI scorer creates/joins matches, sc
 undoes actions, ends sets/matches, and restores its session. The shared Swift outbox
 persists uncertain commands and reconciles receipts. Full milestone 1 is still in
 progress: recording associations and durable broadcast intent are implemented, but
-relay credentials, observed worker status, and the actual worker consumer still
-need integration. See the [media control API](media-control-api.md).
+relay credential routes and source observation now have real SRT validation.
+Observed worker status and the actual worker consumer still need integration.
+See the [media control API](media-control-api.md).
 
 ## Run locally
 
@@ -113,8 +114,9 @@ The legacy `/games` API remains an in-memory prototype for existing scaffolds.
 It does not share the new native match lifecycle yet; do not mix both APIs in one
 session. Native match creation needs no YouTube key and starts no recording or
 broadcast. Recording associations, broadcast commands, and a selected-worker snapshot
-endpoint now share the durable lifecycle. Publishing credentials and the actual
-worker consumer remain integration steps. The native scoring app remains independent
+endpoint now share the durable lifecycle. Relay credentials and reconciliation are
+connected through separate native API routes; the actual worker consumer remains
+an integration step. The native scoring app remains independent
 of the unfinished camera/media project. Watch UI and route integration follow later.
 
 ## Native validation
@@ -160,6 +162,6 @@ confirmation during an in-flight refresh. Production storage remains Keychain-on
 
 These tests do not yet simulate two people tapping simultaneously through two
 real UI processes, actual watch connectivity, or camera/streaming performance.
-The remaining milestone 1 integration connects durable match identity to publishing
-credentials and actual worker reconciliation/status; the legacy publishing
+The remaining milestone 1 integration connects durable match identity to actual
+worker reconciliation/status; the legacy publishing
 scaffold currently still has a separate in-memory lifecycle.

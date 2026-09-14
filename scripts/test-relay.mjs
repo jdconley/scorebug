@@ -3,9 +3,12 @@ import { mkdtemp, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { createSocket } from 'node:dgram';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools, command } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
+import { startScoringTestServer, scoringTestToken } from './scoring-test-server.mjs';
 import { IngestRelay, deriveIngestGrant } from '../apps/control-plane/src/ingest.ts';
 
 const checkCancellation = cancellation();
@@ -13,7 +16,19 @@ const name = `scorebug-relay-${randomUUID()}`;
 const directory = await mkdtemp(join(tmpdir(), 'scorebug-relay-'));
 const owned = new Set();
 const processes = [];
+let api;
 const { ffmpeg, ffprobe } = mediaTools();
+async function availablePort(protocol) {
+  const socket = protocol === 'udp' ? createSocket('udp4') : createServer();
+  await new Promise((resolve, reject) => {
+    socket.once('error', reject);
+    if (protocol === 'udp') socket.bind(0, '127.0.0.1', resolve);
+    else socket.listen(0, '127.0.0.1', resolve);
+  });
+  const port = socket.address().port;
+  await new Promise((resolve) => socket.close(resolve));
+  return port;
+}
 function start(args) {
   const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'ignore'] });
   owned.add(child);
@@ -113,6 +128,10 @@ try {
     new URL('../infra/local/ingest.yml', import.meta.url),
     join(directory, 'mediamtx.yml'),
   );
+  // Explicit ephemeral ports stay fixed when Docker restarts the same container.
+  // If another process claims one before Docker binds, startup fails safely.
+  const apiPort = await availablePort('tcp');
+  const srtPort = await availablePort('udp');
   const run = await command(
     'docker',
     [
@@ -121,9 +140,9 @@ try {
       '--name',
       name,
       '-p',
-      '127.0.0.1::9997',
+      `127.0.0.1:${apiPort}:9997`,
       '-p',
-      '127.0.0.1::8890/udp',
+      `127.0.0.1:${srtPort}:8890/udp`,
       '-v',
       `${join(directory, 'mediamtx.yml')}:/mediamtx.yml:ro`,
       'bluenviron/mediamtx:1.21.0',
@@ -254,10 +273,159 @@ try {
   await denied(readArgs(grant.readUrl), 'revoked reading credential');
   if ((await relay.status(grant.path)).ready) throw new Error('Revoked path remains ready');
   console.log('Revocation disconnects existing clients and rejects reuse of both credentials.');
+  const environment = {
+    RELAY_API_URL: apiUrl,
+    RELAY_API_USERNAME: 'qa-admin',
+    RELAY_API_PASSWORD: 'qa-admin-not-production',
+    INGEST_HOST: '127.0.0.1',
+    INGEST_PORT: ports['8890/udp'][0].HostPort,
+  };
+  const database = join(directory, 'matches.sqlite');
+  // Startup must remove a crash-orphaned path while preserving other installations.
+  const orphan = deriveIngestGrant(
+    scoringTestToken,
+    randomUUID(),
+    selection,
+    1,
+    '127.0.0.1',
+    Number(ports['8890/udp'][0].HostPort),
+  );
+  await relay.ensure(orphan);
+  await relay.ensure(grant);
+  api = await startScoringTestServer(database, environment);
+  await until(
+    async () => !(await relay.list(orphan.path.slice(0, 26))).includes(orphan.path),
+    'startup orphan revocation',
+  );
+  if (!(await relay.list(grant.path.slice(0, 26))).includes(grant.path))
+    throw new Error('Reconciliation removed another installation path');
+  await relay.remove(grant.path);
+  const request = async (path, token, body) => {
+    const response = await fetch(`${api.baseURL}${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error(`Native relay request failed: HTTP ${response.status}`);
+    return response.json();
+  };
+  console.log('Startup orphan cleanup and installation isolation verified.');
+  const matchId = randomUUID();
+  const team = { name: 'Relay test', shortName: 'QA', color: '#123456' };
+  const created = await request('/v1/matches', scoringTestToken, {
+    id: matchId,
+    deviceId: 'scorer',
+    teams: { home: team, away: team },
+    rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
+  });
+  const capture = await request(`/v1/matches/${matchId}/join`, scoringTestToken, {
+    deviceId: 'phone',
+    role: 'capture',
+  });
+  await request(`/v1/matches/${matchId}/media/recordings`, capture.credential.token, {
+    recordingId: 'native-archive',
+    sequence: 0,
+    status: 'recording',
+    startedAt: new Date().toISOString(),
+  });
+  await request(`/v1/matches/${matchId}/media/commands`, scoringTestToken, {
+    commandId: 'start',
+    gameId: matchId,
+    expectedGeneration: 0,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'mac',
+        outputId: 'local-sink',
+        captureDeviceId: 'phone',
+        recordingId: 'native-archive',
+      },
+    },
+  });
+  const access = await request(`/v1/matches/${matchId}/media/publish`, capture.credential.token, {
+    recordingId: 'native-archive',
+    generation: 1,
+  });
+  let nativePublisher = start(publishArgs(access.publishUrl));
+  const workerToken = 'qa-home-token-not-production';
+  await until(async () => {
+    if (nativePublisher.exited) throw new Error('Native authorized publisher exited');
+    return (await request('/v1/worker/connection?workerId=mac', workerToken)).connection?.source
+      .ready;
+  }, 'native source readiness');
+  const beforeAPIRestart = (await request('/v1/worker/connection?workerId=mac', workerToken))
+    .connection.source.inboundBytes;
+  await api.stop();
+  api = await startScoringTestServer(database, environment);
+  const restored = await request(`/v1/matches/${matchId}/media/publish`, capture.credential.token, {
+    recordingId: 'native-archive',
+    generation: 1,
+  });
+  if (restored.publishUrl !== access.publishUrl || nativePublisher.exited)
+    throw new Error('API restart interrupted or changed current publishing access');
+  await until(async () => {
+    if (nativePublisher.exited) throw new Error('Publisher disconnected after API restart');
+    const connection = (await request('/v1/worker/connection?workerId=mac', workerToken))
+      .connection;
+    return connection?.source.ready && connection.source.inboundBytes > beforeAPIRestart;
+  }, 'continued source bytes after API restart');
+  console.log('API restart preserved current publishing access.');
+  const restarted = await command('docker', ['restart', name], 30_000);
+  if (!restarted.ok) throw new Error('Owned relay restart failed');
+  const restartedPorts = await command('docker', [
+    'inspect',
+    '--format',
+    '{{json .NetworkSettings.Ports}}',
+    name,
+  ]);
+  if (!restartedPorts.ok) throw new Error('Restarted relay ports unavailable');
+  if (JSON.stringify(JSON.parse(restartedPorts.stdout)) !== JSON.stringify(ports))
+    throw new Error('Owned relay published ports changed during restart');
+  console.log('Owned relay restarted; waiting for management and path recovery.');
+  await until(() => nativePublisher.exited, 'publisher disconnect during relay restart');
+  const nativePath = new URL(access.publishUrl).searchParams
+    .get('streamid')
+    .slice('publish:'.length);
+  await until(async () => {
+    try {
+      return (await relay.list(nativePath.slice(0, 26))).includes(nativePath);
+    } catch (error) {
+      // Docker reports the process started before its HTTP listener is ready.
+      if (error.message === 'relay_unavailable') return false;
+      throw error;
+    }
+  }, 'automatic path restoration after relay restart');
+  nativePublisher = start(publishArgs(access.publishUrl));
+  await until(
+    async () =>
+      (await request('/v1/worker/connection?workerId=mac', workerToken)).connection?.source.ready,
+    'source reconnect after relay restart',
+  );
+  await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
+    commandId: 'end',
+    gameId: matchId,
+    deviceId: 'scorer',
+    expectedRevision: 1,
+    scorerEpoch: 1,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'end_match', reason: 'Relay validation finished' },
+  });
+  // No direct adapter delete: the production reconciliation loop must revoke it.
+  await until(() => nativePublisher.exited, 'match end automatically revokes relay publishing');
+  await denied(publishArgs(access.publishUrl), 'ended match credential');
+  const ended = await request(`/v1/matches/${matchId}/media`, capture.credential.token);
+  if (ended.snapshot.recordings[0]?.status !== 'recording')
+    throw new Error('Match end changed independent recording metadata');
+  console.log(
+    'Native access, orphan cleanup, API and relay restart recovery, and automatic match-end revocation verified.',
+  );
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
+  await api?.stop();
   for (const child of owned) child.kill('SIGTERM');
   await delay(300);
   for (const child of owned) child.kill('SIGKILL');

@@ -31,6 +31,15 @@ The local run passed these checks:
   credentials and using the publisher credential to read are rejected.
 - Deleting the path disconnects the publisher and a reader already producing
   frames. Reusing either revoked credential fails. Repeated deletion is harmless.
+- Native capture/worker API routes return separate credentials. A forced API exit
+  preserves the active publisher: readiness remains true and received bytes continue
+  increasing after restart. Credentials remain stable.
+- Startup removes an orphan in the installation's namespace and preserves a path
+  belonging to another installation. Restarting the relay at unchanged host ports
+  causes the running API to recreate the desired path, after which the fixture
+  reconnects with its existing publishing credential.
+- Ending the native match automatically disconnects its publisher and rejects the
+  old credential. The independent recording association remains unchanged.
 
 This is transport/access evidence at one small fixture profile. It does not measure
 fresh-frame loss, gym motion quality, audio/video synchronization, a score overlay,
@@ -57,11 +66,29 @@ bodies and credentialed URLs. Source observations include only validated readine
 byte counters, and codecs. The adapter uses the
 [pinned MediaMTX API contract](https://github.com/bluenviron/mediamtx/blob/v1.21.0/api/openapi.yaml).
 
-The adapter is not yet wired to native capture credential retrieval or automatic
-match/broadcast reconciliation. Deletion is proven when explicitly invoked by the
-test; match end does not yet automatically revoke relay access. That integration
-must recheck generation after asynchronous provisioning and reconcile old paths
-after control-plane or relay restarts. Relay API unavailability must remain visible.
+The adapter is now connected to native capture credential retrieval and automatic
+match/broadcast reconciliation. Configure `RELAY_API_URL`, `RELAY_API_USERNAME`, and
+`RELAY_API_PASSWORD` together; the local environment example points to the local
+Compose ingest API. `INGEST_HOST` and `INGEST_PORT` are the address capture devices
+and workers use for SRT, independently of the private management address. Omit all
+three management settings to run scoring without a relay. Connection routes then
+return HTTP 503 `relay_not_configured`.
+
+The API inventories only paths belonging to its installation secret and reconciles
+them with the current durable broadcast. It runs once at startup and one second
+after each completed pass, serializing credential requests with background work.
+It rechecks generation after network operations and immediately before constructing
+credential responses. Stop or match end removes stale paths; API failures retain
+the durable desired state for retry and return a visible error. No recording report
+is changed by relay reconciliation.
+
+Revocation is asynchronous. If the relay management API is unreachable, an existing
+SRT connection can remain alive until management access recovers. The future worker
+consumer must also stop on lost control/expired assignment; this checkpoint does
+not claim that behavior. Keep the installation secret stable: changing it creates
+a different namespace, so deliberate secret rotation must also retire old paths.
+Relay inventory is bounded to 1,000 configured paths; larger or malformed inventory
+fails closed rather than returning a partial result.
 
 ## Worker process supervision
 
@@ -76,8 +103,13 @@ playback. The old worker entry point still uses the legacy WebSocket lifecycle a
 does not yet consume the durable match assignment or this callback for truthful
 live status; that replacement remains required.
 
-Focused verification passes 12 relay adapter tests and 20 pipeline argument/process
+Focused verification passes 14 relay adapter tests, 25 lifecycle tests, 6 route tests,
+and 20 pipeline argument/process
 tests. The latter use real child fixtures for ignored TERM, graceful exit, spawn
 failure, progress parsing, and credential-safe logs. Harness tests also cover
 partial container startup and cancellation cleanup. CI is configured to run the
 real relay test on Linux; a local Mac pass is not Linux host qualification.
+
+The complete workspace passes 169 API tests, 28 worker tests, and 12 tooling tests,
+plus typecheck, production build, and formatting. Production server container
+startup and the four-exit native scoring recovery test also pass with this integration.

@@ -5,6 +5,14 @@ import type { BroadcastSelection } from '@scorebug/protocol';
 
 const pathPattern = /^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$/;
 const identifier = /^[A-Za-z0-9_-]{1,128}$/;
+export function ingestPathPrefix(secret: string): string {
+  if (secret.length < 16) throw new Error('invalid_ingest_identity');
+  const identity = createHmac('sha256', secret)
+    .update(JSON.stringify(['scorebug-ingest-v1', 'installation', '']))
+    .digest('hex')
+    .slice(0, 16);
+  return `scorebug-${identity}-`;
+}
 export type IngestGrant = {
   path: string;
   publishPassphrase: string;
@@ -52,7 +60,7 @@ export function deriveIngestGrant(
     selection.recordingId,
     generation,
   ]);
-  const path = `scorebug-${hmac('installation').slice(0, 16)}-${hmac('path', identity).slice(0, 32)}`;
+  const path = `${ingestPathPrefix(installationSecret)}${hmac('path', identity).slice(0, 32)}`;
   const publishPassphrase = hmac('publish', identity),
     readPassphrase = hmac('read', identity);
   const url = (action: string, passphrase: string) => {
@@ -109,6 +117,28 @@ const observation = z.object({
 
 /** Private MediaMTX v1.21 API adapter. Never includes remote bodies or credentialed URLs in errors. */
 export class IngestRelay {
+  async list(prefix: string): Promise<string[]> {
+    if (!/^scorebug-[a-f0-9]{16}-$/.test(prefix)) throw new Error('invalid_relay_prefix');
+    const paths = new Set<string>();
+    for (let page = 0; page < 10; page++) {
+      const response = await this.request(
+        'GET',
+        `v3/config/paths/list?page=${page}&itemsPerPage=100`,
+      );
+      if (response.status !== 200) throw new Error(`relay_http_${response.status}`);
+      const parsed = z
+        .object({
+          pageCount: z.number().int().min(0).max(10),
+          items: z.array(z.object({ name: z.string() })).max(100),
+        })
+        .safeParse(response.body);
+      if (!parsed.success) throw new Error('relay_invalid_response');
+      for (const { name } of parsed.data.items)
+        if (name.startsWith(prefix) && pathPattern.test(name)) paths.add(name);
+      if (page + 1 >= parsed.data.pageCount) return [...paths];
+    }
+    throw new Error('relay_invalid_response');
+  }
   private readonly base: URL;
   private readonly authorization: string;
   private readonly timeoutMs: number;

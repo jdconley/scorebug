@@ -130,8 +130,9 @@ undo, take over scoring, and end the match without invoking a camera or browser.
 **In progress:** [Native scoring API and recovery evidence](../../native-scoring-api.md).
 Recording associations, broadcast commands, and the selected-worker snapshot endpoint
 are implemented and restart-tested: [media control evidence](../../media-control-api.md).
-This is control state only; publishing credentials, observed source/worker status,
-and the actual worker consumer remain before this milestone is complete.
+Relay credential retrieval, source observation, and automatic relay reconciliation
+are now integrated. Observed worker status and the actual worker consumer remain
+before this milestone is complete.
 
 ## Milestone 2: Real local media through a portable worker
 
@@ -163,8 +164,8 @@ not assertions that FFmpeg arguments merely contain an encoder name.
 recovery within ten seconds after a reachable source returns in the test environment.
 
 **In progress:** [Real SRT access and process supervision evidence](../../relay-conformance.md).
-Explicit provisioning/revocation passes real audio/video tests; native credential
-routes, automatic relay reconciliation, and the durable worker consumer remain.
+Provisioning/revocation and native credential routes pass real audio/video tests;
+automatic relay reconciliation is connected. The durable worker consumer remains.
 
 ## Milestone 3: iPhone recording core and streaming adapter
 

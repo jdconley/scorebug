@@ -8,6 +8,7 @@ import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
 import { MediaStateError } from '../media-state.js';
+import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -37,7 +38,7 @@ const command = z
 type Env = { Variables: { credential: Omit<MatchCredential, 'token'> } };
 
 /** Mounted under /v1/matches/:id/media. Recording telemetry never changes scoring authority. */
-export function mediaRoutes(config: Config, matches: MatchStore) {
+export function mediaRoutes(config: Config, matches: MatchStore, relayLifecycle?: RelayLifecycle) {
   const app = new Hono<Env>();
   const installation = bearer(config.PHONE_TOKEN, 'installation');
   const scoped = createMiddleware<Env>(async (c, next) => {
@@ -63,6 +64,30 @@ export function mediaRoutes(config: Config, matches: MatchStore) {
     );
     return c.json({ recording, serverTime: new Date().toISOString() });
   });
+  app.post(
+    '/publish',
+    scoped,
+    zValidator('json', z.object({ recordingId: id, generation: sequence.min(1) }).strict()),
+    async (c) => {
+      const credential = c.get('credential');
+      if (credential.role !== 'capture') return c.json({ error: 'forbidden' }, 403);
+      if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
+      const result = await relayLifecycle.publish({
+        ...c.req.valid('json'),
+        gameId: credential.gameId,
+        deviceId: credential.deviceId,
+      });
+      const current = matches.media.get(credential.gameId).broadcast;
+      if (
+        current.desired !== 'running' ||
+        current.generation !== result.generation ||
+        current.selection?.captureDeviceId !== credential.deviceId ||
+        current.selection.recordingId !== result.recordingId
+      )
+        throw new RelayLifecycleError('broadcast_changed');
+      return c.json({ ...result, serverTime: new Date().toISOString() });
+    },
+  );
   app.post('/commands', installation, zValidator('json', command), (c) => {
     const command = c.req.valid('json');
     if (command.gameId !== c.req.param('id')) return c.json({ error: 'forbidden' }, 403);
@@ -74,13 +99,22 @@ export function mediaRoutes(config: Config, matches: MatchStore) {
     return outcome ? c.json(outcome) : c.json({ error: 'command_not_found' }, 404);
   });
   app.onError((error, c) => {
+    if (error instanceof RelayLifecycleError)
+      return c.json(
+        { error: error.code },
+        error.code === 'capture_not_selected'
+          ? 403
+          : error.code === 'broadcast_changed'
+            ? 409
+            : 503,
+      );
     if (error instanceof MediaStoreError || error instanceof MediaStateError)
       return c.json({ error: error.code }, error.code === 'match_not_found' ? 404 : 409);
     throw error;
   });
   return app;
 }
-export function workerRoutes(config: Config, matches: MatchStore) {
+export function workerRoutes(config: Config, matches: MatchStore, relayLifecycle?: RelayLifecycle) {
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -93,5 +127,24 @@ export function workerRoutes(config: Config, matches: MatchStore) {
       serverTime: new Date().toISOString(),
     }),
   );
+  app.get('/connection', zValidator('query', z.object({ workerId: id }).strict()), async (c) => {
+    if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
+    const connection = await relayLifecycle.worker(c.req.valid('query').workerId);
+    if (connection) {
+      const current = matches.media.workerAssignment(c.req.valid('query').workerId);
+      if (
+        !current ||
+        current.match.id !== connection.gameId ||
+        current.media.broadcast.generation !== connection.generation
+      )
+        throw new RelayLifecycleError('broadcast_changed');
+    }
+    return c.json({ connection, serverTime: new Date().toISOString() });
+  });
+  app.onError((error, c) => {
+    if (error instanceof RelayLifecycleError)
+      return c.json({ error: error.code }, error.code === 'broadcast_changed' ? 409 : 503);
+    throw error;
+  });
   return app;
 }

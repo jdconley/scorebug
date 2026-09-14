@@ -5,7 +5,7 @@ export const scoringTestToken = 'qa-phone-token-not-production';
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 /** Starts a real API on an OS-selected loopback port; owns only this child. */
-export async function startScoringTestServer(databasePath) {
+export async function startScoringTestServer(databasePath, environment = {}) {
   const child = spawn(
     process.execPath,
     [
@@ -24,6 +24,11 @@ export async function startScoringTestServer(databasePath) {
         HOME_TOKEN: 'qa-home-token-not-production',
         INTERNAL_TOKEN: 'qa-internal-token-not-production',
         LOG_LEVEL: 'info',
+        // Ordinary scoring tests must never reconcile an ambient real relay.
+        RELAY_API_URL: undefined,
+        RELAY_API_USERNAME: undefined,
+        RELAY_API_PASSWORD: undefined,
+        ...environment,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

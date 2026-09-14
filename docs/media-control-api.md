@@ -11,13 +11,15 @@ All routes below use Bearer authorization and return `Cache-Control: no-store`.
 The installation credential is `PHONE_TOKEN`; the worker credential is `HOME_TOKEN`.
 Scoped credentials come from the native match create/join routes.
 
-| Method and path                                 | Authorization             | Response                                              |
-| ----------------------------------------------- | ------------------------- | ----------------------------------------------------- |
-| `GET /v1/matches/:id/media`                     | Scoped scoring or capture | `{snapshot, serverTime}`                              |
-| `POST /v1/matches/:id/media/recordings`         | Scoped capture            | `{recording, serverTime}`                             |
-| `POST /v1/matches/:id/media/commands`           | Installation              | `BroadcastOutcome`, HTTP 200 accepted or 409 rejected |
-| `GET /v1/matches/:id/media/commands/:commandId` | Installation              | Original outcome, or 404 `command_not_found`          |
-| `GET /v1/worker/snapshot?workerId=mac`          | Worker                    | `{assignment, serverTime}`                            |
+| Method and path                                 | Authorization             | Response                                                    |
+| ----------------------------------------------- | ------------------------- | ----------------------------------------------------------- |
+| `GET /v1/matches/:id/media`                     | Scoped scoring or capture | `{snapshot, serverTime}`                                    |
+| `POST /v1/matches/:id/media/recordings`         | Scoped capture            | `{recording, serverTime}`                                   |
+| `POST /v1/matches/:id/media/commands`           | Installation              | `BroadcastOutcome`, HTTP 200 accepted or 409 rejected       |
+| `GET /v1/matches/:id/media/commands/:commandId` | Installation              | Original outcome, or 404 `command_not_found`                |
+| `GET /v1/worker/snapshot?workerId=mac`          | Worker                    | `{assignment, serverTime}`                                  |
+| `POST /v1/matches/:id/media/publish`            | Selected scoped capture   | `{gameId, generation, recordingId, publishUrl, serverTime}` |
+| `GET /v1/worker/connection?workerId=mac`        | Worker                    | `{connection, serverTime}`; null for an unselected worker   |
 
 A recording report contains `recordingId`, `sequence`, `status`, and `startedAt`.
 The API takes the reporting device identity from its capture credential. It rejects
@@ -53,8 +55,16 @@ The selected worker snapshot contains a consistent `{match, media}` assignment o
 when that worker is selected for the active match's requested broadcast. Other
 workers receive `null`. A late or restarted worker can fetch current score and intent.
 `desired: running` is a request, not proof of an active stream. No worker currently
-consumes this endpoint to launch media, and no source readiness or output health is
-reported by this slice.
+consumes this endpoint to launch media. Worker output health is not yet reported.
+
+The publishing route takes `{recordingId, generation}` and returns only publishing
+access for the selected capture device. The worker connection route returns only
+reading access and a validated source observation (`ready`, `inboundBytes`, `tracks`).
+Both routes recheck the current generation after asynchronous relay work; a changed
+broadcast returns HTTP 409, an unselected capture returns 403, and unavailable or
+unconfigured relay access returns 503. The existing public match/media snapshots
+still contain no stream URLs or credentials. Source readiness is not worker output
+health. See [relay reconciliation and limits](relay-conformance.md).
 
 Schema version 2 adds recording, broadcast, and receipt tables to the existing
 match database. Migration preserves scoring state, credentials, and receipts.
@@ -67,8 +77,8 @@ with native matches.
 - 49 pure media state tests, 10 persistence tests, and 4 HTTP route tests pass.
   Coverage includes ownership, ordering, rejected operations, schema migration,
   independent SQLite connections, and rollback when receipt persistence fails.
-- The complete workspace suite passes 124 API tests, 14 existing worker tests,
-  and 9 tooling tests. Typecheck, production build, formatting, and the actual
+- The complete workspace suite passes 169 API tests, 28 worker tests,
+  and 12 tooling tests. Typecheck, production build, formatting, and the actual
   production server container startup check pass.
 - Shared Swift passes 45 tests, including 11 media contract/client tests.
   TypeScript and Swift consume identical `media-v1.json` wire fixtures.
@@ -79,6 +89,7 @@ with native matches.
   broadcast stop after match end. Its owned processes and temporary files are removed.
 
 These results do not qualify recording, SRT, FFmpeg output, watch networking, or
-physical devices. Next work connects relay publishing credentials, observed
-source/worker status, and a worker that reconciles the durable assignment before
+physical devices. Relay credential retrieval and source observations now have
+separate integration evidence. Next work connects observed worker status and a
+worker that reconciles the durable assignment before
 the real local media acceptance run.

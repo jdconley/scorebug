@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { createServer } from 'node:http';
-import { IngestRelay, deriveIngestGrant } from '../src/ingest.js';
+import { IngestRelay, deriveIngestGrant, ingestPathPrefix } from '../src/ingest.js';
 
 const selection = {
   workerId: 'mac',
@@ -73,6 +73,7 @@ it('derives stable, separate capabilities scoped to installation and broadcast i
   const a = grant();
   expect(a).toEqual(grant());
   expect(a.path).toMatch(/^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$/);
+  expect(ingestPathPrefix('installation-secret-not-production')).toBe(a.path.slice(0, 26));
   expect(a.publishPassphrase).not.toEqual(a.readPassphrase);
   const publisher = new URL(a.publishUrl),
     reader = new URL(a.readUrl);
@@ -103,6 +104,35 @@ it('derives stable, separate capabilities scoped to installation and broadcast i
   ]) {
     expect(changed.path).not.toBe(a.path);
     expect(changed.publishPassphrase).not.toBe(a.publishPassphrase);
+  }
+});
+it('lists only exact paths in this installation namespace across bounded pages', async () => {
+  const prefix = grant().path.slice(0, 26);
+  const second = `${prefix}${'a'.repeat(32)}`;
+  const f = await relay((_method, path) => ({
+    body: {
+      pageCount: 2,
+      items: path.includes('page=0&')
+        ? [{ name: grant().path }, { name: 'fixture' }, { name: `~${prefix}.*` }]
+        : [{ name: second }, { name: `scorebug-${'0'.repeat(16)}-${'1'.repeat(32)}` }],
+    },
+  }));
+  expect(await f.client.list(prefix)).toEqual([grant().path, second]);
+  expect(f.requests.map((r) => r.path)).toEqual([
+    '/v3/config/paths/list?page=0&itemsPerPage=100',
+    '/v3/config/paths/list?page=1&itemsPerPage=100',
+  ]);
+  await expect(f.client.list('scorebug-')).rejects.toThrow('invalid_relay_prefix');
+});
+it('rejects excessive or malformed pagination instead of returning a partial inventory', async () => {
+  for (const body of [
+    { pageCount: 11, items: [] },
+    { pageCount: 1, items: [{ name: 3 }] },
+  ]) {
+    const f = await relay(() => ({ body }));
+    await expect(f.client.list(grant().path.slice(0, 26))).rejects.toThrow(
+      'relay_invalid_response',
+    );
   }
 });
 it.each(['', 'unknown-codec'])(
