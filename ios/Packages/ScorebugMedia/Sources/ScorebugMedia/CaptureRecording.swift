@@ -10,8 +10,8 @@ import Foundation
 /// Releasing this owner cancels and schedules source teardown.
 public final class CaptureRecording: Sendable {
     private let core: CaptureRecordingCore
-    public init(source: any CaptureSource, session: RecordingSession) {
-        core = CaptureRecordingCore(source: source, session: session)
+    public init(source: any CaptureSource, session: RecordingSession, publishingTap: PublishingTap? = nil) {
+        core = CaptureRecordingCore(source: source, session: session, publishingTap: publishingTap)
     }
     deinit { core.cancel() }
     public var snapshot: RecordingSessionSnapshot { core.session.snapshot }
@@ -32,9 +32,9 @@ private final class CaptureRecordingCore: @unchecked Sendable {
     private var starting = false
     private var stopRequested = false
 
-    init(source: any CaptureSource, session: RecordingSession) {
+    init(source: any CaptureSource, session: RecordingSession, publishingTap: PublishingTap?) {
         self.source = source; self.session = session
-        ingress = CaptureIngress(session: session)
+        ingress = CaptureIngress(session: session, publishingTap: publishingTap)
     }
 
     func start() async throws {
@@ -89,6 +89,7 @@ private final class CaptureRecordingCore: @unchecked Sendable {
             if let shutdown { return shutdown }
             guard let startup else { return nil }
             stopRequested = true
+            ingress.detachPublishing()
             if starting { session.cancel() }
             let shutdown = Task.detached {
                 _ = await startup.result
@@ -109,6 +110,7 @@ private final class CaptureRecordingCore: @unchecked Sendable {
     }
 
     func cancel() {
+        ingress.detachPublishing()
         session.cancel()
         lock.withLock { stopRequested = true }
         requestStop()
@@ -121,9 +123,13 @@ private final class CaptureRecordingCore: @unchecked Sendable {
 private final class CaptureIngress: @unchecked Sendable {
     private let lock = NSLock()
     private let session: RecordingSession
+    private let publishingTap: PublishingTap?
     private var acceptsSamples = false
     private var closed = false
-    init(session: RecordingSession) { self.session = session }
+    init(session: RecordingSession, publishingTap: PublishingTap?) {
+        self.session = session; self.publishingTap = publishingTap
+    }
+    func detachPublishing() { publishingTap?.close() }
     func open() { lock.withLock { if !closed { acceptsSamples = true } } }
     func close() { lock.withLock { closed = true; acceptsSamples = false } }
 
@@ -131,7 +137,9 @@ private final class CaptureIngress: @unchecked Sendable {
     func offer(_ sample: CapturedMediaSample) -> Bool {
         lock.withLock {
             guard acceptsSamples, !closed else { return false }
-            return !session.offer(sample) && session.snapshot.failure != nil
+            guard session.offer(sample) else { return session.snapshot.failure != nil }
+            publishingTap?.offer(sample)
+            return false
         }
     }
     func fail(_ event: CaptureSourceEvent) -> Bool {

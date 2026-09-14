@@ -154,6 +154,64 @@ import XCTest
         XCTAssertEqual(source.stops, 1)
     }
 
+    func testPublishingCanAttachAfterCaptureStartsAndFailureNeverStopsArchive() async throws {
+        let sink = CaptureSink(), publisher = CapturePublisher(appendFails: true)
+        let source = CaptureFixture(sink: sink)
+        let tap = PublishingTap()
+        let recording = CaptureRecording(source: source, session: try RecordingSession(sink: sink), publishingTap: tap)
+        let publishing = try PublishingSession(publisher: publisher)
+        try await recording.start()
+        try await publishing.start()
+        XCTAssertTrue(tap.attach(publishing))
+        source.sample(12)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while publishing.snapshot.failure == nil, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(publishing.snapshot.failure, .appendFailed)
+        XCTAssertEqual(recording.snapshot.state, .recording)
+        source.sample(13)
+        await publishing.stop()
+        source.sample(14)
+        _ = try await recording.stop()
+        XCTAssertEqual(sink.count, 5)
+        XCTAssertEqual(recording.snapshot.state, .finished)
+        XCTAssertEqual(source.stops, 1)
+    }
+
+    func testCaptureShutdownClosesTapAndLateCallbacksWithoutOwningPublishingStop() async throws {
+        let sink = CaptureSink(), publisher = CapturePublisher()
+        let source = CaptureFixture(sink: sink)
+        let tap = PublishingTap()
+        let publishing = try PublishingSession(publisher: publisher)
+        let recording = CaptureRecording(source: source, session: try RecordingSession(sink: sink), publishingTap: tap)
+        try await publishing.start()
+        XCTAssertTrue(tap.attach(publishing))
+        try await recording.start()
+        _ = try await recording.stop()
+        XCTAssertEqual(publishing.snapshot.state, .publishing)
+        let admitted = publishing.snapshot.queue.acceptedCount
+        source.lateSample(99)
+        XCTAssertFalse(tap.offer(try captureAudio(98)))
+        XCTAssertFalse(tap.attach(publishing), "A closed recording tap cannot be reused by another capture")
+        XCTAssertEqual(publishing.snapshot.queue.acceptedCount, admitted)
+        XCTAssertEqual(recording.snapshot.state, .finished)
+        await publishing.stop()
+    }
+
+    func testArchiveAdmissionFailureDoesNotForwardRejectedSampleToPublisher() async throws {
+        let sink = CaptureSink(), publisher = CapturePublisher()
+        let source = CaptureFixture(sink: sink)
+        let tap = PublishingTap()
+        let publishing = try PublishingSession(publisher: publisher)
+        let recording = CaptureRecording(source: source, session: try RecordingSession(sink: sink, maxBytes: 1), publishingTap: tap)
+        try await publishing.start()
+        tap.attach(publishing)
+        do { try await recording.start(); XCTFail("Expected archive overflow") } catch {}
+        XCTAssertEqual(publishing.snapshot.queue.acceptedCount, 0)
+        XCTAssertEqual(publishing.snapshot.state, .publishing)
+        await assertFailure(recording, .overflow)
+        await publishing.stop()
+    }
+
     private func assertFailure(_ recording: CaptureRecording, _ failure: RecordingSessionError) async {
         do { _ = try await recording.stop(); XCTFail("Expected failure") }
         catch { XCTAssertEqual(error as? RecordingSessionError, failure) }
@@ -205,6 +263,8 @@ private final class CaptureFixture: CaptureSource, @unchecked Sendable {
         sink.markSourceStopped()
     }
     func event(_ event: CaptureSourceEvent) { lock.withLock { callbacks }?.event(event) }
+    func sample(_ second: Int64) { lock.withLock { callbacks }?.sample(try! captureAudio(second)) }
+    func lateSample(_ second: Int64) { lock.withLock { oldCallbacks }?.sample(try! captureAudio(second)) }
     func lateFailure() { lock.withLock { oldCallbacks }?.event(.failed) }
 }
 
@@ -273,4 +333,16 @@ private func captureAudio(_ second: Int64) throws -> CapturedMediaSample {
         sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
         sampleBufferOut: &sample), noErr)
     return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .audio)
+}
+
+private actor CapturePublisher: MediaPublisher {
+    private var active = false
+    let appendFails: Bool
+    init(appendFails: Bool = false) { self.appendFails = appendFails }
+    var isPublishing: Bool { active }
+    func start() async throws { active = true }
+    func append(_ sample: CapturedMediaSample) async throws {
+        if appendFails { throw PublishingSessionError.appendFailed }
+    }
+    func stop() async { active = false }
 }
