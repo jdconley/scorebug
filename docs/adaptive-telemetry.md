@@ -96,5 +96,26 @@ rejection and teardown parity, invalid/closed observers, source quiescence, and
 replacement/detach/close interleavings. All 115 Media tests and the unsigned combined
 iPhone/Watch Release build pass; evidence is under
 `artifacts/qa/capture-video-observation-*`. App construction still attaches no
-observation owner. VideoToolbox and polling integration remain open, and no new
-production runtime metric or adaptive setting is enabled yet.
+observation owner.
+
+## Native encoder completion hook
+
+The pinned HaishinKit patch now accepts an optional immutable observer at SRT stream
+construction. Each conversion retains its scalar input PTS and that observer through
+the actual VideoToolbox completion callback. It notifies before downstream queue
+admission; subsequent queue rejection does not erase a successful encoding event.
+
+Only successful, non-dropped, ready single-frame compressed video with nonempty
+data and valid, rationally matching input/output PTS qualifies. Decompression and
+compressed passthrough do not notify. These diagnostic checks preserve the existing
+media delivery/failure path. Encoded-stage callback counts will mean qualifying
+notifications, not all native callbacks or all diagnostic rejections. The current
+profile disables frame reordering; any change needs separate qualification.
+
+All 76 SDK tests and the unsigned combined iPhone/Watch Release build pass.
+Tests cover actual encoding/decompression, SRT construction and drain, passthrough,
+delayed observer isolation, invalid outputs, and notification before queue failure.
+The maintained patch verifies all 162 original upstream hashes and an exact round
+trip. Evidence is under `artifacts/qa/encoder-completion-observation-*`.
+App/controller wiring and polling remain open, so these optional hooks still supply
+no production runtime metric and automatic quality changes remain disabled.

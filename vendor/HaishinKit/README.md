@@ -31,6 +31,17 @@ failure observation, task ownership, and qualification scope. The same upstream 
 [the evidence](../../docs/native-dual-output.md). Keep local changes small and
 review them against the original hashes when updating the SDK.
 
+`SRTStream(connection:encoderCompletionObserver:)` optionally accepts a synchronous
+`@Sendable (CMTime, CMTime) -> Void` observer. Construction fixes the observer for
+the stream and final drain; each compression submission captures only its input
+PTS, observer, and output queue. Qualifying native callbacks notify before queue
+admission, so later count/byte rejection does not erase encoding completion.
+Only successful, non-dropped, ready single-sample compressed video with nonempty
+data and numeric, positive-timescale, equal-epoch, rationally equal input/output
+PTS qualifies. Diagnostic rejection preserves normal media delivery and failure
+behavior. Decompression and compressed SRT passthrough never notify. Observers
+must do bounded synchronous work, without per-frame tasks, I/O, or waits.
+
 Verify the maintained patch without a network checkout:
 
 ```sh

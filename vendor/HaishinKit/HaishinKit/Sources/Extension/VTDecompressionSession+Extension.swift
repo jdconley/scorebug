@@ -8,7 +8,7 @@ extension VTDecompressionSession: VTSessionConvertible {
     ]
 
     @inline(__always)
-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver _: VideoEncoderCompletionObserver?) throws {
         var flagsOut: VTDecodeInfoFlags = []
         var _: VTEncodeInfoFlags = []
         let status = VTDecompressionSessionDecodeFrame(

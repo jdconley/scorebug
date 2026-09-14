@@ -1,9 +1,27 @@
 import AVFoundation
 import CoreMedia
+import HaishinKit
 import Testing
 @testable import SRTHaishinKit
 
 @Suite struct TSWriterStartupTests {
+    @Test func compressedSRTPassthroughDoesNotNotifyEncoderObserver() async throws {
+        let bytes = PassthroughTransport()
+        let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
+        let stream = SRTStream(connection: connection, encoderCompletionObserver: { _, _ in
+            Issue.record("Compressed passthrough must never report native encoding")
+        })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video])
+        await stream.publish()
+        await stream.append(try video(0))
+        await stream.finish()
+        #expect(await stream.publishingError == nil)
+        #expect(bytes.count > 0, "Compressed media must still reach the transport")
+        await connection.close()
+    }
+
     private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {
         var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
@@ -295,4 +313,11 @@ import Testing
         withExtendedLifetime(output) {}
     }
 
+}
+
+private final class PassthroughTransport: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = 0
+    var count: Int { lock.withLock { stored } }
+    func append(_ data: Data) { lock.withLock { stored += data.count } }
 }

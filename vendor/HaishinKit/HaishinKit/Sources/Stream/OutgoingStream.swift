@@ -59,7 +59,7 @@ package final class OutgoingStream {
     package private(set) var videoInputFormat: CMFormatDescription?
 
     private var audioCodec = AudioCodec()
-    private var videoCodec = VideoCodec()
+    private let videoCodec: VideoCodec
     private var videoInputContinuation: AsyncStream<CMSampleBuffer>.Continuation? {
         didSet {
             oldValue?.finish()
@@ -72,7 +72,8 @@ package final class OutgoingStream {
     }
 
     /// Create a new instance.
-    package init() {
+    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
+        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver)
     }
 
     /// Appends a sample buffer for publish.

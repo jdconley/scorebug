@@ -8,6 +8,12 @@ import UIKit
 final class VideoCodec {
     static let frameInterval: Double = 0.0
 
+    private let encoderCompletionObserver: VideoEncoderCompletionObserver?
+
+    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
+        self.encoderCompletionObserver = encoderCompletionObserver
+    }
+
     var settings: VideoCodecSettings = .default {
         didSet {
             let invalidateSession = settings.invalidateSession(oldValue)
@@ -67,10 +73,10 @@ final class VideoCodec {
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
-                try session.convert(sampleBuffer, continuation: continuation)
+                try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
-                    try session.convert(sampleBuffer, continuation: continuation)
+                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 }
             }

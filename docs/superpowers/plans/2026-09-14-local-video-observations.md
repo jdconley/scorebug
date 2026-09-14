@@ -99,6 +99,34 @@ decompression nor compressed passthrough notifies this observer. Keep frame
 reordering disabled: native callbacks arrive in decode order, and changing that
 setting requires separate qualification of advancing-PTS interpretation.
 
+## Runtime ownership and qualification
+
+After access validation and the existing attempt check, create the optional owner
+and publisher, store their ownership, and attach before awaiting publisher startup.
+This local interval includes encoder/transport startup, but starts after earlier
+broadcast/access requests. Revision 1 identifies the fixed profile; a starting
+snapshot is not evidence that configuration or readiness has succeeded.
+Unavailable observation construction must leave publishing usable with no owner.
+If publisher construction fails after owner creation, close that owner explicitly.
+
+Poll the directly owned observer synchronously in the existing local health loop;
+do not introduce an asynchronous snapshot getter or another polling task. Detach
+immediately on stop, retain the old owner while joining session shutdown, and close
+it only afterward. Publish its final bounded snapshot only if its diagnostic
+attempt and teardown identity are still current. Diagnostic identity is separate
+from the control epoch, because a normal stop invalidates that epoch before drain.
+A new start clears prior diagnostics even if it fails before receiving access.
+
+Model tests must exercise a real capture callback during gated publisher startup,
+capture stop during startup, delayed encoding during gated shutdown, fresh owners
+after restart, closed-tap and factory-failure cleanup, and absent observations.
+For native qualification, a separately gated DEBUG fixture exporter can serialize
+one closed snapshot after teardown without changing the production UI or writing
+on capture callbacks. Preserve rational PTS and scope; omit URLs and credentials.
+Compare those bounded windows to the existing fully decoded barcode/audio fixture,
+including startup and drain intervals, without inferring loss from unaligned stage
+counts.
+
 ## Remaining work after this slice
 
 Source-range correlation, full report-transit age, time-weighted live queue pressure,
@@ -123,5 +151,15 @@ invalidate old publication admission while keeping the old owner available for
 encoder drain. Eight new integration tests pass, including deterministic callback
 interleavings; all 115 Media package tests and the unsigned combined iPhone/Watch
 Release build pass. Logs are under `artifacts/qa/capture-video-observation-*`.
-Encoder and app/controller integration remain open; existing app calls supply no
-observer yet.
+Existing app calls supply no observer yet.
+
+## Encoder integration evidence
+
+Checkpoint 3 adds the immutable optional observer through SRT construction to the
+actual native compression callback, with the diagnostic-only validation described
+above. All 76 SDK tests pass, including actual encode/decode, SRT final drain,
+passthrough exclusion, and queue-rejection ordering. The unsigned combined
+iPhone/Watch Release build passes. The SDK patch preserves all 162 original hashes
+and an exact reverse/forward round trip. Logs are under
+`artifacts/qa/encoder-completion-observation-*`. App/controller wiring and local
+fixed-profile measurement qualification remain open.

@@ -49,7 +49,7 @@ public actor SRTStream {
     private lazy var writer = TSWriter()
     private lazy var reader = TSReader()
     package lazy var incoming = IncomingStream(self)
-    package lazy var outgoing = OutgoingStream()
+    package let outgoing: OutgoingStream
     private weak var connection: SRTConnection?
 
     /// The error domain codes.
@@ -59,7 +59,11 @@ public actor SRTStream {
     }
 
     /// Creates a new stream object.
-    public init(connection: SRTConnection) {
+    /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
+    ///   notification for this stream, including final drain. Compressed passthrough
+    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
+    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
+        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver)
         self.connection = connection
         Task { await connection.addStream(self) }
     }

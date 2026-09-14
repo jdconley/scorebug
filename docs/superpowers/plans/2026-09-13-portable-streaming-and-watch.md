@@ -305,10 +305,10 @@ travel through the authenticated API to Swift models with per-attempt regression
 guards and monotonic age. Capture/encoder correlation and report-transit age remain
 open, so the broader fresh-frame tracking item and adaptive enablement stay pending.
 The [local observation slice](2026-09-14-local-video-observations.md) now includes
-the bounded accumulator and optional capture hook before archive admission.
-All 115 Media package tests and the unsigned combined iPhone/Watch Release build
-pass. App construction still attaches no observation owner, and the encoder hook
-remains open; this does not close the runtime tracking gate.
+the bounded accumulator, optional capture hook before archive admission, and
+actual VideoToolbox completion hook. All 115 Media package tests, 76 SDK tests,
+and the unsigned combined iPhone/Watch Release build pass. App construction still
+attaches no observation owner; this does not close the runtime tracking gate.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 

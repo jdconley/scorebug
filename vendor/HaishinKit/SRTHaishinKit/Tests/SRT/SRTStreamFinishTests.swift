@@ -5,6 +5,26 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTStreamFinishTests {
+    @Test func constructionObserverReachesNativeEncoderThroughFinalDrain() async throws {
+        let recorder = FinishEncoderObserver()
+        let bytes = FinishBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
+        let stream = SRTStream(connection: connection, encoderCompletionObserver: recorder.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setVideoInputBufferCounts(4)
+        await stream.setExpectedMedias([.video])
+        await stream.publish()
+        #expect(recorder.sourcePTS.isEmpty)
+        for frame in 0..<3 { await stream.append(try finishVideo(frame)) }
+        await stream.finish()
+        #expect(recorder.sourcePTS == (0..<3).map { CMTime(value: Int64($0), timescale: 30) })
+        #expect(bytes.videoPTS == [9000, 12000, 15000])
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
     @Test func finishPreservesLastAcceptedVideoThroughTransport() async throws {
         let bytes = FinishBytes()
         let socket = SRTSocket(sender: { bytes.append($0); return Int32($0.count) })
@@ -192,4 +212,14 @@ private func finishVideo(_ frame: Int) throws -> CMSampleBuffer {
     #expect(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image,
         formatDescription: try #require(format), sampleTiming: &timing, sampleBufferOut: &sample) == noErr)
     return try #require(sample)
+}
+
+private final class FinishEncoderObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [CMTime] = []
+    var sourcePTS: [CMTime] { lock.withLock { stored } }
+    func record(_ source: CMTime, _ output: CMTime) {
+        #expect(CMTimeCompare(source, output) == 0)
+        lock.withLock { stored.append(source) }
+    }
 }

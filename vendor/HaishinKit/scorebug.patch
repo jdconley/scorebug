@@ -1,3 +1,4 @@
+diff --git a/HaishinKit/Sources/Codec/AudioCodec.swift b/HaishinKit/Sources/Codec/AudioCodec.swift
 --- a/HaishinKit/Sources/Codec/AudioCodec.swift
 +++ b/HaishinKit/Sources/Codec/AudioCodec.swift
 @@ -20,8 +20,15 @@
@@ -83,9 +84,10 @@
 +        outputQueue?.finish()
      }
  }
+diff --git a/HaishinKit/Sources/Codec/VTSessionConvertible.swift b/HaishinKit/Sources/Codec/VTSessionConvertible.swift
 --- a/HaishinKit/Sources/Codec/VTSessionConvertible.swift
 +++ b/HaishinKit/Sources/Codec/VTSessionConvertible.swift
-@@ -3,6 +3,11 @@
+@@ -3,15 +3,26 @@
  import VideoToolbox
  
  enum VTSessionError: Swift.Error {
@@ -97,19 +99,39 @@
      case failedToCreate(status: OSStatus)
      case failedToPrepare(status: OSStatus)
      case failedToConvert(status: OSStatus)
-@@ -11,7 +16,8 @@
+ }
+ 
++/// Synchronous notification of a qualifying native video encoder output.
++/// Runs on the VideoToolbox callback thread before downstream queue admission.
++/// Keep work bounded: do not perform I/O, wait, or create a task per frame.
++public typealias VideoEncoderCompletionObserver = @Sendable (_ sourcePTS: CMTime, _ outputPTS: CMTime) -> Void
++
  protocol VTSessionConvertible {
      func setOption(_ option: VTSessionOption) -> OSStatus
      func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
 -    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws
-+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws
 +    func completeFrames() -> OSStatus
      func invalidate()
  }
  
+diff --git a/HaishinKit/Sources/Codec/VideoCodec.swift b/HaishinKit/Sources/Codec/VideoCodec.swift
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -19,16 +19,19 @@
+@@ -7,6 +7,12 @@
+ 
+ final class VideoCodec {
+     static let frameInterval: Double = 0.0
++
++    private let encoderCompletionObserver: VideoEncoderCompletionObserver?
++
++    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
++        self.encoderCompletionObserver = encoderCompletionObserver
++    }
+ 
+     var settings: VideoCodecSettings = .default {
+         didSet {
+@@ -19,16 +25,19 @@
          }
      }
      var passthrough = true
@@ -134,7 +156,7 @@
      private(set) var isRunning = false
      private(set) var inputFormat: CMFormatDescription? {
          didSet {
-@@ -48,7 +51,7 @@
+@@ -48,7 +57,7 @@
      private(set) var outputFormat: CMFormatDescription?
  
      func append(_ sampleBuffer: CMSampleBuffer) {
@@ -143,7 +165,17 @@
              return
          }
          do {
-@@ -72,8 +75,17 @@
+@@ -64,16 +73,25 @@
+                 return
+             }
+             if sampleBuffer.formatDescription?.isCompressed == true {
+-                try session.convert(sampleBuffer, continuation: continuation)
++                try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
+             } else {
+                 if useFrame(sampleBuffer.presentationTimeStamp) {
+-                    try session.convert(sampleBuffer, continuation: continuation)
++                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
+                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                  }
              }
          } catch {
@@ -161,7 +193,7 @@
      }
  
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -97,13 +109,18 @@
+@@ -97,13 +115,18 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -182,7 +214,7 @@
      }
  
      #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -163,7 +180,7 @@
+@@ -163,7 +186,7 @@
          invalidateSession = true
          inputFormat = nil
          outputFormat = nil
@@ -191,7 +223,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +189,18 @@
+@@ -172,3 +195,18 @@
          #endif
      }
  }
@@ -210,35 +242,39 @@
 +        output?.finish()
 +    }
 +}
+diff --git a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift b/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
 --- a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
 +++ b/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
-@@ -9,7 +9,7 @@
+@@ -9,22 +9,22 @@
  
  extension VTCompressionSession: VTSessionConvertible {
      @inline(__always)
 -    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
-+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
          guard let imageBuffer = sampleBuffer.imageBuffer else {
              return
          }
-@@ -21,9 +21,13 @@
++        let completion = VideoEncoderCompletion(sourcePTS: sampleBuffer.presentationTimeStamp,
++            observer: encoderCompletionObserver, continuation: continuation)
+         var flags: VTEncodeInfoFlags = []
+         let status = VTCompressionSessionEncodeFrame(
+             self,
+             imageBuffer: imageBuffer,
+-            presentationTimeStamp: sampleBuffer.presentationTimeStamp,
++            presentationTimeStamp: completion.sourcePTS,
              duration: sampleBuffer.duration,
              frameProperties: nil,
              infoFlagsOut: &flags,
 -            outputHandler: { _, _, sampleBuffer in
 -                if let sampleBuffer {
 -                    continuation?.yield(sampleBuffer)
-+            outputHandler: { status, _, sampleBuffer in
-+                guard status == noErr, let sampleBuffer else {
-+                    continuation?.fail(.codecFailed(status: status == noErr ? -1 : status))
-+                    return
-+                }
-+                do {
-+                    continuation?.yield(sampleBuffer, byteCount: sampleBuffer.dataBuffer?.dataLength ?? sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? 0)
-                 }
+-                }
++            outputHandler: { status, flags, sampleBuffer in
++                completion.complete(status: status, flags: flags, sampleBuffer: sampleBuffer)
              }
          )
-@@ -32,6 +36,10 @@
+         if status != noErr {
+@@ -32,7 +32,43 @@
          }
      }
  
@@ -249,6 +285,40 @@
      func invalidate() {
          VTCompressionSessionInvalidate(self)
      }
+ }
++
++/// One native encode submission owns its timestamp, observer and output queue.
++/// No input sample or mutable codec/stream state is retained by the callback.
++struct VideoEncoderCompletion: Sendable {
++    let sourcePTS: CMTime
++    let observer: VideoEncoderCompletionObserver?
++    let continuation: PublishingQueue<CMSampleBuffer>?
++
++    func complete(status: OSStatus, flags: VTEncodeInfoFlags, sampleBuffer: CMSampleBuffer?) {
++        guard status == noErr, let sampleBuffer else {
++            continuation?.fail(.codecFailed(status: status == noErr ? -1 : status))
++            return
++        }
++        let outputPTS = sampleBuffer.presentationTimeStamp
++        // Data readiness alone includes empty CoreMedia marker buffers.
++        // Observation rejection never changes the existing media delivery path.
++        if let observer,
++           !flags.contains(.frameDropped),
++           CMSampleBufferDataIsReady(sampleBuffer),
++           CMSampleBufferGetNumSamples(sampleBuffer) == 1,
++           let format = sampleBuffer.formatDescription,
++           format.mediaType == .video, format.isCompressed,
++           let data = sampleBuffer.dataBuffer, data.dataLength > 0,
++           sourcePTS.isNumeric, sourcePTS.timescale > 0,
++           outputPTS.isNumeric, outputPTS.timescale > 0,
++           sourcePTS.epoch == outputPTS.epoch,
++           CMTimeCompare(sourcePTS, outputPTS) == 0 {
++            observer(sourcePTS, outputPTS)
++        }
++        continuation?.yield(sampleBuffer, byteCount: sampleBuffer.dataBuffer?.dataLength ?? sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? 0)
++    }
++}
+diff --git a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift b/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 --- a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 +++ b/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 @@ -8,7 +8,7 @@
@@ -256,7 +326,7 @@
  
      @inline(__always)
 -    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
-+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?) throws {
++    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver _: VideoEncoderCompletionObserver?) throws {
          var flagsOut: VTDecodeInfoFlags = []
          var _: VTEncodeInfoFlags = []
          let status = VTDecompressionSessionDecodeFrame(
@@ -281,6 +351,7 @@
      func invalidate() {
          VTDecompressionSessionInvalidate(self)
      }
+diff --git a/HaishinKit/Sources/Stream/OutgoingStream.swift b/HaishinKit/Sources/Stream/OutgoingStream.swift
 --- a/HaishinKit/Sources/Stream/OutgoingStream.swift
 +++ b/HaishinKit/Sources/Stream/OutgoingStream.swift
 @@ -4,6 +4,7 @@
@@ -291,7 +362,15 @@
  
      /// The asynchronous sequence for audio output.
      package var audioOutputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
-@@ -65,12 +66,18 @@
+@@ -58,19 +59,26 @@
+     package private(set) var videoInputFormat: CMFormatDescription?
+ 
+     private var audioCodec = AudioCodec()
+-    private var videoCodec = VideoCodec()
++    private let videoCodec: VideoCodec
+     private var videoInputContinuation: AsyncStream<CMSampleBuffer>.Continuation? {
+         didSet {
+             oldValue?.finish()
          }
      }
  
@@ -301,7 +380,9 @@
 +    }
 +
      /// Create a new instance.
-     package init() {
+-    package init() {
++    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
++        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver)
      }
  
      /// Appends a sample buffer for publish.
@@ -310,7 +391,7 @@
          switch sampleBuffer.formatDescription?.mediaType {
          case .audio:
              audioInputFormat = sampleBuffer.formatDescription
-@@ -85,9 +92,20 @@
+@@ -85,9 +93,20 @@
  
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -331,7 +412,7 @@
  
      /// Appends a video buffer.
      package func append(video sampleBuffer: CMSampleBuffer) {
-@@ -101,12 +119,14 @@
+@@ -101,12 +120,14 @@
          guard !isRunning else {
              return
          }
@@ -346,6 +427,8 @@
          guard isRunning else {
              return
          }
+diff --git a/HaishinKit/Sources/Util/PublishingQueue.swift b/HaishinKit/Sources/Util/PublishingQueue.swift
+new file mode 100644
 --- /dev/null
 +++ b/HaishinKit/Sources/Util/PublishingQueue.swift
 @@ -0,0 +1,102 @@
@@ -451,6 +534,7 @@
 +        continuation.finish()
 +    }
 +}
+diff --git a/SRTHaishinKit/Sources/SRT/SRTConnection.swift b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 @@ -30,6 +30,13 @@
@@ -673,6 +757,7 @@
              await close()
          }
      }
+diff --git a/SRTHaishinKit/Sources/SRT/SRTSocket.swift b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 @@ -2,6 +2,12 @@
@@ -909,6 +994,7 @@
          let performanceData = self.performanceData
          return .init(
              queueBytesOut: Int(performanceData.byteSndBuf),
+diff --git a/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift b/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 @@ -7,18 +7,12 @@
@@ -935,6 +1021,7 @@
          }
          return paramsReturn
      }
+diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/SRT/SRTStream.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
 @@ -8,6 +8,33 @@
@@ -971,7 +1058,29 @@
  
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -45,7 +72,7 @@
+@@ -22,7 +49,7 @@
+     private lazy var writer = TSWriter()
+     private lazy var reader = TSReader()
+     package lazy var incoming = IncomingStream(self)
+-    package lazy var outgoing = OutgoingStream()
++    package let outgoing: OutgoingStream
+     private weak var connection: SRTConnection?
+ 
+     /// The error domain codes.
+@@ -32,7 +59,11 @@
+     }
+ 
+     /// Creates a new stream object.
+-    public init(connection: SRTConnection) {
++    /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
++    ///   notification for this stream, including final drain. Compressed passthrough
++    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
++    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
++        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver)
+         self.connection = connection
+         Task { await connection.addStream(self) }
+     }
+@@ -45,7 +76,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -980,7 +1089,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +84,21 @@
+@@ -57,8 +88,21 @@
              }
              return
          }
@@ -1003,7 +1112,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +108,39 @@
+@@ -68,26 +112,39 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1063,7 +1172,7 @@
      }
  
      /// Playback streaming audio and video from server.
-@@ -116,16 +169,66 @@
+@@ -116,16 +173,66 @@
          readyState = .playing
      }
  
@@ -1135,7 +1244,7 @@
      }
  
      /// Sets the expected media.
-@@ -157,11 +260,11 @@
+@@ -157,11 +264,11 @@
      }
  
      public func append(_ sampleBuffer: CMSampleBuffer) {
@@ -1149,7 +1258,7 @@
              } else {
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
-@@ -172,16 +275,29 @@
+@@ -172,16 +279,29 @@
      }
  
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -1181,6 +1290,7 @@
      }
  
      public func dispatch(_ event: NetworkMonitorEvent) async {
+diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/TSWriter.swift
 --- a/SRTHaishinKit/Sources/TS/TSWriter.swift
 +++ b/SRTHaishinKit/Sources/TS/TSWriter.swift
 @@ -1,6 +1,7 @@
@@ -1527,6 +1637,7 @@
              clockTimeStamp = timestamp
          }
          var packets: [TSPacket] = []
+diff --git a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift b/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
 --- a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
 +++ b/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
 @@ -5,6 +5,9 @@
