@@ -74,14 +74,17 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var observation: WorkerObservation?
     public var observedAt: String?
     public var expiresAt: String?
+    /// Conservative server-relative age of the completed decoded-video window.
+    public var decodedVideoAgeUpperBoundMs: Double?
 
     public init(gameId: String, generation: Int, workerId: String?, state: WorkerMediaState,
-                observation: WorkerObservation?, observedAt: String?, expiresAt: String?) {
+                observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId; self.state = state
         self.observation = observation; self.observedAt = observedAt; self.expiresAt = expiresAt
+        self.decodedVideoAgeUpperBoundMs = decodedVideoAgeUpperBoundMs
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, state, observation, observedAt, expiresAt }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(gameId, forKey: .gameId)
@@ -91,6 +94,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         try container.encode(observation, forKey: .observation)
         try container.encode(observedAt, forKey: .observedAt)
         try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encodeIfPresent(decodedVideoAgeUpperBoundMs, forKey: .decodedVideoAgeUpperBoundMs)
     }
 }
 

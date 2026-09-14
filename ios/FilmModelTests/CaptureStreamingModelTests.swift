@@ -106,6 +106,114 @@ import XCTest
         XCTAssertFalse(model.needsStorageRetry)
     }
 
+    func testWorkerDecodedVideoAgeStoredAndExpiresWithoutAnotherRequest() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        await model.pollControl()
+        let evidence = try XCTUnwrap(model.workerDecodedVideoFreshness)
+        XCTAssertEqual(evidence.gameId, "game-1")
+        XCTAssertEqual(evidence.generation, 1)
+        XCTAssertEqual(evidence.workerId, "worker-1")
+        XCTAssertEqual(evidence.attempt, 2)
+        XCTAssertEqual(evidence.completed.sequence, 7)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(evidence.ageUpperBound()), .milliseconds(550))
+        XCTAssertEqual(model.workerState, .producingOutput)
+        let requestsBefore = await server.requestCount
+        model.pollLocalHealth(at: ContinuousClock.now + .seconds(5))
+        XCTAssertNil(model.workerDecodedVideoFreshness)
+        XCTAssertEqual(model.workerState, .stale)
+        XCTAssertEqual(model.localState, .publishing)
+        let requestsAfter = await server.requestCount
+        XCTAssertEqual(requestsAfter, requestsBefore)
+        await model.stopStreaming()
+    }
+
+    func testLegacyWorkerReplyClearsPreviouslyStoredAgeWithoutChangingProcessHealth() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        await model.pollControl()
+        XCTAssertNotNil(model.workerDecodedVideoFreshness)
+        await server.setStatusOverride(workerAgeResponse(bound: nil))
+        await model.pollControl()
+        XCTAssertNil(model.workerDecodedVideoFreshness)
+        XCTAssertEqual(model.workerState, .producingOutput)
+        await server.setStatusOverride(workerAgeResponse())
+        await model.pollControl()
+        XCTAssertNotNil(model.workerDecodedVideoFreshness)
+        await model.stopStreaming()
+        XCTAssertNil(model.workerDecodedVideoFreshness)
+    }
+
+    func testWorkerScopeMismatchClearsPreviouslyStoredAge() async throws {
+        let server = CaptureTestServer()
+        let model = makeModel(server: server)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        for field in ["game", "generation", "worker"] {
+            await server.setStatusOverride(workerAgeResponse())
+            await model.pollControl()
+            XCTAssertNotNil(model.workerDecodedVideoFreshness)
+            var mismatch = workerAgeResponse()
+            switch field {
+            case "game": mismatch.status.gameId = "other"
+            case "generation": mismatch.status.generation = 2
+            default: mismatch.status.workerId = "other"
+            }
+            await server.setStatusOverride(mismatch)
+            await model.pollControl()
+            XCTAssertNil(model.workerDecodedVideoFreshness)
+            XCTAssertEqual(model.workerState, .unknown)
+        }
+        await model.stopStreaming()
+    }
+
+    func testLateWorkerFailureAfterStopIsIgnoredAndRestartWaitsForControlCompletion() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        var publishers: [CaptureTestPublisher] = []
+        let model = makeModel(server: server, publisherFactory: { _, _ in
+            let publisher = CaptureTestPublisher(); publishers.append(publisher); return publisher
+        })
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        await server.setStatusGate(gate)
+        await server.setStatusFailure(true)
+        let polling = Task { await model.pollControl() }
+        await gate.waitUntilEntered()
+        await model.stopStreaming()
+        let messageAfterStop = model.message
+        await model.startStreaming()
+        XCTAssertEqual(publishers.count, 1, "A pending control request blocks replacement startup")
+        XCTAssertEqual(model.localState, .idle)
+        await gate.release()
+        await polling.value
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertEqual(model.message, messageAfterStop, "An obsolete worker failure must not overwrite current status")
+        XCTAssertEqual(model.workerState, .unknown)
+        await server.setStatusFailure(false)
+        await server.setStatusGate(nil)
+        await model.startStreaming()
+        XCTAssertEqual(publishers.count, 2)
+        XCTAssertEqual(model.localState, .publishing)
+        await model.pollControl()
+        XCTAssertEqual(model.localState, .publishing)
+        let replacementPublishing = await publishers.last?.isPublishing
+        XCTAssertEqual(replacementPublishing, true)
+        let operations = await server.operations
+        XCTAssertEqual(operations, ["start"], "Obsolete failure must not trigger a stop of the replacement")
+        await model.stopStreaming()
+    }
+
     func testWorkerReplyAfterLocalStopCannotReappearAsCurrent() async throws {
         let server = CaptureTestServer()
         let gate = FilmTestGate()
@@ -113,13 +221,18 @@ import XCTest
         await model.restore()
         model.captureChanged(captureContext())
         await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        await model.pollControl()
+        XCTAssertNotNil(model.workerDecodedVideoFreshness)
         await server.setStatusGate(gate)
         let polling = Task { await model.pollControl() }
         await gate.waitUntilEntered()
         model.captureChanged(nil)
+        XCTAssertNil(model.workerDecodedVideoFreshness)
         await gate.release()
         await polling.value
         XCTAssertEqual(model.workerState, .unknown)
+        XCTAssertNil(model.workerDecodedVideoFreshness)
     }
 
     func testWorkerObservationExpiresIndependentlyOfControlRequests() async throws {
@@ -582,6 +695,17 @@ import XCTest
         XCTAssertFalse(model.needsStorageRetry)
     }
 
+    private func workerAgeResponse(bound: Double? = 550) -> WorkerMediaStatusResponse {
+        let window = DecodedVideoWindow(sequence: 7, durationMs: 5000, ageMs: 250, firstPTS: 0, lastPTS: 447000,
+                                       freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)
+        let observation = WorkerObservation(gameId: "game-1", generation: 1, state: .producingOutput,
+            reason: nil, attempt: 2, frame: 150, outTimeUs: 1000, scoreRevision: 1,
+            decodedVideo: .init(completed: window, invalidReason: nil, ended: false))
+        return WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: 1, workerId: "worker-1",
+            state: .producingOutput, observation: observation, observedAt: "2040-01-01T00:00:00.000Z",
+            expiresAt: "2040-01-01T00:00:05.000Z", decodedVideoAgeUpperBoundMs: bound), serverTime: "2040-01-01T00:00:00.000Z")
+    }
+
     private func makeModel(server: CaptureTestServer, saved: SavedCaptureSetup? = captureSetup(),
                            storage: CaptureMemoryStorage? = nil,
                            publisher: CaptureTestPublisher = CaptureTestPublisher(),
@@ -649,6 +773,10 @@ actor CaptureTestServer {
     func setFailMedia(_ value: Bool) { failMedia = value }
     var publishGate: FilmTestGate?
     var statusGate: FilmTestGate?
+    var statusFailure = false
+    var statusOverride: WorkerMediaStatusResponse?
+    func setStatusFailure(_ value: Bool) { statusFailure = value }
+    func setStatusOverride(_ value: WorkerMediaStatusResponse?) { statusOverride = value }
     var joinGate: FilmTestGate?
     func setJoinGate(_ value: FilmTestGate) { joinGate = value }
     var dropReply = false
@@ -657,7 +785,7 @@ actor CaptureTestServer {
     func setRejectStop() { rejectStop = true }
     func setFailBeforeCommand() { failBeforeCommand = true }
     func setDropReply() { dropReply = true }
-    func setStatusGate(_ value: FilmTestGate) { statusGate = value }
+    func setStatusGate(_ value: FilmTestGate?) { statusGate = value }
     func selectAnotherCapture() { broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: .init(workerId: "worker-1", outputId: "output-1", captureDeviceId: "another-device", recordingId: "other-recording")) }
     func setOffline(_ value: Bool) { offline = value }
     func setPublishGate(_ value: FilmTestGate) { publishGate = value }
@@ -702,8 +830,11 @@ actor CaptureTestServer {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             data = try JSONSerialization.data(withJSONObject: ["gameId": "game-1", "recordingId": body["recordingId"]!, "generation": broadcast.generation, "publishUrl": "srt://localhost:19000?streamid=test", "serverTime": time])
         } else if path.hasSuffix("/status") {
+            let failure = statusFailure
+            let response = statusOverride ?? WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time)
             if let statusGate { await statusGate.enter() }
-            data = try JSONEncoder().encode(WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time))
+            if failure { throw URLError(.networkConnectionLost) }
+            data = try JSONEncoder().encode(response)
         } else { data = try JSONEncoder().encode(MediaSnapshotResponse(snapshot: snapshot(), serverTime: time)) }
         return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }

@@ -84,6 +84,12 @@ worker status clears or expires. Guard failed worker-status replies by the same
 epoch as successful replies, so a late failure cannot clear evidence or stop a
 replacement publisher. No policy activation.
 
+The current `startStreaming` guard already prevents replacement while `controlBusy`
+holds an older request. Preserve that guard. Exercise the reachable regression:
+a delayed worker-status failure after Stop must not restore an error or invalidate
+cleared evidence; restart remains blocked while pending, then succeeds after the
+old request completes. Do not add a test-only bypass to manufacture overlap.
+
 Use exact `Duration` arithmetic for native additions after validating the whole-ms
 server bound. Check remaining numeric budget before adding request duration or
 residence; summing large Doubles first can hide overflow. Reject read instants
@@ -139,21 +145,83 @@ cannot log a reporting recovery. All asynchronous waits share one timeout, and
 the monotonic deadline also prevents a late POST after a slow synchronous sample.
 Logs: `artifacts/qa/worker-report-age-sampling-*`.
 
-## Checkpoint 3: Native age and local integration evidence
+## Checkpoint 3: Native age and model ownership
 
 **Files:** `ios/Packages/ScorebugCore/Sources/ScorebugCore/WorkerStatus.swift`, new
 `WorkerDecodedVideoFreshness.swift` and corresponding Core tests,
 `ios/Sources/Scorebug/Capture/CaptureStreamingModel.swift`, Film model tests,
-shared protocol fixtures and their Swift copies, `scripts/native-streaming-fixture.mjs`.
+the shared protocol fixture's Swift copy.
 
-- [ ] Add shared wire round-trip and deterministic native age tests. Server bound
+- [x] Add shared wire round-trip and deterministic native age tests. Server bound
   550 ms + 200 ms request + 300 ms residence => 1050 ms, independent of wall time.
-- [ ] Test invalid/legacy/stale/mismatched evidence, monotonic reversal at read,
+- [x] Test invalid/legacy/stale/mismatched evidence, monotonic reversal at read,
   overflow, epoch changes in Film model (late success and failure), expiration of
   previously valid evidence, and no extension from repeated reads.
-- [ ] Implement optional wire field, native age value, and scoped model ownership.
+- [x] Implement optional wire field, native age value, and scoped model ownership.
+- [x] Run Core/Film regressions, build Core for arm64_32 watchOS 10 and the combined
+  unsigned iPhone/Watch Release target. Review and commit this native boundary.
+
+Checkpoint 3 passes 119 Core tests and 50 Film model tests, the arm64_32 watchOS 10
+Core build, and the combined unsigned iPhone/Watch Release build. Specification
+and code-quality reviews approve. Behavioral red tests demonstrate the missing
+wire field and the late status failure overwriting the post-Stop message before
+the changes. Logs: `artifacts/qa/native-worker-report-age-*`. Running-app proof
+remains checkpoint 4; automatic quality selection remains disabled.
+
+## Checkpoint 4: Native report-age qualification
+
+**Files:** DEBUG simulator qualification exporter/model hooks,
+`scripts/native-streaming-fixture.mjs`, native observation validator and focused tests.
+
+Reuse `SCOREBUG_TEST_VIDEO_OBSERVATIONS=1` under DEBUG simulator compilation. At
+each scoped status poll, evaluate the actual native helper once at one monotonic
+instant. Save its result, the response's server upper bound, original request
+duration, residence since receipt, immutable completed window, and full remote
+game/generation/worker/attempt identity. Bind each proof to the current local
+recording and publishing-attempt UUID; require an active matching diagnostic
+attempt. A proof describes evaluation at that poll, not freshness at export.
+
+Keep at most two proofs for distinct window sequences, oldest first. Replace the
+newest proof within the same window; shift only when sequence advances. Reset on
+sequence rewind, any local/remote scope change, unusable current helper, worker
+clear or TTL expiry. This allows the independent API collector to match the
+previous window when the latest window arrives immediately before Stop. Capture
+the immutable array before clearing worker state in detach, and pass it through
+the existing awaited shutdown export after drain and identity checks. No timer,
+per-frame I/O, credentials, media, new UI, or Release behavior. Omit the optional
+proof field when empty so existing version-1 fixture serialization stays valid.
+
+Serialize request, residence and actual helper result using Duration components
+as decimal strings: `{seconds, attoseconds}`. Require canonical nonnegative
+components (seconds within signed Int64, attoseconds in 0..<10^18), parse with
+BigInt in JavaScript, and reject total ages above MAX_SAFE_INTEGER milliseconds.
+The server bound is a whole nonnegative safe integer. Require exact equality:
+`helper = serverUpperMs * 10^15 + request + residence` in attoseconds. Do not use
+floating millisecond tolerances that could hide a missing sub-millisecond term.
+
+Independent API evidence retains game and worker IDs plus the optional upper bound.
+Prefer a later bounded sample over an unbounded first sample for the same window;
+reject changed immutable content under a reused identity. Preserve the existing
+invalid-decoder checks, including invalid later samples. Validate both native
+proofs, but require at least one match to an independently collected bounded API
+window with full remote identity and identical immutable window content. Ages
+from separate API reads need not be equal; each upper must separately bound its
+lower age. Report an unmatched latest boundary proof explicitly. Missing both
+matches fails qualification. This fixture owns one worker run; its attempt number
+does not establish a globally unique identity across future worker process runs.
+
+Test omitted request/residence terms, exact sub-millisecond residence, malformed
+and overflowing components, missing proofs, local/remote scope mismatches, changed
+window content, two-proof replacement/advance/rewind/reset, unusable latest status
+and lifecycle clearing, unbounded-to-bounded collector upgrades, differing valid
+ages, one unmatched latest proof, and no independent matches. Prefer a separate
+`worker-report-age-qualification.mjs` validator so existing frame gates stay intact.
+
+- [ ] Export bounded, credential-free evidence that the actual native helper accepts
+  a scoped server upper bound and adds request/residence time. Reuse the explicit
+  DEBUG simulator flag and joined shutdown export; no per-frame I/O or new UI.
 - [ ] Require bounded-age evidence in the maintained native fixture while preserving
-  all current media gates. Run Core/Film regressions, tools/type checks, unsigned
-  iPhone/Watch Release build, then one isolated native streaming qualification.
+  all current media gates. Run focused regressions and relevant builds before one
+  isolated native streaming qualification, with no concurrent media/build jobs.
 - [ ] Record exact outcomes and remaining adaptive gates in the telemetry contract,
   worker decoder documentation, and parent plan. Review and commit.

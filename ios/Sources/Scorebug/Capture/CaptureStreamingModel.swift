@@ -20,6 +20,7 @@ import ScorebugStreaming
     @Published private(set) var needsStorageRetry = false
     @Published private(set) var commandState: BroadcastCoordinatorState?
     @Published private(set) var workerState: WorkerMediaState = .unknown
+    @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
@@ -274,12 +275,21 @@ import ScorebugStreaming
             guard let credential = setup.credential else { return }
             let observedEpoch = workerEpoch
             let requestStart = ContinuousClock.now
-            let response = try await clientForSetup().workerStatus(credential: credential)
+            let response: WorkerMediaStatusResponse
+            do {
+                response = try await clientForSetup().workerStatus(credential: credential)
+            } catch {
+                // A stopped attempt no longer owns either successes or failures.
+                guard observedEpoch == workerEpoch else { return }
+                throw error
+            }
             guard observedEpoch == workerEpoch else { return }
             guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
                   response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return }
             let received = ContinuousClock.now
-            workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestStart.duration(to: received))
+            let requestDuration = requestStart.duration(to: received)
+            workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+            workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
             clearWorker()
@@ -289,8 +299,10 @@ import ScorebugStreaming
         }
     }
 
-    func pollLocalHealth() {
-        if workerFreshness?.isFresh() == false { workerState = .stale; workerFreshness = nil }
+    func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
+        if workerFreshness?.isFresh(at: instant) == false {
+            workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil
+        }
         guard let publishing else { return }
         videoObservation = publishing.observations?.poll()
         let snapshot = publishing.session.snapshot
@@ -373,7 +385,9 @@ import ScorebugStreaming
         }
         publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
     }
-    private func clearWorker() { workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil }
+    private func clearWorker() {
+        workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil
+    }
     private func reserveStopOwnership(_ id: String) throws {
         guard var saved = setup else { throw CaptureControlError.noSetup }
         var ids = saved.stopRecordingIDs ?? []
