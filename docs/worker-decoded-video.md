@@ -40,6 +40,28 @@ has not been measured. It is insufficient on its own to authorize an adaptive
 increase. Swift uses Int64 for counters and source timestamps, including on 32-bit
 Watch targets, and preserves explicit nulls within the new shape.
 
+The API now also supports optional `timingToken` provenance and a separate
+server-owned `decodedVideoAgeUpperBoundMs` status field. A worker must sample after
+receiving the token and echo it with that observation. The server then adds the
+entire monotonic interval from token issuance to receipt, plus status residence,
+to the sampled decoder-window age. No cross-machine wall-clock comparison is used.
+Current and previous tokens are bounded per session; lost acknowledgments and
+exact retries do not refresh stored observations or token issuance times.
+
+Upper bounds remain scoped to the match, generation, attempt, and decoder window.
+Missing tokens cannot create a bound. Contradictory evidence or overflow makes
+that window's bound unknown; clock failure disables timing evidence for the API
+instance. Endpoints round outward before subtraction, and integer age additions
+are checked before overflow. Legacy status responses retain their existing shape.
+
+This API checkpoint passes 33 focused tests and the complete 240-test API suite,
+plus protocol build and type checking. The shared `worker-report-age-v1.json`
+fixture matches the complete deterministic HTTP response. Evidence is under
+`artifacts/qa/worker-report-age-api-*`. The maintained worker still needs to sample
+after token reception, and Swift still needs to add status-request and local
+residence time. Thus complete production report-age qualification remains open;
+see [the implementation plan](superpowers/plans/2026-09-14-worker-report-age.md).
+
 ## Qualification
 
 Host software, host VideoToolbox, and the existing CPU container's FFmpeg 5.1.9

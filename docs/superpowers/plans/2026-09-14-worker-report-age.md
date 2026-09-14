@@ -25,8 +25,15 @@ HTTP timeout does not bound server receipt: an abandoned request may arrive late
 Instead use the causal ordering `token issue <= snapshot sample <= API receipt`.
 Then `sampledAge + receipt - tokenIssue` bounds age at receipt conservatively.
 Round up calculated bounds to whole milliseconds; arithmetic overflow is unknown,
-never a clamped finite bound. These are bounds on decoder-window age, not source
+never a clamped finite bound. Overflow remains unknown for that window even if a
+later report supplies a smaller candidate. These are bounds on decoder-window age, not source
 capture time or viewer latency.
+
+Preserve conservative rounding before arithmetic: upper elapsed time comes from
+`ceil(end) - floor(start)` on validated ordered clock endpoints (equal endpoints
+can yield zero). Subtracting fractional floating timestamps first can round down
+near the safe-integer limit. Add separately rounded age and elapsed only after a
+checked integer overflow guard. Apply this to token transit and all later residence.
 
 Add optional `timingToken` to worker session/report responses and report requests.
 The token uses the existing bounded identifier format. Keep only current and
@@ -43,6 +50,9 @@ For a completed window with recognized token, store its calculated upper bound.
 For the same attempt/window, preserve the maximum of a new candidate and previous
 bound plus residence. Omission/unknown tokens may preserve an already proven bound
 for that same window, but cannot invent one. New windows/attempts start independently.
+If the retained lower age exceeds either a prior proven upper bound advanced to
+receipt or a newly proven candidate, latch the upper bound unknown for that window
+before merging. A larger candidate must not hide contradictory earlier evidence.
 Retain age provenance across temporarily omitted telemetry without exposing the
 omitted observation. Legacy status shapes remain unchanged when no bound exists.
 
@@ -64,8 +74,12 @@ Swift preserves the optional server field and provides an immutable
 timing. It adds full nonnegative request duration at receipt and ContinuousClock
 residence on reads. Invalid/absent age, invalid/ended windows, scope mismatch,
 non-producing status, expired process TTL, negative time, or overflow returns nil.
-Expose the latest value in the Film model, replace only through existing epoch/scope
-guards, and clear it wherever worker status clears or expires. No policy activation.
+The immutable value retains its game/generation/worker/attempt/window identity and
+completed window alongside the timing anchor. Expose the latest value in the Film
+model, replace only through existing epoch/scope guards, and clear it wherever
+worker status clears or expires. Guard failed worker-status replies by the same
+epoch as successful replies, so a late failure cannot clear evidence or stop a
+replacement publisher. No policy activation.
 
 ## Checkpoint 1: API timing provenance
 
@@ -74,17 +88,23 @@ guards, and clear it wherever worker status clears or expires. No policy activat
 `apps/control-plane/src/routes/media.ts`, new
 `apps/control-plane/test/worker-report-age.test.ts`.
 
-- [ ] Write failing deterministic API/HTTP tests. Example: issue at 100 ms, sample
+- [x] Write failing deterministic API/HTTP tests. Example: issue at 100 ms, sample
   age 50 ms, receive at 400 ms, status at 600 ms => upper bound 550 ms. Change wall
   time independently and require identical elapsed age.
-- [ ] Cover current/previous rotation, repeated lost acknowledgments, exact retry,
+- [x] Cover current/previous rotation, repeated lost acknowledgments, exact retry,
   unknown token, legacy omission, same-window/new-sequence no rejuvenation, omitted
   telemetry, new windows/attempts, retired sessions, restart, malformed token,
   rejected reports not rotating, caller/read mutation, clock faults and overflow.
-- [ ] Run `pnpm --filter @scorebug/control-plane test -- test/worker-report-age.test.ts`
+- [x] Run `pnpm --filter @scorebug/control-plane test -- test/worker-report-age.test.ts`
   and retain a failing log, then implement the bounded protocol and server logic.
-- [ ] Run the focused tests, full control-plane suite, protocol build and typecheck;
+- [x] Run the focused tests, full control-plane suite, protocol build and typecheck;
   obtain specification then quality review before committing this checkpoint.
+
+Checkpoint 1 passes 33 focused tests and 240 total API tests. Protocol build and
+API/protocol type checking pass. Both reviews approve the final implementation,
+including per-candidate contradiction checks and conservative endpoint rounding.
+The complete HTTP result matches `packages/protocol/fixtures/worker-report-age-v1.json`.
+Logs: `artifacts/qa/worker-report-age-api-{red,green,suite,protocol-build,typecheck,protocol-typecheck}.log`.
 
 ## Checkpoint 2: Worker sampling order
 
@@ -109,7 +129,8 @@ shared protocol fixtures and their Swift copies, `scripts/native-streaming-fixtu
 - [ ] Add shared wire round-trip and deterministic native age tests. Server bound
   550 ms + 200 ms request + 300 ms residence => 1050 ms, independent of wall time.
 - [ ] Test invalid/legacy/stale/mismatched evidence, monotonic reversal at read,
-  overflow, epoch changes in Film model, and no extension from repeated reads.
+  overflow, epoch changes in Film model (late success and failure), expiration of
+  previously valid evidence, and no extension from repeated reads.
 - [ ] Implement optional wire field, native age value, and scoped model ownership.
 - [ ] Require bounded-age evidence in the maintained native fixture while preserving
   all current media gates. Run Core/Film regressions, tools/type checks, unsigned

@@ -69,12 +69,23 @@ export type WorkerObservation = {
   decodedVideo?: DecodedVideoSnapshot;
 };
 export type WorkerSessionRequest = { workerId: string; runId: string };
-export type WorkerSessionResponse = { sessionId: string; serverTime: string };
+export type WorkerSessionResponse = {
+  sessionId: string;
+  serverTime: string;
+  /** Opaque server monotonic timing provenance; echo with a later snapshot. */
+  timingToken?: string;
+};
 export type WorkerObservationRequest = {
   workerId: string;
   sessionId: string;
   sequence: number;
+  timingToken?: string;
   observation: WorkerObservation;
+};
+export type WorkerObservationResponse = {
+  accepted: true;
+  serverTime: string;
+  timingToken?: string;
 };
 export type WorkerMediaStatus = {
   gameId: string;
@@ -82,6 +93,9 @@ export type WorkerMediaStatus = {
   workerId: string | null;
   state: 'not_requested' | 'unknown' | 'stale' | WorkerState;
   observation: WorkerObservation | null;
+  /** Proven upper age including report transit and server residence, rounded up in ms.
+   * Omitted when unavailable; server-owned, never supplied by the worker. */
+  decodedVideoAgeUpperBoundMs?: number;
   observedAt: string | null;
   expiresAt: string | null;
 };

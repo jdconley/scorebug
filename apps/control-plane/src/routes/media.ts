@@ -179,6 +179,7 @@ export function workerRoutes(
         .object({
           workerId: id,
           sessionId: id,
+          timingToken: id.optional(),
           sequence,
           observation: z
             .object({
@@ -204,9 +205,11 @@ export function workerRoutes(
     (c) => {
       const body = c.req.valid('json');
       const { decodedVideo, ...observation } = body.observation;
+      const { timingToken, ...request } = body;
       return c.json(
         observations.report({
-          ...body,
+          ...request,
+          ...(timingToken !== undefined ? { timingToken } : {}),
           observation: { ...observation, ...(decodedVideo ? { decodedVideo } : {}) },
         }),
       );

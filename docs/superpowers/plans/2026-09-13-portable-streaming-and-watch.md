@@ -315,6 +315,10 @@ and five steady observation windows matching 750 decoded frames exactly. Startup
 acquisition and two absent encoded tail frames remain explicit in the report.
 Production source-range correlation and the other adaptive inputs remain open;
 this does not close the broader runtime tracking gate.
+The [report-age slice](2026-09-14-worker-report-age.md) now has its API foundation:
+bounded server timing tokens and conservative window-age upper bounds, with 33
+focused and 240 total API tests passing. Worker sampling order and native receipt
+accounting still need integration before this closes the report-transit gap.
 
 ## Milestone 5: Watch scoring and complete simulator workflows
 

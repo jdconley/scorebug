@@ -5,6 +5,7 @@ import {
   type WorkerMediaStatusResponse,
   type WorkerObservation,
   type WorkerObservationRequest,
+  type WorkerObservationResponse,
   type WorkerSessionRequest,
   type WorkerSessionResponse,
 } from '@scorebug/protocol';
@@ -29,12 +30,40 @@ type Report = {
   observation: WorkerObservation;
   counters: Counters;
   observedAt: number;
-  receivedAt: number;
+  receivedAt: number | undefined;
   decodedVideo?: DecodedVideoSnapshot;
   lastDecodedPTS?: number;
-  decodedAge?: { sequence: number; ageMs: number; at: number };
+  decodedAge?: { sequence: number; ageMs: number; at: number | undefined };
+  decodedUpperAge?: UpperAge;
 };
-type Session = { runId: string; sessionId: string; report?: Report };
+// An undefined age preserves overflow/contradiction evidence until this window is replaced.
+type UpperAge = { sequence: number; ageMs: number | undefined; at: number };
+type TimingToken = { readonly value: string; readonly issuedAt: number };
+type Session = {
+  runId: string;
+  sessionId: string;
+  report?: Report;
+  currentToken?: TimingToken;
+  previousToken?: TimingToken;
+};
+
+function upperAge(ageMs: number, start: number, end: number): number | undefined {
+  // Round checked endpoints outward BEFORE subtracting; subtracting a fractional
+  // start from a large end can round elapsed down and disguise overflow.
+  const age = Math.ceil(ageMs);
+  const residence = start === end ? 0 : Math.ceil(end) - Math.floor(start);
+  if (
+    !Number.isSafeInteger(age) ||
+    !Number.isSafeInteger(residence) ||
+    age < 0 ||
+    end < start ||
+    residence < 0 ||
+    age > Number.MAX_SAFE_INTEGER - residence
+  )
+    return undefined;
+  return age + residence;
+}
+
 type Worker = { current: Session; retiredRuns: Set<string>; retiredSessions: Set<string> };
 
 /** Process-local receipt state. Restart deliberately makes all observations unknown.
@@ -42,21 +71,58 @@ type Worker = { current: Session; retiredRuns: Set<string>; retiredSessions: Set
  */
 export class WorkerObservations {
   private readonly workers = new Map<string, Worker>();
+  private lastMonotonic: number | undefined;
+  private timingUnavailable = false;
   constructor(
     private readonly media: MediaStore,
     private readonly now: () => number = Date.now,
     private readonly monotonic: () => number = () => performance.now(),
   ) {}
 
+  /** Once a clock loses monotonic provenance it cannot prove timing again in this process. */
+  private sampleMonotonic(): number | undefined {
+    if (this.timingUnavailable) return undefined;
+    try {
+      const sampled = this.monotonic();
+      if (
+        Number.isFinite(sampled) &&
+        sampled >= 0 &&
+        sampled <= Number.MAX_SAFE_INTEGER &&
+        (this.lastMonotonic === undefined || sampled >= this.lastMonotonic)
+      ) {
+        this.lastMonotonic = sampled;
+        return sampled;
+      }
+    } catch {
+      // Diagnostic clock failure must not reject worker control traffic.
+    }
+    this.timingUnavailable = true;
+    return undefined;
+  }
+
+  private timingResponse(session: Session): { timingToken?: string } {
+    return !this.timingUnavailable && session.currentToken
+      ? { timingToken: session.currentToken.value }
+      : {};
+  }
+
   register({ workerId, runId }: WorkerSessionRequest): WorkerSessionResponse {
+    const sampled = this.sampleMonotonic();
     const worker = this.workers.get(workerId);
     if (worker?.retiredRuns.has(runId)) throw new WorkerObservationError('worker_session_retired');
     if (worker?.current.runId === runId)
       return {
         sessionId: worker.current.sessionId,
+        ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
-    const current = { runId, sessionId: randomUUID() };
+    const current: Session = {
+      runId,
+      sessionId: randomUUID(),
+      ...(sampled !== undefined
+        ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
+        : {}),
+    };
     if (worker) {
       worker.retiredRuns.add(worker.current.runId);
       worker.retiredSessions.add(worker.current.sessionId);
@@ -64,10 +130,15 @@ export class WorkerObservations {
     } else {
       this.workers.set(workerId, { current, retiredRuns: new Set(), retiredSessions: new Set() });
     }
-    return { sessionId: current.sessionId, serverTime: new Date(this.now()).toISOString() };
+    return {
+      sessionId: current.sessionId,
+      serverTime: new Date(this.now()).toISOString(),
+      ...this.timingResponse(current),
+    };
   }
 
-  report(body: WorkerObservationRequest): { accepted: true; serverTime: string } {
+  report(body: WorkerObservationRequest): WorkerObservationResponse {
+    const receivedAt = this.sampleMonotonic();
     const worker = this.workers.get(body.workerId);
     if (worker?.retiredSessions.has(body.sessionId))
       throw new WorkerObservationError('worker_session_retired');
@@ -86,7 +157,11 @@ export class WorkerObservations {
     if (previous && body.sequence <= previous.sequence) {
       if (body.sequence !== previous.sequence || request !== previous.request)
         throw new WorkerObservationError('observation_conflict');
-      return { accepted: true, serverTime: new Date(this.now()).toISOString() };
+      return {
+        accepted: true,
+        serverTime: new Date(this.now()).toISOString(),
+        ...this.timingResponse(worker.current),
+      };
     }
     if (previous && observation.attempt < previous.observation.attempt)
       throw new WorkerObservationError('observation_conflict');
@@ -105,6 +180,10 @@ export class WorkerObservations {
       }
     }
     const sameAttempt = previous?.observation.attempt === observation.attempt;
+    const sameAgeScope =
+      sameAttempt &&
+      previous?.observation.gameId === observation.gameId &&
+      previous.observation.generation === observation.generation;
     const beforeVideo = sameAttempt ? previous?.decodedVideo : undefined;
     const afterVideo = observation.decodedVideo;
     let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
@@ -140,19 +219,52 @@ export class WorkerObservations {
     }
     if (afterVideo?.completed?.lastPTS !== null && afterVideo?.completed?.lastPTS !== undefined)
       lastDecodedPTS = afterVideo.completed.lastPTS;
-    const receivedAt = this.monotonic();
     let decodedAge = sameAttempt ? previous?.decodedAge : undefined;
     if (afterVideo?.completed) {
       const window = afterVideo.completed;
       const knownAge =
         decodedAge?.sequence === window.sequence
-          ? decodedAge.ageMs + Math.max(0, receivedAt - decodedAge.at)
+          ? decodedAge.ageMs +
+            (receivedAt !== undefined && decodedAge.at !== undefined
+              ? receivedAt - decodedAge.at
+              : 0)
           : 0;
       decodedAge = {
         sequence: window.sequence,
         ageMs: Math.min(Number.MAX_SAFE_INTEGER, Math.max(window.ageMs, knownAge)),
         at: receivedAt,
       };
+    }
+    const session = worker.current;
+    const token =
+      body.timingToken === session.currentToken?.value
+        ? session.currentToken
+        : body.timingToken === session.previousToken?.value
+          ? session.previousToken
+          : undefined;
+    let decodedUpperAge = sameAgeScope ? previous?.decodedUpperAge : undefined;
+    if (afterVideo?.completed) {
+      const window = afterVideo.completed;
+      if (decodedUpperAge?.sequence !== window.sequence) decodedUpperAge = undefined;
+      if (receivedAt !== undefined) {
+        const prior = decodedUpperAge;
+        const priorAge = prior ? upperAge(prior.ageMs ?? NaN, prior.at, receivedAt) : undefined;
+        // Issuance <= worker snapshot <= receipt. Only a recognized echoed token proves transit.
+        const candidate = token ? upperAge(window.ageMs, token.issuedAt, receivedAt) : undefined;
+        if (prior || token) {
+          const lowerAge = decodedAge?.ageMs ?? window.ageMs;
+          // Check each proof before merging: taking the larger bound could hide a
+          // contradiction in either the prior evidence or the newly echoed sample.
+          const unavailable =
+            (prior && (priorAge === undefined || priorAge < lowerAge)) ||
+            (token && (candidate === undefined || candidate < lowerAge));
+          decodedUpperAge = {
+            sequence: window.sequence,
+            ageMs: unavailable ? undefined : Math.max(priorAge ?? 0, candidate ?? 0),
+            at: receivedAt,
+          };
+        }
+      }
     }
     const now = this.now();
     worker.current.report = {
@@ -167,11 +279,22 @@ export class WorkerObservations {
         : {}),
       ...(lastDecodedPTS !== undefined ? { lastDecodedPTS } : {}),
       ...(decodedAge ? { decodedAge } : {}),
+      ...(decodedUpperAge ? { decodedUpperAge } : {}),
     };
-    return { accepted: true, serverTime: new Date(now).toISOString() };
+    // Rotate only after all acceptance checks and age calculations; previous remains immutable.
+    if (receivedAt !== undefined && token && token === session.currentToken) {
+      session.previousToken = token;
+      session.currentToken = { value: randomUUID(), issuedAt: receivedAt };
+    }
+    return {
+      accepted: true,
+      serverTime: new Date(now).toISOString(),
+      ...this.timingResponse(session),
+    };
   }
 
   status(gameId: string): WorkerMediaStatusResponse {
+    const sampled = this.sampleMonotonic();
     const { broadcast } = this.media.get(gameId);
     const now = this.now();
     const workerId = broadcast.selection?.workerId ?? null;
@@ -194,8 +317,12 @@ export class WorkerObservations {
     )
       return { status: { ...base, state: 'unknown' }, serverTime };
     // Wall time describes receipt provenance; only monotonic elapsed time determines freshness.
-    const remaining = WORKER_OBSERVATION_TTL_MS - (this.monotonic() - report.receivedAt);
+    const remaining =
+      sampled !== undefined && report.receivedAt !== undefined
+        ? WORKER_OBSERVATION_TTL_MS - (sampled - report.receivedAt)
+        : 0;
     const observation = structuredClone(report.observation);
+    let decodedVideoAgeUpperBoundMs: number | undefined;
     if (observation.decodedVideo?.completed) {
       const completed = observation.decodedVideo.completed;
       const known = report.decodedAge;
@@ -204,16 +331,21 @@ export class WorkerObservations {
         Math.max(
           completed.ageMs,
           known?.sequence === completed.sequence
-            ? known.ageMs + Math.max(0, this.monotonic() - known.at)
+            ? known.ageMs +
+                (sampled !== undefined && known.at !== undefined ? sampled - known.at : 0)
             : completed.ageMs,
         ),
       );
+      const upper = report.decodedUpperAge;
+      if (sampled !== undefined && upper?.sequence === completed.sequence)
+        decodedVideoAgeUpperBoundMs = upperAge(upper.ageMs ?? NaN, upper.at, sampled);
     }
     return {
       status: {
         ...base,
         state: remaining <= 0 ? 'stale' : report.observation.state,
         observation,
+        ...(decodedVideoAgeUpperBoundMs !== undefined ? { decodedVideoAgeUpperBoundMs } : {}),
         observedAt: new Date(report.observedAt).toISOString(),
         // Translate remaining freshness into the current wall clock for remote clients.
         expiresAt: new Date(now + Math.max(0, remaining)).toISOString(),

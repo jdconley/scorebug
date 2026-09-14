@@ -9,7 +9,7 @@ now connects capture and actual encoder-completion measurements while retaining 
 | Existing observation                    | What it measures                                                                                              | Missing evidence                                                                                         |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
-| `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Source-range correlation, image-content uniqueness, usable capacity, remote receipt, and local fixture qualification |
+| `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt |
 | Publishing mailbox occupancy/drops      | Bounded raw sample queue, including audio and video                                                           | Time-weighted occupancy and per-kind/source-PTS loss                                                     |
 | `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
@@ -180,3 +180,18 @@ This fixture-specific offline alignment does not supply a production source-cloc
 mapping or loss estimator. Report-transit age, qualified capacity and queue pressure,
 verified profile application, impairment, and sustained hardware testing remain
 required before adaptive enablement.
+
+## Server report-age provenance
+
+The [report-age slice](superpowers/plans/2026-09-14-worker-report-age.md) adds the API
+foundation for a conservative decoder-window age upper bound. Opaque session timing
+tokens retain server monotonic issuance times. Reports with recognized tokens can
+prove transit-inclusive age once the worker samples after token reception. Status
+adds API residence; retries, omissions, clock failures, contradictory bounds, and
+numeric overflow cannot manufacture fresh evidence. This optional upper bound is
+separate from the existing lower-bound `completed.ageMs`.
+
+All 33 focused and 240 total API tests pass, including the shared HTTP golden
+fixture. Protocol build and type checking pass. Worker sampling-order changes,
+Swift request/local-residence accounting, and native qualification remain the next
+checkpoints. Automatic quality changes remain disabled.
