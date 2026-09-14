@@ -34,10 +34,9 @@ Files: create `scripts/native-streaming-options.mjs` and tests; modify `scripts/
 
 ## Task 3: Isolated pressure qualification
 
-- [ ] Run a single maintained iPhone 14/iOS 17.5 native fixture with direct recorder and `SCOREBUG_TEST_STREAM_HOLD_SECONDS=180`. No other builds/tests/media jobs run concurrently. Keep owned-resource cleanup and failure preservation.
-- [ ] Inspect actual outcome: full archive/source coverage, live frame tail and worker terminal evidence, A/V end/markers, all complete five-second windows, native scoring/export and age proofs. Inspect archive pressure first failure and terminal counters, retained timings and omitted history; never infer early behavior from a retained tail.
-- [ ] Save exact revision/configuration/results and update main plan. If overflow recurs, diagnose it from preserved samples and timings before fixing. If it passes, retain the earlier overflow as unresolved and plan ten-minute evidence collection plus physical-device/Watch and portable-host work.
-
+- [x] Run a single maintained iPhone 14/iOS 17.5 native fixture with direct recorder and `SCOREBUG_TEST_STREAM_HOLD_SECONDS=180`. No other builds/tests/media jobs run concurrently. Keep owned-resource cleanup and failure preservation.
+- [x] Inspect actual outcome: full archive/source coverage, live frame tail and worker terminal evidence, A/V end/markers, all complete five-second windows, native scoring/export and age proofs. Inspect archive pressure first failure and terminal counters, retained timings and omitted history; never infer early behavior from a retained tail.
+- [x] Save exact revision/configuration/results and update main plan. If overflow recurs, diagnose it from preserved samples and timings before fixing. If it passes, retain the earlier overflow as unresolved and plan ten-minute evidence collection plus physical-device/Watch and portable-host work.
 
 ## Implementation checks before native qualification
 
@@ -55,12 +54,11 @@ destination than the existing device-release check. The current host uses arm64
 simulators; Intel simulator linkage is not qualified by the successful device build.
 No native pressure run has occurred for these changes yet.
 
-
 Quality review found that the existing UI duration baseline defaulted to zero when
 accessibility was unavailable, which could shorten the requested hold. Both initial
 and post-stop baselines now require finite nonnegative values. The hold additionally
 requires its full monotonic elapsed time, and a fail-first saved-source coverage
-check requires at least holdSeconds*30 continuously received source frames after
+check requires at least holdSeconds\*30 continuously received source frames after
 delivery qualification. This prevents a successful result with less requested media
 coverage; source coverage is reported separately from wall-clock hold duration.
 
@@ -68,3 +66,54 @@ Both specification and independent quality reviews now approve Tasks1/2. Final
 checks:262 tool tests,76 Film tests, device Release build and arm64 simulator UI
 build-for-testing pass. Configuration is written before owned resources are created
 so failed runs retain the exact hold/history choice. No media gates were relaxed.
+
+## Three-minute result
+
+The isolated run `artifacts/qa/native-app-azEu6Y` at `7905d55` passes all maintained
+gates with `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1` and
+`SCOREBUG_TEST_STREAM_HOLD_SECONDS=180`. The UI test takes 238.883 seconds; the
+monotonic hold and independent minimum received-source duration both pass. Native
+runner exits 0 and cleans every owned simulator/process/container. Reproduction log:
+`artifacts/qa/native-sustained-180.log`; exact configuration is saved in the run.
+
+- Clean local recording:6352 consecutive source frames 0..6351,211.733 seconds at
+  30 fps, no source loss. A/V end difference+20 ms; marker maximum offset 0.021 ms.
+- Live:5968 consecutive frames 200..6167,198.933 seconds of source video at 30 fps;
+  all worker decoded/output frames and the final native encoded frame are retained.
+  Video begins at 1.319 s while the worker acquires its keyframe; A/V end difference
+  +19.776 ms and marker maximum offset 65.917 ms remain within unchanged gates.
+- Native capture contains 6029 frames 139..6167 and encoder 6028 frames 140..6167.
+  The single leading capture frame predates encoded coverage. The next 60 encoded
+  frames 140..199 form the explicit worker acquisition interval. Neither interval
+  is described as delivered live; both are present in the clean archive.
+- All 39 steady five-second windows have 30 fps for capture and encoder. All 41 total
+  observation windows are retained without eviction. Both age proofs match their
+  independent API windows (sequences 37/38). Native scoring changes 350 overlay pixels.
+- Archive diagnostics are valid/closed with complete coverage:12704 accepted and
+  written samples, zero rejected/dropped, peak queue one item/3200 bytes, finished,
+  no first failure. Retained producer/consumer/persistence histories are 32/64/32;
+  omitted earlier counts are 6320/12640/75 respectively. Their tail-only maxima are
+  producer-start lateness 2.952 ms, generation 8.438 ms, callback 0.053 ms, append 1.392 ms,
+  persistence 8.218 ms. These do not bound timings in the omitted early history.
+- Worker decoder/progress both report 5968 frames. Encoder exits 0 without a recorded
+  termination request, telemetry ends validly, and recorder exits naturally 0. The
+  complete-delivery gate reports these actual outcomes and no missing encoded tail.
+
+`pressure-summary.json` and adjacent `summarize-pressure.py` preserve the detailed
+comparison and its evidence limits. The earlier archive overflow did not recur and
+remains unexplained; no archive queue, source pacing, media policy or quality profile
+was changed. This is synthetic simulator evidence, not physical camera/Watch or
+thermal qualification and not a ten-minute result.
+
+## Next bounded step
+
+Extend bounded test evidence to a ten-minute simultaneous native recording/stream.
+The current core observer and API-evidence collector each cap retained history at 64
+five-second windows; a ten-minute run must preserve all windows, not skip the
+zero-eviction or cadence gates. Review a bounded 128-window fixture strategy (with
+production default 8 unchanged) against an incremental checkpoint collector before
+choosing the smaller reliable implementation. Increase only validated test duration
+and necessary test-run/export/decode budgets, then run one isolated 600-second hold.
+Keep the native recording requirement central; if pressure fails, preserve its first
+failure and recoverable media before making an evidence-based fix. Physical Watch
+pairing, real camera routes, adaptive profiles and additional hosts remain open.

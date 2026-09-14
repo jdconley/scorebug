@@ -442,3 +442,13 @@ The short iPhone 14 / iOS 17.5 qualification `native-app-lyB1el` saves all 894 w
 video frames with no missing encoded tail and a complete clean local archive. It
 is not sustained or physical-device qualification. See the
 [native tail evidence](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
+
+For the qualified three-minute simultaneous hold, also set
+`SCOREBUG_TEST_STREAM_HOLD_SECONDS=180`. Overrides must be canonical integers 12–180
+and require the direct recorder. The runner saves `configuration.json`, retains up
+to 64 observation windows and requires the requested monotonic hold plus matching
+minimum received-source coverage. The default short run retains eight windows.
+Direct runs additionally reject any missing encoded tail, decoder/saved frame-count
+difference, incomplete terminal evidence or forced recorder shutdown; actual worker
+termination is reported distinctly. The 180-second iPhone 14/iOS 17.5 run passes; see
+[measurements and limits](superpowers/plans/2026-09-14-native-sustained-validation.md).

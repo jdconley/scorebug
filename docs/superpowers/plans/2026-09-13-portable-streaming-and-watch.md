@@ -464,3 +464,12 @@ naturally (0). See the [native tail plan](2026-09-14-native-tail-diagnosis.md) f
 failed precursor runs, recorder fixes, evidence and limits. Sustained native archive
 pressure qualification is next; adaptive quality and physical Watch pairing remain
 open. The default comparative MediaMTX test endpoint is retained.
+
+The next pressure checkpoint also passes: `native-app-azEu6Y` at `7905d55` performs a
+180-second simultaneous hold with the direct recorder. It preserves all 6352 archive
+frames and 5968 live frames through the last encoded frame; all 39 steady windows are
+30 fps, native scoring/export/A/V and age proofs pass, and archive diagnostics show
+zero rejected/dropped samples. The earlier overflow remains unexplained. See the
+[sustained native plan](2026-09-14-native-sustained-validation.md) for evidence,
+explicit acquisition/initial encoder coverage, history limits and ten-minute next
+steps. No adaptive/hardware/Watch or remote-host qualification is implied.

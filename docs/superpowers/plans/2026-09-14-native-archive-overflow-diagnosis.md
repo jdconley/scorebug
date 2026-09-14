@@ -195,3 +195,11 @@ overflow is still unresolved; these short runs do not establish sustained record
 reliability. Thirteen terminal native encoded frames are absent from the live sink,
 so complete end delivery remains a separate open diagnosis despite passing A/V
 alignment. See the tail plan for the exact results and next measurements.
+
+A subsequent 180-second simultaneous hold `native-app-azEu6Y` at `7905d55` passes all
+native media gates using the direct receiver. Its 6352-frame clean archive contains
+all source frames;12704 samples are accepted/written with no reject/drop and no
+first failure. The earlier overflow does not recur. Diagnostic histories remain
+bounded, so retained tail timing maxima do not explain the earlier failed run.
+See the [sustained qualification](2026-09-14-native-sustained-validation.md) for
+complete evidence and the still-required ten-minute and physical-device tests.
