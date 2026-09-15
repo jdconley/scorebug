@@ -1,10 +1,103 @@
 import AVFoundation
 import Foundation
-import HaishinKit
+@testable import HaishinKit
 import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTStreamFinishTests {
+    @Test func verifiedBitRateRequiresCurrentRawEncoderAndPreservesFinalFrames() async throws {
+        let bytes = FinishBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        #expect(await stream.publishingGeneration == nil)
+        await #expect(throws: VideoBitRateUpdateError.notEncoding) {
+            try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: 0)
+        }
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await #expect(throws: VideoBitRateUpdateError.notEncoding) {
+            try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: generation)
+        }
+        await stream.append(try finishVideo(0))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while bytes.videoPTS.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(bytes.videoPTS == [9000])
+        let updated = try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: generation)
+        #expect(updated.bitRate == 1_000_000)
+        #expect(await stream.videoSettings.bitRate == 1_000_000)
+        for frame in 1...4 { await stream.append(try finishVideo(frame)) }
+        await stream.finish()
+        #expect(bytes.videoPTS == [9000, 12000, 15000, 18000, 21000])
+        #expect(await stream.publishingError == nil)
+        #expect(await stream.publishingGeneration == nil)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration != generation)
+        await #expect(throws: VideoBitRateUpdateError.notEncoding) {
+            try await stream.setVerifiedVideoBitRate(2_000_000, publishingGeneration: generation)
+        }
+        await connection.close()
+    }
+
+    @Test func compressedPassthroughCannotUpdateAnEarlierRawEncoder() async throws {
+        let codec = VideoCodec()
+        codec.settings = .init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false)
+        let output = codec.outputStream
+        codec.startRunning(); codec.append(try finishVideo(1))
+        let complete = codec.makeCompletion()
+        await Task.detached { complete() }.value
+        codec.stopRunning()
+        var iterator = output.makeAsyncIterator()
+        let compressed = try #require(await iterator.next())
+
+        let bytes = FinishBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try finishVideo(0))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while bytes.videoPTS.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(bytes.videoPTS == [9000])
+        await stream.append(compressed)
+        #expect(await stream.publishingError == nil)
+        #expect(await stream.muxerError == nil)
+        await #expect(throws: VideoBitRateUpdateError.notEncoding) {
+            try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: generation)
+        }
+        #expect(await stream.videoSettings.bitRate == 640_000)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func finishingRejectsVerifiedUpdateBeforeClosingTheStream() async throws {
+        let peer = FinishBlockedPeer()
+        let connection = SRTConnection(socket: SRTSocket(sender: { peer.send($0) }))
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try finishVideo(0))
+        let enteredDeadline = ContinuousClock.now + .seconds(2)
+        while !peer.entered && ContinuousClock.now < enteredDeadline { await Task.yield() }
+        #expect(peer.entered)
+        let finishing = Task { await stream.finish() }
+        let finishDeadline = ContinuousClock.now + .seconds(2)
+        while await stream.publishingGeneration != nil, ContinuousClock.now < finishDeadline { await Task.yield() }
+        #expect(await stream.readyState == .publishing)
+        await #expect(throws: VideoBitRateUpdateError.notEncoding) {
+            try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: generation)
+        }
+        peer.release(); await finishing.value
+        await connection.close()
+    }
+
     @Test func constructionObserverReachesNativeEncoderThroughFinalDrain() async throws {
         let recorder = FinishEncoderObserver()
         let bytes = FinishBytes()
@@ -222,4 +315,17 @@ private final class FinishEncoderObserver: @unchecked Sendable {
         #expect(CMTimeCompare(source, output) == 0)
         lock.withLock { stored.append(source) }
     }
+}
+
+private final class FinishBlockedPeer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var didEnter = false
+    var entered: Bool { lock.withLock { didEnter } }
+    func send(_ data: Data) -> Int32 {
+        let first = lock.withLock { let first = !didEnter; didEnter = true; return first }
+        if first { _ = gate.wait(timeout: .now() + 1) }
+        return Int32(data.count)
+    }
+    func release() { gate.signal() }
 }

@@ -39,6 +39,11 @@ package final class OutgoingStream {
         }
     }
 
+    package func setVerifiedVideoBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
+        guard isRunning, !inputFinished else { throw VideoBitRateUpdateError.notEncoding }
+        return try videoCodec.setVerifiedBitRate(bitRate)
+    }
+
     /// Specifies the video buffering count.
     package var videoInputBufferCounts = -1
 

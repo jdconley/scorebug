@@ -10,18 +10,54 @@ final class VideoCodec {
 
     private let encoderCompletionObserver: VideoEncoderCompletionObserver?
 
-    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
+    private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
+    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
+         sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)? = nil) {
         self.encoderCompletionObserver = encoderCompletionObserver
+        self.sessionFactory = sessionFactory
     }
 
-    var settings: VideoCodecSettings = .default {
-        didSet {
-            let invalidateSession = settings.invalidateSession(oldValue)
-            if invalidateSession {
-                self.invalidateSession = invalidateSession
-            } else {
-                settings.apply(self, rhs: oldValue)
+    func requestSessionInvalidation() { invalidation.invalidate() }
+
+    func setVerifiedBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
+        guard isRunning, failure.error == nil, sessionMode == .compression, let session else {
+            throw VideoBitRateUpdateError.notEncoding
+        }
+        let observed = invalidation.snapshot
+        guard !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
+        let updated: VideoCodecSettings
+        do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
+        catch let error as VideoBitRateUpdateError {
+            // A failed attempted native mutation is not a successful rollback.
+            switch error {
+            case .writeFailed(_, let status), .readFailed(_, let status):
+                failure.fail(.codecFailed(status: status))
+            case .readbackMismatch:
+                failure.fail(.codecFailed(status: -1))
+            default: break // Preflight rejection made no native call.
             }
+            throw error
+        }
+        guard failure.error == nil else { throw VideoBitRateUpdateError.notEncoding }
+        guard invalidation.isCurrent(observed.revision) else {
+            failure.fail(.codecFailed(status: -1))
+            throw VideoBitRateUpdateError.sessionInvalidated
+        }
+        // This is accepted configuration at this point, not a frame boundary or
+        // achieved output rate. Do not repeat settings' legacy unchecked apply.
+        storedSettings = updated
+        return updated
+    }
+
+
+    private var storedSettings: VideoCodecSettings = .default
+    var settings: VideoCodecSettings {
+        get { storedSettings }
+        set {
+            let previous = storedSettings
+            storedSettings = newValue
+            if newValue.invalidateSession(previous) { requestSessionInvalidation() }
+            else { newValue.apply(self, rhs: previous) }
         }
     }
     var passthrough = true
@@ -36,7 +72,8 @@ final class VideoCodec {
     var frameInterval = VideoCodec.frameInterval
     private var startedAt: CMTime = .zero
     private var continuation: PublishingQueue<CMSampleBuffer>?
-    private var invalidateSession = true
+    private let invalidation = VideoCodecInvalidation()
+    private var sessionMode: VTSessionMode?
     private var presentationTimeStamp: CMTime?
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
@@ -44,14 +81,13 @@ final class VideoCodec {
             guard inputFormat != oldValue else {
                 return
             }
-            invalidateSession = true
+            requestSessionInvalidation()
             outputFormat = nil
         }
     }
     private(set) var session: (any VTSessionConvertible)? {
         didSet {
             oldValue?.invalidate()
-            invalidateSession = false
         }
     }
     private(set) var outputFormat: CMFormatDescription?
@@ -62,13 +98,14 @@ final class VideoCodec {
         }
         do {
             inputFormat = sampleBuffer.formatDescription
-            if invalidateSession {
-                if sampleBuffer.formatDescription?.isCompressed == true {
-                    session = try VTSessionMode.decompression.makeSession(self)
-                } else {
-                    session = try VTSessionMode.compression.makeSession(self)
-                }
+            let observed = invalidation.snapshot
+            if observed.pending {
+                let mode: VTSessionMode = sampleBuffer.formatDescription?.isCompressed == true ? .decompression : .compression
+                session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
+                sessionMode = mode
+                invalidation.installed(observed.revision)
             }
+            guard invalidation.isCurrent(observed.revision) else { return }
             guard let session, let continuation else {
                 return
             }
@@ -132,7 +169,7 @@ final class VideoCodec {
     #if os(iOS) || os(tvOS) || os(visionOS)
     @objc
     private func applicationWillEnterForeground(_ notification: Notification) {
-        invalidateSession = true
+        requestSessionInvalidation()
     }
 
     @objc
@@ -145,7 +182,7 @@ final class VideoCodec {
         }
         switch type {
         case .ended:
-            invalidateSession = true
+            requestSessionInvalidation()
         default:
             break
         }
@@ -183,7 +220,8 @@ extension VideoCodec: Runner {
         }
         isRunning = false
         session = nil
-        invalidateSession = true
+        sessionMode = nil
+        requestSessionInvalidation()
         inputFormat = nil
         outputFormat = nil
         presentationTimeStamp = nil

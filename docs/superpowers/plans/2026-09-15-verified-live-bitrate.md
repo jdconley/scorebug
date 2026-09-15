@@ -71,3 +71,69 @@ Two boundaries require explicit design before implementation:
 A bounded read-only source review agrees with this direction and identified the
 notification-invalidation and profile-boundary limitations above. No implementation,
 native property-application proof or runtime adaptation is claimed by this plan.
+
+## Lifecycle design decision before implementation
+
+A read-only lifecycle review approves a narrow revision owner for codec invalidation.
+Only that owner is lock-protected; notifications replace its revision, and session
+creation records the revision it actually consumed. A concurrent invalidation must
+remain pending instead of being cleared by session creation. No lock is held during
+native property operations or callbacks. The verified update rechecks invalidation
+and the asynchronous codec failure latch before committing stored settings.
+
+SRT ingress must separately track the latest raw/compressed input representation:
+compressed input bypasses the outgoing codec and can leave an earlier raw encoder
+alive. Encoder output must not change this ingress state. Reset the state per
+publishing generation and require raw input for a verified update.
+
+The app adapter owns the captured SRT generation and rejects startup/stopping/stale
+operations. A single update may be in flight. Preserve the stop policy's underlying
+transport health predicate after marking the adapter stopping; otherwise graceful
+drain would be skipped. Pre-dispatch cancellation makes no encoder call. If native
+verification completes before cancellation is observed, first commit that verified
+native state, then suppress caller acknowledgment and close the live publisher so
+an abandoned change cannot leave the policy believing old settings remain applied.
+The clean archive is outside this path. No profile revision or source-frame boundary
+is reassigned by these changes.
+
+## Implemented native verification and lifecycle checkpoint
+
+The dedicated SDK path now checks native writes and typed exact readback for average
+bitrate and effective data-rate limits, then commits backing settings without a
+second unchecked write. Boolean/nonfinite/malformed and lossy integer readbacks fail.
+The initial generic configuration path retains its prior option-resolution behavior.
+Native write/readback uncertainty latches live codec failure; preflight rejection
+makes no property call. Codec notification invalidation uses a narrow locked revision
+owner and cannot be erased by overlapping session creation.
+
+SRT checks publishing generation, finishing state, live failure and actual raw-input
+representation before reaching the encoder. A raw-to-compressed transition cannot
+update the retained raw encoder. The app adapter captures its generation after
+startup and retires it before stop while preserving the stop policy's drain health
+predicate. The media wrapper allows one update at a time, rejects pre-cancelled work,
+and closes live publishing when a dispatched update is abandoned by cancellation.
+No profile revision, source-frame boundary, controller enablement or archive path
+changes are included.
+
+Verification so far has actual exit 0:
+
+- 16 native-property helper tests, with a failing precision regression before the
+  exact Int64-to-Double comparison fix.
+- 9 codec lifecycle tests after 21 behavioral-red assertions; 10 SRT finish tests
+  including the three new identity/passthrough/finishing tests after 8 red assertions.
+- Full SDK: 105 Swift Testing tests. Real native encoders accept/read back 1 and
+  3 Mbps plus matching burst limits, then emit/drain all 20 expected frames. The
+  SRT fixture independently verifies continued transport of final frames after a
+  real update. These tiny fixtures do not establish achieved target bitrates.
+- Full ScorebugStreaming: 21 XCTest tests, after 6 expected adapter-red assertions.
+- The no-network SDK smoke now explicitly verifies that a pre-publish live update
+  is rejected. The original smoke assumption was corrected after independent review.
+- The combined iPhone/Watch Release and arm64 simulator Debug builds pass. Maintained vendor patch verification
+  checks all 162 original source hashes and an exact reverse/forward round trip;
+  it includes the two added codec primitives and 13 modified upstream files.
+
+Separate specification and quality reviews approve both the property helper and
+lifecycle integration. Logs are `artifacts/qa/verified-bitrate-*.log`. The existing
+five-scenario dual-output qualification remains next. The latter
+already changes the real app adapter from 6 to 2 Mbps after five source seconds,
+so it can validate the strengthened setter without a new harness or another long run.

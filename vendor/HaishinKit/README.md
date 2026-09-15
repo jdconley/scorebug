@@ -5,8 +5,8 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`. The original BSD-3-Clause notice is in
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
-`scorebug.patch` is the diff against that revision for the 12 modified upstream
-files and the added `PublishingQueue.swift` primitive. Original upstream hashes
+`scorebug.patch` is the diff against that revision for the 13 modified upstream
+files and three added bounded publishing/bitrate source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -60,3 +60,12 @@ DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
 
 The local deployment floor is iOS 17/macOS 13. The inherited libsrt binary still
 does not link an Intel simulator executable; this Mac uses the ARM64 slice.
+
+Verified live average-bitrate changes use `SRTStream.setVerifiedVideoBitRate` with
+an active publishing-generation token. They require a ready raw-video encoder,
+check native writes and readback of bitrate plus effective data-rate limits, and
+commit settings only after verification. Uncertain native application fails live
+publishing explicitly. A lock-protected invalidation revision preserves notifications
+that overlap session creation or property writes. Configuration acknowledgment does
+not identify a source-frame transition or prove achieved bitrate/capacity. See the
+[implementation plan](../../docs/superpowers/plans/2026-09-15-verified-live-bitrate.md).

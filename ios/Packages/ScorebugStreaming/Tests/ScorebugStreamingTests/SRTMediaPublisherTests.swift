@@ -49,6 +49,74 @@ final class SRTMediaPublisherTests: XCTestCase {
         withExtendedLifetime(publisher) {}
     }
 
+    func testBitRateRejectsPreparedAndStoppedWithoutCallingEncoder() async throws {
+        let fixture = AdapterFixture()
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        for stopped in [false, true] {
+            if stopped { await publisher.stop() }
+            do { try await publisher.setBitRate(3_000_000); XCTFail("No active publisher") }
+            catch let error as SRTMediaPublisher.PublisherError { XCTAssertEqual(error, .notPublishing) }
+        }
+        let calls = await fixture.bitRateCalls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testCancelledBitRateCallNeverReachesEncoder() async throws {
+        let fixture = AdapterFixture()
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        try await publisher.start()
+        let update = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await publisher.setBitRate(3_000_000)
+        }
+        do { try await update.value; XCTFail("Cancelled request cannot apply settings") }
+        catch let error as SRTMediaPublisher.PublisherError { XCTAssertEqual(error, .cancelled) }
+        let calls = await fixture.bitRateCalls
+        XCTAssertEqual(calls, 0)
+        await publisher.stop()
+    }
+
+    func testOnlyOneBitRateUpdateMayOwnTheEncoderAtATime() async throws {
+        let fixture = AdapterFixture(gated: .bitRate)
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        try await publisher.start()
+        let first = Task { try await publisher.setBitRate(3_000_000) }
+        await fixture.waitUntilEntered()
+        do { try await publisher.setBitRate(4_000_000); XCTFail("Overlapping update must be rejected") }
+        catch let error as SRTMediaPublisher.PublisherError { XCTAssertEqual(error, .invalidState) }
+        await fixture.releaseBitRate()
+        try await first.value
+        let calls = await fixture.bitRateCalls
+        XCTAssertEqual(calls, 1)
+        try await publisher.setBitRate(5_000_000)
+        await publisher.stop()
+    }
+
+    func testCancellationOrStopDuringBitRateWriteCannotReturnSuccess() async throws {
+        for stop in [false, true] {
+            let fixture = AdapterFixture(gated: .bitRate)
+            let publisher = SRTMediaPublisher(operations: await fixture.operations())
+            try await publisher.start()
+            let update = Task { try await publisher.setBitRate(3_000_000) }
+            await fixture.waitUntilEntered()
+            if stop { await publisher.stop() } else { update.cancel(); await fixture.releaseBitRate() }
+            do { try await update.value; XCTFail("Late encoder result must not acknowledge a cancelled operation") }
+            catch let error as SRTMediaPublisher.PublisherError { XCTAssertEqual(error, .cancelled) }
+            let alive = await publisher.isPublishing
+            XCTAssertFalse(alive, "A cancelled in-flight update cannot leave changed native settings under old caller state")
+            await publisher.stop()
+        }
+    }
+
+    func testBitRateFailureDoesNotExposeNativeErrorDetails() async throws {
+        let fixture = AdapterFixture(bitRateFails: true)
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        try await publisher.start()
+        do { try await publisher.setBitRate(3_000_000); XCTFail("Native error must propagate") }
+        catch let error as SRTMediaPublisher.PublisherError { XCTAssertEqual(error, .bitRateUpdateFailed) }
+        await publisher.stop()
+    }
+
     func testStopDuringConfigurationCannotStartConnectionLater() async throws {
         let fixture = AdapterFixture(gated: .configure)
         let publisher = SRTMediaPublisher(operations: await fixture.operations())
@@ -108,20 +176,24 @@ final class SRTMediaPublisherTests: XCTestCase {
 }
 
 private actor AdapterFixture {
-    enum Gate { case configure, start }
+    enum Gate { case configure, start, bitRate }
     private let gated: Gate?
     private let fails: Bool
+    private let bitRateFails: Bool
+    private(set) var bitRateCalls = 0
     private var entered = false
     private var continuation: CheckedContinuation<Void, Never>?
     private var healthy = false
     private var stopped = false
     private var starts = 0
     private var stops = 0
-    init(gated: Gate? = nil, fails: Bool = false) { self.gated = gated; self.fails = fails }
+    init(gated: Gate? = nil, fails: Bool = false, bitRateFails: Bool = false) {
+        self.gated = gated; self.fails = fails; self.bitRateFails = bitRateFails
+    }
     func operations() -> SRTMediaPublisher.Operations {
         .init(configure: { try await self.configure() }, start: { await self.start() },
               append: { _ in }, isPublishing: { await self.isHealthy() }, stop: { await self.stop() },
-              setBitRate: { _ in }, metrics: { nil })
+              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil })
     }
     func configure() async throws {
         if fails { throw NSError(domain: "srt://private-secret", code: 1) }
@@ -132,6 +204,12 @@ private actor AdapterFixture {
         if gated == .start { await wait() }
         healthy = true // Model reusable SDK: a late start can reopen after close.
     }
+    func setBitRate() async throws {
+        bitRateCalls += 1
+        if gated == .bitRate, bitRateCalls == 1 { await wait() }
+        if bitRateFails { throw NSError(domain: "private encoder details", code: -1) }
+    }
+    func releaseBitRate() { continuation?.resume(); continuation = nil }
     func isHealthy() -> Bool { healthy }
     func setHealthy(_ value: Bool) { healthy = value }
     func stop() {

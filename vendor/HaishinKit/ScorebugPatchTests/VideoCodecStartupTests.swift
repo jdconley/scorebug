@@ -39,6 +39,36 @@ import VideoToolbox
         return timestamps
     }
 
+    @Test(arguments: [1_000_000, 3_000_000])
+    func liveBitRateReadbackMatchesNativePropertiesAndKeepsFrames(rate: Int) async throws {
+        let codec = VideoCodec()
+        codec.settings = .init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false)
+        let output = codec.outputStream
+        let consuming = Task.detached {
+            var timestamps: [CMTime] = []
+            for await sample in output { timestamps.append(sample.presentationTimeStamp) }
+            return timestamps
+        }
+        codec.startRunning()
+        let expected = (0..<20).map { CMTime(value: Int64($0), timescale: 30) }
+        codec.append(try frame(expected[0]))
+        _ = try codec.setVerifiedBitRate(rate)
+        let session = try #require(codec.session) as! VTCompressionSession
+        var nativeRate: CFTypeRef?, nativeLimits: CFTypeRef?
+        #expect(VTSessionCopyProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
+            allocator: kCFAllocatorDefault, valueOut: &nativeRate) == noErr)
+        #expect(VTSessionCopyProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+            allocator: kCFAllocatorDefault, valueOut: &nativeLimits) == noErr)
+        #expect((nativeRate as? NSNumber)?.intValue == rate)
+        #expect((nativeLimits as? [NSNumber])?.map(\.doubleValue) == [Double(rate) / 8 * 1.5, 1])
+        for timestamp in expected.dropFirst() { codec.append(try frame(timestamp)) }
+        let complete = codec.makeCompletion()
+        await Task.detached { complete() }.value
+        codec.stopRunning()
+        #expect(await consuming.value == expected)
+        #expect(codec.failure.error == nil)
+    }
+
     @Test(arguments: [0.0, VideoCodecSettings.frameInterval30])
     func encodesFirstZeroTimestampAndRestart(interval: Double) async throws {
         let codec = VideoCodec()

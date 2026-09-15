@@ -54,15 +54,15 @@ now connects capture and actual encoder-completion measurements while retaining 
    keyframe/codec and destination-canvas qualification; bitrate support alone is
    insufficient.
 
-Source inspection confirms a concrete application-acknowledgment gap before step 7:
-`SRTPublisher.setBitRate` awaits `SRTStream.setVideoSettings`, but the pinned SDK's
-`VideoCodecSettings.apply` discards the optional native session's `setOption` result.
-The SRT setter checks the codec format and assigns settings; it does not establish
-successful application to an existing VideoToolbox session. Its current successful
-return therefore cannot serve as a `QualityController` acknowledgment. Future live
-control must propagate and verify actual application, including missing sessions,
-native errors, concurrent shutdown and stale attempts. This read-only finding does
-not change the currently fixed live profile.
+The [verified live bitrate implementation](superpowers/plans/2026-09-15-verified-live-bitrate.md)
+now provides a dedicated average-rate update with checked native writes/readback,
+matching burst limits, lifecycle guards and explicit failure on uncertain application.
+The previous generic SDK setter still cannot act as an acknowledgment; the app uses
+the dedicated path. Real small-encoder fixtures verify accepted settings and continued
+frame output. This does not identify the first frame affected by the setting, establish
+achieved output rate/capacity or authorize relabeling queued completions with a new
+profile revision. Those transition and telemetry boundaries remain required before
+runtime policy activation.
 
 Tests should inject complete windows, stale/duplicate reports, counter resets,
 clock changes, reconnects, invalid values, and absent metrics. Then replay measured

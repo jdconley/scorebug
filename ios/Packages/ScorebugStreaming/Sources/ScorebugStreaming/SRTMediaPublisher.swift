@@ -15,6 +15,7 @@ public actor SRTMediaPublisher: MediaPublisher {
     private var state = State.prepared
     private var startup: Task<Void, Error>?
     private var shutdown: Task<Void, Never>?
+    private var bitRateUpdating = false
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
@@ -109,9 +110,25 @@ public actor SRTMediaPublisher: MediaPublisher {
 
     public func setBitRate(_ bitsPerSecond: Int) async throws {
         guard state == .publishing else { throw PublisherError.notPublishing }
+        guard !Task.isCancelled else { throw PublisherError.cancelled }
+        guard !bitRateUpdating else { throw PublisherError.invalidState }
+        bitRateUpdating = true
+        defer { bitRateUpdating = false }
         do { try await operations.setBitRate(bitsPerSecond) }
-        catch { throw PublisherError.bitRateUpdateFailed }
+        catch {
+            if state == .stopped || Task.isCancelled {
+                // A dispatched operation may already have changed native settings.
+                // Join live shutdown rather than leave an abandoned change active.
+                await stop()
+                throw PublisherError.cancelled
+            }
+            throw PublisherError.bitRateUpdateFailed
+        }
         guard state == .publishing else { throw PublisherError.cancelled }
+        if Task.isCancelled {
+            await stop()
+            throw PublisherError.cancelled
+        }
     }
 
     public func metrics() async -> TransportMetrics? {

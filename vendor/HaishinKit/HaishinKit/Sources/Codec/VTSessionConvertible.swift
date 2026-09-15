@@ -20,6 +20,7 @@ public typealias VideoEncoderCompletionObserver = @Sendable (_ sourcePTS: CMTime
 
 protocol VTSessionConvertible {
     func setOption(_ option: VTSessionOption) -> OSStatus
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?)
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
     func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws
     func completeFrames() -> OSStatus
@@ -27,6 +28,12 @@ protocol VTSessionConvertible {
 }
 
 extension VTSessionConvertible where Self: VTSession {
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) {
+        var value: CFTypeRef?
+        let status = VTSessionCopyProperty(self, key: key.CFString, allocator: kCFAllocatorDefault, valueOut: &value)
+        return (status, value)
+    }
+
     func setOption(_ option: VTSessionOption) -> OSStatus {
         return VTSessionSetProperty(self, key: option.key.CFString, value: option.value)
     }

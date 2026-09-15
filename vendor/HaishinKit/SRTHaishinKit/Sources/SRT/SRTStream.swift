@@ -28,6 +28,21 @@ public actor SRTStream {
     public var publishingError: PublishingError? { failure.error ?? writer.failure.error }
     private var failure = PublishingFailureLatch()
     private var generation: UInt64 = 0
+    private var videoInputIsRaw = false
+    /// Identity for an active publication, not proof that its encoder is ready.
+    public var publishingGeneration: UInt64? {
+        readyState == .publishing && finishingGeneration == nil && publishingError == nil && muxerError == nil
+            ? generation : nil
+    }
+    /// Point-in-time native configuration acknowledgment. It is not a source-frame
+    /// boundary, achieved output rate, or authorization to relabel queued frames.
+    public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
+        try Task.checkCancellation()
+        guard publishingGeneration == expected, videoInputIsRaw else {
+            throw VideoBitRateUpdateError.notEncoding
+        }
+        return try outgoing.setVerifiedVideoBitRate(bitRate)
+    }
     private struct PublishingTasks {
         let video, audio, input, transport, errors: Task<Void, Never>
         var all: [Task<Void, Never>] { [video, audio, input, transport, errors] }
@@ -90,6 +105,7 @@ public actor SRTStream {
         }
         guard readyState == .idle, finishingGeneration == nil else { return }
         generation &+= 1
+        videoInputIsRaw = false
         let session = generation
         failure = PublishingFailureLatch()
         writer.failure = failure
@@ -225,6 +241,7 @@ public actor SRTStream {
     /// Stops playing or publishing and makes available other uses.
     public func close() async {
         generation &+= 1
+        videoInputIsRaw = false
         for task in publishingTasks?.all ?? [] { task.cancel() }
         publishingTasks = nil
         outgoing.stopRunning()
@@ -268,8 +285,10 @@ extension SRTStream: _Stream {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
+                videoInputIsRaw = false
                 appendCompressedVideo(sampleBuffer)
             } else {
+                videoInputIsRaw = true
                 outgoing.append(sampleBuffer)
                 outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
             }

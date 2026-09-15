@@ -186,6 +186,15 @@ public struct VideoCodecSettings: Codable, Sendable {
         }
     }
 
+    /// Resolves the existing zero sentinels without changing initial configuration validation.
+    var effectiveDataRateLimits: [Double]? {
+        guard let dataRateLimits, dataRateLimits.count == 2 else { return nil }
+        return [
+            dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0],
+            dataRateLimits[1] == 0 ? 1.0 : dataRateLimits[1]
+        ]
+    }
+
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
     func makeOptions() -> Set<VTSessionOption> {
         let isBaseline = profileLevel.contains("Baseline")
@@ -199,13 +208,8 @@ public struct VideoCodecSettings: Codable, Sendable {
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)
         ])
-        if bitRateMode == .average {
-            if let dataRateLimits, dataRateLimits.count == 2 {
-                var limits = [Double](repeating: 0.0, count: 2)
-                limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
-                limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
-                options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
-            }
+        if bitRateMode == .average, let limits = effectiveDataRateLimits {
+            options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
         }
         #if os(macOS)
         if isHardwareAcceleratedEnabled {

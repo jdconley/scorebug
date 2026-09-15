@@ -12,6 +12,8 @@ public actor SRTPublisher {
     private let connection = SRTConnection()
     private let stream: SRTStream
     private let stopPolicy: SRTStopPolicy
+    private var activeGeneration: UInt64?
+    private var stopping = false
     public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
     public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil) {
         self.stopPolicy = stopPolicy
@@ -41,13 +43,26 @@ public actor SRTPublisher {
               await connection.publishingError == nil else {
             throw PublisherError.notPublishing
         }
+        guard let generation = await stream.publishingGeneration, !stopping, !Task.isCancelled else {
+            throw PublisherError.notPublishing
+        }
+        activeGeneration = generation
     }
     public func video(_ sample: CMSampleBuffer) async { await stream.append(sample) }
     public func audio(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) async { await stream.append(buffer, when: when) }
     public func setBitRate(_ bitRate: Int) async throws {
-        var settings = await stream.videoSettings
-        settings.bitRate = bitRate
-        try await stream.setVideoSettings(settings)
+        try Task.checkCancellation()
+        guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
+        let healthy = await isPublishing()
+        try Task.checkCancellation()
+        guard healthy, !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
+        _ = try await stream.setVerifiedVideoBitRate(bitRate, publishingGeneration: generation)
+        guard !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
+        if Task.isCancelled {
+            // Native settings were committed; retire the abandoned live attempt.
+            await stop()
+            throw CancellationError()
+        }
     }
     public func metrics() async -> (Double, Int32, UInt64)? {
         guard let stats = await connection.performanceData else { return nil }
@@ -62,6 +77,10 @@ public actor SRTPublisher {
         return connected && publishing && muxerHealthy && streamHealthy && transportHealthy
     }
     public func stop() async {
+        stopping = true
+        activeGeneration = nil
+        // isPublishing remains a raw health predicate so the stop policy can drain
+        // this now-stopping stream rather than treating it as already closed.
         lastStopOutcome = await stopPolicy.run(operations: .init(
             isPublishing: { await self.isPublishing() },
             finish: { await self.stream.finish(timeout: $0) },
