@@ -1,5 +1,41 @@
+diff --git a/internal/core/path.go b/internal/core/path.go
+index 83e4e6d..29cfd04 100644
+--- a/internal/core/path.go
++++ b/internal/core/path.go
+@@ -1090,9 +1090,21 @@ func (pa *path) executeRemovePublisher() {
+ 	pa.source = nil
+ }
+ 
++// addReaderResponse runs in the path goroutine, together with stream/source selection.
++func (pa *path) addReaderResponse() defs.PathAddReaderRes {
++	res := defs.PathAddReaderRes{Stream: pa.stream}
++	if !pa.conf.AlwaysAvailable && pa.source != nil {
++		if source := pa.source.APISourceDescribe(); source != nil && source.Type == defs.APIPathSourceTypeSRTConn {
++			snapshot := *source
++			res.Source = &snapshot
++		}
++	}
++	return res
++}
++
+ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
+ 	if _, ok := pa.readers[req.Author]; ok {
+-		req.Res <- defs.PathAddReaderRes{Stream: pa.stream}
++		req.Res <- pa.addReaderResponse()
+ 		return
+ 	}
+ 
+@@ -1117,7 +1129,7 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
+ 		}
+ 	}
+ 
+-	req.Res <- defs.PathAddReaderRes{Stream: pa.stream}
++	req.Res <- pa.addReaderResponse()
+ }
+ 
+ // reloadConf is called by pathManager.
 diff --git a/internal/defs/api_srt.go b/internal/defs/api_srt.go
-index 1e3d871..d87710d 100644
+index 1e3d871..1a16a05 100644
 --- a/internal/defs/api_srt.go
 +++ b/internal/defs/api_srt.go
 @@ -23,6 +23,13 @@ const (
@@ -16,15 +52,29 @@ index 1e3d871..d87710d 100644
  // APISRTConn is a SRT connection.
  type APISRTConn struct {
  	ID         uuid.UUID       `json:"id"`
-@@ -33,6 +40,8 @@ type APISRTConn struct {
+@@ -33,6 +40,9 @@ type APISRTConn struct {
  	Query      string          `json:"query"`
  	User       string          `json:"user"`
  
 +	ScorebugTransportClock *APISRTTransportClock `json:"scorebugTransportClock,omitempty"`
++	ScorebugReaderSource   *APIPathSource        `json:"scorebugReaderSource,omitempty"`
 +
  	// The metric names/comments are pulled from GoSRT
  
  	// The total number of sent DATA packets, including retransmitted packets
+diff --git a/internal/defs/path.go b/internal/defs/path.go
+index 6ffca69..2b4ab90 100644
+--- a/internal/defs/path.go
++++ b/internal/defs/path.go
+@@ -89,6 +89,8 @@ type PathAddReaderRes struct {
+ 	Path   Path
+ 	User   string
+ 	Stream *stream.Stream
++	// Source is an independent snapshot of the publication selected for this reader.
++	Source *APIPathSource
+ 	Err    error
+ }
+ 
 diff --git a/internal/protocols/mpegts/to_stream.go b/internal/protocols/mpegts/to_stream.go
 index 5b0bbea..1fccc32 100644
 --- a/internal/protocols/mpegts/to_stream.go
@@ -154,7 +204,7 @@ index 5b0bbea..1fccc32 100644
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
 diff --git a/internal/servers/srt/conn.go b/internal/servers/srt/conn.go
-index 46aedc4..ad556ed 100644
+index 46aedc4..2d0ca49 100644
 --- a/internal/servers/srt/conn.go
 +++ b/internal/servers/srt/conn.go
 @@ -6,6 +6,7 @@ import (
@@ -165,7 +215,7 @@ index 46aedc4..ad556ed 100644
  	"sync"
  	"time"
  
-@@ -56,17 +57,18 @@ type conn struct {
+@@ -56,17 +57,19 @@ type conn struct {
  	pathManager         serverPathManager
  	parent              *Server
  
@@ -192,10 +242,11 @@ index 46aedc4..ad556ed 100644
 +	sconn          srt.Conn
 +	reader         *stream.Reader
 +	transportClock *defs.APISRTTransportClock
++	readerSource   *defs.APIPathSource
  }
  
  func (c *conn) initialize() {
-@@ -194,6 +196,11 @@ func (c *conn) runPublish(streamID *streamID) error {
+@@ -194,6 +197,11 @@ func (c *conn) runPublish(streamID *streamID) error {
  }
  
  func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *conf.Path) error {
@@ -207,7 +258,7 @@ index 46aedc4..ad556ed 100644
  	sconn.SetReadDeadline(time.Now().Add(time.Duration(c.readTimeout)))
  	r := &mpegts.EnhancedReader{R: sconn}
  	err := r.Initialize()
-@@ -220,7 +227,20 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
+@@ -220,7 +228,20 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
  
  	var subStream *stream.SubStream
  
@@ -229,13 +280,56 @@ index 46aedc4..ad556ed 100644
  	if err != nil {
  		return err
  	}
-@@ -380,6 +400,11 @@ func (c *conn) apiItem() *defs.APISRTConn {
+@@ -262,6 +283,12 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
+ }
+ 
+ func (c *conn) runRead(streamID *streamID) error {
++	defer func() {
++		c.mutex.Lock()
++		c.readerSource = nil
++		c.mutex.Unlock()
++	}()
++
+ 	res, err := c.pathManager.AddReader(defs.PathAddReaderReq{
+ 		Author: c,
+ 		AccessRequest: defs.PathAccessRequest{
+@@ -287,6 +314,16 @@ func (c *conn) runRead(streamID *streamID) error {
+ 		return err
+ 	}
+ 
++	// Keep only a validated, independent copy of the actual registration result.
++	// A later path lookup could select a different publication.
++	var readerSource *defs.APIPathSource
++	if source := res.Source; source != nil && source.Type == defs.APIPathSourceTypeSRTConn {
++		if id, parseErr := uuid.Parse(source.ID); parseErr == nil && id.String() == source.ID {
++			snapshot := *source
++			readerSource = &snapshot
++		}
++	}
++
+ 	defer res.Path.RemoveReader(defs.PathRemoveReaderReq{Author: c})
+ 
+ 	err = srtCheckPassphrase(c.connReq, res.Path.SafeConf().SRTReadPassphrase)
+@@ -339,6 +376,7 @@ func (c *conn) runRead(streamID *streamID) error {
+ 
+ 	c.mutex.Lock()
+ 	c.reader = r
++	c.readerSource = readerSource
+ 	c.mutex.Unlock()
+ 
+ 	select {
+@@ -380,6 +418,16 @@ func (c *conn) apiItem() *defs.APISRTConn {
  		User:       c.user,
  	}
  
 +	if c.state == defs.APISRTConnStatePublish && c.transportClock != nil {
 +		clock := *c.transportClock
 +		item.ScorebugTransportClock = &clock
++	}
++
++	if c.state == defs.APISRTConnStateRead && c.readerSource != nil {
++		source := *c.readerSource
++		item.ScorebugReaderSource = &source
 +	}
 +
  	if c.sconn != nil {
@@ -253,6 +347,117 @@ index bdea48c..6c059a5 100644
  				PacketsSent:                   list.Items[0].PacketsSent,
  				PacketsReceived:               list.Items[0].PacketsReceived,
  				PacketsSentUnique:             list.Items[0].PacketsSentUnique,
+diff --git a/internal/core/path_reader_source_test.go b/internal/core/path_reader_source_test.go
+new file mode 100644
+index 0000000..daa2aec
+--- /dev/null
++++ b/internal/core/path_reader_source_test.go
+@@ -0,0 +1,105 @@
++package core
++
++import (
++	"testing"
++
++	"github.com/google/uuid"
++	"github.com/stretchr/testify/require"
++
++	"github.com/bluenviron/mediamtx/internal/conf"
++	"github.com/bluenviron/mediamtx/internal/defs"
++	"github.com/bluenviron/mediamtx/internal/logger"
++	"github.com/bluenviron/mediamtx/internal/stream"
++	"github.com/bluenviron/mediamtx/internal/test"
++)
++
++type readerSourceTestSource struct {
++	logger.Writer
++	desc *defs.APIPathSource
++}
++
++func (s *readerSourceTestSource) APISourceDescribe() *defs.APIPathSource { return s.desc }
++
++type readerSourceTestReader struct {
++	logger.Writer
++	id string
++}
++
++func (*readerSourceTestReader) Close() {}
++func (r *readerSourceTestReader) APIReaderDescribe() *defs.APIPathReader {
++	return &defs.APIPathReader{Type: defs.APIPathReaderTypeSRTConn, ID: r.id}
++}
++
++func readerSourceRegister(pa *path, reader defs.Reader) defs.PathAddReaderRes {
++	ch := make(chan defs.PathAddReaderRes, 1)
++	pa.addReaderPost(defs.PathAddReaderReq{Author: reader, Res: ch})
++	return <-ch
++}
++
++func TestPathReaderSourceRegistration(t *testing.T) {
++	firstID, secondID := uuid.NewString(), uuid.NewString()
++	selected := &readerSourceTestSource{Writer: test.NilLogger, desc: &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: firstID}}
++	firstStream, secondStream := &stream.Stream{}, &stream.Stream{}
++	pa := &path{conf: &conf.Path{}, source: selected, stream: firstStream, readers: make(map[defs.Reader]struct{})}
++	firstReader := &readerSourceTestReader{Writer: test.NilLogger, id: uuid.NewString()}
++	first := readerSourceRegister(pa, firstReader)
++	require.NoError(t, first.Err)
++	require.Same(t, firstStream, first.Stream)
++	require.Equal(t, selected.desc, first.Source)
++	require.NotSame(t, selected.desc, first.Source)
++	duplicate := readerSourceRegister(pa, firstReader)
++	require.NoError(t, duplicate.Err)
++	require.Same(t, firstStream, duplicate.Stream)
++	require.Equal(t, first.Source, duplicate.Source)
++	require.NotSame(t, first.Source, duplicate.Source)
++	require.Len(t, pa.readers, 1)
++
++	// Replacing the active publication cannot change an already returned registration.
++	selected.desc.ID = secondID
++	pa.source = &readerSourceTestSource{Writer: test.NilLogger, desc: &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: secondID}}
++	pa.stream = secondStream
++	second := readerSourceRegister(pa, &readerSourceTestReader{Writer: test.NilLogger, id: uuid.NewString()})
++	require.NoError(t, second.Err)
++	require.Same(t, secondStream, second.Stream)
++	require.Equal(t, secondID, second.Source.ID)
++	require.Equal(t, firstID, first.Source.ID)
++	require.Equal(t, firstID, duplicate.Source.ID)
++	second.Source.ID = "caller mutation"
++	require.Equal(t, secondID, pa.source.APISourceDescribe().ID)
++}
++
++func TestPathReaderSourceSuppression(t *testing.T) {
++	for _, tc := range []struct {
++		name   string
++		always bool
++		source defs.Source
++	}{
++		{name: "always available", always: true, source: &readerSourceTestSource{desc: &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: uuid.NewString()}}},
++		{name: "no source"},
++		{name: "nil descriptor", source: &readerSourceTestSource{}},
++		{name: "non SRT", source: &readerSourceTestSource{desc: &defs.APIPathSource{Type: defs.APIPathSourceTypeRTMPConn, ID: uuid.NewString()}}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			strm := &stream.Stream{}
++			pa := &path{conf: &conf.Path{AlwaysAvailable: tc.always}, source: tc.source, stream: strm, readers: make(map[defs.Reader]struct{})}
++			reader := &readerSourceTestReader{id: uuid.NewString()}
++			for range 2 {
++				res := readerSourceRegister(pa, reader)
++				require.NoError(t, res.Err)
++				require.Same(t, strm, res.Stream)
++				require.Nil(t, res.Source)
++			}
++		})
++	}
++}
++
++func TestPathReaderSourceRegistrationError(t *testing.T) {
++	pa := &path{conf: &conf.Path{MaxReaders: 1}, source: &readerSourceTestSource{desc: &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: uuid.NewString()}}, stream: &stream.Stream{}, readers: make(map[defs.Reader]struct{})}
++	reader := &readerSourceTestReader{id: uuid.NewString()}
++	require.NoError(t, readerSourceRegister(pa, reader).Err)
++	res := readerSourceRegister(pa, &readerSourceTestReader{id: uuid.NewString()})
++	require.EqualError(t, res.Err, "maximum reader count reached")
++	require.Nil(t, res.Stream)
++	require.Nil(t, res.Source)
++	require.NoError(t, readerSourceRegister(pa, reader).Err, "duplicate registration must still succeed at the reader limit")
++}
 diff --git a/internal/protocols/mpegts/to_stream_clock_origin_test.go b/internal/protocols/mpegts/to_stream_clock_origin_test.go
 new file mode 100644
 index 0000000..7bb785b
@@ -576,5 +781,208 @@ index 0000000..190fad2
 +				require.NotContains(t, clockJSON(t, c), "scorebugTransportClock", "reader teardown clears origin")
 +			})
 +		}
++	}
++}
+diff --git a/internal/servers/srt/conn_reader_source_test.go b/internal/servers/srt/conn_reader_source_test.go
+new file mode 100644
+index 0000000..8115d48
+--- /dev/null
++++ b/internal/servers/srt/conn_reader_source_test.go
+@@ -0,0 +1,197 @@
++package srt
++
++import (
++	"context"
++	"fmt"
++	"net"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/bluenviron/gortsplib/v5/pkg/description"
++	"github.com/bluenviron/gortsplib/v5/pkg/format"
++	gosrt "github.com/datarhei/gosrt"
++	"github.com/google/uuid"
++	"github.com/stretchr/testify/require"
++
++	"github.com/bluenviron/mediamtx/internal/conf"
++	"github.com/bluenviron/mediamtx/internal/defs"
++	"github.com/bluenviron/mediamtx/internal/stream"
++	"github.com/bluenviron/mediamtx/internal/test"
++)
++
++type readerSourceRequest struct {
++	gosrt.ConnRequest
++	transport gosrt.Conn
++	acceptErr error
++}
++
++func (*readerSourceRequest) RemoteAddr() net.Addr {
++	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9999}
++}
++func (r *readerSourceRequest) Accept() (gosrt.Conn, error) { return r.transport, r.acceptErr }
++func (*readerSourceRequest) Reject(gosrt.RejectionReason)  {}
++func (*readerSourceRequest) IsEncrypted() bool             { return false }
++
++type readerSourceTransport struct {
++	gosrt.Conn
++	beforeAttach chan struct{}
++	proceed      chan struct{}
++}
++
++func (s *readerSourceTransport) SetReadDeadline(time.Time) error {
++	if s.beforeAttach != nil {
++		close(s.beforeAttach)
++		<-s.proceed
++	}
++	return nil
++}
++func (*readerSourceTransport) Stats(*gosrt.Statistics) {}
++func (*readerSourceTransport) Close() error            { return nil }
++
++type readerSourcePath struct {
++	dummyPath
++	conf    *conf.Path
++	removed chan struct{}
++}
++
++func (p *readerSourcePath) SafeConf() *conf.Path                  { return p.conf }
++func (p *readerSourcePath) RemoveReader(defs.PathRemoveReaderReq) { close(p.removed) }
++
++func TestConnReaderSourceLifecycle(t *testing.T) {
++	publisherID := uuid.NewString()
++	for _, tc := range []struct {
++		name   string
++		source *defs.APIPathSource
++		valid  bool
++	}{
++		{"canonical", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: publisherID}, true},
++		{"canonical zero", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: uuid.Nil.String()}, true},
++		{"absent", nil, false},
++		{"non SRT", &defs.APIPathSource{Type: defs.APIPathSourceTypeRTMPConn, ID: publisherID}, false},
++		{"empty ID", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn}, false},
++		{"malformed ID", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: "publisher"}, false},
++		{"uppercase ID", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: strings.ToUpper("abcdefab-cdef-abcd-efab-cdefabcdefab")}, false},
++		{"compact ID", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: strings.ReplaceAll(publisherID, "-", "")}, false},
++		{"URN ID", &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: "urn:uuid:" + publisherID}, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			strm := &stream.Stream{OrigDesc: &description.Session{Medias: []*description.Media{{Type: description.MediaTypeVideo, Formats: []format.Format{test.FormatH264}}}}, WriteQueueSize: 512, RTPMaxPayloadSize: 1450, Parent: test.NilLogger}
++			require.NoError(t, strm.Initialize())
++			defer strm.Close()
++			transport := &readerSourceTransport{beforeAttach: make(chan struct{}), proceed: make(chan struct{})}
++			path := &readerSourcePath{conf: &conf.Path{}, removed: make(chan struct{})}
++			res := &defs.PathAddReaderRes{Path: path, Stream: strm, Source: tc.source}
++			c := &conn{ctx: ctx, uuid: uuid.New(), connReq: &readerSourceRequest{transport: transport}, state: defs.APISRTConnStateIdle, udpMaxPayloadSize: 1472, parent: &Server{Parent: test.NilLogger}}
++			c.pathManager = &test.PathManager{AddReaderImpl: func(req defs.PathAddReaderReq) (*defs.PathAddReaderRes, error) {
++				require.Same(t, c, req.Author)
++				require.Equal(t, "relay-test", req.AccessRequest.Name)
++				require.NotContains(t, clockJSON(t, c), "scorebugReaderSource", "path registration alone is insufficient")
++				return res, nil
++			}}
++			require.NotContains(t, clockJSON(t, c), "scorebugReaderSource")
++			done := make(chan error, 1)
++			stopped := make(chan struct{})
++			go func() {
++				defer close(stopped)
++				done <- c.runRead(&streamID{path: "relay-test"})
++			}()
++			defer func() {
++				cancel()
++				select {
++				case <-transport.proceed:
++				default:
++					close(transport.proceed)
++				}
++				<-stopped
++			}()
++			select {
++			case <-transport.beforeAttach:
++			case <-time.After(time.Second):
++				t.Fatal("did not reach pre-attachment boundary")
++			}
++			require.Equal(t, defs.APISRTConnStateRead, c.apiItem().State)
++			require.NotContains(t, clockJSON(t, c), "scorebugReaderSource", "read state precedes stream attachment")
++			close(transport.proceed)
++			require.Eventually(t, func() bool { c.mutex.RLock(); defer c.mutex.RUnlock(); return c.reader != nil }, time.Second, time.Millisecond)
++			strm.WaitForReaders() // Real Stream.AddReader was executed.
++			if tc.valid {
++				want := *tc.source
++				require.Equal(t, map[string]any{"type": "srtConn", "id": want.ID}, clockJSON(t, c)["scorebugReaderSource"])
++				require.NotContains(t, clockJSON(t, c), "scorebugTransportClock", "reader must never expose a publisher clock")
++				tc.source.ID = uuid.NewString()
++				require.Equal(t, want.ID, c.apiItem().ScorebugReaderSource.ID, "source descriptor is copied at attachment")
++				snapshot := c.apiItem()
++				snapshot.ScorebugReaderSource.ID = "caller mutation"
++				require.Equal(t, want.ID, c.apiItem().ScorebugReaderSource.ID)
++				for _, state := range []defs.APISRTConnState{defs.APISRTConnStatePublish, defs.APISRTConnStateIdle} {
++					c.mutex.Lock()
++					c.state = state
++					c.mutex.Unlock()
++					require.NotContains(t, clockJSON(t, c), "scorebugReaderSource")
++				}
++				c.mutex.Lock()
++				c.state = defs.APISRTConnStateRead
++				c.mutex.Unlock()
++			} else {
++				require.NotContains(t, clockJSON(t, c), "scorebugReaderSource")
++			}
++			var wg sync.WaitGroup
++			for range 8 {
++				wg.Go(func() {
++					for range 200 {
++						item := c.apiItem()
++						if item.ScorebugReaderSource != nil {
++							item.ScorebugReaderSource.ID = "local"
++						}
++					}
++				})
++			}
++			cancel()
++			select {
++			case err := <-done:
++				require.EqualError(t, err, "terminated")
++			case <-time.After(time.Second):
++				t.Fatal("read did not exit")
++			}
++			wg.Wait()
++			<-path.removed
++			require.NotContains(t, clockJSON(t, c), "scorebugReaderSource", "read exit clears the attachment")
++		})
++	}
++}
++
++func TestConnReaderSourceFailedStartup(t *testing.T) {
++	for _, phase := range []string{"registration", "passphrase", "accept", "format"} {
++		t.Run(phase, func(t *testing.T) {
++			path := &readerSourcePath{conf: &conf.Path{}, removed: make(chan struct{})}
++			transport := &readerSourceTransport{}
++			request := &readerSourceRequest{transport: transport}
++			if phase == "passphrase" {
++				path.conf.SRTReadPassphrase = "reader-password"
++			}
++			if phase == "accept" {
++				request.acceptErr = fmt.Errorf("accept failed")
++			}
++			c := &conn{ctx: context.Background(), uuid: uuid.New(), connReq: request, state: defs.APISRTConnStateIdle, udpMaxPayloadSize: 1472, parent: &Server{Parent: test.NilLogger}}
++			c.pathManager = &test.PathManager{AddReaderImpl: func(defs.PathAddReaderReq) (*defs.PathAddReaderRes, error) {
++				if phase == "registration" {
++					return nil, fmt.Errorf("registration failed")
++				}
++				return &defs.PathAddReaderRes{Path: path, Stream: &stream.Stream{OrigDesc: &description.Session{}}, Source: &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: uuid.NewString()}}, nil
++			}}
++			// Even an unsuccessful read attempt must clear any previous cached descriptor.
++			c.readerSource = &defs.APIPathSource{Type: defs.APIPathSourceTypeSRTConn, ID: uuid.NewString()}
++			require.Error(t, c.runRead(&streamID{path: "relay-test"}))
++			require.Nil(t, c.readerSource)
++			require.NotContains(t, clockJSON(t, c), "scorebugReaderSource")
++			require.Nil(t, c.reader)
++			if phase != "registration" {
++				<-path.removed
++			}
++		})
 +	}
 +}

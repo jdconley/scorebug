@@ -15,6 +15,7 @@ import {
   videoPayloadHashes,
   compareRelayClock,
   qualifyRelayOrigin,
+  qualifyRelayReader,
 } from './relay-clock-comparison.mjs';
 import {
   decodeFrameCodes,
@@ -379,19 +380,73 @@ async function scenario(source, name, origin, readerDelay) {
         1500,
       );
     }
-    const launchReader = (label) =>
-      launch(label, transmitter, [
+    const readerQueries = new Map();
+    const launchReader = (label) => {
+      const query = requireMapping ? `sbr1=${randomUUID()}` : undefined;
+      if (query) readerQueries.set(label, query);
+      return launch(label, transmitter, [
         '-a:no',
         '-t:25',
         '-c:1316',
-        `srt://127.0.0.1:${ingress}?mode=caller&streamid=read:fixture&passphrase=qa-read-encryption&latency=120`,
+        `srt://127.0.0.1:${ingress}?mode=caller&streamid=read:fixture${query ? `:${query}` : ''}&passphrase=qa-read-encryption&latency=120`,
         'file://con',
       ]);
+    };
     // Same publication, two distinct reader acquisition boundaries.
     const earlyReader = readerDelay > 0 ? launchReader('early-reader') : undefined;
     await delay(readerDelay);
     checkCancellation();
     const reader = launchReader('raw-reader');
+    if (requireMapping) {
+      result.readerAssociations = {};
+      await until(
+        async () => {
+          const response = await fetch(
+            `http://127.0.0.1:${api}/v3/srtconns/list?itemsPerPage=100&page=0`,
+            {
+              signal: AbortSignal.timeout(1000),
+            },
+          );
+          assert.equal(response.status, 200, 'Cannot observe relay readers');
+          const connections = await response.json();
+          assert.ok([0, 1].includes(connections.pageCount), 'Incomplete reader connection list');
+          assert.ok(Array.isArray(connections.items) && connections.items.length <= 100);
+          assert.equal(connections.itemCount, connections.items.length);
+          let complete = true;
+          for (const [label, readerQuery] of readerQueries) {
+            const matches = connections.items.filter((item) => item.query === readerQuery);
+            assert.ok(matches.length <= 1, 'Ambiguous relay reader query');
+            if (!matches.length || matches[0].scorebugReaderSource == null) {
+              complete = false;
+              continue;
+            }
+            const association = qualifyRelayReader({
+              path: 'fixture',
+              publisherId: result.relayConnection.id,
+              readerQuery,
+              connection: matches[0],
+            });
+            if (result.readerAssociations[label])
+              assert.deepEqual(
+                association,
+                result.readerAssociations[label],
+                'Reader association changed',
+              );
+            result.readerAssociations[label] = association;
+          }
+          return complete;
+        },
+        'relay reader source metadata',
+        [native, bridge, publisher, reader, earlyReader].filter(Boolean),
+        1500,
+      );
+      if (earlyReader)
+        assert.notEqual(
+          result.readerAssociations['early-reader'].readerId,
+          result.readerAssociations['raw-reader'].readerId,
+          'Early/late readers must be distinct',
+        );
+    }
     await native.done;
     await bridge.done;
     await forwarded;

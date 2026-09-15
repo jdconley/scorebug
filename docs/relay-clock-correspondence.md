@@ -210,24 +210,74 @@ home-GPU or cloud qualification. Logs, image identities and a source/evidence ha
 manifest are retained under `artifacts/qa/relay-origin-final-verification.json`.
 Regular deployment configurations still select the stock relay.
 
+### Actual reader source primitive
+
+The clock-v2 build captures a reader's source descriptor from the same serialized
+path operation that selects its Stream. The private SRT reader API exposes a copied
+`scorebugReaderSource` containing the selected publisher UUID. The field appears
+after stream-reader attachment and disappears on read exit. Non-SRT sources,
+alwaysAvailable paths, malformed descriptors and unattached connections omit it.
+This identifies the source selected for that reader; it is not a claim that the
+publisher remains live or that any particular frame arrived.
+
+The maintained mapped run `artifacts/qa/relay-clock-3Cdl1Q` passes all three cases
+with the clock-v2 image. The fixture identifies each actual reader using a distinct
+query nonce, validates its source against the separately observed publisher, and
+retains only sanitized association fields. Zero-origin, nonzero-origin and late
+readers retain 180, 181 and 121 pictures respectively; the early control retains 181.
+Every acquired picture still matches its compressed source bytes, raw/decoded PTS
+and observed origin. The production worker retains every primary picture. All
+three native archives and publisher counters contain 240 pictures. Startup prefixes
+remain explicit and are not counted as successfully delivered frames.
+
+In the late case, the two reader UUIDs are distinct and both identify the same
+publisher UUID. All children exit 0, closed publishers disappear from the private
+connection listing, and exact owned containers are independently confirmed absent.
+Relay warnings and cleanup errors are empty. The clock-v1 negative control
+`relay-clock-WNUiDi` obtains valid origin metadata and receives reader bytes, then
+fails specifically because reader-source metadata is absent. All of its children
+terminate and its exact container is confirmed absent.
+
+Fail-first Go tests exercise actual path registration and SRT attachment, copied
+snapshots, unsupported/malformed source data, failed startup and teardown. Targeted
+core tests plus full MPEG-TS/SRT package tests pass, including race checks. The core
+replacement test substitutes the selected source/Stream to check snapshot isolation;
+it does not qualify a full network reconnect. The helper passes 109 tests and the
+full tooling suite passes 594. Independent specification and quality reviews approve
+the source. The cumulative patch is verified against the pinned archive, original
+files and license, with exact apply/reverse and patched-byte checks.
+
+Both Linux targets build and return `v1.21.0-scorebug-clock-v2`:
+
+| Target | Local image | Image ID |
+| ------ | ----------- | -------- |
+| ARM64 | `scorebug/ingest:clock-v2` | `sha256:f72a43ddbb1db4c027fb935b210b45485cc052a08e7f8e9c04f745d059c7a490` |
+| AMD64 | `scorebug/ingest:clock-v2-amd64` | `sha256:19eedbabbaf58885372e3b2d6e31fe99e1aa2d4794fc37291d8253ffb8423950` |
+
+ARM64 media is qualified in Docker Desktop's Linux VM. The AMD64 version probe is
+emulated and does not qualify physical AMD64, NVIDIA or cloud hardware. Source and
+evidence hashes are retained in `artifacts/qa/relay-reader-final-verification.json`.
+Regular deployment configurations still select the stock relay.
+
 ### Remaining production association
 
-Keep the existing relay media timing and add explicit publisher-epoch clock mapping
-metadata in the owned relay/gateway path. That avoids changing the A/V timing already
-qualified for playback. The mapping must be captured at the actual first supported
-ingress callback and tied to a unique publication epoch; the control plane must bind
-it to the authorized publishing attempt and worker session. Neither an observed
-constant such as 9000/10919 nor a reader's first decoded frame can stand in for it.
+The observed origin and actual reader-source primitives now exist. Native publishing
+attempts also carry a signed identifier scoped to their authorized ingest path; see
+[the native publishing contract](native-publishing-session.md). Production integration
+must combine these with a distinct authenticated worker pipeline read and the
+[public worker epoch](superpowers/plans/2026-09-15-public-worker-epoch.md). The fixture's
+reader nonce is only a test marker, not that production authentication contract.
 
-A byte-preserving SRT route or per-frame in-band identity remain alternatives, but
-introduce a different deployment topology or SDK/worker metadata path. Patching the
-relay to preserve PTS is another option and requires independent A/V, wrap, reconnect
-and output qualification. None is enabled by this diagnostic command. Next work is
-binding authorized native attempts and actual worker reads to the observed relay
-publication, followed by matched source intervals and
-available-capacity evidence before enabling automatic quality. The
-[public worker epoch](superpowers/plans/2026-09-15-public-worker-epoch.md) now gives
-native consumers a separate opaque reporting-session identifier. The existing
-status contract continues to exclude private reporting session IDs and timing
-tokens. This identity must be associated with the actual publication mapping;
-it does not supply that mapping by itself.
+A worker connection must be matched to its actual selected publisher, that
+publisher's valid signed native attempt and observed clock origin. A later current-path
+lookup cannot substitute for the reader's source association. Asynchronous lookups
+must recheck worker session, attempt and broadcast identity before exposing results;
+missing, ambiguous, replaced or stale evidence must remain unknown. Public status
+continues to exclude private reporting session IDs, timing tokens and SRT credentials.
+
+Keep relay media timing unchanged. Neither a measured constant such as 9000/10919
+nor a reader's first decoded frame can replace observed ingress origin. After the
+production association is integrated, matched source intervals and available-capacity
+evidence still need qualification before automatic quality can be enabled. Physical
+camera/radio behavior, arbitrary timestamp discontinuities and external GPU systems
+remain separate qualification work.

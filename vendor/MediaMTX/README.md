@@ -1,4 +1,4 @@
-# MediaMTX relay origin patch
+# MediaMTX relay origin and reader source patch
 
 Scorebug's qualification build uses MediaMTX 1.21.0, revision
 `2c6727904fbf233615de74a6c54a9b94dbf6025d`, with a small diagnostic patch.
@@ -25,10 +25,27 @@ for idle/read connections and for alwaysAvailable paths. Keep this API private a
 authenticated. This primitive does not associate native attempts or worker reads,
 and must not enable adaptive quality by itself.
 
+The clock-v2 build also exposes optional `scorebugReaderSource` on private SRT
+reader items. The descriptor is copied from the source selected by the path's
+serialized AddReader operation, together with that Stream, then captured when
+the SRT reader attaches. For a non-alwaysAvailable SRT source it contains:
+
+```json
+{ "type": "srtConn", "id": "<publisher UUID>" }
+```
+
+The enclosing API item identifies the reader UUID and path. This is the selected
+source identity, not a later lookup of the current path or proof of frame delivery.
+Copies keep old snapshots independent of subsequent source replacement; the field
+is cleared on reader exit. Idle/publisher connections, unsupported sources and
+alwaysAvailable paths omit it. The publisher-only clock metadata stays unchanged.
+Production worker pipeline reads still need their own authenticated association;
+the qualification fixture's read query is only a unique test marker.
+
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:clock-v1 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:clock-v2 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
@@ -41,17 +58,23 @@ removes its containers:
 DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer pnpm test:relay-origin
 ```
 
-The existing `pnpm test:relay-clock` continues to characterize the stock relay.
-To confirm that mapped qualification rejects missing metadata, explicitly require
-it from the stock image (expected failure):
+The mapped command requires actual origin and reader-source metadata for every
+reader, in addition to its raw media checks. The existing `pnpm test:relay-clock`
+continues to characterize the stock relay. To confirm that mapped qualification
+rejects missing reader association, use the previously qualified clock-v1 image
+(expected failure after its valid origin check):
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
   pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs \
-  --mapping-image=bluenviron/mediamtx:1.21.0
+  --mapping-image=scorebug/ingest:clock-v1
 ```
 
-See [the implementation plan](../../docs/superpowers/plans/2026-09-15-relay-origin-metadata.md)
+The stock `bluenviron/mediamtx:1.21.0` image also fails mapped mode, earlier because
+it has no origin metadata. Neither omission is filled with a guessed constant.
+
+See the [origin plan](../../docs/superpowers/plans/2026-09-15-relay-origin-metadata.md),
+[reader-source plan](../../docs/superpowers/plans/2026-09-15-relay-reader-source.md)
 and [boundary contract](../../docs/relay-clock-correspondence.md) for qualification
 results and remaining production association work. This build is not yet selected
 by the regular local or remote deployment configurations.

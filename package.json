@@ -38,7 +38,7 @@
     "test:native-watch": "node scripts/test-native-watch.mjs",
     "test:paired-watch": "node scripts/test-paired-watch.mjs",
     "test:relay-clock": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs",
-    "test:relay-origin": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs --mapping-image=scorebug/ingest:clock-v1"
+    "test:relay-origin": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs --mapping-image=scorebug/ingest:clock-v2"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

@@ -5,6 +5,7 @@ import {
   compareRelayClock,
   videoPayloadHashes,
   qualifyRelayOrigin,
+  qualifyRelayReader,
 } from '../relay-clock-comparison.mjs';
 import { psiCRC, PTS_MODULUS, moduloPTS } from '../transport-clock-parser.mjs';
 
@@ -379,6 +380,172 @@ test('retains existing finite TS and frame bounds', () => {
 
 // The API mapping must explain the same complete picture comparison, not endpoints.
 const publicationID = 'd6c217a3-27c5-44ea-a55e-3b951c67981f';
+const readerID = '31a88519-e2c9-4d8f-9ee0-8b2a275a18ca';
+const readerFixture = () => ({
+  path: 'fixture',
+  publisherId: publicationID,
+  readerQuery: `sbr1=${readerID}`,
+  connection: {
+    id: readerID,
+    path: 'fixture',
+    state: 'read',
+    query: `sbr1=${readerID}`,
+    scorebugReaderSource: { type: 'srtConn', id: publicationID },
+    user: 'secret',
+    remoteAddr: 'private',
+  },
+});
+test('qualifies the exact reader query and immutable source without retaining private API data', () => {
+  const input = readerFixture();
+  const saved = structuredClone(input);
+  assert.deepEqual(qualifyRelayReader(input), {
+    readerId: readerID,
+    publisherId: publicationID,
+    path: 'fixture',
+  });
+  assert.deepEqual(input, saved);
+});
+for (const [label, change] of [
+  [
+    'missing connection',
+    (x) => {
+      x.connection = undefined;
+    },
+  ],
+  [
+    'missing source',
+    (x) => {
+      delete x.connection.scorebugReaderSource;
+    },
+  ],
+  [
+    'null source',
+    (x) => {
+      x.connection.scorebugReaderSource = null;
+    },
+  ],
+  [
+    'wrong source protocol',
+    (x) => {
+      x.connection.scorebugReaderSource.type = 'rtmpConn';
+    },
+  ],
+  [
+    'replacement publisher',
+    (x) => {
+      x.connection.scorebugReaderSource.id = readerID;
+    },
+  ],
+  [
+    'publisher connection',
+    (x) => {
+      x.connection.state = 'publish';
+    },
+  ],
+  [
+    'idle connection',
+    (x) => {
+      x.connection.state = 'idle';
+    },
+  ],
+  [
+    'other reader path',
+    (x) => {
+      x.connection.path = 'other';
+    },
+  ],
+  [
+    'empty path',
+    (x) => {
+      x.path = '';
+      x.connection.path = '';
+    },
+  ],
+  [
+    'oversized path',
+    (x) => {
+      x.path = 'x'.repeat(129);
+      x.connection.path = x.path;
+    },
+  ],
+  [
+    'malformed reader id',
+    (x) => {
+      x.connection.id = 'bad';
+    },
+  ],
+  [
+    'reader newline',
+    (x) => {
+      x.connection.id += '\n';
+    },
+  ],
+  [
+    'publisher equals reader',
+    (x) => {
+      x.connection.id = publicationID;
+    },
+  ],
+  [
+    'malformed publisher id',
+    (x) => {
+      x.publisherId = 'bad';
+      x.connection.scorebugReaderSource.id = 'bad';
+    },
+  ],
+  [
+    'publisher newline',
+    (x) => {
+      x.publisherId += '\n';
+      x.connection.scorebugReaderSource.id = x.publisherId;
+    },
+  ],
+  [
+    'another query',
+    (x) => {
+      x.connection.query = `sbr1=${publicationID}`;
+    },
+  ],
+  [
+    'missing query',
+    (x) => {
+      delete x.connection.query;
+    },
+  ],
+  [
+    'unscoped query',
+    (x) => {
+      x.readerQuery = 'unscoped';
+      x.connection.query = x.readerQuery;
+    },
+  ],
+  [
+    'query newline',
+    (x) => {
+      x.readerQuery += '\n';
+      x.connection.query = x.readerQuery;
+    },
+  ],
+  [
+    'duplicate query',
+    (x) => {
+      x.readerQuery += '&' + x.readerQuery;
+      x.connection.query = x.readerQuery;
+    },
+  ],
+  [
+    'uppercase query',
+    (x) => {
+      x.readerQuery = x.readerQuery.toUpperCase();
+      x.connection.query = x.readerQuery;
+    },
+  ],
+])
+  test(`rejects reader association with ${label}`, () => {
+    const input = readerFixture();
+    change(input);
+    assert.throws(() => qualifyRelayReader(input));
+  });
 const originFixture = (origin = 9000) => {
   const before = records(5, PTS_MODULUS - 4000);
   return {

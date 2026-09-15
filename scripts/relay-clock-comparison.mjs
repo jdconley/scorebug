@@ -2,6 +2,38 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { MAX_FRAMES, PTS_MODULUS, moduloPTS, parseTransport } from './transport-clock-parser.mjs';
 
+// Identity at reader attachment, not frame receipt or a current-path lookup.
+export function qualifyRelayReader({ path, publisherId, readerQuery, connection }) {
+  const uuid = (value) =>
+    typeof value === 'string' &&
+    value.length === 36 &&
+    /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
+  assert.ok(
+    typeof path === 'string' && path.length > 0 && path.length <= 128,
+    'Invalid reader path',
+  );
+  assert.ok(uuid(publisherId), 'Invalid publisher identity');
+  assert.ok(uuid(connection?.id), 'Invalid reader identity');
+  assert.notEqual(connection.id, publisherId, 'Publisher cannot identify the reader');
+  assert.ok(
+    typeof readerQuery === 'string' &&
+      readerQuery.length === 41 &&
+      readerQuery.startsWith('sbr1=') &&
+      uuid(readerQuery.slice(5)),
+    'Invalid reader query marker',
+  );
+  assert.equal(connection.query, readerQuery, 'Reader query identity mismatch');
+  assert.equal(connection.path, path, 'Reader path mismatch');
+  assert.equal(connection.state, 'read', 'Connection is not reading');
+  assert.equal(connection.scorebugReaderSource?.type, 'srtConn', 'Missing SRT reader source');
+  assert.equal(
+    connection.scorebugReaderSource?.id,
+    publisherId,
+    'Reader publisher identity mismatch',
+  );
+  return { readerId: connection.id, publisherId, path };
+}
+
 // Hash compressed picture bytes, excluding Annex B framing and the framing NALs
 // MediaMTX can insert/remove. Length prefixes preserve slice boundaries/order.
 function pictureHash(payload) {
