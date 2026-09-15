@@ -233,6 +233,83 @@ import XCTest
         XCTAssertEqual(publisher.stops, 1)
     }
 
+    func testIngressObservationSeparatesReadinessOverflowAndJoinedShutdown() async throws {
+        let startGate = PublishingGate(), appendGate = PublishingGate(), stopGate = PublishingGate()
+        defer { startGate.release(); appendGate.release(); stopGate.release() }
+        let publisher = PublisherFixture(startGate: startGate, appendGate: appendGate, stopGate: stopGate)
+        let configuration = ingressConfiguration()
+        let session = try PublishingSession(publisher: publisher, maxItems: 1, maxBytes: 10,
+            ingressObservation: configuration)
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .startup)
+        XCTAssertFalse(session.offer(try publishingAudio(99)))
+        let start = Task { try await session.start() }
+        await startGate.waitUntilEntered()
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .startup)
+        XCTAssertTrue(session.snapshot.ingressObservation?.totalDispositions.isEmpty == true)
+        startGate.release()
+        try await start.value
+        XCTAssertEqual(session.snapshot.ingressObservation?.phase, .admitting)
+        XCTAssertTrue(session.offer(try publishingAudio(0)))
+        await appendGate.waitUntilEntered()
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        XCTAssertTrue(session.offer(try publishingAudio(2)))
+        let active = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertEqual(active.scope, configuration.scope)
+        XCTAssertEqual(active.maxItems, 1)
+        XCTAssertEqual(active.maxBytes, 10)
+        XCTAssertEqual(active.totalDispositions[.admitted]?[.audio]?.count, 3)
+        XCTAssertEqual(active.totalDispositions[.dequeued]?[.audio]?.count, 1)
+        XCTAssertEqual(active.totalDispositions[.overflowEvicted]?[.audio]?.count, 1)
+        XCTAssertEqual(active.totalDispositions[.overflowEvicted]?[.audio]?.minimumSourcePTS?.seconds, 1)
+        let stop = Task { await session.stop() }
+        await stopGate.waitUntilEntered()
+        let closing = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertTrue(closing.isClosed)
+        XCTAssertEqual(session.snapshot.state, .stopping)
+        XCTAssertEqual(closing.totalDispositions[.cancellationDiscarded]?[.audio]?.minimumSourcePTS?.seconds, 2)
+        XCTAssertEqual(closing.currentItems, 0)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(session.snapshot.ingressObservation?.current.monotonicEnd, closing.current.monotonicEnd)
+        stopGate.release()
+        await stop.value
+        XCTAssertEqual(session.snapshot.state, .stopped)
+        XCTAssertEqual(session.snapshot.ingressObservation?.current.monotonicEnd, closing.current.monotonicEnd)
+    }
+
+    func testFailedReadinessClosesStartupObservationWithoutInventingAdmission() async throws {
+        let session = try PublishingSession(publisher: PublisherFixture(startFails: true),
+            ingressObservation: ingressConfiguration())
+        do { try await session.start(); XCTFail("Expected startup failure") } catch {}
+        let snapshot = try XCTUnwrap(session.snapshot.ingressObservation)
+        XCTAssertTrue(snapshot.isClosed)
+        XCTAssertEqual(snapshot.phase, .closed)
+        XCTAssertTrue(snapshot.totalDispositions.isEmpty)
+        XCTAssertEqual(snapshot.totalOccupancy.maxPressureSeconds, 0)
+        XCTAssertEqual(snapshot.invalidity, [])
+    }
+
+    func testUnavailableIngressDiagnosticsKeepPublishingUsable() async throws {
+        let valid = ingressConfiguration()
+        let invalid = LiveIngressObservationConfiguration(scope: valid.scope, monotonicAnchor: .nan)
+        for configuration in [nil, invalid] {
+            let publisher = PublisherFixture()
+            let session = try PublishingSession(publisher: publisher, ingressObservation: configuration)
+            try await session.start()
+            XCTAssertTrue(session.offer(try publishingAudio(5)))
+            await eventually { publisher.seconds == [5] }
+            XCTAssertNil(session.snapshot.ingressObservation)
+            await session.stop()
+            XCTAssertNil(session.snapshot.ingressObservation)
+            XCTAssertEqual(session.snapshot.sentSamples, 1)
+        }
+    }
+
+    private func ingressConfiguration() -> LiveIngressObservationConfiguration {
+        .init(scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1),
+            monotonicAnchor: ProcessInfo.processInfo.systemUptime)
+    }
+
     private func eventually(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         let deadline = ContinuousClock.now + .seconds(2)
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }

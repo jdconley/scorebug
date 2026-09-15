@@ -265,6 +265,14 @@ The [pure-policy implementation plan](2026-09-14-adaptive-quality-policy.md) sta
 this milestone. Its [runtime telemetry contract](../../adaptive-telemetry.md)
 records which measurements still need instrumentation before app enablement.
 
+The [live ingress pressure slice](2026-09-15-live-ingress-pressure.md) now connects
+time-weighted mailbox occupancy and per-kind dispositions to each publishing attempt
+and the native app. Full Media passes 162 tests, FilmModels 87, and the combined
+iPhone/Watch Release build passes. Native export/long-run qualification of these new
+measurements remains next; they do not establish link capacity or enable adaptation.
+Source inspection also confirms that native bitrate application must be verified:
+the existing SDK setter discards the VideoToolbox property-write result.
+
 **Files:** new `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,
 its Swift tests, capture/publish adapter, worker telemetry/profile handling,
 shared protocol telemetry fixtures, new `infra/local/netem/`,

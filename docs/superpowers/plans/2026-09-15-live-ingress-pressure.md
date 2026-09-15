@@ -83,3 +83,71 @@ A bounded read-only review of mailbox, publishing-session and app lifecycle owne
 endorses this scope. It specifically requires separating shutdown discards, measuring
 inside actual mailbox mutations, and preserving occupied gaps rather than treating
 them as empty. No implementation or runtime qualification is claimed yet.
+
+## Implemented accumulator, mailbox and app checkpoint
+
+Steps 1–3 are implemented. `LiveIngressObservationAccumulator` keeps bounded scalar
+windows and lifetime totals, with normalized item/byte/instantaneous-maximum areas,
+phase occupancy, per-kind dispositions and rational PTS summaries. Invalid clocks
+retain actual depth and cumulative counts but quarantine unknown elapsed time and
+leave events unassigned to windows. Impossible item/byte relationships invalidate
+occupancy. Half-open boundary transitions do not carry a previous depth's peak into
+the new interval. Terminal closure freezes time and evidence.
+
+`BoundedMailbox` owns optional instrumentation inside its existing lock and exposes
+an atomic statistics/observation snapshot. The default path adds no clock reading or
+metadata extraction. Direct handoff counts admitted/dequeued with zero queued area;
+overflow and cancellation use metadata from the removed entries. Waiting-task
+cancellation does not close the observation. Finish measures draining until the
+last queued element is removed; cancellation closes at discard. Later terminal
+rejections remain visible in legacy statistics but are outside the frozen ingress
+observation. No continuations or element deinitializers are invoked under a new lock.
+
+`PublishingSession` starts observation in startup phase, marks admission only after
+readiness under its existing ownership lock, and supplies scalar sample kind/PTS
+only when observations are available. Cancellation closes ingress before joined
+publisher/encoder shutdown. The app copies the video scope, anchor and window
+duration, publishes current/frozen ingress snapshots through its local health loop,
+and guards final retention against newer attempts. Diagnostic construction failure
+leaves both media branches available. Live encoder settings remain fixed.
+
+Verification completes with actual exit 0:
+
+- 15 accumulator tests, including behavioral red (52 issues), impossible-depth red
+  (18 issues) and the independently found boundary-peak red (4 issues).
+- 8 mailbox integration tests after compiled behavioral red, covering analytic
+  areas, direct handoff, mixed-kind eviction/discard, drain, invalid clocks and
+  concurrent atomic snapshots and cancellation conservation. The existing retained-
+  element test also passes with instrumentation both disabled and enabled.
+  All 18 publishing-session tests pass.
+- Full Media: 107 XCTest plus 55 Swift Testing tests, 162 total.
+- App integration: 40 targeted tests pass after 14 behavioral-red assertions;
+  full FilmModels passes all 87 tests. The combined iPhone/Watch Release build passes.
+- Independent scalar, mailbox, publishing-session and app reviews approve the
+  final behavior. The scalar review's boundary finding was reproduced and fixed.
+
+Logs are `artifacts/qa/live-ingress-{accumulator-*,consistency-*,boundary-*,mailbox-*,
+publishing-*,media-full,media-final,film-*,native-release}.log`. The native fixture does not yet
+export or qualify ingress data, so this checkpoint is not long-run media evidence
+for the new instrumentation and does not enable adaptive quality.
+
+## Remaining native qualification
+
+Add the frozen ingress snapshot to the existing explicitly enabled simulator-only
+`video-observation.json` export, through its joined, attempt-guarded writer. Preserve
+bounded windows/totals/phases/budgets, decimal counter strings, rational PTS and
+invalidity. No new runner or capacity threshold is needed.
+
+Write focused serializer and strict JavaScript qualifier tests for malformed scope,
+clock/bounds, omitted history, inconsistent areas and accounting. Require matching
+video scope/anchor/window duration, terminal zero depth, finite bounded areas, no
+invalid timing, and complete retained history for this fixture. Check window sums
+against lifetime totals and admitted = dequeued + overflow-evicted + cancellation-
+discarded for each kind; preserve shutdown discards separately. Verify ingress closes
+between capture detach and video-observer closure. Compare PTS extrema with archive
+bounds without asserting continuity or equating dequeues to encoded frames.
+
+Include the qualified summary in existing native results and run the uninstrumented
+600-second workflow with all current archive, frame-delivery, A/V, workload and worker
+evidence gates intact. This plan has independent read-only design review; implementation
+and native qualification of this remaining export slice are still pending.

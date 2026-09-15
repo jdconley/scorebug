@@ -1,3 +1,4 @@
+import CoreMedia
 import Foundation
 
 /// One transport/encoder instance for one publishing attempt. Capture callbacks
@@ -25,6 +26,7 @@ public struct PublishingSessionSnapshot: Sendable {
     /// encoded frames, network delivery, or remote playback.
     public let sentSamples: Int
     public let queue: BoundedMailbox<CapturedMediaSample>.Statistics
+    public let ingressObservation: LiveIngressObservationSnapshot?
 }
 
 /// Strong owner of a single publishing attempt, independent of the offline archive.
@@ -40,10 +42,11 @@ public final class PublishingSession: Sendable {
     private let core: PublishingCore
     public init(publisher: any MediaPublisher, maxItems: Int = 8,
                 maxBytes: Int = 12 * 1024 * 1024,
-                healthCheckInterval: Duration = .milliseconds(250)) throws {
+                healthCheckInterval: Duration = .milliseconds(250),
+                ingressObservation: LiveIngressObservationConfiguration? = nil) throws {
         guard healthCheckInterval > .zero else { throw PublishingSessionError.invalidHealthCheckInterval }
         core = try PublishingCore(publisher: publisher, maxItems: maxItems, maxBytes: maxBytes,
-                                  healthCheckInterval: healthCheckInterval)
+                                  healthCheckInterval: healthCheckInterval, ingressObservation: ingressObservation)
     }
     deinit { core.cancel() }
     public var snapshot: PublishingSessionSnapshot { core.snapshot }
@@ -66,13 +69,24 @@ private final class PublishingCore: @unchecked Sendable {
     private var monitor: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
 
-    init(publisher: any MediaPublisher, maxItems: Int, maxBytes: Int, healthCheckInterval: Duration) throws {
+    init(publisher: any MediaPublisher, maxItems: Int, maxBytes: Int, healthCheckInterval: Duration,
+         ingressObservation: LiveIngressObservationConfiguration?) throws {
         self.publisher = publisher; self.healthCheckInterval = healthCheckInterval
-        mailbox = try BoundedMailbox(maxItems: maxItems, maxBytes: maxBytes, overflowPolicy: .dropOldest)
+        // Readiness belongs to this session, regardless of the generic mailbox's
+        // default admission phase. Configuration is immutable and diagnostic only.
+        let configuration = ingressObservation.map {
+            LiveIngressObservationConfiguration(scope: $0.scope, monotonicAnchor: $0.monotonicAnchor,
+                windowDuration: $0.windowDuration, completedWindowLimit: $0.completedWindowLimit, initialPhase: .startup)
+        }
+        mailbox = try BoundedMailbox(maxItems: maxItems, maxBytes: maxBytes, overflowPolicy: .dropOldest,
+                                     ingressObservation: configuration)
     }
     var snapshot: PublishingSessionSnapshot {
-        lock.withLock { PublishingSessionSnapshot(state: state, failure: failure,
-                                                  sentSamples: sentSamples, queue: mailbox.statistics) }
+        lock.withLock {
+            let measured = mailbox.snapshot
+            return PublishingSessionSnapshot(state: state, failure: failure, sentSamples: sentSamples,
+                queue: measured.statistics, ingressObservation: measured.ingressObservation)
+        }
     }
     func start() async throws {
         let pending = try lock.withLock {
@@ -95,6 +109,7 @@ private final class PublishingCore: @unchecked Sendable {
             guard await publisher.isPublishing else { throw PublishingSessionError.publisherUnhealthy }
             try lock.withLock {
                 guard state == .starting else { throw failure ?? PublishingSessionError.cancelled }
+                mailbox.beginObservedAdmission()
                 state = .publishing
                 consumer = Task.detached { await self.consume() }
                 monitor = Task.detached { await self.monitorHealth() }
@@ -112,7 +127,12 @@ private final class PublishingCore: @unchecked Sendable {
     func offer(_ sample: CapturedMediaSample) -> Bool {
         lock.withLock {
             guard state == .publishing else { return false }
-            return mailbox.offer(sample, bytes: sample.retainedByteCount).acceptedCount == 1
+            let metadata: LiveIngressSampleMetadata?
+            if mailbox.hasIngressObservation {
+                metadata = .init(kind: sample.kind == .video ? .video : .audio,
+                                 sourcePTS: sample.sampleBuffer.presentationTimeStamp)
+            } else { metadata = nil }
+            return mailbox.offer(sample, bytes: sample.retainedByteCount, observation: metadata).acceptedCount == 1
         }
     }
     private func consume() async {

@@ -25,6 +25,9 @@ import ScorebugStreaming
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
     @Published private(set) var videoObservation: VideoFrameObservationSnapshot?
+    /// Same attempt/anchor as video observations, but closes at ingress cancellation
+    /// rather than encoder-drain completion. This is not transport capacity or loss.
+    @Published private(set) var ingressObservation: LiveIngressObservationSnapshot?
     #if DEBUG
     // Explicit simulator fixture flag; Mac unit tests opt in by injection.
     var workerReportAgeProofsEnabled: Bool = {
@@ -180,7 +183,7 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy, publishing == nil, let context = current else { return }
         busy = true
         let attempt = UUID(); epoch = attempt; actionID = attempt
-        diagnosticAttemptID = attempt; videoObservation = nil
+        diagnosticAttemptID = attempt; videoObservation = nil; ingressObservation = nil
         localState = .starting; message = nil; clearWorker()
         let task = Task { [self] in
             do {
@@ -217,7 +220,9 @@ import ScorebugStreaming
                 videoObservation = observations?.snapshot
                 let session: PublishingSession
                 do {
-                    session = try PublishingSession(publisher: publisherFactory(access.publishUrl, observations))
+                    session = try PublishingSession(publisher: publisherFactory(access.publishUrl, observations),
+                        ingressObservation: ingressConfiguration(for: videoObservation))
+                    ingressObservation = session.snapshot.ingressObservation
                 } catch {
                     videoObservation = observations?.close()
                     throw error
@@ -361,6 +366,7 @@ import ScorebugStreaming
         videoObservation = publishing.observations?.poll()
         let snapshot = publishing.session.snapshot
         sentSamples = snapshot.sentSamples
+        ingressObservation = snapshot.ingressObservation
         if snapshot.failure != nil || snapshot.state == .stopped {
             detachPublisher(); shouldStopOwnedBroadcast = true
             localState = .failed
@@ -402,6 +408,17 @@ import ScorebugStreaming
         try Task.checkCancellation()
         guard current?.id == context.id, current?.tap === context.tap, epoch == attempt else { throw CaptureControlError.recordingStopped }
     }
+    private func ingressConfiguration(for snapshot: VideoFrameObservationSnapshot?) -> LiveIngressObservationConfiguration? {
+        guard let snapshot else { return nil }
+        #if DEBUG && targetEnvironment(simulator)
+        let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)
+        #else
+        let limit = 8
+        #endif
+        return .init(scope: snapshot.scope, monotonicAnchor: snapshot.monotonicAnchor,
+            windowDuration: snapshot.windowDuration, completedWindowLimit: limit, initialPhase: .startup)
+    }
+
     private func detachPublisher() {
         if let publishing {
             publishing.context.tap.detach(publishing.session)
@@ -414,6 +431,9 @@ import ScorebugStreaming
             let workerReportAgeProofs = workerReportAgeProofHistory.proofs
             #endif
             publishing.session.cancel()
+            if diagnosticAttemptID == publishing.attempt {
+                ingressObservation = publishing.session.snapshot.ingressObservation
+            }
             let session = publishing.session
             let observations = publishing.observations, attempt = publishing.attempt
             let id = UUID()
@@ -427,6 +447,7 @@ import ScorebugStreaming
                 if teardownID == id {
                     if diagnosticAttemptID == attempt {
                         videoObservation = final
+                        ingressObservation = session.snapshot.ingressObservation
                         #if DEBUG
                         if let final, let captureDetachedAt, let fixtureWriter {
                             await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs)

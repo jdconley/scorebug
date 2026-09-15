@@ -10,7 +10,7 @@ now connects capture and actual encoder-completion measurements while retaining 
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
 | `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt |
-| Publishing mailbox occupancy/drops      | Bounded raw sample queue, including audio and video                                                           | Time-weighted occupancy and per-kind/source-PTS loss                                                     |
+| `CaptureStreamingModel.ingressObservation` | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries | Native-run qualification, in-flight/SDK buffering, source-loss denominator and transport capacity |
 | `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
 | `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
@@ -54,6 +54,16 @@ now connects capture and actual encoder-completion measurements while retaining 
    keyframe/codec and destination-canvas qualification; bitrate support alone is
    insufficient.
 
+Source inspection confirms a concrete application-acknowledgment gap before step 7:
+`SRTPublisher.setBitRate` awaits `SRTStream.setVideoSettings`, but the pinned SDK's
+`VideoCodecSettings.apply` discards the optional native session's `setOption` result.
+The SRT setter checks the codec format and assigns settings; it does not establish
+successful application to an existing VideoToolbox session. Its current successful
+return therefore cannot serve as a `QualityController` acknowledgment. Future live
+control must propagate and verify actual application, including missing sessions,
+native errors, concurrent shutdown and stale attempts. This read-only finding does
+not change the currently fixed live profile.
+
 Tests should inject complete windows, stale/duplicate reports, counter resets,
 clock changes, reconnects, invalid values, and absent metrics. Then replay measured
 impairment traces and compare recommendations with fully decoded output. Until those
@@ -68,6 +78,18 @@ intermittent export timeout remains unexplained; see the
 [measured results](superpowers/plans/2026-09-15-structured-motion-edges.md#complete-instrumented-ten-minute-pass).
 The next diagnostic-only slice measures
 [time-weighted live ingress pressure](superpowers/plans/2026-09-15-live-ingress-pressure.md).
+
+That slice now connects the scalar accumulator, optional mailbox instrumentation,
+publishing-session lifecycle and app snapshots. Full Media passes 162 tests and full
+FilmModels passes 87; the combined iPhone/Watch Release build passes. Invalid clocks
+preserve actual mailbox operation while making the affected time unknown. Terminal
+queue cancellation freezes observations before encoder shutdown completes. The
+default archive mailbox performs no extra clock or metadata work.
+
+The native fixture export/qualification remains open. These model tests do not
+establish sustained camera performance with instrumentation, useful link capacity,
+viewer receipt or safe quality increases. See the linked plan for exact evidence
+and the next uninstrumented ten-minute gate.
 
 ## Local observation accumulator
 
