@@ -69,8 +69,9 @@ Two boundaries require explicit design before implementation:
    because the setter has a new isolated test.
 
 A bounded read-only source review agrees with this direction and identified the
-notification-invalidation and profile-boundary limitations above. No implementation,
-native property-application proof or runtime adaptation is claimed by this plan.
+notification-invalidation and profile-boundary limitations above. That review preceded
+implementation; the completed evidence is recorded below.
+Runtime adaptation remains disabled.
 
 ## Lifecycle design decision before implementation
 
@@ -133,7 +134,37 @@ Verification so far has actual exit 0:
   it includes the two added codec primitives and 13 modified upstream files.
 
 Separate specification and quality reviews approve both the property helper and
-lifecycle integration. Logs are `artifacts/qa/verified-bitrate-*.log`. The existing
-five-scenario dual-output qualification remains next. The latter
-already changes the real app adapter from 6 to 2 Mbps after five source seconds,
-so it can validate the strengthened setter without a new harness or another long run.
+lifecycle integration. Logs are `artifacts/qa/verified-bitrate-*.log`.
+
+## Five-scenario native dual-output qualification
+
+At implementation commit `48155ea`, `pnpm test:dual-output` exits 0 with evidence in
+`artifacts/qa/dual-output-tT1UH7` and `verified-bitrate-dual-output.log`. The existing
+14-second Mac harness changes the real app adapter from 6 to 2 Mbps after five
+source seconds, exercising the dedicated native write/readback path.
+
+| Scenario | Archive frames | Live frames | Measured video rate before → after | Peak RSS |
+| --- | ---: | ---: | --- | ---: |
+| Record only | 420 | — | — | 75.7 MiB |
+| Normal | 420 | 420 | 6.135 → 1.982 Mbps | 94.5 MiB |
+| Normal, source clock +123.25 s | 420 | 420 | 6.068 → 2.016 Mbps | 94.7 MiB |
+| Stalled receiver | 420 | Failure reported | — | 81.3 MiB |
+| Absent receiver | 420 | Failure reported | — | 76.1 MiB |
+
+All archives retain source frames 0–419 at 30 fresh fps, with no archive rejections,
+complete audio coverage and all six expected audio markers. Maximum archive marker
+offset is 0.021 ms and audio tail padding is 14.667 ms. Both normal live outputs
+retain frames 0–419 with no source-frame loss; their minimum five-second cadence is
+29.8 and 30 fps. All seven live audio markers match, maximum offset is 65.375 ms,
+and audio tail padding is 15.988 ms, within the unchanged 100 ms coverage gate.
+Maximum producer lag across all scenarios is 9.941 ms (250 ms limit). Archive and
+live queued bytes remain below their 24 MiB and 12 MiB budgets. The absent receiver
+causes live evictions/rejections while the archive remains complete; those live
+losses are expected and are not described as successful streaming.
+
+This is measured output-rate evidence for these short local workloads, separately
+from native property acceptance. It does not identify the first affected frame,
+qualify available network capacity, prove physical iPhone performance, or extend
+the earlier ten-minute app run to this new implementation. Production source-clock
+correlation and profile-transition boundaries remain the next prerequisites, followed
+by qualified capacity/pressure inputs and impairment tests before policy activation.

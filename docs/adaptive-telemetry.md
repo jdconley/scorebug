@@ -59,9 +59,13 @@ now provides a dedicated average-rate update with checked native writes/readback
 matching burst limits, lifecycle guards and explicit failure on uncertain application.
 The previous generic SDK setter still cannot act as an acknowledgment; the app uses
 the dedicated path. Real small-encoder fixtures verify accepted settings and continued
-frame output. This does not identify the first frame affected by the setting, establish
-achieved output rate/capacity or authorize relabeling queued completions with a new
-profile revision. Those transition and telemetry boundaries remain required before
+frame output. The five-scenario Mac dual-output run at `48155ea` also passes:
+normal live packet rates decrease from 6.135 to 1.982 Mbps and 6.068 to 2.016 Mbps,
+with all 420 source frames retained in each live output. Every archive remains
+complete, including stalled/absent receivers. This establishes achieved rates for
+these short fixtures, but does not identify the first frame affected by the setting,
+establish available link capacity or authorize relabeling queued completions with a
+new profile revision. Those transition and telemetry boundaries remain required before
 runtime policy activation.
 
 Tests should inject complete windows, stale/duplicate reports, counter resets,
@@ -96,7 +100,7 @@ no evictions/discards/rejections. Mean maximum pressure is 0.009745% of queue bu
 All prior media gates pass. This does not establish physical camera performance,
 useful link capacity, viewer receipt or safe quality increases. The earlier export
 timeout and pixel-noise overload remain unresolved. See the linked plan for evidence
-and the [next verified-bitrate slice](superpowers/plans/2026-09-15-verified-live-bitrate.md).
+and the [completed verified-bitrate primitive](superpowers/plans/2026-09-15-verified-live-bitrate.md).
 
 ## Local observation accumulator
 

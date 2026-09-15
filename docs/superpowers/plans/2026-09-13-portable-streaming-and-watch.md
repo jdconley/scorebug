@@ -274,10 +274,16 @@ iPhone/Watch Release build, with independent review. The ten-minute native gate 
 passes at `11247df` without temporary export tracing: 19,018 archive and 18,620 acquired
 live frames at 30 fps, zero source loss, complete encoded tail, and fully conserved
 ingress accounting. These measurements do not establish link capacity or enable
-adaptation. The next primitive is
-[verified live bitrate application](2026-09-15-verified-live-bitrate.md).
-Source inspection also confirms that native bitrate application must be verified:
-the existing SDK setter discards the VideoToolbox property-write result.
+adaptation. The [verified live bitrate primitive](2026-09-15-verified-live-bitrate.md)
+is now implemented at `48155ea`: dedicated checked native writes/readback, publishing
+identity guards, serialized updates and cancellation handling pass 105 SDK and 21
+Streaming tests plus simulator/device builds. The five-scenario Mac dual-output run
+`dual-output-tT1UH7` passes: both normal streams retain all 420 frames at approximately
+30 fps while measured video rates fall from about 6.1 to 2.0 Mbps. All archives retain
+420 frames and full audio, including stalled and absent receivers. These short runs
+qualify the setter and archive independence, not runtime adaptation or physical
+hardware. Production source-clock correlation, profile-transition boundaries and
+qualified capacity/pressure inputs remain open.
 
 **Files:** new `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,
 its Swift tests, capture/publish adapter, worker telemetry/profile handling,
@@ -289,8 +295,10 @@ shared protocol telemetry fixtures, new `infra/local/netem/`,
       capacity headroom, supported profile limits, bounded queues, and outage state.
 - [ ] Track captured/encoded/received fresh frames separately from muxed/duplicated
       frames. Track archive loss separately from stream loss and output reconnect gaps.
-- [ ] Implement bitrate changes and validate resolution/keyframe transitions. Do not
-      reconfigure the archive in response to venue bandwidth changes.
+- [x] Implement verified live bitrate changes with native readback, lifecycle guards
+      and measured dual-output continuity; keep archive settings independent.
+- [ ] Validate profile-revision boundaries and resolution/keyframe transitions before
+      feeding applied settings back to the automatic policy.
 - [ ] Validate stable destination-canvas handling; report source and output dimensions
       separately. Qualify destination profile changes before enabling them mid-stream.
 - [ ] Impair both directions of SRT inside isolated Linux test containers; use tc/netem

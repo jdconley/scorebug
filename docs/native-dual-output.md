@@ -120,5 +120,13 @@ Still required: sustained dual encoding, network loss/jitter/bandwidth shaping,
 reconnection, adaptive quality, and physical iPhone qualification. Production
 publisher orchestration and capture-role registration are integrated.
 Offline Simulator app workflows have a separate
-[native app validation runner](native-film-app.md). Native Watch scoring
-remains a separate planned milestone.
+[native app validation runner](native-film-app.md). [Native Watch scoring](native-watch-app.md)
+has a separate qualification track; physical pairing and radio tests remain open.
+
+The verified-bitrate repeat at `48155ea` (`dual-output-tT1UH7`) passes all five
+scenarios through the dedicated checked native property-update path. Both normal
+streams retain all 420 frames; measured video rates change from 6.135 to 1.982 Mbps
+and 6.068 to 2.016 Mbps. All archives retain 420 frames and complete audio, including
+receiver failure cases. Peak RSS is 94.7 MiB and maximum producer lag is 9.941 ms.
+See the [bitrate qualification](superpowers/plans/2026-09-15-verified-live-bitrate.md#five-scenario-native-dual-output-qualification)
+for A/V measurements, queue limits and the remaining profile-boundary limitations.
