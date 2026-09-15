@@ -40,6 +40,15 @@ now connects capture and actual encoder-completion measurements while retaining 
    decoder PTS therefore need an explicit, attempt-scoped clock mapping, including
    qualification of demux normalization and timestamp wrap. Numeric equality or
    the first frame observed by a worker that joined later cannot establish it.
+   The [transport clock calibration](superpowers/plans/2026-09-15-transport-clock-calibration.md)
+   now finds a finite-fixture-compatible worker path on Mac FFmpeg 8.1.2 and Linux
+   FFmpeg 5.1.9: preserve input timestamps, retain the explicit frame-rate cap,
+   use timestamp passthrough and normalize only at the output muxer. Plain `-copyts`
+   loses frames around timestamp wrap under the current VFR output path. The
+   successful candidate preserves exact wire correspondence modulo 2^33 and all
+   frame identities in six full/late input cases. Production flags remain unchanged;
+   native serialization, an attempt-scoped anchor and matching source-interval
+   counts are still required.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof
