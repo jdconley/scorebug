@@ -185,3 +185,15 @@ suite. Repeat Release validation after the bounded transport is added.
 
 These are local protocol/model checks, not completed WatchConnectivity integration.
 The app still uses direct HTTP for Watch scoring until the next wiring checkpoint.
+
+Physical availability changed at this checkpoint: `devicectl list devices` now
+reports the iPhone 16 Pro and Apple Watch Ultra 2 as available (paired), with command
+exit 0 (`watch-relay-device-availability.log`). This is device discovery only;
+installation/signing, running apps and real relay delivery have not been qualified.
+Attempt those after app-scoped forwarding and native session wiring are tested.
+
+The [bounded message owner](2026-09-15-native-watch-relay-transport.md) is now
+implemented and independently reviewed. Full Core passes 159 tests; the Release
+app build passes with both Watch architectures and the final phone pairing gate.
+The next concrete implementation task is the scoped phone HTTP forwarder, followed
+by the existing-session native adapter and Watch scoring-client injection.

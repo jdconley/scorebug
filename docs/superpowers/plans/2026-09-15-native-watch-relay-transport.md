@@ -42,3 +42,29 @@ for rejected input. This supports immediate bounded failure replies at admission
 then one owned async forwarding task for an accepted request. See
 [sendMessageData](https://developer.apple.com/documentation/watchconnectivity/wcsession/sendmessagedata(_:replyhandler:errorhandler:))
 and [the receiving delegate](https://developer.apple.com/documentation/watchconnectivity/wcsessiondelegate/session(_:didreceivemessagedata:replyhandler:)).
+
+## Implemented local request owner
+
+`WatchRelayMessageTransport` now owns one MainActor continuation, absolute deadline,
+cancelable timer and immutable request UUID. It validates the bounded request before
+dispatch. A private lock admits at most one callback, replacing oversized reply
+bytes or invalid HTTP error metadata before creating its actor Task. The injected
+scheduler must defer its callback rather than call inline; the default uses an
+asynchronous cancellable Task. Early timer callbacks rearm to the original deadline.
+
+Fifteen focused tests pass, including a real-file outbox whose timed-out committed
+command recovers via one receipt with no second mutation. Expected missing-API and
+metadata-bound failures are retained in `watch-relay-transport-{red,admission-red}.log`;
+`watch-relay-transport-green.log` records terminal exit 0. A draft-only type-inference
+compile failure is preserved separately. Full Core now passes all 159 tests, and
+Release iPhone builds both arm64 and arm64_32 Watch code successfully, including the
+final phone peer-change gate. Both commands terminated with exit 0; logs are
+`watch-relay-transport-{core-full,phone-release}.log`.
+
+This implements injected local ownership only. The WCSession adapter, phone HTTP
+forwarder, route selection and app-level background lifecycle remain unwired.
+
+Independent review approved continuation ownership, bounded callback admission,
+monotonic deadline handling, timer lifetime and durable recovery coverage with no
+concrete correctness findings. Parent also inspected the implementation and verified
+the built Watch executable contains arm64_32 and arm64 slices using Xcode 26.2.
