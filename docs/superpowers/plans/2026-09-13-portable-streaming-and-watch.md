@@ -267,8 +267,10 @@ records which measurements still need instrumentation before app enablement.
 
 The [live ingress pressure slice](2026-09-15-live-ingress-pressure.md) now connects
 time-weighted mailbox occupancy and per-kind dispositions to each publishing attempt
-and the native app. Full Media passes 162 tests, FilmModels 87, and the combined
-iPhone/Watch Release build passes. Native export/long-run qualification of these new
+and the native app. The frozen snapshot now exports through the joined native
+fixture writer and is required by its strict qualifier. Full Media passes 162 tests;
+the export checkpoint passes 89 Film model and 400 tooling tests and the combined
+iPhone/Watch Release build, with independent review. Long-run qualification of these
 measurements remains next; they do not establish link capacity or enable adaptation.
 Source inspection also confirms that native bitrate application must be verified:
 the existing SDK setter discards the VideoToolbox property-write result.

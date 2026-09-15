@@ -899,9 +899,16 @@ import XCTest
             model.workerReportAgeProofsEnabled = true
             var exported: [WorkerReportAgeProof]?
             var closed: VideoFrameObservationSnapshot?
-            model.videoObservationFixtureWriter = { snapshot, detached, proofs in
+            model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress in
                 XCTAssertTrue(snapshot.isClosed)
                 XCTAssertGreaterThanOrEqual(detached, snapshot.monotonicAnchor)
+                XCTAssertEqual(ingress?.scope, snapshot.scope)
+                XCTAssertEqual(ingress?.isClosed, true)
+                XCTAssertEqual(ingress?.phase, .closed)
+                XCTAssertEqual(ingress?.currentItems, 0)
+                XCTAssertEqual(ingress?.currentBytes, 0)
+                XCTAssertGreaterThanOrEqual(ingress?.current.monotonicEnd ?? 0, detached)
+                XCTAssertLessThanOrEqual(ingress?.current.monotonicEnd ?? .infinity, snapshot.current.monotonicEnd)
                 exported = proofs; closed = snapshot
             }
             await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
@@ -922,7 +929,11 @@ import XCTest
         model.workerReportAgeProofsEnabled = true
         let gate = FilmTestGate()
         var exported: [WorkerReportAgeProof] = []
-        model.videoObservationFixtureWriter = { _, _, proofs in
+        model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress in
+            XCTAssertEqual(ingress?.scope, snapshot.scope)
+            XCTAssertEqual(ingress?.isClosed, true)
+            XCTAssertGreaterThanOrEqual(ingress?.current.monotonicEnd ?? 0, detached)
+            XCTAssertLessThanOrEqual(ingress?.current.monotonicEnd ?? .infinity, snapshot.current.monotonicEnd)
             exported = proofs
             await gate.enter()
         }

@@ -10,6 +10,7 @@ import {
   decodeFixtureBarcodes,
   qualifyVideoObservation,
 } from './video-observation-qualification.mjs';
+import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
@@ -462,7 +463,11 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let videoObservation, workerReportAge, archiveDiagnostics, directRecorderDelivery;
+  let videoObservation,
+    ingressObservation,
+    workerReportAge,
+    archiveDiagnostics,
+    directRecorderDelivery;
   if (streaming) {
     assert.equal(states.length, 1, 'Observation fixture must own one recording');
     assert.equal(recordingFolders[0], states[0].id, 'Recording folder/status identity mismatch');
@@ -497,6 +502,11 @@ try {
       },
       archiveIDs,
       liveIDs: liveSegments.flat(),
+      completedWindowLimit: streamingOptions.completedWindowLimit,
+    });
+    ingressObservation = qualifyIngressObservation({
+      snapshot: observationSnapshot,
+      archive: media[0],
       completedWindowLimit: streamingOptions.completedWindowLimit,
     });
     if (process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1') {
@@ -550,6 +560,7 @@ try {
         live,
         statuses: states,
         videoObservation,
+        ingressObservation,
         workerReportAge,
         archiveDiagnostics,
         directRecorderDelivery,

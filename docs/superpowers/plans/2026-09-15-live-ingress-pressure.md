@@ -151,3 +151,34 @@ Include the qualified summary in existing native results and run the uninstrumen
 600-second workflow with all current archive, frame-delivery, A/V, workload and worker
 evidence gates intact. This plan has independent read-only design review; implementation
 and native qualification of this remaining export slice are still pending.
+
+## Native export and qualifier implementation
+
+The existing simulator-only fixture now exports the frozen ingress observation
+through its joined, attempt-guarded writer. An optional nested version-1 object
+preserves bounded windows, phases, budgets, exact decimal counts/rational PTS and
+invalidity without changing existing exports when ingress is absent. The native
+streaming runner requires the new object and includes its qualified summary in
+`results.json` after video identity/media qualification.
+
+The strict qualifier checks scope/anchor/duration, terminal zero depth and close
+ordering, retained history, finite normalized areas, phase/window/total accounting,
+per-kind conservation, and coalesced occupied intervals. Source video extrema map
+to decoded archive frame identities. Audio buffer starts use exact rational
+subtraction of the fixture's 123.25-second source origin and archive audio coverage;
+they are not PCM sample counts or video frame identities. Dequeue counts never
+stand in for encoder completion, fresh frames, network capacity or receiver proof.
+
+Verification has actual exit 0: all 89 Film model tests, all 400 tooling tests
+(including 17 ingress qualifier tests), and the combined iPhone/Watch Release build.
+Serializer tests first failed on missing ingress export; joined-writer tests then
+produced 18 expected assertions with a deliberately absent ingress snapshot before
+final wiring passed. The qualifier's occupied-gap test reproduced underintegration
+before its check was added. Independent review also caught underintegration in
+ordinary event-free windows; a failing regression now covers unchanged depth even
+when rejected offers occur. The correction passes and final independent review
+approves the exporter, joined writer, qualifier and runner integration. Logs are `artifacts/qa/ingress-export-*.log` and
+`artifacts/qa/ingress-qualification-*.log`.
+
+The unchanged 600-second native media workflow is the next acceptance step. No
+export timeout, media threshold, queue budget or encoder setting was relaxed.

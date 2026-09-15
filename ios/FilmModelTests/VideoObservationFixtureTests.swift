@@ -38,6 +38,72 @@ final class VideoObservationFixtureTests: XCTestCase {
         XCTAssertEqual(Set(json.keys), ["formatVersion", "scope", "captureDetachedAt", "monotonicAnchor", "windowDuration", "current", "completed", "omittedCompletedWindowCount", "omittedThroughMonotonicTime", "rejectedClockOperationCount", "invalidity", "isClosed"])
     }
 
+    func testIngressExportPreservesPressureDispositionsAndExactSourceTime() throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 2, publishingAttemptID: UUID(), appliedProfileRevision: .max)
+        var video = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
+        var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 0,
+            maxItems: 2, maxBytes: 100)
+        let pts = CMTime(value: 9_007_199_254_740_993, timescale: 60, flags: .valid, epoch: 9_007_199_254_740_995)
+        let metadata = LiveIngressSampleMetadata(kind: .video, sourcePTS: pts)
+        ingress.observe(.admitted, sample: metadata, at: 0)
+        ingress.updateOccupancy(items: 1, bytes: 50, phase: .admitting, at: 0)
+        ingress.observe(.overflowEvicted, sample: metadata, at: 2)
+        ingress.updateOccupancy(items: 0, bytes: 0, at: 2)
+        let data = try VideoObservationFixture.data(for: video.close(at: 4), captureDetachedAt: 3,
+            ingressObservation: ingress.close(at: 3))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let exported = try XCTUnwrap(json["ingressObservation"] as? [String: Any])
+        XCTAssertEqual(exported["formatVersion"] as? Int, 1)
+        XCTAssertEqual(exported["scope"] as? NSDictionary, json["scope"] as? NSDictionary)
+        XCTAssertEqual(exported["phase"] as? String, "closed")
+        XCTAssertEqual(exported["currentItems"] as? Int, 0)
+        XCTAssertEqual(exported["currentBytes"] as? Int, 0)
+        XCTAssertEqual(exported["omittedCompletedWindowCount"] as? String, "0")
+        XCTAssertEqual(exported["unassignedDispositionCount"] as? String, "0")
+        let pressure = try XCTUnwrap(exported["totalOccupancy"] as? [String: Any])
+        XCTAssertEqual(pressure["knownDuration"] as? Double, 3)
+        XCTAssertEqual(pressure["unknownDuration"] as? Double, 0)
+        XCTAssertEqual(pressure["maxPressureSeconds"] as? Double, 1)
+        XCTAssertEqual(pressure["peakItems"] as? Int, 1)
+        XCTAssertEqual(pressure["peakBytes"] as? Int, 50)
+        let dispositions = try XCTUnwrap(exported["totalDispositions"] as? [String: [String: [String: Any]]])
+        XCTAssertEqual(dispositions["admitted"]?["video"]?["count"] as? String, "1")
+        XCTAssertEqual(dispositions["overflowEvicted"]?["video"]?["invalidPTSCount"] as? String, "0")
+        let source = try XCTUnwrap(dispositions["admitted"]?["video"]?["minimumSourcePTS"] as? [String: Any])
+        XCTAssertEqual(source["value"] as? String, "9007199254740993")
+        XCTAssertEqual(source["epoch"] as? String, "9007199254740995")
+        XCTAssertEqual(source["timescale"] as? Int, 60)
+        let current = try XCTUnwrap(exported["current"] as? [String: Any])
+        XCTAssertEqual(current["coveredWindowCount"] as? String, "1")
+        XCTAssertEqual(current["isClosed"] as? Bool, true)
+        XCTAssertEqual(current["isCoalesced"] as? Bool, false)
+        let phases = try XCTUnwrap(current["occupancyByPhase"] as? [String: [String: Any]])
+        XCTAssertEqual(phases["admitting"]?["knownDuration"] as? Double, 3)
+        XCTAssertLessThan(data.count, 4 * 1024 * 1024)
+    }
+
+    func testIngressExportRetainsInvalidClockAndRejectionEvidence() throws {
+        let scope = VideoFrameObservationScope(recordingID: "r", matchID: "m", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        var video = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
+        var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 0, maxItems: 1, maxBytes: 100)
+        ingress.observe(.rejected(.oversize), sample: .init(kind: .audio, sourcePTS: .invalid), at: .nan)
+        let data = try VideoObservationFixture.data(for: video.close(at: 3), captureDetachedAt: 1,
+            ingressObservation: ingress.close(at: 2))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let exported = try XCTUnwrap(json["ingressObservation"] as? [String: Any])
+        XCTAssertNotEqual(exported["invalidity"] as? Int, 0)
+        XCTAssertEqual(exported["rejectedClockOperationCount"] as? String, "1")
+        XCTAssertEqual(exported["unassignedDispositionCount"] as? String, "1")
+        let pressure = try XCTUnwrap(exported["totalOccupancy"] as? [String: Any])
+        XCTAssertEqual(pressure["unknownDuration"] as? Double, 2)
+        let dispositions = try XCTUnwrap(exported["totalDispositions"] as? [String: [String: [String: Any]]])
+        let rejected = try XCTUnwrap(dispositions["rejected.oversize"]?["audio"])
+        XCTAssertEqual(rejected["invalidPTSCount"] as? String, "1")
+        XCTAssertTrue(rejected["minimumSourcePTS"] is NSNull)
+    }
+
     func testFixtureRequiresExactExplicitFlag() {
         XCTAssertFalse(VideoObservationFixture.requested(environment: [:]))
         XCTAssertFalse(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "true"]))

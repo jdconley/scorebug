@@ -19,7 +19,7 @@ enum VideoObservationFixture {
         return hold > 180 ? 128 : 64
     }
 
-    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = []) throws -> Data {
+    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil) throws -> Data {
         let scope = snapshot.scope
         var object: [String: Any] = [
             "formatVersion": 1,
@@ -38,6 +38,9 @@ enum VideoObservationFixture {
             "invalidity": snapshot.invalidity.rawValue,
             "isClosed": snapshot.isClosed,
         ]
+        if let ingressObservation {
+            object["ingressObservation"] = ingress(ingressObservation)
+        }
         if !workerReportAgeProofs.isEmpty {
             object["workerReportAgeProofs"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(workerReportAgeProofs))
         }
@@ -77,11 +80,68 @@ enum VideoObservationFixture {
          "encodedVideo": aggregate(value.encodedVideo)]
     }
 
+    private static func occupancy(_ value: LiveIngressOccupancy) -> [String: Any] {
+        ["knownDuration": value.knownDuration, "unknownDuration": value.unknownDuration,
+         "itemSeconds": value.itemSeconds, "byteSeconds": value.byteSeconds,
+         "maxPressureSeconds": value.maxPressureSeconds,
+         "peakItems": value.peakItems, "peakBytes": value.peakBytes]
+    }
+
+    private static func dispositionKey(_ value: LiveIngressDisposition) -> String {
+        switch value {
+        case .admitted: "admitted"
+        case .dequeued: "dequeued"
+        case .overflowEvicted: "overflowEvicted"
+        case .cancellationDiscarded: "cancellationDiscarded"
+        case .rejected(let reason): "rejected.\(reason.rawValue)"
+        }
+    }
+
+    private static func dispositions(_ values: LiveIngressDispositions) -> [String: Any] {
+        Dictionary(uniqueKeysWithValues: values.map { disposition, kinds in
+            (dispositionKey(disposition), Dictionary(uniqueKeysWithValues: kinds.map { kind, value in
+                (kind.rawValue, ["count": String(value.count), "invalidPTSCount": String(value.invalidPTSCount),
+                    "firstSourcePTS": time(value.firstSourcePTS), "lastSourcePTS": time(value.lastSourcePTS),
+                    "minimumSourcePTS": time(value.minimumSourcePTS), "maximumSourcePTS": time(value.maximumSourcePTS),
+                    "invalidity": value.invalidity.rawValue] as [String: Any])
+            }) as Any)
+        })
+    }
+
+    private static func window(_ value: LiveIngressObservationWindow) -> [String: Any] {
+        ["monotonicStart": value.monotonicStart, "monotonicEnd": value.monotonicEnd,
+         "scheduledMonotonicEnd": value.scheduledMonotonicEnd,
+         "coveredWindowCount": String(value.coveredWindowCount), "isCoalesced": value.isCoalesced,
+         "isPartial": value.isPartial, "isClosed": value.isClosed,
+         "occupancy": occupancy(value.occupancy),
+         "occupancyByPhase": Dictionary(uniqueKeysWithValues: value.occupancyByPhase.map { ($0.key.rawValue, occupancy($0.value)) }),
+         "dispositions": dispositions(value.dispositions)]
+    }
+
+    private static func ingress(_ value: LiveIngressObservationSnapshot) -> [String: Any] {
+        let scope = value.scope
+        return ["formatVersion": 1,
+            "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
+                "broadcastGeneration": scope.broadcastGeneration,
+                "publishingAttemptID": scope.publishingAttemptID.uuidString,
+                "appliedProfileRevision": String(scope.appliedProfileRevision)],
+            "monotonicAnchor": value.monotonicAnchor, "windowDuration": value.windowDuration,
+            "maxItems": value.maxItems, "maxBytes": value.maxBytes,
+            "phase": value.phase.rawValue, "currentItems": value.currentItems, "currentBytes": value.currentBytes,
+            "current": window(value.current), "completed": value.completed.map(window),
+            "totalOccupancy": occupancy(value.totalOccupancy), "totalDispositions": dispositions(value.totalDispositions),
+            "omittedCompletedWindowCount": String(value.omittedCompletedWindowCount),
+            "omittedThroughMonotonicTime": optional(value.omittedThroughMonotonicTime),
+            "rejectedClockOperationCount": String(value.rejectedClockOperationCount),
+            "unassignedDispositionCount": String(value.unassignedDispositionCount),
+            "invalidity": value.invalidity.rawValue, "isClosed": value.isClosed]
+    }
+
     #if targetEnvironment(simulator)
     /// Awaited by the existing teardown task after encoder drain and identity
     /// admission. This single I/O task is joined before another attempt can start.
     /// Failure cannot interrupt teardown; a missing artifact fails the runner.
-    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = []) async {
+    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil) async {
         guard snapshot.isClosed else { return }
         await Task.detached(priority: .utility) {
             do {
@@ -89,7 +149,7 @@ enum VideoObservationFixture {
                     in: .userDomainMask, appropriateFor: nil, create: true)
                 let directory = support.appendingPathComponent("Scorebug/QA", isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
+                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs, ingressObservation: ingressObservation).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
             } catch {
                 // Qualification is optional to capture and archive cleanup.
             }

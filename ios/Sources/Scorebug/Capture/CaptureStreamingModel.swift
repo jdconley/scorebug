@@ -38,10 +38,10 @@ import ScorebugStreaming
         #endif
     }()
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
-    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof]) async -> Void)? = {
+    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?) async -> Void)? = {
         #if targetEnvironment(simulator)
-        return { snapshot, detached, proofs in
-            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs)
+        return { snapshot, detached, proofs, ingress in
+            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress)
         }
         #else
         return nil
@@ -450,7 +450,7 @@ import ScorebugStreaming
                         ingressObservation = session.snapshot.ingressObservation
                         #if DEBUG
                         if let final, let captureDetachedAt, let fixtureWriter {
-                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs)
+                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation)
                         }
                         #endif
                     }

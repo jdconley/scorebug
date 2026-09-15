@@ -86,8 +86,10 @@ preserve actual mailbox operation while making the affected time unknown. Termin
 queue cancellation freezes observations before encoder shutdown completes. The
 default archive mailbox performs no extra clock or metadata work.
 
-The native fixture export/qualification remains open. These model tests do not
-establish sustained camera performance with instrumentation, useful link capacity,
+The native fixture now exports and strictly qualifies the frozen ingress evidence;
+all 89 Film model and 400 tooling tests and the combined Release build pass, with
+independent review. The long native run remains open. These tests do not establish
+sustained camera performance with instrumentation, useful link capacity,
 viewer receipt or safe quality increases. See the linked plan for exact evidence
 and the next uninstrumented ten-minute gate.
 
