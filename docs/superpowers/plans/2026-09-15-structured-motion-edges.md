@@ -3,6 +3,67 @@
 Use systematic debugging and bounded subagent implementation with independent
 specification/quality review. Parent owns isolated native/media execution.
 
+## Complete instrumented ten-minute pass
+
+At `02afc61` plus an artifact-only tracing patch, `native-app-Roau2o` passes the
+complete runner with exit 0. The iPhone 14/iOS 17.5 UI test passes in 702.884 seconds.
+The 600-second blocks16 hold, original 45-second export wait, full native export
+validation and every media/evidence gate remain unchanged. No concurrent builds
+or other media qualification ran during this experiment.
+
+The trace now includes the UI request/result, library recovery and exporter entry,
+assembly, remux, decode progress, file sync, publication and directory sync:
+
+- Recovery takes 0.472 seconds, assembly 1.080 seconds and remux 3.124 seconds.
+- Full validation takes 36.092 seconds and decodes 18,935 video frames plus
+  30,296,000 audio samples. Progress continues through the final counters.
+- The selected export reaches MainActor 40.796 seconds after the request; the
+  model returns at 40.811 seconds. Final publication and UI delivery add no
+  substantial stall in this run.
+
+This narrowly fits the existing allowance but does not reproduce or explain the
+earlier timeout. No export operation, validation requirement or deadline changed.
+The tracing patch and original/instrumented SHA256 manifest are saved under
+`artifacts/qa/export-fullapp-600-diagnostic`; the three source files were restored
+byte-for-byte against both their saved originals and HEAD. The run retains
+`export-stage-trace.json`, `compact-summary.json` and full `results.json`.
+
+All media and independent workflow evidence pass:
+
+- Archive: 18,935 consecutive frames 0–18934, 631.167 seconds at 30 fps, zero source
+  loss; 37,870 accepted/written samples, zero rejected/dropped. It continues 184
+  frames beyond the final live frame. All 315 complete audio markers match with
+  maximum offset 0.020833 ms; A/V endpoints agree within timestamp rounding.
+- Live: 18,534 consecutive acquired frames 217–18750, 617.8 source seconds at 30 fps,
+  zero loss. Final encoded frame 18750 is delivered, with no missing encoded tail.
+  The 60 acquisition frames 157–216 remain explicitly outside the saved live range.
+  All 309 covered audio markers match, maximum offset 65.917 ms and tail +22.558 ms.
+  The explicit 1.106-second acquisition audio lead passes its existing allowance.
+- Every frozen complete five-second workload window passes: archive 126 windows,
+  mean 12.018853 Mbps, range 11.827096–12.129547; live 122 windows, mean 7.657755 Mbps,
+  range 7.580354–7.734550. The requested live rate remains 6 Mbps, so this does not
+  establish hard rate control.
+- Native scoring changes 694 overlay pixels. Capture records 18,596 frames and
+  encoding 18,594; the two initial capture frames precede encoded frame 157.
+  There are 122 steady completed observation windows and 123 aligned comparisons,
+  including shutdown. Both native report-age proofs match independent API evidence.
+  All 10 worker events are retained with no omissions or malformed lines. Recorder,
+  worker encoder and worker wrapper exit 0; recorder/encoder exits are unrequested.
+
+The original failures stay failed. This is an instrumented simulator qualification,
+not a resolved intermittent-export bug, an uninstrumented ten-minute pass, real
+sports/camera qualification or proof of physical Watch networking. Proceed with
+the diagnostic-only [live ingress pressure slice](2026-09-15-live-ingress-pressure.md)
+while keeping adaptive behavior disabled. Retain an uninstrumented long-run check
+after integration, with the same recording/export/media gates.
+
+Independent evidence review finds no inconsistencies: all 91 trace events are
+monotonic, all 64 decode checkpoints advance (largest interval 0.767 seconds),
+the native counters match the exported media, both age proofs match, and restored
+source hashes match the originals. Review supports proceeding with ingress
+telemetry before another uninstrumented long run; roughly four seconds of export
+headroom is not a reliability guarantee across runs or devices.
+
 ## Ten-minute run: export deadline failure
 
 `native-app-dUHHoC` at `d85ac44`, with direct RTMP recording and a 600-second

@@ -207,3 +207,13 @@ The 600-second run `native-app-dUHHoC` then fails the unchanged 45-second native
 export-ready wait. Its original verdict, preservation limits and planned same-source
 export diagnosis are recorded in the linked evidence. The original overload and
 export-timeout failures are not reclassified by the three-minute pass.
+
+The instrumented 600-second repeat `native-app-Roau2o` at `02afc61` passes the entire
+runner with exit 0 and the original 45-second export wait: 18,935 archive frames,
+18,534 acquired live frames at 30 fps, zero loss, complete terminal delivery and
+all frozen payload windows. UI export delivery takes 40.796 seconds, including
+36.092 seconds of full validation. The temporary trace is removed and source hashes
+match HEAD. See the [full ten-minute evidence](2026-09-15-structured-motion-edges.md#complete-instrumented-ten-minute-pass).
+This is not an uninstrumented ten-minute pass and does not explain the intermittent
+timeout. Diagnostic ingress telemetry can proceed with adaptation disabled; retain
+uninstrumented long-run qualification after integration.

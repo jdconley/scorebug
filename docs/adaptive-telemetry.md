@@ -62,6 +62,13 @@ workload-specific: the low-complexity ten-minute fixture passes, while sustained
 structured motion and the pixel-noise overload failures remain under investigation
 in the [motion calibration plan](superpowers/plans/2026-09-14-structured-motion-calibration.md).
 
+The latest structured-motion checkpoint adds a complete instrumented ten-minute
+pass at fixed 1080p30, with temporary export tracing removed afterward. The earlier
+intermittent export timeout remains unexplained; see the
+[measured results](superpowers/plans/2026-09-15-structured-motion-edges.md#complete-instrumented-ten-minute-pass).
+The next diagnostic-only slice measures
+[time-weighted live ingress pressure](superpowers/plans/2026-09-15-live-ingress-pressure.md).
+
 ## Local observation accumulator
 
 `ScorebugMedia/VideoFrameObservation.swift` now implements the isolated first

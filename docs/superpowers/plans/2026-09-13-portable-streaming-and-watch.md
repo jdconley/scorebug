@@ -357,6 +357,16 @@ identity checks. Failure evidence preservation now works; its bounded shutdown
 retry is unit-tested. A separate [structured workload calibration](2026-09-14-structured-motion-calibration.md)
 is planned near the intended rates, preserving the original overload case.
 
+The blocks16 workload now has a complete uninstrumented 180-second pass and a
+complete instrumented 600-second pass (`native-app-Roau2o` at `02afc61`). The latter
+preserves 18,935 archive frames and 18,534 acquired live frames at 30 fps, complete
+terminal delivery and all frozen workload/media gates. Export reaches the UI in
+40.796 seconds under the unchanged 45-second test wait. Temporary tracing is removed;
+the prior intermittent export timeout remains unexplained. See the
+[structured-motion evidence](2026-09-15-structured-motion-edges.md) and next
+[live ingress pressure slice](2026-09-15-live-ingress-pressure.md). Automatic quality
+changes remain disabled; uninstrumented long-run and physical qualification remain.
+
 ## Milestone 5: Watch scoring and complete simulator workflows
 
 [Networking design notes](../../watch-networking-design.md) map the existing shared
