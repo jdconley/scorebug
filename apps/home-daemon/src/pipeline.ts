@@ -89,10 +89,11 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     'yuv420p',
   );
   // Preserve acquisition gaps on the common A/V timeline. Auto/CFR can pad
-  // early audio with duplicates of the first video frame; VFR never invents frames.
+  // early audio with duplicates; VFR can remove frames around timestamp wrap.
+  // Passthrough leaves frame removal solely to the explicit cap below.
   // Select at most one frame per cap interval, retaining source PTS. Half an
   // input timebase tick prevents timestamp rounding from skipping boundary frames.
-  video.push('-fps_mode', 'vfr', '-enc_time_base:v', '-1');
+  video.push('-fps_mode', 'passthrough', '-enc_time_base:v', '-1');
   const cap = profile
     ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+TB/2)*${profile.fps}),floor((prev_selected_t-start_t+TB/2)*${profile.fps}))',`
     : '';
@@ -105,6 +106,8 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   const telemetry =
     "metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]";
 
+  // copyts preserves the decoder's transport clock; avoid_negative_ts only
+  // normalizes outgoing mux timestamps onto a nonnegative timeline.
   return [
     '-hide_banner',
     '-nostats',
@@ -114,6 +117,7 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     'warning',
     '-fflags',
     '+genpts',
+    '-copyts',
     '-i',
     spec.pullUrl,
     '-map',
@@ -129,6 +133,8 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '128k',
     '-ar',
     '44100',
+    '-avoid_negative_ts',
+    'make_zero',
     '-f',
     'flv',
     spec.publishUrl,

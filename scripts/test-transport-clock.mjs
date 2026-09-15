@@ -76,7 +76,7 @@ export async function qualifyTransportClock() {
       nodeVersion: process.version,
     },
     candidateRationale:
-      'copyts preserves transport timestamps; observed negative wrap PTS require testing output-only make_zero, then passthrough to avoid pre-mux VFR frame removal. All remain experiment-only.',
+      'Production preserves input timestamps, uses passthrough to avoid pre-mux VFR frame removal and normalizes only at the output muxer. Legacy rebasing and incomplete copyts combinations remain diagnostic controls.',
     commands: [],
     fixtures: [],
     errors: [],
@@ -221,10 +221,10 @@ export async function qualifyTransportClock() {
       if (Object.values(fixture.checks).some((item) => !item.pass))
         throw new Error('Source qualification failed');
       for (const candidate of [
-        'current',
+        'production',
+        'legacy',
         'copyts',
         ...(name.startsWith('wrap') ? ['copyts-make-zero'] : []),
-        'copyts-passthrough-make-zero',
       ]) {
         const output = join(directory, `${name}-${candidate}.flv`);
         const args = buildFfmpegArgs({
@@ -237,10 +237,18 @@ export async function qualifyTransportClock() {
           encoder: 'software',
           profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
         });
-        if (candidate.startsWith('copyts')) args.unshift('-copyts');
-        if (candidate.includes('make-zero'))
-          args.splice(args.length - 3, 0, '-avoid_negative_ts', 'make_zero');
-        if (candidate.includes('passthrough')) args[args.indexOf('-fps_mode') + 1] = 'passthrough';
+        // Production is exercised verbatim. Reconstruct prior paths only for
+        // diagnostic controls, so a missing production flag cannot pass the gate.
+        if (candidate !== 'production') {
+          const copyts = args.indexOf('-copyts');
+          if (copyts !== -1) args.splice(copyts, 1);
+          const normalization = args.indexOf('-avoid_negative_ts');
+          if (normalization !== -1) args.splice(normalization, 2);
+          args[args.indexOf('-fps_mode') + 1] = 'vfr';
+          if (candidate.startsWith('copyts')) args.unshift('-copyts');
+          if (candidate.includes('make-zero'))
+            args.splice(args.length - 3, 0, '-avoid_negative_ts', 'make_zero');
+        }
         const result = { candidate, output, args, checks: {}, diagnostics: {} };
         fixture.candidates.push(result);
         report.commands.push({
@@ -495,12 +503,10 @@ export async function qualifyTransportClock() {
         fixture.candidates.find((result) => result.candidate === 'copyts')?.mappingPass &&
         fixture.candidates.find((result) => result.candidate === 'copyts')?.mediaPass,
     );
-  report.copytsPassthroughMuxzeroQualified =
+  report.productionQualified =
     report.characterizationComplete &&
     report.fixtures.every((fixture) => {
-      const candidate = fixture.candidates.find(
-        (result) => result.candidate === 'copyts-passthrough-make-zero',
-      );
+      const candidate = fixture.candidates.find((result) => result.candidate === 'production');
       return candidate?.mappingPass && candidate?.mediaPass;
     });
   report.copytsMuxzeroWrapQualified =
@@ -513,9 +519,9 @@ export async function qualifyTransportClock() {
         );
         return candidate?.mappingPass && candidate?.mediaPass;
       });
-  report.chosenCandidate = 'copyts-passthrough-make-zero';
+  report.chosenCandidate = 'production';
   report.qualifiedCandidates = [
-    'current',
+    'legacy',
     'copyts',
     'copyts-make-zero',
     report.chosenCandidate,
@@ -532,7 +538,7 @@ export async function qualifyTransportClock() {
     JSON.stringify({
       reportPath,
       qualifiedCandidates: report.qualifiedCandidates,
-      copytsPassthroughMuxzeroQualified: report.copytsPassthroughMuxzeroQualified,
+      productionQualified: report.productionQualified,
       copytsMuxzeroWrapQualified: report.copytsMuxzeroWrapQualified,
       characterizationComplete: report.characterizationComplete,
       copytsQualified: report.copytsQualified,

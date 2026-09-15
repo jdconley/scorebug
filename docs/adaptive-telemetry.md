@@ -47,8 +47,9 @@ now connects capture and actual encoder-completion measurements while retaining 
    use timestamp passthrough and normalize only at the output muxer. Plain `-copyts`
    loses frames around timestamp wrap under the current VFR output path. The
    successful candidate preserves exact wire correspondence modulo 2^33 and all
-   frame identities in six full/late input cases. Production flags remain unchanged;
-   native serialization and an attempt-scoped SDK anchor are now implemented in the
+   frame identities in six full/late input cases. The
+   [production worker now uses that path](superpowers/plans/2026-09-15-production-worker-clock.md);
+   native serialization and an attempt-scoped SDK anchor are implemented in the
    [native clock slice](superpowers/plans/2026-09-15-native-transport-clock.md).
    App/worker plumbing and matching source-interval counts are still required.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
@@ -129,9 +130,13 @@ The five-scenario native run `dual-output-yKe5LJ` passes with all 420 archive fr
 in every case and all 420 live frames in both normal cases at 30 fps. Stalled and
 absent receivers leave complete local recordings. Live packet bitrate decreases
 from 5.992/6.068 Mbps to 1.982/2.016 Mbps; live A/V marker error stays below 65.364 ms.
-These results verify the repair in this short Mac fixture. Production worker flags,
-app/worker mapping integration, matched interval counts and profile/capacity
-qualification remain separate work; automatic quality changes remain disabled.
+These results verify the repair in this short Mac fixture. The production worker
+now preserves the decoder transport clock and passes full/late/wrap fixtures on
+Mac and Linux CPU, plus acquisition/cadence tests on Mac software/VideoToolbox and
+Linux CPU. Its local software-worker recovery and native scoring workflow also
+passes. See the [production clock results](superpowers/plans/2026-09-15-production-worker-clock.md).
+App/worker mapping integration, clock-convention negotiation, matched interval counts
+and profile/capacity qualification remain; automatic quality changes remain disabled.
 
 ## Local observation accumulator
 

@@ -7,7 +7,13 @@ absence means unknown. Automatic quality changes remain disabled.
 
 ## Measurement and bounds
 
-A separate FFmpeg filter branch normalizes timestamps to 90 kHz and emits a fixed
+The production worker preserves input timestamps through decoding and filtering
+with `-copyts`. Its explicit cap remains responsible for selecting frames; encoder
+sync uses `-fps_mode passthrough` so negative wrap-region timestamps do not cause
+VFR frame removal. Only outgoing mux timestamps are shifted by
+`-avoid_negative_ts make_zero`. No input/filter zero-origin shift is added.
+
+A separate FFmpeg filter branch rescales timestamps to 90 kHz and emits a fixed
 metadata marker with numeric frame headers to a dedicated descriptor. The existing
 live filter branch keeps its original timebase. The guardian preserves separate
 IPC, progress, and telemetry channels and always drains the telemetry descriptor.
@@ -157,3 +163,30 @@ video packets yield 112 saved frames with immediate EOF versus 119 with a one-se
 EOF delay. This is diagnostic evidence, not an application fix or exact attribution
 of the native deficit. The next step is an independently qualified test recorder;
 see the [tail investigation](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
+
+
+## Production transport clock qualification
+
+The [production clock slice](superpowers/plans/2026-09-15-production-worker-clock.md)
+passes all six finite ordinary/large-origin/33-bit-wrap cases with both full inputs
+and actual late byte-cut joins on Mac FFmpeg 8.1.2 and Linux CPU FFmpeg 5.1.9.
+Qualification uses production argv without test-added flags. Decoder observations
+match independently parsed MPEG-TS PTS modulo 2^33; all 120 full-input or 90 late-input
+frame identities survive. Maximum A/V marker offset is 0.395833 ms; decoded tail
+separation is at most 34.270833 ms. Earlier/incomplete paths remain negative controls.
+
+All five acquisition/cadence fixtures also pass on Mac software, Mac VideoToolbox
+and Linux CPU. Decoder counts are 90/180/75/78/90; output counts are 90/90/75/78/90.
+The 60 fps input remains capped at 30, 25 fps is preserved, missing source frames
+remain gaps and unequal A/V startup offsets survive. The full local software-worker
+workflow passes native scoring overlay updates, process/source/API recovery and
+match-end shutdown. Full worker tests pass 166 and tooling tests pass 430; type
+checking and independent specification/quality reviews pass.
+
+Evidence: `artifacts/qa/transport-clock-299FJR`, `transport-clock-ip7O7n`,
+`native-worker-software` and `production-clock-*` logs/command records. NVENC has
+argument-contract coverage only; no NVIDIA hardware was exercised. The optional
+report shape has not changed, so consumers still need explicit clock-convention
+negotiation and the native attempt-scoped anchor before correlating older/newer
+worker reports. Matching source intervals and loss denominators remain necessary;
+clock preservation does not by itself enable automatic quality adjustment.

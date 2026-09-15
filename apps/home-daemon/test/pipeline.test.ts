@@ -54,7 +54,7 @@ it('selects real VideoToolbox without silent software fallback and applies the o
   expect(args).toContain('h264_videotoolbox');
   expect(args[args.indexOf('-allow_sw') + 1]).toBe('0');
   expect(args[args.indexOf('-b:v') + 1]).toBe('3000k');
-  expect(args[args.indexOf('-fps_mode') + 1]).toBe('vfr');
+  expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
   expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('-1');
   expect(args).not.toContain('-fpsmax');
   expect(args[args.indexOf('-vf') + 1]).toContain('select=');
@@ -65,6 +65,45 @@ it('selects real VideoToolbox without silent software fallback and applies the o
 it('lets explicit software selection override the legacy NVENC flag', () => {
   expect(buildFfmpegArgs({ ...baseSpec, nvenc: true, encoder: 'software' })).toContain('libx264');
 });
+
+describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timestamps', (encoder) => {
+  it.each([false, true])('preserves the common A/V timeline with profile=%s', (withProfile) => {
+    const args = buildFfmpegArgs({
+      ...baseSpec,
+      nvenc: false,
+      encoder,
+      ...(withProfile ? { profile: { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 } } : {}),
+    });
+    const inputIndex = args.indexOf('-i');
+    const shiftIndex = args.indexOf('-avoid_negative_ts');
+    const filter = args[args.indexOf('-vf') + 1]!;
+
+    expect(args.filter((arg) => arg === '-copyts')).toHaveLength(1);
+    expect(args.indexOf('-copyts')).toBeLessThan(inputIndex);
+    expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
+    expect(args[args.indexOf('-enc_time_base:v') + 1]).toBe('-1');
+    expect(args.filter((arg) => arg === '-avoid_negative_ts')).toHaveLength(1);
+    expect(shiftIndex).toBeGreaterThan(inputIndex + 1);
+    expect(args[shiftIndex + 1]).toBe('make_zero');
+    expect(shiftIndex).toBeLessThan(args.indexOf('-f'));
+    expect(args.slice(-3)).toEqual(['-f', 'flv', baseSpec.publishUrl]);
+    expect(args).not.toContain('-start_at_zero');
+    expect(args).not.toContain('-r');
+    expect(args).not.toContain('-fpsmax');
+    expect(filter).not.toContain('setpts');
+
+    if (withProfile) {
+      expect(filter).toContain(
+        "nullsink;[live]select='isnan(prev_selected_t)+gt(floor((t-start_t+TB/2)*30),floor((prev_selected_t-start_t+TB/2)*30))',scale=1280:720",
+      );
+      expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
+      expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
+    } else {
+      expect(filter).not.toContain('select=');
+    }
+  });
+});
+
 it('rejects invalid output profiles before spawning FFmpeg', () => {
   for (const width of [0, 1279, Infinity])
     expect(() =>
