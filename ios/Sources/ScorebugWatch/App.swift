@@ -19,9 +19,21 @@ struct ScorebugWatchApp: App {
             newDeviceId: { fixture?.offer.watchDeviceId ?? UUID().uuidString })
         _connectivity = StateObject(wrappedValue: connectivity)
         _model = StateObject(wrappedValue: WatchScoringModel(setupCoordinator: coordinator, pendingStore: pending,
+            scoringClientFactory: { paired in
+                let deadline = MatchHTTPDeadlineTransport(timeout: 2)
+                let direct = MatchHTTPClient(endpoint: try ScoringEndpoint(paired.endpoint),
+                    transport: { try await deadline.send($0) })
+                let companion = try connectivity.scoringRelayClient(for: paired)
+                return WatchRoutedScoringClient(direct: direct, companion: companion,
+                    companionAvailable: { [weak connectivity] in
+                        guard let connectivity else { return false }
+                        return await connectivity.canRelayScoring
+                    })
+            }, recoverUncertainSendImmediately: true,
             onNotice: { try? connectivity.sendNotice($0) },
             acknowledgmentHaptic: { WKInterfaceDevice.current().play(.success) }))
         self.fixture = fixture
+        connectivity.activate()
     }
     var body: some Scene {
         WindowGroup { WatchRootView(model: model, connectivity: connectivity, fixture: fixture) }

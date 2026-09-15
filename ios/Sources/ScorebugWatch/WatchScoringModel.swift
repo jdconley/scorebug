@@ -15,7 +15,8 @@ final class WatchScoringModel: ObservableObject {
 
     private let setupCoordinator: WatchSetupCoordinator
     private let pendingStore: any PendingCommandStore
-    private let clientFactory: @Sendable (ScoringEndpoint) -> MatchHTTPClient
+    private let scoringClientFactory: @MainActor @Sendable (WatchPairedSetup) throws -> any MatchScoringClient
+    private let recoverUncertainSendImmediately: Bool
     private let onNotice: (WatchCompanionNotice) -> Void
     private let acknowledgmentHaptic: () -> Void
     private var coordinator: MatchCommandCoordinator?
@@ -31,10 +32,16 @@ final class WatchScoringModel: ObservableObject {
 
     init(setupCoordinator: WatchSetupCoordinator, pendingStore: any PendingCommandStore,
          clientFactory: @escaping @Sendable (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
+         scoringClientFactory: (@MainActor @Sendable (WatchPairedSetup) throws -> any MatchScoringClient)? = nil,
+         recoverUncertainSendImmediately: Bool = false,
          onNotice: @escaping (WatchCompanionNotice) -> Void = { _ in },
          acknowledgmentHaptic: @escaping () -> Void = {}) {
         self.setupCoordinator = setupCoordinator; self.pendingStore = pendingStore
-        self.clientFactory = clientFactory; self.onNotice = onNotice
+        self.scoringClientFactory = scoringClientFactory ?? { paired in
+            clientFactory(try ScoringEndpoint(paired.endpoint))
+        }
+        self.recoverUncertainSendImmediately = recoverUncertainSendImmediately
+        self.onNotice = onNotice
         self.acknowledgmentHaptic = acknowledgmentHaptic
     }
 
@@ -154,9 +161,24 @@ final class WatchScoringModel: ObservableObject {
                 throw MatchCoordinatorError.scoringNotAllowed
             }
             self.message = nil; self.problemMessage = false
-            let result = try await coordinator.submit(operation)
-            try self.check(token)
-            self.install(result)
+            do {
+                let result = try await coordinator.submit(operation)
+                try self.check(token)
+                self.install(result)
+            } catch {
+                try self.check(token)
+                guard self.recoverUncertainSendImmediately,
+                      WatchRoutedScoringClient.isRecoverableTransportFailure(error) else { throw error }
+                let uncertain = await coordinator.state()
+                try self.check(token)
+                guard uncertain.pending != nil else { throw error }
+                self.install(uncertain)
+                // One receipt-first recovery within this same owned operation.
+                // The coordinator alone may retry the exact durable command.
+                let recovered = try await coordinator.recover()
+                try self.check(token)
+                self.install(recovered)
+            }
         }
     }
 
@@ -246,11 +268,15 @@ final class WatchScoringModel: ObservableObject {
     private func install(_ setup: WatchSetupState) throws {
         setupRecord = setup.record
         if scoringSetup != setup.record?.paired {
-            scoringSetup = setup.record?.paired
+            // Disable the old scorer before constructing a replacement. Keep
+            // scoringSetup nil if construction fails so a later wake can retry.
+            scoringSetup = nil
             state = nil; describedOutcomeId = nil; coordinator = nil
-            if let paired = scoringSetup {
-                coordinator = MatchCommandCoordinator(client: clientFactory(try ScoringEndpoint(paired.endpoint)),
+            if let paired = setup.record?.paired {
+                let client = try scoringClientFactory(paired)
+                coordinator = MatchCommandCoordinator(client: client,
                     credential: paired.credential, endpointScope: paired.scoringScope, store: pendingStore)
+                scoringSetup = paired
             }
         }
         if let paired = setup.record?.paired, let offeredSetup,

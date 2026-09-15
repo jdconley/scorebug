@@ -104,6 +104,25 @@ private final class RelayBindingMemory: PhoneWatchRequestStorage {
         XCTAssertEqual(storage.value, original)
     }
 
+    func testBackgroundRelayRestoreDoesNotActivateSetupUIOrIssueRequests() async {
+        let storage = RelayBindingMemory(PhoneWatchSetupRecord(relayBinding: scope))
+        var changes: [WatchRelayScope?] = []
+        let model = PhoneWatchModel(storage: storage, clientFactory: { endpoint in
+            MatchHTTPClient(endpoint: endpoint, transport: { _ in
+                XCTFail("Background restore must not issue setup requests")
+                throw URLError(.notConnectedToInternet)
+            })
+        }, onRelayBindingChanged: { changes.append($0) }, sendEnvelope: { _ in XCTFail("No setup") })
+        model.restoreRelayAssociation()
+        XCTAssertEqual(model.relayBinding, scope)
+        XCTAssertEqual(changes, [scope])
+        model.receive(notice)
+        await model.connect(using: request().connection)
+        await model.retry()
+        XCTAssertNil(model.pending)
+        XCTAssertTrue(storage.saves.isEmpty)
+    }
+
     func testConfirmedBindingRestoresWithoutIssuanceOrSavedSecrets() {
         let storage = RelayBindingMemory(PhoneWatchSetupRecord(relayBinding: scope))
         var seen: WatchRelayScope?

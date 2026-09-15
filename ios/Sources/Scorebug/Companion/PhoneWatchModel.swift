@@ -84,6 +84,10 @@ protocol PhoneWatchRequestStorage {
     }
     func resume() {
         active = true
+        restoreRelayAssociation()
+    }
+    /// Background relay may restore its durable binding without enabling setup UI.
+    func restoreRelayAssociation() {
         do { try load() } catch { message = "Saved Watch setup could not be read. Try again." }
     }
     func suspend() async {

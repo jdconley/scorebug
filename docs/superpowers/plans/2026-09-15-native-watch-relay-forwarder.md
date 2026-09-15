@@ -38,3 +38,31 @@ peer/binding change during HTTP, cancellation join, timeout and late callback, p
 server commit/lost companion reply recovery through the real durable coordinator.
 The native delegate must acquire bounded admission before creating actor tasks;
 model-only tests do not prove this platform integration or background execution.
+
+## Implemented forwarder checkpoint
+
+`WatchRelayPhoneForwarder` implements the full binding check, one owned HTTP task,
+monotonic deadline, cancellation join and correlated bounded replies. Binding changes
+invalidate the generation before validation or cancellation. Invalid replacement
+bindings therefore fail closed. Decode errors from the actual `MatchHTTPClient` map
+to `invalidResponse`, preventing malformed server data from appearing to be a
+recoverable connectivity failure. Only authoritative receipt absence returns nil.
+
+Thirteen focused tests pass, including actual HTTP decoding failures and a committed
+command whose lost reply recovers through the durable coordinator without another
+mutation. Cancellation ordering and decoding classification each have a retained
+failing regression before their passing fix. Evidence is in
+`artifacts/qa/watch-relay-forwarder-*.log`.
+
+The app now owns this forwarder and restores the phone's persisted association at
+launch and before requests, without activating setup UI. The production phone deadline
+is 1.5 seconds inside a two-second companion attempt, superseding the initial 3/4
+second integration values above. Defaults remain configurable; physical latency and
+background execution still require qualification.
+
+Final routed verification adds a fourteenth test through actual HTTP clients,
+the typed relay and router. Only recognized connectivity errors permit fallback;
+TLS, unknown errors and cancellation retain terminal classifications. Full Core
+passes 194 tests (`watch-relay-forwarder-taxonomy-core-green.log`). The initial
+11-assertion regression and a separate public-error-type test expectation correction
+are retained. Final production classification was independently reviewed.

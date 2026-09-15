@@ -68,3 +68,26 @@ Independent review approved continuation ownership, bounded callback admission,
 monotonic deadline handling, timer lifetime and durable recovery coverage with no
 concrete correctness findings. Parent also inspected the implementation and verified
 the built Watch executable contains arm64_32 and arm64 slices using Xcode 26.2.
+
+## Native adapter checkpoint
+
+The existing `WatchSetupConnectivity` delegate now sends and receives bounded scoring
+messages. The Watch creates a two-second message owner; the phone reserves one request
+before creating its MainActor task and uses a lock-protected once-only reply wrapper.
+Setup application context continues through the same delegate. Both apps activate
+the session during app initialization.
+
+Peer changes synchronously close admission and advance its epoch. Admission opens
+only after the matching actor cleanup invalidates the durable binding and forwarding
+generation. An older queued cleanup cannot reopen admission or clear a newer peer.
+In-flight capacity remains reserved until its task joins, and stale replies cannot
+publish success. Independent review found the initial admission reopening race;
+the regression failed before the closed-transition fix and now passes.
+
+Seven session-gate tests cover concurrent admission, peer transitions, stale cleanup,
+duplicate release and bounded once-only replies. Combined with the 36 Watch model
+tests, all 43 pass (`watch-immediate-recovery-green.log`). The final Release iPhone
+build compiles the native adapter and both Watch architectures successfully
+(`watch-relay-routed-native-release.log`). Independent review approved the final
+gate and routing/model wiring. These checks do not prove physical WC delivery or
+background execution; injected recording integration is the next functional check.

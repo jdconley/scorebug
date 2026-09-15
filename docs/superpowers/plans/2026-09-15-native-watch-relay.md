@@ -197,3 +197,106 @@ implemented and independently reviewed. Full Core passes 159 tests; the Release
 app build passes with both Watch architectures and the final phone pairing gate.
 The next concrete implementation task is the scoped phone HTTP forwarder, followed
 by the existing-session native adapter and Watch scoring-client injection.
+
+## Provisional native routing budget
+
+Add a bounded direct HTTP transport and a per-pairing routed scoring client before
+selecting the companion client in the Watch app. Direct HTTP remains the first
+route so the OS can use its available networking. Retain a route that answers
+successful reads; after an uncertain execute, prefer the alternate route for
+receipt recovery. Each execute uses exactly one route. Reads may fall back only
+for recognized connectivity failures or companion unavailable/busy/scope mismatch.
+Cancellation, authorization, malformed responses and authoritative HTTP errors
+must propagate. Domain outcomes and authoritative receipt absence keep their meaning.
+
+Configure native direct and companion attempts to two seconds, with phone forwarding
+nested at 1.5 seconds. Library defaults remain configurable. Direct HTTP needs an
+absolute monotonic deadline with cancellation/join ownership, not only a URLRequest
+inactivity timeout. Test its timer with injected clocks and cancellation-ignoring
+HTTP work before use. A bounded transport can be injected into MatchHTTPClient;
+it must not mutate the caller's URL, headers or body beyond its timeout setting.
+
+After an uncertain execute, perform one immediate coordinator receipt-first recovery
+inside the current Watch model operation. Do not add the two-second polling wait.
+The ordinary one-switch sequence is 2 seconds initial execute + 2 receipt + 2 fresh
+snapshot (if absent) + 2 exact original-command retry = 8 seconds, leaving nominal
+margin within the existing ten-second retry age. Additional read fallbacks, delayed
+cancellation joins or suspension can exceed this envelope; preserve the fresh server
+age checks and explicit reconciliation. Receipt lookup can still recover a committed
+command after retry expiry. These defaults require physical latency qualification.
+
+## Routed native scoring checkpoint
+
+The forwarder, existing-session adapter and production Watch scoring factory are
+now connected. Phone relay setup is restored independently of foreground setup UI.
+The Watch factory receives the complete persisted pairing; a failed replacement
+disables the old scorer and remains retryable. Bootstrap redemption still uses its
+separate HTTP client.
+
+`MatchHTTPDeadlineTransport` supplies an absolute deadline and joins canceled HTTP
+work before returning. `WatchRoutedScoringClient` initially uses direct HTTP, retains
+a successful route and sends each execute through exactly one route. Recoverable
+execute failures remember an alternate route for that command's receipt; reads can
+use one alternate. Authorization, malformed data, cancellation and authoritative
+server errors do not cause route fallback. The Watch model performs one immediate
+receipt-first recovery under the same operation ownership, preserving durable
+acknowledgment before success haptics. The provisional 2/2/1.5-second native budget
+above is implemented and remains subject to physical measurement.
+
+Core passes 193 tests, including 13 forwarder, nine deadline and 12 router tests.
+Watch passes 43 model/gate tests and phone companion passes 34 model tests. All
+commands terminated with exit 0. Evidence:
+
+- `artifacts/qa/watch-relay-routed-core-full.log`
+- `artifacts/qa/watch-immediate-recovery-green.log`
+- `artifacts/qa/watch-relay-background-restore-green.log`
+- `artifacts/qa/watch-relay-routed-native-release.log` (Release iPhone plus both Watch architectures)
+
+Independent review approved final immediate recovery, production factory wiring,
+router cancellation ownership and the native peer-transition gate. The review of
+the forwarder caught malformed HTTP decoding being classified as connectivity;
+the new failing regression and corrected classification are retained. App-level
+recording integration, bootstrap relay and physical networking remain outstanding.
+
+### Physical-device readiness, read-only check
+
+The connected iPhone 16 Pro reports iOS 26.6.2 and the Ultra 2 reports watchOS 26.6;
+both have Developer Mode enabled and developer services available. This is fresh
+device discovery, not an app installation or WatchConnectivity result. The local
+wildcard development profiles include this phone but omit this Watch. No signing
+team has been selected for Scorebug and no developer-account registrations have
+been changed. Complete the local integration and bootstrap path before resolving
+Watch provisioning and beginning physical acceptance tests.
+
+## Recording integration and final error taxonomy
+
+The injected native integration now passes with two distinct Watch/phone pairs
+and one real `FixtureCameraSource` / `FilmModel` local recording. Watch A's committed
+point loses its reply, keeps a durable pending command with no success haptic, then
+recovers the exact receipt. Watch B takes over and scores while the original capture
+ID continues. The HTTP fixture observes exactly three original durable commands
+with the two Watch credentials and one recovery receipt, with no duplicate mutation.
+
+The finalized archive assembles and fully decodes: 2.687 seconds, 80 video frames,
+128,960 audio samples, audible content and the fixture's clean lower image band.
+Disabling immediate recovery only in the test fixture produces eight relevant
+assertion failures; restoring the real configuration passes. Independent review
+approved this functional scope. This does not establish frame continuity, 24 fps
+under load, A/V synchronization, sustained latency or physical WatchConnectivity.
+
+A final cross-route regression found TLS, URL cancellation and unknown phone HTTP
+errors still becoming `unavailable`. They now remain terminal across the relay;
+only recognized connectivity failures can prompt route fallback. The actual HTTP
+client / typed relay / router test first failed 11 assertions, then passed after
+the mapping fix and correction of the test's public error-type expectation.
+Independent review approved the final mapping. Full Core passes 194 tests and full
+Film model passes 86 tests, including the recording integration, both terminal 0.
+Evidence is `watch-relay-forwarder-taxonomy-*.log`,
+`native-watch-relay-recording-{red,green}.log` and `native-watch-relay-film-full.log`.
+The final combined Release build also terminates with exit 0
+(`watch-relay-native-final-release.log`) after the taxonomy fix; its embedded Watch
+executable retains arm64 and arm64_32. The 43 Watch model/gate and 34 phone model
+checks above remain the relevant companion-model evidence for this checkpoint.
+
+The next implementation checkpoint is the separately scoped
+[Watch bootstrap relay](2026-09-15-watch-bootstrap-relay.md).

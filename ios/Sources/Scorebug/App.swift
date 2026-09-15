@@ -1,3 +1,4 @@
+import ScorebugCore
 import ScorebugMedia
 import SwiftUI
 
@@ -10,9 +11,20 @@ struct ScorebugApp: App {
     @StateObject private var connectivity: WatchSetupConnectivity
     init() {
         let connectivity = WatchSetupConnectivity()
-        let phoneWatch = PhoneWatchModel(storage: PhoneWatchRequestKeychain(), sendEnvelope: { try connectivity.sendEnvelope($0) })
+        let forwarder = WatchRelayPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
+        let phoneWatch = PhoneWatchModel(storage: PhoneWatchRequestKeychain(),
+            onRelayBindingChanged: { try? forwarder.updateBinding($0) },
+            sendEnvelope: { try connectivity.sendEnvelope($0) })
         connectivity.noticeHandler = { [weak phoneWatch] in phoneWatch?.receive($0) }
         connectivity.peerChangedHandler = { [weak phoneWatch] in phoneWatch?.peerChanged() }
+        connectivity.scoringRequestHandler = { [weak phoneWatch] data in
+            guard let phoneWatch else { return Data() }
+            // Retry a locked/unavailable Keychain read before each request.
+            phoneWatch.restoreRelayAssociation()
+            return await forwarder.forward(data)
+        }
+        phoneWatch.restoreRelayAssociation()
+        connectivity.activate()
         _connectivity = StateObject(wrappedValue: connectivity)
         _phoneWatch = StateObject(wrappedValue: phoneWatch)
         let streaming = CaptureStreamingModel()

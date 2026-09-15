@@ -111,6 +111,9 @@ targets:
     deploymentTarget: '14.0'
     sources:
       - path: Sources/Scorebug/Capture
+      - path: Sources/Scorebug/Companion/PhoneWatchModel.swift
+      - path: Sources/ScorebugWatch/WatchScoringModel.swift
+      - path: Sources/WatchSupport/WatchRelaySessionGate.swift
       - path: FilmModelTests
     settings:
       base:

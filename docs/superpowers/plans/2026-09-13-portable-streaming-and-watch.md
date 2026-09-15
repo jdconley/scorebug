@@ -376,6 +376,16 @@ companion-database error. Sequential preinstallation did not resolve it; Xcode's
 no-reinstallation mode rejects simulator destinations. See the native Watch evidence
 for exact artifacts. These failures leave the paired workflow gate open.
 
+Configured native scoring now has a bounded paired-phone relay alongside direct
+HTTP, durable receipt-first recovery and peer-change invalidation. An injected
+two-pair test preserves one real local A/V recording while Watch A recovers a lost
+reply and Watch B takes over and scores. Core passes 194 tests, Watch model/gate 43,
+phone companion 34 and Film model 86; the final Release iPhone/Watch build passes.
+See the [native relay checkpoint](2026-09-15-native-watch-relay.md) for evidence and
+limits. This is functional model/media integration, not a successful physical WC
+or paired-simulator workflow. Initial setup still needs the separately planned
+[bootstrap relay](2026-09-15-watch-bootstrap-relay.md).
+
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
 `ios/WatchTests/`, `ios/WatchUITests/`, and native iPhone scoring tests from milestone 1.
@@ -389,7 +399,7 @@ new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,
       credentials and an expiring pairing code; optionally transfer setup with WatchConnectivity.
 - [x] Add home/away score, set/match display, undo, confirmed/pending states, retry,
       end-set confirmation, and guarded end-match. Do not require a WebSocket on watchOS.
-- [ ] Persist uncertain commands across suspension and reuse IDs across HTTP/companion
+- [x] Persist uncertain commands across suspension and reuse IDs across HTTP/companion
       routes. Haptics signal server acknowledgment; pending actions look different.
 - [ ] Test with dedicated iPhone/watch simulators: native iPhone scorer creates game, capture fixture
       joins, watch scores, worker output changes, then watch suspends/relaunches and rejoins.

@@ -13,9 +13,9 @@ relaunch, without activating scoring or reconciling its outbox.
 
 The phone persists a pairing request before issuance and the returned offer before
 sending it through WatchConnectivity application context. Retries keep the original
-request ID, endpoint, and installation context. Only a bounded, typed setup offer
-crosses to the Watch; installation authority, redeemed credentials, recovery keys,
-and scoring commands do not. The Watch explicitly accepts an offered match and
+request ID, endpoint, and installation context. Setup application context carries
+only a bounded, typed offer and identity notices; installation authority and
+recovery keys remain on their owning devices. The Watch explicitly accepts an offered match and
 stores its own redeemed credential in device-only Keychain.
 
 The Watch shows scores, team point buttons, set totals, explicit takeover, undo,
@@ -29,9 +29,27 @@ one slot, cancels and joins any passive poll, then rechecks lifecycle, setup,
 pending work, and current scorer before submission. Suspension invalidates and joins
 owned work. The app does not request continuous background execution.
 
-Watch HTTP uses OS-selected networking. The production companion bridge exchanges
-setup/identity context and handles activation and Watch switching. This implementation
-is not evidence of reliable physical Wi-Fi, cellular, or paired-phone routing.
+Configured Watch scoring now uses direct HTTP with OS-selected networking plus an
+explicit paired-phone relay. The native app initially tries direct HTTP, retains a
+successful route and uses receipt-first recovery after uncertain sends. A command
+is never blindly resubmitted through a second route. Immediate recovery runs once;
+the durable coordinator owns receipt lookup, retry eligibility and exact-command
+retry. Current attempt budgets are two seconds direct, two seconds companion and
+1.5 seconds for the phone's nested HTTP forwarding.
+
+The relay carries only bounded snapshot, execute and receipt requests, authenticated
+with the Watch's own score credential. The phone must match the complete scope to
+its persisted pairing association before forwarding; it never substitutes its own
+credential. One existing WCSession delegate handles setup and scoring at app scope,
+independent of filming or the selected phone tab. Peer changes invalidate old work
+before admitting new requests. Initial Watch redemption still needs direct HTTP;
+a separate bootstrap relay remains planned.
+
+The routed native code compiles for iPhone and both Watch architectures. Core/model
+tests cover deadlines, cancellation, lost replies and exact-command recovery; see
+the [relay checkpoint](superpowers/plans/2026-09-15-native-watch-relay.md#routed-native-scoring-checkpoint)
+for current counts and evidence. This is not evidence of reliable physical Wi-Fi,
+cellular, background wake or paired-phone delivery.
 
 ## Repeatable local test
 
@@ -130,8 +148,12 @@ explicitly calls for a physical iPhone and Watch.
 
 ## Remaining qualification
 
+- Complete the separately scoped bootstrap relay so initial setup can also use the
+  paired phone when Watch direct HTTP is unavailable.
 - Exercise actual companion exchange with paired simulators and physical devices.
-- Verify Watch A while its paired phone films, and Watch B through another phone.
+- Repeat Watch A while its paired phone films, and Watch B through another phone,
+  on real devices. The injected native-model test now covers those scoring roles
+  during one finalized, decodable local A/V archive; it does not exercise WC radios.
 - Test wrist suspension, cellular/Wi-Fi/paired-route changes, and dropped replies
   on physical hardware; simulator networking cannot establish those guarantees.
 - Continue adaptive media telemetry, profile transitions, impairment and sustained

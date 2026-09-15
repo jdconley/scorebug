@@ -627,4 +627,270 @@ final class WatchScoringModelTests: XCTestCase {
         await model.refresh()
         XCTAssertTrue(model.message?.localizedCaseInsensitiveContains("tied") == true)
     }
+    func testInjectedNativeScoringClientReceivesFullPairingAndRecoversLostReply() async throws {
+        let original = paired(), outbox = Outbox()
+        let native = NativeScoringClient(current: snapshot(device))
+        let factory = NativeScoringFactory(client: native)
+        let setup = WatchSetupCoordinator(storage: SetupStore(original), scoringOutbox: outbox,
+            clientFactory: forbiddenHTTP)
+        var haptics = 0
+        let model = WatchScoringModel(setupCoordinator: setup, pendingStore: outbox,
+            clientFactory: forbiddenHTTP, scoringClientFactory: { try factory.make($0) },
+            acknowledgmentHaptic: { haptics += 1 })
+        await model.wake()
+        XCTAssertEqual(factory.setups, [try XCTUnwrap(original.paired)])
+        XCTAssertTrue(model.canScore)
+        await native.loseNextReply()
+        await model.send(.awardPoint(side: .home))
+        let pending = try XCTUnwrap(outbox.load())
+        XCTAssertTrue(model.pending)
+        XCTAssertEqual(haptics, 0)
+        await model.refresh()
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(model.state?.outcome?.commandId, pending.command.commandId)
+        XCTAssertEqual(haptics, 1)
+        let observations = await native.observations()
+        XCTAssertEqual(observations.0, [.snapshot, .execute, .receipt])
+        XCTAssertTrue(observations.1.allSatisfy { $0 == original.paired?.credential })
+        XCTAssertEqual(observations.2, 1)
+    }
+
+    func testScoringFactoryFailureCanRetryWithoutChangingPersistedPairing() async throws {
+        let original = paired(), outbox = Outbox(), store = SetupStore(paired())
+        let native = NativeScoringClient(current: snapshot(device))
+        let factory = NativeScoringFactory(client: native)
+        factory.setFail(true)
+        let setup = WatchSetupCoordinator(storage: store, scoringOutbox: outbox, clientFactory: forbiddenHTTP)
+        let model = WatchScoringModel(setupCoordinator: setup, pendingStore: outbox,
+            clientFactory: forbiddenHTTP, scoringClientFactory: { try factory.make($0) })
+        await model.wake()
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(model.canScore)
+        XCTAssertEqual(try store.load(), original)
+        let attempts = factory.setups.count
+        factory.setFail(false)
+        await model.refresh()
+        XCTAssertGreaterThan(factory.setups.count, attempts)
+        XCTAssertEqual(model.snapshot?.id, game)
+        XCTAssertTrue(model.canScore)
+        XCTAssertEqual(try store.load(), original)
+    }
+
+    func testFailedReplacementFactoryCannotKeepOldScorerActive() async throws {
+        let store = SetupStore(paired()), outbox = Outbox(), server = Server(owner: device)
+        let native = NativeScoringClient(current: snapshot(device))
+        let factory = NativeScoringFactory(client: native)
+        let setup = WatchSetupCoordinator(storage: store, scoringOutbox: outbox,
+            clientFactory: { MatchHTTPClient(endpoint: $0, transport: { try await server.handle($0) }) },
+            newRedemptionId: { redemption }, newRecoveryKey: { String(repeating: "A", count: 43) })
+        let model = WatchScoringModel(setupCoordinator: setup, pendingStore: outbox,
+            clientFactory: forbiddenHTTP, scoringClientFactory: { try factory.make($0) })
+        await model.wake()
+        XCTAssertTrue(model.canScore)
+        factory.setFail(true)
+        let newPair = "40000000-0000-4000-8000-000000000002"
+        await model.receive(envelope(pairingId: newPair))
+        await model.acceptOfferedSetup(replacingCurrent: true)
+        XCTAssertEqual(try store.load()?.paired?.pairingId, newPair)
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(model.canScore)
+        factory.setFail(false)
+        await model.refresh()
+        XCTAssertEqual(factory.setups.last?.pairingId, newPair)
+        XCTAssertTrue(model.canScore)
+    }
+
+    private func immediateModel(_ native: NativeScoringClient, outbox: Outbox,
+                                haptic: @escaping () -> Void = {}) -> WatchScoringModel {
+        let setup = WatchSetupCoordinator(storage: SetupStore(paired()), scoringOutbox: outbox,
+            clientFactory: forbiddenHTTP)
+        return WatchScoringModel(setupCoordinator: setup, pendingStore: outbox,
+            clientFactory: forbiddenHTTP, scoringClientFactory: { _ in native },
+            recoverUncertainSendImmediately: true, acknowledgmentHaptic: haptic)
+    }
+
+    func testUncertainSendImmediatelyRecoversOneReceiptBeforeAcknowledgment() async throws {
+        let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+        var haptics = 0
+        let model = immediateModel(native, outbox: outbox, haptic: { haptics += 1 })
+        await model.wake()
+        await native.loseNextReply(URLError(.networkConnectionLost))
+        await model.send(.awardPoint(side: .home))
+        let observations = await native.observations()
+        XCTAssertEqual(observations.0, [.snapshot, .execute, .receipt])
+        XCTAssertEqual(observations.2, 1)
+        XCTAssertFalse(model.pending)
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(model.snapshot?.score.home, 1)
+        XCTAssertEqual(haptics, 1)
+    }
+
+    func testImmediateRecoveryFailureDoesNotLoopOrResend() async throws {
+        let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+        var haptics = 0
+        let model = immediateModel(native, outbox: outbox, haptic: { haptics += 1 })
+        await model.wake()
+        await native.loseNextReply(URLError(.timedOut))
+        await native.failNextReceipt(URLError(.networkConnectionLost))
+        await model.send(.awardPoint(side: .home))
+        let uncertain = await native.observations()
+        XCTAssertEqual(uncertain.0, [.snapshot, .execute, .receipt])
+        XCTAssertEqual(uncertain.2, 1)
+        XCTAssertTrue(model.pending)
+        XCTAssertFalse(model.busy)
+        XCTAssertEqual(haptics, 0)
+        await model.refresh()
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(haptics, 1)
+    }
+
+    func testImmediateRecoveryDoesNotAcknowledgeBeforeDurableClear() async throws {
+        let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+        var haptics = 0
+        let model = immediateModel(native, outbox: outbox, haptic: { haptics += 1 })
+        await model.wake()
+        outbox.failClear = true
+        await native.loseNextReply(URLError(.timedOut))
+        await model.send(.awardPoint(side: .home))
+        XCTAssertTrue(model.pending)
+        XCTAssertNotNil(try outbox.load())
+        XCTAssertEqual(haptics, 0)
+        outbox.failClear = false
+        await model.refresh()
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(haptics, 1)
+    }
+
+    func testAuthenticationMalformedAndStorageFailuresDoNotStartImmediateRecovery() async {
+        let errors: [Error] = [MatchClientError.unauthorized, MatchClientError.forbidden,
+            MatchClientError.invalidResponse, CancellationError(),
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "fixture"))]
+        for error in errors {
+            let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+            let model = immediateModel(native, outbox: outbox)
+            await model.wake()
+            await native.failNextExecute(error)
+            await model.send(.awardPoint(side: .home))
+            let observations = await native.observations()
+            XCTAssertEqual(observations.0, [.snapshot, .execute])
+            XCTAssertEqual(observations.2, 0)
+            XCTAssertTrue(model.pending)
+        }
+        let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+        let model = immediateModel(native, outbox: outbox)
+        await model.wake()
+        outbox.failSave = true
+        await model.send(.awardPoint(side: .home))
+        let observations = await native.observations()
+        XCTAssertEqual(observations.0, [.snapshot])
+        XCTAssertTrue(model.pending)
+    }
+
+    func testSuspensionPreventsImmediateRecoveryOfLateUncertainSend() async throws {
+        let native = NativeScoringClient(current: snapshot(device)), outbox = Outbox()
+        var haptics = 0
+        let model = immediateModel(native, outbox: outbox, haptic: { haptics += 1 })
+        await model.wake()
+        await native.loseNextReply(URLError(.networkConnectionLost))
+        await native.holdNextExecute()
+        let send = Task { await model.send(.awardPoint(side: .home)) }
+        await native.waitUntilHeld()
+        let suspend = Task { await model.suspend() }
+        while model.isActive { await Task.yield() }
+        await native.releaseExecute()
+        await send.value; await suspend.value
+        let observations = await native.observations()
+        XCTAssertEqual(observations.0, [.snapshot, .execute])
+        XCTAssertNotNil(try outbox.load())
+        XCTAssertEqual(haptics, 0)
+        await model.wake()
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(haptics, 1)
+    }
+
+    func testNativeScoringFactoryDoesNotReplacePairingRedemptionHTTP() async throws {
+        let store = SetupStore(), outbox = Outbox(), server = Server(owner: device)
+        let native = NativeScoringClient(current: snapshot(device))
+        let factory = NativeScoringFactory(client: native)
+        let setup = WatchSetupCoordinator(storage: store, scoringOutbox: outbox,
+            clientFactory: { MatchHTTPClient(endpoint: $0, transport: { try await server.handle($0) }) },
+            newDeviceId: { device }, newRedemptionId: { redemption },
+            newRecoveryKey: { String(repeating: "A", count: 43) })
+        let model = WatchScoringModel(setupCoordinator: setup, pendingStore: outbox,
+            clientFactory: forbiddenHTTP, scoringClientFactory: { try factory.make($0) })
+        await model.wake()
+        await model.receive(envelope())
+        XCTAssertTrue(factory.setups.isEmpty)
+        await model.acceptOfferedSetup()
+        let requests = await server.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests.first?.url?.path.hasSuffix("/redeem") == true)
+        XCTAssertEqual(factory.setups, [try XCTUnwrap(store.load()?.paired)])
+        XCTAssertTrue(model.canScore)
+    }
+
+}
+
+
+private let forbiddenHTTP: @Sendable (ScoringEndpoint) -> MatchHTTPClient = {
+    MatchHTTPClient(endpoint: $0, transport: { _ in
+        XCTFail("Injected native scoring must not silently use HTTP")
+        throw Failure.network
+    })
+}
+
+private final class NativeScoringFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private let client: any MatchScoringClient
+    private var values: [WatchPairedSetup] = []
+    private var fail = false
+    init(client: any MatchScoringClient) { self.client = client }
+    var setups: [WatchPairedSetup] { lock.lock(); defer { lock.unlock() }; return values }
+    func setFail(_ value: Bool) { lock.lock(); defer { lock.unlock() }; fail = value }
+    func make(_ setup: WatchPairedSetup) throws -> any MatchScoringClient {
+        lock.lock(); defer { lock.unlock() }
+        values.append(setup)
+        if fail { throw Failure.network }
+        return client
+    }
+}
+
+private actor NativeScoringClient: MatchScoringClient {
+    private var current: MatchSnapshot
+    private var operations: [WatchRelayOperationKind] = []
+    private var credentials: [MatchCredential] = []
+    private var receipts: [String: CommandOutcome] = [:]
+    private var applications = 0
+    private var lostReplyError: Error?
+    private var executeError: Error?
+    private var receiptError: Error?
+    private var holdExecute = false
+    private var held: CheckedContinuation<Void, Never>?
+    init(current: MatchSnapshot) { self.current = current }
+    func loseNextReply(_ error: Error = Failure.network) { lostReplyError = error }
+    func failNextExecute(_ error: Error) { executeError = error }
+    func failNextReceipt(_ error: Error) { receiptError = error }
+    func holdNextExecute() { holdExecute = true }
+    func waitUntilHeld() async { while held == nil { await Task.yield() } }
+    func releaseExecute() { held?.resume(); held = nil }
+    func observations() -> ([WatchRelayOperationKind], [MatchCredential], Int) { (operations, credentials, applications) }
+    func snapshot(credential: MatchCredential) async throws -> MatchSnapshotResponse {
+        operations.append(.snapshot); credentials.append(credential)
+        return MatchSnapshotResponse(snapshot: current, serverTime: date)
+    }
+    func execute(_ command: MatchCommand, credential: MatchCredential) async throws -> CommandOutcome {
+        operations.append(.execute); credentials.append(credential)
+        if let error = executeError { executeError = nil; throw error }
+        current.score.home += 1; current.revision += 1; applications += 1
+        let result = CommandOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: current)
+        receipts[command.commandId] = result
+        if holdExecute { holdExecute = false; await withCheckedContinuation { held = $0 } }
+        if let error = lostReplyError { lostReplyError = nil; throw error }
+        return result
+    }
+    func receipt(commandId: String, credential: MatchCredential) async throws -> CommandOutcome? {
+        operations.append(.receipt); credentials.append(credential)
+        if let error = receiptError { receiptError = nil; throw error }
+        return receipts[commandId]
+    }
 }

@@ -112,7 +112,7 @@ the runner's device and processes are cleaned up. It never shares the video.
 See [native app integration](../docs/native-film-app.md), the
 [architecture](../docs/architecture.md), and the
 [delivery plan](../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
-Physical-phone camera qualification and the native Watch app remain ahead.
+Physical-phone camera and Watch networking qualification remain ahead.
 
 ## Native Watch scorer
 
@@ -120,7 +120,10 @@ Physical-phone camera qualification and the native Watch app remain ahead.
 in the phone app. It uses ScorebugCore and Apple frameworks, without media packages.
 The phone's Watch tab sends an expiring setup offer using a saved Film or Score
 connection. Accept it on the Watch, then take over scoring explicitly. Watch commands
-use its own credential, Keychain setup, and durable scoring outbox.
+use its own credential, Keychain setup, and durable scoring outbox. Configured Watch
+scoring can use direct HTTP or the paired phone's app-scoped relay, with receipt-first
+recovery after uncertain sends. Initial setup redemption still requires direct HTTP;
+physical network switching and background delivery remain unqualified.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer
