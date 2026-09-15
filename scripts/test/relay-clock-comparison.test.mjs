@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { compareRelayClock, videoPayloadHashes } from '../relay-clock-comparison.mjs';
+import {
+  compareRelayClock,
+  videoPayloadHashes,
+  qualifyRelayOrigin,
+} from '../relay-clock-comparison.mjs';
 import { psiCRC, PTS_MODULUS, moduloPTS } from '../transport-clock-parser.mjs';
 
 const digest = (code) => createHash('sha256').update(`picture ${code}`).digest('hex');
@@ -372,3 +376,165 @@ test('retains existing finite TS and frame bounds', () => {
   assert.throws(() => videoPayloadHashes(fixture().subarray(0, -1)), /Truncated TS/);
   assert.throws(() => videoPayloadHashes(fixture(Array(301).fill(annex(picture)))), /frame bound/);
 });
+
+// The API mapping must explain the same complete picture comparison, not endpoints.
+const publicationID = 'd6c217a3-27c5-44ea-a55e-3b951c67981f';
+const originFixture = (origin = 9000) => {
+  const before = records(5, PTS_MODULUS - 4000);
+  return {
+    path: 'fixture',
+    source: { type: 'srtConn', id: publicationID },
+    connection: {
+      id: publicationID,
+      state: 'publish',
+      path: 'fixture',
+      query: 'not-for-evidence',
+      scorebugTransportClock: {
+        convention: 'mpegts-ingress-origin-90k-v1',
+        originPTS: String(origin),
+      },
+    },
+    before,
+    after: shifted(before, -origin).slice(2),
+  };
+};
+for (const origin of [0, 9000, 10919, PTS_MODULUS / 2, PTS_MODULUS - 1]) {
+  test(`qualifies actual relay origin ${origin} against every acquired picture`, () => {
+    const input = originFixture(origin);
+    const saved = structuredClone(input);
+    const result = qualifyRelayOrigin(input);
+    assert.deepEqual(result, {
+      publicationId: publicationID,
+      path: 'fixture',
+      convention: 'mpegts-ingress-origin-90k-v1',
+      originPTS: String(origin),
+      comparison: compareRelayClock(input),
+    });
+    assert.deepEqual(input, saved);
+    assert.ok(!JSON.stringify(result).includes('not-for-evidence'));
+  });
+}
+for (const origin of [
+  undefined,
+  null,
+  9000,
+  '',
+  '-1',
+  '01',
+  '1.0',
+  '1e3',
+  '+1',
+  ' 1',
+  '1 ',
+  String(PTS_MODULUS),
+  '999999999999999999999',
+  {},
+  [],
+]) {
+  test(`rejects malformed or out-of-range relay origin ${JSON.stringify(origin)}`, () => {
+    const input = originFixture();
+    input.connection.scorebugTransportClock.originPTS = origin;
+    assert.throws(() => qualifyRelayOrigin(input));
+  });
+}
+for (const [name, mutate] of [
+  [
+    'missing source',
+    (x) => {
+      x.source = undefined;
+    },
+  ],
+  [
+    'wrong source protocol',
+    (x) => {
+      x.source.type = 'rtmpConn';
+    },
+  ],
+  [
+    'invalid publication id',
+    (x) => {
+      x.source.id = 'unknown';
+      x.connection.id = 'unknown';
+    },
+  ],
+  [
+    'different publication',
+    (x) => {
+      x.connection.id = 'd1e71c84-e637-4215-b5d2-3840e5a6fe40';
+    },
+  ],
+  [
+    'missing connection',
+    (x) => {
+      x.connection = undefined;
+    },
+  ],
+  [
+    'reader connection',
+    (x) => {
+      x.connection.state = 'read';
+    },
+  ],
+  [
+    'idle connection',
+    (x) => {
+      x.connection.state = 'idle';
+    },
+  ],
+  [
+    'different path',
+    (x) => {
+      x.connection.path = 'other';
+    },
+  ],
+  [
+    'empty expected path',
+    (x) => {
+      x.path = '';
+      x.connection.path = '';
+    },
+  ],
+  [
+    'missing mapping',
+    (x) => {
+      delete x.connection.scorebugTransportClock;
+    },
+  ],
+  [
+    'null mapping',
+    (x) => {
+      x.connection.scorebugTransportClock = null;
+    },
+  ],
+  [
+    'unknown convention',
+    (x) => {
+      x.connection.scorebugTransportClock.convention = 'future';
+    },
+  ],
+  [
+    'wrong origin',
+    (x) => {
+      x.connection.scorebugTransportClock.originPTS = '10919';
+    },
+  ],
+  [
+    'middle picture mismatch',
+    (x) => {
+      x.after[1].payloadHash = digest(99);
+    },
+  ],
+  [
+    'middle timestamp mismatch',
+    (x) => {
+      x.after[1].wirePTS += 1;
+      x.after[1].decoderPTS += 1;
+    },
+  ],
+]) {
+  test(`rejects relay origin evidence with ${name}`, () => {
+    const input = originFixture();
+    mutate(input);
+    assert.throws(() => qualifyRelayOrigin(input));
+  });
+}

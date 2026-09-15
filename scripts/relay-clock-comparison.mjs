@@ -168,3 +168,39 @@ export function compareRelayClock({ before, after }) {
     timestampsPreserved: offsetTicks === 0,
   };
 }
+
+// Private API identity and actual ingress origin must explain every acquired
+// picture. Return only bounded scalar evidence, never connection query/credentials.
+export function qualifyRelayOrigin({ path, source, connection, before, after }) {
+  assert.ok(typeof path === 'string' && path.length > 0 && path.length <= 128, 'Invalid path');
+  assert.equal(source?.type, 'srtConn', 'Expected SRT publisher source');
+  assert.ok(
+    typeof source?.id === 'string' &&
+      /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(source.id),
+    'Invalid publication identity',
+  );
+  assert.equal(connection?.id, source.id, 'Publication identity mismatch');
+  assert.equal(connection?.path, path, 'Publication path mismatch');
+  assert.equal(connection?.state, 'publish', 'Connection is not publishing');
+  const clock = connection.scorebugTransportClock;
+  assert.equal(clock?.convention, 'mpegts-ingress-origin-90k-v1', 'Unknown relay clock');
+  assert.ok(
+    typeof clock?.originPTS === 'string' && /^(?:0|[1-9][0-9]{0,9})$/.test(clock.originPTS),
+    'Invalid relay origin',
+  );
+  const origin = Number(clock.originPTS);
+  assert.ok(origin < PTS_MODULUS, 'Relay origin outside 33-bit wire range');
+  const comparison = compareRelayClock({ before, after });
+  assert.equal(
+    moduloPTS(comparison.offsetTicks + origin),
+    0,
+    'Relay origin contradicts acquired picture timestamps',
+  );
+  return {
+    publicationId: source.id,
+    path,
+    convention: clock.convention,
+    originPTS: clock.originPTS,
+    comparison,
+  };
+}

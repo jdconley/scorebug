@@ -11,7 +11,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { buildFfmpegArgs } from '../apps/home-daemon/src/pipeline.ts';
 import { runInstrumentedWorker } from './test-worker-timestamps.mjs';
 import { parseTransport, MAX_TS_BYTES, MAX_FRAMES } from './transport-clock-parser.mjs';
-import { videoPayloadHashes, compareRelayClock } from './relay-clock-comparison.mjs';
+import {
+  videoPayloadHashes,
+  compareRelayClock,
+  qualifyRelayOrigin,
+} from './relay-clock-comparison.mjs';
 import {
   decodeFrameCodes,
   frameCodeReadFilter,
@@ -35,7 +39,15 @@ const directory = await mkdtemp(join(root, 'artifacts/qa/relay-clock-'));
 console.log(`Relay clock evidence: ${directory}`);
 const { ffmpeg, ffprobe, font } = mediaTools();
 const transmitter = executable('srt-live-transmit');
-const image = 'bluenviron/mediamtx:1.21.0';
+const mappingOption = process.argv[2];
+assert.ok(
+  process.argv.length <= 3 &&
+    (mappingOption === undefined ||
+      /^--mapping-image=[A-Za-z0-9/_:.-]{1,256}$/.test(mappingOption)),
+  'Use --mapping-image=<locally built relay image> to require origin metadata',
+);
+const requireMapping = mappingOption !== undefined;
+const image = mappingOption?.slice('--mapping-image='.length) ?? 'bluenviron/mediamtx:1.21.0';
 const report = {
   meaning:
     'Finite native/relay/decoder correspondence. A measured offset is not a runtime correction or a loss denominator.',
@@ -43,6 +55,7 @@ const report = {
   setupFailure,
   startedAt: new Date().toISOString(),
   image,
+  requireMapping,
   commands: [],
   scenarios: [],
 };
@@ -124,8 +137,8 @@ async function stop(item) {
   if (!item.evidence.terminal) item.child.kill('SIGKILL');
   await item.done;
 }
-async function until(fn, label, processes = []) {
-  const deadline = Date.now() + 12000;
+async function until(fn, label, processes = [], timeout = 12000) {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     checkCancellation();
     for (const item of processes)
@@ -332,6 +345,40 @@ async function scenario(source, name, origin, readerDelay) {
       'published path',
       [native, bridge, publisher],
     );
+    if (requireMapping) {
+      const source = result.readyPath.source;
+      assert.equal(source?.type, 'srtConn', 'Ready path must identify its SRT publisher');
+      assert.match(source.id, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+      const publicationURL = `http://127.0.0.1:${api}/v3/srtconns/get/${source.id}`;
+      await until(
+        async () => {
+          const response = await fetch(publicationURL, { signal: AbortSignal.timeout(1000) });
+          if (!response.ok) {
+            await response.body?.cancel();
+            return false;
+          }
+          const connection = await response.json();
+          const clock = connection.scorebugTransportClock;
+          if (clock == null) return false;
+          assert.equal(connection.id, source.id);
+          assert.equal(connection.state, 'publish');
+          assert.equal(connection.path, 'fixture');
+          assert.ok(typeof clock.convention === 'string' && clock.convention.length <= 64);
+          assert.ok(typeof clock.originPTS === 'string' && clock.originPTS.length <= 10);
+          // Never retain private API fields such as query, user or remoteAddr.
+          result.relayConnection = {
+            id: connection.id,
+            state: connection.state,
+            path: connection.path,
+            scorebugTransportClock: { convention: clock.convention, originPTS: clock.originPTS },
+          };
+          return true;
+        },
+        'relay ingress origin metadata',
+        [native, bridge, publisher],
+        1500,
+      );
+    }
     const launchReader = (label) =>
       launch(label, transmitter, [
         '-a:no',
@@ -355,6 +402,26 @@ async function scenario(source, name, origin, readerDelay) {
     // turn a partial recording into a passing result.
     await delay(1500);
     await stop(publisher);
+    if (requireMapping) {
+      await until(async () => {
+        // Listing avoids the expected ERR log from GET of an already closed ID;
+        // keep the strict zero-warning/error media gate unchanged.
+        const response = await fetch(
+          `http://127.0.0.1:${api}/v3/srtconns/list?itemsPerPage=100&page=0`,
+          { signal: AbortSignal.timeout(1000) },
+        );
+        assert.equal(response.status, 200, 'Cannot observe closed publisher');
+        const connections = await response.json();
+        assert.ok([0, 1].includes(connections.pageCount), 'Incomplete connection list');
+        assert.ok(Array.isArray(connections.items) && connections.items.length <= 100);
+        assert.equal(connections.itemCount, connections.items.length);
+        for (const item of connections.items)
+          assert.match(item.id, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+        if (connections.items.some((item) => item.id === result.relayConnection.id)) return false;
+        result.closedPublisherAbsent = true;
+        return true;
+      }, 'closed relay publisher removal');
+    }
     await stop(reader);
     await stop(earlyReader);
     for (const child of children) {
@@ -460,8 +527,26 @@ async function scenario(source, name, origin, readerDelay) {
       'Production output must retain every acquired source picture',
     );
     result.comparison = compareRelayClock({ before: result.before, after: result.after });
+    if (requireMapping) {
+      result.originMapping = qualifyRelayOrigin({
+        path: 'fixture',
+        source: result.readyPath.source,
+        connection: result.relayConnection,
+        before: result.before,
+        after: result.after,
+      });
+    }
     if (earlyReader) {
       result.earlyComparison = compareRelayClock({ before: result.before, after: result.early });
+      if (requireMapping) {
+        result.earlyOriginMapping = qualifyRelayOrigin({
+          path: 'fixture',
+          source: result.readyPath.source,
+          connection: result.relayConnection,
+          before: result.before,
+          after: result.early,
+        });
+      }
       assert.ok(
         result.comparison.firstCode > result.earlyComparison.firstCode,
         'Late reader must establish a different acquisition boundary',

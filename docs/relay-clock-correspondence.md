@@ -7,7 +7,7 @@ interval counts have an explicit, scoped contract.
 
 ## Source contract
 
-The installed qualification image is MediaMTX 1.21.0, locally resolved to image ID
+The stock qualification image is MediaMTX 1.21.0, locally resolved to image ID
 `sha256:19fddade8d6110a3d718ac0045681fbeba344ae563a066205fe5929a87f7582f`.
 Its [pinned dependencies](https://github.com/bluenviron/mediamtx/blob/v1.21.0/go.mod)
 include mediacommon 2.9.4. SRT ingest invokes
@@ -154,6 +154,64 @@ match, independently excluding the observed corruption from those comparisons.
 
 ## Production decision
 
+### Observed relay origin primitive
+
+The maintained [MediaMTX patch](../vendor/MediaMTX/README.md) now observes the actual
+first supported callback passed to the shared decoder. It leaves decoder output
+unchanged and exposes a copied, mutex-protected `scorebugTransportClock` on the
+owning private SRT publisher API item. Its convention is
+`mpegts-ingress-origin-90k-v1`; `originPTS` is a canonical decimal 33-bit value.
+It is absent before observation, for readers/idle/alwaysAvailable connections,
+and after the publisher reader exits. Existing publisher UUID and path identify
+the publication. This does not yet associate native publishing attempts or actual
+worker reads with that publication.
+
+`pnpm test:relay-origin` explicitly requires this metadata. The completed run
+`artifacts/qa/relay-clock-DCWw7h` passes zero-origin, 123.25-second-origin and
+late-reader cases. Every acquired compressed picture, raw PTS, decoded barcode and
+production worker picture matches; the returned origin explains every timestamp
+modulo 2^33. The origin is observed from the API, never supplied as a fixture constant.
+
+| Reader                         | Acquired pictures | API origin (90 kHz) | Observed shift | Worker pictures  |
+| ------------------------------ | ----------------- | ------------------- | -------------- | ---------------- |
+| Zero origin                    | 60–239 (180)      | 9000                | -9000          | 180              |
+| 123.25 s origin                | 59–239 (181)      | 9000                | -9000          | 181              |
+| Late reader                    | 119–239 (121)     | 9000                | -9000          | 121              |
+| Same-publication early control | 59–239 (181)      | 9000                | -9000          | Raw/decoder only |
+
+All three local archives and native publisher counters retain 240 pictures.
+Early/late readers use the same publisher UUID and API origin. After each publisher
+stops, a complete private connection listing proves that its UUID is absent. Every
+child exits 0; all containers are removed and independently confirmed absent; relay
+warnings and cleanup errors are empty. The original stock characterization command
+remains unchanged. Requiring mapped metadata from stock MediaMTX fails as intended
+in `relay-clock-giXYTL`, with all owned children stopped and its container removed.
+
+The initial patched run `relay-clock-MCNLpF` passed media comparison but failed the
+strict log gate: GET of the closed publisher correctly returned 404 and emitted an
+API error. The final harness uses a complete connection listing for that check;
+it does not filter or weaken the zero-warning/error gate.
+
+The source archive, builder image, original touched files and patch are pinned in
+`vendor/MediaMTX/upstream.json`. Archive/patch/original-file hashes and license bytes
+are independently verified; exact patch application and reverse checks include both
+added Go test files. Full MPEG-TS/SRT package tests and race checks pass, as do all
+561 tooling tests. Independent specification and quality reviews approve the source.
+Both Linux targets build and return `v1.21.0-scorebug-clock-v1`:
+
+| Target | Local image                      | Image ID                                                                  |
+| ------ | -------------------------------- | ------------------------------------------------------------------------- |
+| ARM64  | `scorebug/ingest:clock-v1`       | `sha256:af14b36d860f1264458f4a4da45bf0f133b3a564602308acf478ec7cc142e5a3` |
+| AMD64  | `scorebug/ingest:clock-v1-amd64` | `sha256:53272ff0b752441479faf1409f4955f0fbf20440e011dfacab6bfc3ead14aa4b` |
+
+ARM64 media runs in Docker Desktop's Linux VM on this Mac. AMD64 is cross-compiled
+and its version command runs under emulation; this is not physical AMD64, NVIDIA,
+home-GPU or cloud qualification. Logs, image identities and a source/evidence hash
+manifest are retained under `artifacts/qa/relay-origin-final-verification.json`.
+Regular deployment configurations still select the stock relay.
+
+### Remaining production association
+
 Keep the existing relay media timing and add explicit publisher-epoch clock mapping
 metadata in the owned relay/gateway path. That avoids changing the A/V timing already
 qualified for playback. The mapping must be captured at the actual first supported
@@ -165,7 +223,8 @@ A byte-preserving SRT route or per-frame in-band identity remain alternatives, b
 introduce a different deployment topology or SDK/worker metadata path. Patching the
 relay to preserve PTS is another option and requires independent A/V, wrap, reconnect
 and output qualification. None is enabled by this diagnostic command. Next work is
-the scoped relay metadata contract, followed by matched source intervals and
+binding authorized native attempts and actual worker reads to the observed relay
+publication, followed by matched source intervals and
 available-capacity evidence before enabling automatic quality. The
 [public worker epoch](superpowers/plans/2026-09-15-public-worker-epoch.md) now gives
 native consumers a separate opaque reporting-session identifier. The existing

@@ -1,0 +1,580 @@
+diff --git a/internal/defs/api_srt.go b/internal/defs/api_srt.go
+index 1e3d871..d87710d 100644
+--- a/internal/defs/api_srt.go
++++ b/internal/defs/api_srt.go
+@@ -23,6 +23,13 @@ const (
+ 	APISRTConnStatePublish APISRTConnState = "publish"
+ )
+ 
++// APISRTTransportClock is the MPEG-TS ingress origin for this SRT publication.
++// The enclosing connection ID, state and path identify the publication epoch.
++type APISRTTransportClock struct {
++	Convention string `json:"convention"`
++	OriginPTS  string `json:"originPTS"`
++}
++
+ // APISRTConn is a SRT connection.
+ type APISRTConn struct {
+ 	ID         uuid.UUID       `json:"id"`
+@@ -33,6 +40,8 @@ type APISRTConn struct {
+ 	Query      string          `json:"query"`
+ 	User       string          `json:"user"`
+ 
++	ScorebugTransportClock *APISRTTransportClock `json:"scorebugTransportClock,omitempty"`
++
+ 	// The metric names/comments are pulled from GoSRT
+ 
+ 	// The total number of sent DATA packets, including retransmitted packets
+diff --git a/internal/protocols/mpegts/to_stream.go b/internal/protocols/mpegts/to_stream.go
+index 5b0bbea..1fccc32 100644
+--- a/internal/protocols/mpegts/to_stream.go
++++ b/internal/protocols/mpegts/to_stream.go
+@@ -26,12 +26,33 @@ func ToStream(
+ 	r *EnhancedReader,
+ 	subStream **stream.SubStream,
+ 	l logger.Writer,
++) ([]*description.Media, error) {
++	return ToStreamWithClockOrigin(r, subStream, l, nil)
++}
++
++// ToStreamWithClockOrigin maps a MPEG-TS stream and observes its normalization origin.
++func ToStreamWithClockOrigin(
++	r *EnhancedReader,
++	subStream **stream.SubStream,
++	l logger.Writer,
++	onOrigin func(int64),
+ ) ([]*description.Media, error) {
+ 	var medias []*description.Media //nolint:prealloc
+ 	var unsupportedTracks []int
+ 
+ 	td := &mpegts.TimeDecoder{}
+ 	td.Initialize()
++	observed := false
++	decode := func(pts int64) int64 {
++		out := td.Decode(pts)
++		if !observed {
++			observed = true
++			if onOrigin != nil {
++				onOrigin(pts)
++			}
++		}
++		return out
++	}
+ 
+ 	for i, track := range r.Tracks() { //nolint:dupl
+ 		var medi *description.Media
+@@ -46,7 +67,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataH265(track, func(pts int64, _ int64, au [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+@@ -65,7 +86,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataH264(track, func(pts int64, _ int64, au [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+@@ -83,7 +104,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataMPEG4Video(track, func(pts int64, frame []byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+@@ -99,7 +120,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataMPEG1Video(track, func(pts int64, frame []byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+@@ -118,7 +139,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataOpus(track, func(pts int64, packets [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
+@@ -135,7 +156,7 @@ func ToStream(
+ 				}},
+ 			}
+ 			r.OnDataKLV(track, func(pts int64, uni []byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts,
+@@ -157,7 +178,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataMPEG4Audio(track, func(pts int64, aus [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
+@@ -184,7 +205,7 @@ func ToStream(
+ 			clockRate := medi.Formats[0].ClockRate()
+ 
+ 			r.OnDataMPEG4AudioLATM(track, func(pts int64, els [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				pts = multiplyAndDivide(pts, int64(clockRate), 90000)
+ 
+@@ -228,7 +249,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataMPEG1Audio(track, func(pts int64, frames [][]byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+@@ -248,7 +269,7 @@ func ToStream(
+ 			}
+ 
+ 			r.OnDataAC3(track, func(pts int64, frame []byte) error {
+-				pts = td.Decode(pts)
++				pts = decode(pts)
+ 
+ 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+ 					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
+diff --git a/internal/servers/srt/conn.go b/internal/servers/srt/conn.go
+index 46aedc4..ad556ed 100644
+--- a/internal/servers/srt/conn.go
++++ b/internal/servers/srt/conn.go
+@@ -6,6 +6,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"net"
++	"strconv"
+ 	"sync"
+ 	"time"
+ 
+@@ -56,17 +57,18 @@ type conn struct {
+ 	pathManager         serverPathManager
+ 	parent              *Server
+ 
+-	ctx       context.Context
+-	ctxCancel func()
+-	created   time.Time
+-	uuid      uuid.UUID
+-	mutex     sync.RWMutex
+-	state     defs.APISRTConnState
+-	pathName  string
+-	query     string
+-	user      string
+-	sconn     srt.Conn
+-	reader    *stream.Reader
++	ctx            context.Context
++	ctxCancel      func()
++	created        time.Time
++	uuid           uuid.UUID
++	mutex          sync.RWMutex
++	state          defs.APISRTConnState
++	pathName       string
++	query          string
++	user           string
++	sconn          srt.Conn
++	reader         *stream.Reader
++	transportClock *defs.APISRTTransportClock
+ }
+ 
+ func (c *conn) initialize() {
+@@ -194,6 +196,11 @@ func (c *conn) runPublish(streamID *streamID) error {
+ }
+ 
+ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *conf.Path) error {
++	defer func() {
++		c.mutex.Lock()
++		c.transportClock = nil
++		c.mutex.Unlock()
++	}()
+ 	sconn.SetReadDeadline(time.Now().Add(time.Duration(c.readTimeout)))
+ 	r := &mpegts.EnhancedReader{R: sconn}
+ 	err := r.Initialize()
+@@ -220,7 +227,20 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
+ 
+ 	var subStream *stream.SubStream
+ 
+-	medias, err := mpegts.ToStream(r, &subStream, c)
++	// AlwaysAvailable has an additional stream PTS offset. Its configuration
++	// cannot be hot reloaded: changing it closes this publisher's path.
++	var onOrigin func(int64)
++	if !pathConf.AlwaysAvailable {
++		onOrigin = func(pts int64) {
++			c.mutex.Lock()
++			c.transportClock = &defs.APISRTTransportClock{
++				Convention: "mpegts-ingress-origin-90k-v1",
++				OriginPTS:  strconv.FormatInt(pts, 10),
++			}
++			c.mutex.Unlock()
++		}
++	}
++	medias, err := mpegts.ToStreamWithClockOrigin(r, &subStream, c, onOrigin)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -380,6 +400,11 @@ func (c *conn) apiItem() *defs.APISRTConn {
+ 		User:       c.user,
+ 	}
+ 
++	if c.state == defs.APISRTConnStatePublish && c.transportClock != nil {
++		clock := *c.transportClock
++		item.ScorebugTransportClock = &clock
++	}
++
+ 	if c.sconn != nil {
+ 		var s srt.Statistics
+ 		c.sconn.Stats(&s)
+diff --git a/internal/servers/srt/server_test.go b/internal/servers/srt/server_test.go
+index bdea48c..6c059a5 100644
+--- a/internal/servers/srt/server_test.go
++++ b/internal/servers/srt/server_test.go
+@@ -252,6 +252,7 @@ func TestServerPublish(t *testing.T) {
+ 				Path:                          "teststream",
+ 				Query:                         "param=value",
+ 				User:                          "myuser",
++				ScorebugTransportClock:        &defs.APISRTTransportClock{Convention: "mpegts-ingress-origin-90k-v1", OriginPTS: "0"},
+ 				PacketsSent:                   list.Items[0].PacketsSent,
+ 				PacketsReceived:               list.Items[0].PacketsReceived,
+ 				PacketsSentUnique:             list.Items[0].PacketsSentUnique,
+diff --git a/internal/protocols/mpegts/to_stream_clock_origin_test.go b/internal/protocols/mpegts/to_stream_clock_origin_test.go
+new file mode 100644
+index 0000000..7bb785b
+--- /dev/null
++++ b/internal/protocols/mpegts/to_stream_clock_origin_test.go
+@@ -0,0 +1,138 @@
++package mpegts
++
++import (
++	"bytes"
++	"fmt"
++	"io"
++	"testing"
++	"time"
++
++	"github.com/bluenviron/gortsplib/v5/pkg/description"
++	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
++	mcmpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
++	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
++	"github.com/stretchr/testify/require"
++
++	"github.com/bluenviron/mediamtx/internal/stream"
++	"github.com/bluenviron/mediamtx/internal/test"
++	"github.com/bluenviron/mediamtx/internal/unit"
++)
++
++// Exercise real TS demux callbacks and delivered stream units, using the unmodified
++// mediacommon decoder as the oracle, including audio selecting the shared origin.
++func TestToStreamClockOrigin(t *testing.T) {
++	for _, origin := range []int64{0, 9000, (1 << 33) - 2000} {
++		for _, audioFirst := range []bool{false, true} {
++			for _, observed := range []bool{false, true} {
++				t.Run(fmt.Sprintf("origin_%d/audio_first_%v/observed_%v", origin, audioFirst, observed), func(t *testing.T) {
++					var buf bytes.Buffer
++					video := &mcmpegts.Track{Codec: &codecs.H264{}}
++					audio := &mcmpegts.Track{Codec: &codecs.MPEG4Audio{Config: mpeg4audio.AudioSpecificConfig{
++						Type: 2, SampleRate: 48000, ChannelConfig: 2,
++					}}}
++					w := &mcmpegts.Writer{W: &buf, Tracks: []*mcmpegts.Track{video, audio}}
++					require.NoError(t, w.Initialize())
++					_, err := w.WriteTables()
++					require.NoError(t, err)
++					// Backward steps and wrap are intentional. The first callback is not the minimum PTS.
++					pts := []int64{origin, (origin + 3000) & ((1 << 33) - 1), (origin + 1000) & ((1 << 33) - 1),
++						(origin + 6000) & ((1 << 33) - 1), (origin + 9000) & ((1 << 33) - 1)}
++					type sample struct {
++						audio bool
++						pts   int64
++					}
++					var expected []sample
++					for i, p := range pts {
++						isAudio := (i%2 == 0) == audioFirst
++						if isAudio {
++							require.NoError(t, w.WriteMPEG4Audio(audio, p, [][]byte{{1, 2, 3, 4}}))
++						} else {
++							require.NoError(t, w.WriteH264(video, p, p, [][]byte{test.FormatH264.SPS, test.FormatH264.PPS, {5, byte(i)}}))
++						}
++					}
++					// Video PES delivery can lag audio. Observe the actual callback order
++					// independently instead of assuming writer order or the lowest PTS.
++					oracle := &mcmpegts.TimeDecoder{}
++					oracle.Initialize()
++					raw := &EnhancedReader{R: bytes.NewReader(buf.Bytes())}
++					require.NoError(t, raw.Initialize())
++					var firstPTS int64
++					observe := func(p int64, isAudio bool) {
++						if len(expected) == 0 {
++							firstPTS = p
++						}
++						d := oracle.Decode(p)
++						if isAudio {
++							d = multiplyAndDivide(d, 48000, 90000)
++						}
++						expected = append(expected, sample{isAudio, d})
++					}
++					for _, track := range raw.Tracks() {
++						switch track.Codec.(type) {
++						case *codecs.H264:
++							raw.OnDataH264(track, func(p, _ int64, _ [][]byte) error { observe(p, false); return nil })
++						case *codecs.MPEG4Audio:
++							raw.OnDataMPEG4Audio(track, func(p int64, _ [][]byte) error { observe(p, true); return nil })
++						}
++					}
++					for {
++						err = raw.Read()
++						if err != nil {
++							require.ErrorIs(t, err, io.EOF)
++							break
++						}
++					}
++					require.NotEmpty(t, expected)
++					if audioFirst {
++						require.Equal(t, origin, firstPTS)
++					}
++					r := &EnhancedReader{R: bytes.NewReader(buf.Bytes())}
++					require.NoError(t, r.Initialize())
++					var sub *stream.SubStream
++					var origins []int64
++					var medias []*description.Media
++					if observed {
++						medias, err = ToStreamWithClockOrigin(r, &sub, test.NilLogger, func(p int64) { origins = append(origins, p) })
++					} else {
++						medias, err = ToStream(r, &sub, test.NilLogger)
++					}
++					require.NoError(t, err)
++					require.Empty(t, origins, "registration must not observe a timestamp")
++					s := &stream.Stream{OrigDesc: &description.Session{Medias: medias}, WriteQueueSize: 512, RTPMaxPayloadSize: 1450, Parent: test.NilLogger}
++					require.NoError(t, s.Initialize())
++					defer s.Close()
++					sub = &stream.SubStream{Stream: s}
++					require.NoError(t, sub.Initialize())
++					received := make(chan sample, 32)
++					reader := &stream.Reader{Parent: test.NilLogger}
++					for _, media := range medias {
++						isAudio := media.Type == description.MediaTypeAudio
++						reader.OnData(media, media.Formats[0], func(u *unit.Unit) error { received <- sample{isAudio, u.PTS}; return nil })
++					}
++					s.AddReader(reader)
++					defer s.RemoveReader(reader)
++					for {
++						err = r.Read()
++						if err != nil {
++							require.ErrorIs(t, err, io.EOF)
++							break
++						}
++					}
++					if observed {
++						require.Equal(t, []int64{firstPTS}, origins)
++					} else {
++						require.Empty(t, origins)
++					}
++					for _, want := range expected {
++						select {
++						case got := <-received:
++							require.Equal(t, want, got)
++						case <-time.After(time.Second):
++							t.Fatal("missing stream unit")
++						}
++					}
++				})
++			}
++		}
++	}
++}
+diff --git a/internal/servers/srt/conn_clock_origin_test.go b/internal/servers/srt/conn_clock_origin_test.go
+new file mode 100644
+index 0000000..190fad2
+--- /dev/null
++++ b/internal/servers/srt/conn_clock_origin_test.go
+@@ -0,0 +1,175 @@
++package srt
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
++	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
++	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
++	gosrt "github.com/datarhei/gosrt"
++	"github.com/google/uuid"
++	"github.com/stretchr/testify/require"
++
++	"github.com/bluenviron/mediamtx/internal/conf"
++	"github.com/bluenviron/mediamtx/internal/defs"
++	"github.com/bluenviron/mediamtx/internal/stream"
++	"github.com/bluenviron/mediamtx/internal/test"
++	"github.com/bluenviron/mediamtx/internal/unit"
++)
++
++type clockConnRequest struct{ gosrt.ConnRequest }
++
++func (clockConnRequest) RemoteAddr() net.Addr {
++	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9999}
++}
++
++type clockConn struct {
++	gosrt.Conn
++	data *bytes.Reader
++	stop chan struct{}
++}
++
++func (c *clockConn) Read(p []byte) (int, error) {
++	n, err := c.data.Read(p)
++	if err == io.EOF {
++		<-c.stop
++	}
++	return n, err
++}
++func (*clockConn) SetReadDeadline(time.Time) error { return nil }
++func (*clockConn) Stats(*gosrt.Statistics)         {}
++
++type clockPath struct {
++	dummyPath
++	removed chan struct{}
++}
++
++func (p *clockPath) RemovePublisher(defs.PathRemovePublisherReq) { close(p.removed) }
++
++func clockJSON(t *testing.T, c *conn) map[string]any {
++	t.Helper()
++	b, err := json.Marshal(c.apiItem())
++	require.NoError(t, err)
++	var item map[string]any
++	require.NoError(t, json.Unmarshal(b, &item))
++	return item
++}
++
++func TestConnClockOriginLifecycle(t *testing.T) {
++	for _, always := range []bool{false, true} {
++		for _, origin := range []int64{0, 9000, (1 << 33) - 2000} {
++			t.Run(fmt.Sprintf("always_%v/origin_%d", always, origin), func(t *testing.T) {
++				var buf bytes.Buffer
++				audio := &mpegts.Track{Codec: &codecs.MPEG4Audio{Config: mpeg4audio.AudioSpecificConfig{Type: 2, SampleRate: 48000, ChannelConfig: 2}}}
++				video := &mpegts.Track{Codec: &codecs.H264{}}
++				w := &mpegts.Writer{W: &buf, Tracks: []*mpegts.Track{video, audio}}
++				require.NoError(t, w.Initialize())
++				_, err := w.WriteTables()
++				require.NoError(t, err)
++				require.NoError(t, w.WriteMPEG4Audio(audio, origin, [][]byte{{1, 2, 3, 4}}))
++				require.NoError(t, w.WriteH264(video, (origin+3000)&((1<<33)-1), (origin+3000)&((1<<33)-1), [][]byte{test.FormatH264.SPS, test.FormatH264.PPS, {5, 1}}))
++				require.NoError(t, w.WriteMPEG4Audio(audio, (origin+6000)&((1<<33)-1), [][]byte{{1, 2, 3, 4}}))
++				transport := &clockConn{data: bytes.NewReader(buf.Bytes()), stop: make(chan struct{})}
++				defer func() {
++					select {
++					case <-transport.stop:
++					default:
++						close(transport.stop)
++					}
++				}()
++				path := &clockPath{removed: make(chan struct{})}
++				pathConf := &conf.Path{AlwaysAvailable: always}
++				added := make(chan struct{})
++				proceed := make(chan struct{})
++				delivered := make(chan struct{}, 10)
++				var strm *stream.Stream
++				var reader *stream.Reader
++				c := &conn{uuid: uuid.New(), connReq: clockConnRequest{}, state: defs.APISRTConnStateIdle,
++					readTimeout: conf.Duration(time.Second), parent: &Server{Parent: test.NilLogger}}
++				c.pathManager = &test.PathManager{AddPublisherImpl: func(req defs.PathAddPublisherReq) (*defs.PathAddPublisherRes, error) {
++					require.Same(t, pathConf, req.ConfToCompare)
++					strm = &stream.Stream{OrigDesc: req.Desc, WriteQueueSize: 512, RTPMaxPayloadSize: 1450, Parent: test.NilLogger}
++					require.NoError(t, strm.Initialize())
++					sub := &stream.SubStream{Stream: strm}
++					require.NoError(t, sub.Initialize())
++					reader = &stream.Reader{Parent: test.NilLogger}
++					for _, media := range req.Desc.Medias {
++						reader.OnData(media, media.Formats[0], func(*unit.Unit) error { delivered <- struct{}{}; return nil })
++					}
++					strm.AddReader(reader)
++					close(added)
++					<-proceed
++					return &defs.PathAddPublisherRes{Path: path, SubStream: sub}, nil
++				}}
++				done := make(chan error, 1)
++				go func() { done <- c.runPublishReader(transport, &streamID{path: "clock-test"}, pathConf) }()
++				select {
++				case <-added:
++				case <-time.After(time.Second):
++					t.Fatal("publisher not added")
++				}
++				defer func() { strm.RemoveReader(reader); strm.Close() }()
++				require.NotContains(t, clockJSON(t, c), "scorebugTransportClock", "no decoder callback yet")
++				close(proceed)
++				select {
++				case <-delivered:
++				case <-time.After(time.Second):
++					t.Fatal("missing callback")
++				}
++				item := clockJSON(t, c)
++				if always {
++					require.NotContains(t, item, "scorebugTransportClock")
++				} else {
++					require.Equal(t, map[string]any{"convention": "mpegts-ingress-origin-90k-v1", "originPTS": fmt.Sprint(origin)}, item["scorebugTransportClock"])
++					require.Equal(t, c.uuid.String(), item["id"])
++					require.Equal(t, "publish", item["state"])
++					require.Equal(t, "clock-test", item["path"])
++					// Returned API objects are independent snapshots, even if a caller mutates one.
++					snapshot := c.apiItem()
++					snapshot.ScorebugTransportClock.OriginPTS = "mutated"
++					require.Equal(t, fmt.Sprint(origin), c.apiItem().ScorebugTransportClock.OriginPTS)
++					for _, state := range []defs.APISRTConnState{defs.APISRTConnStateRead, defs.APISRTConnStateIdle} {
++						c.mutex.Lock()
++						c.state = state
++						c.mutex.Unlock()
++						require.NotContains(t, clockJSON(t, c), "scorebugTransportClock")
++					}
++					c.mutex.Lock()
++					c.state = defs.APISRTConnStatePublish
++					c.mutex.Unlock()
++					other := &conn{uuid: uuid.New(), connReq: clockConnRequest{}, state: defs.APISRTConnStatePublish, pathName: "clock-test"}
++					require.NotContains(t, clockJSON(t, other), "scorebugTransportClock", "new publication must not inherit origin")
++				}
++				// Concurrent snapshots race with teardown and mutate only their own copy.
++				var wg sync.WaitGroup
++				for range 8 {
++					wg.Go(func() {
++						for range 100 {
++							v := c.apiItem()
++							if v.ScorebugTransportClock != nil {
++								v.ScorebugTransportClock.OriginPTS = "local"
++							}
++						}
++					})
++				}
++				close(transport.stop)
++				select {
++				case err := <-done:
++					require.ErrorIs(t, err, io.EOF)
++				case <-time.After(time.Second):
++					t.Fatal("reader did not exit")
++				}
++				wg.Wait()
++				<-path.removed
++				require.NotContains(t, clockJSON(t, c), "scorebugTransportClock", "reader teardown clears origin")
++			})
++		}
++	}
++}

@@ -52,12 +52,12 @@ Edit only the isolated checkout
 `artifacts/qa/mediamtx-clock-source/upstream` while developing. Maintained deliverable
 is `vendor/MediaMTX/scorebug.patch`, upstream identity/hash manifest and MIT notice.
 
-- [ ] Read pinned ToStream, TimeDecoder and SRT connection lifecycle. Add failing
+- [x] Read pinned ToStream, TimeDecoder and SRT connection lifecycle. Add failing
       Go tests before implementation for first-zero/nonzero/near-wrap origins, mixed
       callback order, exactly-once notification and unchanged decoder outputs; use
       the real existing TimeDecoder as the output oracle. Add actual ToStream callback
       coverage so an unused wrapper cannot pass.
-- [ ] Implement explicit optional observer in ToStreamWithClockOrigin while original
+- [x] Implement explicit optional observer in ToStreamWithClockOrigin while original
       ToStream delegates with nil. Every supported codec must use the same observed
       decoder; unsupported packets cannot choose the origin. For example:
 
@@ -70,14 +70,14 @@ if !observed {
 return out
 ```
 
-- [ ] Add failing publisher API tests. Store a copy of the immutable scalar under
+- [x] Add failing publisher API tests. Store a copy of the immutable scalar under
       the existing connection mutex, clear on publish-reader exit, suppress it for
       alwaysAvailable, idle and read connections. Include the JSON field only when
       qualified. Test snapshot isolation and concurrent access under the race detector.
-- [ ] Run targeted Go tests with recorded red/green logs, then full MPEG-TS and SRT
+- [x] Run targeted Go tests with recorded red/green logs, then full MPEG-TS and SRT
       package tests and race checks. Preserve normal auth/timing/teardown behavior.
       Return sole execution ownership before parent Docker/media qualification.
-- [ ] Produce an exact git diff against the pinned clean revision, including added
+- [x] Produce an exact git diff against the pinned clean revision, including added
       tests; record SHA-256 for original touched files and round-trip patch application.
 
 ## Task 2: Reproducible portable build
@@ -85,11 +85,11 @@ return out
 Files: `vendor/MediaMTX/{README.md,LICENSE,upstream.json,scorebug.patch,Dockerfile}`
 and `scripts/build-ingest-relay.mjs` only if a helper materially improves reproducibility.
 
-- [ ] Pin the upstream archive URL by full revision and SHA-256, preserving go.mod
+- [x] Pin the upstream archive URL by full revision and SHA-256, preserving go.mod
       and go.sum. Docker build verifies the archive hash before patching. Use a pinned
       Go toolchain builder and a minimal runtime with CA certificates. Build a static
       binary for the requested Linux target architecture. Do not add a cloud service.
-- [ ] Build the local ARM64 image `scorebug/ingest:clock-v1`; record image/source
+- [x] Build the local ARM64 image `scorebug/ingest:clock-v1`; record image/source
       hashes and build commands. Validate the Linux AMD64 compile target as feasible.
       Keep deployment examples on the stock image until metadata gates pass.
 
@@ -98,20 +98,40 @@ and `scripts/build-ingest-relay.mjs` only if a helper materially improves reprod
 Files: `scripts/test-relay-clock.mjs`, `scripts/relay-clock-comparison.mjs`,
 `scripts/test/relay-clock-comparison.test.mjs`, `package.json` if a named command helps.
 
-- [ ] Add fail-first pure checks for the exact convention, canonical origin string
+- [x] Add fail-first pure checks for the exact convention, canonical origin string
       in `[0, 2^33)`, publisher UUID/path/state identity and modulo consistency with the
       existing all-picture comparison. Reject missing/malformed/mismatched metadata;
       allow zero and wrap-region origins without truncation or hardcoded offsets.
-- [ ] Implement a separate explicit mapped-relay mode. Read the private SRT item
+- [x] Implement a separate explicit mapped-relay mode. Read the private SRT item
       identified by the ready path's source UUID while native publishing is live; save
       only the bounded scalar metadata/identity needed for evidence. Compare the returned
       origin with all raw before/after picture offsets. Require same-publication early
       and late readers to agree. Keep full decode, VCL hashes, worker output identity,
       local recording and cleanup assertions unchanged.
-- [ ] Run the stock image in mapped mode as a missing-metadata negative control,
+- [x] Run the stock image in mapped mode as a missing-metadata negative control,
       then the pinned patched image for zero/offset/late-reader cases. Run full tools
       tests. Verify absent metadata on a stopped connection; do not infer completion
       from a stale path snapshot. Save actual process exits and owned-container cleanup.
-- [ ] Obtain independent specification then quality review, resolve findings, update
+- [x] Obtain independent specification then quality review, resolve findings, update
       `docs/relay-clock-correspondence.md` with actual evidence and remaining association
       work, and commit the verified primitive. Keep the full goal active.
+
+## Qualification outcome
+
+Completed on 2026-09-15. Go MPEG-TS/SRT full and race tests pass; both added
+Go test files are in the exact verified patch. Source/archive/license hashes match.
+ARM64 and AMD64 images build; both version probes pass (AMD64 under emulation).
+Mapped raw native fixture `relay-clock-DCWw7h` passes all three scenarios, with
+180/181/121 acquired worker pictures and 240 archived/published pictures each.
+The early control has 181 pictures and the late reader shares its publication.
+API origins explain every raw timestamp. Stock mapped negative `relay-clock-giXYTL`
+fails for missing metadata and cleans up. All 561 tooling tests pass.
+
+Teardown uses a complete connection listing to prove the publisher UUID absent.
+The initial GET-after-stop check correctly returned 404 but caused the upstream API
+to emit an expected ERR log; changing the query preserves the strict zero-error
+media/log gate. Specification and quality reviews approve, including that adjustment.
+
+The patch/toolchain/package are pinned in vendor/MediaMTX. No default deployment
+change or adaptive-quality enablement. Native-attempt and actual worker-read
+association remains the next separate integration; the overall goal stays active.
