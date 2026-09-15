@@ -31,7 +31,8 @@ public actor SRTMediaPublisher: MediaPublisher {
                     await adapter.audio(pcm, when: when)
                 }
             }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop() },
-            setBitRate: { try await adapter.setBitRate($0) }, metrics: { await adapter.metrics() })
+            setBitRate: { try await adapter.setBitRate($0) }, metrics: { await adapter.metrics() },
+            transportClock: { await adapter.transportClock() })
     }
 
     struct Operations: Sendable {
@@ -42,6 +43,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         let stop: @Sendable () async -> Void
         let setBitRate: @Sendable (Int) async throws -> Void
         let metrics: @Sendable () async -> TransportMetrics?
+        var transportClock: @Sendable () async -> PublishingTransportClock? = { nil }
     }
     init(operations: Operations) { self.operations = operations }
 
@@ -129,6 +131,15 @@ public actor SRTMediaPublisher: MediaPublisher {
             await stop()
             throw PublisherError.cancelled
         }
+    }
+
+    public func transportClock() async -> PublishingTransportClock? {
+        guard state == .publishing, !Task.isCancelled else { return nil }
+        let healthy = await operations.isPublishing()
+        guard state == .publishing, !Task.isCancelled, healthy else { return nil }
+        let clock = await operations.transportClock()
+        guard state == .publishing, !Task.isCancelled else { return nil }
+        return clock
     }
 
     public func metrics() async -> TransportMetrics? {

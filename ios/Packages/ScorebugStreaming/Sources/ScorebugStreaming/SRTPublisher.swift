@@ -64,6 +64,17 @@ public actor SRTPublisher {
             throw CancellationError()
         }
     }
+    public func transportClock() async -> PublishingTransportClock? {
+        guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }
+        let healthy = await isPublishing()
+        guard healthy, !stopping, !Task.isCancelled, activeGeneration == generation else { return nil }
+        let snapshot = await stream.transportClockSnapshot
+        guard !stopping, !Task.isCancelled, activeGeneration == generation,
+              let snapshot, snapshot.publishingGeneration == generation else { return nil }
+        return PublishingTransportClock(sourceOrigin: snapshot.clock.origin,
+                                        publishingGeneration: snapshot.publishingGeneration)
+    }
+
     public func metrics() async -> (Double, Int32, UInt64)? {
         guard let stats = await connection.performanceData else { return nil }
         return (stats.msRTT, stats.pktSndDropTotal, stats.byteSentTotal)

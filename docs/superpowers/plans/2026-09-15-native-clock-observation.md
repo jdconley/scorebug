@@ -64,30 +64,33 @@ worker joins. The user's standing autonomy authorization covers this integration
 `PublishingSession.swift`, Media tests; Streaming `SRTPublisher.swift`,
 `SRTMediaPublisher.swift` and adapter tests.
 
-- [ ] Add descriptor and optional/default publisher getter API.
-- [ ] Write behavioral failing tests for origin validation; initially absent, later
+- [x] Add descriptor and optional/default publisher getter API.
+- [x] Write behavioral failing tests for origin validation; initially absent, later
   available/equal/nil/contradictory cached mappings; stop during a suspended read;
   retained history and replacement isolation. Add wrapper tests for prepared,
   starting, stopped, cancelled and unhealthy reads and stop while getter suspended.
-- [ ] Implement monitor sampling/caching with no callback tasks, outside locks and
+- [x] Implement monitor sampling/caching with no callback tasks, outside locks and
   post-await state checks; implement exact SDK conversion and wrapper forwarding.
-- [ ] Run focused/full Media and Streaming tests and retain red/green evidence.
+- [x] Run focused/full Media and Streaming tests and retain red/green evidence.
   Obtain specification and quality reviews of the foundation.
 
 ## Task 2: Actual native transport evidence
 
 **Files:** `tools/media-sdk-probe/Sources/DualOutputSmoke/DualOutputSmoke.swift`,
-`scripts/test-dual-output.mjs`.
+`scripts/test-dual-output.mjs`, `scripts/publishing-clock-evidence.mjs` and tests.
 
-- [ ] Export the actual session descriptor in the normal dual-output fixture after
-  source production and before/after joined shutdown. Require a chosen mapping for
+- [x] Export the actual native adapter descriptor in the normal dual-output fixture
+  after source production and before/after joined shutdown. Require a chosen mapping for
   normal and 123.25-second-origin publication; no guessed origin for recording-only
   or unavailable publication. Preserve all existing frame/A/V/rate/memory gates.
-- [ ] Prove exact conversion by comparing actual chosen origin/generation against
-  native adapter evidence or independently retained timestamps, without inferring
-  origin from a late worker's first decoded frame. Keep mapping availability separate
-  from live transport success in stalled/absent-receiver cases.
-- [ ] Clean the downstream package graph for the added source, run five-scenario
+- [x] Compare the actual adapter origin exactly with this fixture's known common
+  audio/video source origin (0 or 493/4 seconds). Validate full-width generation,
+  fixed projection constants and unavailable clock after stop. Test the evidence
+  checker against malformed/lossy/contradictory values. This fixture uses SRTPublisher
+  directly; session caching/retention is covered by unit tests and the later app
+  qualification, not relabeled as an existing dual-output behavior. Keep mapping
+  availability separate from transport success in stalled/absent-receiver cases.
+- [x] Clean the downstream package graph for the added source, run five-scenario
   dual-output, and compile combined Apple device/simulator targets as warranted.
 
 ## Task 3: App scope and fixture integration
@@ -104,3 +107,28 @@ worker joins. The user's standing autonomy authorization covers this integration
   local workflow, keeping local-recording, scoring, A/V and freshness gates intact.
 - [ ] Document actual evidence and remaining worker-session/matched-interval work.
   Complete specification/quality review and commit coherent verified checkpoints.
+
+## Tasks 1–2 verification checkpoint
+
+Media passes 112 XCTest and 55 Swift Testing tests; Streaming passes 25 XCTest
+tests. Behavioral red evidence precedes both implementations. The exact evidence
+checker adds 17 tests; the complete tools suite passes all 448 tests. Independent
+specification and code-quality reviews approve the foundation and fixture code.
+
+The five-scenario native run `artifacts/qa/dual-output-CKsfFc` exits 0. Every archive
+contains all 420 source frames (0–419), full audio, zero archive rejections and
+30 fresh frames/sec in every measured window, including stalled/absent receivers.
+Both normal live streams also retain all 420 frames at 30 fps. The exported SDK
+origin is exactly 0/1000 for the zero-origin fixture and 123250000000/1000000000
+for the offset fixture; both use native generation 1, the documented constants,
+and an unavailable direct adapter clock after joined shutdown. Peak RSS is 95.44
+MiB across these runs. Source lag peaks at 24.254 ms; archive A/V marker error is
+0.021 ms and live marker error stays below 65.365 ms. Existing qualification gates
+remain unchanged.
+
+Both downstream Swift package graphs needed cleaning after adding the Media source:
+cleaning only media-sdk-probe left media-harness with a stale source list. The
+latter failed before media execution; cleaning that graph resolved the build.
+Apple device Release and arm64 simulator Debug builds are recorded separately.
+Logs use `artifacts/qa/native-clock-observation-*`. This checkpoint does not claim
+app scope/export integration or source-loss/capacity qualification.

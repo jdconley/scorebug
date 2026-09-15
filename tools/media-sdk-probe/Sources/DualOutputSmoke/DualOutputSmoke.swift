@@ -9,6 +9,17 @@ private func emit(_ value: [String: Any]) throws {
     try FileHandle.standardOutput.write(contentsOf: data)
 }
 
+private func clockEvidence(_ clock: PublishingTransportClock?) -> Any {
+    guard let clock else { return NSNull() }
+    let origin = clock.sourceOrigin
+    return ["publishingGeneration": String(clock.publishingGeneration),
+            "sourceOrigin": ["value": String(origin.value), "timescale": origin.timescale,
+                             "epoch": String(origin.epoch), "flags": origin.flags.rawValue],
+            "timescale": PublishingTransportClock.timescale,
+            "presentationLead": String(PublishingTransportClock.presentationLead),
+            "wireModulus": String(PublishingTransportClock.wireModulus)] as [String: Any]
+}
+
 private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, pcm }
 
 private final class PublisherHealth: @unchecked Sendable {
@@ -170,15 +181,19 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 // Production stop owns finalization. No extra harness delay may
                 // hide codec or receiver-buffer loss at shutdown.
                 let status = await publisher.metrics()
+                let transportClockBeforeStop = await publisher.transportClock()
                 let publishing = await publisher.isPublishing()
                 monitor?.cancel()
                 await publisher.stop()
                 await monitor?.value
+                let transportClockAfterStop = await publisher.transportClock()
                 try emit(["event": "publisher-finished", "videoSubmitted": publishedVideo,
                           "audioSamplesSubmitted": publishedAudio, "changedBitrate": changed,
                           "sentBytes": status.map { $0.2 as Any } ?? NSNull(),
                           "packetDrops": status.map { $0.1 as Any } ?? NSNull(),
-                          "publishingBeforeStop": publishing])
+                          "publishingBeforeStop": publishing,
+                          "transportClockBeforeStop": clockEvidence(transportClockBeforeStop),
+                          "transportClockAfterStop": clockEvidence(transportClockAfterStop)])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()

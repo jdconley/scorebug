@@ -1,9 +1,82 @@
+import CoreMedia
 import Foundation
 import ScorebugMedia
 import XCTest
 @testable import ScorebugStreaming
 
 final class SRTMediaPublisherTests: XCTestCase {
+    func testNativeTransportClockIsAbsentBeforeConnectionAndAfterStop() async throws {
+        let adapter = SRTPublisher()
+        var clock = await adapter.transportClock()
+        XCTAssertNil(clock)
+        try await adapter.configure()
+        clock = await adapter.transportClock()
+        XCTAssertNil(clock)
+        await adapter.stop()
+        clock = await adapter.transportClock()
+        XCTAssertNil(clock)
+    }
+
+    func testTransportClockForwardsOnlyForHealthyPublishingAttempt() async throws {
+        let fixture = AdapterFixture()
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        var clock = await publisher.transportClock()
+        XCTAssertNil(clock)
+        try await publisher.start()
+        clock = await publisher.transportClock()
+        XCTAssertEqual(clock?.sourceOrigin.value, 493)
+        XCTAssertEqual(clock?.sourceOrigin.timescale, 4)
+        XCTAssertEqual(clock?.publishingGeneration, 7)
+        await fixture.setHealthy(false)
+        clock = await publisher.transportClock()
+        XCTAssertNil(clock)
+        await fixture.setHealthy(true)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await publisher.transportClock()
+        }
+        clock = await cancelled.value
+        XCTAssertNil(clock)
+        await publisher.stop()
+        clock = await publisher.transportClock()
+        XCTAssertNil(clock)
+        let reads = await fixture.clockCalls
+        XCTAssertEqual(reads, 1, "Inactive, unhealthy and cancelled getters must not query native clock")
+        let writes = await fixture.bitRateCalls
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testTransportClockIsUnavailableDuringStartup() async throws {
+        let fixture = AdapterFixture(gated: .start)
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        let start = Task { try await publisher.start() }
+        await fixture.waitUntilEntered()
+        let clock = await publisher.transportClock()
+        XCTAssertNil(clock)
+        let reads = await fixture.clockCalls
+        XCTAssertEqual(reads, 0)
+        await fixture.releaseBitRate()
+        try await start.value
+        await publisher.stop()
+    }
+
+    func testTransportClockRejectsStopOrCancellationDuringSuspendedRead() async throws {
+        for stop in [false, true] {
+            let fixture = AdapterFixture(gated: .clock)
+            let publisher = SRTMediaPublisher(operations: await fixture.operations())
+            try await publisher.start()
+            let read = Task { await publisher.transportClock() }
+            await fixture.waitUntilEntered()
+            if stop { await publisher.stop() }
+            else { read.cancel(); await fixture.releaseBitRate() }
+            let clock = await read.value
+            XCTAssertNil(clock)
+            let counts = await fixture.counts()
+            XCTAssertEqual(counts.stops, stop ? 1 : 0, "Diagnostic getters must not own shutdown")
+            await publisher.stop()
+        }
+    }
+
     func testNativeObservationOwnerCanConfigureAndStopWithoutOpeningTransport() async throws {
         let owner = try VideoFrameObservationOwner(scope: .init(recordingID: "recording", matchID: "match",
             broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1))
@@ -176,11 +249,12 @@ final class SRTMediaPublisherTests: XCTestCase {
 }
 
 private actor AdapterFixture {
-    enum Gate { case configure, start, bitRate }
+    enum Gate { case configure, start, bitRate, clock }
     private let gated: Gate?
     private let fails: Bool
     private let bitRateFails: Bool
     private(set) var bitRateCalls = 0
+    private(set) var clockCalls = 0
     private var entered = false
     private var continuation: CheckedContinuation<Void, Never>?
     private var healthy = false
@@ -193,7 +267,7 @@ private actor AdapterFixture {
     func operations() -> SRTMediaPublisher.Operations {
         .init(configure: { try await self.configure() }, start: { await self.start() },
               append: { _ in }, isPublishing: { await self.isHealthy() }, stop: { await self.stop() },
-              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil })
+              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil }, transportClock: { await self.transportClock() })
     }
     func configure() async throws {
         if fails { throw NSError(domain: "srt://private-secret", code: 1) }
@@ -208,6 +282,11 @@ private actor AdapterFixture {
         bitRateCalls += 1
         if gated == .bitRate, bitRateCalls == 1 { await wait() }
         if bitRateFails { throw NSError(domain: "private encoder details", code: -1) }
+    }
+    func transportClock() async -> PublishingTransportClock? {
+        clockCalls += 1
+        if gated == .clock { await wait() }
+        return PublishingTransportClock(sourceOrigin: CMTime(value: 493, timescale: 4), publishingGeneration: 7)
     }
     func releaseBitRate() { continuation?.resume(); continuation = nil }
     func isHealthy() -> Bool { healthy }

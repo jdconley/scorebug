@@ -3,9 +3,9 @@ import Foundation
 
 /// One transport/encoder instance for one publishing attempt. Capture callbacks
 /// never invoke these methods. start() returns only when publication is ready.
-/// start/append/health must finish in bounded time or cooperate with cancellation.
+/// start/append/health/transportClock must finish in bounded time or cooperate with cancellation.
 /// stop() is terminal and safe concurrently with suspended operations: it must
-/// unblock append/start/health and prevent a late startup from resurrecting publication.
+/// unblock append/start/health/transportClock and prevent a late startup from resurrecting publication.
 /// Stop must finish even if its caller is cancelled. Destination credentials belong
 /// in the injected publisher, never in session errors or diagnostic snapshots.
 public protocol MediaPublisher: Sendable {
@@ -13,6 +13,13 @@ public protocol MediaPublisher: Sendable {
     func append(_ sample: CapturedMediaSample) async throws
     var isPublishing: Bool { get async }
     func stop() async
+    /// Optional diagnostic read; must be bounded or cooperate with cancellation.
+    /// stop() must unblock suspended reads. Never owns shutdown or encoder settings.
+    func transportClock() async -> PublishingTransportClock?
+}
+
+public extension MediaPublisher {
+    func transportClock() async -> PublishingTransportClock? { nil }
 }
 
 public enum PublishingSessionState: Sendable { case prepared, starting, publishing, stopping, stopped, failed }
@@ -26,6 +33,10 @@ public struct PublishingSessionSnapshot: Sendable {
     /// encoded frames, network delivery, or remote playback.
     public let sentSamples: Int
     public let queue: BoundedMailbox<CapturedMediaSample>.Statistics
+    /// Last observed native mapping, retained after shutdown. This is historical
+    /// evidence, not current readiness, transport receipt, or a profile revision.
+    /// A contradictory mapping makes this unknown for the rest of this session.
+    public let transportClock: PublishingTransportClock?
     public let ingressObservation: LiveIngressObservationSnapshot?
 }
 
@@ -64,6 +75,8 @@ private final class PublishingCore: @unchecked Sendable {
     private var state = PublishingSessionState.prepared
     private var failure: PublishingSessionError?
     private var sentSamples = 0
+    private var transportClock: PublishingTransportClock?
+    private var transportClockQuarantined = false
     private var startup: Task<Void, Error>?
     private var consumer: Task<Void, Never>?
     private var monitor: Task<Void, Never>?
@@ -85,7 +98,7 @@ private final class PublishingCore: @unchecked Sendable {
         lock.withLock {
             let measured = mailbox.snapshot
             return PublishingSessionSnapshot(state: state, failure: failure, sentSamples: sentSamples,
-                queue: measured.statistics, ingressObservation: measured.ingressObservation)
+                queue: measured.statistics, transportClock: transportClock, ingressObservation: measured.ingressObservation)
         }
     }
     func start() async throws {
@@ -153,8 +166,21 @@ private final class PublishingCore: @unchecked Sendable {
                 try await Task.sleep(for: healthCheckInterval)
                 try Task.checkCancellation()
                 let healthy = await publisher.isPublishing
+                try Task.checkCancellation()
                 guard lock.withLock({ state == .publishing }) else { return }
                 if !healthy { _ = requestStop(failure: .publisherUnhealthy); return }
+                let observedClock = await publisher.transportClock()
+                try Task.checkCancellation()
+                lock.withLock {
+                    guard state == .publishing, !transportClockQuarantined,
+                          let observedClock else { return }
+                    if let transportClock, transportClock != observedClock {
+                        self.transportClock = nil
+                        transportClockQuarantined = true
+                    } else {
+                        transportClock = observedClock
+                    }
+                }
             }
         } catch { /* Cancellation is shutdown, never a transport failure. */ }
     }
@@ -169,7 +195,7 @@ private final class PublishingCore: @unchecked Sendable {
                 // Task cancellation handlers may call arbitrary publisher code;
                 // invoke them outside locks and never on a capture callback.
                 startup?.cancel(); consumer?.cancel(); monitor?.cancel()
-                // Stop may unblock suspended start/append/health operations.
+                // Stop may unblock suspended start/append/health/clock operations.
                 await self.publisher.stop()
                 _ = await startup?.result
                 await consumer?.value

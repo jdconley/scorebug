@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { command, mediaTools } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
+import { validatePublishingClockEvidence } from './publishing-clock-evidence.mjs';
 import {
   sourceFrameCodeFilter,
   frameCodeReadFilter,
@@ -437,6 +438,7 @@ try {
     const archiveResult = await analyze(exported, `${scenario}-archive`, true);
     let liveResult;
     let bitrateChange;
+    let transportClock;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
       assert.deepEqual(
@@ -449,6 +451,11 @@ try {
       assert.ok(native.events.some((x) => x.event === 'bitrate-changed'));
       const sent = native.events.find((x) => x.event === 'publisher-finished');
       assert.ok(sent?.sentBytes > 0 && sent.publishingBeforeStop);
+      transportClock = validatePublishingClockEvidence(
+        sent.transportClockBeforeStop,
+        sent.transportClockAfterStop,
+        { value: scenario === 'normal-clock-offset' ? 493n : 0n, timescale: 4n },
+      );
       liveResult = await analyze(live, `${scenario}-live`, false);
       bitrateChange = await measureBitrateChange(live);
     }
@@ -466,6 +473,7 @@ try {
       archive: archiveResult,
       live: liveResult,
       bitrateChange,
+      transportClock,
       counters: finished,
       peakRSS,
     });
