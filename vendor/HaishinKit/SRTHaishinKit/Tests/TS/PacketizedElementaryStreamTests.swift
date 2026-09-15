@@ -13,7 +13,8 @@ import Testing
         let pes = PacketizedElementaryStream(PacketizedElementaryStreamTests.dataWithVideo)!
         let header = pes.optionalPESHeader
         let timingInfo = header?.makeSampleTimingInfo(.invalid)
-        #expect(timingInfo?.presentationTimeStamp == CMTime(value: 126384, timescale: CMTimeScale(TSTimestamp.resolution)))
+        // Literal PTS bytes [33, 0, 7, 216, 97] carry 3 * 32768 + 216 * 128 + 48 ticks.
+        #expect(timingInfo?.presentationTimeStamp == CMTime(value: 126_000, timescale: CMTimeScale(TSTimestamp.resolution)))
         #expect(pes.payload == PacketizedElementaryStreamTests.dataWithVideo)
     }
 

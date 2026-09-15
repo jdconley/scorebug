@@ -25,7 +25,6 @@ enum PESPTSDTSIndicator: UInt8 {
 struct PESOptionalHeader {
     static let fixedSectionSize: Int = 3
     static let defaultMarkerBits: UInt8 = 2
-    static let offset = CMTime(value: 3, timescale: 30)
 
     var markerBits: UInt8 = PESOptionalHeader.defaultMarkerBits
     var scramblingControl: UInt8 = 0
@@ -51,23 +50,21 @@ struct PESOptionalHeader {
         self.data = data
     }
 
-    mutating func setTimestamp(_ timestamp: CMTime, presentationTimeStamp: CMTime, decodeTimeStamp: CMTime) {
-        let base = Double(timestamp.seconds)
-        if presentationTimeStamp != CMTime.invalid {
-            ptsDtsIndicator |= 0x02
-        }
-        if decodeTimeStamp != CMTime.invalid {
-            ptsDtsIndicator |= 0x01
-        }
-        if (ptsDtsIndicator & 0x02) == 0x02 {
-            let pts = Int64((presentationTimeStamp.seconds + Self.offset.seconds - base) * Double(TSTimestamp.resolution))
-            optionalFields += TSTimestamp.encode(pts, ptsDtsIndicator << 4)
-        }
-        if (ptsDtsIndicator & 0x01) == 0x01 {
-            let dts = Int64((decodeTimeStamp.seconds - base) * Double(TSTimestamp.resolution))
-            optionalFields += TSTimestamp.encode(dts, 0x01 << 4)
-        }
-        pesHeaderLength = UInt8(optionalFields.count)
+    @discardableResult
+    mutating func setTimestamp(_ timestamp: CMTime, presentationTimeStamp: CMTime, decodeTimeStamp: CMTime) -> Bool {
+        guard let clock = TransportClock(origin: timestamp),
+              let pts = clock.presentationTimestamp(for: presentationTimeStamp) else { return false }
+        let hasDecodeTime = decodeTimeStamp != .invalid
+        let dts = hasDecodeTime ? clock.presentationTimestamp(for: decodeTimeStamp) : nil
+        guard !hasDecodeTime || dts != nil else { return false }
+        let indicator: UInt8 = hasDecodeTime ? 3 : 2
+        var fields = TSTimestamp.encode(pts, indicator << 4)
+        if let dts { fields += TSTimestamp.encode(dts, 0x10) }
+        // Commit only after both projections succeed, replacing stale fields.
+        ptsDtsIndicator = indicator
+        optionalFields = fields
+        pesHeaderLength = UInt8(fields.count)
+        return true
     }
 
     func makeSampleTimingInfo(_ previousPresentationTimeStamp: CMTime) -> CMSampleTimingInfo? {
@@ -236,11 +233,11 @@ struct PacketizedElementaryStream: PESPacketHeader {
         }
         optionalPESHeader = PESOptionalHeader()
         optionalPESHeader?.dataAlignmentIndicator = true
-        optionalPESHeader?.setTimestamp(
+        guard optionalPESHeader?.setTimestamp(
             timeStamp,
             presentationTimeStamp: sampleBuffer.presentationTimeStamp,
             decodeTimeStamp: sampleBuffer.decodeTimeStamp
-        )
+        ) == true else { return nil }
         let length = data.count + (optionalPESHeader?.data.count ?? 0)
         if length < Int(UInt16.max) {
             packetLength = UInt16(length)
@@ -258,11 +255,11 @@ struct PacketizedElementaryStream: PESPacketHeader {
         audioCompressedBuffer.encode(to: &data)
         optionalPESHeader = PESOptionalHeader()
         optionalPESHeader?.dataAlignmentIndicator = true
-        optionalPESHeader?.setTimestamp(
+        guard optionalPESHeader?.setTimestamp(
             timeStamp,
             presentationTimeStamp: when.makeTime(),
             decodeTimeStamp: .invalid
-        )
+        ) == true else { return nil }
         let length = data.count + (optionalPESHeader?.data.count ?? 0)
         if length < Int(UInt16.max) {
             packetLength = UInt16(length)

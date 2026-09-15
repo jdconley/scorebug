@@ -15,6 +15,7 @@ now connects capture and actual encoder-completion measurements while retaining 
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
 | `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
 | `WorkerObservation.decodedVideo`        | Five-second decoder/filter-ingress windows, strictly advancing PTS, duplicate/reordered counts and invalidity | Image-content uniqueness, viewer receipt, full report-transit age, correlation with capture and encoding |
+| SDK `SRTStream.transportClockSnapshot` | Immutable exact source-to-90kHz projection, scoped to the active publishing generation after muxer startup | App/worker plumbing, matching source intervals, delivery/loss and applied profile boundaries |
 | Native test barcode/audio analysis      | Offline decoded identities and A/V alignment in the owned sink                                                | A production runtime observation channel                                                                 |
 | Archive export validation               | Fully decoded completed/recovered local segments                                                              | Live congestion; archive health is an independent signal                                                 |
 
@@ -36,8 +37,8 @@ now connects capture and actual encoder-completion measurements while retaining 
    and restart gaps visible as gaps; do not compare unrelated windows or exclude
    outage time from reports. Archive losses remain separate from live losses.
    The SDK transport writer rebases PTS against its common A/V startup origin and
-   adds a 0.1-second lead before quantizing to 90 kHz. Local source PTS and worker
-   decoder PTS therefore need an explicit, attempt-scoped clock mapping, including
+   quantizes the exact rational delta to 90 kHz, then adds a 9,000-tick lead. Local
+   source PTS and worker decoder PTS therefore need an explicit, attempt-scoped clock mapping, including
    qualification of demux normalization and timestamp wrap. Numeric equality or
    the first frame observed by a worker that joined later cannot establish it.
    The [transport clock calibration](superpowers/plans/2026-09-15-transport-clock-calibration.md)
@@ -47,8 +48,9 @@ now connects capture and actual encoder-completion measurements while retaining 
    loses frames around timestamp wrap under the current VFR output path. The
    successful candidate preserves exact wire correspondence modulo 2^33 and all
    frame identities in six full/late input cases. Production flags remain unchanged;
-   native serialization, an attempt-scoped anchor and matching source-interval
-   counts are still required.
+   native serialization and an attempt-scoped SDK anchor are now implemented in the
+   [native clock slice](superpowers/plans/2026-09-15-native-transport-clock.md).
+   App/worker plumbing and matching source-interval counts are still required.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof
@@ -110,6 +112,26 @@ All prior media gates pass. This does not establish physical camera performance,
 useful link capacity, viewer receipt or safe quality increases. The earlier export
 timeout and pixel-noise overload remain unresolved. See the linked plan for evidence
 and the [completed verified-bitrate primitive](superpowers/plans/2026-09-15-verified-live-bitrate.md).
+
+
+## Exact native transport clock
+
+The [native clock implementation](superpowers/plans/2026-09-15-native-transport-clock.md)
+now fixes timestamp bit encoding/decoding and shares exact rational projection
+between PES, PCR and the SDK snapshot. PTS and DTS receive the same checked lead;
+PCR cadence uses relative ticks. Invalid or unrepresentable values fail before
+payload emission. Snapshot availability follows startup, publishing generation,
+failure, finishing and close; a retained old snapshot cannot represent a new attempt.
+
+All 124 SDK and 21 Streaming adapter tests pass, as do the unsigned combined
+Apple device Release and arm64 simulator Debug builds and patch provenance checks.
+The five-scenario native run `dual-output-yKe5LJ` passes with all 420 archive frames
+in every case and all 420 live frames in both normal cases at 30 fps. Stalled and
+absent receivers leave complete local recordings. Live packet bitrate decreases
+from 5.992/6.068 Mbps to 1.982/2.016 Mbps; live A/V marker error stays below 65.364 ms.
+These results verify the repair in this short Mac fixture. Production worker flags,
+app/worker mapping integration, matched interval counts and profile/capacity
+qualification remain separate work; automatic quality changes remain disabled.
 
 ## Local observation accumulator
 

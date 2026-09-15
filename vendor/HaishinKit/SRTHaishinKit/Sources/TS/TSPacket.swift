@@ -139,17 +139,18 @@ enum TSTimestamp {
         var result: Int64 = 0
         result |= Int64(data[offset + 0] & 0x0e) << 29
         result |= Int64(data[offset + 1]) << 22 | Int64(data[offset + 2] & 0xfe) << 14
-        result |= Int64(data[offset + 3]) << 7 | Int64(data[offset + 3] & 0xfe) << 1
+        result |= Int64(data[offset + 3]) << 7 | Int64(data[offset + 4] & 0xfe) >> 1
         return result
     }
 
     static func encode(_ b: Int64, _ m: UInt8) -> Data {
         var data = Data(count: dataSize)
-        data[0] = UInt8(truncatingIfNeeded: b >> 29) | 0x01 | m
+        // Only the low 33 clock bits belong on the wire; preserve the prefix and markers.
+        data[0] = (UInt8(truncatingIfNeeded: b >> 29) & 0x0e) | 0x01 | m
         data[1] = UInt8(truncatingIfNeeded: b >> 22)
-        data[2] = UInt8(truncatingIfNeeded: b >> 14) | 0x01
+        data[2] = (UInt8(truncatingIfNeeded: b >> 14) & 0xfe) | 0x01
         data[3] = UInt8(truncatingIfNeeded: b >> 7)
-        data[4] = UInt8(truncatingIfNeeded: b << 1) | 0x01
+        data[4] = (UInt8(truncatingIfNeeded: b << 1) & 0xfe) | 0x01
         return data
     }
 }

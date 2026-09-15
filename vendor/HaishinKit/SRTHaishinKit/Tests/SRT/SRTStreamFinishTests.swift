@@ -87,10 +87,12 @@ import Testing
         let enteredDeadline = ContinuousClock.now + .seconds(2)
         while !peer.entered && ContinuousClock.now < enteredDeadline { await Task.yield() }
         #expect(peer.entered)
+        #expect(await stream.transportClockSnapshot?.publishingGeneration == generation)
         let finishing = Task { await stream.finish() }
         let finishDeadline = ContinuousClock.now + .seconds(2)
         while await stream.publishingGeneration != nil, ContinuousClock.now < finishDeadline { await Task.yield() }
         #expect(await stream.readyState == .publishing)
+        #expect(await stream.transportClockSnapshot == nil)
         await #expect(throws: VideoBitRateUpdateError.notEncoding) {
             try await stream.setVerifiedVideoBitRate(1_000_000, publishingGeneration: generation)
         }

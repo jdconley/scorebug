@@ -1,4 +1,3 @@
-diff --git a/HaishinKit/Sources/Codec/AudioCodec.swift b/HaishinKit/Sources/Codec/AudioCodec.swift
 --- a/HaishinKit/Sources/Codec/AudioCodec.swift
 +++ b/HaishinKit/Sources/Codec/AudioCodec.swift
 @@ -20,8 +20,15 @@
@@ -84,7 +83,6 @@ diff --git a/HaishinKit/Sources/Codec/AudioCodec.swift b/HaishinKit/Sources/Code
 +        outputQueue?.finish()
      }
  }
-diff --git a/HaishinKit/Sources/Codec/VTSessionConvertible.swift b/HaishinKit/Sources/Codec/VTSessionConvertible.swift
 --- a/HaishinKit/Sources/Codec/VTSessionConvertible.swift
 +++ b/HaishinKit/Sources/Codec/VTSessionConvertible.swift
 @@ -3,19 +3,37 @@
@@ -126,103 +124,6 @@ diff --git a/HaishinKit/Sources/Codec/VTSessionConvertible.swift b/HaishinKit/So
      func setOption(_ option: VTSessionOption) -> OSStatus {
          return VTSessionSetProperty(self, key: option.key.CFString, value: option.value)
      }
-diff --git a/HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift b/HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift
---- /dev/null
-+++ b/HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift
-@@ -0,0 +1,92 @@
-+import Foundation
-+import VideoToolbox
-+
-+/// A verified live bitrate update could not be applied to the active encoder.
-+public enum VideoBitRateUpdateError: Error, Equatable, Sendable {
-+    case invalidBitRate
-+    case unsupportedRateControl
-+    case invalidDataRateLimits
-+    case notEncoding
-+    case sessionInvalidated
-+    case writeFailed(property: String, status: Int32)
-+    case readFailed(property: String, status: Int32)
-+    case readbackMismatch(property: String)
-+}
-+
-+/// Updates only native rate properties. The owner publishes returned settings after success.
-+enum VerifiedVideoBitRate {
-+    static func apply(_ bitRate: Int, to current: VideoCodecSettings,
-+                      session: any VTSessionConvertible) throws -> VideoCodecSettings {
-+        guard bitRate > 0, bitRate <= Int32.max else {
-+            throw VideoBitRateUpdateError.invalidBitRate
-+        }
-+        guard current.bitRateMode == .average else {
-+            throw VideoBitRateUpdateError.unsupportedRateControl
-+        }
-+        var updated = current
-+        updated.bitRate = bitRate
-+        let limits = updated.effectiveDataRateLimits
-+        if updated.dataRateLimits != nil {
-+            guard let limits, limits.allSatisfy({ $0.isFinite && $0 > 0 }) else {
-+                throw VideoBitRateUpdateError.invalidDataRateLimits
-+            }
-+        }
-+
-+        try write(.init(key: .averageBitRate, value: NSNumber(value: bitRate)), session: session)
-+        if let limits {
-+            try write(.init(key: .dataRateLimits, value: limits as NSArray), session: session)
-+        }
-+        let nativeRate = try read(.averageBitRate, session: session)
-+        guard matchesNumber(nativeRate, expected: Double(bitRate)) else {
-+            throw VideoBitRateUpdateError.readbackMismatch(property: name(.averageBitRate))
-+        }
-+        if let limits {
-+            let nativeLimits = try read(.dataRateLimits, session: session)
-+            guard let nativeLimits, CFGetTypeID(nativeLimits) == CFArrayGetTypeID() else {
-+                throw VideoBitRateUpdateError.readbackMismatch(property: name(.dataRateLimits))
-+            }
-+            // Inspect the length before touching elements so work stays bounded to two values.
-+            let array = unsafeDowncast(nativeLimits, to: NSArray.self)
-+            guard array.count == 2,
-+                  matchesNumber(array[0] as AnyObject, expected: limits[0]),
-+                  matchesNumber(array[1] as AnyObject, expected: limits[1]) else {
-+                throw VideoBitRateUpdateError.readbackMismatch(property: name(.dataRateLimits))
-+            }
-+        }
-+        return updated
-+    }
-+
-+    private static func name(_ key: VTSessionOptionKey) -> String {
-+        key.CFString as String
-+    }
-+
-+    private static func write(_ option: VTSessionOption, session: any VTSessionConvertible) throws {
-+        let status = session.setOption(option)
-+        guard status == noErr else {
-+            throw VideoBitRateUpdateError.writeFailed(property: name(option.key), status: status)
-+        }
-+    }
-+
-+    private static func read(_ key: VTSessionOptionKey, session: any VTSessionConvertible) throws -> CFTypeRef? {
-+        let result = session.copyOption(key)
-+        guard result.status == noErr else {
-+            throw VideoBitRateUpdateError.readFailed(property: name(key), status: result.status)
-+        }
-+        return result.value
-+    }
-+
-+    private static func matchesNumber(_ value: CFTypeRef?, expected: Double) -> Bool {
-+        // CFBoolean bridges to NSNumber, so check the native type before any conversion.
-+        guard let value, CFGetTypeID(value) == CFNumberGetTypeID() else { return false }
-+        let number = unsafeDowncast(value, to: CFNumber.self)
-+        if !CFNumberIsFloatType(number) {
-+            var integer: Int64 = 0
-+            guard CFNumberGetValue(number, .sInt64Type, &integer),
-+                  let actual = Double(exactly: integer) else { return false }
-+            return actual == expected
-+        }
-+        var actual = 0.0
-+        guard CFNumberGetValue(number, .doubleType, &actual), actual.isFinite else { return false }
-+        return actual == expected
-+    }
-+}
-diff --git a/HaishinKit/Sources/Codec/VideoCodec.swift b/HaishinKit/Sources/Codec/VideoCodec.swift
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
 @@ -8,72 +8,127 @@
@@ -449,37 +350,6 @@ diff --git a/HaishinKit/Sources/Codec/VideoCodec.swift b/HaishinKit/Sources/Code
 +        output?.finish()
 +    }
 +}
-diff --git a/HaishinKit/Sources/Codec/VideoCodecInvalidation.swift b/HaishinKit/Sources/Codec/VideoCodecInvalidation.swift
---- /dev/null
-+++ b/HaishinKit/Sources/Codec/VideoCodecInvalidation.swift
-@@ -0,0 +1,26 @@
-+import Foundation
-+
-+/// Notifications may arrive outside the stream actor. They only replace this
-+/// scalar revision; codec/session mutation stays on the owning stream actor.
-+final class VideoCodecInvalidation: @unchecked Sendable {
-+    struct Snapshot {
-+        let revision: UUID
-+        let pending: Bool
-+    }
-+    private let lock = NSLock()
-+    private var revision = UUID()
-+    private var installedRevision: UUID?
-+
-+    var snapshot: Snapshot {
-+        lock.withLock { Snapshot(revision: revision, pending: installedRevision != revision) }
-+    }
-+    func invalidate() { lock.withLock { revision = UUID() } }
-+    func installed(_ revision: UUID) {
-+        // Installing a session cannot consume an invalidation that arrived while
-+        // it was being created. Such a request remains pending for the next input.
-+        lock.withLock { installedRevision = revision }
-+    }
-+    func isCurrent(_ expected: UUID) -> Bool {
-+        lock.withLock { revision == expected && installedRevision == expected }
-+    }
-+}
-diff --git a/HaishinKit/Sources/Codec/VideoCodecSettings.swift b/HaishinKit/Sources/Codec/VideoCodecSettings.swift
 --- a/HaishinKit/Sources/Codec/VideoCodecSettings.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodecSettings.swift
 @@ -186,6 +186,15 @@
@@ -514,7 +384,6 @@ diff --git a/HaishinKit/Sources/Codec/VideoCodecSettings.swift b/HaishinKit/Sour
          }
          #if os(macOS)
          if isHardwareAcceleratedEnabled {
-diff --git a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift b/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
 --- a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
 +++ b/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift
 @@ -9,22 +9,22 @@
@@ -590,7 +459,6 @@ diff --git a/HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift b
 +        continuation?.yield(sampleBuffer, byteCount: sampleBuffer.dataBuffer?.dataLength ?? sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? 0)
 +    }
 +}
-diff --git a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift b/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 --- a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 +++ b/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
 @@ -8,7 +8,7 @@
@@ -623,7 +491,6 @@ diff --git a/HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift
      func invalidate() {
          VTDecompressionSessionInvalidate(self)
      }
-diff --git a/HaishinKit/Sources/Stream/OutgoingStream.swift b/HaishinKit/Sources/Stream/OutgoingStream.swift
 --- a/HaishinKit/Sources/Stream/OutgoingStream.swift
 +++ b/HaishinKit/Sources/Stream/OutgoingStream.swift
 @@ -4,6 +4,7 @@
@@ -711,113 +578,6 @@ diff --git a/HaishinKit/Sources/Stream/OutgoingStream.swift b/HaishinKit/Sources
          guard isRunning else {
              return
          }
-diff --git a/HaishinKit/Sources/Util/PublishingQueue.swift b/HaishinKit/Sources/Util/PublishingQueue.swift
---- /dev/null
-+++ b/HaishinKit/Sources/Util/PublishingQueue.swift
-@@ -0,0 +1,102 @@
-+import Foundation
-+
-+/// A terminal failure of a named publishing boundary. No compressed media is silently dropped.
-+public enum PublishingError: Swift.Error, Equatable, Sendable {
-+    case queueCapacityExceeded(boundary: String)
-+    case itemSizeExceeded(boundary: String, bytes: Int, limit: Int)
-+    case outputTerminated(boundary: String)
-+    case codecFailed(status: Int32)
-+    case muxerFailed(reason: String)
-+    case transportWriteFailed
-+}
-+
-+/// One event per session, synchronously latched even from VideoToolbox callbacks.
-+package final class PublishingFailureLatch: @unchecked Sendable {
-+    private let lock = NSLock()
-+    private var storedError: PublishingError?
-+    package let events: AsyncStream<PublishingError>
-+    private let continuation: AsyncStream<PublishingError>.Continuation
-+
-+    package init() {
-+        (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(1))
-+    }
-+
-+    package var error: PublishingError? { lock.withLock { storedError } }
-+
-+    package func fail(_ error: PublishingError) {
-+        lock.withLock {
-+            guard storedError == nil else { return }
-+            storedError = error
-+            continuation.yield(error)
-+            continuation.finish()
-+        }
-+    }
-+
-+    package func finish() { continuation.finish() }
-+}
-+
-+/// Count bound plus an independent pre-yield byte limit. Limits cover retained queue items,
-+/// not VideoToolbox/AVAudioConverter/libSRT internal allocations or producer-owned input.
-+package final class PublishingQueue<Element: Sendable>: @unchecked Sendable {
-+    package struct Limits: Sendable {
-+        package var count: Int
-+        package var bytesPerItem: Int
-+        package init(count: Int, bytesPerItem: Int) {
-+            precondition(count > 0 && bytesPerItem > 0)
-+            self.count = count
-+            self.bytesPerItem = bytesPerItem
-+        }
-+    }
-+
-+    package let stream: AsyncStream<Element>
-+    private let continuation: AsyncStream<Element>.Continuation
-+    private let lock = NSLock()
-+    private var finished = false
-+    private let boundary: String
-+    private let limits: Limits
-+    private let failure: PublishingFailureLatch
-+
-+    package init(boundary: String, limits: Limits, failure: PublishingFailureLatch) {
-+        self.boundary = boundary
-+        self.limits = limits
-+        self.failure = failure
-+        (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.count))
-+    }
-+
-+    @discardableResult package func yield(_ element: Element, byteCount: Int) -> Bool {
-+        lock.withLock {
-+            guard !finished, failure.error == nil else { return false }
-+            guard byteCount >= 0, byteCount <= limits.bytesPerItem else {
-+                terminate(.itemSizeExceeded(boundary: boundary, bytes: byteCount, limit: limits.bytesPerItem))
-+                return false
-+            }
-+            switch continuation.yield(element) {
-+            case .enqueued: return true
-+            case .dropped: terminate(.queueCapacityExceeded(boundary: boundary))
-+            case .terminated: terminate(.outputTerminated(boundary: boundary))
-+            @unknown default: terminate(.outputTerminated(boundary: boundary))
-+            }
-+            return false
-+        }
-+    }
-+
-+    package func fail(_ error: PublishingError) {
-+        lock.withLock {
-+            guard !finished else { return }
-+            terminate(error)
-+        }
-+    }
-+
-+    package func finish() {
-+        lock.withLock {
-+            finished = true
-+            continuation.finish()
-+        }
-+    }
-+
-+    private func terminate(_ error: PublishingError) {
-+        finished = true
-+        failure.fail(error)
-+        continuation.finish()
-+    }
-+}
-diff --git a/SRTHaishinKit/Sources/SRT/SRTConnection.swift b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 @@ -30,6 +30,13 @@
@@ -1040,7 +800,6 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTConnection.swift b/SRTHaishinKit/Sourc
              await close()
          }
      }
-diff --git a/SRTHaishinKit/Sources/SRT/SRTSocket.swift b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 @@ -2,6 +2,12 @@
@@ -1277,7 +1036,6 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTSocket.swift b/SRTHaishinKit/Sources/S
          let performanceData = self.performanceData
          return .init(
              queueBytesOut: Int(performanceData.byteSndBuf),
-diff --git a/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift b/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift
 @@ -7,18 +7,12 @@
@@ -1304,10 +1062,9 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTSocketURL.swift b/SRTHaishinKit/Source
          }
          return paramsReturn
      }
-diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/SRT/SRTStream.swift
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,48 @@
+@@ -8,6 +8,58 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1337,6 +1094,16 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
 +        readyState == .publishing && finishingGeneration == nil && publishingError == nil && muxerError == nil
 +            ? generation : nil
 +    }
++    public struct TransportClockSnapshot: Equatable, Sendable {
++        public let publishingGeneration: UInt64
++        public let clock: TransportClock
++    }
++    /// Muxer-selected mapping only; never a claim of transport receipt or frame loss.
++    public var transportClockSnapshot: TransportClockSnapshot? {
++        guard let generation = publishingGeneration, let clock = writer.transportClock else { return nil }
++        return .init(publishingGeneration: generation, clock: clock)
++    }
++
 +    /// Point-in-time native configuration acknowledgment. It is not a source-frame
 +    /// boundary, achieved output rate, or authorization to relabel queued frames.
 +    public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
@@ -1356,7 +1123,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +64,7 @@
+@@ -22,7 +74,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1365,7 +1132,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,7 +74,11 @@
+@@ -32,7 +84,11 @@
      }
 
      /// Creates a new stream object.
@@ -1378,7 +1145,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
          self.connection = connection
          Task { await connection.addStream(self) }
      }
-@@ -45,7 +91,7 @@
+@@ -45,7 +101,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1387,7 +1154,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
              return
          }
          guard name != nil else {
-@@ -57,8 +103,22 @@
+@@ -57,8 +113,22 @@
              }
              return
          }
@@ -1411,7 +1178,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +128,39 @@
+@@ -68,26 +138,39 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1471,7 +1238,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +189,67 @@
+@@ -116,16 +199,67 @@
          readyState = .playing
      }
 
@@ -1544,7 +1311,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
      }
 
      /// Sets the expected media.
-@@ -157,12 +281,14 @@
+@@ -157,12 +291,14 @@
      }
 
      public func append(_ sampleBuffer: CMSampleBuffer) {
@@ -1561,7 +1328,7 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +298,29 @@
+@@ -172,16 +308,29 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -1593,7 +1360,108 @@ diff --git a/SRTHaishinKit/Sources/SRT/SRTStream.swift b/SRTHaishinKit/Sources/S
      }
 
      public func dispatch(_ event: NetworkMonitorEvent) async {
-diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/TSWriter.swift
+--- a/SRTHaishinKit/Sources/TS/PacketizedElementaryStream.swift
++++ b/SRTHaishinKit/Sources/TS/PacketizedElementaryStream.swift
+@@ -25,7 +25,6 @@
+ struct PESOptionalHeader {
+     static let fixedSectionSize: Int = 3
+     static let defaultMarkerBits: UInt8 = 2
+-    static let offset = CMTime(value: 3, timescale: 30)
+
+     var markerBits: UInt8 = PESOptionalHeader.defaultMarkerBits
+     var scramblingControl: UInt8 = 0
+@@ -51,23 +50,21 @@
+         self.data = data
+     }
+
+-    mutating func setTimestamp(_ timestamp: CMTime, presentationTimeStamp: CMTime, decodeTimeStamp: CMTime) {
+-        let base = Double(timestamp.seconds)
+-        if presentationTimeStamp != CMTime.invalid {
+-            ptsDtsIndicator |= 0x02
+-        }
+-        if decodeTimeStamp != CMTime.invalid {
+-            ptsDtsIndicator |= 0x01
+-        }
+-        if (ptsDtsIndicator & 0x02) == 0x02 {
+-            let pts = Int64((presentationTimeStamp.seconds + Self.offset.seconds - base) * Double(TSTimestamp.resolution))
+-            optionalFields += TSTimestamp.encode(pts, ptsDtsIndicator << 4)
+-        }
+-        if (ptsDtsIndicator & 0x01) == 0x01 {
+-            let dts = Int64((decodeTimeStamp.seconds - base) * Double(TSTimestamp.resolution))
+-            optionalFields += TSTimestamp.encode(dts, 0x01 << 4)
+-        }
+-        pesHeaderLength = UInt8(optionalFields.count)
++    @discardableResult
++    mutating func setTimestamp(_ timestamp: CMTime, presentationTimeStamp: CMTime, decodeTimeStamp: CMTime) -> Bool {
++        guard let clock = TransportClock(origin: timestamp),
++              let pts = clock.presentationTimestamp(for: presentationTimeStamp) else { return false }
++        let hasDecodeTime = decodeTimeStamp != .invalid
++        let dts = hasDecodeTime ? clock.presentationTimestamp(for: decodeTimeStamp) : nil
++        guard !hasDecodeTime || dts != nil else { return false }
++        let indicator: UInt8 = hasDecodeTime ? 3 : 2
++        var fields = TSTimestamp.encode(pts, indicator << 4)
++        if let dts { fields += TSTimestamp.encode(dts, 0x10) }
++        // Commit only after both projections succeed, replacing stale fields.
++        ptsDtsIndicator = indicator
++        optionalFields = fields
++        pesHeaderLength = UInt8(fields.count)
++        return true
+     }
+
+     func makeSampleTimingInfo(_ previousPresentationTimeStamp: CMTime) -> CMSampleTimingInfo? {
+@@ -236,11 +233,11 @@
+         }
+         optionalPESHeader = PESOptionalHeader()
+         optionalPESHeader?.dataAlignmentIndicator = true
+-        optionalPESHeader?.setTimestamp(
++        guard optionalPESHeader?.setTimestamp(
+             timeStamp,
+             presentationTimeStamp: sampleBuffer.presentationTimeStamp,
+             decodeTimeStamp: sampleBuffer.decodeTimeStamp
+-        )
++        ) == true else { return nil }
+         let length = data.count + (optionalPESHeader?.data.count ?? 0)
+         if length < Int(UInt16.max) {
+             packetLength = UInt16(length)
+@@ -258,11 +255,11 @@
+         audioCompressedBuffer.encode(to: &data)
+         optionalPESHeader = PESOptionalHeader()
+         optionalPESHeader?.dataAlignmentIndicator = true
+-        optionalPESHeader?.setTimestamp(
++        guard optionalPESHeader?.setTimestamp(
+             timeStamp,
+             presentationTimeStamp: when.makeTime(),
+             decodeTimeStamp: .invalid
+-        )
++        ) == true else { return nil }
+         let length = data.count + (optionalPESHeader?.data.count ?? 0)
+         if length < Int(UInt16.max) {
+             packetLength = UInt16(length)
+--- a/SRTHaishinKit/Sources/TS/TSPacket.swift
++++ b/SRTHaishinKit/Sources/TS/TSPacket.swift
+@@ -139,17 +139,18 @@
+         var result: Int64 = 0
+         result |= Int64(data[offset + 0] & 0x0e) << 29
+         result |= Int64(data[offset + 1]) << 22 | Int64(data[offset + 2] & 0xfe) << 14
+-        result |= Int64(data[offset + 3]) << 7 | Int64(data[offset + 3] & 0xfe) << 1
++        result |= Int64(data[offset + 3]) << 7 | Int64(data[offset + 4] & 0xfe) >> 1
+         return result
+     }
+
+     static func encode(_ b: Int64, _ m: UInt8) -> Data {
+         var data = Data(count: dataSize)
+-        data[0] = UInt8(truncatingIfNeeded: b >> 29) | 0x01 | m
++        // Only the low 33 clock bits belong on the wire; preserve the prefix and markers.
++        data[0] = (UInt8(truncatingIfNeeded: b >> 29) & 0x0e) | 0x01 | m
+         data[1] = UInt8(truncatingIfNeeded: b >> 22)
+-        data[2] = UInt8(truncatingIfNeeded: b >> 14) | 0x01
++        data[2] = (UInt8(truncatingIfNeeded: b >> 14) & 0xfe) | 0x01
+         data[3] = UInt8(truncatingIfNeeded: b >> 7)
+-        data[4] = UInt8(truncatingIfNeeded: b << 1) | 0x01
++        data[4] = (UInt8(truncatingIfNeeded: b << 1) & 0xfe) | 0x01
+         return data
+     }
+ }
 --- a/SRTHaishinKit/Sources/TS/TSWriter.swift
 +++ b/SRTHaishinKit/Sources/TS/TSWriter.swift
 @@ -1,6 +1,7 @@
@@ -1646,6 +1514,7 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
      }
 -    private var videoTimeStamp: CMTime = .invalid
 -    private var audioTimeStamp: CMTime = .invalid
+-    private var clockTimeStamp: CMTime = .zero
 +    // PES data owns copied compressed bytes; codec buffers may be reused after append.
 +    private struct PendingPacket {
 +        var pes: PacketizedElementaryStream
@@ -1669,10 +1538,12 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 +    private var initialMedias: Set<AVMediaType> = []
 +    private var startupMinimum: CMTime = .invalid
 +    private var startupMaximum: CMTime = .invalid
-+    private var origin: CMTime = .invalid
-     private var clockTimeStamp: CMTime = .zero
++    private(set) var transportClock: TransportClock?
++    private var origin: CMTime { transportClock?.origin ?? .invalid }
++    private var lastPCRTicks: UInt64 = 0
      private var segmentDuration: Double = TSWriter.defaultSegmentDuration
-     private var rotatedTimeStamp: CMTime = .zero
+-    private var rotatedTimeStamp: CMTime = .zero
++    private var rotatedClockTicks: UInt64 = 0
      private var audioContinuityCounter: UInt8 = 0
      private var videoContinuityCounter: UInt8 = 0
 -    private var continuation: AsyncStream<Data>.Continuation? {
@@ -1704,20 +1575,6 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 -            audioTimeStamp = when.makeTime()
 -            if pcrPID == TSWriter.defaultAudioPID {
 -                clockTimeStamp = audioTimeStamp
--            }
--        }
--        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
--            pes.streamID = 192
--            writePacketizedElementaryStream(
--                TSWriter.defaultAudioPID,
--                PES: pes,
--                timeStamp: when.makeTime(),
--                randomAccessIndicator: true
--            )
--        }
--    }
--
--    /// Appends a buffer.
 +        guard error == nil, let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
 +        guard when.isHostTimeValid else { fail(.invalidTimestamp); return }
 +        let timestamp = when.makeTime()
@@ -1738,7 +1595,52 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 +    }
 +
 +    /// Appends a compressed video buffer.
-     func append(_ sampleBuffer: CMSampleBuffer) {
++    func append(_ sampleBuffer: CMSampleBuffer) {
++        guard error == nil, sampleBuffer.formatDescription?.mediaType == .video else { return }
++        let pts = sampleBuffer.presentationTimeStamp
++        let dts = sampleBuffer.decodeTimeStamp
++        guard valid(pts), dts == .invalid || valid(dts) else { fail(.invalidTimestamp); return }
++        guard preflightTimes(pts, decodeTime: dts) else { return }
++        guard let block = sampleBuffer.dataBuffer, block.dataLength > 0 else { fail(.invalidPayload); return }
++        let parameterBytes = sampleBuffer.formatDescription?.parameterSets.reduce(0) { $0 + $1.count + 4 } ?? 0
++        guard preflightPayload(block.dataLength + parameterBytes + 6) else { return }
++        guard let pes = PacketizedElementaryStream(sampleBuffer, timeStamp: min(pts, dts.isValid ? dts : pts)),
++              !pes.data.isEmpty else {
++            fail(.invalidPayload)
++            return
++        }
++        append(PendingPacket(pes: pes, media: .video, presentationTime: pts,
++            decodeTime: dts, randomAccess: !sampleBuffer.isNotSync))
++    }
++
++    private func valid(_ time: CMTime) -> Bool {
++        time.isNumeric && time.epoch == 0 && time.seconds.isFinite
++    }
++
++    // Validate the exact projection before PES initializers allocate payloads.
++    private func preflightTimes(_ pts: CMTime, decodeTime: CMTime) -> Bool {
++        let time = decodeTime.isValid ? decodeTime : pts
++        if transportClock == nil {
++            let low = startupMinimum.isValid ? min(startupMinimum, min(pts, time)) : min(pts, time)
++            let high = startupMaximum.isValid ? max(startupMaximum, max(pts, time)) : max(pts, time)
++            guard (high - low).seconds <= startupLimits.mediaSpan else {
++                fail(.startupTimeLimitExceeded)
++                return false
+             }
+         }
+-        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
+-            pes.streamID = 192
+-            writePacketizedElementaryStream(
+-                TSWriter.defaultAudioPID,
+-                PES: pes,
+-                timeStamp: when.makeTime(),
+-                randomAccessIndicator: true
+-            )
+-        }
+-    }
+-
+-    /// Appends a buffer.
+-    func append(_ sampleBuffer: CMSampleBuffer) {
 -        guard canWriteFor else {
 -            return
 -        }
@@ -1764,45 +1666,11 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 -        default:
 -            break
 -        }
-+        guard error == nil, sampleBuffer.formatDescription?.mediaType == .video else { return }
-+        let pts = sampleBuffer.presentationTimeStamp
-+        let dts = sampleBuffer.decodeTimeStamp
-+        guard valid(pts), dts == .invalid || valid(dts) else { fail(.invalidTimestamp); return }
-+        guard preflightTimes(pts, decodeTime: dts) else { return }
-+        guard let block = sampleBuffer.dataBuffer, block.dataLength > 0 else { fail(.invalidPayload); return }
-+        let parameterBytes = sampleBuffer.formatDescription?.parameterSets.reduce(0) { $0 + $1.count + 4 } ?? 0
-+        guard preflightPayload(block.dataLength + parameterBytes + 6) else { return }
-+        guard let pes = PacketizedElementaryStream(sampleBuffer, timeStamp: min(pts, dts.isValid ? dts : pts)),
-+              !pes.data.isEmpty else {
-+            fail(.invalidPayload)
-+            return
-+        }
-+        append(PendingPacket(pes: pes, media: .video, presentationTime: pts,
-+            decodeTime: dts, randomAccess: !sampleBuffer.isNotSync))
-+    }
-+
-+    private func valid(_ time: CMTime) -> Bool {
-+        time.isNumeric && time.epoch == 0 && time.seconds.isFinite
-+    }
-+
-+    // Bound timestamp arithmetic before the PES initializer converts seconds to Int64.
-+    private func preflightTimes(_ pts: CMTime, decodeTime: CMTime) -> Bool {
-+        let time = decodeTime.isValid ? decodeTime : pts
-+        if origin.isValid {
-+            let maximumSeconds = Double(Int64.max) / TSTimestamp.resolution - 1
-+            guard time >= origin, pts >= origin,
-+                  (pts - origin).seconds < maximumSeconds,
-+                  (time - origin).seconds < maximumSeconds else {
-+                fail(.invalidTimestamp)
-+                return false
-+            }
-+        } else {
-+            let low = startupMinimum.isValid ? min(startupMinimum, min(pts, time)) : min(pts, time)
-+            let high = startupMaximum.isValid ? max(startupMaximum, max(pts, time)) : max(pts, time)
-+            guard (high - low).seconds <= startupLimits.mediaSpan else {
-+                fail(.startupTimeLimitExceeded)
-+                return false
-+            }
++        guard let clock = transportClock ?? TransportClock(origin: min(pts, time)),
++              clock.presentationTimestamp(for: pts) != nil,
++              clock.presentationTimestamp(for: time) != nil else {
++            fail(.invalidTimestamp)
++            return false
 +        }
 +        return true
 +    }
@@ -1835,9 +1703,13 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 +        pending.append(packet)
 +        initialMedias.insert(packet.media)
 +        guard canWriteFor, expectedMedias.isSubset(of: initialMedias) else { return }
-+        origin = low
-+        clockTimeStamp = origin
-+        rotatedTimeStamp = origin
++        guard let clock = TransportClock(origin: low), pending.allSatisfy({
++            clock.presentationTimestamp(for: $0.presentationTime) != nil &&
++            clock.presentationTimestamp(for: $0.time) != nil
++        }) else { fail(.invalidTimestamp); return }
++        transportClock = clock
++        lastPCRTicks = 0
++        rotatedClockTicks = 0
 +        pcrPID = initialMedias.contains(.video) ? Self.defaultVideoPID : Self.defaultAudioPID
 +        writeProgram()
 +        let startup = pending
@@ -1848,23 +1720,20 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
 +
 +    private func emit(_ packet: PendingPacket) {
 +        guard error == nil else { return }
-+        guard packet.time >= origin, packet.presentationTime >= origin,
-+              (packet.presentationTime - origin).seconds < Double(Int64.max) / TSTimestamp.resolution,
-+              (packet.time - origin).seconds < Double(Int64.max) / TSTimestamp.resolution else {
++        var header = PESOptionalHeader()
++        header.dataAlignmentIndicator = true
++        guard let clock = transportClock,
++              let ticks = clock.clockReference(for: packet.time),
++              header.setTimestamp(clock.origin, presentationTimeStamp: packet.presentationTime,
++                                  decodeTimeStamp: packet.decodeTime) else {
 +            fail(.invalidTimestamp)
 +            return
 +        }
 +        var pes = packet.pes
-+        pes.optionalPESHeader = PESOptionalHeader()
-+        pes.optionalPESHeader?.dataAlignmentIndicator = true
-+        // Upstream adds the transport lead to PTS only. Apply the same lead to DTS
-+        // so rebasing preserves the encoder's PTS minus DTS composition offset.
-+        let decodeTime = packet.decodeTime.isValid ? packet.decodeTime + PESOptionalHeader.offset : .invalid
-+        pes.optionalPESHeader?.setTimestamp(origin, presentationTimeStamp: packet.presentationTime,
-+            decodeTimeStamp: decodeTime)
++        pes.optionalPESHeader = header
 +        pes.streamID = packet.media == .audio ? 192 : 224
 +        writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
-+            PES: pes, timeStamp: packet.time, randomAccessIndicator: packet.randomAccess)
++            PES: pes, clockTicks: ticks, randomAccessIndicator: packet.randomAccess)
 +    }
 +
 +    private func fail(_ failure: SRTStream.MuxerError) {
@@ -1886,31 +1755,57 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
      }
 
      /// Clears the writer object for new transport stream.
-@@ -147,12 +269,20 @@
+@@ -147,17 +269,25 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
 -        videoTimeStamp = .invalid
 -        audioTimeStamp = .invalid
-+        origin = .invalid
+-        clockTimeStamp = .zero
+-        rotatedTimeStamp = .zero
++        transportClock = nil
 +        startupMinimum = .invalid
 +        startupMaximum = .invalid
 +        pending.removeAll(keepingCapacity: false)
 +        pendingBytes = 0
 +        initialMedias.removeAll()
 +        error = nil
-         clockTimeStamp = .zero
-         rotatedTimeStamp = .zero
++        lastPCRTicks = 0
++        rotatedClockTicks = 0
          expectedMedias.removeAll()
 -        continuation = nil
+-    }
+-
+-    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, timeStamp: CMTime, randomAccessIndicator: Bool) {
+-        let packets: [TSPacket] = split(PID, PES: PES, timestamp: timeStamp)
+-        rotateFileHandle(timeStamp)
 +        outputQueue?.finish()
 +        outputQueue = nil
 +        failure.finish()
 +        failure = PublishingFailureLatch()
++    }
++
++    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) {
++        let packets: [TSPacket] = split(PID, PES: PES, clockTicks: clockTicks)
++        rotateFileHandle(clockTicks)
+
+         packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
+
+@@ -179,17 +309,20 @@
+         write(bytes)
      }
 
-     private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, timeStamp: CMTime, randomAccessIndicator: Bool) {
-@@ -189,7 +319,10 @@
+-    private func rotateFileHandle(_ timestamp: CMTime) {
+-        let duration = timestamp.seconds - rotatedTimeStamp.seconds
+-        guard segmentDuration < duration else {
++    private func rotateFileHandle(_ ticks: UInt64) {
++        guard ticks >= rotatedClockTicks,
++              segmentDuration < Double(ticks - rotatedClockTicks) / Double(TransportClock.timescale) else {
+             return
+         }
+         writeProgramIfNeeded()
+-        rotatedTimeStamp = timestamp
++        rotatedClockTicks = ticks
      }
 
      private func write(_ data: Data) {
@@ -1922,7 +1817,7 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
      }
 
      private func writeProgram() {
-@@ -208,7 +341,7 @@
+@@ -208,18 +341,17 @@
          guard !expectedMedias.isEmpty else {
              return
          }
@@ -1931,16 +1826,21 @@ diff --git a/SRTHaishinKit/Sources/TS/TSWriter.swift b/SRTHaishinKit/Sources/TS/
              return
          }
          writeProgram()
-@@ -218,7 +351,7 @@
+     }
+
+-    private func split(_ PID: UInt16, PES: PacketizedElementaryStream, timestamp: CMTime) -> [TSPacket] {
++    private func split(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64) -> [TSPacket] {
          var PCR: UInt64?
-         let duration: Double = timestamp.seconds - clockTimeStamp.seconds
-         if pcrPID == PID && 0.02 <= duration {
+-        let duration: Double = timestamp.seconds - clockTimeStamp.seconds
+-        if pcrPID == PID && 0.02 <= duration {
 -            PCR = UInt64((timestamp.seconds - (PID == Self.defaultVideoPID ? videoTimeStamp : audioTimeStamp).seconds) * TSTimestamp.resolution)
-+            PCR = UInt64((timestamp - origin).seconds * TSTimestamp.resolution)
-             clockTimeStamp = timestamp
+-            clockTimeStamp = timestamp
++        if pcrPID == PID, clockTicks >= lastPCRTicks, clockTicks - lastPCRTicks >= 1_800 {
++            PCR = clockTicks
++            lastPCRTicks = clockTicks
          }
          var packets: [TSPacket] = []
-diff --git a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift b/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
+         for packet in PES.arrayOfPackets(PID, PCR: PCR) {
 --- a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
 +++ b/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift
 @@ -5,6 +5,9 @@
@@ -1967,3 +1867,381 @@ diff --git a/SRTHaishinKit/Tests/SRT/SRTSocketOptionTests.swift b/SRTHaishinKit/
      }
 
      @Test func string() throws {
+--- a/SRTHaishinKit/Tests/TS/PacketizedElementaryStreamTests.swift
++++ b/SRTHaishinKit/Tests/TS/PacketizedElementaryStreamTests.swift
+@@ -13,7 +13,8 @@
+         let pes = PacketizedElementaryStream(PacketizedElementaryStreamTests.dataWithVideo)!
+         let header = pes.optionalPESHeader
+         let timingInfo = header?.makeSampleTimingInfo(.invalid)
+-        #expect(timingInfo?.presentationTimeStamp == CMTime(value: 126384, timescale: CMTimeScale(TSTimestamp.resolution)))
++        // Literal PTS bytes [33, 0, 7, 216, 97] carry 3 * 32768 + 216 * 128 + 48 ticks.
++        #expect(timingInfo?.presentationTimeStamp == CMTime(value: 126_000, timescale: CMTimeScale(TSTimestamp.resolution)))
+         #expect(pes.payload == PacketizedElementaryStreamTests.dataWithVideo)
+     }
+
+--- a/SRTHaishinKit/Tests/TS/TSPacketTests.swift
++++ b/SRTHaishinKit/Tests/TS/TSPacketTests.swift
+@@ -25,4 +25,64 @@
+         #expect(Data([49, 0, 1, 0, 1]) == TSTimestamp.encode(0, TSTimestamp.ptsDtsMask))
+         #expect(Data([17, 0, 1, 0, 1]) == TSTimestamp.encode(0, TSTimestamp.ptsMask))
+     }
++
++    @Test func timestampDecodesLiteralWireValues() {
++        let fixtures: [(wire: [UInt8], ticks: Int64)] = [
++            ([0x21, 0x00, 0x01, 0x00, 0x03], 1),
++            ([0x21, 0x00, 0x01, 0x00, 0xff], 127),
++            ([0x21, 0x00, 0x01, 0x01, 0x01], 128),
++            ([0x21, 0x00, 0x07, 0xd8, 0x61], 126_000),
++            ([0x29, 0x8d, 0x15, 0xcf, 0x13], 0x1_2345_6789),
++            ([0x2f, 0xff, 0xff, 0xff, 0xff], 0x1_ffff_ffff)
++        ]
++        for fixture in fixtures {
++            #expect(TSTimestamp.decode(Data(fixture.wire)) == fixture.ticks)
++        }
++    }
++
++    @Test func timestampDecodesEveryLowSevenBitPattern() {
++        // The final byte carries exactly seven clock bits, followed by a marker bit.
++        for lowBits in UInt8(0)...UInt8(127) {
++            let wire = Data([0x21, 0x00, 0x01, 0x00, lowBits * 2 + 1])
++            #expect(TSTimestamp.decode(wire) == Int64(lowBits))
++        }
++    }
++
++    @Test func timestampDecodesAtNonzeroOffset() {
++        let wire = Data([0xaa, 0xbb, 0xcc, 0x21, 0x00, 0x07, 0xd8, 0x61, 0xdd])
++        #expect(TSTimestamp.decode(wire, offset: 3) == 126_000)
++    }
++
++    @Test func timestampEncodesLiteralWireValuesModulo33Bits() {
++        // Literal field bytes are independent of decode; signed inputs wrap modulo 2^33.
++        let fixtures: [(ticks: Int64, fields: [UInt8])] = [
++            (0, [0x01, 0x00, 0x01, 0x00, 0x01]),
++            (1, [0x01, 0x00, 0x01, 0x00, 0x03]),
++            (127, [0x01, 0x00, 0x01, 0x00, 0xff]),
++            (128, [0x01, 0x00, 0x01, 0x01, 0x01]),
++            (126_000, [0x01, 0x00, 0x07, 0xd8, 0x61]),
++            (0x1_2345_6789, [0x09, 0x8d, 0x15, 0xcf, 0x13]),
++            (0x1_ffff_ffff, [0x0f, 0xff, 0xff, 0xff, 0xff]),
++            (0x2_0000_0000, [0x01, 0x00, 0x01, 0x00, 0x01]),
++            (0x2_0000_0001, [0x01, 0x00, 0x01, 0x00, 0x03]),
++            (0x3_2345_6789, [0x09, 0x8d, 0x15, 0xcf, 0x13]),
++            (Int64.max, [0x0f, 0xff, 0xff, 0xff, 0xff]),
++            (-1, [0x0f, 0xff, 0xff, 0xff, 0xff]),
++            (-128, [0x0f, 0xff, 0xff, 0xff, 0x01]),
++            (-0x2_0000_0000, [0x01, 0x00, 0x01, 0x00, 0x01]),
++            (Int64.min, [0x01, 0x00, 0x01, 0x00, 0x01])
++        ]
++        for prefix: UInt8 in [0x10, 0x20, 0x30] {
++            for fixture in fixtures {
++                var expected = Data(fixture.fields)
++                expected[0] |= prefix
++                let encoded = TSTimestamp.encode(fixture.ticks, prefix)
++                #expect(encoded == expected)
++                #expect(encoded[0] & 0xf0 == prefix)
++                #expect(encoded[0] & 0x01 == 0x01)
++                #expect(encoded[2] & 0x01 == 0x01)
++                #expect(encoded[4] & 0x01 == 0x01)
++            }
++        }
++    }
+ }
+--- /dev/null
++++ b/HaishinKit/Sources/Util/PublishingQueue.swift
+@@ -0,0 +1,102 @@
++import Foundation
++
++/// A terminal failure of a named publishing boundary. No compressed media is silently dropped.
++public enum PublishingError: Swift.Error, Equatable, Sendable {
++    case queueCapacityExceeded(boundary: String)
++    case itemSizeExceeded(boundary: String, bytes: Int, limit: Int)
++    case outputTerminated(boundary: String)
++    case codecFailed(status: Int32)
++    case muxerFailed(reason: String)
++    case transportWriteFailed
++}
++
++/// One event per session, synchronously latched even from VideoToolbox callbacks.
++package final class PublishingFailureLatch: @unchecked Sendable {
++    private let lock = NSLock()
++    private var storedError: PublishingError?
++    package let events: AsyncStream<PublishingError>
++    private let continuation: AsyncStream<PublishingError>.Continuation
++
++    package init() {
++        (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(1))
++    }
++
++    package var error: PublishingError? { lock.withLock { storedError } }
++
++    package func fail(_ error: PublishingError) {
++        lock.withLock {
++            guard storedError == nil else { return }
++            storedError = error
++            continuation.yield(error)
++            continuation.finish()
++        }
++    }
++
++    package func finish() { continuation.finish() }
++}
++
++/// Count bound plus an independent pre-yield byte limit. Limits cover retained queue items,
++/// not VideoToolbox/AVAudioConverter/libSRT internal allocations or producer-owned input.
++package final class PublishingQueue<Element: Sendable>: @unchecked Sendable {
++    package struct Limits: Sendable {
++        package var count: Int
++        package var bytesPerItem: Int
++        package init(count: Int, bytesPerItem: Int) {
++            precondition(count > 0 && bytesPerItem > 0)
++            self.count = count
++            self.bytesPerItem = bytesPerItem
++        }
++    }
++
++    package let stream: AsyncStream<Element>
++    private let continuation: AsyncStream<Element>.Continuation
++    private let lock = NSLock()
++    private var finished = false
++    private let boundary: String
++    private let limits: Limits
++    private let failure: PublishingFailureLatch
++
++    package init(boundary: String, limits: Limits, failure: PublishingFailureLatch) {
++        self.boundary = boundary
++        self.limits = limits
++        self.failure = failure
++        (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.count))
++    }
++
++    @discardableResult package func yield(_ element: Element, byteCount: Int) -> Bool {
++        lock.withLock {
++            guard !finished, failure.error == nil else { return false }
++            guard byteCount >= 0, byteCount <= limits.bytesPerItem else {
++                terminate(.itemSizeExceeded(boundary: boundary, bytes: byteCount, limit: limits.bytesPerItem))
++                return false
++            }
++            switch continuation.yield(element) {
++            case .enqueued: return true
++            case .dropped: terminate(.queueCapacityExceeded(boundary: boundary))
++            case .terminated: terminate(.outputTerminated(boundary: boundary))
++            @unknown default: terminate(.outputTerminated(boundary: boundary))
++            }
++            return false
++        }
++    }
++
++    package func fail(_ error: PublishingError) {
++        lock.withLock {
++            guard !finished else { return }
++            terminate(error)
++        }
++    }
++
++    package func finish() {
++        lock.withLock {
++            finished = true
++            continuation.finish()
++        }
++    }
++
++    private func terminate(_ error: PublishingError) {
++        finished = true
++        failure.fail(error)
++        continuation.finish()
++    }
++}
+--- /dev/null
++++ b/HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift
+@@ -0,0 +1,92 @@
++import Foundation
++import VideoToolbox
++
++/// A verified live bitrate update could not be applied to the active encoder.
++public enum VideoBitRateUpdateError: Error, Equatable, Sendable {
++    case invalidBitRate
++    case unsupportedRateControl
++    case invalidDataRateLimits
++    case notEncoding
++    case sessionInvalidated
++    case writeFailed(property: String, status: Int32)
++    case readFailed(property: String, status: Int32)
++    case readbackMismatch(property: String)
++}
++
++/// Updates only native rate properties. The owner publishes returned settings after success.
++enum VerifiedVideoBitRate {
++    static func apply(_ bitRate: Int, to current: VideoCodecSettings,
++                      session: any VTSessionConvertible) throws -> VideoCodecSettings {
++        guard bitRate > 0, bitRate <= Int32.max else {
++            throw VideoBitRateUpdateError.invalidBitRate
++        }
++        guard current.bitRateMode == .average else {
++            throw VideoBitRateUpdateError.unsupportedRateControl
++        }
++        var updated = current
++        updated.bitRate = bitRate
++        let limits = updated.effectiveDataRateLimits
++        if updated.dataRateLimits != nil {
++            guard let limits, limits.allSatisfy({ $0.isFinite && $0 > 0 }) else {
++                throw VideoBitRateUpdateError.invalidDataRateLimits
++            }
++        }
++
++        try write(.init(key: .averageBitRate, value: NSNumber(value: bitRate)), session: session)
++        if let limits {
++            try write(.init(key: .dataRateLimits, value: limits as NSArray), session: session)
++        }
++        let nativeRate = try read(.averageBitRate, session: session)
++        guard matchesNumber(nativeRate, expected: Double(bitRate)) else {
++            throw VideoBitRateUpdateError.readbackMismatch(property: name(.averageBitRate))
++        }
++        if let limits {
++            let nativeLimits = try read(.dataRateLimits, session: session)
++            guard let nativeLimits, CFGetTypeID(nativeLimits) == CFArrayGetTypeID() else {
++                throw VideoBitRateUpdateError.readbackMismatch(property: name(.dataRateLimits))
++            }
++            // Inspect the length before touching elements so work stays bounded to two values.
++            let array = unsafeDowncast(nativeLimits, to: NSArray.self)
++            guard array.count == 2,
++                  matchesNumber(array[0] as AnyObject, expected: limits[0]),
++                  matchesNumber(array[1] as AnyObject, expected: limits[1]) else {
++                throw VideoBitRateUpdateError.readbackMismatch(property: name(.dataRateLimits))
++            }
++        }
++        return updated
++    }
++
++    private static func name(_ key: VTSessionOptionKey) -> String {
++        key.CFString as String
++    }
++
++    private static func write(_ option: VTSessionOption, session: any VTSessionConvertible) throws {
++        let status = session.setOption(option)
++        guard status == noErr else {
++            throw VideoBitRateUpdateError.writeFailed(property: name(option.key), status: status)
++        }
++    }
++
++    private static func read(_ key: VTSessionOptionKey, session: any VTSessionConvertible) throws -> CFTypeRef? {
++        let result = session.copyOption(key)
++        guard result.status == noErr else {
++            throw VideoBitRateUpdateError.readFailed(property: name(key), status: result.status)
++        }
++        return result.value
++    }
++
++    private static func matchesNumber(_ value: CFTypeRef?, expected: Double) -> Bool {
++        // CFBoolean bridges to NSNumber, so check the native type before any conversion.
++        guard let value, CFGetTypeID(value) == CFNumberGetTypeID() else { return false }
++        let number = unsafeDowncast(value, to: CFNumber.self)
++        if !CFNumberIsFloatType(number) {
++            var integer: Int64 = 0
++            guard CFNumberGetValue(number, .sInt64Type, &integer),
++                  let actual = Double(exactly: integer) else { return false }
++            return actual == expected
++        }
++        var actual = 0.0
++        guard CFNumberGetValue(number, .doubleType, &actual), actual.isFinite else { return false }
++        return actual == expected
++    }
++}
+--- /dev/null
++++ b/HaishinKit/Sources/Codec/VideoCodecInvalidation.swift
+@@ -0,0 +1,26 @@
++import Foundation
++
++/// Notifications may arrive outside the stream actor. They only replace this
++/// scalar revision; codec/session mutation stays on the owning stream actor.
++final class VideoCodecInvalidation: @unchecked Sendable {
++    struct Snapshot {
++        let revision: UUID
++        let pending: Bool
++    }
++    private let lock = NSLock()
++    private var revision = UUID()
++    private var installedRevision: UUID?
++
++    var snapshot: Snapshot {
++        lock.withLock { Snapshot(revision: revision, pending: installedRevision != revision) }
++    }
++    func invalidate() { lock.withLock { revision = UUID() } }
++    func installed(_ revision: UUID) {
++        // Installing a session cannot consume an invalidation that arrived while
++        // it was being created. Such a request remains pending for the next input.
++        lock.withLock { installedRevision = revision }
++    }
++    func isCurrent(_ expected: UUID) -> Bool {
++        lock.withLock { revision == expected && installedRevision == expected }
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/TS/TransportClock.swift
+@@ -0,0 +1,67 @@
++import CoreMedia
++
++/// Immutable source-to-MPEG-TS mapping. Values are unwrapped 90 kHz ticks;
++/// timestamp serialization alone applies the 33-bit wire modulus.
++/// This clock does not identify receipt, loss, capacity or a profile transition.
++public struct TransportClock: Equatable, Sendable {
++    public static let timescale: CMTimeScale = 90_000
++    public static let presentationLead: Int64 = 9_000
++    public let origin: CMTime
++
++    public init?(origin: CMTime) {
++        guard Self.valid(origin) else { return nil }
++        self.origin = origin
++    }
++
++    /// floor((source - origin) * 90000) + 9000, with exact rational subtraction.
++    public func presentationTimestamp(for source: CMTime) -> Int64? {
++        guard let delta = deltaTicks(for: source) else { return nil }
++        let sum = delta.addingReportingOverflow(Self.presentationLead)
++        return sum.overflow ? nil : sum.partialValue
++    }
++
++    /// The common clock has no PES decoder lead and shares the same quantization.
++    public func clockReference(for source: CMTime) -> UInt64? {
++        deltaTicks(for: source).map(UInt64.init)
++    }
++
++    private static func valid(_ time: CMTime) -> Bool {
++        time.isNumeric && time.timescale > 0 && time.epoch == 0
++    }
++
++    // Floor decomposition avoids negating Int64.min. Adjustment is safe: a
++    // negative remainder implies scale > 1 and quotient > Int64.min.
++    private static func components(_ time: CMTime) -> (whole: Int64, remainder: Int64) {
++        let scale = Int64(time.timescale)
++        let quotient = time.value / scale
++        let remainder = time.value % scale
++        return remainder < 0 ? (quotient - 1, remainder + scale) : (quotient, remainder)
++    }
++
++    private func deltaTicks(for source: CMTime) -> Int64? {
++        guard Self.valid(source) else { return nil }
++        let a = Self.components(source), b = Self.components(origin)
++        let difference = a.whole.subtractingReportingOverflow(b.whole)
++        guard !difference.overflow else { return nil }
++        var whole = difference.partialValue
++        let sourceScale = Int64(source.timescale), originScale = Int64(origin.timescale)
++        // Both products are below denominator <= Int32.max squared < Int64.max.
++        let denominator = sourceScale * originScale
++        var numerator = a.remainder * originScale - b.remainder * sourceScale
++        if numerator < 0 {
++            let borrowed = whole.subtractingReportingOverflow(1)
++            guard !borrowed.overflow else { return nil }
++            whole = borrowed.partialValue
++            numerator += denominator
++        }
++        guard whole >= 0 else { return nil }
++        let seconds = whole.multipliedReportingOverflow(by: Int64(Self.timescale))
++        guard !seconds.overflow else { return nil }
++        // 0 <= numerator < denominator, so this full-width quotient is < 90000
++        // and cannot overflow dividingFullWidth's UInt64 result.
++        let product = UInt64(numerator).multipliedFullWidth(by: UInt64(Self.timescale))
++        let fraction = UInt64(denominator).dividingFullWidth(product).quotient
++        let ticks = seconds.partialValue.addingReportingOverflow(Int64(fraction))
++        return ticks.overflow ? nil : ticks.partialValue
++    }
++}

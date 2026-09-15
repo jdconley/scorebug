@@ -5,8 +5,8 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`. The original BSD-3-Clause notice is in
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
-`scorebug.patch` is the diff against that revision for the 13 modified upstream
-files and three added bounded publishing/bitrate source primitives. Original upstream hashes
+`scorebug.patch` is the diff against that revision for the 17 modified upstream
+files and four added publishing/bitrate/clock source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -69,3 +69,13 @@ publishing explicitly. A lock-protected invalidation revision preserves notifica
 that overlap session creation or property writes. Configuration acknowledgment does
 not identify a source-frame transition or prove achieved bitrate/capacity. See the
 [implementation plan](../../docs/superpowers/plans/2026-09-15-verified-live-bitrate.md).
+
+Native transport timestamps now share an exact rational `TransportClock` projection:
+source delta is floored to 90 kHz, with a checked 9,000-tick lead for both PTS and
+DTS and no lead for PCR. Invalid or unrepresentable timestamps fail before emission.
+The bit serializer preserves the 33-bit clock modulus without changing PES prefix
+bits; the decoder reads all seven low bits correctly. PCR cadence uses relative
+ticks, avoiding precision loss at large absolute source clocks.
+`SRTStream.transportClockSnapshot` exposes the muxer-selected origin with its current
+publishing generation, only after startup and before finishing/failure/close.
+The snapshot is an immutable mapping, not a receipt, loss or profile-transition claim.

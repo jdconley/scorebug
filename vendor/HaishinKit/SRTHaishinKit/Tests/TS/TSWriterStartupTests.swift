@@ -61,6 +61,111 @@ import Testing
         return try #require(sample)
     }
 
+    private func retimedVideo(_ pts: CMTime) throws -> CMSampleBuffer {
+        let source = try video(0)
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+                                       presentationTimeStamp: pts, decodeTimeStamp: .invalid)
+        var copy: CMSampleBuffer?
+        #expect(CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault,
+            sampleBuffer: source, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+            sampleBufferOut: &copy) == noErr)
+        return try #require(copy)
+    }
+
+    @Test func pcrCadenceUsesExactRelativeTicksAtLargeAbsoluteClocks() async throws {
+        let writer = TSWriter()
+        let output = writer.output
+        writer.expectedMedias = [.video]
+        let base = Int64.max - 10_000
+        for milliseconds: Int64 in [0, 19, 20, 39, 40] {
+            let sample = try retimedVideo(CMTime(value: base + milliseconds, timescale: 1_000))
+            writer.videoFormat = sample.formatDescription
+            writer.append(sample)
+        }
+        #expect(writer.error == nil)
+        writer.clear()
+        let result = await packets(output)
+        let video = result.filter { $0.pid == TSWriter.defaultVideoPID && $0.payloadUnitStartIndicator }
+        #expect(video.map { pts($0) } == [9_000, 10_710, 10_800, 12_510, 12_600])
+        let references = video.compactMap { packet -> UInt64? in
+            guard let field = packet.adaptationField, field.pcrFlag else { return nil }
+            let b = field.pcr
+            return UInt64(b[0]) << 25 | UInt64(b[1]) << 17 | UInt64(b[2]) << 9 |
+                UInt64(b[3]) << 1 | UInt64(b[4]) >> 7
+        }
+        #expect(references == [1_800, 3_600])
+    }
+
+    @Test func emittedWrapBitsMatchTheSelectedClock() async throws {
+        let writer = TSWriter()
+        let output = writer.output
+        writer.expectedMedias = [.video]
+        #expect(writer.transportClock == nil)
+        let values: [Int64] = [0, 8_589_925_592, 8_589_928_592]
+        for value in values {
+            let sample = try retimedVideo(CMTime(value: value, timescale: 90_000))
+            writer.videoFormat = sample.formatDescription
+            writer.append(sample)
+        }
+        let clock = try #require(writer.transportClock)
+        #expect(clock.origin == .zero)
+        #expect(clock.presentationTimestamp(for: CMTime(value: values[1], timescale: 90_000)) == 8_589_934_592)
+        #expect(writer.error == nil)
+        writer.finishOutput()
+        #expect(writer.transportClock == clock)
+        let video = await packets(output).filter { $0.pid == TSWriter.defaultVideoPID && $0.payloadUnitStartIndicator }
+        #expect(video.map { pts($0) } == [9_000, 0, 3_000])
+        #expect(video.allSatisfy { $0.payload[9] >> 4 == 2 })
+        writer.clear()
+        #expect(writer.transportClock == nil)
+    }
+
+    @Test func unrepresentablePresentationTimeFailsBeforePayloadEmission() async throws {
+        let writer = TSWriter()
+        let output = writer.output
+        writer.expectedMedias = [.video]
+        let first = try retimedVideo(.zero)
+        writer.videoFormat = first.formatDescription
+        writer.append(first)
+        writer.append(try retimedVideo(CMTime(value: Int64.max, timescale: 90_000)))
+        #expect(writer.error == .invalidTimestamp)
+        let video = await packets(output).filter { $0.pid == TSWriter.defaultVideoPID && $0.payloadUnitStartIndicator }
+        #expect(video.count == 1)
+        #expect(video.map { pts($0) } == [9_000])
+    }
+
+    @Test func streamClockSnapshotIsScopedAndAbsentBeforeStartupOrAfterFailure() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        #expect(await stream.transportClockSnapshot == nil)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.audio, .video])
+        await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        #expect(await stream.transportClockSnapshot == nil)
+        await stream.append(try video(10.25, dts: CMTime(value: 10, timescale: 1)))
+        #expect(await stream.transportClockSnapshot == nil)
+        await stream.append(audio(), when: time(10.1))
+        let first = try #require(await stream.transportClockSnapshot)
+        #expect(first.publishingGeneration == generation)
+        #expect(first.clock.origin == CMTime(value: 10, timescale: 1))
+        #expect(first.clock.presentationTimestamp(for: CMTime(value: 41, timescale: 4)) == 31_500)
+        await stream.close()
+        #expect(await stream.transportClockSnapshot == nil)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.transportClockSnapshot == nil)
+        await stream.append(try video(123.25))
+        let second = try #require(await stream.transportClockSnapshot)
+        #expect(second.publishingGeneration != generation)
+        #expect(second.clock.origin == CMTime(value: 493, timescale: 4))
+        #expect(first.clock.origin == CMTime(value: 10, timescale: 1))
+        await stream.append(try retimedVideo(.indefinite))
+        #expect(await stream.muxerError == .invalidTimestamp)
+        #expect(await stream.transportClockSnapshot == nil)
+        await connection.close()
+    }
+
     private func packets(_ stream: AsyncStream<Data>) async -> [TSPacket] {
         var result: [TSPacket] = []
         for await bytes in stream {

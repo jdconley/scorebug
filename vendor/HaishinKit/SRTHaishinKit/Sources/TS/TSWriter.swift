@@ -99,10 +99,11 @@ final class TSWriter {
     private var initialMedias: Set<AVMediaType> = []
     private var startupMinimum: CMTime = .invalid
     private var startupMaximum: CMTime = .invalid
-    private var origin: CMTime = .invalid
-    private var clockTimeStamp: CMTime = .zero
+    private(set) var transportClock: TransportClock?
+    private var origin: CMTime { transportClock?.origin ?? .invalid }
+    private var lastPCRTicks: UInt64 = 0
     private var segmentDuration: Double = TSWriter.defaultSegmentDuration
-    private var rotatedTimeStamp: CMTime = .zero
+    private var rotatedClockTicks: UInt64 = 0
     private var audioContinuityCounter: UInt8 = 0
     private var videoContinuityCounter: UInt8 = 0
     /// Creates a new instance with segument duration.
@@ -159,24 +160,22 @@ final class TSWriter {
         time.isNumeric && time.epoch == 0 && time.seconds.isFinite
     }
 
-    // Bound timestamp arithmetic before the PES initializer converts seconds to Int64.
+    // Validate the exact projection before PES initializers allocate payloads.
     private func preflightTimes(_ pts: CMTime, decodeTime: CMTime) -> Bool {
         let time = decodeTime.isValid ? decodeTime : pts
-        if origin.isValid {
-            let maximumSeconds = Double(Int64.max) / TSTimestamp.resolution - 1
-            guard time >= origin, pts >= origin,
-                  (pts - origin).seconds < maximumSeconds,
-                  (time - origin).seconds < maximumSeconds else {
-                fail(.invalidTimestamp)
-                return false
-            }
-        } else {
+        if transportClock == nil {
             let low = startupMinimum.isValid ? min(startupMinimum, min(pts, time)) : min(pts, time)
             let high = startupMaximum.isValid ? max(startupMaximum, max(pts, time)) : max(pts, time)
             guard (high - low).seconds <= startupLimits.mediaSpan else {
                 fail(.startupTimeLimitExceeded)
                 return false
             }
+        }
+        guard let clock = transportClock ?? TransportClock(origin: min(pts, time)),
+              clock.presentationTimestamp(for: pts) != nil,
+              clock.presentationTimestamp(for: time) != nil else {
+            fail(.invalidTimestamp)
+            return false
         }
         return true
     }
@@ -209,9 +208,13 @@ final class TSWriter {
         pending.append(packet)
         initialMedias.insert(packet.media)
         guard canWriteFor, expectedMedias.isSubset(of: initialMedias) else { return }
-        origin = low
-        clockTimeStamp = origin
-        rotatedTimeStamp = origin
+        guard let clock = TransportClock(origin: low), pending.allSatisfy({
+            clock.presentationTimestamp(for: $0.presentationTime) != nil &&
+            clock.presentationTimestamp(for: $0.time) != nil
+        }) else { fail(.invalidTimestamp); return }
+        transportClock = clock
+        lastPCRTicks = 0
+        rotatedClockTicks = 0
         pcrPID = initialMedias.contains(.video) ? Self.defaultVideoPID : Self.defaultAudioPID
         writeProgram()
         let startup = pending
@@ -222,23 +225,20 @@ final class TSWriter {
 
     private func emit(_ packet: PendingPacket) {
         guard error == nil else { return }
-        guard packet.time >= origin, packet.presentationTime >= origin,
-              (packet.presentationTime - origin).seconds < Double(Int64.max) / TSTimestamp.resolution,
-              (packet.time - origin).seconds < Double(Int64.max) / TSTimestamp.resolution else {
+        var header = PESOptionalHeader()
+        header.dataAlignmentIndicator = true
+        guard let clock = transportClock,
+              let ticks = clock.clockReference(for: packet.time),
+              header.setTimestamp(clock.origin, presentationTimeStamp: packet.presentationTime,
+                                  decodeTimeStamp: packet.decodeTime) else {
             fail(.invalidTimestamp)
             return
         }
         var pes = packet.pes
-        pes.optionalPESHeader = PESOptionalHeader()
-        pes.optionalPESHeader?.dataAlignmentIndicator = true
-        // Upstream adds the transport lead to PTS only. Apply the same lead to DTS
-        // so rebasing preserves the encoder's PTS minus DTS composition offset.
-        let decodeTime = packet.decodeTime.isValid ? packet.decodeTime + PESOptionalHeader.offset : .invalid
-        pes.optionalPESHeader?.setTimestamp(origin, presentationTimeStamp: packet.presentationTime,
-            decodeTimeStamp: decodeTime)
+        pes.optionalPESHeader = header
         pes.streamID = packet.media == .audio ? 192 : 224
         writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
-            PES: pes, timeStamp: packet.time, randomAccessIndicator: packet.randomAccess)
+            PES: pes, clockTicks: ticks, randomAccessIndicator: packet.randomAccess)
     }
 
     private func fail(_ failure: SRTStream.MuxerError) {
@@ -269,15 +269,15 @@ final class TSWriter {
         pat.programs.removeAll()
         pat.programs = [1: Self.defaultPMTPID]
         pmt = TSProgramMap()
-        origin = .invalid
+        transportClock = nil
         startupMinimum = .invalid
         startupMaximum = .invalid
         pending.removeAll(keepingCapacity: false)
         pendingBytes = 0
         initialMedias.removeAll()
         error = nil
-        clockTimeStamp = .zero
-        rotatedTimeStamp = .zero
+        lastPCRTicks = 0
+        rotatedClockTicks = 0
         expectedMedias.removeAll()
         outputQueue?.finish()
         outputQueue = nil
@@ -285,9 +285,9 @@ final class TSWriter {
         failure = PublishingFailureLatch()
     }
 
-    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, timeStamp: CMTime, randomAccessIndicator: Bool) {
-        let packets: [TSPacket] = split(PID, PES: PES, timestamp: timeStamp)
-        rotateFileHandle(timeStamp)
+    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) {
+        let packets: [TSPacket] = split(PID, PES: PES, clockTicks: clockTicks)
+        rotateFileHandle(clockTicks)
 
         packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
 
@@ -309,13 +309,13 @@ final class TSWriter {
         write(bytes)
     }
 
-    private func rotateFileHandle(_ timestamp: CMTime) {
-        let duration = timestamp.seconds - rotatedTimeStamp.seconds
-        guard segmentDuration < duration else {
+    private func rotateFileHandle(_ ticks: UInt64) {
+        guard ticks >= rotatedClockTicks,
+              segmentDuration < Double(ticks - rotatedClockTicks) / Double(TransportClock.timescale) else {
             return
         }
         writeProgramIfNeeded()
-        rotatedTimeStamp = timestamp
+        rotatedClockTicks = ticks
     }
 
     private func write(_ data: Data) {
@@ -347,12 +347,11 @@ final class TSWriter {
         writeProgram()
     }
 
-    private func split(_ PID: UInt16, PES: PacketizedElementaryStream, timestamp: CMTime) -> [TSPacket] {
+    private func split(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64) -> [TSPacket] {
         var PCR: UInt64?
-        let duration: Double = timestamp.seconds - clockTimeStamp.seconds
-        if pcrPID == PID && 0.02 <= duration {
-            PCR = UInt64((timestamp - origin).seconds * TSTimestamp.resolution)
-            clockTimeStamp = timestamp
+        if pcrPID == PID, clockTicks >= lastPCRTicks, clockTicks - lastPCRTicks >= 1_800 {
+            PCR = clockTicks
+            lastPCRTicks = clockTicks
         }
         var packets: [TSPacket] = []
         for packet in PES.arrayOfPackets(PID, PCR: PCR) {

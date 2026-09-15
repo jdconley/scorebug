@@ -34,6 +34,16 @@ public actor SRTStream {
         readyState == .publishing && finishingGeneration == nil && publishingError == nil && muxerError == nil
             ? generation : nil
     }
+    public struct TransportClockSnapshot: Equatable, Sendable {
+        public let publishingGeneration: UInt64
+        public let clock: TransportClock
+    }
+    /// Muxer-selected mapping only; never a claim of transport receipt or frame loss.
+    public var transportClockSnapshot: TransportClockSnapshot? {
+        guard let generation = publishingGeneration, let clock = writer.transportClock else { return nil }
+        return .init(publishingGeneration: generation, clock: clock)
+    }
+
     /// Point-in-time native configuration acknowledgment. It is not a source-frame
     /// boundary, achieved output rate, or authorization to relabel queued frames.
     public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
