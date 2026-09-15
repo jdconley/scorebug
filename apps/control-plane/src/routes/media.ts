@@ -21,6 +21,10 @@ const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const pts = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
 const decodedVideo = z
   .object({
+    clock: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,63}$/)
+      .optional(),
     completed: z
       .object({
         sequence: sequence.min(1),
@@ -46,7 +50,11 @@ const decodedVideo = z
     ended: z.boolean(),
   })
   .strict()
-  .refine((v) => v.completed === null || v.completed.valid === (v.invalidReason === null));
+  .refine((v) => v.completed === null || v.completed.valid === (v.invalidReason === null))
+  .transform(({ clock, ...snapshot }) => ({
+    ...snapshot,
+    ...(clock !== undefined ? { clock } : {}),
+  }));
 const report = z
   .object({
     recordingId: id,

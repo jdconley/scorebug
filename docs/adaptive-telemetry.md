@@ -135,8 +135,11 @@ now preserves the decoder transport clock and passes full/late/wrap fixtures on
 Mac and Linux CPU, plus acquisition/cadence tests on Mac software/VideoToolbox and
 Linux CPU. Its local software-worker recovery and native scoring workflow also
 passes. See the [production clock results](superpowers/plans/2026-09-15-production-worker-clock.md).
-App/worker mapping integration, clock-convention negotiation, matched interval counts
-and profile/capacity qualification remain; automatic quality changes remain disabled.
+Worker clock conventions are now explicitly negotiated and decoded by native
+clients; absent/unknown labels remain unsuitable for source matching. The
+[native anchor integration and matched interval work](superpowers/plans/2026-09-15-worker-clock-convention.md)
+still remain, together with profile/capacity qualification. Automatic quality
+changes remain disabled.
 
 ## Local observation accumulator
 

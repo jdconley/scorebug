@@ -47,14 +47,21 @@ public struct DecodedVideoSnapshot: Codable, Equatable, Sendable {
     public var completed: DecodedVideoWindow?
     public var invalidReason: DecodedVideoInvalidReason?
     public var ended: Bool
-    public init(completed: DecodedVideoWindow?, invalidReason: DecodedVideoInvalidReason?, ended: Bool) {
+    /// Omitted/unknown conventions cannot establish correspondence with native source PTS.
+    /// Preserve future strings so otherwise usable status observations still decode.
+    public var clock: String?
+    /// Convention recognition alone does not prove freshness, matching source intervals or receipt.
+    public var usesTransportClock: Bool { clock == "mpegts-pts-90k-v1" }
+    public init(completed: DecodedVideoWindow?, invalidReason: DecodedVideoInvalidReason?, ended: Bool, clock: String? = nil) {
         self.completed = completed; self.invalidReason = invalidReason; self.ended = ended
+        self.clock = clock
     }
-    private enum CodingKeys: String, CodingKey { case completed, invalidReason, ended }
+    private enum CodingKeys: String, CodingKey { case completed, invalidReason, ended, clock }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(completed, forKey: .completed)
         try container.encode(invalidReason, forKey: .invalidReason)
         try container.encode(ended, forKey: .ended)
+        try container.encodeIfPresent(clock, forKey: .clock)
     }
 }

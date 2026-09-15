@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { buildFfmpegArgs, startPipeline } from '../src/pipeline.js';
+import * as protocol from '@scorebug/protocol';
 import { createLogger, type Logger } from '../src/logger.js';
 
 it('executes the configured media binary instead of the one on PATH', async () => {
@@ -24,6 +25,11 @@ it('executes the configured media binary instead of the one on PATH', async () =
       createLogger('error'),
     );
     expect(await pipeline.waitExit()).toEqual({ code: 0, signal: null });
+    expect(protocol).toHaveProperty('DECODED_VIDEO_TRANSPORT_CLOCK', 'mpegts-pts-90k-v1');
+    expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
+      clock: 'mpegts-pts-90k-v1',
+      ended: true,
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -404,6 +410,7 @@ it('routes dedicated telemetry independently of progress and drains the terminal
       ended: true,
       invalidReason: null,
       completed: { freshFrames: 1, firstPTS: 9000, lastPTS: 9000 },
+      clock: 'mpegts-pts-90k-v1',
     });
     expect(JSON.stringify(fixture.records)).not.toContain('SECRET_DIAGNOSTIC');
   } finally {

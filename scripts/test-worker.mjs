@@ -395,23 +395,33 @@ try {
   };
   const workerStatus = async () =>
     (await request(`/v1/matches/${matchId}/media/status`, created.credential.token)).status;
+  const clockProofs = [];
   const ready = async () => {
+    let clockProof;
     await until(
       async () => {
         assert.ok(!worker.exited, 'Worker exited before output');
         const state = await sinkState();
         const reported = await workerStatus();
+        clockProof = reported;
         return (
           state.ready &&
           state.bytesReceived > 0 &&
           worker.output.includes('producing_output') &&
           reported.state === 'producing_output' &&
           reported.observation.frame > 0 &&
-          reported.observation.outTimeUs > 0
+          reported.observation.outTimeUs > 0 &&
+          reported.observation.decodedVideo?.clock === 'mpegts-pts-90k-v1'
         );
       },
       'real worker output',
       25_000,
+    );
+    assert.ok(clockProofs.length < 32, 'Clock proof fixture exceeded its bound');
+    clockProofs.push(clockProof);
+    await writeFile(
+      join(artifact, 'clock-observations.json'),
+      JSON.stringify(clockProofs, null, 2),
     );
   };
   const clip = async (label) => {

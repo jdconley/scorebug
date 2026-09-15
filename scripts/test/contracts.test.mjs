@@ -79,3 +79,19 @@ test('Swift and TypeScript consume the same decoded video status fixture', () =>
   );
   assert.deepEqual(JSON.parse(swift), JSON.parse(canonical));
 });
+
+test('Swift and TypeScript consume identical known, unknown and legacy clock fixtures', () => {
+  const file = 'decoded-video-clock-v1.json';
+  const canonical = readFileSync(
+    new URL(`../../packages/protocol/fixtures/${file}`, import.meta.url),
+    'utf8',
+  );
+  const swift = readFileSync(
+    new URL(
+      `../../ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/${file}`,
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.deepEqual(JSON.parse(swift), JSON.parse(canonical));
+});

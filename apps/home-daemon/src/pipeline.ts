@@ -1,3 +1,4 @@
+import { DECODED_VIDEO_TRANSPORT_CLOCK } from '@scorebug/protocol';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import type { Logger } from './logger.js';
@@ -371,6 +372,9 @@ export function startPipeline(
       send({ type: 'stop' });
     },
     waitExit: () => exit,
-    snapshotDecodedVideo: () => decodedVideo.snapshot(),
+    snapshotDecodedVideo: () => ({
+      ...decodedVideo.snapshot(),
+      clock: DECODED_VIDEO_TRANSPORT_CLOCK,
+    }),
   };
 }

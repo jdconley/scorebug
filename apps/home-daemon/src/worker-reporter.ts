@@ -1,8 +1,12 @@
-import type { WorkerObservation } from '@scorebug/protocol';
+import { DECODED_VIDEO_TRANSPORT_CLOCK, type WorkerObservation } from '@scorebug/protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
-const session = z.object({ sessionId: identifier, timingToken: identifier.optional() });
+const session = z.object({
+  sessionId: identifier,
+  timingToken: identifier.optional(),
+  decodedVideoClock: z.string().optional(),
+});
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
 
@@ -115,12 +119,24 @@ export class WorkerReporter {
       }
       checkDeadline();
       if (observation === null) return;
+      if (
+        observation.decodedVideo &&
+        (registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          observation.decodedVideo.clock !== DECODED_VIDEO_TRANSPORT_CLOCK)
+      )
+        delete observation.decodedVideo.clock;
       if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
       const sequence = ++this.sequence;
       try {
         const acknowledgement = await this.post(
           'observations',
-          { workerId: this.workerId, ...registered, sequence, observation },
+          {
+            workerId: this.workerId,
+            sessionId: registered.sessionId,
+            timingToken: registered.timingToken,
+            sequence,
+            observation,
+          },
           accepted,
           signal,
         );

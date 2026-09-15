@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
+  DECODED_VIDEO_TRANSPORT_CLOCK,
   type DecodedVideoSnapshot,
   type WorkerMediaStatusResponse,
   type WorkerObservation,
@@ -113,6 +114,7 @@ export class WorkerObservations {
     if (worker?.current.runId === runId)
       return {
         sessionId: worker.current.sessionId,
+        decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
         ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
@@ -132,6 +134,7 @@ export class WorkerObservations {
     }
     return {
       sessionId: current.sessionId,
+      decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
     };
@@ -189,6 +192,7 @@ export class WorkerObservations {
     let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
     if (beforeVideo && afterVideo) {
       if (
+        beforeVideo.clock !== afterVideo.clock ||
         (beforeVideo.ended && !afterVideo.ended) ||
         (beforeVideo.invalidReason !== null &&
           beforeVideo.invalidReason !== afterVideo.invalidReason)

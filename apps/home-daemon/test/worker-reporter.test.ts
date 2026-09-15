@@ -446,3 +446,106 @@ it('refuses sequence exhaustion without wrapping or sending unsafe numbers', asy
   await expect(f.reporter.report(() => observation)).rejects.toThrow(/^worker_report_unavailable$/);
   expect(f.requests).toHaveLength(2);
 });
+
+const transportClock = 'mpegts-pts-90k-v1';
+it.each([
+  [undefined, transportClock, undefined],
+  ['future-clock-v2', transportClock, undefined],
+  [transportClock, 'future-clock-v2', undefined],
+  ['future-clock-v2', 'future-clock-v2', undefined],
+  [transportClock, undefined, undefined],
+  [transportClock, transportClock, transportClock],
+])(
+  'negotiates advertised %s and supplied %s as %s without changing the supplier',
+  async (advertised, supplied, expected) => {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? { sessionId: 'one', timingToken: 'marker-1', decodedVideoClock: advertised }
+        : { accepted: true, timingToken: 'marker-2', decodedVideoClock: 'ignored-ack-clock' },
+    }));
+    const mutable = {
+      ...observation,
+      decodedVideo: {
+        completed: null,
+        invalidReason: null,
+        ended: false,
+        ...(supplied === undefined ? {} : { clock: supplied }),
+      },
+    };
+    const original = structuredClone(mutable);
+    await f.reporter.report(() => mutable);
+    await f.reporter.report(() => mutable);
+    expect(mutable).toEqual(original);
+    for (const [index, request] of f.requests.slice(1).entries()) {
+      const decodedVideo = {
+        completed: null,
+        invalidReason: null,
+        ended: false,
+        ...(expected === undefined ? {} : { clock: expected }),
+      };
+      expect(request.body).toEqual({
+        workerId: 'mac',
+        sessionId: 'one',
+        timingToken: index === 0 ? 'marker-1' : 'marker-2',
+        sequence: index + 1,
+        observation: { ...observation, decodedVideo },
+      });
+    }
+  },
+);
+
+it.each([
+  [transportClock, undefined],
+  [undefined, transportClock],
+  [transportClock, 'future-clock-v2'],
+])('re-evaluates clock support after restart from %s to %s', async (first, second) => {
+  let registrations = 0;
+  let samples = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: `session-${++registrations}`,
+            decodedVideoClock: registrations === 1 ? first : second,
+            timingToken: `marker-${registrations}`,
+          },
+        }
+      : registrations === 1
+        ? { status: 409, body: { error: 'worker_session_unknown' } }
+        : { body: { accepted: true, timingToken: 'marker-3' } },
+  );
+  await f.reporter.report(() => {
+    samples++;
+    return {
+      ...observation,
+      decodedVideo: { completed: null, invalidReason: null, ended: false, clock: transportClock },
+    };
+  });
+  await f.reporter.report(() => ({
+    ...observation,
+    decodedVideo: { completed: null, invalidReason: null, ended: false, clock: transportClock },
+  }));
+  expect(samples).toBe(2);
+  const posts = f.requests
+    .filter((request) => request.path.endsWith('observations'))
+    .map((request) => request.body);
+  expect(posts.map((body) => body.observation.decodedVideo.clock)).toEqual([
+    first === transportClock ? transportClock : undefined,
+    second === transportClock ? transportClock : undefined,
+    second === transportClock ? transportClock : undefined,
+  ]);
+  expect(posts.map((body) => body.timingToken)).toEqual(['marker-1', 'marker-2', 'marker-3']);
+  expect(posts.map((body) => body.sequence)).toEqual([1, 2, 3]);
+  expect(posts.every((body) => !Object.hasOwn(body, 'decodedVideoClock'))).toBe(true);
+});
+
+it.each([null, 42, true, {}])(
+  'rejects non-string advertised clock %j',
+  async (decodedVideoClock) => {
+    const f = await fixture(() => ({ body: { sessionId: 'one', decodedVideoClock } }));
+    await expect(f.reporter.report(() => observation)).rejects.toThrow(
+      'invalid_worker_report_response',
+    );
+    expect(f.requests).toHaveLength(1);
+  },
+);

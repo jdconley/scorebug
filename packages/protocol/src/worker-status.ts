@@ -24,6 +24,10 @@ export const WORKER_REASONS = [
   'shutdown',
 ] as const;
 export const WORKER_OBSERVATION_TTL_MS = 5000;
+/** Signed decoder PTS at 90 kHz, preserving the input timestamp origin.
+ * Compare with MPEG-TS timestamps modulo 2^33. This identifies coordinates only;
+ * it makes no claim about source loss, receipt time, or delivery. */
+export const DECODED_VIDEO_TRANSPORT_CLOCK = 'mpegts-pts-90k-v1';
 export const DECODED_VIDEO_INVALID_REASONS = [
   'framing',
   'numeric',
@@ -50,6 +54,8 @@ export type DecodedVideoWindow = {
   valid: boolean;
 };
 export type DecodedVideoSnapshot = {
+  /** Optional coordinate convention; absence does not prove transport-clock alignment. */
+  clock?: string;
   completed: DecodedVideoWindow | null;
   invalidReason: DecodedVideoInvalidReason | null;
   ended: boolean;
@@ -70,6 +76,8 @@ export type WorkerObservation = {
 };
 export type WorkerSessionRequest = { workerId: string; runId: string };
 export type WorkerSessionResponse = {
+  /** Clock convention accepted by this API session. */
+  decodedVideoClock?: string;
   sessionId: string;
   serverTime: string;
   /** Opaque server monotonic timing provenance; echo with a later snapshot. */

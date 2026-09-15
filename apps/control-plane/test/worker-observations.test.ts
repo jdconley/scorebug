@@ -6,29 +6,32 @@ import { testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 
 const stores: MatchStore[] = [];
-it('accepts the exact shared Swift decoded-video observations', async () => {
-  const examples = JSON.parse(
-    readFileSync(
-      new URL('../../../packages/protocol/fixtures/decoded-video-v1.json', import.meta.url),
-      'utf8',
-    ),
-  );
-  for (const example of Object.values(examples) as {
-    status: { observation: WorkerObservation };
-  }[]) {
-    const f = await fixture();
-    const observation = example.status.observation;
-    expect((await f.report({ ...f.body, observation })).status).toBe(200);
-    const actual = (await f.status()).status.observation;
-    if (observation.decodedVideo?.completed) {
-      expect(actual.decodedVideo.completed.ageMs).toBeGreaterThanOrEqual(
-        observation.decodedVideo.completed.ageMs,
-      );
-      actual.decodedVideo.completed.ageMs = observation.decodedVideo.completed.ageMs;
+it.each(['decoded-video-v1.json', 'decoded-video-clock-v1.json'])(
+  'accepts the exact shared Swift observations in %s',
+  async (fixtureName) => {
+    const examples = JSON.parse(
+      readFileSync(
+        new URL(`../../../packages/protocol/fixtures/${fixtureName}`, import.meta.url),
+        'utf8',
+      ),
+    );
+    for (const example of Object.values(examples) as {
+      status: { observation: WorkerObservation };
+    }[]) {
+      const f = await fixture();
+      const observation = example.status.observation;
+      expect((await f.report({ ...f.body, observation })).status).toBe(200);
+      const actual = (await f.status()).status.observation;
+      if (observation.decodedVideo?.completed) {
+        expect(actual.decodedVideo.completed.ageMs).toBeGreaterThanOrEqual(
+          observation.decodedVideo.completed.ageMs,
+        );
+        actual.decodedVideo.completed.ageMs = observation.decodedVideo.completed.ageMs;
+      }
+      expect(actual).toEqual(observation);
     }
-    expect(actual).toEqual(observation);
-  }
-});
+  },
+);
 afterEach(() => {
   stores.splice(0).forEach((store) => store.close());
   vi.useRealTimers();
@@ -599,3 +602,125 @@ it('retains fresh PTS range across zero-progress windows and rejects a later sou
   };
   expect((await report(resumed, 3)).status).toBe(200);
 });
+
+const transportClock = 'mpegts-pts-90k-v1';
+it('advertises the decoded transport clock on initial and idempotent session registration', async () => {
+  const f = await fixture();
+  expect(f.session.decodedVideoClock).toBe(transportClock);
+  const repeat = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+      workerId: 'mac',
+      runId: 'run',
+    })
+  ).json();
+  expect(repeat).toMatchObject({
+    sessionId: f.session.sessionId,
+    decodedVideoClock: transportClock,
+  });
+});
+
+it.each([undefined, transportClock, 'future-clock-v2', 'a', 'a'.repeat(64)])(
+  'roundtrips optional bounded decoded clock %s',
+  async (clock) => {
+    const f = await fixture();
+    const decodedVideo = { ...decoded(), ...(clock === undefined ? {} : { clock }) };
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, decodedVideo } })).status,
+    ).toBe(200);
+    const actual = (await f.status()).status.observation.decodedVideo;
+    expect(actual.clock).toBe(clock);
+    if (clock === undefined) expect(actual).not.toHaveProperty('clock');
+  },
+);
+
+it.each([
+  null,
+  42,
+  true,
+  {},
+  [],
+  '',
+  'A',
+  '9clock',
+  '-clock',
+  'bad_clock',
+  'bad clock',
+  'clock.v1',
+  'a'.repeat(65),
+])('rejects malformed decoded clock %j without changing accepted state', async (clock) => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const before = await f.status();
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, decodedVideo: { ...decoded(), clock } },
+      })
+    ).status,
+  ).toBe(400);
+  expect(await f.status()).toEqual(before);
+  expect((await f.report({ ...f.body, sequence: 2 })).status).toBe(200);
+});
+
+it.each([undefined, transportClock, 'future-clock-v2'])(
+  'freezes the first decoded snapshot clock %s across omissions and retries, resetting on attempts and sessions',
+  async (clock) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    // Even an incomplete first snapshot fixes the attempt clock.
+    const decodedVideo = {
+      completed: null,
+      invalidReason: null,
+      ended: false,
+      ...(clock === undefined ? {} : { clock }),
+    };
+    const body = {
+      ...f.body,
+      timingToken: f.session.timingToken,
+      observation: { ...f.body.observation, decodedVideo },
+    };
+    expect((await f.report(body)).status).toBe(200);
+    expect((await f.report(body)).status).toBe(200);
+    expect((await f.report({ ...f.body, sequence: 2 })).status).toBe(200);
+    const before = await f.status();
+    const nextClock = clock === transportClock ? undefined : transportClock;
+    const changed = { ...decoded(), ...(nextClock === undefined ? {} : { clock: nextClock }) };
+    const conflict = {
+      ...f.body,
+      timingToken: f.session.timingToken,
+      sequence: 3,
+      observation: { ...f.body.observation, decodedVideo: changed },
+    };
+    expect((await f.report(conflict)).status).toBe(409);
+    expect(await f.status()).toEqual(before);
+    // Same sequence remains available after rejection; the omission retained the original guard.
+    const sameClock = { ...decoded(), ...(clock === undefined ? {} : { clock }) };
+    expect(
+      (
+        await f.report({
+          ...conflict,
+          observation: { ...f.body.observation, decodedVideo: sameClock },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await f.report({
+          ...conflict,
+          sequence: 4,
+          observation: { ...conflict.observation, attempt: 2 },
+        })
+      ).status,
+    ).toBe(200);
+    const replacement = await (
+      await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, {
+        workerId: 'mac',
+        runId: 'new-run',
+      })
+    ).json();
+    expect((await f.report({ ...body, sessionId: replacement.sessionId })).status).toBe(200);
+  },
+);

@@ -31,6 +31,28 @@ zero-progress windows. EOF discards the final partial window and preserves aging
 the last completed window. This measures timestamp cadence, not changing picture
 content or delivery to a viewer. Timestamp gaps alone do not establish frame loss.
 
+## Clock convention compatibility
+
+The actual pipeline labels snapshots `mpegts-pts-90k-v1`: signed decoder input PTS
+rescaled to 90 kHz without a worker input-origin shift. MPEG-TS wire correspondence
+is modulo 2^33, including demuxed negative wrap-region values. The label does not
+identify a native publishing attempt, establish matched source intervals or count
+lost frames.
+
+New API sessions advertise `decodedVideoClock`. The reporter sends the optional
+snapshot `clock` only when both the session and snapshot carry the exact known
+convention. Older servers receive the previous shape; unknown future advertisements
+also leave the convention unreported. Session renewal negotiates again. Timing-token
+acknowledgments cannot change this capability, and the capability is never copied
+into the strict observation request envelope.
+
+The API accepts bounded convention identifiers and freezes the first observed
+convention, including absence, within each worker attempt. Omitting an entire
+snapshot cannot erase that guard. A new attempt/session can establish a new
+convention. Swift preserves unknown optional strings but recognizes only the exact
+known label; absent or unknown conventions cannot authorize source-clock matching.
+Age freshness remains independent of convention recognition.
+
 ## Status semantics
 
 Reports remain scoped to worker session, match, broadcast generation, and attempt.
@@ -185,8 +207,18 @@ checking and independent specification/quality reviews pass.
 
 Evidence: `artifacts/qa/transport-clock-299FJR`, `transport-clock-ip7O7n`,
 `native-worker-software` and `production-clock-*` logs/command records. NVENC has
-argument-contract coverage only; no NVIDIA hardware was exercised. The optional
-report shape has not changed, so consumers still need explicit clock-convention
-negotiation and the native attempt-scoped anchor before correlating older/newer
-worker reports. Matching source intervals and loss denominators remain necessary;
+argument-contract coverage only; no NVIDIA hardware was exercised. The [negotiated clock convention](superpowers/plans/2026-09-15-worker-clock-convention.md)
+now distinguishes older/unknown worker clocks from the preserving path. Consumers
+still need the native attempt-scoped anchor before correlating worker reports. Matching source intervals and loss denominators remain necessary;
 clock preservation does not by itself enable automatic quality adjustment.
+
+
+Convention negotiation verification passes 263 API, 179 worker, 235 Core and 431
+tooling tests, protocol/API/worker type checks, the arm64_32 watchOS 10 Core build
+and the combined unsigned iPhone/Watch Release build. The full local software-worker
+workflow also passes; four authenticated startup/recovery snapshots carry the known
+label through the actual pipeline and reporter. Their completed windows are still
+null, so that run proves negotiation rather than source-interval correlation.
+Known/legacy/unknown completed-window examples round-trip in shared HTTP/Swift
+fixtures. Logs and proof snapshots are under `artifacts/qa/worker-clock-*` and
+`native-worker-software/clock-observations.json`.
