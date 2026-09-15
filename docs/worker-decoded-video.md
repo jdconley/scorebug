@@ -33,6 +33,24 @@ content or delivery to a viewer. Timestamp gaps alone do not establish frame los
 
 ## Clock convention compatibility
 
+Public status now includes optional `workerEpoch`, an independent server-generated
+reporting-session identifier. Use it with match, broadcast generation, worker ID
+and attempt; attempt numbers can repeat after worker or API replacement. The epoch
+stays stable for pipeline retries and stale reports, and changes when the reporting
+session is replaced. It appears only alongside a report matching the selected
+worker and broadcast generation. Unknown/stopped status and legacy APIs omit it.
+Absence cannot establish common scope; presence cannot establish freshness.
+
+The public epoch is separate from private reporting session IDs and timing tokens.
+Workers cannot supply it through report payloads. Native iPhone/watchOS clients
+preserve it as an optional opaque string, with legacy omission retained. See the
+[public epoch implementation](superpowers/plans/2026-09-15-public-worker-epoch.md).
+Publisher-to-relay clock mapping and matched source intervals remain required.
+Verification passes 269 API, 239 Core and 526 tooling tests, all relevant type
+checks, the arm64_32 watchOS 10 Core build and combined iPhone/Watch Release build.
+The real software-worker workflow confirms new epochs across worker/API replacement
+and the same epoch across source recovery while preserving existing media checks.
+
 The actual pipeline labels snapshots `mpegts-pts-90k-v1`: signed decoder input PTS
 rescaled to 90 kHz without a worker input-origin shift. Correspondence with the
 MPEG-TS entering this worker is modulo 2^33, including demuxed negative wrap-region

@@ -70,6 +70,8 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var gameId: String
     public var generation: Int
     public var workerId: String?
+    /// Opaque reporting-session identity; it does not establish freshness or readiness.
+    public var workerEpoch: String?
     public var state: WorkerMediaState
     public var observation: WorkerObservation?
     public var observedAt: String?
@@ -78,18 +80,21 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var decodedVideoAgeUpperBoundMs: Double?
 
     public init(gameId: String, generation: Int, workerId: String?, state: WorkerMediaState,
-                observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil) {
+                observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil,
+                workerEpoch: String? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId; self.state = state
         self.observation = observation; self.observedAt = observedAt; self.expiresAt = expiresAt
         self.decodedVideoAgeUpperBoundMs = decodedVideoAgeUpperBoundMs
+        self.workerEpoch = workerEpoch
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(gameId, forKey: .gameId)
         try container.encode(generation, forKey: .generation)
         try container.encode(workerId, forKey: .workerId)
+        try container.encodeIfPresent(workerEpoch, forKey: .workerEpoch)
         try container.encode(state, forKey: .state)
         try container.encode(observation, forKey: .observation)
         try container.encode(observedAt, forKey: .observedAt)

@@ -724,3 +724,170 @@ it.each([undefined, transportClock, 'future-clock-v2'])(
     expect((await f.report({ ...body, sessionId: replacement.sessionId })).status).toBe(200);
   },
 );
+
+const publicEpochPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+it('publishes an independent epoch only with a matching report, stable across registration and retries', async () => {
+  const f = await fixture();
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  expect(first).not.toBe(f.session.sessionId);
+  expect(first).not.toBe(f.session.timingToken);
+  const registration = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' })
+  ).json();
+  expect(registration.sessionId).toBe(f.session.sessionId);
+  expect(registration.workerEpoch).toBeUndefined();
+  expect((await f.report()).status).toBe(200);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, attempt: 2, frame: 1, outTimeUs: 1 },
+      })
+    ).status,
+  ).toBe(200);
+  const status = (await f.status()).status;
+  expect(status.workerEpoch).toBe(first);
+  expect(status.observation.attempt).toBe(2);
+  expect(JSON.stringify(status)).not.toContain(f.session.sessionId);
+  expect(JSON.stringify(status)).not.toContain(f.session.timingToken);
+});
+
+it('retains public epoch on stale status without refreshing duplicate reports', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  vi.advanceTimersByTime(5000);
+  expect((await f.report()).status).toBe(200);
+  const stale = (await f.status()).status;
+  expect(stale.state).toBe('stale');
+  expect(stale.workerEpoch).toBe(first.workerEpoch);
+  expect(stale.observedAt).toBe(first.observedAt);
+});
+
+it('changes public epoch on worker replacement even when attempt repeats, rejecting retired reports', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  const replacement = await (
+    await f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'next' })
+  ).json();
+  expect((await f.status()).status).toMatchObject({ state: 'unknown', observation: null });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect((await f.report({ ...f.body, sessionId: replacement.sessionId })).status).toBe(200);
+  const next = (await f.status()).status;
+  expect(next.workerEpoch).toMatch(publicEpochPattern);
+  expect(next.workerEpoch).not.toBe(first.workerEpoch);
+  expect(next.observation.attempt).toBe(first.observation.attempt);
+  expect((await f.report()).status).toBe(409);
+  expect((await f.status()).status.workerEpoch).toBe(next.workerEpoch);
+});
+
+it('API replacement allocates a different public epoch for the same worker run and attempt', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status;
+  expect(first.workerEpoch).toMatch(publicEpochPattern);
+  const restarted = createApp(f.config, { matches: f.matches });
+  const request = (path: string, token: string, body?: unknown) =>
+    restarted.app.request(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { ...phoneAuth(token), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const status = async () =>
+    (await (await request('/v1/matches/match/media/status', f.scorer.token)).json()).status;
+  expect((await status()).workerEpoch).toBeUndefined();
+  const session = await (
+    await request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' })
+  ).json();
+  expect((await request('/v1/worker/observations', f.config.HOME_TOKEN, f.body)).status).toBe(409);
+  expect(
+    (
+      await request('/v1/worker/observations', f.config.HOME_TOKEN, {
+        ...f.body,
+        sessionId: session.sessionId,
+      })
+    ).status,
+  ).toBe(200);
+  const next = await status();
+  expect(next.workerEpoch).toMatch(publicEpochPattern);
+  expect(next.workerEpoch).not.toBe(first.workerEpoch);
+  expect(next.observation.attempt).toBe(first.observation.attempt);
+  expect(JSON.stringify(next)).not.toContain(session.sessionId);
+  expect(JSON.stringify(next)).not.toContain(session.timingToken);
+});
+
+it('omits epoch when stopped or a new generation has no matching report', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  f.matches.media.execute({
+    commandId: 'epoch-stop',
+    gameId: 'match',
+    expectedGeneration: 1,
+    issuedAt: new Date().toISOString(),
+    operation: { type: 'stop' },
+  });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  f.matches.media.execute({
+    commandId: 'epoch-start',
+    gameId: 'match',
+    expectedGeneration: 2,
+    issuedAt: new Date().toISOString(),
+    operation: {
+      type: 'start',
+      selection: {
+        workerId: 'mac',
+        outputId: 'sink',
+        captureDeviceId: 'phone',
+        recordingId: 'archive',
+      },
+    },
+  });
+  expect((await f.status()).status).toMatchObject({ state: 'unknown', observation: null });
+  expect((await f.status()).status.workerEpoch).toBeUndefined();
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, generation: 3 },
+      })
+    ).status,
+  ).toBe(200);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+});
+
+it('rejects supplied public epochs and invalid reports without changing the accepted identity', async () => {
+  const f = await fixture();
+  expect((await f.report()).status).toBe(200);
+  const first = (await f.status()).status.workerEpoch;
+  expect(first).toMatch(publicEpochPattern);
+  for (const body of [
+    { ...f.body, workerEpoch: 'spoofed' },
+    { ...f.body, observation: { ...f.body.observation, workerEpoch: 'spoofed' } },
+  ])
+    expect((await f.report(body)).status).toBe(400);
+  expect(
+    (
+      await f.report({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, generation: 99 },
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (await f.report({ ...f.body, observation: { ...f.body.observation, frame: 13 } })).status,
+  ).toBe(409);
+  expect((await f.status()).status.workerEpoch).toBe(first);
+});

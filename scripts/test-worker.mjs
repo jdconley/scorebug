@@ -418,6 +418,11 @@ try {
       25_000,
     );
     assert.ok(clockProofs.length < 32, 'Clock proof fixture exceeded its bound');
+    assert.match(
+      clockProof.workerEpoch,
+      /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/,
+      'Accepted worker status must carry its public session epoch',
+    );
     clockProofs.push(clockProof);
     await writeFile(
       join(artifact, 'clock-observations.json'),
@@ -611,18 +616,33 @@ try {
   );
   worker = startWorker();
   await ready();
+  assert.notEqual(
+    clockProofs[1].workerEpoch,
+    clockProofs[0].workerEpoch,
+    'Worker process replacement must replace the public epoch',
+  );
   await currentScoreClip('worker-crash-recovered');
   await api.stop();
   await until(async () => !(await sinkState()).ready, 'control lease stops stale output', 10_000);
   assert.ok(!publisher.exited, 'Control outage stopped the independent source');
   api = await startScoringTestServer(database, { ...environment, PORT: apiPort });
   await ready();
+  assert.notEqual(
+    clockProofs[2].workerEpoch,
+    clockProofs[1].workerEpoch,
+    'API process replacement must replace the public epoch',
+  );
   await currentScoreClip('api-recovered');
   await stop(publisher);
   await until(async () => !(await sinkState()).ready, 'source loss stops output');
   const sourceReturned = performance.now();
   publisher = start(ffmpeg, publisherArgs);
   await ready();
+  assert.equal(
+    clockProofs[3].workerEpoch,
+    clockProofs[2].workerEpoch,
+    'Source recovery inside the worker session must preserve the public epoch',
+  );
   const recoveryMs = performance.now() - sourceReturned;
   assert.ok(recoveryMs < 10_000, `Source recovery took ${Math.round(recoveryMs)} ms`);
   await currentScoreClip('source-recovered');

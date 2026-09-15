@@ -18,6 +18,68 @@ final class WorkerStatusTests: XCTestCase {
                        try JSONSerialization.jsonObject(with: data) as? NSDictionary)
     }
 
+    func testSharedWorkerEpochFixtureRoundTripsEveryResponse() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "worker-epoch-v1", withExtension: "json", subdirectory: "Fixtures"))
+        let data = try Data(contentsOf: url)
+        let fixture = try JSONDecoder().decode([String: WorkerMediaStatusResponse].self, from: data)
+        XCTAssertEqual(Set(fixture.keys), Set(["current", "stale", "replacement", "legacy"]))
+        let current = try XCTUnwrap(fixture["current"]?.status)
+        let stale = try XCTUnwrap(fixture["stale"]?.status)
+        let replacement = try XCTUnwrap(fixture["replacement"]?.status)
+        let legacy = try XCTUnwrap(fixture["legacy"]?.status)
+        XCTAssertEqual(current.workerEpoch, "d6c217a3-27c5-44ea-a55e-3b951c67981f")
+        XCTAssertEqual(stale.workerEpoch, current.workerEpoch)
+        XCTAssertEqual(stale.state, .stale)
+        XCTAssertEqual(replacement.workerEpoch, "d1e71c84-e637-4215-b5d2-3840e5a6fe40")
+        XCTAssertNotEqual(replacement.workerEpoch, current.workerEpoch)
+        XCTAssertEqual(replacement.workerId, current.workerId)
+        XCTAssertEqual(replacement.observation?.attempt, current.observation?.attempt)
+        XCTAssertNil(legacy.workerEpoch)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture)) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: data) as? NSDictionary)
+    }
+
+    func testWorkerEpochIsAnOpaqueOptionalString() throws {
+        for epoch in ["", "opaque epoch / β"] {
+            let status = WorkerMediaStatus(gameId: "match", generation: 2, workerId: "mac", state: .unknown,
+                                           observation: nil, observedAt: nil, expiresAt: nil, workerEpoch: epoch)
+            let decoded = try JSONDecoder().decode(WorkerMediaStatus.self, from: JSONEncoder().encode(status))
+            XCTAssertEqual(decoded.workerEpoch, epoch)
+            XCTAssertEqual(decoded.state, .unknown)
+            XCTAssertNil(decoded.observation)
+        }
+    }
+
+    func testWorkerEpochRejectsNonStringJSONValues() throws {
+        var response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(wire.utf8)) as? [String: Any])
+        var status = try XCTUnwrap(response["status"] as? [String: Any])
+        for epoch: Any in [42, true, ["epoch"], ["id": "epoch"]] {
+            status["workerEpoch"] = epoch
+            response["status"] = status
+            let data = try JSONSerialization.data(withJSONObject: response)
+            XCTAssertThrowsError(try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: data)) { error in
+                guard case DecodingError.typeMismatch = error else {
+                    return XCTFail("Expected a type mismatch, got \(error)")
+                }
+            }
+        }
+    }
+
+    func testStatusHTTPClientPreservesWorkerEpochFixtureValues() async throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "worker-epoch-v1", withExtension: "json", subdirectory: "Fixtures"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: [String: Any]])
+        for name in ["current", "stale", "replacement", "legacy"] {
+            let response = try XCTUnwrap(fixture[name])
+            let status = try XCTUnwrap(response["status"] as? [String: Any])
+            let data = try JSONSerialization.data(withJSONObject: response)
+            let client = MatchHTTPClient(endpoint: try ScoringEndpoint("https://example.com"), transport: { request in
+                (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            })
+            let result = try await client.workerStatus(credential: MatchCredential(gameId: "match", deviceId: "phone", role: .score, token: "scoped"))
+            XCTAssertEqual(result.status.workerEpoch, status["workerEpoch"] as? String, name)
+        }
+    }
+
     func testWireRoundTripPreservesNullsAndAllStateAndReasonValues() throws {
         let response = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(wire.utf8))
         XCTAssertEqual(response.status.state, .producingOutput)
@@ -34,6 +96,8 @@ final class WorkerStatusTests: XCTestCase {
             XCTAssertTrue(object["observation"] is NSNull)
             XCTAssertTrue(object["observedAt"] is NSNull)
             XCTAssertTrue(object["expiresAt"] is NSNull)
+            XCTAssertNil(status.workerEpoch)
+            XCTAssertNil(object["workerEpoch"])
             XCTAssertEqual(try JSONDecoder().decode(WorkerMediaStatus.self, from: data), status)
         }
     }

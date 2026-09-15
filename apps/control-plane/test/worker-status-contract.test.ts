@@ -67,10 +67,19 @@ it('returns the canonical native worker-status fixture through scoped HTTP route
       sequence: 1,
       observation: fixture.current.status.observation,
     });
-    expect(await status()).toEqual(fixture.current);
+    const current = await status();
+    const workerEpoch = current.status.workerEpoch;
+    expect(workerEpoch).toMatch(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+    expect(current).toEqual({
+      ...fixture.current,
+      status: { ...fixture.current.status, workerEpoch },
+    });
     now += 5000;
     monotonic += 5000;
-    expect(await status()).toEqual(fixture.stale);
+    expect(await status()).toEqual({
+      ...fixture.stale,
+      status: { ...fixture.stale.status, workerEpoch },
+    });
     matches.media.execute({
       commandId: 'stop',
       gameId: 'match',

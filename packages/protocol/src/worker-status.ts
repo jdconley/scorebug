@@ -99,6 +99,9 @@ export type WorkerMediaStatus = {
   gameId: string;
   generation: number;
   workerId: string | null;
+  /** Public server-owned reporting-session identity, separate from private tokens.
+   * Absent for legacy or reportless status; alone does not prove freshness. */
+  workerEpoch?: string;
   state: 'not_requested' | 'unknown' | 'stale' | WorkerState;
   observation: WorkerObservation | null;
   /** Proven upper age including report transit and server residence, rounded up in ms.

@@ -158,7 +158,13 @@ it('bounds snapshot age by token issuance, full transit, and status residence th
       'utf8',
     ),
   );
-  expect(result).toEqual(canonical);
+  expect(result).toEqual({
+    ...canonical,
+    status: {
+      ...canonical.status,
+      workerEpoch: expect.stringMatching(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/),
+    },
+  });
   expect(result.status.decodedVideoAgeUpperBoundMs).toBe(550);
   expect(result.status.observation.decodedVideo.completed.ageMs).toBe(250);
   expect(JSON.stringify(result)).not.toContain('timingToken');

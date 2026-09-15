@@ -165,8 +165,10 @@ A byte-preserving SRT route or per-frame in-band identity remain alternatives, b
 introduce a different deployment topology or SDK/worker metadata path. Patching the
 relay to preserve PTS is another option and requires independent A/V, wrap, reconnect
 and output qualification. None is enabled by this diagnostic command. Next work is
-the scoped metadata contract and public worker-session identity, followed by matched
-source intervals and available-capacity evidence before enabling automatic quality.
-The public worker epoch must be a separate opaque identifier: the existing status
-contract deliberately excludes the private worker reporting session and timing
-tokens. Reusing those private values would violate that boundary.
+the scoped relay metadata contract, followed by matched source intervals and
+available-capacity evidence before enabling automatic quality. The
+[public worker epoch](superpowers/plans/2026-09-15-public-worker-epoch.md) now gives
+native consumers a separate opaque reporting-session identifier. The existing
+status contract continues to exclude private reporting session IDs and timing
+tokens. This identity must be associated with the actual publication mapping;
+it does not supply that mapping by itself.

@@ -43,6 +43,7 @@ type TimingToken = { readonly value: string; readonly issuedAt: number };
 type Session = {
   runId: string;
   sessionId: string;
+  workerEpoch: string;
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
@@ -121,6 +122,7 @@ export class WorkerObservations {
     const current: Session = {
       runId,
       sessionId: randomUUID(),
+      workerEpoch: randomUUID(),
       ...(sampled !== undefined
         ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
         : {}),
@@ -313,8 +315,10 @@ export class WorkerObservations {
     const serverTime = new Date(now).toISOString();
     if (broadcast.desired !== 'running')
       return { status: { ...base, state: 'not_requested' }, serverTime };
-    const report = workerId ? this.workers.get(workerId)?.current.report : undefined;
+    const session = workerId ? this.workers.get(workerId)?.current : undefined;
+    const report = session?.report;
     if (
+      !session ||
       !report ||
       report.observation.gameId !== gameId ||
       report.observation.generation !== broadcast.generation
@@ -347,6 +351,7 @@ export class WorkerObservations {
     return {
       status: {
         ...base,
+        workerEpoch: session.workerEpoch,
         state: remaining <= 0 ? 'stale' : report.observation.state,
         observation,
         ...(decodedVideoAgeUpperBoundMs !== undefined ? { decodedVideoAgeUpperBoundMs } : {}),

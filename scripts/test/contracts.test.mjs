@@ -95,3 +95,27 @@ test('Swift and TypeScript consume identical known, unknown and legacy clock fix
   );
   assert.deepEqual(JSON.parse(swift), JSON.parse(canonical));
 });
+
+test('Swift and TypeScript share exact public worker epoch fixtures including legacy omission', () => {
+  const file = 'worker-epoch-v1.json';
+  const canonical = readFileSync(
+    new URL(`../../packages/protocol/fixtures/${file}`, import.meta.url),
+    'utf8',
+  );
+  const swift = readFileSync(
+    new URL(
+      `../../ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/${file}`,
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.equal(swift, canonical);
+  const fixture = JSON.parse(canonical);
+  assert.equal(fixture.current.status.workerEpoch, fixture.stale.status.workerEpoch);
+  assert.notEqual(fixture.current.status.workerEpoch, fixture.replacement.status.workerEpoch);
+  assert.equal(
+    fixture.current.status.observation.attempt,
+    fixture.replacement.status.observation.attempt,
+  );
+  assert.ok(!Object.hasOwn(fixture.legacy.status, 'workerEpoch'));
+});
