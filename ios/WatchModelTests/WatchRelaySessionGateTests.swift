@@ -3,6 +3,35 @@ import ScorebugCore
 import XCTest
 
 final class WatchRelaySessionGateTests: XCTestCase {
+    func testInboundKindsPreserveCorrelationForImmediateAndStaleFailureReplies() throws {
+        let scope = WatchRelayScope(endpoint: "https://example.com", gameId: "fixture-game",
+            watchDeviceId: "00000000-0000-4000-8000-000000000014", pairingId: "00000000-0000-4000-8000-000000000015")
+        let score = WatchRelayRequest(requestId: UUID().uuidString, scope: scope,
+            credential: MatchCredential(gameId: scope.gameId, deviceId: scope.watchDeviceId, role: .score,
+                token: String(repeating: "A", count: 43)), operation: .snapshot)
+        let bootstrap = WatchBootstrapRequest(requestId: UUID().uuidString,
+            authority: WatchBootstrapAuthority(scope: scope, pairingToken: String(repeating: "A", count: 43)),
+            redemption: WatchPairingRedeemRequest(redemptionId: UUID().uuidString, deviceId: scope.watchDeviceId),
+            recoveryKey: String(repeating: "B", count: 42) + "A")
+        let scoringInput = try WatchRelayInboundRequest(validating: WatchRelayCodec.encodeRequest(score))
+        let bootstrapInput = try WatchRelayInboundRequest(validating: WatchBootstrapCodec.encodeRequest(bootstrap))
+        guard case .scoring(let decodedScore) = scoringInput,
+              case .bootstrap(let decodedBootstrap) = bootstrapInput else { return XCTFail("Expected distinct native dispatch kinds") }
+        XCTAssertEqual(decodedScore, score); XCTAssertEqual(decodedBootstrap, bootstrap)
+        for failure in [WatchRelayFailure.busy, .cancelled, .scopeMismatch] {
+            XCTAssertEqual(try WatchRelayCodec.decodeReply(scoringInput.failureReply(failure), for: score).result, .failure(failure))
+            XCTAssertEqual(try WatchBootstrapCodec.decodeReply(bootstrapInput.failureReply(failure), for: bootstrap).result, .failure(failure))
+        }
+    }
+
+    func testInboundValidationRejectsUnknownOrOversizedDataBeforeActorDispatch() {
+        let invalid = [Data(), Data("not-json".utf8), Data(#"{"type":"arbitrary_http","url":"https://example.com"}"#.utf8),
+            Data(repeating: 32, count: WatchRelayInboundRequest.maximumRequestBytes + 1)]
+        for data in invalid {
+            XCTAssertThrowsError(try WatchRelayInboundRequest(validating: data))
+        }
+    }
+
     func testOnlyOneConcurrentMessageIsAdmitted() {
         let gate = WatchRelaySessionGate(), admitted = LockedValues<WatchRelaySessionGate.Token>()
         DispatchQueue.concurrentPerform(iterations: 32) { _ in

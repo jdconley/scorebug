@@ -137,3 +137,111 @@ view, native dispatch and route selection are still required.
 
 The combined Release iPhone/Watch build after this dependency change also passes
 with terminal exit 0 (`watch-setup-redemption-native-release.log`).
+
+## Bootstrap relay and native wiring implemented
+
+The strict bootstrap codec/client use distinct request/reply discriminators,
+16 KiB requests and 32 KiB replies. They share the existing strict JSON preflight
+and snapshot/failure validators; the scoring codec only widens helper visibility
+inside Core. Bootstrap capabilities, recovery keys and returned score tokens must
+be canonical 32-byte values. Replies correlate request UUID, full scope and
+redemption ID, then verify the returned credential and snapshot identities. A
+maximally escaped five-set snapshot fits the reply bound without artificially
+capping scores. The typed client performs one attempt with cancellation checks
+before dispatch and after receipt; authoritative expiry errors retain their type.
+
+`PhoneWatchModel` now publishes a transient bootstrap authority from the canonical
+scope and capability of a saved pending offer. The view contains no installation
+token or recovery key. Save/load validation precedes publication; failed confirmation
+retains the prior saved offer, successful confirmation removes it, and peer changes
+force immediate invalidation even if storage fails. A previous confirmed scorer can
+coexist with a distinct offer awaiting acceptance. Nine new phone tests cover
+publication order, invalid/missing authority, peer gates, reset, confirmation failure
+and unordered notices; all 43 phone companion model tests pass.
+
+`WatchBootstrapPhoneForwarder` checks that complete authority before constructing
+its HTTP client. It passes the original capability, recovery key and redemption
+request unchanged, never uses installation authority, and cannot activate a scoring
+binding. One task owns the HTTP attempt until it joins, including timeout and peer
+invalidation; a late result cannot cross authority generations. Nine actual-HTTP
+tests cover forwarding, every authority mismatch, cancellation/deadlines, terminal
+errors and committed redemption recovery.
+
+`WatchRoutedBootstrapClient` keeps only nonsecret scope and redemption identity in
+routing history. It initially uses direct HTTP, remembers success and chooses the
+alternate for a later coordinator attempt after a recognized connectivity failure.
+There is no inline retry. Unavailable companion selects direct; a terminal direct
+failure retires any older companion preference. Eleven tests cover route identity,
+busy/cancellation ownership and real-file coordinator recovery after lost responses
+or failed saves. An added regression failed three assertions before the stale
+terminal-error route preference was fixed.
+
+The native bridge now shares one delegate, one inbound admission gate and one
+outgoing message owner across scoring and bootstrap. Bootstrap requires explicit
+opt-in at the outgoing owner. A closed native request decoder performs strict
+validation before actor dispatch and generates correlated immediate/stale failures
+for either kind. Peer invalidation closes both forwarding authorities before the
+gate reopens. The phone restores its saved state for background requests; setup UI
+need not be open. The Watch app injects the bootstrap router into its setup
+coordinator, with two-second direct and companion attempts and a 1.5-second nested
+phone attempt. These are provisional budgets pending physical measurements.
+
+Current verification, all terminal exit 0:
+
+- Full Core: 233 tests (`watch-bootstrap-router-core.log`).
+- Phone companion: 43 tests (`watch-bootstrap-phone-green.log`).
+- Watch model/inbound gate: 45 tests (`watch-bootstrap-inbound-green.log`).
+- Combined Release iPhone/Watch build (`watch-bootstrap-native-release.log`).
+
+Independent reviews approved the codec/client, phone authority lifecycle, forwarder
+and final native wiring. Parent reviewed the router. Expected red/green evidence is
+in `artifacts/qa/watch-bootstrap-{codec,phone,forwarder,router,message-owner,inbound}-*.log`.
+App-level setup-then-score integration is the next functional check. Physical WC
+delivery, background wake and Wi-Fi/cellular/paired-route transitions remain
+unqualified; protocol tests and a compiling app do not establish those properties.
+
+## Native setup-to-score integration passes
+
+`NativeWatchBootstrapTests` now runs the phone and Watch models with actual atomic
+test files, both HTTP forwarders, strict inbound discrimination, shared message
+ownership and the native admission/reply gate under injected WC callbacks. It
+explicitly accepts an offer, observes direct failure, commits through the companion
+and loses that reply, observes one further direct failure, then recovers the same
+credential through the companion after offer expiry. All four are separate
+coordinator attempts; no transport silently repeats a redemption.
+
+After each of the first three attempts the exact saved capability, recovery key
+and redemption identity remain pending, the phone keeps only bootstrap authority,
+and there is no success haptic. The fourth attempt commits Watch storage before
+its paired notice causes the phone's atomic pending-to-scoring transition. The same
+shared transport then handles explicit takeover and a point with the new Watch
+credential and real durable scoring outbox. Assertions require one credential mint,
+two exact companion redemption requests, no installation authority in forwarded
+HTTP, and two distinct acknowledged scoring commands.
+
+The initial and final focused runs pass, terminal exit 0. Suppressing the lost reply
+only in the test fixture causes 20 expected assertion failures, terminal exit 65;
+the original fixture is restored. Full FilmModels passes all 87 tests, terminal
+exit 0, including the previous two-Watch real recording integration. Evidence is
+`artifacts/qa/native-watch-bootstrap-{initial,counterfactual-red,green,film-models}.log`.
+Production Keychain and actual WC radio behavior remain separate physical checks;
+these test files are not a replacement production secret-storage implementation.
+
+Independent review approved the final integration test's durable recovery, storage
+ordering, credential separation, shared admission and acknowledgment assertions.
+
+## Native Watch simulator regression passes
+
+After the new setup/scoring factories were connected, the existing native UI runner
+passed on Series 7 41 mm / watchOS 10.5 with terminal exit 0:
+`artifacts/qa/native-watch-4itqTX` (`watch-bootstrap-native-watch-ui.log`). It uses a
+real local server, native URLSession and simulator Keychain. Six exact command
+outcomes are retained: takeover, point, undo, rejected tied end-set, point and
+end-match; final revision is 5 and score is 0–1. The app relaunches without injected
+setup and recovers its saved credential. Scoring and restored-state screenshots
+were visually inspected on the small Watch display.
+
+Only the initial offer is injected in this runner. This confirms native direct
+networking and Keychain behavior with the new routing code, while the companion
+fallback path has the injected model/HTTP evidence above. It does not supersede
+the previously recorded paired-simulator ACX failures or physical WC requirements.

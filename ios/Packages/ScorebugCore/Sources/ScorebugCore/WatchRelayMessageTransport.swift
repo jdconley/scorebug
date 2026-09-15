@@ -1,7 +1,7 @@
 import Foundation
 
 /// Owns one companion message attempt. Byte admission precedes actor Tasks;
-/// typed reply correlation remains in WatchRelayScoringClient. Canceling local
+/// typed reply correlation remains in the scoring and bootstrap clients. Canceling local
 /// ownership cannot unsend a message or establish whether a mutation committed.
 @MainActor
 public final class WatchRelayMessageTransport {
@@ -21,6 +21,7 @@ public final class WatchRelayMessageTransport {
         var cancelTimer: ScheduledCancellation?
     }
     private let timeout: TimeInterval
+    private let allowsBootstrap: Bool
     private let reachable: @MainActor @Sendable () -> Bool
     private let now: @MainActor @Sendable () -> TimeInterval
     private let schedule: Scheduler
@@ -28,10 +29,12 @@ public final class WatchRelayMessageTransport {
     private var pending: Pending?
 
     public init(timeout: TimeInterval = 4,
+                allowsBootstrap: Bool = false,
                 isReachable: @escaping @MainActor @Sendable () -> Bool,
                 now: @escaping @MainActor @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
                 schedule: Scheduler? = nil, send: @escaping Sender) {
-        self.timeout = timeout; reachable = isReachable; self.now = now
+        self.timeout = timeout; self.allowsBootstrap = allowsBootstrap
+        reachable = isReachable; self.now = now
         self.schedule = schedule ?? Self.defaultScheduler; sender = send
     }
 
@@ -40,8 +43,12 @@ public final class WatchRelayMessageTransport {
         guard pending == nil else { throw WatchRelayFailure.busy }
         // The codec checks its byte ceiling before parsing. This also rejects
         // direct callers' malformed requests before any platform dispatch.
-        do { _ = try WatchRelayCodec.decodeRequest(data) }
-        catch { throw WatchRelayFailure.invalidRequest }
+        // Explicit bootstrap opt-in still shares this one pending owner.
+        if (try? WatchRelayCodec.decodeRequest(data)) == nil {
+            guard allowsBootstrap, (try? WatchBootstrapCodec.decodeRequest(data)) != nil else {
+                throw WatchRelayFailure.invalidRequest
+            }
+        }
         guard reachable(), timeout.isFinite, timeout > 0 else { throw WatchRelayFailure.unavailable }
         let start = now()
         let deadline = start + timeout

@@ -61,12 +61,16 @@ protocol PhoneWatchRequestStorage {
     @Published private(set) var notice: WatchCompanionNotice?
     @Published private(set) var pending: PhoneWatchRequest?
     @Published private(set) var relayBinding: WatchRelayScope?
+    /// Transient capability-bearing view for the app's bootstrap forwarder.
+    /// Never includes the pending record's installation authority.
+    private(set) var bootstrapAuthority: WatchBootstrapAuthority?
     @Published private(set) var busy = false
     @Published private(set) var message: String?
     private let storage: any PhoneWatchRequestStorage
     private let clientFactory: @Sendable (ScoringEndpoint) -> MatchHTTPClient
     private let sendEnvelope: (WatchPairingEnvelope) throws -> Void
     private let onRelayBindingChanged: (WatchRelayScope?) -> Void
+    private let onBootstrapAuthorityChanged: (WatchBootstrapAuthority?) -> Void
     private var record = PhoneWatchSetupRecord()
     private var relaySuppressed = false
     private var requiresNewRequest = false
@@ -78,9 +82,11 @@ protocol PhoneWatchRequestStorage {
     init(storage: any PhoneWatchRequestStorage,
          clientFactory: @escaping @Sendable (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
          onRelayBindingChanged: @escaping (WatchRelayScope?) -> Void = { _ in },
+         onBootstrapAuthorityChanged: @escaping (WatchBootstrapAuthority?) -> Void = { _ in },
          sendEnvelope: @escaping (WatchPairingEnvelope) throws -> Void) {
         self.storage = storage; self.clientFactory = clientFactory; self.sendEnvelope = sendEnvelope
         self.onRelayBindingChanged = onRelayBindingChanged
+        self.onBootstrapAuthorityChanged = onBootstrapAuthorityChanged
     }
     func resume() {
         active = true
@@ -117,6 +123,7 @@ protocol PhoneWatchRequestStorage {
     }
     func peerChanged() {
         epoch = UUID(); notice = nil; operation?.cancel(); requiresNewRequest = true; suppressRelay()
+        publishBootstrap(nil, force: true)
         do {
             try load()
             try persistRecord(PhoneWatchSetupRecord(pending: pending, requiresNewRequest: true))
@@ -214,22 +221,29 @@ protocol PhoneWatchRequestStorage {
                 }
             }
             if let binding = saved.relayBinding { try WatchRelayCodec.validateScope(binding) }
+            let bootstrap = try Self.bootstrapAuthority(for: saved)
             record = saved; pending = saved.pending; loaded = true
             requiresNewRequest = requiresNewRequest || saved.requiresNewRequest
             if requiresNewRequest { suppressRelay() }
             else if !relaySuppressed { publishRelay(saved.relayBinding) }
+            publishBootstrap(requiresNewRequest ? nil : bootstrap)
         } catch { throw Failure.storage }
     }
     private func persist(_ value: PhoneWatchRequest?, startsNewRequest: Bool = false) throws {
         try persistRecord(PhoneWatchSetupRecord(pending: value,
             relayBinding: relaySuppressed ? nil : record.relayBinding,
             requiresNewRequest: startsNewRequest ? false : requiresNewRequest))
-        if startsNewRequest { requiresNewRequest = false }
+        if startsNewRequest {
+            requiresNewRequest = false
+            publishBootstrap(try Self.bootstrapAuthority(for: record))
+        }
     }
     private func persistRecord(_ value: PhoneWatchSetupRecord) throws {
+        let bootstrap = try Self.bootstrapAuthority(for: value)
         do { try storage.save(value) } catch { throw Failure.storage }
         record = value; pending = value.pending
         if !relaySuppressed { publishRelay(value.relayBinding) }
+        publishBootstrap(requiresNewRequest ? nil : bootstrap)
     }
     private func confirmsPending(_ notice: WatchCompanionNotice) -> Bool {
         guard !requiresNewRequest, let pending else { return false }
@@ -241,6 +255,20 @@ protocol PhoneWatchRequestStorage {
             gameId: request.gameId, watchDeviceId: request.request.watchDeviceId, pairingId: request.request.pairingId)
         try WatchRelayCodec.validateScope(binding)
         return binding
+    }
+    private static func bootstrapAuthority(for record: PhoneWatchSetupRecord) throws -> WatchBootstrapAuthority? {
+        guard !record.requiresNewRequest, let pending = record.pending, let offer = pending.offer else { return nil }
+        guard offer.pairingId == pending.request.pairingId, offer.watchDeviceId == pending.request.watchDeviceId,
+              offer.gameId == pending.gameId else { throw Failure.storage }
+        _ = try WatchCompanionCodec.encodeEnvelope(WatchPairingEnvelope(endpoint: pending.connection.endpoint, offer: offer))
+        let authority = WatchBootstrapAuthority(scope: try scope(for: pending), pairingToken: offer.pairingToken)
+        try WatchBootstrapCodec.validateAuthority(authority)
+        return authority
+    }
+    private func publishBootstrap(_ value: WatchBootstrapAuthority?, force: Bool = false) {
+        let changed = bootstrapAuthority != value
+        bootstrapAuthority = value
+        if changed || force { onBootstrapAuthorityChanged(value) }
     }
     private func publishRelay(_ value: WatchRelayScope?, force: Bool = false) {
         let changed = relayBinding != value

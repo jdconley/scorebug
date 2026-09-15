@@ -14,8 +14,8 @@ relaunch, without activating scoring or reconciling its outbox.
 The phone persists a pairing request before issuance and the returned offer before
 sending it through WatchConnectivity application context. Retries keep the original
 request ID, endpoint, and installation context. Setup application context carries
-only a bounded, typed offer and identity notices; installation authority and
-recovery keys remain on their owning devices. The Watch explicitly accepts an offered match and
+only a bounded, typed offer and identity notices; it never carries installation
+authority or recovery keys. The Watch explicitly accepts an offered match and
 stores its own redeemed credential in device-only Keychain.
 
 The Watch shows scores, team point buttons, set totals, explicit takeover, undo,
@@ -42,8 +42,24 @@ with the Watch's own score credential. The phone must match the complete scope t
 its persisted pairing association before forwarding; it never substitutes its own
 credential. One existing WCSession delegate handles setup and scoring at app scope,
 independent of filming or the selected phone tab. Peer changes invalidate old work
-before admitting new requests. Initial Watch redemption still needs direct HTTP;
-a separate bootstrap relay remains planned.
+before admitting new requests.
+
+Initial setup now also has a paired-phone route. Its separate typed request carries
+the saved pairing capability, redemption ID and recovery key. The phone matches the
+capability against its persisted pending offer before forwarding, without substituting
+installation authority or saving the returned Watch credential. A lost reply preserves
+the same pending redemption for a later attempt, including recovery after capability
+expiry. Only the Watch's successful Keychain commit and matching paired notice can
+activate the phone's scoring association. See the
+[bootstrap relay checkpoint](superpowers/plans/2026-09-15-watch-bootstrap-relay.md)
+for current tests and remaining physical qualification.
+
+The full injected setup/recovery/scoring workflow now passes, including Watch
+storage before phone activation and one credential recovered after a lost reply.
+The existing Series 7 41 mm / watchOS 10.5 native UI workflow also passes after
+this wiring (`artifacts/qa/native-watch-4itqTX`), with all six expected server
+outcomes and Keychain relaunch restoration. Initial setup is injected for that UI
+run; it proves direct networking, not real companion transfer.
 
 The routed native code compiles for iPhone and both Watch architectures. Core/model
 tests cover deadlines, cancellation, lost replies and exact-command recovery; see
@@ -148,8 +164,6 @@ explicitly calls for a physical iPhone and Watch.
 
 ## Remaining qualification
 
-- Complete the separately scoped bootstrap relay so initial setup can also use the
-  paired phone when Watch direct HTTP is unavailable.
 - Exercise actual companion exchange with paired simulators and physical devices.
 - Repeat Watch A while its paired phone films, and Watch B through another phone,
   on real devices. The injected native-model test now covers those scoring roles

@@ -122,7 +122,8 @@ The phone's Watch tab sends an expiring setup offer using a saved Film or Score
 connection. Accept it on the Watch, then take over scoring explicitly. Watch commands
 use its own credential, Keychain setup, and durable scoring outbox. Configured Watch
 scoring can use direct HTTP or the paired phone's app-scoped relay, with receipt-first
-recovery after uncertain sends. Initial setup redemption still requires direct HTTP;
+recovery after uncertain sends. Initial setup redemption can also recover through
+the paired phone using its original saved capability and recovery identity;
 physical network switching and background delivery remain unqualified.
 
 ```sh

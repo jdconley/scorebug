@@ -102,25 +102,25 @@ public enum WatchRelayCodec {
         } catch { throw WatchRelayCodecError.invalidMessage }
     }
 
-    private static func encode<T: Encodable>(_ value: T) throws -> Data {
+    static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
     }
-    private static func object(_ data: Data, maximum: Int) throws -> [String: Any] {
+    static func object(_ data: Data, maximum: Int) throws -> [String: Any] {
         guard !data.isEmpty, data.count <= maximum else { throw WatchRelayCodecError.invalidMessage }
         var preflight = WatchRelayJSON(data)
         try preflight.validate()
         return try dictionary(JSONSerialization.jsonObject(with: data))
     }
-    private static func dictionary(_ value: Any?) throws -> [String: Any] {
+    static func dictionary(_ value: Any?) throws -> [String: Any] {
         guard let value = value as? [String: Any] else { throw WatchRelayCodecError.invalidMessage }
         return value
     }
-    private static func keys(_ value: [String: Any], _ required: Set<String>, optional: Set<String> = []) throws {
+    static func keys(_ value: [String: Any], _ required: Set<String>, optional: Set<String> = []) throws {
         let actual = Set(value.keys)
         guard required.isSubset(of: actual), actual.isSubset(of: required.union(optional)) else { throw WatchRelayCodecError.invalidMessage }
     }
-    private static func string(_ value: Any?) throws -> String {
+    static func string(_ value: Any?) throws -> String {
         guard let value = value as? String else { throw WatchRelayCodecError.invalidMessage }
         return value
     }
@@ -137,11 +137,11 @@ public enum WatchRelayCodec {
     private static func identifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
     }
-    private static func uuid(_ value: String) -> Bool { value.utf8.count == 36 && UUID(uuidString: value) != nil }
-    private static func version(_ value: [String: Any]) throws {
+    static func uuid(_ value: String) -> Bool { value.utf8.count == 36 && UUID(uuidString: value) != nil }
+    static func version(_ value: [String: Any]) throws {
         guard try integer(value["version"]) == 1, uuid(try string(value["requestId"])) else { throw WatchRelayCodecError.invalidMessage }
     }
-    private static func scopeObject(_ input: Any?) throws {
+    static func scopeObject(_ input: Any?) throws {
         let value = try dictionary(input)
         try keys(value, ["endpoint", "gameId", "watchDeviceId", "pairingId"])
         try validateScope(WatchRelayScope(endpoint: string(value["endpoint"]), gameId: string(value["gameId"]), watchDeviceId: string(value["watchDeviceId"]), pairingId: string(value["pairingId"])))
@@ -149,7 +149,7 @@ public enum WatchRelayCodec {
     private static func oneOf(_ value: Any?, _ options: Set<String>) throws {
         guard options.contains(try string(value)) else { throw WatchRelayCodecError.invalidMessage }
     }
-    private static func date(_ input: Any?) throws {
+    static func date(_ input: Any?) throws {
         let value = try string(input)
         guard value.utf8.count <= 128, value.last == "Z",
               value.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$"#, options: .regularExpression) != nil else { throw WatchRelayCodecError.invalidMessage }
@@ -196,7 +196,7 @@ public enum WatchRelayCodec {
         default: throw WatchRelayCodecError.invalidMessage
         }
     }
-    private static func snapshotObject(_ input: Any?) throws {
+    static func snapshotObject(_ input: Any?) throws {
         let value = try dictionary(input)
         try keys(value, ["id", "createdAt", "revision", "teams", "rules", "score", "completedSets", "status", "endReason", "canUndo", "scorer", "broadcast"])
         guard identifier(try string(value["id"])) else { throw WatchRelayCodecError.invalidMessage }
@@ -247,7 +247,7 @@ public enum WatchRelayCodec {
         }
         try snapshotObject(value["snapshot"])
     }
-    private static func failureObject(_ input: Any?) throws {
+    static func failureObject(_ input: Any?) throws {
         let value = try dictionary(input)
         switch try string(value["type"]) {
         case "http":

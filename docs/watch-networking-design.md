@@ -7,6 +7,14 @@ foundation. ScorebugCore's
 durable command coordinator owns command identity and receipt reconciliation
 independently of the iPhone UI.
 
+Both configured scoring and initial setup now have bounded native companion
+routes alongside direct HTTP. Scoring uses receipt-first reconciliation; setup
+repeats the exact durable redemption on a later coordinator attempt. The shared
+native delegate owns admission across both message kinds, while the phone checks
+their separate persisted authorities. See the
+[bootstrap implementation checkpoint](superpowers/plans/2026-09-15-watch-bootstrap-relay.md)
+for current evidence and physical qualification limits.
+
 ## Platform behavior
 
 Watch URLSession requests can use the paired iPhone as a network proxy, known Wi-Fi,
@@ -33,7 +41,7 @@ transport tests and direct Watch HTTP Simulator tests can verify the application
 protocol, but physical paired devices remain necessary for that queued route.
 [Apple: transferUserInfo](<https://developer.apple.com/documentation/watchconnectivity/wcsession/transferuserinfo(_:)>)
 
-## Application decisions to implement
+## Application contracts
 
 - Give each Watch a distinct scorer device identity and scoped match credential.
   Keep direct HTTP available without an active companion app. Watch A may score

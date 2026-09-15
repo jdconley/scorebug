@@ -12,14 +12,76 @@ final class WatchRelayMessageTransportTests: XCTestCase {
     private func request() throws -> Data {
         try WatchRelayCodec.encodeRequest(WatchRelayRequest(requestId: UUID().uuidString, scope: scope, credential: credential, operation: .snapshot))
     }
-    private func owner(_ harness: MessageHarness, timeout: TimeInterval = 4) -> WatchRelayMessageTransport {
-        WatchRelayMessageTransport(timeout: timeout, isReachable: { harness.reachable }, now: { harness.time },
+    private func owner(_ harness: MessageHarness, timeout: TimeInterval = 4, allowsBootstrap: Bool = false) -> WatchRelayMessageTransport {
+        WatchRelayMessageTransport(timeout: timeout, allowsBootstrap: allowsBootstrap,
+            isReachable: { harness.reachable }, now: { harness.time },
             schedule: { delay, fire in harness.schedule(delay, fire: fire) },
             send: { data, callback in try harness.send(data, callback: callback) })
     }
     private func expectFailure<T>(_ task: Task<T, Error>, _ expected: WatchRelayFailure) async {
         do { _ = try await task.value; XCTFail("Expected \(expected)") }
         catch { XCTAssertEqual(error as? WatchRelayFailure, expected) }
+    }
+
+    private func bootstrapRequest() throws -> Data {
+        try WatchBootstrapCodec.encodeRequest(WatchBootstrapRequest(requestId: UUID().uuidString,
+            authority: WatchBootstrapAuthority(scope: scope, pairingToken: String(repeating: "A", count: 43)),
+            redemption: WatchPairingRedeemRequest(redemptionId: UUID().uuidString, deviceId: scope.watchDeviceId),
+            recoveryKey: String(repeating: "B", count: 42) + "A"))
+    }
+
+    func testBootstrapRequiresExplicitOptInAndStrictValidationBeforeDispatch() async throws {
+        let harness = MessageHarness(), bootstrap = try bootstrapRequest()
+        do { _ = try await owner(harness).send(bootstrap); XCTFail("Default owner accepts scoring only") }
+        catch { XCTAssertEqual(error as? WatchRelayFailure, .invalidRequest) }
+        let enabled = owner(harness, allowsBootstrap: true)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: bootstrap) as? [String: Any])
+        object["installationToken"] = "must-not-cross-relay"
+        let extraAuthority = try JSONSerialization.data(withJSONObject: object)
+        object.removeValue(forKey: "installationToken"); object["recoveryKey"] = "invalid"
+        let invalidKey = try JSONSerialization.data(withJSONObject: object)
+        for data in [Data(), Data("not-json".utf8), extraAuthority, invalidKey,
+                     Data(repeating: 32, count: WatchBootstrapCodec.maximumRequestBytes + 1)] {
+            do { _ = try await enabled.send(data); XCTFail("Expected strict request validation") }
+            catch { XCTAssertEqual(error as? WatchRelayFailure, .invalidRequest) }
+        }
+        XCTAssertTrue(harness.requests.isEmpty)
+        XCTAssertTrue(harness.timers.isEmpty)
+    }
+
+    func testScoringAndBootstrapShareOnePendingOwnerInBothDirections() async throws {
+        let bootstrap = try bootstrapRequest(), scoring = try request()
+        for (firstBytes, secondBytes) in [(bootstrap, scoring), (scoring, bootstrap)] {
+            let harness = MessageHarness(), transport = owner(harness, allowsBootstrap: true)
+            let first = Task { try await transport.send(firstBytes) }
+            await harness.waitForSend(1)
+            do { _ = try await transport.send(secondBytes); XCTFail("Kinds must share admission") }
+            catch { XCTAssertEqual(error as? WatchRelayFailure, .busy) }
+            harness.callbacks[0](.success(Data("first".utf8)))
+            _ = try await first.value
+            let second = Task { try await transport.send(secondBytes) }
+            await harness.waitForSend(2)
+            harness.callbacks[1](.success(Data("second".utf8)))
+            let reply = try await second.value
+            XCTAssertEqual(reply, Data("second".utf8))
+            XCTAssertEqual(harness.requests, [firstBytes, secondBytes])
+        }
+    }
+
+    func testInvalidatedBootstrapReplyCannotSettleNewScoringRequest() async throws {
+        let harness = MessageHarness(), transport = owner(harness, allowsBootstrap: true)
+        let bootstrap = try bootstrapRequest(), scoring = try request()
+        let old = Task { try await transport.send(bootstrap) }
+        await harness.waitForSend(1)
+        transport.invalidatePeer()
+        await expectFailure(old, .unavailable)
+        let current = Task { try await transport.send(scoring) }
+        await harness.waitForSend(2)
+        harness.callbacks[0](.success(Data("old credential reply".utf8)))
+        harness.callbacks[1](.success(Data("current score reply".utf8)))
+        let reply = try await current.value
+        XCTAssertEqual(reply, Data("current score reply".utf8))
+        XCTAssertEqual(harness.requests, [bootstrap, scoring])
     }
 
     func testOnePendingExactDataAndBusyAdmission() async throws {

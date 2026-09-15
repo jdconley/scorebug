@@ -101,6 +101,10 @@ bootstrap redemption relay after configured scoring works; the recovery-key and
 capability rules must remain intact. Neither a configured-only relay nor model
 tests complete the user's all-available-networking requirement by themselves.
 
+Update: the [bootstrap relay](2026-09-15-watch-bootstrap-relay.md) now adds initial
+setup to the companion route and is wired into both native apps. Follow
+that document for current integration evidence and remaining physical gates.
+
 ## Scoring-client foundation implemented
 
 `MatchScoringClient` now supplies the three Sendable operations. The HTTP client

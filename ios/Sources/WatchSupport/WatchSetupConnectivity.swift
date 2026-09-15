@@ -10,11 +10,12 @@ import SwiftUI
     var noticeHandler: (WatchCompanionNotice) -> Void = { _ in }
     var peerChangedHandler: () -> Void = {}
     var scoringRequestHandler: (Data) async -> Data = { _ in Data() }
+    var bootstrapRequestHandler: (Data) async -> Data = { _ in Data() }
     private var outgoing: (String, Data)?
-    private var scoringTransport: WatchRelayMessageTransport?
+    private var relayTransport: WatchRelayMessageTransport?
     private nonisolated let messageGate = WatchRelaySessionGate()
 
-    var canRelayScoring: Bool {
+    var canRelayRequests: Bool {
         WCSession.isSupported() && WCSession.default.activationState == .activated && WCSession.default.isReachable
     }
 
@@ -24,23 +25,30 @@ import SwiftUI
         try WatchRelayCodec.validateScope(scope)
         return WatchRelayScoringClient(scope: scope, send: { [weak self] data in
             guard let self else { throw WatchRelayFailure.unavailable }
-            return try await self.sendScoring(data)
+            return try await self.sendRelay(data)
         })
     }
 
-    private func sendScoring(_ data: Data) async throws -> Data {
-        if scoringTransport == nil {
-            scoringTransport = WatchRelayMessageTransport(timeout: 2,
-                isReachable: { [weak self] in self?.canRelayScoring == true },
+    func bootstrapRelayClient() -> WatchBootstrapRelayClient {
+        WatchBootstrapRelayClient(send: { [weak self] data in
+            guard let self else { throw WatchRelayFailure.unavailable }
+            return try await self.sendRelay(data)
+        })
+    }
+
+    private func sendRelay(_ data: Data) async throws -> Data {
+        if relayTransport == nil {
+            relayTransport = WatchRelayMessageTransport(timeout: 2, allowsBootstrap: true,
+                isReachable: { [weak self] in self?.canRelayRequests == true },
                 send: { [weak self] data, callback in
-                    guard self?.canRelayScoring == true else { throw WatchRelayFailure.unavailable }
+                    guard self?.canRelayRequests == true else { throw WatchRelayFailure.unavailable }
                     WCSession.default.sendMessageData(data,
                         replyHandler: { callback(.success($0)) },
                         errorHandler: { _ in callback(.failure(.unavailable)) })
                 })
         }
-        guard let scoringTransport else { throw WatchRelayFailure.unavailable }
-        return try await scoringTransport.send(data)
+        guard let relayTransport else { throw WatchRelayFailure.unavailable }
+        return try await relayTransport.send(data)
     }
 
     func activate() {
@@ -98,32 +106,31 @@ import SwiftUI
                              replyHandler: @escaping (Data) -> Void) {
         #if os(iOS)
         let reply = WatchRelayReplyOnce(replyHandler)
-        guard !messageData.isEmpty, messageData.count <= WatchRelayCodec.maximumRequestBytes else {
+        guard let request = try? WatchRelayInboundRequest(validating: messageData) else {
             reply.send(Data()); return
         }
         let gate = messageGate
         guard let token = gate.admit() else {
-            reply.send(Self.failureReply(.busy, for: messageData)); return
+            reply.send(request.failureReply(.busy)); return
         }
         Task { @MainActor [weak self] in
             defer { gate.release(token) }
             guard let self, gate.isCurrent(token) else {
-                reply.send(Self.failureReply(.cancelled, for: messageData)); return
+                reply.send(request.failureReply(.cancelled)); return
             }
-            let result = await self.scoringRequestHandler(messageData)
+            let result: Data
+            switch request {
+            case .scoring: result = await self.scoringRequestHandler(messageData)
+            case .bootstrap: result = await self.bootstrapRequestHandler(messageData)
+            }
             // The delegate can invalidate this epoch before its actor task runs.
             // Do not return stale HTTP success while that actor invalidation waits.
-            reply.send(gate.isCurrent(token) ? result : Self.failureReply(.cancelled, for: messageData))
+            reply.send(gate.isCurrent(token) ? result : request.failureReply(.cancelled))
         }
         #else
         // The Watch accepts setup context; HTTP forwarding belongs to the phone.
         replyHandler(Data())
         #endif
-    }
-
-    private nonisolated static func failureReply(_ failure: WatchRelayFailure, for data: Data) -> Data {
-        guard let request = try? WatchRelayCodec.decodeRequest(data) else { return Data() }
-        return (try? WatchRelayCodec.encodeReply(WatchRelayReply(request: request, result: .failure(failure)), for: request)) ?? Data()
     }
 
     #if os(iOS)
@@ -141,7 +148,7 @@ import SwiftUI
     private func peerChanged(_ transition: UUID) {
         guard messageGate.isCurrentEpoch(transition) else { return }
         outgoing = nil
-        scoringTransport?.invalidatePeer()
+        relayTransport?.invalidatePeer()
         peerChangedHandler()
         messageGate.completePeerChange(transition)
         // Activation may have completed while actor cleanup was queued.

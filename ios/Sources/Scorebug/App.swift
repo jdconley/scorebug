@@ -12,8 +12,10 @@ struct ScorebugApp: App {
     init() {
         let connectivity = WatchSetupConnectivity()
         let forwarder = WatchRelayPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
+        let bootstrap = WatchBootstrapPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
         let phoneWatch = PhoneWatchModel(storage: PhoneWatchRequestKeychain(),
             onRelayBindingChanged: { try? forwarder.updateBinding($0) },
+            onBootstrapAuthorityChanged: { try? bootstrap.updateAuthority($0) },
             sendEnvelope: { try connectivity.sendEnvelope($0) })
         connectivity.noticeHandler = { [weak phoneWatch] in phoneWatch?.receive($0) }
         connectivity.peerChangedHandler = { [weak phoneWatch] in phoneWatch?.peerChanged() }
@@ -22,6 +24,11 @@ struct ScorebugApp: App {
             // Retry a locked/unavailable Keychain read before each request.
             phoneWatch.restoreRelayAssociation()
             return await forwarder.forward(data)
+        }
+        connectivity.bootstrapRequestHandler = { [weak phoneWatch] data in
+            guard let phoneWatch else { return Data() }
+            phoneWatch.restoreRelayAssociation()
+            return await bootstrap.forward(data)
         }
         phoneWatch.restoreRelayAssociation()
         connectivity.activate()

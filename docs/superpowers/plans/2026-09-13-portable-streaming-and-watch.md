@@ -383,8 +383,13 @@ reply and Watch B takes over and scores. Core passes 194 tests, Watch model/gate
 phone companion 34 and Film model 86; the final Release iPhone/Watch build passes.
 See the [native relay checkpoint](2026-09-15-native-watch-relay.md) for evidence and
 limits. This is functional model/media integration, not a successful physical WC
-or paired-simulator workflow. Initial setup still needs the separately planned
-[bootstrap relay](2026-09-15-watch-bootstrap-relay.md).
+or paired-simulator workflow. The separately scoped
+[bootstrap relay](2026-09-15-watch-bootstrap-relay.md) now also supports initial setup
+and exact redemption recovery through the paired phone. Its current checkpoint
+passes 233 Core, 43 phone companion and 45 Watch model/gate tests, plus the combined
+native Release build. Full FilmModels also passes all 87 tests, including the
+injected native setup/lost-reply/recovery/score flow. Physical networking
+qualification remains a distinct gate.
 
 **Files:** `ios/Project.yml`, shared `ios/Packages/ScorebugCore/` scoring models/client,
 new `ios/Sources/ScorebugWatch/`, `ios/Sources/Scorebug/Companion/`,

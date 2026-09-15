@@ -1,6 +1,31 @@
 import Foundation
 import ScorebugCore
 
+/// Closed set of immediate relay requests. Decode on the delegate thread before
+/// creating actor work, and retain the request identity for every terminal reply.
+enum WatchRelayInboundRequest: Sendable {
+    case scoring(WatchRelayRequest)
+    case bootstrap(WatchBootstrapRequest)
+
+    static let maximumRequestBytes = max(WatchRelayCodec.maximumRequestBytes, WatchBootstrapCodec.maximumRequestBytes)
+    static let maximumReplyBytes = max(WatchRelayCodec.maximumReplyBytes, WatchBootstrapCodec.maximumReplyBytes)
+
+    init(validating data: Data) throws {
+        guard !data.isEmpty, data.count <= Self.maximumRequestBytes else { throw WatchRelayCodecError.invalidMessage }
+        if let scoring = try? WatchRelayCodec.decodeRequest(data) { self = .scoring(scoring) }
+        else { self = .bootstrap(try WatchBootstrapCodec.decodeRequest(data)) }
+    }
+
+    func failureReply(_ failure: WatchRelayFailure) -> Data {
+        switch self {
+        case .scoring(let request):
+            return (try? WatchRelayCodec.encodeReply(WatchRelayReply(request: request, result: .failure(failure)), for: request)) ?? Data()
+        case .bootstrap(let request):
+            return (try? WatchBootstrapCodec.encodeReply(WatchBootstrapReply(request: request, result: .failure(failure)), for: request)) ?? Data()
+        }
+    }
+}
+
 /// Admission is reserved on the native delegate thread, before creating actor
 /// work. Peer invalidation changes the epoch but holds capacity until work joins.
 final class WatchRelaySessionGate: @unchecked Sendable {
@@ -53,6 +78,6 @@ final class WatchRelayReplyOnce: @unchecked Sendable {
         lock.lock()
         let callback = reply; reply = nil
         lock.unlock()
-        callback?(data.count <= WatchRelayCodec.maximumReplyBytes ? data : Data())
+        callback?(data.count <= WatchRelayInboundRequest.maximumReplyBytes ? data : Data())
     }
 }
