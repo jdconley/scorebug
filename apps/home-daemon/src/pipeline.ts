@@ -92,11 +92,12 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
   // Preserve acquisition gaps on the common A/V timeline. Auto/CFR can pad
   // early audio with duplicates; VFR can remove frames around timestamp wrap.
   // Passthrough leaves frame removal solely to the explicit cap below.
-  // Select at most one frame per cap interval, retaining source PTS. Half an
-  // input timebase tick prevents timestamp rounding from skipping boundary frames.
+  // Select at most one frame per anchored cap interval, retaining source PTS.
+  // Allow one input tick for floor-quantized acquisition timestamps plus half
+  // a tick for input rescaling, so boundary frames keep their intended bucket.
   video.push('-fps_mode', 'passthrough', '-enc_time_base:v', '-1');
   const cap = profile
-    ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+TB/2)*${profile.fps}),floor((prev_selected_t-start_t+TB/2)*${profile.fps}))',`
+    ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*${profile.fps}),floor((prev_selected_t-start_t+1.5*TB)*${profile.fps}))',`
     : '';
   const filter = profile
     ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`

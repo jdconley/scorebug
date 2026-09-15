@@ -94,7 +94,7 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
 
     if (withProfile) {
       expect(filter).toContain(
-        "nullsink;[live]select='isnan(prev_selected_t)+gt(floor((t-start_t+TB/2)*30),floor((prev_selected_t-start_t+TB/2)*30))',scale=1280:720",
+        "nullsink;[live]select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*30),floor((prev_selected_t-start_t+1.5*TB)*30))',scale=1280:720",
       );
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
