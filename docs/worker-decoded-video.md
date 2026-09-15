@@ -34,10 +34,12 @@ content or delivery to a viewer. Timestamp gaps alone do not establish frame los
 ## Clock convention compatibility
 
 The actual pipeline labels snapshots `mpegts-pts-90k-v1`: signed decoder input PTS
-rescaled to 90 kHz without a worker input-origin shift. MPEG-TS wire correspondence
-is modulo 2^33, including demuxed negative wrap-region values. The label does not
-identify a native publishing attempt, establish matched source intervals or count
-lost frames.
+rescaled to 90 kHz without a worker input-origin shift. Correspondence with the
+MPEG-TS entering this worker is modulo 2^33, including demuxed negative wrap-region
+values. An upstream demuxing relay can select another origin: see the
+[raw relay clock qualification](relay-clock-correspondence.md). The label does not
+identify a native publishing attempt, bridge that relay origin, establish matched
+source intervals or count lost frames.
 
 New API sessions advertise `decodedVideoClock`. The reporter sends the optional
 snapshot `clock` only when both the session and snapshot carry the exact known
@@ -169,7 +171,6 @@ and output drain; synchronized track ends alone cannot establish full delivery.
 The earlier archive overflow remains unresolved. See the
 [native tail evidence and plan](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
 
-
 The optional terminal diagnostic now retains a separate lifetime decoder aggregate,
 final validated output progress, genuine encoder exit evidence and telemetry EOF.
 It leaves the five-second report snapshot unchanged. The owned native fixture saves
@@ -185,7 +186,6 @@ video packets yield 112 saved frames with immediate EOF versus 119 with a one-se
 EOF delay. This is diagnostic evidence, not an application fix or exact attribution
 of the native deficit. The next step is an independently qualified test recorder;
 see the [tail investigation](superpowers/plans/2026-09-14-native-tail-diagnosis.md).
-
 
 ## Production transport clock qualification
 
@@ -211,7 +211,6 @@ argument-contract coverage only; no NVIDIA hardware was exercised. The [negotiat
 now distinguishes older/unknown worker clocks from the preserving path. Consumers
 still need the native attempt-scoped anchor before correlating worker reports. Matching source intervals and loss denominators remain necessary;
 clock preservation does not by itself enable automatic quality adjustment.
-
 
 Convention negotiation verification passes 263 API, 179 worker, 235 Core and 431
 tooling tests, protocol/API/worker type checks, the arm64_32 watchOS 10 Core build

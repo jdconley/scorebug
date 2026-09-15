@@ -36,7 +36,8 @@
     "test:native-app": "node scripts/test-native-app.mjs",
     "test:native-streaming": "node scripts/test-native-app.mjs --streaming",
     "test:native-watch": "node scripts/test-native-watch.mjs",
-    "test:paired-watch": "node scripts/test-paired-watch.mjs"
+    "test:paired-watch": "node scripts/test-paired-watch.mjs",
+    "test:relay-clock": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

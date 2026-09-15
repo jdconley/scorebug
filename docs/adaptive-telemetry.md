@@ -6,19 +6,19 @@ complete fresh-frame/capacity window for safe upward adaptation.
 The [local observation implementation slice](superpowers/plans/2026-09-14-local-video-observations.md)
 now connects capture and actual encoder-completion measurements while retaining fixed live settings.
 
-| Existing observation                    | What it measures                                                                                              | Missing evidence                                                                                         |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
-| `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt |
-| `CaptureStreamingModel.ingressObservation` | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries | In-flight/SDK buffering, production source-loss denominator and transport capacity |
-| `CaptureStreamingModel.publishingClockObservation` | Historical session mapping bound to recording, match, broadcast generation, publishing attempt and profile scope; closure marks detach | Worker-session identity, matched source intervals, remote delivery/loss and applied-profile transition boundaries |
-| `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
-| SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
-| `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
-| `WorkerObservation.decodedVideo`        | Five-second decoder/filter-ingress windows, strictly advancing PTS, duplicate/reordered counts and invalidity | Image-content uniqueness, viewer receipt, full report-transit age, correlation with capture and encoding |
-| SDK `SRTStream.transportClockSnapshot` and `PublishingSessionSnapshot.transportClock` | Actual exact source-to-90kHz mapping and native generation; the session retains accepted historical evidence and quarantines contradictions | App/worker scope correlation, matching source intervals, delivery/loss and applied profile boundaries |
-| Native test barcode/audio analysis      | Offline decoded identities and A/V alignment in the owned sink                                                | A production runtime observation channel                                                                 |
-| Archive export validation               | Fully decoded completed/recovered local segments                                                              | Live congestion; archive health is an independent signal                                                 |
+| Existing observation                                                                  | What it measures                                                                                                                            | Missing evidence                                                                                                  |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `PublishingSessionSnapshot.sentSamples`                                               | Successful publisher append returns, including audio and video                                                                              | Video encoding completion, unique frames, transport receipt, playback                                             |
+| `CaptureStreamingModel.videoObservation`                                              | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows           | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt                |
+| `CaptureStreamingModel.ingressObservation`                                            | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries                                             | In-flight/SDK buffering, production source-loss denominator and transport capacity                                |
+| `CaptureStreamingModel.publishingClockObservation`                                    | Historical session mapping bound to recording, match, broadcast generation, publishing attempt and profile scope; closure marks detach      | Worker-session identity, matched source intervals, remote delivery/loss and applied-profile transition boundaries |
+| `SRTPublisher.metrics()`                                                              | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                                              | Unique video delivery and usable video capacity; transmitted bytes include retransmissions                        |
+| SDK `SRTPerformanceData`                                                              | Socket counters, estimated bandwidth, sender occupancy and buffering                                                                        | A qualified capacity estimator and receiver/worker frame timing                                                   |
+| `WorkerObservation.frame/outTimeUs`                                                   | FFmpeg output progress within a worker attempt                                                                                              | Proof of unique source frames or destination receipt                                                              |
+| `WorkerObservation.decodedVideo`                                                      | Five-second decoder/filter-ingress windows, strictly advancing PTS, duplicate/reordered counts and invalidity                               | Image-content uniqueness, viewer receipt, full report-transit age, correlation with capture and encoding          |
+| SDK `SRTStream.transportClockSnapshot` and `PublishingSessionSnapshot.transportClock` | Actual exact source-to-90kHz mapping and native generation; the session retains accepted historical evidence and quarantines contradictions | App/worker scope correlation, matching source intervals, delivery/loss and applied profile boundaries             |
+| Native test barcode/audio analysis                                                    | Offline decoded identities and A/V alignment in the owned sink                                                                              | A production runtime observation channel                                                                          |
+| Archive export validation                                                             | Fully decoded completed/recovered local segments                                                                                            | Live congestion; archive health is an independent signal                                                          |
 
 ## Integration contract
 
@@ -70,9 +70,13 @@ now connects capture and actual encoder-completion measurements while retaining 
    below the projected native endpoints through the owned SRT relay path. The
    endpoint shifts and spans match; intermediate-frame shifts are not yet measured.
    Frame identity, cadence, A/V and scoped export checks pass, but direct clock
-   equality across that path is not established. Packet-level comparison must
-   locate the shift before runtime source matching; do not silently subtract it
-   or treat earlier direct/file calibration as relay qualification.
+   equality across that path is not established. The subsequent
+   [raw relay comparison](relay-clock-correspondence.md) locates a clock change
+   between native input and MediaMTX output: every retained VCL picture matches,
+   while its PTS shifts and the worker preserves that shifted input. The pinned
+   relay source rebases against its first accepted media callback, which may be
+   audio. Production needs that actual, publication-scoped mapping; do not subtract
+   a fixture constant or infer it from the first late-joined video frame.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof
@@ -134,7 +138,6 @@ All prior media gates pass. This does not establish physical camera performance,
 useful link capacity, viewer receipt or safe quality increases. The earlier export
 timeout and pixel-noise overload remain unresolved. See the linked plan for evidence
 and the [completed verified-bitrate primitive](superpowers/plans/2026-09-15-verified-live-bitrate.md).
-
 
 ## Exact native transport clock
 
