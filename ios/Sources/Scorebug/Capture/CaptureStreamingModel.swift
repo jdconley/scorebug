@@ -217,7 +217,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 guard let broadcast = state.snapshot?.broadcast, broadcast.desired == .running, broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
                 let client = try clientForSetup()
-                let access = try await client.publishAccess(recordingId: context.id, generation: broadcast.generation, credential: credential)
+                let access = try await client.publishAccess(recordingId: context.id, generation: broadcast.generation, publishingAttemptId: attempt, credential: credential)
                 try check(context, attempt)
                 // Measurement starts after the earlier control-plane requests, but
                 // includes encoder/transport startup. Revision 1 identifies the existing

@@ -8,6 +8,7 @@ public struct PublishAccess: Equatable, Sendable, CustomStringConvertible, Custo
     public let recordingId: String
     public let publishUrl: URL
     public let serverTime: String
+    public let publishingAttemptId: UUID?
 
     public var description: String { "PublishAccess(<redacted>)" }
     public var debugDescription: String { description }

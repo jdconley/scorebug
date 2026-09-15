@@ -12,6 +12,7 @@ import {
 } from './video-observation-qualification.mjs';
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
+import { qualifyPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
@@ -465,6 +466,7 @@ try {
       'No interrupted recording status',
     );
   let videoObservation,
+    publishingAttemptEvidence,
     publishingClockObservation,
     ingressObservation,
     workerReportAge,
@@ -510,6 +512,10 @@ try {
       snapshot: observationSnapshot,
       expectedScope: videoObservation.scope,
     });
+    publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
+      JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
+      videoObservation.scope,
+    );
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
       archive: media[0],
@@ -567,6 +573,7 @@ try {
         statuses: states,
         videoObservation,
         publishingClockObservation,
+        publishingAttemptEvidence,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

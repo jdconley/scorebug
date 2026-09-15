@@ -137,6 +137,61 @@ it('restricts worker connections and keeps connection secrets out of public snap
   expect(media).not.toContain('passphrase');
   expect(media).not.toContain('srt:');
 });
+
+it('issues optional attempt grants only to the selected capture and keeps proof private', async () => {
+  const f = await fixture();
+  const publishingAttemptId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const body = { recordingId: 'archive', generation: 1, publishingAttemptId };
+  for (const credential of [f.scorer, f.other])
+    expect(
+      (await f.request('/v1/matches/match/media/publish', credential.token, body)).status,
+    ).toBe(403);
+  expect(f.paths.size).toBe(0);
+  const response = await f.request('/v1/matches/match/media/publish', f.capture.token, body);
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result.publishingAttemptId).toBe(publishingAttemptId);
+  expect(new URL(result.publishUrl).searchParams.get('streamid')).toMatch(
+    new RegExp(`:sbp1=${publishingAttemptId}\\.[0-9a-f]{64}$`),
+  );
+  for (const endpoint of ['media', 'media/status']) {
+    const publicState = await (
+      await f.request(`/v1/matches/match/${endpoint}`, f.scorer.token)
+    ).text();
+    expect(publicState).not.toContain(publishingAttemptId);
+    expect(publicState).not.toContain('sbp1=');
+    expect(publicState).not.toContain('passphrase');
+  }
+  expect(
+    (
+      await f.request('/v1/matches/match/media/publish', f.capture.token, {
+        ...body,
+        generation: 2,
+      })
+    ).status,
+  ).toBe(409);
+});
+
+it.each([
+  '',
+  'not-uuid',
+  'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE',
+  'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n',
+  null,
+  4,
+])('rejects malformed route attempt %j before relay I/O', async (publishingAttemptId) => {
+  const f = await fixture();
+  expect(
+    (
+      await f.request('/v1/matches/match/media/publish', f.capture.token, {
+        recordingId: 'archive',
+        generation: 1,
+        publishingAttemptId,
+      })
+    ).status,
+  ).toBe(400);
+  expect(f.paths.size).toBe(0);
+});
 it('reconciles stopped broadcasts without stopping the recording association', async () => {
   const f = await fixture();
   await f.request('/v1/matches/match/media/publish', f.capture.token, {

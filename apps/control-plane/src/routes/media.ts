@@ -15,6 +15,7 @@ import type { MatchStore } from '../matches-store.js';
 import { MediaStoreError } from '../media-store.js';
 import { MediaStateError } from '../media-state.js';
 import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js';
+import { PUBLISHING_ATTEMPT_ID_PATTERN } from '../publishing-attempt.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -116,13 +117,28 @@ export function mediaRoutes(
   app.post(
     '/publish',
     scoped,
-    zValidator('json', z.object({ recordingId: id, generation: sequence.min(1) }).strict()),
+    zValidator(
+      'json',
+      z
+        .object({
+          recordingId: id,
+          generation: sequence.min(1),
+          publishingAttemptId: z
+            .string()
+            .length(36)
+            .regex(PUBLISHING_ATTEMPT_ID_PATTERN)
+            .optional(),
+        })
+        .strict(),
+    ),
     async (c) => {
       const credential = c.get('credential');
       if (credential.role !== 'capture') return c.json({ error: 'forbidden' }, 403);
       if (!relayLifecycle) return c.json({ error: 'relay_not_configured' }, 503);
+      const { publishingAttemptId, ...request } = c.req.valid('json');
       const result = await relayLifecycle.publish({
-        ...c.req.valid('json'),
+        ...request,
+        ...(publishingAttemptId !== undefined ? { publishingAttemptId } : {}),
         gameId: credential.gameId,
         deviceId: credential.deviceId,
       });

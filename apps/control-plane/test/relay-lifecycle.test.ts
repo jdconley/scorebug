@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { deriveIngestGrant, type IngestGrant, type SourceObservation } from '../src/ingest.js';
 import { RelayLifecycle, RelayLifecycleError, type RelayDesired } from '../src/relay-lifecycle.js';
+import { verifyPublishAttemptQuery } from '../src/publishing-attempt.js';
 
 const config = {
   installationSecret: 'installation-secret-not-production',
@@ -81,6 +82,66 @@ it('provisions only the selected capture and returns only its publish capability
     publishUrl: grantFor(running()).publishUrl,
   });
   expect([...f.paths]).toEqual([grantFor(running()).path]);
+});
+
+it('attests each publishing attempt without changing the path or worker capability', async () => {
+  const f = fixture();
+  const id = '11111111-2222-4333-8444-555555555555';
+  const next = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const first = await f.lifecycle.publish({ ...request, publishingAttemptId: id });
+  const repeated = await f.create().publish({ ...request, publishingAttemptId: id });
+  expect(first).toEqual(repeated);
+  expect(first.publishingAttemptId).toBe(id);
+  const second = await f.lifecycle.publish({ ...request, publishingAttemptId: next });
+  expect(second.publishUrl).not.toBe(first.publishUrl);
+  const grant = grantFor(running());
+  for (const result of [first, second]) {
+    const url = new URL(result.publishUrl);
+    const streamid = url.searchParams.get('streamid')!;
+    expect(streamid.startsWith(`publish:${grant.path}:`)).toBe(true);
+    expect(
+      verifyPublishAttemptQuery(config.installationSecret, grant.path, streamid.split(':')[2]),
+    ).toBe(result.publishingAttemptId);
+    expect(url.searchParams.get('passphrase')).toBe(grant.publishPassphrase);
+  }
+  expect([...f.paths]).toEqual([grant.path]);
+  expect((await f.lifecycle.worker('mac'))?.readUrl).toBe(grant.readUrl);
+  expect(f.calls.filter((call) => call.startsWith('remove:'))).toEqual([]);
+});
+
+it('rejects an invalid attempt before touching the relay, including direct callers', async () => {
+  const f = fixture();
+  await expect(
+    f.lifecycle.publish({ ...request, publishingAttemptId: 'bad' }),
+  ).rejects.toMatchObject({ code: 'invalid_ingest_identity' });
+  expect(f.calls).toEqual([]);
+});
+
+it('retains the requested attempt across asynchronous provisioning', async () => {
+  const f = fixture();
+  const entered = deferred(),
+    released = deferred();
+  const ensure = f.relay.ensure;
+  f.relay.ensure = async (grant) => {
+    entered.resolve();
+    await released.promise;
+    await ensure(grant);
+  };
+  const original = '11111111-2222-4333-8444-555555555555';
+  const mutable = { ...request, publishingAttemptId: original };
+  const pending = f.lifecycle.publish(mutable);
+  await entered.promise;
+  mutable.publishingAttemptId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  released.resolve();
+  const result = await pending;
+  expect(result.publishingAttemptId).toBe(original);
+  expect(
+    verifyPublishAttemptQuery(
+      config.installationSecret,
+      grantFor(running()).path,
+      new URL(result.publishUrl).searchParams.get('streamid')!.split(':')[2],
+    ),
+  ).toBe(original);
 });
 
 it.each([

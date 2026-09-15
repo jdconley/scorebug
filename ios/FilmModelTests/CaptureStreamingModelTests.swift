@@ -38,6 +38,63 @@ import XCTest
         XCTAssertEqual(operations, ["start", "stop"])
     }
 
+    func testEachStartBindsGrantAndPublisherURLToDiagnosticAttempt() async throws {
+        let server = CaptureTestServer()
+        var destinations: [URL] = []
+        let model = makeModel(server: server, publisherFactory: { url, _ in
+            destinations.append(url)
+            return CaptureTestPublisher()
+        })
+        await model.restore()
+        model.captureChanged(captureContext())
+        var attempts: [UUID] = []
+        for _ in 0..<2 {
+            await model.startStreaming()
+            XCTAssertEqual(model.localState, .publishing)
+            let attempt = try XCTUnwrap(model.videoObservation?.scope.publishingAttemptID)
+            attempts.append(attempt)
+            let requests = await server.publishAttempts
+            XCTAssertEqual(requests.last!, attempt.uuidString.lowercased())
+            let streamID = URLComponents(url: try XCTUnwrap(destinations.last), resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "streamid" }?.value
+            XCTAssertEqual(streamID, testPublishStreamID(attempt.uuidString.lowercased()))
+            await model.stopStreaming()
+            XCTAssertEqual(model.activeRecordingID, "recording-1")
+        }
+        XCTAssertNotEqual(attempts[0], attempts[1])
+        XCTAssertEqual(destinations.count, 2)
+    }
+
+    func testInvalidAttemptGrantNeverStartsPublisherAndLocalRecordingCompletes() async throws {
+        for failure in ["missing", "stale", "proof", "network"] {
+            let server = CaptureTestServer()
+            await server.setPublishFailure(failure)
+            let publisher = CaptureTestPublisher()
+            var factoryCalls = 0
+            let model = makeModel(server: server, publisherFactory: { _, _ in
+                factoryCalls += 1
+                return publisher
+            })
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let source = FilmTestSource()
+            let film = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { source }, sinkFactory: testArchiveSink)
+            film.onCaptureChanged = { model.captureChanged($0) }
+            await model.restore()
+            await film.start()
+            await model.startStreaming()
+            XCTAssertEqual(model.localState, .failed, failure)
+            XCTAssertEqual(factoryCalls, 0, failure)
+            let starts = await publisher.startCount
+            XCTAssertEqual(starts, 0, failure)
+            XCTAssertEqual(film.state, .recording, failure)
+            XCTAssertNotNil(model.activeRecordingID, failure)
+            await film.stop()
+            XCTAssertEqual(film.recordings.first?.status, .completed, failure)
+            await model.stopStreaming()
+        }
+    }
+
     func testStopDuringPublishAccessCannotStartLatePublisher() async throws {
         let server = CaptureTestServer()
         let gate = FilmTestGate()
@@ -1188,6 +1245,9 @@ actor CaptureTestServer {
     var offline = false
     var failMedia = false
     func setFailMedia(_ value: Bool) { failMedia = value }
+    var publishAttempts: [String?] = []
+    var publishFailure: String?
+    func setPublishFailure(_ value: String) { publishFailure = value }
     var publishGate: FilmTestGate?
     var statusGate: FilmTestGate?
     var statusFailure = false
@@ -1247,7 +1307,15 @@ actor CaptureTestServer {
         } else if path.hasSuffix("/publish") {
             if let publishGate { await publishGate.enter() }
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-            data = try JSONSerialization.data(withJSONObject: ["gameId": "game-1", "recordingId": body["recordingId"]!, "generation": broadcast.generation, "publishUrl": "srt://localhost:19000?streamid=test", "serverTime": time])
+            let requestedAttempt = body["publishingAttemptId"] as? String
+            publishAttempts.append(requestedAttempt)
+            if publishFailure == "network" { throw URLError(.timedOut) }
+            let attempt = publishFailure == "stale" ? UUID().uuidString.lowercased() : requestedAttempt
+            var response: [String: Any] = ["gameId": "game-1", "recordingId": body["recordingId"]!, "generation": broadcast.generation, "serverTime": time]
+            if let attempt, publishFailure != "missing" { response["publishingAttemptId"] = attempt }
+            let streamID = attempt.map(testPublishStreamID) ?? "test"
+            response["publishUrl"] = "srt://localhost:19000?streamid=\(streamID)" + (publishFailure == "proof" ? "invalid" : "")
+            data = try JSONSerialization.data(withJSONObject: response)
         } else if path.hasSuffix("/status") {
             let failure = statusFailure
             let response = statusOverride ?? WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time)
@@ -1283,4 +1351,8 @@ private func streamingVideo(_ frame: Int64) throws -> CapturedMediaSample {
         imageBuffer: buffer, formatDescription: try XCTUnwrap(format), sampleTiming: &timing,
         sampleBufferOut: &sample), noErr)
     return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .video)
+}
+
+private func testPublishStreamID(_ attempt: String) -> String {
+    "publish:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef:sbp1=\(attempt)." + String(repeating: "a", count: 64)
 }

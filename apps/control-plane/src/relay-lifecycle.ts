@@ -1,4 +1,5 @@
 import type { BroadcastSelection } from '@scorebug/protocol';
+import { publishAttemptQuery } from './publishing-attempt.js';
 import {
   deriveIngestGrant,
   ingestPathPrefix,
@@ -17,12 +18,14 @@ export type PublishRequest = {
   deviceId: string;
   recordingId: string;
   generation: number;
+  publishingAttemptId?: string;
 };
 export type PublishAssignment = {
   gameId: string;
   generation: number;
   recordingId: string;
   publishUrl: string;
+  publishingAttemptId?: string;
 };
 export type WorkerIngestAssignment = {
   gameId: string;
@@ -144,6 +147,7 @@ export class RelayLifecycle {
   }
 
   publish(request: PublishRequest): Promise<PublishAssignment> {
+    request = { ...request };
     return this.serialized(() => {
       const target = this.current();
       if (
@@ -157,6 +161,18 @@ export class RelayLifecycle {
         target.desired.selection.recordingId !== request.recordingId
       )
         throw new RelayLifecycleError('capture_not_selected');
+      let publishUrl = target.grant.publishUrl;
+      if (request.publishingAttemptId !== undefined) {
+        // Validate and sign before relay I/O; keep the generation's base grant intact.
+        const query = publishAttemptQuery(
+          this.config.installationSecret,
+          target.grant.path,
+          request.publishingAttemptId,
+        );
+        const url = new URL(publishUrl);
+        url.searchParams.set('streamid', `publish:${target.grant.path}:${query}`);
+        publishUrl = url.toString();
+      }
       return this.withTarget(target, async () => {
         await this.reconcileTarget(target);
         this.assertCurrent(target);
@@ -164,7 +180,10 @@ export class RelayLifecycle {
           gameId: target.desired.gameId,
           generation: target.desired.generation,
           recordingId: target.desired.selection.recordingId,
-          publishUrl: target.grant.publishUrl,
+          publishUrl,
+          ...(request.publishingAttemptId !== undefined
+            ? { publishingAttemptId: request.publishingAttemptId }
+            : {}),
         };
       });
     });

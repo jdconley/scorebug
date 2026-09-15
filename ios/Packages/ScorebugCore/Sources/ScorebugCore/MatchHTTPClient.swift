@@ -94,25 +94,38 @@ public struct MatchHTTPClient: MatchScoringClient {
     /// Request access only for the current recording and broadcast generation.
     /// The caller must still check its own lifecycle after this await: a matching
     /// response can arrive after the local recording has stopped.
-    public func publishAccess(recordingId: String, generation: Int, credential: MatchCredential) async throws -> PublishAccess {
-        struct Request: Encodable { let recordingId: String; let generation: Int }
+    public func publishAccess(recordingId: String, generation: Int, publishingAttemptId: UUID? = nil, credential: MatchCredential) async throws -> PublishAccess {
+        struct Request: Encodable { let recordingId: String; let generation: Int; let publishingAttemptId: String? }
         struct Response: Decodable {
             let gameId: String
             let generation: Int
             let recordingId: String
             let publishUrl: String
             let serverTime: String
+            let publishingAttemptId: String?
         }
+        let canonicalAttempt = publishingAttemptId?.uuidString.lowercased()
         let response: Response = try await send(path: [credential.gameId, "media", "publish"], method: "POST", token: credential.token,
-                                               body: JSONEncoder().encode(Request(recordingId: recordingId, generation: generation)))
+                                               body: JSONEncoder().encode(Request(recordingId: recordingId, generation: generation, publishingAttemptId: canonicalAttempt)))
         guard response.gameId == credential.gameId, response.recordingId == recordingId, response.generation == generation,
               let components = URLComponents(string: response.publishUrl), components.scheme == "srt",
               let host = components.host, !host.isEmpty,
               let port = components.port, (1...65535).contains(port),
               components.user == nil, components.password == nil, components.fragment == nil,
               let url = components.url else { throw MatchClientError.invalidResponse }
+        if let canonicalAttempt {
+            let streamIDs = components.queryItems?.filter { $0.name == "streamid" } ?? []
+            // The server authenticates the proof. Native only checks complete syntax
+            // and binds this capability to the exact local publishing attempt.
+            let pattern = "\\Apublish:scorebug-[0-9a-f]{16}-[0-9a-f]{32}:sbp1=\(canonicalAttempt)\\.[0-9a-f]{64}\\z"
+            guard response.publishingAttemptId == canonicalAttempt, streamIDs.count == 1,
+                  let streamID = streamIDs.first?.value,
+                  streamID.range(of: pattern, options: .regularExpression) != nil else {
+                throw MatchClientError.invalidResponse
+            }
+        }
         return PublishAccess(gameId: response.gameId, generation: response.generation, recordingId: response.recordingId,
-                             publishUrl: url, serverTime: response.serverTime)
+                             publishUrl: url, serverTime: response.serverTime, publishingAttemptId: publishingAttemptId)
     }
 
     /// Installation authorization controls publishing; a 409 is a normal domain outcome.

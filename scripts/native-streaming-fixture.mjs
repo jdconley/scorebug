@@ -11,6 +11,7 @@ import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
 import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
+import { recordPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
 export async function nativeStreamingFixture({ artifact, root, run, decodedWindowLimit = 64 }) {
@@ -21,6 +22,7 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
   let matchID;
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
+  const publications = new Map();
   async function stopStatus() {
     statusAbort?.abort();
     await statusTask;
@@ -173,6 +175,40 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
             assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
             const { status } = await result.json();
             recordDecodedVideoEvidence(decodedWindows, status, decodedWindowLimit);
+            if (status.generation > 0 && status.workerId) {
+              const mediaResponse = await fetch(`${baseURL}/v1/matches/${matchID}/media`, {
+                headers: { authorization: `Bearer ${created.credential.token}` },
+                signal: AbortSignal.any([statusAbort.signal, AbortSignal.timeout(1500)]),
+              });
+              assert.ok(mediaResponse.ok, 'Read publication scope');
+              const { snapshot } = await mediaResponse.json();
+              if (
+                snapshot.broadcast.desired === 'running' &&
+                snapshot.broadcast.generation === status.generation &&
+                snapshot.broadcast.selection
+              ) {
+                const connections = await fetch(
+                  `http://127.0.0.1:${relayPort}/v3/srtconns/list?itemsPerPage=100&page=0`,
+                  {
+                    headers: {
+                      authorization: `Basic ${Buffer.from('qa-admin:qa-admin-not-production').toString('base64')}`,
+                    },
+                    signal: AbortSignal.any([statusAbort.signal, AbortSignal.timeout(1500)]),
+                  },
+                );
+                assert.ok(connections.ok, 'Read private publication evidence');
+                recordPublishingAttemptEvidence(
+                  publications,
+                  await connections.json(),
+                  {
+                    gameId: matchID,
+                    generation: snapshot.broadcast.generation,
+                    selection: snapshot.broadcast.selection,
+                  },
+                  scoringTestToken,
+                );
+              }
+            }
             await delay(500, undefined, { signal: statusAbort.signal });
           }
         })().catch((error) => {
@@ -219,6 +255,10 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
       },
       async collect() {
         await stopStatus();
+        await writeFile(
+          join(artifact, 'publishing-attempt-status.json'),
+          JSON.stringify([...publications.values()], null, 2),
+        );
         if (statusError) throw statusError;
         const evidence = [...decodedWindows.values()];
         await writeFile(
