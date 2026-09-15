@@ -449,3 +449,101 @@ it('reports only the current pipeline decoder snapshot and isolates observer fai
   expect(r.supervisor.observation()).toBeNull();
   await r.supervisor.close();
 });
+
+const productionReadUrl =
+  'srt://reader:secret@relay:8890?latency=200000&streamid=read:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef&passphrase=private';
+const canonicalUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+it('binds each actual pipeline read to its snapshot, keeps it across scores, and retires it on exit', async () => {
+  const r = rig();
+  const original = input({ readUrl: productionReadUrl });
+  r.set(original);
+  expect(r.supervisor.observation()).toBeNull();
+  await r.supervisor.tick();
+  const firstId = r.supervisor.observation()?.pipelineReadId;
+  expect(firstId).toMatch(canonicalUUID);
+  const started = new URL(r.start.mock.calls[0]![0].readUrl);
+  expect(started.searchParams.get('streamid')).toBe(
+    `${new URL(productionReadUrl).searchParams.get('streamid')}:sbw1=${firstId}`,
+  );
+  expect(started.username).toBe('reader');
+  expect(started.password).toBe('secret');
+  expect(started.searchParams.get('latency')).toBe('200000');
+  expect(started.searchParams.get('passphrase')).toBe('private');
+  expect(original.readUrl).toBe(productionReadUrl);
+  r.set(input({ readUrl: productionReadUrl, scoreRevision: 2, overlay: 'TWO' }));
+  await r.supervisor.tick();
+  await r.supervisor.tick();
+  expect(r.start).toHaveBeenCalledTimes(1);
+  expect(r.supervisor.observation()?.pipelineReadId).toBe(firstId);
+  r.children[0]!.progress({ frame: 1, outTimeUs: 1 });
+  expect(r.supervisor.observation()?.pipelineReadId).toBe(firstId);
+  r.children[0]!.exit();
+  await flush();
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+  await vi.advanceTimersByTimeAsync(1000);
+  await r.supervisor.tick();
+  const secondId = r.supervisor.observation()?.pipelineReadId;
+  expect(secondId).toMatch(canonicalUUID);
+  expect(secondId).not.toBe(firstId);
+  expect(new URL(r.start.mock.calls[1]![0].readUrl).searchParams.get('streamid')).toContain(
+    `:sbw1=${secondId}`,
+  );
+  const closing = r.supervisor.close();
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+  r.children[1]!.exit();
+  await closing;
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+});
+
+it('hides the private read identity during control failure and restores it after recovery', async () => {
+  const r = rig();
+  r.set(input({ readUrl: productionReadUrl }));
+  await r.supervisor.tick();
+  const pipelineReadId = r.supervisor.observation()?.pipelineReadId;
+  expect(pipelineReadId).toMatch(canonicalUUID);
+  r.load.mockRejectedValueOnce(new Error('unavailable'));
+  await r.supervisor.tick();
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+  await r.supervisor.tick();
+  expect(r.supervisor.observation()?.pipelineReadId).toBe(pipelineReadId);
+  expect(r.start).toHaveBeenCalledTimes(1);
+});
+
+it('does not publish a failed start identity and recovers with a new start identity', async () => {
+  const r = rig();
+  r.set(input({ readUrl: productionReadUrl }));
+  r.start.mockImplementationOnce(() => {
+    throw new Error('spawn failed');
+  });
+  await r.supervisor.tick();
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+  const failedRead = new URL(r.start.mock.calls[0]![0].readUrl).searchParams.get('streamid');
+  expect(failedRead).toContain(':sbw1=');
+  await vi.advanceTimersByTimeAsync(1000);
+  await r.supervisor.tick();
+  expect(r.supervisor.observation()?.pipelineReadId).toMatch(canonicalUUID);
+  expect(new URL(r.start.mock.calls[1]![0].readUrl).searchParams.get('streamid')).not.toBe(
+    failedRead,
+  );
+});
+
+it.each([
+  'not a URL',
+  'rtsp://relay/game',
+  productionReadUrl.replace('srt:', 'https:'),
+  productionReadUrl.replace('streamid=', 'wrong='),
+  `${productionReadUrl}&streamid=read:other`,
+  `${productionReadUrl}&%73treamid=read:other`,
+  productionReadUrl.replace('read:scorebug-', 'publish:scorebug-'),
+  productionReadUrl.replace('scorebug-0123456789abcdef-', 'scorebug-0123456789abcde-'),
+  productionReadUrl.replace('scorebug-0123456789abcdef-', 'scorebug-0123456789abcdeF-'),
+  productionReadUrl.replace('&passphrase=', ':sbw1=existing&passphrase='),
+  productionReadUrl.replace('&passphrase=', '%0A&passphrase='),
+  productionReadUrl.replace('&passphrase=', '0&passphrase='),
+])('starts unsupported reads unchanged without publishing identity: %s', async (readUrl) => {
+  const r = rig();
+  r.set(input({ readUrl }));
+  await r.supervisor.tick();
+  expect(r.start.mock.calls[0]![0].readUrl).toBe(readUrl);
+  expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
+});

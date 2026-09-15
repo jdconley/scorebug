@@ -12,6 +12,7 @@ import {
 } from './video-observation-qualification.mjs';
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
+import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
 import { qualifyPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
@@ -29,6 +30,12 @@ import { measureVideoPayloadRate, qualifyStructuredMotionPayload } from './video
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
+const publicationFlag = process.env.SCOREBUG_TEST_RELAY_PUBLICATION;
+assert.ok(
+  publicationFlag === undefined || (publicationFlag === '1' && streaming),
+  'Publication qualification requires streaming and exact opt-in 1',
+);
+const requirePublication = publicationFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
@@ -46,6 +53,7 @@ await writeFile(
       runtime,
       deviceType,
       streaming,
+      requirePublication,
       streamingOptions,
       fixtureWorkload,
       streamingBudget,
@@ -325,6 +333,7 @@ try {
   await run('pnpm', ['--filter', '@scorebug/protocol', 'build'], 'protocol');
   if (streaming)
     proxy = await nativeStreamingFixture({
+      requirePublication,
       artifact,
       root,
       run,
@@ -467,6 +476,7 @@ try {
     );
   let videoObservation,
     publishingAttemptEvidence,
+    workerPublicationEvidence,
     publishingClockObservation,
     ingressObservation,
     workerReportAge,
@@ -516,6 +526,11 @@ try {
       JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
       videoObservation.scope,
     );
+    if (requirePublication)
+      workerPublicationEvidence = qualifyWorkerPublicationEvidence(
+        JSON.parse(await readFile(join(artifact, 'worker-publication-status.json'), 'utf8')),
+        videoObservation.scope,
+      );
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
       archive: media[0],
@@ -574,6 +589,7 @@ try {
         videoObservation,
         publishingClockObservation,
         publishingAttemptEvidence,
+        workerPublicationEvidence,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

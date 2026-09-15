@@ -249,35 +249,34 @@ files and license, with exact apply/reverse and patched-byte checks.
 
 Both Linux targets build and return `v1.21.0-scorebug-clock-v2`:
 
-| Target | Local image | Image ID |
-| ------ | ----------- | -------- |
-| ARM64 | `scorebug/ingest:clock-v2` | `sha256:f72a43ddbb1db4c027fb935b210b45485cc052a08e7f8e9c04f745d059c7a490` |
-| AMD64 | `scorebug/ingest:clock-v2-amd64` | `sha256:19eedbabbaf58885372e3b2d6e31fe99e1aa2d4794fc37291d8253ffb8423950` |
+| Target | Local image                      | Image ID                                                                  |
+| ------ | -------------------------------- | ------------------------------------------------------------------------- |
+| ARM64  | `scorebug/ingest:clock-v2`       | `sha256:f72a43ddbb1db4c027fb935b210b45485cc052a08e7f8e9c04f745d059c7a490` |
+| AMD64  | `scorebug/ingest:clock-v2-amd64` | `sha256:19eedbabbaf58885372e3b2d6e31fe99e1aa2d4794fc37291d8253ffb8423950` |
 
 ARM64 media is qualified in Docker Desktop's Linux VM. The AMD64 version probe is
 emulated and does not qualify physical AMD64, NVIDIA or cloud hardware. Source and
 evidence hashes are retained in `artifacts/qa/relay-reader-final-verification.json`.
 Regular deployment configurations still select the stock relay.
 
-### Remaining production association
+### Production association and remaining quality work
 
-The observed origin and actual reader-source primitives now exist. Native publishing
-attempts also carry a signed identifier scoped to their authorized ingest path; see
-[the native publishing contract](native-publishing-session.md). Production integration
-must combine these with a distinct authenticated worker pipeline read and the
-[public worker epoch](superpowers/plans/2026-09-15-public-worker-epoch.md). The fixture's
-reader nonce is only a test marker, not that production authentication contract.
+The production worker now tags each pipeline read and reports its private identity
+through the authenticated reporting session. The API follows the actual reader's
+source, verifies the publisher's signed native attempt and observed origin, and
+rechecks the worker epoch/generation/attempt after asynchronous I/O. Native status
+has additive, validated publication metadata. See the
+[worker publication contract](worker-publication-association.md) for trust boundaries,
+reconnect behavior, malformed/stale suppression and the actual simulator qualification.
+The full native run observes origin 10919 and associates eight decoder windows with
+one real reader/publisher/native attempt. The earlier raw origin-9000 fixtures remain
+finite evidence for their own sources, not constants used by production.
 
-A worker connection must be matched to its actual selected publisher, that
-publisher's valid signed native attempt and observed clock origin. A later current-path
-lookup cannot substitute for the reader's source association. Asynchronous lookups
-must recheck worker session, attempt and broadcast identity before exposing results;
-missing, ambiguous, replaced or stale evidence must remain unknown. Public status
-continues to exclude private reporting session IDs, timing tokens and SRT credentials.
-
-Keep relay media timing unchanged. Neither a measured constant such as 9000/10919
-nor a reader's first decoded frame can replace observed ingress origin. After the
-production association is integrated, matched source intervals and available-capacity
-evidence still need qualification before automatic quality can be enabled. Physical
-camera/radio behavior, arbitrary timestamp discontinuities and external GPU systems
-remain separate qualification work.
+Relay media timing remains unchanged. Next, qualify matched source intervals and
+available video capacity (after audio/mux/retransmission costs), including profile
+transitions, thermal/worker pressure and impairment traces before enabling automatic
+quality. The earlier simulator startup tap that produced no API command remains an
+explicit reliability investigation. Physical camera/radio behavior, arbitrary
+reconnect histories, phone/watch deployment and external GPU systems remain separate
+qualification work. Regular relay deployment defaults have not yet switched to the
+patched build.

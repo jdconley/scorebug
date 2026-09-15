@@ -11,7 +11,7 @@ import { MatchStore } from './matches-store.js';
 import { matchesRoutes } from './routes/matches.js';
 import { workerRoutes } from './routes/media.js';
 import { IngestRelay } from './ingest.js';
-import { RelayLifecycle } from './relay-lifecycle.js';
+import { RelayLifecycle, type RelayAdapter } from './relay-lifecycle.js';
 
 export type AppDeps = {
   config: Config;
@@ -20,7 +20,7 @@ export type AppDeps = {
   bus: HomeBus;
   log: Logger;
   matches: MatchStore;
-  relay: Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> | undefined;
+  relay: RelayAdapter | undefined;
   relayLifecycle: RelayLifecycle | undefined;
 };
 

@@ -46,10 +46,10 @@ export type WorkerPipelineObservation = WorkerObservation & { pipelineReadId?: s
 // WorkerSessionResponse.pipelineReadIdentity?: string
 // WorkerObservationRequest.pipelineReadId?: string
 export type WorkerPublication = {
-  readerId: string;
-  publisherId: string;
-  publishingAttemptId: string;
-  clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
+    readerId: string;
+    publisherId: string;
+    publishingAttemptId: string;
+    clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
 };
 // WorkerMediaStatus.publication?: WorkerPublication
 ```
@@ -87,53 +87,80 @@ clock coordinates only, not current source delivery, loss rate or capacity.
 Files: `apps/home-daemon/src/{pipeline-read-identity,supervisor,worker-reporter}.ts`
 and focused tests. Parent owns `packages/protocol/src/worker-status.ts`.
 
-- [ ] Write behavioral failing tests for exact tagged URLs, unsupported URL fallback,
+- [x] Write behavioral failing tests for exact tagged URLs, unsupported URL fallback,
       one fresh ID per start/retry, unchanged control URLs/score updates, ID absence
       before start/after stop/failed start, and active scope copies.
-- [ ] Implement `identifyPipelineRead(readUrl)` returning `{readUrl, pipelineReadId?}`.
+- [x] Implement `identifyPipelineRead(readUrl)` returning `{readUrl, pipelineReadId?}`.
       Generate UUID only for the exact base production stream ID and one streamid
       parameter. Keep `Running.input` untagged; store the ID separately. Pass tagged
       copy to start and return `WorkerPipelineObservation` from observation().
-- [ ] Add reporter tests and capability negotiation. Destructure pipelineReadId from
+- [x] Add reporter tests and capability negotiation. Destructure pipelineReadId from
       the supplied observation; include it at request top level only for the exact
       advertised convention. Neither public observation nor unrelated session token
       may stand in for it. Maintain supplier timing/clone/deadline behavior.
-- [ ] Run focused/full worker tests and typecheck; provide actual red/green evidence.
+- [x] Run focused/full worker tests and typecheck; provide actual red/green evidence.
 
 ## Task 2: API observation and relay association (parent)
 
 Files: protocol worker-status, control-plane worker-observations, ingest,
 relay-lifecycle, routes/media, app, new worker-publication helper and focused tests.
 
-- [ ] Define additive optional protocol fields. Add fail-first report validation,
+- [x] Define additive optional protocol fields. Add fail-first report validation,
       same-attempt identity, omitted identity, new-attempt reuse and private/public
       separation tests; implement private report state and scope extraction.
-- [ ] Add fail-first real HTTP adapter tests for exact reader/publisher linkage,
+- [x] Add fail-first real HTTP adapter tests for exact reader/publisher linkage,
       missing/ambiguous/changed source, malformed UUID/origin, pagination and response
       byte bound, redirects/errors. Implement bounded read-only relay lookup.
-- [ ] Add lifecycle tests for authentic native query, wrong path/secret, changed
+- [x] Add lifecycle tests for authentic native query, wrong path/secret, changed
       assignment during lookup, missing optional adapter and no provisioning writes.
       Implement sanitized lookup with before/after target checks.
-- [ ] Add HTTP status tests with delayed lookup: new session/attempt/assignment,
+- [x] Add HTTP status tests with delayed lookup: new session/attempt/assignment,
       stopped pipeline and stale TTL lose mapping; same pipeline/new report may
       retain it. Ordinary status survives unavailable metadata. Worker routes reject
       client-supplied publication metadata. Assert private queries/tokens absent.
-- [ ] Run complete API/worker tests and typechecks. Review specification, then quality.
+- [x] Run complete API/worker tests and typechecks. Review specification, then quality.
 
 ## Task 3: Native and actual media qualification
 
 Files: native WorkerStatus model/tests/fixture and existing native fixture scripts.
 
-- [ ] Add optional native publication model and shared valid/malformed fixtures.
+- [x] Add optional native publication model and shared valid/malformed fixtures.
       Verify legacy status still decodes and no malformed mapping becomes qualified.
-- [ ] Extend the owned native app fixture to select clock-v2 explicitly and require
+- [x] Extend the owned native app fixture to select clock-v2 explicitly and require
       production status publication: native attempt matches the real publisher's
       valid sbp1 query, reader source matches that publisher and observed origin,
       workerEpoch and attempt stay scoped. No fixture-generated replacement mapping.
-- [ ] Run the existing full iPhone14/iOS17.5 workflow with local clean archive,
+- [x] Run the existing full iPhone14/iOS17.5 workflow with local clean archive,
       native scoring overlay, real production worker, exact frame/audio/cleanup gates.
       Record older relay unknown behavior in focused/API tests; retain existing
       worker/API restart and replacement identity regressions.
-- [ ] Build/test native models, update qualification docs and evidence hashes, commit.
+- [x] Build/test native models, update qualification docs and evidence hashes, commit.
       Keep adaptive quality disabled pending matched intervals/capacity/impairments;
       physical phone/watch and home/cloud GPU qualification remain distinct work.
+
+## Evidence and limitations
+
+Source reviews approve after two fail-first corrections: malformed unrelated relay
+inventory entries now invalidate the snapshot, and native publication validation
+checks complete bounded worker/match/generation/attempt scope. The omitted-first-report
+case in a later pipeline attempt also rejects reuse of an earlier private read ID.
+
+- API: 355 tests; worker: 220 tests; tooling: 611 tests; native Core: 254 tests.
+- Four valid shared native fixture rows pass authenticated HTTP route comparisons.
+- Native focused publication validation: ten tests; watchOS 10 arm64_32 Core build
+  and combined unsigned iPhone/Watch Release build pass.
+- Full simulator run: `artifacts/qa/native-app-B3S2kF`, eight actual associated decoder
+  windows, observed relay origin 10919, archive1876/live1465 frames with zero loss in
+  captured intervals. All previous media/score/archive/cleanup gates pass.
+- Earlier `native-app-4Ved1t` failed at UI startup before any broadcast command reached
+  the API. No gate was weakened; the intermittent input observation remains an open
+  reliability investigation. Both runs' owned resources are independently absent.
+- Real software worker recovery: worker SIGKILL, API restart/outage, source loss and
+  match-end stop all pass; source recovery 7402 ms. Preserved output:
+  `artifacts/qa/worker-publication-software-recovery`.
+- Runtime details and limitations: `docs/worker-publication-association.md`.
+- Source/evidence hashes: `artifacts/qa/worker-publication-final-verification.json`.
+
+Automatic quality remains disabled. Next work must qualify matched source intervals,
+available capacity, transitions and impairments, alongside the startup reliability
+investigation and separate physical phone/watch and external-system qualification.

@@ -78,17 +78,35 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var expiresAt: String?
     /// Conservative server-relative age of the completed decoded-video window.
     public var decodedVideoAgeUpperBoundMs: Double?
+    /// Untrusted optional wire metadata. Use validatedPublication before consuming it.
+    public var publication: WorkerPublication?
 
     public init(gameId: String, generation: Int, workerId: String?, state: WorkerMediaState,
                 observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil,
-                workerEpoch: String? = nil) {
+                workerEpoch: String? = nil, publication: WorkerPublication? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId; self.state = state
         self.observation = observation; self.observedAt = observedAt; self.expiresAt = expiresAt
         self.decodedVideoAgeUpperBoundMs = decodedVideoAgeUpperBoundMs
         self.workerEpoch = workerEpoch
+        self.publication = publication
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs, publication }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gameId = try container.decode(String.self, forKey: .gameId)
+        generation = try container.decode(Int.self, forKey: .generation)
+        workerId = try container.decodeIfPresent(String.self, forKey: .workerId)
+        workerEpoch = try container.decodeIfPresent(String.self, forKey: .workerEpoch)
+        state = try container.decode(WorkerMediaState.self, forKey: .state)
+        observation = try container.decodeIfPresent(WorkerObservation.self, forKey: .observation)
+        observedAt = try container.decodeIfPresent(String.self, forKey: .observedAt)
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
+        decodedVideoAgeUpperBoundMs = try container.decodeIfPresent(Double.self, forKey: .decodedVideoAgeUpperBoundMs)
+        // Additive metadata must never invalidate an otherwise usable status.
+        publication = try? container.decodeIfPresent(WorkerPublication.self, forKey: .publication)
+    }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(gameId, forKey: .gameId)
@@ -100,6 +118,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         try container.encode(observedAt, forKey: .observedAt)
         try container.encode(expiresAt, forKey: .expiresAt)
         try container.encodeIfPresent(decodedVideoAgeUpperBoundMs, forKey: .decodedVideoAgeUpperBoundMs)
+        try container.encodeIfPresent(publication, forKey: .publication)
     }
 }
 

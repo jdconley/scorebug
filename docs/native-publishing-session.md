@@ -119,10 +119,11 @@ grant responses cannot start an obsolete publisher or stop the independent recor
 
 This is an identity attestation, not fresh receipt evidence or one-use authorization.
 A holder can reuse its valid URL, so the actual SRT publisher UUID still identifies
-each relay connection. The next integration must bind a worker's actual reader to
-that publication and to its reporting epoch. A lookup of the current path publisher
-does not prove the source of a previously opened worker reader. Automatic quality
-adaptation remains disabled until these associations and interval measurements exist.
+each relay connection. The [worker publication association](worker-publication-association.md)
+now binds the actual reader, reporting epoch and observed origin to this signed
+native attempt. A lookup of the current path publisher does not prove the source of
+a previously opened worker reader. Automatic quality adaptation remains disabled
+pending matched interval and available-capacity qualification.
 
 Qualification on 2026-09-15 (`artifacts/qa/native-app-PO8n7D`) uses the real API,
 stock MediaMTX 1.21.0, native SRT publisher and Mac worker on the iPhone 14/iOS 17.5

@@ -11,10 +11,17 @@ import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
 import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
+import { recordWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
 import { recordPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
-export async function nativeStreamingFixture({ artifact, root, run, decodedWindowLimit = 64 }) {
+export async function nativeStreamingFixture({
+  artifact,
+  root,
+  run,
+  decodedWindowLimit = 64,
+  requirePublication = false,
+}) {
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   const names = [];
   let worker, done, workerEvidence, directRecorder;
@@ -23,6 +30,7 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
   const publications = new Map();
+  const workerPublications = new Map();
   async function stopStatus() {
     statusAbort?.abort();
     await statusTask;
@@ -73,6 +81,20 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
     if (errors.length) throw new AggregateError(errors, 'Owned proxy cleanup failed');
   }
   try {
+    let ingestImage = 'bluenviron/mediamtx:1.21.0';
+    if (requirePublication) {
+      const tag = 'scorebug/ingest:clock-v2';
+      ingestImage = await run(
+        'docker',
+        ['image', 'inspect', tag, '--format', '{{.Id}}'],
+        'publication-relay-image',
+      );
+      assert.match(ingestImage, /^sha256:[0-9a-f]{64}$/);
+      await writeFile(
+        join(artifact, 'publication-relay-image.json'),
+        JSON.stringify({ tag, id: ingestImage }, null, 2),
+      );
+    }
     const ingestPort = await port(true),
       relayPort = await port();
     const sinkPort = await port(),
@@ -98,7 +120,7 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
           `127.0.0.1:${media}:${kind === 'ingest' ? '8890/udp' : '1935'}`,
           '-v',
           `${config}:/mediamtx.yml:ro`,
-          'bluenviron/mediamtx:1.21.0',
+          kind === 'ingest' ? ingestImage : 'bluenviron/mediamtx:1.21.0',
         ],
         `start-${kind}`,
       );
@@ -197,9 +219,10 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
                   },
                 );
                 assert.ok(connections.ok, 'Read private publication evidence');
+                const listing = await connections.json();
                 recordPublishingAttemptEvidence(
                   publications,
-                  await connections.json(),
+                  listing,
                   {
                     gameId: matchID,
                     generation: snapshot.broadcast.generation,
@@ -207,6 +230,18 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
                   },
                   scoringTestToken,
                 );
+                if (requirePublication)
+                  recordWorkerPublicationEvidence(
+                    workerPublications,
+                    status,
+                    listing,
+                    {
+                      gameId: matchID,
+                      generation: snapshot.broadcast.generation,
+                      selection: snapshot.broadcast.selection,
+                    },
+                    scoringTestToken,
+                  );
               }
             }
             await delay(500, undefined, { signal: statusAbort.signal });
@@ -259,6 +294,11 @@ export async function nativeStreamingFixture({ artifact, root, run, decodedWindo
           join(artifact, 'publishing-attempt-status.json'),
           JSON.stringify([...publications.values()], null, 2),
         );
+        if (requirePublication)
+          await writeFile(
+            join(artifact, 'worker-publication-status.json'),
+            JSON.stringify([...workerPublications.values()], null, 2),
+          );
         if (statusError) throw statusError;
         const evidence = [...decodedWindows.values()];
         await writeFile(

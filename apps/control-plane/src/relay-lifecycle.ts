@@ -1,5 +1,5 @@
-import type { BroadcastSelection } from '@scorebug/protocol';
-import { publishAttemptQuery } from './publishing-attempt.js';
+import type { BroadcastSelection, WorkerPublication } from '@scorebug/protocol';
+import { publishAttemptQuery, verifyPublishAttemptQuery } from './publishing-attempt.js';
 import {
   deriveIngestGrant,
   ingestPathPrefix,
@@ -33,6 +33,8 @@ export type WorkerIngestAssignment = {
   readUrl: string;
   source: SourceObservation;
 };
+export type RelayAdapter = Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> &
+  Partial<Pick<IngestRelay, 'publication'>>;
 type Target = { desired: RelayDesired; grant: IngestGrant };
 type RelayConfig = { installationSecret: string; host: string; port: number };
 
@@ -50,7 +52,7 @@ export class RelayLifecycle {
   private readonly config: RelayConfig;
 
   constructor(
-    private readonly relay: Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'>,
+    private readonly relay: RelayAdapter,
     config: RelayConfig,
     private readonly desired: () => RelayDesired | null,
   ) {
@@ -187,6 +189,40 @@ export class RelayLifecycle {
         };
       });
     });
+  }
+
+  /** Diagnostic reads never queue behind provisioning or mutate the relay. */
+  async publication(scope: {
+    workerId: string;
+    gameId: string;
+    generation: number;
+    pipelineReadId: string;
+  }): Promise<WorkerPublication | undefined> {
+    scope = { ...scope };
+    const target = this.current();
+    if (
+      !target ||
+      target.desired.gameId !== scope.gameId ||
+      target.desired.generation !== scope.generation ||
+      target.desired.selection.workerId !== scope.workerId ||
+      !this.relay.publication
+    )
+      return undefined;
+    const found = await this.relay.publication(target.grant.path, scope.pipelineReadId);
+    this.assertCurrent(target);
+    if (!found) return undefined;
+    const publishingAttemptId = verifyPublishAttemptQuery(
+      this.config.installationSecret,
+      target.grant.path,
+      found.publisherQuery,
+    );
+    if (!publishingAttemptId) return undefined;
+    return {
+      readerId: found.readerId,
+      publisherId: found.publisherId,
+      publishingAttemptId,
+      clock: { ...found.clock },
+    };
   }
 
   worker(workerId: string): Promise<WorkerIngestAssignment | null> {

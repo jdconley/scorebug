@@ -9,6 +9,7 @@ import {
   type MatchCredential,
 } from '@scorebug/protocol';
 import { WorkerObservations, WorkerObservationError } from '../worker-observations.js';
+import { publicationStatus } from '../worker-publication.js';
 import { bearer } from '../auth.js';
 import type { Config } from '../config.js';
 import type { MatchStore } from '../matches-store.js';
@@ -97,7 +98,9 @@ export function mediaRoutes(
     c.set('credential', credential);
     await next();
   });
-  app.get('/status', scoped, (c) => c.json(observations.status(c.get('credential').gameId)));
+  app.get('/status', scoped, async (c) =>
+    c.json(await publicationStatus(c.get('credential').gameId, observations, relayLifecycle)),
+  );
   app.get('/', scoped, (c) =>
     c.json({
       snapshot: matches.media.get(c.get('credential').gameId),
@@ -204,6 +207,7 @@ export function workerRoutes(
           workerId: id,
           sessionId: id,
           timingToken: id.optional(),
+          pipelineReadId: z.string().length(36).regex(PUBLISHING_ATTEMPT_ID_PATTERN).optional(),
           sequence,
           observation: z
             .object({
@@ -229,11 +233,12 @@ export function workerRoutes(
     (c) => {
       const body = c.req.valid('json');
       const { decodedVideo, ...observation } = body.observation;
-      const { timingToken, ...request } = body;
+      const { timingToken, pipelineReadId, ...request } = body;
       return c.json(
         observations.report({
           ...request,
           ...(timingToken !== undefined ? { timingToken } : {}),
+          ...(pipelineReadId !== undefined ? { pipelineReadId } : {}),
           observation: { ...observation, ...(decodedVideo ? { decodedVideo } : {}) },
         }),
       );

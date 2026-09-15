@@ -20,6 +20,24 @@ export type IngestGrant = {
   publishUrl: string;
   readUrl: string;
 };
+export type RelayPublication = {
+  readerId: string;
+  publisherId: string;
+  publisherQuery: string;
+  clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
+};
+const uuid = z
+  .string()
+  .length(36)
+  .regex(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+const relayClock = z.object({
+  convention: z.literal('mpegts-ingress-origin-90k-v1'),
+  originPTS: z
+    .string()
+    .max(10)
+    .regex(/^(?:0|[1-9][0-9]*)$/)
+    .refine((value) => String(Number(value)) === value && Number(value) < 2 ** 33),
+});
 export type SourceObservation = { ready: boolean; inboundBytes: number; tracks: string[] };
 
 /** Deterministic capabilities survive API restart, but change with every broadcast generation. */
@@ -174,6 +192,7 @@ export class IngestRelay {
     method: string,
     path: string,
     body?: unknown,
+    maxResponseBytes?: number,
   ): Promise<{ status: number; body: unknown }> {
     try {
       const response = await fetch(new URL(path, this.base), {
@@ -188,11 +207,99 @@ export class IngestRelay {
         await response.body?.cancel();
         return { status: response.status, body: null };
       }
+      if (maxResponseBytes !== undefined) {
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('relay_invalid_response');
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            size += next.value.byteLength;
+            if (size > maxResponseBytes) throw new Error('relay_invalid_response');
+            chunks.push(next.value);
+          }
+          return {
+            status: response.status,
+            body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+          };
+        } finally {
+          await reader.cancel();
+        }
+      }
       return { status: response.status, body: await response.json() };
     } catch {
       throw new Error('relay_unavailable');
     }
   }
+  /** One complete bounded snapshot; never infer a reader's source from a path lookup. */
+  async publication(path: string, pipelineReadId: string): Promise<RelayPublication | undefined> {
+    if (path.length !== 58 || !pathPattern.test(path) || !uuid.safeParse(pipelineReadId).success)
+      throw new Error('invalid_relay_path');
+    const response = await this.request(
+      'GET',
+      'v3/srtconns/list?itemsPerPage=100&page=0',
+      undefined,
+      256 * 1024,
+    );
+    if (response.status !== 200) throw new Error(`relay_http_${response.status}`);
+    const page = z
+      .object({
+        pageCount: z.number().int().min(0).max(1),
+        itemCount: z.number().int().min(0).max(100),
+        items: z.array(z.unknown()).max(100),
+      })
+      .safeParse(response.body);
+    if (!page.success || page.data.itemCount !== page.data.items.length)
+      throw new Error('relay_invalid_response');
+    const inventory = z
+      .array(
+        z
+          .object({
+            id: uuid,
+            state: z.enum(['idle', 'read', 'publish']),
+            path: z.string().max(128),
+            query: z.string().max(4096),
+          })
+          .passthrough(),
+      )
+      .safeParse(page.data.items);
+    if (!inventory.success) throw new Error('relay_invalid_response');
+    const objects = inventory.data;
+    const readers = objects.filter((item) => item.query === `sbw1=${pipelineReadId}`);
+    if (readers.length !== 1) return undefined;
+    const reader = z
+      .object({
+        id: uuid,
+        state: z.literal('read'),
+        path: z.literal(path),
+        scorebugReaderSource: z.object({ type: z.literal('srtConn'), id: uuid }),
+      })
+      .safeParse(readers[0]);
+    if (!reader.success || reader.data.id === reader.data.scorebugReaderSource.id) return undefined;
+    // Duplicate IDs anywhere in the snapshot cannot identify one connection.
+    if (objects.filter((item) => item.id === reader.data.id).length !== 1) return undefined;
+    const publishers = objects.filter((item) => item.id === reader.data.scorebugReaderSource.id);
+    if (publishers.length !== 1) return undefined;
+    const publisher = z
+      .object({
+        id: uuid,
+        state: z.literal('publish'),
+        path: z.literal(path),
+        query: z.string().length(106),
+        scorebugTransportClock: relayClock,
+      })
+      .safeParse(publishers[0]);
+    if (!publisher.success) return undefined;
+    return {
+      readerId: reader.data.id,
+      publisherId: publisher.data.id,
+      publisherQuery: publisher.data.query,
+      clock: { ...publisher.data.scorebugTransportClock },
+    };
+  }
+
   async ensure(grant: IngestGrant): Promise<void> {
     const path = this.path(grant.path);
     if (

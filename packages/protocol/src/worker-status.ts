@@ -74,10 +74,20 @@ export type WorkerObservation = {
   /** Omitted by legacy workers; absence is unknown, never healthy. */
   decodedVideo?: DecodedVideoSnapshot;
 };
+/** Private worker-to-API correlation, not a new authorization capability. */
+export const WORKER_PIPELINE_READ_IDENTITY = 'srt-read-query-v1';
+export type WorkerPipelineObservation = WorkerObservation & { pipelineReadId?: string };
+export type WorkerPublication = {
+  readerId: string;
+  publisherId: string;
+  publishingAttemptId: string;
+  clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
+};
 export type WorkerSessionRequest = { workerId: string; runId: string };
 export type WorkerSessionResponse = {
   /** Clock convention accepted by this API session. */
   decodedVideoClock?: string;
+  pipelineReadIdentity?: string;
   sessionId: string;
   serverTime: string;
   /** Opaque server monotonic timing provenance; echo with a later snapshot. */
@@ -88,6 +98,8 @@ export type WorkerObservationRequest = {
   sessionId: string;
   sequence: number;
   timingToken?: string;
+  /** Private pipeline correlation; never copied into public observations. */
+  pipelineReadId?: string;
   observation: WorkerObservation;
 };
 export type WorkerObservationResponse = {
@@ -102,6 +114,8 @@ export type WorkerMediaStatus = {
   /** Public server-owned reporting-session identity, separate from private tokens.
    * Absent for legacy or reportless status; alone does not prove freshness. */
   workerEpoch?: string;
+  /** Actual attached source and coordinates; not delivery or capacity evidence. */
+  publication?: WorkerPublication;
   state: 'not_requested' | 'unknown' | 'stale' | WorkerState;
   observation: WorkerObservation | null;
   /** Proven upper age including report transit and server residence, rounded up in ms.

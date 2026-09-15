@@ -1,6 +1,7 @@
 import type { PipelineHandle, PipelineProgress } from './pipeline.js';
 import { atomicWrite } from './score-file.js';
-import type { WorkerObservation } from '@scorebug/protocol';
+import type { WorkerPipelineObservation } from '@scorebug/protocol';
+import { identifyPipelineRead } from './pipeline-read-identity.js';
 
 export type WorkerInput = {
   gameId: string;
@@ -53,6 +54,7 @@ export type WorkerSupervisorOptions = {
 type Running = {
   handle: PipelineHandle;
   input: WorkerInput;
+  pipelineReadId?: string;
   exit: Promise<void>;
   stopping: boolean;
   lastOutput: number;
@@ -119,13 +121,13 @@ export class WorkerSupervisor {
     return this.closing;
   }
 
-  /** A copied public observation; it contains no media URL or credential. */
-  observation(): WorkerObservation | null {
+  /** A copied observation with optional private read identity, never a media URL or credential. */
+  observation(): WorkerPipelineObservation | null {
     const state = this.lastState;
     if (state.state === 'idle' || state.gameId === undefined || state.generation === undefined)
       return null;
     const active = this.active;
-    let decodedVideo: WorkerObservation['decodedVideo'];
+    let decodedVideo: WorkerPipelineObservation['decodedVideo'];
     try {
       const snapshot = active?.handle.snapshotDecodedVideo?.();
       if (snapshot) decodedVideo = structuredClone(snapshot);
@@ -142,6 +144,14 @@ export class WorkerSupervisor {
       outTimeUs: active?.progress?.outTimeUs ?? null,
       scoreRevision: active?.input.scoreRevision ?? null,
       ...(decodedVideo ? { decodedVideo } : {}),
+      ...(active &&
+      !active.stopping &&
+      active.input.gameId === state.gameId &&
+      active.input.generation === state.generation &&
+      (state.state === 'starting' || state.state === 'producing_output') &&
+      active.pipelineReadId
+        ? { pipelineReadId: active.pipelineReadId }
+        : {}),
     };
   }
 
@@ -341,8 +351,9 @@ export class WorkerSupervisor {
     let running: Running | undefined;
     let earlyProgress: PipelineProgress | undefined;
     this.attempt++;
+    const identified = identifyPipelineRead(input.readUrl);
     try {
-      handle = this.options.start(input, (progress) => {
+      handle = this.options.start({ ...input, readUrl: identified.readUrl }, (progress) => {
         if (running) this.acceptProgress(running, progress);
         else earlyProgress = progress;
       });
@@ -353,6 +364,7 @@ export class WorkerSupervisor {
     running = {
       handle,
       input: { ...input },
+      ...(identified.pipelineReadId ? { pipelineReadId: identified.pipelineReadId } : {}),
       exit: Promise.resolve(),
       stopping: false,
       lastOutput: this.now(),

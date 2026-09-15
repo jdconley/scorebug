@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
+  WORKER_PIPELINE_READ_IDENTITY,
   DECODED_VIDEO_TRANSPORT_CLOCK,
   type DecodedVideoSnapshot,
   type WorkerMediaStatusResponse,
@@ -10,6 +11,7 @@ import {
   type WorkerSessionRequest,
   type WorkerSessionResponse,
 } from '@scorebug/protocol';
+import { PUBLISHING_ATTEMPT_ID_PATTERN } from './publishing-attempt.js';
 import { canonical } from './canonical-json.js';
 import type { MediaStore } from './media-store.js';
 
@@ -25,7 +27,18 @@ export class WorkerObservationError extends Error {
   }
 }
 type Counters = Pick<WorkerObservation, 'frame' | 'outTimeUs' | 'scoreRevision'>;
+export type WorkerReadScope = {
+  workerId: string;
+  gameId: string;
+  generation: number;
+  workerEpoch: string;
+  attempt: number;
+  pipelineReadId: string;
+};
 type Report = {
+  // Preserve known identity across omission, but only current explicit reports resolve it.
+  pipelineReadId?: string;
+  activeReadId?: string;
   sequence: number;
   request: string;
   observation: WorkerObservation;
@@ -44,6 +57,7 @@ type Session = {
   runId: string;
   sessionId: string;
   workerEpoch: string;
+  readIds: Set<string>;
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
@@ -116,6 +130,7 @@ export class WorkerObservations {
       return {
         sessionId: worker.current.sessionId,
         decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
+        pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
         ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
@@ -123,6 +138,7 @@ export class WorkerObservations {
       runId,
       sessionId: randomUUID(),
       workerEpoch: randomUUID(),
+      readIds: new Set(),
       ...(sampled !== undefined
         ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
         : {}),
@@ -137,6 +153,7 @@ export class WorkerObservations {
     return {
       sessionId: current.sessionId,
       decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
+      pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
     };
@@ -170,6 +187,25 @@ export class WorkerObservations {
     }
     if (previous && observation.attempt < previous.observation.attempt)
       throw new WorkerObservationError('observation_conflict');
+    const pipelineReadId = body.pipelineReadId;
+    if (
+      pipelineReadId !== undefined &&
+      (typeof pipelineReadId !== 'string' ||
+        pipelineReadId.length !== 36 ||
+        !PUBLISHING_ATTEMPT_ID_PATTERN.test(pipelineReadId))
+    )
+      throw new WorkerObservationError('observation_conflict');
+    const sameReadAttempt = previous?.observation.attempt === observation.attempt;
+    if (
+      pipelineReadId !== undefined &&
+      ((sameReadAttempt &&
+        previous.pipelineReadId !== undefined &&
+        previous.pipelineReadId !== pipelineReadId) ||
+        (worker.current.readIds.has(pipelineReadId) &&
+          (!sameReadAttempt || previous.pipelineReadId !== pipelineReadId)))
+    )
+      throw new WorkerObservationError('observation_conflict');
+    const knownReadId = pipelineReadId ?? (sameReadAttempt ? previous.pipelineReadId : undefined);
     const counters: Counters = {
       frame: observation.frame,
       outTimeUs: observation.outTimeUs,
@@ -273,7 +309,10 @@ export class WorkerObservations {
       }
     }
     const now = this.now();
+    if (pipelineReadId !== undefined) worker.current.readIds.add(pipelineReadId);
     worker.current.report = {
+      ...(knownReadId !== undefined ? { pipelineReadId: knownReadId } : {}),
+      ...(pipelineReadId !== undefined ? { activeReadId: pipelineReadId } : {}),
       sequence: body.sequence,
       request,
       observation: structuredClone(observation),
@@ -296,6 +335,37 @@ export class WorkerObservations {
       accepted: true,
       serverTime: new Date(now).toISOString(),
       ...this.timingResponse(session),
+    };
+  }
+
+  /** Internal correlation for a freshly obtained status; never part of public JSON. */
+  readScope(response: WorkerMediaStatusResponse): WorkerReadScope | undefined {
+    const status = response.status;
+    if (
+      !['starting', 'producing_output'].includes(status.state) ||
+      !status.workerId ||
+      !status.workerEpoch ||
+      !status.observation
+    )
+      return undefined;
+    const session = this.workers.get(status.workerId)?.current;
+    const report = session?.report;
+    if (
+      !session ||
+      !report?.activeReadId ||
+      session.workerEpoch !== status.workerEpoch ||
+      report.observation.gameId !== status.gameId ||
+      report.observation.generation !== status.generation ||
+      report.observation.attempt !== status.observation.attempt
+    )
+      return undefined;
+    return {
+      workerId: status.workerId,
+      gameId: status.gameId,
+      generation: status.generation,
+      workerEpoch: session.workerEpoch,
+      attempt: report.observation.attempt,
+      pipelineReadId: report.activeReadId,
     };
   }
 

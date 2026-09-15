@@ -549,3 +549,77 @@ it.each([null, 42, true, {}])(
     expect(f.requests).toHaveLength(1);
   },
 );
+
+const readIdentityConvention = 'srt-read-query-v1';
+const readId = 'abcdef01-2345-4678-9abc-0123456789ab';
+it.each([
+  [undefined, readId, undefined],
+  ['srt-read-query-v2', readId, undefined],
+  [readIdentityConvention, readId, readId],
+  [
+    readIdentityConvention,
+    'abcdef01-2345-0678-1abc-0123456789ab',
+    'abcdef01-2345-0678-1abc-0123456789ab',
+  ],
+  [readIdentityConvention, `${readId}\n`, undefined],
+  [readIdentityConvention, readId.toUpperCase(), undefined],
+  [readIdentityConvention, 'not-a-uuid', undefined],
+  [readIdentityConvention, ` ${readId}`, undefined],
+  [readIdentityConvention, undefined, undefined],
+])(
+  'negotiates private read identity %s / %s only at request top level',
+  async (advertised, supplied, expected) => {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? { sessionId: 'one', timingToken: 'marker-1', pipelineReadIdentity: advertised }
+        : { accepted: true, timingToken: 'marker-2', pipelineReadIdentity: 'ignored' },
+    }));
+    const mutable = { ...observation, pipelineReadId: supplied };
+    const original = structuredClone(mutable);
+    await f.reporter.report(() => mutable);
+    await f.reporter.report(() => mutable);
+    expect(mutable).toEqual(original);
+    for (const [index, request] of f.requests.slice(1).entries()) {
+      expect(request.body).toEqual({
+        workerId: 'mac',
+        sessionId: 'one',
+        timingToken: index === 0 ? 'marker-1' : 'marker-2',
+        sequence: index + 1,
+        observation,
+        ...(expected === undefined ? {} : { pipelineReadId: expected }),
+      });
+    }
+  },
+);
+
+it.each([
+  [readIdentityConvention, undefined],
+  [undefined, readIdentityConvention],
+])('renegotiates read identity after API recovery from %s to %s', async (first, second) => {
+  let registrations = 0;
+  let samples = 0;
+  const nextReadId = 'abcdef01-2345-4678-9abc-0123456789ac';
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: `session-${++registrations}`,
+            pipelineReadIdentity: registrations === 1 ? first : second,
+          },
+        }
+      : registrations === 1
+        ? { status: 409, body: { error: 'worker_session_unknown' } }
+        : { body: { accepted: true } },
+  );
+  await f.reporter.report(() => ({
+    ...observation,
+    pipelineReadId: ++samples === 1 ? readId : nextReadId,
+  }));
+  const posts = f.requests.filter((r) => r.path.endsWith('observations'));
+  expect(posts.map((r) => r.body.pipelineReadId)).toEqual([
+    first === readIdentityConvention ? readId : undefined,
+    second === readIdentityConvention ? nextReadId : undefined,
+  ]);
+  expect(posts.every((r) => !Object.hasOwn(r.body.observation, 'pipelineReadId'))).toBe(true);
+  expect(samples).toBe(2);
+});

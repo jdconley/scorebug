@@ -1,11 +1,17 @@
-import { DECODED_VIDEO_TRANSPORT_CLOCK, type WorkerObservation } from '@scorebug/protocol';
+import {
+  DECODED_VIDEO_TRANSPORT_CLOCK,
+  WORKER_PIPELINE_READ_IDENTITY,
+  type WorkerPipelineObservation,
+} from '@scorebug/protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+const canonicalUUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const session = z.object({
   sessionId: identifier,
   timingToken: identifier.optional(),
   decodedVideoClock: z.string().optional(),
+  pipelineReadIdentity: z.string().optional(),
 });
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
@@ -44,7 +50,7 @@ export class WorkerReporter {
       throw new Error('invalid_worker_report_configuration');
     this.base.pathname = this.base.pathname.replace(/\/$/, '') + '/';
   }
-  report(sample: () => WorkerObservation | null): Promise<void> {
+  report(sample: () => WorkerPipelineObservation | null): Promise<void> {
     if (!this.inFlight) {
       const deadline = performance.now() + this.timeout;
       const signal = AbortSignal.timeout(this.timeout);
@@ -97,7 +103,7 @@ export class WorkerReporter {
     );
   }
   private async publish(
-    sample: () => WorkerObservation | null,
+    sample: () => WorkerPipelineObservation | null,
     signal: AbortSignal,
     deadline: number,
   ): Promise<void> {
@@ -111,14 +117,15 @@ export class WorkerReporter {
       if (!this.session) await this.register(signal);
       checkDeadline();
       const registered = this.session!;
-      let observation: WorkerObservation | null;
+      let sampled: WorkerPipelineObservation | null;
       try {
-        observation = structuredClone(sample());
+        sampled = structuredClone(sample());
       } catch {
         throw new Error('worker_report_unavailable');
       }
       checkDeadline();
-      if (observation === null) return;
+      if (sampled === null) return;
+      const { pipelineReadId, ...observation } = sampled;
       if (
         observation.decodedVideo &&
         (registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
@@ -135,6 +142,12 @@ export class WorkerReporter {
             sessionId: registered.sessionId,
             timingToken: registered.timingToken,
             sequence,
+            ...(registered.pipelineReadIdentity === WORKER_PIPELINE_READ_IDENTITY &&
+            typeof pipelineReadId === 'string' &&
+            pipelineReadId.length === 36 &&
+            canonicalUUID.test(pipelineReadId)
+              ? { pipelineReadId }
+              : {}),
             observation,
           },
           accepted,
