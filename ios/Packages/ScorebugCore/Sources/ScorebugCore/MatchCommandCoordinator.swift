@@ -26,7 +26,7 @@ public struct MatchCoordinatorState: Equatable, Sendable {
 /// outbox file one active coordinator owner. Endpoint/account changes require a
 /// new coordinator and scope; an old pending record then blocks all network use.
 public actor MatchCommandCoordinator {
-    private let client: MatchHTTPClient
+    private let client: any MatchScoringClient
     private let credential: MatchCredential
     private let endpointScope: String
     private let store: any PendingCommandStore
@@ -39,7 +39,7 @@ public actor MatchCommandCoordinator {
     private var busy = false
     private var serverOffset: TimeInterval?
 
-    public init(client: MatchHTTPClient, credential: MatchCredential, endpointScope: String,
+    public init(client: any MatchScoringClient, credential: MatchCredential, endpointScope: String,
                 store: any PendingCommandStore, now: @escaping @Sendable () -> Date = { Date() }) {
         self.client = client
         self.credential = credential

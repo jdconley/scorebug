@@ -3,6 +3,33 @@
 Use systematic debugging and bounded subagent implementation with independent
 specification/quality review. Parent owns isolated native/media execution.
 
+## Ten-minute run: export deadline failure
+
+`native-app-dUHHoC` at `d85ac44`, with direct RTMP recording and a 600-second
+blocks16 hold, exits 1 after 761.157 seconds. The UI workflow fails its unchanged
+45-second export-ready assertion at test time 706.82 seconds. The recording UI
+shows Completed / 10:33 and remains on Preparing and checking video. No final
+qualification result was produced; this is not a ten-minute pass.
+
+Archive diagnostics report finished, 37,952 accepted/written samples and zero
+rejections/drops. Failure preservation copies 641 files / 952,493,479 bytes and is
+explicitly incomplete under its 1 GiB cap. Metadata inventory finds 318 consecutive
+bundles (initialization plus 317 media segments), matching all manifest entries and
+payload sizes. The two skipped files are assembled/export MP4 intermediates.
+Source payloads total 952,188,452 bytes; metadata agreement alone does not prove
+hashes, successful export, decoded frame continuity or A/V quality.
+
+Worker evidence is complete with 12 events and no omitted/invalid/oversized lines.
+The decoder reports 18,577 fresh frames and EOF. Encoder exit is 255 after SIGTERM;
+the direct recorder exits 0 without requested termination. Clean final delivery
+is therefore not qualified even though the recorder closed normally.
+
+Artifact-only replay preparation is in this run's `export-replay/` directory.
+Measure hash-checked recovery, assembly, remux and full decode in isolated macOS
+and iOS 17.5 processes before deciding whether the fixed UI allowance is adequate.
+The original exporter source matches the three-minute replay. No deadline or
+production exporter change has been made.
+
 ## Original evidence
 
 At `a2e8141`, the 180-second hold `native-app-qlQcKm` fails the unchanged

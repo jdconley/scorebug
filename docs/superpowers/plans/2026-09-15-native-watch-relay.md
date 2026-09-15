@@ -100,3 +100,27 @@ Initial Watch redemption currently requires direct HTTP. Add a separately bounde
 bootstrap redemption relay after configured scoring works; the recovery-key and
 capability rules must remain intact. Neither a configured-only relay nor model
 tests complete the user's all-available-networking requirement by themselves.
+
+## Scoring-client foundation implemented
+
+`MatchScoringClient` now supplies the three Sendable operations. The HTTP client
+conforms, and the coordinator accepts the interface without changing its command
+or recovery logic. Receipt absence must be authoritative; transport uncertainty
+throws and retains pending work. Setup and installation operations remain outside
+the interface.
+
+Three tests use a non-HTTP actor and real durable outbox to prove persistence before
+send, Watch identity/credential preservation, receipt-only recovery after a lost
+committed reply, and exact-command retry after confirmed absence plus a fresh
+snapshot. They pass after the expected missing-interface compile failure. All 122
+Core tests, 27 Watch model tests, and 9 phone companion model tests pass. The Release
+iPhone build also builds both arm64 and arm64_32 Watch targets successfully.
+Independent specification/quality review finds no issues. Evidence is under
+`artifacts/qa/watch-scoring-client-*.log`.
+
+The 85 Film model tests also pass, including recording/streaming lifecycle and
+fixture media regression coverage. All verification commands terminated with exit 0.
+
+This implements typed foundation step 1 only. The Watch model still uses HTTP;
+companion codec, persisted binding, request ownership, routing and bootstrap relay
+remain to be implemented and qualified.

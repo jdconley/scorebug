@@ -203,5 +203,7 @@ uninstrumented 180-second repeat `native-app-xiMqVd` at `33232fd` passes every g
 with exit0: 6,382 archive frames, 5,960 acquired live frames, 30fps, complete final
 delivery and all11 worker lifecycle events with no omissions. Frozen per-window
 payload bands pass. See the [complete evidence](2026-09-15-structured-motion-edges.md#complete-uninstrumented-180-second-pass).
-The 600-second run is next; the original overload and export-timeout failures remain
-recorded and are not reclassified by this pass.
+The 600-second run `native-app-dUHHoC` then fails the unchanged 45-second native
+export-ready wait. Its original verdict, preservation limits and planned same-source
+export diagnosis are recorded in the linked evidence. The original overload and
+export-timeout failures are not reclassified by the three-minute pass.

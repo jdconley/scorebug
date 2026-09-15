@@ -10,7 +10,7 @@ public enum MatchClientError: Error, Equatable, Sendable {
 
 /// Camera-independent client shared by iPhone and watch. Credentials are only sent
 /// in Authorization headers; HTTP errors retain the server's code, never its body.
-public struct MatchHTTPClient: Sendable {
+public struct MatchHTTPClient: MatchScoringClient {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     private struct Failure: Decodable { let error: String }
