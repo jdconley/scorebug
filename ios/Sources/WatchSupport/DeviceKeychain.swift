@@ -46,8 +46,8 @@ struct WatchSetupKeychain: WatchSetupStorage {
 
 #if os(iOS)
 struct PhoneWatchRequestKeychain: PhoneWatchRequestStorage {
-    private let keychain = DeviceKeychain<PhoneWatchRequest>(service: "live.scorebug.phone.watch-setup", account: "paired-watch")
-    func load() throws -> PhoneWatchRequest? { try keychain.load() }
-    func save(_ request: PhoneWatchRequest?) throws { try keychain.save(request) }
+    private let keychain = DeviceKeychain<PhoneWatchSetupRecord>(service: "live.scorebug.phone.watch-setup", account: "paired-watch")
+    func load() throws -> PhoneWatchSetupRecord? { try keychain.load() }
+    func save(_ record: PhoneWatchSetupRecord) throws { try keychain.save(record) }
 }
 #endif

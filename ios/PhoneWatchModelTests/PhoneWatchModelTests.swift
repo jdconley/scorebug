@@ -3,12 +3,16 @@ import ScorebugCore
 import XCTest
 
 private final class MemoryRequest: PhoneWatchRequestStorage {
-    var value: PhoneWatchRequest?
+    var record: PhoneWatchSetupRecord?
+    var value: PhoneWatchRequest? {
+        get { record?.pending }
+        set { record = PhoneWatchSetupRecord(pending: newValue, relayBinding: record?.relayBinding) }
+    }
     var writesLeft = Int.max
-    func load() throws -> PhoneWatchRequest? { value }
-    func save(_ value: PhoneWatchRequest?) throws {
+    func load() throws -> PhoneWatchSetupRecord? { record }
+    func save(_ value: PhoneWatchSetupRecord) throws {
         guard writesLeft > 0 else { throw CocoaError(.fileWriteUnknown) }
-        writesLeft -= 1; self.value = value
+        writesLeft -= 1; self.record = value
     }
 }
 private actor PhoneNetwork {
@@ -171,6 +175,31 @@ private actor PhoneNetwork {
         XCTAssertEqual(store.value, saved)
         XCTAssertEqual(model.pending, saved)
         XCTAssertTrue(model.message?.contains("could not be saved") == true)
+    }
+
+    func testFailedConfirmationDuringIssuanceBlocksLateOfferAndRetriesLocally() async throws {
+        let store = MemoryRequest(), network = try PhoneNetwork()
+        await network.configure(pause: true)
+        let model = model(store, network) { _ in XCTFail("Already confirmed by Watch") }
+        let connecting = Task { await model.connect(using: connection) }
+        await awaitIssue(network)
+        let original = try XCTUnwrap(store.value)
+        store.writesLeft = 0
+        model.receive(WatchCompanionNotice(deviceId: device, phase: .paired, gameId: original.gameId,
+            pairingId: original.request.pairingId))
+        XCTAssertEqual(store.value, original)
+        XCTAssertNil(model.relayBinding)
+        await network.release(); await connecting.value
+        XCTAssertEqual(store.value, original, "Late HTTP must not overwrite failed confirmation")
+        XCTAssertNil(model.relayBinding)
+        XCTAssertFalse(model.busy)
+        let beforeRetry = await network.all().count
+        store.writesLeft = 1
+        await model.retry()
+        XCTAssertNil(store.value)
+        XCTAssertEqual(model.relayBinding?.pairingId, original.request.pairingId)
+        let afterRetry = await network.all().count
+        XCTAssertEqual(afterRetry, beforeRetry, "Confirmation retry is an atomic local write")
     }
 
     func testSameGameNoticeDoesNotSuppressIssuanceOnSelectedServer() async throws {

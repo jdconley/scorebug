@@ -121,6 +121,67 @@ Independent specification/quality review finds no issues. Evidence is under
 The 85 Film model tests also pass, including recording/streaming lifecycle and
 fixture media regression coverage. All verification commands terminated with exit 0.
 
-This implements typed foundation step 1 only. The Watch model still uses HTTP;
-companion codec, persisted binding, request ownership, routing and bootstrap relay
-remain to be implemented and qualified.
+That checkpoint implements typed foundation step 1. Subsequent codec and binding
+work is tracked in the [codec contract](2026-09-15-native-watch-relay-codec.md) and
+[atomic binding design](2026-09-15-native-watch-relay-binding.md). The Watch model
+still uses HTTP until the companion client is wired into app-scoped request
+ownership. Routing, background lifecycle and bootstrap relay remain required.
+
+## Native networking integration references
+
+Configure and activate the existing single WCSession delegate before messages
+arrive. Immediate messages require a reachable counterpart, and delegate callbacks
+arrive on a background thread. Keep the bounded request owner at app scope rather
+than the setup tab. See [Apple's WCSession documentation](https://developer.apple.com/documentation/watchconnectivity/wcsession).
+
+Direct URLSession remains useful alongside the explicit companion relay: the OS
+can route Watch requests through its paired phone, known Wi-Fi or cellular. Each
+route still needs physical testing; simulator protocol checks cannot establish
+radio switching. See [Keeping watchOS content up to date](https://developer.apple.com/documentation/watchos-apps/keeping-your-watchos-app-s-content-up-to-date).
+
+## Next native integration checkpoints
+
+Continue with [bounded companion request ownership](2026-09-15-native-watch-relay-transport.md),
+then the [scoped phone forwarder](2026-09-15-native-watch-relay-forwarder.md).
+Keep the existing single WCSession delegate. Install message byte/admission bounds
+before crossing into MainActor; activate at application start and restore the
+phone binding before admitting relay requests, independent of active-scene setup UI.
+The Watch model needs a separate scoring-client factory accepting full paired
+setup and returning `any MatchScoringClient`; its bootstrap HTTP factory remains
+separate until the explicitly planned redemption relay is implemented.
+
+App wiring must invalidate local session/request generations on actual WC peer
+changes, while preserving unordered application-context handling. Test the linked
+client/transport/forwarder path under injected callbacks before simulator attempts.
+Physical delivery, background suspension and radio switching remain unverified.
+
+A Watch's outgoing paired notice does not acknowledge successful phone persistence.
+A first relay attempt can legitimately encounter a temporary scope mismatch while
+confirmation is being saved. Preserve command uncertainty and recover through the
+normal receipt path; do not infer rejection or create a replacement command ID.
+
+## Codec, client and phone association checkpoint
+
+The strict scoring codec and `WatchRelayScoringClient` are implemented. The client
+preserves immutable commands and Watch credentials, validates correlated replies,
+and leaves retries to the durable coordinator. Nine client tests include a real
+file outbox recovering a committed command after its relay reply is lost, plus
+cancellation before dispatch and after a late reply. Independent review approved
+the codec and client. All 144 Core tests passed (`watch-relay-core-full.log`).
+
+Phone setup now persists one atomic version-2 Keychain record, migrates existing
+pending setup, and installs a canonical nonsecret relay association only after a
+matching confirmation is saved. Unordered notices cannot revoke that association.
+Actual peer changes invalidate it and require fresh setup before reusing retained
+pending issuance; the persisted gate prevents a delayed confirmation from reviving
+an invalidated association. All 33 phone model tests passed after expected regression
+failures (`watch-relay-peer-gate-{red,green}.log`). Parent reviewed the final gate.
+
+All 27 Watch model tests also passed (`watch-relay-watch-models.log`). The Release
+iPhone build passed with arm64 and arm64_32 Watch code after correcting the codec's
+native integer bound (`watch-relay-phone-release.log`). That build preceded the
+final phone-only peer gate; the final gate is compiled and tested by the phone model
+suite. Repeat Release validation after the bounded transport is added.
+
+These are local protocol/model checks, not completed WatchConnectivity integration.
+The app still uses direct HTTP for Watch scoring until the next wiring checkpoint.
