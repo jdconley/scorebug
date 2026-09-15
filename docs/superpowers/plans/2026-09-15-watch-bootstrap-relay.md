@@ -40,8 +40,8 @@ activate that binding: the Watch may still fail its Keychain commit.
 3. Authorize phone forwarding only against its persisted pending issuance and saved
    offer, including exact capability and canonical full scope. Require the durable
    peer-change gate to permit the pending request. An existing confirmed scoring
-   binding is insufficient authority for a different bootstrap request. Failed
-   storage or a missing saved offer must prevent HTTP dispatch.
+   binding is insufficient authority for a different bootstrap request. Unavailable
+   or invalid persisted authority, including a missing saved offer, prevents HTTP dispatch.
 4. Use the existing HTTP redemption method with only the supplied capability and
    recovery key. Installation authority stays on the phone; no arbitrary request
    URL, header, path or method is accepted. Recovery keys and returned credentials
@@ -86,3 +86,54 @@ activate that binding: the Watch may still fail its Keychain commit.
 No server contract change is currently indicated. If implementation reveals a
 need to change recovery or capability semantics, reassess that change explicitly
 and retain the existing server regression evidence.
+
+## Phone authority lifecycle details
+
+Expose only the persisted pending offer's canonical scope and capability to the
+bootstrap forwarder, never the enclosing `PhoneWatchRequest` containing installation
+authority. Construct that view only after successful load/save and offer validation.
+A pending issuance without a saved offer cannot authorize redemption. Publish an
+invalidation when a reset, replacement, confirmation or actual peer change removes
+or changes this authority, before late HTTP work can report success.
+
+The confirmed scoring binding and pending bootstrap authority have different
+lifetimes: the user can have a working scorer while deciding whether to accept a
+new offer. Preserve that behavior. `requiresNewRequest` is the durable peer-change
+gate and must close bootstrap forwarding immediately, including if saving that gate
+fails. Do not infer bootstrap authority from an unordered Watch identity notice.
+
+Review failure cases against the actual durable value. If saving a new offer fails,
+the unsaved offer cannot be forwarded; the previously committed request remains
+unchanged. If saving confirmation fails, do not fabricate a confirmed scoring
+binding. Recovery through a still-valid previously saved offer must continue using
+its original capability and redemption identity. Neither elapsed local time nor an
+expired offer's display state proves the server never committed redemption.
+
+Independent design review approved these lifecycle rules after clarifying that
+unavailable/invalid persisted authority blocks dispatch, while a failed confirmation
+save can leave a previously committed offer valid for exact redemption recovery.
+
+## Redemption dependency foundation implemented
+
+`WatchSetupCoordinator` now accepts an optional Sendable `redemption` closure after
+the existing `clientFactory` argument. Its default builds the same HTTP call from
+that factory. Only transport dispatch moves: the coordinator still owns pending
+persistence, scoring-outbox exclusion, cancellation checks, response validation
+and paired-state commit.
+
+Six new tests reopen actual committed test files before dispatch and across
+coordinator recreation. They prove exact capability/request/key reuse after a
+committed lost reply or failed final save, pending-save failure before invocation,
+invalid returned authority, and cancellation plus busy ownership while a reply is
+awaited. Production storage remains device Keychain. The expected missing-argument
+compile red terminated with exit 1; focused green and full Core terminated with
+exit 0, with all 200 Core tests passing. Evidence is
+`artifacts/qa/watch-setup-redemption-{red,green,core}.log`.
+
+Independent review approved source compatibility, unchanged default HTTP behavior,
+durable ordering, cancellation, validation and the tests. This is the first
+dependency checkpoint only: the strict bootstrap codec, authorized pending-offer
+view, native dispatch and route selection are still required.
+
+The combined Release iPhone/Watch build after this dependency change also passes
+with terminal exit 0 (`watch-setup-redemption-native-release.log`).

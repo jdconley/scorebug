@@ -59,7 +59,7 @@ public struct WatchSetupState: Equatable, Sendable {
 public actor WatchSetupCoordinator {
     private let storage: any WatchSetupStorage
     private let scoringOutbox: any PendingCommandStore
-    private let clientFactory: @Sendable (ScoringEndpoint) -> MatchHTTPClient
+    private let redemption: @Sendable (PendingWatchPairing) async throws -> WatchPairingRedeemed
     private let newDeviceId: @Sendable () -> String
     private let newRedemptionId: @Sendable () -> String
     private let newRecoveryKey: @Sendable () -> String
@@ -70,6 +70,7 @@ public actor WatchSetupCoordinator {
 
     public init(storage: any WatchSetupStorage, scoringOutbox: any PendingCommandStore,
                 clientFactory: @escaping @Sendable (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
+                redemption: (@Sendable (PendingWatchPairing) async throws -> WatchPairingRedeemed)? = nil,
                 newDeviceId: @escaping @Sendable () -> String = { UUID().uuidString },
                 newRedemptionId: @escaping @Sendable () -> String = { UUID().uuidString },
                 newRecoveryKey: @escaping @Sendable () -> String = {
@@ -77,7 +78,14 @@ public actor WatchSetupCoordinator {
                         .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
                         .replacingOccurrences(of: "=", with: "")
                 }) {
-        self.storage = storage; self.scoringOutbox = scoringOutbox; self.clientFactory = clientFactory
+        self.storage = storage; self.scoringOutbox = scoringOutbox
+        // The dependency chooses transport only. This coordinator persists the
+        // exact pending attempt before invocation and validates before commit.
+        self.redemption = redemption ?? { pending in
+            try await clientFactory(ScoringEndpoint(pending.endpoint)).redeemWatchPairing(
+                gameId: pending.offer.gameId, pairingId: pending.offer.pairingId, pairingToken: pending.offer.pairingToken,
+                recoveryKey: pending.recoveryKey, request: pending.request)
+        }
         self.newDeviceId = newDeviceId; self.newRedemptionId = newRedemptionId; self.newRecoveryKey = newRecoveryKey
     }
 
@@ -144,9 +152,7 @@ public actor WatchSetupCoordinator {
     private func redeem(_ pending: PendingWatchPairing) async throws -> WatchSetupState {
         try requireEmptyScoringOutbox()
         try Task.checkCancellation()
-        let response = try await clientFactory(ScoringEndpoint(pending.endpoint)).redeemWatchPairing(
-            gameId: pending.offer.gameId, pairingId: pending.offer.pairingId, pairingToken: pending.offer.pairingToken,
-            recoveryKey: pending.recoveryKey, request: pending.request)
+        let response = try await redemption(pending)
         try Task.checkCancellation()
         guard response.pairingId == pending.offer.pairingId, response.redemptionId == pending.request.redemptionId,
               response.credential.gameId == pending.offer.gameId, response.credential.deviceId == pending.request.deviceId,
