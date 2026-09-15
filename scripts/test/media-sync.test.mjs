@@ -65,6 +65,75 @@ test('allows partial edge pulses and uses absolute media timestamps', () => {
   assert.ok(result.maxAbsOffset < 0.02);
 });
 
+function terminalPulseFixture({ activeSamples, quietSamples }) {
+  const input = fixture({ duration: 14 });
+  const start = 12 * input.sampleRate;
+  input.audioSamples = input.audioSamples.slice(0, start + activeSamples + quietSamples);
+  for (let i = 0; i < activeSamples; i++) {
+    input.audioSamples[start + i] = 0.5 * Math.sin((2 * Math.PI * 1120 * i) / input.sampleRate);
+  }
+  // Fix the threshold-crossing boundaries exactly, independently of sine phase.
+  input.audioSamples[start] = 0.5;
+  input.audioSamples[start + activeSamples - 1] = 0.5;
+  input.audioSamples.fill(0, start + activeSamples);
+  const frames = Math.floor((input.audioSamples.length / input.sampleRate) * 30);
+  input.codes = input.codes.slice(0, frames);
+  input.videoTimes = input.videoTimes.slice(0, frames);
+  return input;
+}
+
+for (const [label, quietSamples] of [
+  ['measured 20.479167 ms AAC padding', 983],
+  ['one sample below the 40 ms silence boundary', 1919],
+]) {
+  test(`omits only the cut terminal marker with ${label}`, () => {
+    const result = analyzeMediaSync(terminalPulseFixture({ activeSamples: 2175, quietSamples }));
+    assert.equal(result.pulseCount, 5);
+    assert.equal(result.pulses.at(-1).id, 5);
+    assert.doesNotThrow(() => assertMediaSync(result));
+  });
+}
+
+test('rejects a short final marker closed by exactly 40 ms silence', () => {
+  assert.throws(
+    () => analyzeMediaSync(terminalPulseFixture({ activeSamples: 2175, quietSamples: 1920 })),
+    /Invalid audio marker pulse duration/,
+  );
+});
+
+test('counts a complete 200 ms final marker with 30 ms quiet at EOF', () => {
+  const result = analyzeMediaSync(
+    terminalPulseFixture({ activeSamples: 9600, quietSamples: 1440 }),
+  );
+  assert.equal(result.pulseCount, 6);
+  assert.equal(result.pulses.at(-1).id, 6);
+  assert.doesNotThrow(() => assertMediaSync(result));
+});
+
+test('rejects a long final marker even while its trailing silence is incomplete', () => {
+  assert.throws(
+    () => analyzeMediaSync(terminalPulseFixture({ activeSamples: 14400, quietSamples: 1440 })),
+    /Invalid audio marker pulse duration/,
+  );
+});
+
+test('rejects a shortened interior marker', () => {
+  const input = fixture();
+  input.audioSamples.fill(0, 6 * input.sampleRate + 2175, 6.2 * input.sampleRate);
+  assert.throws(() => analyzeMediaSync(input), /Invalid audio marker pulse duration/);
+});
+
+test('a late unfinished blip cannot hide a missing fully covered final marker', () => {
+  const input = fixture({ drop: [5] });
+  const start = input.audioSamples.length - 2175 - 983;
+  for (let i = 0; i < 2175; i++) {
+    input.audioSamples[start + i] = 0.5 * Math.sin((2 * Math.PI * 1120 * i) / input.sampleRate);
+  }
+  input.audioSamples[start] = 0.5;
+  input.audioSamples[start + 2174] = 0.5;
+  assert.throws(() => analyzeMediaSync(input), /Missing fully covered audio marker 5/);
+});
+
 test('rejects missing interior audio marker instead of selecting surviving pulses', () => {
   assert.throws(() => analyzeMediaSync(fixture({ drop: [3] })), /missing|sequence/i);
 });

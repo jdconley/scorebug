@@ -187,3 +187,13 @@ Independent specification and quality reviews approve the qualifier. Logs:
 `structured-motion-demand-tools.log` (original failure),
 `structured-motion-readiness-reproduce.log`, `structured-motion-demand-focused.log`
 and `structured-motion-demand-tools-green.log`.
+
+## First 180-second run: not qualified
+
+At `a2e8141`, `native-app-qlQcKm` reaches recording completion but fails the native
+45-second export-ready wait. Its preserved temporary export passes independent
+frame, A/V and workload checks; the original workflow remains failed. The saved
+live file also exposes a detector edge case at its cut final audio marker.
+See the [export and terminal audio diagnosis](2026-09-15-structured-motion-edges.md)
+for exact evidence, isolated native exporter replays and next actions. Neither
+the three-minute nor the ten-minute blocks16 qualification is complete.

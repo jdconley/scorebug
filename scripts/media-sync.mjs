@@ -20,17 +20,21 @@ function detectPulses(samples, sampleRate, startTime) {
       if (start === null) start = i;
       lastActive = i;
     } else if (start !== null && i - lastActive >= quietSamples) {
-      segments.push({ start, end: lastActive + 1 });
+      segments.push({ start, end: lastActive + 1, openAtEnd: false });
       start = null;
     }
   }
-  if (start !== null) segments.push({ start, end: lastActive + 1 });
+  if (start !== null) segments.push({ start, end: lastActive + 1, openAtEnd: true });
 
   const pulses = [];
   for (const segment of segments) {
     // Capture edges may cut a pulse at an arbitrary phase; omit only those edges.
     if (segment.start < edgeSamples || segment.end > samples.length - edgeSamples) continue;
     const duration = (segment.end - segment.start) / sampleRate;
+    // EOF can cut a marker before AAC padding completes the 40 ms quiet interval.
+    // Leave only that short unfinished tail unqualified; fully covered marker
+    // checks below still reject missing expected content earlier in the capture.
+    if (segment.openAtEnd && duration < 0.15) continue;
     if (duration < 0.15 || duration > 0.25) throw new Error('Invalid audio marker pulse duration');
     const from = segment.start + Math.round(sampleRate * 0.03);
     const to = segment.end - Math.round(sampleRate * 0.03);

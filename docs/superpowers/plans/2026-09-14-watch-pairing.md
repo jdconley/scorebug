@@ -99,6 +99,9 @@ from reviving a discarded attempt. Canonical 32-byte recovery keys are validated
 both sides. See [qualification evidence](../../watch-pairing-foundation.md).
 
 Native phone issuance persistence, device Keychain adapters, companion envelopes,
-the watchOS target, and the user-facing Watch scoring flow remain the next slice.
-The shared coordinator's single-owner/quiescent-scoring precondition must be upheld
-by those native models; it is not a cross-process lock on app configuration.
+the watchOS target, and the user-facing Watch scoring flow are now implemented;
+see [native Watch status and qualification](../../native-watch-app.md). Standalone
+native scoring passes on the tested Watch sizes and runtime generations. Actual
+companion exchange, command fallback and physical routing remain unqualified.
+The shared coordinator's single-owner/quiescent-scoring precondition is upheld
+by the native models; it is not a cross-process lock on app configuration.

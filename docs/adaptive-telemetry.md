@@ -57,7 +57,10 @@ now connects capture and actual encoder-completion measurements while retaining 
 Tests should inject complete windows, stale/duplicate reports, counter resets,
 clock changes, reconnects, invalid values, and absent metrics. Then replay measured
 impairment traces and compare recommendations with fully decoded output. Until those
-checks pass, the app remains on its qualified fixed 1080p30 live profile.
+checks pass, the app retains its fixed 1080p30 live profile. Qualification is
+workload-specific: the low-complexity ten-minute fixture passes, while sustained
+structured motion and the pixel-noise overload failures remain under investigation
+in the [motion calibration plan](superpowers/plans/2026-09-14-structured-motion-calibration.md).
 
 ## Local observation accumulator
 
