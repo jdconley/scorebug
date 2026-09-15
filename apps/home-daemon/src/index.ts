@@ -5,6 +5,7 @@ import { scoreFilePath } from './score-file.js';
 import { WorkerClient } from './worker-client.js';
 import { WorkerSupervisor } from './supervisor.js';
 import { WorkerReporter } from './worker-reporter.js';
+import { createWorkerStateLogger } from './worker-state-log.js';
 import { createWorkerTerminalDiagnostics, flushWorkerDiagnostics } from './worker-terminal.js';
 
 const config = loadConfig();
@@ -20,7 +21,7 @@ const supervisor = new WorkerSupervisor({
   load: () => client.load(),
   scoreFile,
   outputId: config.OUTPUT_ID,
-  onState: (state) => log.info('worker_state', state),
+  onState: createWorkerStateLogger(log),
   start: (input, onProgress) => {
     const diagnostics = terminalDiagnostics.scope(input);
     return startPipeline(
