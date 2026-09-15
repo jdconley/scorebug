@@ -3,6 +3,19 @@
 Use systematic debugging and bounded subagent implementation with independent
 specification/quality review. Parent owns isolated native/media execution.
 
+## Latest ten-minute pass without temporary export tracing
+
+At `11247df`, `native-app-FhHkaM` passes the entire native runner with exit 0 after
+adding frozen live-ingress evidence and its strict qualifier. The 600-second hold,
+45-second export wait and media gates remain unchanged. Archive and acquired live
+contain 19,018 and 18,620 consecutive frames at 30 fps, zero source loss and no
+missing encoded tail. Ingress accounting and all existing A/V, workload, scoring,
+worker and terminal-delivery checks pass. The prior temporary export tracing is
+absent; the earlier failed timeout is not reclassified or explained by this pass.
+See the [full ingress qualification checkpoint](2026-09-15-live-ingress-pressure.md#complete-ten-minute-native-qualification)
+for measured counts, pressure, bitrate and timing limits. Physical camera, network
+impairment and the original pixel-noise overload remain unqualified.
+
 ## Complete instrumented ten-minute pass
 
 At `02afc61` plus an artifact-only tracing patch, `native-app-Roau2o` passes the

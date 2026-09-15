@@ -82,7 +82,7 @@ not authorize enabling the controller or claiming sustainable higher quality.
 A bounded read-only review of mailbox, publishing-session and app lifecycle ownership
 endorses this scope. It specifically requires separating shutdown discards, measuring
 inside actual mailbox mutations, and preserving occupied gaps rather than treating
-them as empty. No implementation or runtime qualification is claimed yet.
+them as empty. No implementation or runtime qualification was claimed at that design checkpoint.
 
 ## Implemented accumulator, mailbox and app checkpoint
 
@@ -127,11 +127,11 @@ Verification completes with actual exit 0:
   final behavior. The scalar review's boundary finding was reproduced and fixed.
 
 Logs are `artifacts/qa/live-ingress-{accumulator-*,consistency-*,boundary-*,mailbox-*,
-publishing-*,media-full,media-final,film-*,native-release}.log`. The native fixture does not yet
-export or qualify ingress data, so this checkpoint is not long-run media evidence
+publishing-*,media-full,media-final,film-*,native-release}.log`. At this checkpoint the native fixture did not
+export or qualify ingress data, so these model tests alone were not long-run media evidence
 for the new instrumentation and does not enable adaptive quality.
 
-## Remaining native qualification
+## Native qualification plan (completed below)
 
 Add the frozen ingress snapshot to the existing explicitly enabled simulator-only
 `video-observation.json` export, through its joined, attempt-guarded writer. Preserve
@@ -182,3 +182,52 @@ approves the exporter, joined writer, qualifier and runner integration. Logs are
 
 The unchanged 600-second native media workflow is the next acceptance step. No
 export timeout, media threshold, queue budget or encoder setting was relaxed.
+
+## Complete ten-minute native qualification
+
+At `11247df`, `artifacts/qa/native-app-FhHkaM` passes the complete runner with actual
+exit 0 (`ingress-native-600.log`). The iPhone 14/iOS 17.5 native UI test passes in
+693.532 seconds, using the local Mac VideoToolbox worker, blocks16 motion and direct
+RTMP recorder. Temporary export-stage tracing is absent. The 600-second hold,
+45-second export wait and every existing media/evidence gate remain unchanged.
+No competing builds, tests or media runs executed during qualification.
+
+- The clean archive has 19,018 consecutive frames 0–19017 at 30 fps and zero source
+  loss. All 38,036 admitted samples are written, with zero rejected/dropped. The
+  archive continues 181 frames after live ends. All 316 audio markers match;
+  maximum offset is 0.020833 ms and tail offset is +6.667 ms.
+- The live file has 18,620 consecutive frames 217–18836, 620.667 source seconds at
+  30 fps and zero source loss. Final encoded frame 18836 reaches the sink with no
+  encoded tail missing. The existing 60-frame acquisition exclusion (157–216)
+  remains explicit. All 310 audio markers match, maximum offset 65.917 ms and tail
+  +11.612 ms. The 1.106-second acquisition audio lead passes its existing allowance.
+- All complete workload windows pass: archive 126 windows, mean 12.018853 Mbps,
+  range 11.827096–12.129547; live 123 windows, mean 7.657586 Mbps, range
+  7.580354–7.734550. Requested live bitrate remains 6 Mbps; accepted workload
+  bounds do not establish hard rate control.
+- Native scoring changes 690 overlay pixels. Capture and encoder each observe
+  18,680 video frames. Both report-age proofs match independent API evidence.
+  All 10 worker events are retained without omissions or malformed lines. Recorder,
+  worker encoder and worker exits are zero, without forced termination.
+- Ingress exports 124 complete windows and one partial window over 622.671 seconds.
+  Scope, anchor, phase/window/total areas, source bounds and close ordering all
+  qualify. Audio and video each admit/dequeue 18,680 buffers; there are no overflow
+  evictions, cancellation discards or rejections. Closure leaves zero queue depth,
+  no invalidity, unknown time, rejected clocks, unassigned events or omitted history.
+- Queue budgets remain 8 items / 12 MiB. Peak queued occupancy is one 3,200-byte
+  buffer. Mean normalized maximum pressure is 0.009745% and the highest complete
+  five-second mean is 0.011295%. The combined observation artifact is 421,331 bytes.
+  Queue closure follows capture detach by about 12 microseconds and precedes
+  encoder-observer closure by 0.739 seconds.
+
+These are queued-buffer measurements, excluding in-flight samples, encoder/network
+buffers and receiver loss. This pass does not qualify physical camera performance,
+network impairment, higher profiles, or sustainable link capacity. It does not
+explain the earlier intermittent export timeout or resolve the original pixel-noise
+overload. Runtime adaptation remains disabled. Full evidence and the bounded
+`compact-summary.json` are retained in the run directory. Independent read-only review
+recomputed phase/window/total accounting and source bounds and approved the full
+evidence checkpoint without material findings.
+
+The next control primitive is the separately reviewed
+[verified live bitrate application plan](2026-09-15-verified-live-bitrate.md).

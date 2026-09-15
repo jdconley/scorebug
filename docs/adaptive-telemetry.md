@@ -10,7 +10,7 @@ now connects capture and actual encoder-completion measurements while retaining 
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
 | `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt |
-| `CaptureStreamingModel.ingressObservation` | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries | Native-run qualification, in-flight/SDK buffering, source-loss denominator and transport capacity |
+| `CaptureStreamingModel.ingressObservation` | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries | In-flight/SDK buffering, production source-loss denominator and transport capacity |
 | `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
 | `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
@@ -88,10 +88,15 @@ default archive mailbox performs no extra clock or metadata work.
 
 The native fixture now exports and strictly qualifies the frozen ingress evidence;
 all 89 Film model and 400 tooling tests and the combined Release build pass, with
-independent review. The long native run remains open. These tests do not establish
-sustained camera performance with instrumentation, useful link capacity,
-viewer receipt or safe quality increases. See the linked plan for exact evidence
-and the next uninstrumented ten-minute gate.
+independent review. The complete ten-minute native run now passes at `11247df` without temporary export
+tracing (`native-app-FhHkaM`): 19,018 archive and 18,620 acquired live frames at 30 fps,
+zero source loss and no missing encoded tail. All 124 complete ingress windows plus
+the terminal partial qualify; 18,680 audio and video buffers each admit/dequeue with
+no evictions/discards/rejections. Mean maximum pressure is 0.009745% of queue budget.
+All prior media gates pass. This does not establish physical camera performance,
+useful link capacity, viewer receipt or safe quality increases. The earlier export
+timeout and pixel-noise overload remain unresolved. See the linked plan for evidence
+and the [next verified-bitrate slice](superpowers/plans/2026-09-15-verified-live-bitrate.md).
 
 ## Local observation accumulator
 

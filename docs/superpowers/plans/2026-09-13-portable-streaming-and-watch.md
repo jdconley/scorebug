@@ -270,8 +270,12 @@ time-weighted mailbox occupancy and per-kind dispositions to each publishing att
 and the native app. The frozen snapshot now exports through the joined native
 fixture writer and is required by its strict qualifier. Full Media passes 162 tests;
 the export checkpoint passes 89 Film model and 400 tooling tests and the combined
-iPhone/Watch Release build, with independent review. Long-run qualification of these
-measurements remains next; they do not establish link capacity or enable adaptation.
+iPhone/Watch Release build, with independent review. The ten-minute native gate now
+passes at `11247df` without temporary export tracing: 19,018 archive and 18,620 acquired
+live frames at 30 fps, zero source loss, complete encoded tail, and fully conserved
+ingress accounting. These measurements do not establish link capacity or enable
+adaptation. The next primitive is
+[verified live bitrate application](2026-09-15-verified-live-bitrate.md).
 Source inspection also confirms that native bitrate application must be verified:
 the existing SDK setter discards the VideoToolbox property-write result.
 
