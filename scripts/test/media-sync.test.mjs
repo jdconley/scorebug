@@ -65,6 +65,117 @@ test('allows partial edge pulses and uses absolute media timestamps', () => {
   assert.ok(result.maxAbsOffset < 0.02);
 });
 
+function writePulse(input, start, length, frequency = 1000) {
+  for (let i = 0; i < length; i++) {
+    input.audioSamples[start + i] =
+      0.5 * Math.sin((2 * Math.PI * frequency * i) / input.sampleRate);
+  }
+  input.audioSamples[start] = 0.5;
+  input.audioSamples[start + length - 1] = 0.5;
+}
+
+function initialPulseFixture({ start = 1213, length = 2781, frequency = 1066 } = {}) {
+  const input = fixture({ duration: 14 });
+  input.audioSamples.fill(0, 0, 2 * input.sampleRate);
+  writePulse(input, start, length, frequency);
+  input.codes = input.codes.slice(33);
+  input.videoTimes = input.videoTimes.slice(33).map((time) => time - 0.016);
+  return input;
+}
+
+test('omits the measured short acquisition prefix without qualifying its frequency', () => {
+  const input = initialPulseFixture();
+  const result = analyzeMediaSync(input);
+  assert.equal(result.pulseCount, 6);
+  assert.equal(result.matchedPulseCount, 6);
+  assert.equal(result.expectedPulseCount, 6);
+  assert.deepEqual(
+    result.pulses.map((pulse) => pulse.id),
+    [1, 2, 3, 4, 5, 6],
+  );
+  assert.doesNotThrow(() => assertMediaSync(result));
+  const coverage = { ...input, audioSampleCount: input.audioSamples.length };
+  assert.throws(() => assertMediaCoverage(coverage), /coverage.*start.*100 ms/i);
+  assert.doesNotThrow(() => assertMediaCoverage({ ...coverage, maxAudioLeadSeconds: 2.1 }));
+});
+
+test('acquisition prefix exclusion uses absolute audio timestamps', () => {
+  const input = initialPulseFixture();
+  input.audioStartTime = 93.5;
+  input.videoTimes = input.videoTimes.map((time) => time + 93.5);
+  assert.equal(analyzeMediaSync(input).matchedPulseCount, 6);
+  // Moving only audio makes the same fragment occur inside video coverage.
+  input.audioStartTime += 2;
+  assert.throws(() => analyzeMediaSync(input), /Invalid audio marker pulse duration/);
+});
+
+for (const [label, endSample, accepted] of [
+  ['one sample before video begins', 52031, true],
+  ['exactly where video begins', 52032, false],
+  ['one sample after video begins', 52033, false],
+]) {
+  test(`short acquisition prefix ending ${label}`, () => {
+    const input = initialPulseFixture({ start: endSample - 2781 });
+    // Set the boundary directly to avoid subtracting rounded frame timestamps.
+    const adjustment = 52032 / input.sampleRate - input.videoTimes[0];
+    input.videoTimes = input.videoTimes.map((time) => time + adjustment);
+    if (accepted) assert.doesNotThrow(() => assertMediaSync(analyzeMediaSync(input)));
+    else assert.throws(() => analyzeMediaSync(input), /Invalid audio marker pulse duration/);
+  });
+}
+
+test('rejects a short first pulse wholly within video coverage', () => {
+  assert.throws(
+    () => analyzeMediaSync(initialPulseFixture({ start: 57600 })),
+    /Invalid audio marker pulse duration/,
+  );
+});
+
+test('rejects a second short prefix even if the first raw segment was edge-skipped', () => {
+  const input = initialPulseFixture({ start: 0, length: 1000 });
+  writePulse(input, 9600, 2781, 1066);
+  assert.throws(() => analyzeMediaSync(input), /Invalid audio marker pulse duration/);
+});
+
+for (const length of [7200, 9600]) {
+  test(`counts a ${length / 48} ms complete acquisition prefix`, () => {
+    const result = analyzeMediaSync(initialPulseFixture({ length, frequency: 1000 }));
+    assert.equal(result.pulseCount, 7);
+    assert.equal(result.matchedPulseCount, 6);
+    assert.doesNotThrow(() => assertMediaSync(result));
+  });
+}
+
+test('omits a first prefix one sample shorter than 150 ms', () => {
+  assert.equal(analyzeMediaSync(initialPulseFixture({ length: 7199 })).pulseCount, 6);
+});
+
+test('still rejects a long acquisition prefix', () => {
+  assert.throws(
+    () => analyzeMediaSync(initialPulseFixture({ length: 14400 })),
+    /Invalid audio marker pulse duration/,
+  );
+});
+
+test('still validates a complete acquisition prefix frequency', () => {
+  assert.throws(
+    () => analyzeMediaSync(initialPulseFixture({ length: 9600, frequency: 1009 })),
+    /Ambiguous audio marker frequency/,
+  );
+});
+
+test('an exempt acquisition prefix cannot hide the first fully covered missing marker', () => {
+  const input = initialPulseFixture();
+  input.audioSamples.fill(0, 2 * input.sampleRate, 2.2 * input.sampleRate);
+  assert.throws(() => analyzeMediaSync(input), /Missing fully covered audio marker 1/);
+});
+
+test('rejects nonfinite audio even inside an otherwise exempt acquisition prefix', () => {
+  const input = initialPulseFixture();
+  input.audioSamples[1300] = NaN;
+  assert.throws(() => analyzeMediaSync(input), /Audio samples must be finite/);
+});
+
 function terminalPulseFixture({ activeSamples, quietSamples }) {
   const input = fixture({ duration: 14 });
   const start = 12 * input.sampleRate;

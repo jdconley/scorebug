@@ -7,7 +7,7 @@ export function sourceAudioExpression() {
 const SOURCE_FPS = 30;
 const MARKER_FRAMES = 60;
 
-function detectPulses(samples, sampleRate, startTime) {
+function detectPulses(samples, sampleRate, startTime, firstVideoTime) {
   // A 40 ms quiet interval bridges the sine's zero crossings and AAC ringing.
   const quietSamples = Math.round(sampleRate * 0.04);
   const edgeSamples = Math.round(sampleRate * 0.02);
@@ -31,6 +31,14 @@ function detectPulses(samples, sampleRate, startTime) {
     // Capture edges may cut a pulse at an arbitrary phase; omit only those edges.
     if (segment.start < edgeSamples || segment.end > samples.length - edgeSamples) continue;
     const duration = (segment.end - segment.start) / sampleRate;
+    // Acquisition may leave one short first fragment before video starts. Its
+    // identity remains unqualified; never omit a later or overlapping segment.
+    if (
+      segment === segments[0] &&
+      duration < 0.15 &&
+      startTime + segment.end / sampleRate < firstVideoTime
+    )
+      continue;
     // EOF can cut a marker before AAC padding completes the 40 ms quiet interval.
     // Leave only that short unfinished tail unqualified; fully covered marker
     // checks below still reject missing expected content earlier in the capture.
@@ -106,7 +114,7 @@ export function analyzeMediaSync({
       throw new Error('Video presentation timestamp cadence does not match source frame identity');
     }
   }
-  const pulses = detectPulses(audioSamples, sampleRate, audioStartTime);
+  const pulses = detectPulses(audioSamples, sampleRate, audioStartTime, videoTimes[0]);
   if (pulses.length < 3) throw new Error('At least three complete audio markers required');
   function markerVideoTime(frame) {
     let low = 0;

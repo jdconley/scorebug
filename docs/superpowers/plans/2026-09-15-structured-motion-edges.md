@@ -22,13 +22,90 @@ hashes, successful export, decoded frame continuity or A/V quality.
 Worker evidence is complete with 12 events and no omitted/invalid/oversized lines.
 The decoder reports 18,577 fresh frames and EOF. Encoder exit is 255 after SIGTERM;
 the direct recorder exits 0 without requested termination. Clean final delivery
-is therefore not qualified even though the recorder closed normally.
+requires the saved-frame comparison below; the existing qualification allows
+exit 255 when the one scoped SIGTERM precedes matching terminal and exit events.
+The exit code alone is not another failure.
 
 Artifact-only replay preparation is in this run's `export-replay/` directory.
 Measure hash-checked recovery, assembly, remux and full decode in isolated macOS
 and iOS 17.5 processes before deciding whether the fixed UI allowance is adequate.
 The original exporter source matches the three-minute replay. No deadline or
 production exporter change has been made.
+
+### Same-source export and media diagnosis
+
+Source-hashed, artifact-only native export replays both succeed. macOS takes
+21.841 seconds: recovery 0.766 s, assembly 1.442 s, remux 8.145 s and validation
+11.151 s. An owned iPhone 14 / iOS 17.5 standalone simulator process takes
+42.656 seconds: recovery 0.484 s, assembly 0.988 s, remux 5.149 s and validation
+34.666 s. Both recover the preserved source hashes and fully decode 18,976 video
+frames plus 30,362,560 audio samples before publication. The simulator is shut
+down and deleted. Replay paths are `export-replay/mac-e81hicab` and
+`export-replay/sim-2f5ddwi2`; `replay-summary.json` preserves stage timings.
+
+The simulator replay is close to the 45-second UI allowance, suggesting inadequate
+headroom for longer exports. It does not reproduce or conclusively explain the
+full app's timeout. Full validation remains required. Measure in-app stage progress
+before changing the test allowance; do not classify the original run as passed.
+
+Independent archive checks pass: 18,976 consecutive frames 0–18975 at 30 fps,
+zero source loss, 316 matched complete audio markers with maximum offset
+0.020833 ms, and audio ending 20 ms after video. All 126 complete five-second
+payload windows pass the frozen 6–18 Mbps band; mean 12.018853 Mbps, minimum
+11.827096 and maximum 12.129547 Mbps. This archive is the native replay export
+from preserved original segments, not an original successfully published UI export.
+
+The initial artifact diagnostic runner reaches its generic helper's 4 MiB stdout
+limit while reading frame metadata. Its failure is retained. A separate diagnostic
+uses a bounded 64 MiB buffer and preserves the same frame, sync and payload checks;
+archive/live probe outputs are measured, with no production runner change.
+
+The live file fully decodes and has 18,577 consecutive video identities 218–18794.
+Its marker check fails on the raw first pulse: onset 25.270833 ms, duration
+57.9375 ms, exclusive end 83.208333 ms. This fragment is wholly before the first
+video PTS of 1.084 s. All 310 subsequent complete markers, IDs 4–313, are consecutive
+and match video with maximum offset 65.25 ms. Audio ends approximately 26.98 ms
+after video; decoded audio timestamp gaps remain below 0.159 ms. These diagnostic
+facts do not override the original marker failure.
+
+Existing observation and direct-delivery predicates pass against saved evidence:
+capture/encoded identities 158–18794 (18,637 each), exactly 60 acquired encoded
+frames before the saved live range, and no missing encoded tail. Worker decoder
+and output counts equal the 18,577 saved frames; the archive continues 181 frames
+after live detach. These additional predicates do not include independent API
+report-age checks or replace the failed media/workflow prerequisites. There is no
+evidence here requiring a worker shutdown change.
+
+The proposed detector correction leaves only the raw first segment unqualified
+when it is shorter than 150 ms and ends strictly before validated video coverage.
+Do not infer its identity/frequency. Keep all-sample finiteness checks, the current
+20 ms edge rule, complete/long prefix validation, all subsequent pulse checks,
+sequence checks and projected fully covered-marker requirements. Boundary tests
+must reject a short segment ending at/inside video, a second short segment, missing
+covered markers and nonfinite prefix samples. No production media is modified.
+
+The correction is implemented and independently reviewed without findings. Focused
+TDD reports five expected failures among 67 tests, then all 67 pass. Full tooling
+passes 383 tests. All commands terminate normally; evidence is
+`artifacts/qa/initial-audio-prefix-{red,green,tools}.log`.
+
+`recheck-preserved-media.mjs` applies the corrected helper and the original
+per-file predicates to the already decoded source evidence, without another full
+decode. It additionally extracts the two original overlay crops. Both archive and
+live checks pass, with results in `recheck-preserved-media.json`. Live video is
+30 fps with zero source loss; all 310 complete overlapping audio markers pass,
+maximum offset 65.25 ms, and audio tail 26.975 ms after video. The 123 complete
+payload windows pass 3–9 Mbps, mean 7.658093 Mbps, minimum 7.567888 and maximum
+7.725250 Mbps. Native scoring changes 710 overlay pixels. Requested live bitrate
+is still 6 Mbps; this measurement is not a hard rate-control guarantee.
+
+The initial unqualified acquisition fragment is not claimed to have valid marker
+content. The unchanged original UI timeout still prevents complete workflow
+qualification. The separate saved-data delivery check is reproducible in
+`check-preserved-delivery.mjs` / `preserved-delivery-check.json`. Its success does
+not supply the missing independent API report-age proof. Next native diagnostic
+should expose bounded export phase progress, preserving full decode and a distinct
+original verdict, rather than changing stream shutdown for a normal SIGTERM.
 
 ## Original evidence
 
