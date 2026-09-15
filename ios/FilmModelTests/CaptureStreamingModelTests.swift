@@ -577,6 +577,120 @@ import XCTest
         XCTAssertTrue(model.canStart)
     }
 
+    func testPublishingClockUnavailableAndEarlyStopRemainOptional() async throws {
+        let startupGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(gate: startupGate)
+        await publisher.setTransportClock(testTransportClock())
+        let model = makeModel(server: CaptureTestServer(), publisher: publisher)
+        await model.restore(); model.captureChanged(captureContext())
+        XCTAssertNil(model.publishingClockObservation)
+        let starting = Task { await model.startStreaming() }
+        await startupGate.waitUntilEntered()
+        model.pollLocalHealth()
+        XCTAssertNil(model.publishingClockObservation)
+        model.captureChanged(nil)
+        await startupGate.release(); await starting.value; await model.stopStreaming()
+        XCTAssertNil(model.publishingClockObservation)
+        XCTAssertEqual(model.videoObservation?.isClosed, true)
+
+        let unavailable = makeModel(server: CaptureTestServer())
+        await unavailable.restore(); unavailable.captureChanged(captureContext()); await unavailable.startStreaming()
+        unavailable.pollLocalHealth()
+        XCTAssertNil(unavailable.publishingClockObservation)
+        XCTAssertEqual(unavailable.localState, .publishing)
+        await unavailable.stopStreaming()
+        XCTAssertNil(unavailable.publishingClockObservation)
+    }
+
+    func testPublishingClockBindsExactScopeClosesAtDetachAndExportsAfterDrain() async throws {
+        let stopGate = FilmTestGate()
+        let publisher = CaptureTestPublisher(stopGate: stopGate)
+        let descriptor = testTransportClock()
+        await publisher.setTransportClock(descriptor)
+        let model = makeModel(server: CaptureTestServer(), publisher: publisher)
+        model.workerReportAgeProofsEnabled = true
+        var exported: PublishingClockObservation?
+        model.videoObservationFixtureWriter = { snapshot, _, _, _, clock in
+            XCTAssertEqual(clock?.scope, snapshot.scope)
+            XCTAssertEqual(clock?.isClosed, true)
+            XCTAssertTrue(snapshot.isClosed)
+            exported = clock
+        }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await waitForClock(model)
+        let live = try XCTUnwrap(model.publishingClockObservation)
+        XCTAssertEqual(live.scope, model.videoObservation?.scope)
+        XCTAssertEqual(live.transportClock, descriptor)
+        XCTAssertFalse(live.isClosed)
+        let stopping = Task { await model.stopStreaming() }
+        await stopGate.waitUntilEntered()
+        XCTAssertEqual(model.publishingClockObservation?.scope, live.scope)
+        XCTAssertEqual(model.publishingClockObservation?.transportClock, descriptor)
+        XCTAssertEqual(model.publishingClockObservation?.isClosed, true)
+        XCTAssertEqual(model.videoObservation?.isClosed, false)
+        await publisher.setTransportClock(testTransportClock(generation: 2))
+        await stopGate.release(); await stopping.value
+        XCTAssertEqual(exported, model.publishingClockObservation)
+        XCTAssertEqual(exported?.transportClock, descriptor)
+        model.pollLocalHealth()
+        XCTAssertEqual(model.publishingClockObservation, exported)
+    }
+
+    func testPublishingClockReplacementClearsHistoryAndCannotBorrowOldDescriptor() async throws {
+        let first = CaptureTestPublisher(), second = CaptureTestPublisher()
+        await first.setTransportClock(testTransportClock())
+        var count = 0
+        let model = makeModel(server: CaptureTestServer(), publisherFactory: { _, _ in
+            count += 1; return count == 1 ? first : second
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await waitForClock(model)
+        let previous = try XCTUnwrap(model.publishingClockObservation)
+        await model.stopStreaming()
+        await model.startStreaming()
+        model.pollLocalHealth()
+        XCTAssertNil(model.publishingClockObservation)
+        XCTAssertNotEqual(model.videoObservation?.scope.publishingAttemptID, previous.scope.publishingAttemptID)
+        await first.setTransportClock(testTransportClock(generation: 3))
+        await second.setTransportClock(testTransportClock(generation: 2))
+        await waitForClock(model)
+        XCTAssertEqual(model.publishingClockObservation?.scope, model.videoObservation?.scope)
+        XCTAssertEqual(model.publishingClockObservation?.transportClock.publishingGeneration, 2)
+        XCTAssertEqual(model.publishingClockObservation?.isClosed, false)
+        await model.stopStreaming()
+    }
+
+    func testPublishingClockContradictionClearsDiagnosticWithoutStoppingPublication() async throws {
+        let publisher = CaptureTestPublisher()
+        await publisher.setTransportClock(testTransportClock())
+        let model = makeModel(server: CaptureTestServer(), publisher: publisher)
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await waitForClock(model)
+        XCTAssertNotNil(model.publishingClockObservation)
+        await publisher.setTransportClock(testTransportClock(generation: 2))
+        let deadline = ContinuousClock.now + .seconds(2)
+        repeat {
+            await Task.yield(); model.pollLocalHealth()
+        } while model.publishingClockObservation != nil && ContinuousClock.now < deadline
+        XCTAssertNil(model.publishingClockObservation)
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertFalse(model.needsStorageRetry)
+        await model.stopStreaming()
+        XCTAssertNil(model.publishingClockObservation)
+    }
+
+    private func waitForClock(_ model: CaptureStreamingModel) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        repeat {
+            await Task.yield(); model.pollLocalHealth()
+        } while model.publishingClockObservation == nil && ContinuousClock.now < deadline
+    }
+
+    private func testTransportClock(generation: UInt64 = .max) -> PublishingTransportClock {
+        PublishingTransportClock(sourceOrigin: CMTime(value: 9_007_199_254_740_993, timescale: 60), publishingGeneration: generation)!
+    }
+
     func testCaptureCallbacksAreObservedDuringPublisherStartupBeforeReadiness() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -774,6 +888,7 @@ import XCTest
         defer { try? FileManager.default.removeItem(at: root) }
         let server = CaptureTestServer()
         let publisher = CaptureTestPublisher()
+        await publisher.setTransportClock(testTransportClock())
         var receivedNil = false
         let model = makeModel(server: server, publisherFactory: { _, owner in
             receivedNil = owner == nil; return publisher
@@ -786,13 +901,19 @@ import XCTest
         await model.startStreaming()
         XCTAssertTrue(receivedNil)
         XCTAssertEqual(model.localState, .publishing)
+        // A second read proves the first available descriptor returned to the
+        // session cache, even though this attempt has no observation owner.
+        await publisher.waitForTransportClockReads(2)
         source.send(try streamingVideo(1))
         await publisher.waitForAppends(1)
         model.pollLocalHealth()
         XCTAssertNil(model.videoObservation)
         XCTAssertFalse(model.needsStorageRetry)
         XCTAssertNil(model.ingressObservation)
+        XCTAssertNil(model.publishingClockObservation)
+        XCTAssertEqual(model.localState, .publishing)
         await model.stopStreaming()
+        XCTAssertNil(model.publishingClockObservation)
         XCTAssertNil(model.videoObservation)
         XCTAssertEqual(film.state, .recording)
         await film.stop()
@@ -801,17 +922,23 @@ import XCTest
 
     func testAttemptFailureBeforePublishAccessClearsPreviousDiagnostics() async throws {
         let server = CaptureTestServer()
-        let model = makeModel(server: server)
+        let publisher = CaptureTestPublisher()
+        await publisher.setTransportClock(testTransportClock())
+        let model = makeModel(server: server, publisher: publisher)
         await model.restore()
         model.captureChanged(captureContext())
         await model.startStreaming()
+        await waitForClock(model)
+        XCTAssertNotNil(model.publishingClockObservation)
         await model.stopStreaming()
+        XCTAssertEqual(model.publishingClockObservation?.isClosed, true)
         XCTAssertEqual(model.videoObservation?.isClosed, true)
         await server.setOffline(true)
         await model.startStreaming()
         XCTAssertEqual(model.localState, .failed)
         XCTAssertNil(model.videoObservation)
         XCTAssertNil(model.ingressObservation)
+        XCTAssertNil(model.publishingClockObservation)
         XCTAssertEqual(model.activeRecordingID, "recording-1")
         XCTAssertFalse(model.needsStorageRetry)
     }
@@ -899,7 +1026,7 @@ import XCTest
             model.workerReportAgeProofsEnabled = true
             var exported: [WorkerReportAgeProof]?
             var closed: VideoFrameObservationSnapshot?
-            model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress in
+            model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock in
                 XCTAssertTrue(snapshot.isClosed)
                 XCTAssertGreaterThanOrEqual(detached, snapshot.monotonicAnchor)
                 XCTAssertEqual(ingress?.scope, snapshot.scope)
@@ -929,7 +1056,7 @@ import XCTest
         model.workerReportAgeProofsEnabled = true
         let gate = FilmTestGate()
         var exported: [WorkerReportAgeProof] = []
-        model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress in
+        model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock in
             XCTAssertEqual(ingress?.scope, snapshot.scope)
             XCTAssertEqual(ingress?.isClosed, true)
             XCTAssertGreaterThanOrEqual(ingress?.current.monotonicEnd ?? 0, detached)
@@ -1009,6 +1136,18 @@ actor CaptureTestPublisher: MediaPublisher {
     var startCount = 0
     var appendCount = 0
     var terminated = false
+    private var clock: PublishingTransportClock?
+    private var transportClockReads = 0
+    func setTransportClock(_ value: PublishingTransportClock?) { clock = value }
+    func transportClock() async -> PublishingTransportClock? {
+        transportClockReads += 1
+        return clock
+    }
+    func waitForTransportClockReads(_ count: Int) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while transportClockReads < count, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertGreaterThanOrEqual(transportClockReads, count)
+    }
     let gate: FilmTestGate?
     let stopGate: FilmTestGate?
     let stopOrderTrace: CaptureStopOrderTrace?

@@ -98,14 +98,14 @@ worker joins. The user's standing autonomy authorization covers this integration
 **Files:** `ios/Sources/Scorebug/Capture/CaptureStreamingModel.swift`,
 `VideoObservationFixture.swift`, associated Film model/export tests and native runner.
 
-- [ ] Expose a scoped clock observation tied to the existing logical recording,
+- [x] Expose a scoped clock observation tied to the existing logical recording,
   match, broadcast, publishing attempt and profile scope, with historical closure.
-- [ ] Test unavailable origins, early stop, stale teardown/replacement, diagnostic
+- [x] Test unavailable origins, early stop, stale teardown/replacement, diagnostic
   failure and scalar fixture serialization; no scope may silently borrow another
   session's descriptor. Retain exact rational origin and native generation.
-- [ ] Extend the native app qualification exporter/checker and run the complete
+- [x] Extend the native app qualification exporter/checker and run the complete
   local workflow, keeping local-recording, scoring, A/V and freshness gates intact.
-- [ ] Document actual evidence and remaining worker-session/matched-interval work.
+- [x] Document actual evidence and remaining worker-session/matched-interval work.
   Complete specification/quality review and commit coherent verified checkpoints.
 
 ## Tasks 1–2 verification checkpoint
@@ -132,3 +132,71 @@ latter failed before media execution; cleaning that graph resolved the build.
 Apple device Release and arm64 simulator Debug builds are recorded separately.
 Logs use `artifacts/qa/native-clock-observation-*`. This checkpoint does not claim
 app scope/export integration or source-loss/capacity qualification.
+
+## Task 3 implementation and test evidence
+
+The app exposes `PublishingClockObservation` using the exact existing full video
+observation scope. It clears old history before control-plane waits, samples only
+cached session evidence, marks the mapping historical at capture detach, and
+publishes final closed evidence only through the existing joined attempt guard.
+Fixture export rejects mismatched scope or closure and preserves all Int64/UInt64
+scalars as decimal strings. Missing diagnostics and contradictory mappings leave
+recording and publication independent.
+
+Behavioral red: 53 focused Swift tests compile with 11 expected failures before
+implementation; the early-failure clearing test separately fails two assertions.
+The implementation passes 53 focused tests and all 95 FilmModel tests. The final
+full run also proves a valid native descriptor was read twice before checking that
+an unavailable observation owner still produces no scoped clock and leaves
+publication running. Independent specification and quality reviews approve.
+
+The app qualification checker has 25 tests; its initial stub fails the 24 negative
+cases. Together with the 17 existing exact-origin fixture cases, 42 focused tests
+pass; the full tools suite passes 473 tests. The checker compares the exported
+clock's full scope with the separately qualified capture/encode scope and requires
+historical closure, exact scalar types/ranges and fixed projection constants. It
+does not assume the app's muxer origin equals recording start: publishing starts
+later, and a worker may join later still. Actual native workflow and final device
+Release evidence are recorded below.
+
+## Actual app workflow and remaining correspondence limit
+
+`artifacts/qa/native-app-0YPFpe` completes with exit 0 on iOS 17.5 / iPhone 14
+simulator using the explicit direct RTMP recorder and a 30-second hold. Both saved
+MP4s fully decode. The archive contains 1,836 consecutive frames (0–1835), 61.2
+seconds at 30 fps, with zero source loss. Live contains 1,427 consecutive frames
+(229–1655), 47.567 source seconds at 30 fps, with no loss after acquisition and no
+missing encoded tail. Frames 169–228 remain explicitly identified as the 60-frame
+startup acquisition interval. Native capture counts 1,488 frames; encoder counts
+1,487, with the leading capture frame preceding encoding. Eight complete steady
+observation windows report 30 fps for both capture and encoding.
+
+The closed app clock uses the exact matching full scope and actual SDK origin
+7733/60, generation 1, and the documented constants. Two historical worker-age
+proofs match independently collected windows. The native score update changes 339
+overlay pixels; archive diagnostics finish without failure; owned worker/recorder
+processes exit 0 and the owned simulator/container are cleaned. Archive A/V marker
+error is 0.021 ms, live 65.25 ms; tail offsets are 4 ms and 27.372 ms respectively.
+The combined iPhone/Watch device Release build exits 0 after app integration; the
+actual workflow also builds/runs the Debug simulator app. Logs use
+`artifacts/qa/native-clock-app-*`.
+
+A separate exact-rational inspection reveals an unresolved **end-to-end clock
+correspondence offset** in this successful media run. For barcode source frames
+229 and 1655, source PTS = 493/4 + frame/30 and the reported native origin project
+to 189000 and 4467000 ticks. Worker decoder endpoints instead report 178081 and
+4456081: both differ by -10919 ticks (about -121.322 ms). Arithmetic is retained in
+`artifacts/qa/native-clock-app-correspondence.json`. This does not invalidate the
+scoped SDK-origin export or the fully decoded frame evidence, but it does prevent
+claiming direct equality between native wire PTS and worker decoder PTS through
+the owned SRT relay path. Earlier file/direct transport calibration did not establish
+that end-to-end relay correspondence. The location/cause of the shift still needs
+packet-level qualification; do not assume the relay is the cause without that
+comparison, infer an origin from a late worker frame, or silently normalize it away.
+
+Next work must qualify this complete path, expose public worker-session identity
+(attempt 1 recurs after process replacement), and match source-interval counts.
+Applied-profile boundaries and qualified available capacity remain necessary too.
+Runtime adaptation stays disabled at the fixed 1080p30 profile. These short barcode
+fixtures do not qualify physical cameras, Watch radios, high-motion capacity or
+other GPU/cloud hosts.

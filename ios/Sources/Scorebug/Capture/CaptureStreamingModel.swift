@@ -4,6 +4,13 @@ import ScorebugCore
 import ScorebugMedia
 import ScorebugStreaming
 
+/// Immutable historical mapping owned by exactly one observation attempt.
+struct PublishingClockObservation: Equatable, Sendable {
+    let scope: VideoFrameObservationScope
+    let transportClock: PublishingTransportClock
+    let isClosed: Bool
+}
+
 /// Control-plane waits run independently from FilmModel's archive health loop.
 /// Only a synchronous tap is shared with capture. No network operation owns it.
 @MainActor final class CaptureStreamingModel: ObservableObject {
@@ -28,6 +35,8 @@ import ScorebugStreaming
     /// Same attempt/anchor as video observations, but closes at ingress cancellation
     /// rather than encoder-drain completion. This is not transport capacity or loss.
     @Published private(set) var ingressObservation: LiveIngressObservationSnapshot?
+    /// Historical native clock mapping; closure marks detach, not current readiness.
+    @Published private(set) var publishingClockObservation: PublishingClockObservation?
     #if DEBUG
     // Explicit simulator fixture flag; Mac unit tests opt in by injection.
     var workerReportAgeProofsEnabled: Bool = {
@@ -38,10 +47,10 @@ import ScorebugStreaming
         #endif
     }()
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
-    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?) async -> Void)? = {
+    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?, PublishingClockObservation?) async -> Void)? = {
         #if targetEnvironment(simulator)
-        return { snapshot, detached, proofs, ingress in
-            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress)
+        return { snapshot, detached, proofs, ingress, clock in
+            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress, publishingClockObservation: clock)
         }
         #else
         return nil
@@ -183,7 +192,7 @@ import ScorebugStreaming
         guard !busy, !stopping, !publisherStopping, !controlBusy, publishing == nil, let context = current else { return }
         busy = true
         let attempt = UUID(); epoch = attempt; actionID = attempt
-        diagnosticAttemptID = attempt; videoObservation = nil; ingressObservation = nil
+        diagnosticAttemptID = attempt; videoObservation = nil; ingressObservation = nil; publishingClockObservation = nil
         localState = .starting; message = nil; clearWorker()
         let task = Task { [self] in
             do {
@@ -367,6 +376,8 @@ import ScorebugStreaming
         let snapshot = publishing.session.snapshot
         sentSamples = snapshot.sentSamples
         ingressObservation = snapshot.ingressObservation
+        publishingClockObservation = clockObservation(snapshot.transportClock,
+            scope: videoObservation?.scope, isClosed: false)
         if snapshot.failure != nil || snapshot.state == .stopped {
             detachPublisher(); shouldStopOwnedBroadcast = true
             localState = .failed
@@ -419,6 +430,12 @@ import ScorebugStreaming
             windowDuration: snapshot.windowDuration, completedWindowLimit: limit, initialPhase: .startup)
     }
 
+    private func clockObservation(_ clock: PublishingTransportClock?, scope: VideoFrameObservationScope?,
+                                  isClosed: Bool) -> PublishingClockObservation? {
+        guard let clock, let scope else { return nil }
+        return PublishingClockObservation(scope: scope, transportClock: clock, isClosed: isClosed)
+    }
+
     private func detachPublisher() {
         if let publishing {
             publishing.context.tap.detach(publishing.session)
@@ -432,7 +449,10 @@ import ScorebugStreaming
             #endif
             publishing.session.cancel()
             if diagnosticAttemptID == publishing.attempt {
-                ingressObservation = publishing.session.snapshot.ingressObservation
+                let snapshot = publishing.session.snapshot
+                ingressObservation = snapshot.ingressObservation
+                publishingClockObservation = clockObservation(snapshot.transportClock,
+                    scope: publishing.observations?.snapshot.scope, isClosed: true)
             }
             let session = publishing.session
             let observations = publishing.observations, attempt = publishing.attempt
@@ -446,11 +466,14 @@ import ScorebugStreaming
                 let final = observations?.close()
                 if teardownID == id {
                     if diagnosticAttemptID == attempt {
+                        let snapshot = session.snapshot
                         videoObservation = final
-                        ingressObservation = session.snapshot.ingressObservation
+                        ingressObservation = snapshot.ingressObservation
+                        publishingClockObservation = clockObservation(snapshot.transportClock,
+                            scope: final?.scope, isClosed: true)
                         #if DEBUG
                         if let final, let captureDetachedAt, let fixtureWriter {
-                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation)
+                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation, publishingClockObservation)
                         }
                         #endif
                     }

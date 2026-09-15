@@ -11,11 +11,12 @@ now connects capture and actual encoder-completion measurements while retaining 
 | `PublishingSessionSnapshot.sentSamples` | Successful publisher append returns, including audio and video                                                | Video encoding completion, unique frames, transport receipt, playback                                    |
 | `CaptureStreamingModel.videoObservation` | Attempt-scoped capture callbacks and qualifying native encoding completions, with advancing-PTS counts and full monotonic windows | Production source-range correlation, image-content uniqueness, usable capacity, and remote receipt |
 | `CaptureStreamingModel.ingressObservation` | Time-weighted live mailbox item/byte/max pressure, phase and per-kind disposition/PTS summaries | In-flight/SDK buffering, production source-loss denominator and transport capacity |
+| `CaptureStreamingModel.publishingClockObservation` | Historical session mapping bound to recording, match, broadcast generation, publishing attempt and profile scope; closure marks detach | Worker-session identity, matched source intervals, remote delivery/loss and applied-profile transition boundaries |
 | `SRTPublisher.metrics()`                | RTT, cumulative SRT packet drops, cumulative transmitted bytes                                                | Unique video delivery and usable video capacity; transmitted bytes include retransmissions               |
 | SDK `SRTPerformanceData`                | Socket counters, estimated bandwidth, sender occupancy and buffering                                          | A qualified capacity estimator and receiver/worker frame timing                                          |
 | `WorkerObservation.frame/outTimeUs`     | FFmpeg output progress within a worker attempt                                                                | Proof of unique source frames or destination receipt                                                     |
 | `WorkerObservation.decodedVideo`        | Five-second decoder/filter-ingress windows, strictly advancing PTS, duplicate/reordered counts and invalidity | Image-content uniqueness, viewer receipt, full report-transit age, correlation with capture and encoding |
-| SDK `SRTStream.transportClockSnapshot` | Immutable exact source-to-90kHz projection, scoped to the active publishing generation after muxer startup | App/worker plumbing, matching source intervals, delivery/loss and applied profile boundaries |
+| SDK `SRTStream.transportClockSnapshot` and `PublishingSessionSnapshot.transportClock` | Actual exact source-to-90kHz mapping and native generation; the session retains accepted historical evidence and quarantines contradictions | App/worker scope correlation, matching source intervals, delivery/loss and applied profile boundaries |
 | Native test barcode/audio analysis      | Offline decoded identities and A/V alignment in the owned sink                                                | A production runtime observation channel                                                                 |
 | Archive export validation               | Fully decoded completed/recovered local segments                                                              | Live congestion; archive health is an independent signal                                                 |
 
@@ -51,7 +52,27 @@ now connects capture and actual encoder-completion measurements while retaining 
    [production worker now uses that path](superpowers/plans/2026-09-15-production-worker-clock.md);
    native serialization and an attempt-scoped SDK anchor are implemented in the
    [native clock slice](superpowers/plans/2026-09-15-native-transport-clock.md).
-   App/worker plumbing and matching source-interval counts are still required.
+   The [native publishing observation](superpowers/plans/2026-09-15-native-clock-observation.md)
+   now carries that actual SDK origin through the publisher and session lifecycle.
+   A nil read preserves accepted history, while a contradictory mapping permanently
+   clears that session's diagnostic mapping without stopping media. The native
+   dual-output fixture verifies exact origins 0 and 123.25 seconds, full local/live
+   frame preservation, and unavailable adapter evidence after joined stop.
+   The app now binds accepted history to its full observation scope, clears it on
+   a new attempt, and guards joined teardown from replacing another attempt's
+   diagnostics. Closed scalar fixture export preserves the exact rational origin
+   and native generation as decimal strings and rejects scope/closure mismatches.
+   This is historical mapping evidence, not proof of current readiness or receipt.
+   Worker-session identity and matching source-interval counts are still required;
+   worker attempt 1 can recur after process/session replacement.
+   The full native app fixture also exposes a remaining end-to-end correspondence
+   gap: the worker decoder endpoints are each 10,919 ticks (about 121.322 ms)
+   below the projected native endpoints through the owned SRT relay path. The
+   endpoint shifts and spans match; intermediate-frame shifts are not yet measured.
+   Frame identity, cadence, A/V and scoped export checks pass, but direct clock
+   equality across that path is not established. Packet-level comparison must
+   locate the shift before runtime source matching; do not silently subtract it
+   or treat earlier direct/file calibration as relay qualification.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof

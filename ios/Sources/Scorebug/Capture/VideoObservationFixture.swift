@@ -7,6 +7,8 @@ import ScorebugMedia
 /// Explicit local qualification fixture. Only scalar, bounded observation state
 /// crosses this boundary; setup, credentials and media are never serialized.
 enum VideoObservationFixture {
+    enum ExportError: Error { case publishingClockScopeMismatch, publishingClockClosureMismatch }
+
     static func requested(environment: [String: String]) -> Bool {
         environment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] == "1"
     }
@@ -19,7 +21,11 @@ enum VideoObservationFixture {
         return hold > 180 ? 128 : 64
     }
 
-    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil) throws -> Data {
+    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil) throws -> Data {
+        if let publishingClockObservation {
+            guard publishingClockObservation.scope == snapshot.scope else { throw ExportError.publishingClockScopeMismatch }
+            guard publishingClockObservation.isClosed == snapshot.isClosed else { throw ExportError.publishingClockClosureMismatch }
+        }
         let scope = snapshot.scope
         var object: [String: Any] = [
             "formatVersion": 1,
@@ -38,6 +44,9 @@ enum VideoObservationFixture {
             "invalidity": snapshot.invalidity.rawValue,
             "isClosed": snapshot.isClosed,
         ]
+        if let publishingClockObservation {
+            object["publishingClockObservation"] = clock(publishingClockObservation)
+        }
         if let ingressObservation {
             object["ingressObservation"] = ingress(ingressObservation)
         }
@@ -47,6 +56,21 @@ enum VideoObservationFixture {
         // JSONSerialization rejects nonfinite numbers. Optional values are explicit
         // nulls; counters, profile revision and CMTime value/epoch use decimal strings.
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    private static func clock(_ observation: PublishingClockObservation) -> [String: Any] {
+        let scope = observation.scope
+        let descriptor = observation.transportClock
+        return ["scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
+                    "broadcastGeneration": scope.broadcastGeneration,
+                    "publishingAttemptID": scope.publishingAttemptID.uuidString,
+                    "appliedProfileRevision": String(scope.appliedProfileRevision)],
+                "isClosed": observation.isClosed,
+                "sourceOrigin": time(descriptor.sourceOrigin),
+                "publishingGeneration": String(descriptor.publishingGeneration),
+                "timescale": PublishingTransportClock.timescale,
+                "presentationLead": String(PublishingTransportClock.presentationLead),
+                "wireModulus": String(PublishingTransportClock.wireModulus)]
     }
 
     private static func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
@@ -141,7 +165,7 @@ enum VideoObservationFixture {
     /// Awaited by the existing teardown task after encoder drain and identity
     /// admission. This single I/O task is joined before another attempt can start.
     /// Failure cannot interrupt teardown; a missing artifact fails the runner.
-    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil) async {
+    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil) async {
         guard snapshot.isClosed else { return }
         await Task.detached(priority: .utility) {
             do {
@@ -149,7 +173,7 @@ enum VideoObservationFixture {
                     in: .userDomainMask, appropriateFor: nil, create: true)
                 let directory = support.appendingPathComponent("Scorebug/QA", isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs, ingressObservation: ingressObservation).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
+                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs, ingressObservation: ingressObservation, publishingClockObservation: publishingClockObservation).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
             } catch {
                 // Qualification is optional to capture and archive cleanup.
             }

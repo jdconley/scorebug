@@ -104,6 +104,54 @@ final class VideoObservationFixtureTests: XCTestCase {
         XCTAssertTrue(rejected["minimumSourcePTS"] is NSNull)
     }
 
+    func testPublishingClockExportPreservesFullWidthScalarsAndExactScope() throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 4, publishingAttemptID: UUID(), appliedProfileRevision: .max)
+        var accumulator = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
+        let descriptor = try XCTUnwrap(PublishingTransportClock(
+            sourceOrigin: CMTime(value: .min, timescale: .max, flags: [.valid, .hasBeenRounded], epoch: 0),
+            publishingGeneration: .max))
+        let clock = PublishingClockObservation(scope: scope, transportClock: descriptor, isClosed: true)
+        let data = try VideoObservationFixture.data(for: accumulator.close(at: 2), captureDetachedAt: 1,
+            publishingClockObservation: clock)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let exported = try XCTUnwrap(json["publishingClockObservation"] as? [String: Any])
+        XCTAssertEqual(Set(exported.keys), ["scope", "isClosed", "sourceOrigin", "publishingGeneration", "timescale", "presentationLead", "wireModulus"])
+        XCTAssertEqual(exported["scope"] as? NSDictionary, json["scope"] as? NSDictionary)
+        XCTAssertEqual(exported["isClosed"] as? Bool, true)
+        XCTAssertEqual(exported["publishingGeneration"] as? String, "18446744073709551615")
+        XCTAssertEqual(exported["timescale"] as? Int, 90000)
+        XCTAssertEqual(exported["presentationLead"] as? String, "9000")
+        XCTAssertEqual(exported["wireModulus"] as? String, "8589934592")
+        let origin = try XCTUnwrap(exported["sourceOrigin"] as? [String: Any])
+        XCTAssertEqual(Set(origin.keys), ["value", "timescale", "epoch", "flags"])
+        XCTAssertEqual(origin["value"] as? String, "-9223372036854775808")
+        XCTAssertEqual(origin["timescale"] as? Int, 2147483647)
+        XCTAssertEqual(origin["epoch"] as? String, "0")
+        XCTAssertEqual(origin["flags"] as? UInt32, descriptor.sourceOrigin.flags.rawValue)
+        XCTAssertLessThan(data.count, 16 * 1024)
+    }
+
+    func testPublishingClockExportRejectsEveryScopeMismatchAndInconsistentClosure() throws {
+        let scope = proofScope()
+        let descriptor = try XCTUnwrap(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1))
+        let variants = [proofScope(recording: "other"), proofScope(game: "other"), proofScope(generation: 4),
+            proofScope(attempt: UUID()), VideoFrameObservationScope(recordingID: scope.recordingID,
+                matchID: scope.matchID, broadcastGeneration: scope.broadcastGeneration,
+                publishingAttemptID: scope.publishingAttemptID, appliedProfileRevision: 2)]
+        var accumulator = try VideoFrameObservationAccumulator(scope: scope, monotonicAnchor: 0)
+        let live = accumulator.snapshot
+        let closed = accumulator.close(at: 2)
+        for other in variants {
+            XCTAssertThrowsError(try VideoObservationFixture.data(for: closed, captureDetachedAt: 1,
+                publishingClockObservation: .init(scope: other, transportClock: descriptor, isClosed: true)))
+        }
+        XCTAssertThrowsError(try VideoObservationFixture.data(for: closed, captureDetachedAt: 1,
+            publishingClockObservation: .init(scope: scope, transportClock: descriptor, isClosed: false)))
+        XCTAssertThrowsError(try VideoObservationFixture.data(for: live, captureDetachedAt: 1,
+            publishingClockObservation: .init(scope: scope, transportClock: descriptor, isClosed: true)))
+    }
+
     func testFixtureRequiresExactExplicitFlag() {
         XCTAssertFalse(VideoObservationFixture.requested(environment: [:]))
         XCTAssertFalse(VideoObservationFixture.requested(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "true"]))

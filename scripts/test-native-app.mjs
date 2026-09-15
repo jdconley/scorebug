@@ -11,6 +11,7 @@ import {
   qualifyVideoObservation,
 } from './video-observation-qualification.mjs';
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
+import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
 import { nativeStreamingFixture } from './native-streaming-fixture.mjs';
@@ -464,6 +465,7 @@ try {
       'No interrupted recording status',
     );
   let videoObservation,
+    publishingClockObservation,
     ingressObservation,
     workerReportAge,
     archiveDiagnostics,
@@ -503,6 +505,10 @@ try {
       archiveIDs,
       liveIDs: liveSegments.flat(),
       completedWindowLimit: streamingOptions.completedWindowLimit,
+    });
+    publishingClockObservation = qualifyPublishingClockObservation({
+      snapshot: observationSnapshot,
+      expectedScope: videoObservation.scope,
     });
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
@@ -560,6 +566,7 @@ try {
         live,
         statuses: states,
         videoObservation,
+        publishingClockObservation,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,
