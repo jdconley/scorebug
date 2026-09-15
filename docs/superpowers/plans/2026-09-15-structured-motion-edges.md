@@ -110,3 +110,31 @@ worker suite passes 160 tests, the TypeScript build/typecheck passes, and toolin
 passes 369 tests; all finish with exit 0. Independent specification/quality review
 approves with no findings. Logs: `worker-state-log-{red,green,full,build,tools}.log`.
 The next native repeat uses the original exporter with no diagnostic patch.
+
+## Complete uninstrumented 180-second pass
+
+At `33232fd`, `native-app-xiMqVd` passes the full runner with exit 0 on iPhone14 /
+iOS17.5, with the original exporter, original 45-second export wait and all media
+and evidence gates intact. The native UI test passes in263.018seconds.
+
+- Archive: 6,382 consecutive frames0–6381, 212.7333seconds at30fps; 12,764 samples
+  accepted/written, zero rejected/dropped. It continues195frames beyond live output.
+- Live: 5,960 consecutive acquired frames227–6186, 198.6667 source seconds at30fps;
+  final encoded frame6186 is present and no encoded tail is absent. The60 encoded
+  acquisition frames167–226 remain explicit. Capture166 precedes encoded167.
+- Payload: archive42 complete windows, 12.055801Mbps average, range11.827096–12.129547;
+  live38 complete windows, 7.643508Mbps average, range7.578968–7.691480. Every window
+  passes the previously frozen6–18 /3–9Mbps bands. Live still exceeds its6Mbps request.
+- A/V: maximum marker offset0.020833ms archive /65.583333ms live; tail differences
+  +1.333333ms /+29.716553ms. The explicit1.042second live acquisition audio lead passes
+  the existing allowance. Native scoring changes647 overlay pixels.
+- Observations:39 steady windows each contain150 capture/150 encoded frames.
+  Both native report-age proofs match independent API evidence. Recorder and encoder
+  each exit0 without a termination request; worker wrapper exits0 after its normal
+  fixture shutdown. All11 worker events are retained, with no invalid/oversized/
+  omitted events or incomplete line; one unrelated startup log is discarded.
+
+The original failed runs remain failed. This pass does not explain the initial
+intermittent export delay or resolve high-rate pixel-noise corruption. It permits
+the planned600-second blocks16 qualification, with the same profile, source and
+workload bands. Physical camera, Watch networking and adaptive runtime remain open.

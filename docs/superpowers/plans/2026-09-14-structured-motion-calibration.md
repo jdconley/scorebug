@@ -196,4 +196,12 @@ frame, A/V and workload checks; the original workflow remains failed. The saved
 live file also exposes a detector edge case at its cut final audio marker.
 See the [export and terminal audio diagnosis](2026-09-15-structured-motion-edges.md)
 for exact evidence, isolated native exporter replays and next actions. Neither
-the three-minute nor the ten-minute blocks16 qualification is complete.
+the three-minute nor the ten-minute blocks16 qualification was complete at that point.
+
+After the terminal-audio detector correction and state-log deduplication, the
+uninstrumented 180-second repeat `native-app-xiMqVd` at `33232fd` passes every gate
+with exit0: 6,382 archive frames, 5,960 acquired live frames, 30fps, complete final
+delivery and all11 worker lifecycle events with no omissions. Frozen per-window
+payload bands pass. See the [complete evidence](2026-09-15-structured-motion-edges.md#complete-uninstrumented-180-second-pass).
+The 600-second run is next; the original overload and export-timeout failures remain
+recorded and are not reclassified by this pass.
