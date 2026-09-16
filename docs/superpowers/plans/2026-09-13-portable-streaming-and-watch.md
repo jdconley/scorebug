@@ -1134,3 +1134,19 @@ delivery or the 24-fps requirement. App/DEBUG fixture integration and authentica
 pre-demux receiver accounting come next. Production adaptation stays disabled;
 native archive/live media, physical devices, other hosts and soaks still require
 their existing qualification gates.
+
+
+The [publisher probe adapter checkpoint](2026-09-16-publisher-probe-adapter.md)
+exposes the opt-in capability through the actual `SRTPublisher` and
+`SRTMediaPublisher` adapters. Exact UUID/generation handles scope renewal and
+cancellation; stop cancels and joins in-flight start/renewal, and settings changes
+invalidate pending acknowledgments. Failed renewal revokes the old lease. The
+lower adapter now restricts `configure()` to setup before starting.
+
+All 70 streaming-package and 213 app-model tests pass, along with the combined
+unsigned iPhone/Watch Release build and targeted review. An owned ephemeral native
+SRT connection verifies default-disabled admission and rejection of live
+configuration. It does not qualify camera media or live cadence. Next wire the
+DEBUG fixture's bounded renewal/export ownership, then authenticated pre-demux
+receiver accounting and existing native simultaneous archive/live gates.
+Production adaptation and device/Watch/portable-host/soak qualification remain open.

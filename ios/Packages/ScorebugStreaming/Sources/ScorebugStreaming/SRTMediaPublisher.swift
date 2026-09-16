@@ -15,6 +15,9 @@ public actor SRTMediaPublisher: MediaPublisher {
     private var state = State.prepared
     private var startup: Task<Void, Error>?
     private var shutdown: Task<Void, Never>?
+    private var probeOperation: Task<PublishingBandwidthProbeSnapshot, Error>?
+    private var probeIdentity: PublishingBandwidthProbeSnapshot?
+    private var probeRevision: UInt64 = 0
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
 
@@ -24,10 +27,12 @@ public actor SRTMediaPublisher: MediaPublisher {
                 encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)? = nil,
-                didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false) {
+                didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false,
+                allowsBandwidthProbes: Bool = false) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
-            compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo)
+            compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo,
+            allowsBandwidthProbes: allowsBandwidthProbes)
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
@@ -40,7 +45,11 @@ public actor SRTMediaPublisher: MediaPublisher {
             }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop(); didStop?() },
             setBitRate: { try await adapter.setBitRateWithReceipt($0) }, metrics: { await adapter.metrics() },
             setProfile: { try await adapter.setVideoProfile($0) },
-            transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() })
+            transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() },
+            beginProbe: { try await adapter.beginBandwidthProbe(bitRate: $0) },
+            renewProbe: { try await adapter.renewBandwidthProbe(id: $0, publishingGeneration: $1) },
+            cancelProbe: { await adapter.cancelBandwidthProbe(id: $0, publishingGeneration: $1) },
+            probeSnapshot: { await adapter.bandwidthProbeSnapshot() })
     }
 
     struct Operations: Sendable {
@@ -54,6 +63,10 @@ public actor SRTMediaPublisher: MediaPublisher {
         var setProfile: @Sendable (PublishingVideoProfile) async throws -> PublishingVideoProfileChange = { _ in throw PublisherError.profileUpdateFailed }
         var transportClock: @Sendable () async -> PublishingTransportClock? = { nil }
         var transportStatistics: @Sendable () async -> PublishingTransportStatistics? = { nil }
+        var beginProbe: @Sendable (Int) async throws -> PublishingBandwidthProbeSnapshot = { _ in throw PublishingBandwidthProbeError.disabled }
+        var renewProbe: @Sendable (UUID, UInt64) async throws -> PublishingBandwidthProbeSnapshot = { _, _ in throw PublishingBandwidthProbeError.disabled }
+        var cancelProbe: @Sendable (UUID, UInt64) async -> Void = { _, _ in }
+        var probeSnapshot: @Sendable () async -> PublishingBandwidthProbeSnapshot? = { nil }
     }
     init(operations: Operations) { self.operations = operations }
 
@@ -105,6 +118,8 @@ public actor SRTMediaPublisher: MediaPublisher {
             let close = operations.stop
             let starting = startup
             let changing = profileChange
+            let probing = probeOperation
+            probing?.cancel()
             starting?.cancel(); changing?.cancel()
             pending = Task.detached {
                 // Close first so a blocked configure/connect/readiness operation
@@ -113,7 +128,8 @@ public actor SRTMediaPublisher: MediaPublisher {
                 await close()
                 if let starting { _ = await starting.result }
                 if let changing { _ = await changing.result }
-                if starting != nil || changing != nil { await close() }
+                if let probing { _ = await probing.result }
+                if starting != nil || changing != nil || probing != nil { await close() }
             }
             shutdown = pending
         }
@@ -128,7 +144,9 @@ public actor SRTMediaPublisher: MediaPublisher {
         guard !Task.isCancelled else { throw PublisherError.cancelled }
         guard !encoderUpdating else { throw PublisherError.invalidState }
         encoderUpdating = true
+        await invalidateBandwidthProbe()
         defer { encoderUpdating = false }
+        guard state == .publishing, !Task.isCancelled else { throw PublisherError.cancelled }
         let receipt: PublishingBitRateChange
         do { receipt = try await operations.setBitRate(bitsPerSecond) }
         catch {
@@ -153,6 +171,8 @@ public actor SRTMediaPublisher: MediaPublisher {
         guard !Task.isCancelled else { throw PublisherError.cancelled }
         guard !encoderUpdating else { throw PublisherError.invalidState }
         encoderUpdating = true
+        await invalidateBandwidthProbe()
+        guard state == .publishing, !Task.isCancelled else { encoderUpdating = false; throw PublisherError.cancelled }
         let change = operations.setProfile
         let pending = Task { try await change(profile) }
         profileChange = pending
@@ -174,6 +194,92 @@ public actor SRTMediaPublisher: MediaPublisher {
             pending.cancel()
             Task { await self.stop() }
         }
+    }
+
+    public func beginBandwidthProbe(bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        let revision = probeRevision
+        return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
+            try await self.operations.beginProbe(bitRate)
+        } }
+    }
+
+    public func renewBandwidthProbe(id: UUID, publishingGeneration: UInt64) async throws -> PublishingBandwidthProbeSnapshot {
+        guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
+        guard probeIdentity?.id == id, probeIdentity?.publishingGeneration == publishingGeneration else {
+            throw PublishingBandwidthProbeError.obsolete
+        }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        let revision = probeRevision
+        return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
+            let value = try await self.operations.renewProbe(id, publishingGeneration)
+            guard value.id == id, value.publishingGeneration == publishingGeneration else {
+                await self.operations.cancelProbe(value.id, value.publishingGeneration)
+                throw PublishingBandwidthProbeError.obsolete
+            }
+            return value
+        } }
+    }
+
+    public func cancelBandwidthProbe(id: UUID, publishingGeneration: UInt64) async {
+        guard probeIdentity?.id == id, probeIdentity?.publishingGeneration == publishingGeneration else { return }
+        probeRevision &+= 1
+        probeOperation?.cancel()
+        await operations.cancelProbe(id, publishingGeneration)
+    }
+
+    /// Retained terminal diagnostics; no health check or lease renewal.
+    public func bandwidthProbeSnapshot() async -> PublishingBandwidthProbeSnapshot? {
+        await operations.probeSnapshot()
+    }
+
+    private func invalidateBandwidthProbe() async {
+        probeRevision &+= 1
+        if let probe = probeIdentity { await operations.cancelProbe(probe.id, probe.publishingGeneration) }
+    }
+
+    private func performProbeOperation(revision: UInt64,
+        operation: @Sendable () async throws -> PublishingBandwidthProbeSnapshot) async throws -> PublishingBandwidthProbeSnapshot {
+        let healthy = await operations.isPublishing()
+        guard state == .publishing, healthy else { throw PublishingBandwidthProbeError.notPublishing }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeRevision == revision, !encoderUpdating else { throw PublishingBandwidthProbeError.obsolete }
+        let value = try await operation()
+        let stillHealthy = await operations.isPublishing()
+        guard state == .publishing, stillHealthy, !Task.isCancelled, probeRevision == revision, !encoderUpdating else {
+            await operations.cancelProbe(value.id, value.publishingGeneration)
+            throw Task.isCancelled ? PublishingBandwidthProbeError.cancelled : .obsolete
+        }
+        probeIdentity = value
+        return value
+    }
+
+    private func runProbeOperation(_ operation: @escaping @Sendable () async throws -> PublishingBandwidthProbeSnapshot) async throws -> PublishingBandwidthProbeSnapshot {
+        let revision = probeRevision
+        let pending = Task {
+            do { return try await operation() }
+            catch {
+                // Revocation belongs to the joined operation, including a renewal
+                // that throws before returning its updated snapshot.
+                await self.invalidateBandwidthProbe()
+                throw error
+            }
+        }
+        probeOperation = pending
+        defer { probeOperation = nil }
+        return try await withTaskCancellationHandler {
+            do {
+                let value = try await pending.value
+                guard !Task.isCancelled, state == .publishing, probeRevision == revision, !encoderUpdating else {
+                    await operations.cancelProbe(value.id, value.publishingGeneration)
+                    throw Task.isCancelled ? PublishingBandwidthProbeError.cancelled : .obsolete
+                }
+                return value
+            } catch { throw publishingProbeError(error) }
+        } onCancel: { pending.cancel() }
     }
 
     public func transportClock() async -> PublishingTransportClock? {

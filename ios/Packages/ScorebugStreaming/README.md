@@ -30,3 +30,20 @@ See [publishing lifecycle](../../../docs/native-publishing-session.md) and
 
 Automatic reconnection, adaptive quality, Watch UI/networking, and physical-device
 qualification remain in the [portable streaming plan](../../../docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
+
+Experimental native bandwidth probing is opt-in at construction with
+`allowsBandwidthProbes: true` on `SRTPublisher` or `SRTMediaPublisher`.
+`beginBandwidthProbe(bitRate:)` returns a UUID/generation-scoped immutable snapshot;
+renew and cancel require both exact values. Start and renewal are serialized as
+one owned operation. Stop cancels and joins it, and settings changes invalidate
+pending acknowledgments and revoke the current probe. An abandoned or failed
+renewal also revokes the existing lease without stopping otherwise healthy media.
+`configure()` is pre-start only; use verified bitrate/profile methods while live.
+
+`bandwidthProbeSnapshot()` retains terminal evidence without renewing a lease.
+The snapshot describes local native acceptance, not receiver delivery or capacity.
+The SDK's 300 ms lease and bounded optional writes remain authoritative. There is
+no automatic renewal task, production quality admission or general `MediaPublisher`
+protocol change. A DEBUG fixture must explicitly own renewal and collect receiver
+confirmation before this can support a quality upgrade. See
+[adapter validation](../../../docs/superpowers/plans/2026-09-16-publisher-probe-adapter.md).
