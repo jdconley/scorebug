@@ -7,7 +7,7 @@ import ScorebugMedia
 /// Explicit local qualification fixture. Only scalar, bounded observation state
 /// crosses this boundary; setup, credentials and media are never serialized.
 enum VideoObservationFixture {
-    enum ExportError: Error { case publishingClockScopeMismatch, publishingClockClosureMismatch }
+    enum ExportError: Error { case publishingClockScopeMismatch, publishingClockClosureMismatch, sourceIntervalMismatch }
 
     static func requested(environment: [String: String]) -> Bool {
         environment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] == "1"
@@ -21,7 +21,7 @@ enum VideoObservationFixture {
         return hold > 180 ? 128 : 64
     }
 
-    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil) throws -> Data {
+    static func data(for snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil, sourceIntervals: [WorkerSourceIntervalObservation] = []) throws -> Data {
         if let publishingClockObservation {
             guard publishingClockObservation.scope == snapshot.scope else { throw ExportError.publishingClockScopeMismatch }
             guard publishingClockObservation.isClosed == snapshot.isClosed else { throw ExportError.publishingClockClosureMismatch }
@@ -52,6 +52,30 @@ enum VideoObservationFixture {
         }
         if !workerReportAgeProofs.isEmpty {
             object["workerReportAgeProofs"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(workerReportAgeProofs))
+        }
+        if !sourceIntervals.isEmpty {
+            guard sourceIntervals.count <= 128 else { throw ExportError.sourceIntervalMismatch }
+            object["sourceIntervals"] = try sourceIntervals.map { observation -> [String: Any] in
+                let interval = observation.interval
+                guard interval.scope == snapshot.scope,
+                      observation.nativeClock == publishingClockObservation?.transportClock else {
+                    throw ExportError.sourceIntervalMismatch
+                }
+                return ["scope": object["scope"]!, "workerId": observation.workerId,
+                    "workerEpoch": observation.workerEpoch, "workerAttempt": observation.workerAttempt,
+                    "publication": try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation.publication)),
+                    "previousSequence": String(observation.previousSequence), "sequence": String(observation.sequence),
+                    "previousDecodedPTS": String(observation.previousDecodedPTS),
+                    "firstDecodedPTS": String(observation.firstDecodedPTS), "lastDecodedPTS": String(observation.lastDecodedPTS),
+                    "publishingGeneration": String(interval.publishingGeneration),
+                    "sourceStartExclusive": time(interval.sourceStartExclusive), "sourceEndInclusive": time(interval.sourceEndInclusive),
+                    "captureBoundaryStartTime": interval.captureBoundaryStartTime,
+                    "captureBoundaryEndTime": interval.captureBoundaryEndTime,
+                    "capturedFrames": interval.capturedFrames, "encodedFrames": interval.encodedFrames,
+                    "decodedFrames": interval.decodedFrames, "captureNotEncodedFrames": interval.captureNotEncodedFrames,
+                    "encodedNotDecodedFrames": interval.encodedNotDecodedFrames,
+                    "leadingMissingEncodedFrames": interval.leadingMissingEncodedFrames]
+            }
         }
         // JSONSerialization rejects nonfinite numbers. Optional values are explicit
         // nulls; counters, profile revision and CMTime value/epoch use decimal strings.
@@ -165,7 +189,7 @@ enum VideoObservationFixture {
     /// Awaited by the existing teardown task after encoder drain and identity
     /// admission. This single I/O task is joined before another attempt can start.
     /// Failure cannot interrupt teardown; a missing artifact fails the runner.
-    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil) async {
+    static func writeClosed(_ snapshot: VideoFrameObservationSnapshot, captureDetachedAt: Double, workerReportAgeProofs: [WorkerReportAgeProof] = [], ingressObservation: LiveIngressObservationSnapshot? = nil, publishingClockObservation: PublishingClockObservation? = nil, sourceIntervals: [WorkerSourceIntervalObservation] = []) async {
         guard snapshot.isClosed else { return }
         await Task.detached(priority: .utility) {
             do {
@@ -173,7 +197,7 @@ enum VideoObservationFixture {
                     in: .userDomainMask, appropriateFor: nil, create: true)
                 let directory = support.appendingPathComponent("Scorebug/QA", isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs, ingressObservation: ingressObservation, publishingClockObservation: publishingClockObservation).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
+                try data(for: snapshot, captureDetachedAt: captureDetachedAt, workerReportAgeProofs: workerReportAgeProofs, ingressObservation: ingressObservation, publishingClockObservation: publishingClockObservation, sourceIntervals: sourceIntervals).write(to: directory.appendingPathComponent("video-observation.json"), options: .atomic)
             } catch {
                 // Qualification is optional to capture and archive cleanup.
             }

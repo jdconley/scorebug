@@ -13,6 +13,7 @@ import {
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
+import { qualifySourceIntervals } from './source-interval-qualification.mjs';
 import { qualifyPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
 import { analyzeMediaSync, assertMediaSync, assertMediaCoverage } from './media-sync.mjs';
@@ -477,6 +478,7 @@ try {
   let videoObservation,
     publishingAttemptEvidence,
     workerPublicationEvidence,
+    sourceIntervalQualification,
     publishingClockObservation,
     ingressObservation,
     workerReportAge,
@@ -526,11 +528,21 @@ try {
       JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
       videoObservation.scope,
     );
-    if (requirePublication)
+    if (requirePublication) {
       workerPublicationEvidence = qualifyWorkerPublicationEvidence(
         JSON.parse(await readFile(join(artifact, 'worker-publication-status.json'), 'utf8')),
         videoObservation.scope,
       );
+      sourceIntervalQualification = qualifySourceIntervals({
+        snapshot: observationSnapshot,
+        videoObservation,
+        publishingClockObservation,
+        workerPublicationEvidence,
+        decodedEvidence,
+        archiveIDs,
+        liveIDs: liveSegments.flat(),
+      });
+    }
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
       archive: media[0],
@@ -590,6 +602,7 @@ try {
         publishingClockObservation,
         publishingAttemptEvidence,
         workerPublicationEvidence,
+        sourceIntervalQualification,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

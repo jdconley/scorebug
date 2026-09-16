@@ -1,8 +1,8 @@
 # Matched source interval measurements
 
-The Media and Streaming packages provide the bounded history and exact interval
-matching primitives needed to compare native capture, encoding completion and
-worker decoder counts. They are not yet connected to the app's worker-status loop.
+The native app now compares capture, encoding completion and worker decoder counts
+over matched source intervals. Its worker-status loop uses bounded source history,
+the actual native mux clock and authenticated relay publication association.
 Automatic quality adaptation remains disabled.
 
 `VideoSourceHistory` stores exact rational source PTS and monotonic callback time in
@@ -45,20 +45,63 @@ scope, and unavailable evidence must stay unknown or explicit gaps. Capture call
 boundary times and receiver window times are different clocks; no quality-policy
 window may silently equate them.
 
+## Native integration
+
+The observation owner samples one uptime value under its existing lock for both
+aggregate observation and source-history admission. Production publishing opts into
+2,048 entries per stage; other callers default to no history. Invalid diagnostic
+history does not reject ordinary media callbacks. Control polling copies history;
+no projection, network operation or per-frame task runs on the callback path.
+
+`WorkerSourceIntervalTracker` requires an open native history and clock, authenticated
+publication, recognized decoder clock and a valid freshness helper. It binds native
+recording/profile/attempt and clock to worker identity/epoch/attempt, reader, publisher
+and relay origin. The first report establishes a baseline. Only the next sequence
+can produce a match. Skipped sequences re-baseline; rewinds and contradictory
+same-sequence contents discard the baseline and keep the sequence high-water mark.
+Repeated identical reports cannot refresh a measurement's original freshness lease.
+
+A fresh report may keep a historical baseline available while the five-second
+worker window ages. Expiring the report lease discards the baseline, including when
+a new response arrives before the local health timer runs. A completed measurement
+carries its own freshness helper; it is not current health or policy permission.
+Capture replacement clears current evidence immediately. Stream/capture stop snapshots
+bounded fixture history before clearing live state and exports it after joined drain.
+
+The debug fixture exports at most 128 runtime intervals, binding every entry to the
+closed observation scope and actual native clock. The offline qualifier requires
+at least two entries and exactly one independently authenticated worker publication
+scope. It checks consecutive immutable decoder reports and exact BigInt source-to-wire
+projection against the actual relay origin, then compares the same source interval
+with decoded archive and live frame identities. The known fixture has contiguous
+30-fps capture/encode timestamps: this oracle qualifies leading/interior decoder
+losses, not arbitrary production camera cadence or encoder-loss scenarios. Unit tests
+of the lower-level matcher separately cover encoder losses. Missing runtime evidence
+cannot be replaced by offline reconstruction.
+
 ## Qualification
 
-Seven history tests and fourteen matcher tests cover bounded eviction, snapshot
-isolation, quarantine, close, leading/interior losses, encoding drops, missing
-capture provenance, bad counts, wrong origins, signed coordinates, wrap, ambiguous
-history, exact 1/29-second quantization, Int64.min origins and overflow. The full Media
-suite passes 174 tests (119 XCTest + 55 Swift Testing); Streaming passes 39 tests.
-The combined unsigned iPhone/embedded Watch Release build verifies package integration.
-Independent review found no blocking issue; its numerical-boundary coverage notes
-were added and pass. Evidence is retained in
-`artifacts/qa/source-interval-final-verification.json`.
+The foundational matcher passed 39 Streaming tests and the combined unsigned
+iPhone/embedded Watch Release build. Current owner integration passes 177 Media
+tests (122 XCTest + 55 Swift Testing). The native model suite passes 123 tests,
+including consecutive matching, leading loss, duplicate age, contradiction, rewind,
+missing reports, scope replacement, lease expiry, invalid history and both stop paths.
+The tooling suite passes 646 tests, including 35 independent source-interval tests.
+The independent fixture checker covers healthy counts, leading/interior losses,
+signed/unwrapped PTS, repeated report ages and malformed/mismatched evidence.
+Independent review found no blocking issue and prompted a valid-but-nonconsecutive
+sequence regression, which now exercises the intended continuity check.
 
-This is foundational unit/build qualification. Production collection, consecutive
-report association, native fixture export and independent barcode qualification
-remain in [the integration plan](superpowers/plans/2026-09-15-matched-source-intervals.md).
-Usable capacity, thermal/worker pressure and applied-profile boundaries are still
-required before runtime quality changes.
+Foundation evidence remains in `artifacts/qa/source-interval-final-verification.json`.
+Runtime integration evidence is in
+`artifacts/qa/source-interval-runtime-final-verification.json`. The complete iPhone 14 /
+iOS 17.5 fixture `native-app-D1xobo` passed: 1,905 archive frames and 1,463 live frames
+at approximately 30 fps, seven independently checked runtime intervals of 150 frames
+each, no losses within those intervals, complete encoded drain and score changes.
+Sixty startup encoded frames remain explicit acquisition. A/V pulse offset was
+0.021 ms archive / 65.25 ms live. The final unsigned iPhone/Watch Release build passes.
+This finite synthetic-video run does not qualify camera hardware, sustained physical
+thermal load, radio transitions or other-host GPU behavior. Detailed evidence is in
+[the integration plan](superpowers/plans/2026-09-15-matched-source-intervals.md).
+Usable video capacity, thermal/worker pressure, monotonic policy-window alignment
+and applied-profile boundaries remain necessary before runtime quality changes.

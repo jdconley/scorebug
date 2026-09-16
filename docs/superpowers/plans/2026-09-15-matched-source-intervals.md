@@ -52,29 +52,29 @@ Files: new Media `VideoSourceHistory.swift` and tests; new Streaming
 `PublishingSourceInterval.swift` and tests. No runtime collection enabled yet.
 
 - [x] Write executable failing tests for ring eviction and frozen snapshots,
-  duplicate/reorder/epoch/clock quarantine, independent stages, close and bounds.
-  Use the intended API:
-  ```swift
-  var history = try VideoSourceHistory(scope: scope, capacity: 512)
-  history.observe(.captureVideo, sourcePTS: CMTime(value: 1, timescale: 30), at: 1)
-  history.observe(.encodedVideo, sourcePTS: CMTime(value: 1, timescale: 30), at: 1)
-  XCTAssertEqual(history.snapshot.capture.count, 1)
-  ```
+      duplicate/reorder/epoch/clock quarantine, independent stages, close and bounds.
+      Use the intended API:
+    ```swift
+    var history = try VideoSourceHistory(scope: scope, capacity: 512)
+    history.observe(.captureVideo, sourcePTS: CMTime(value: 1, timescale: 30), at: 1)
+    history.observe(.encodedVideo, sourcePTS: CMTime(value: 1, timescale: 30), at: 1)
+    XCTAssertEqual(history.snapshot.capture.count, 1)
+    ```
 - [x] Implement the preallocated ledger and run focused/full Media tests:
-  `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugMedia`.
+      `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugMedia`.
 - [x] Write failing matcher tests for healthy 150-frame intervals, leading/interior
-  losses, capture-to-encoder drops, signed decoder PTS, wire wrap, rational origins,
-  quantization collisions, eviction, wrong origin and impossible frame counts.
-  ```swift
-  let result = PublishingSourceInterval.match(history: history.snapshot, clock: clock,
-      relayOriginPTS: origin, previousDecodedPTS: previous,
-      firstDecodedPTS: first, lastDecodedPTS: last, decodedFrames: 145)
-  XCTAssertEqual(result?.encodedFrames, 150)
-  XCTAssertEqual(result?.encodedNotDecodedFrames, 5)
-  XCTAssertEqual(result?.leadingMissingEncodedFrames, 5)
-  ```
+      losses, capture-to-encoder drops, signed decoder PTS, wire wrap, rational origins,
+      quantization collisions, eviction, wrong origin and impossible frame counts.
+    ```swift
+    let result = PublishingSourceInterval.match(history: history.snapshot, clock: clock,
+        relayOriginPTS: origin, previousDecodedPTS: previous,
+        firstDecodedPTS: first, lastDecodedPTS: last, decodedFrames: 145)
+    XCTAssertEqual(result?.encodedFrames, 150)
+    XCTAssertEqual(result?.encodedNotDecodedFrames, 5)
+    XCTAssertEqual(result?.leadingMissingEncodedFrames, 5)
+    ```
 - [x] Implement exact matching with existing SDK projection, run focused/full
-  Streaming tests and combined unsigned iPhone/Watch Release build; review and commit.
+      Streaming tests and combined unsigned iPhone/Watch Release build; review and commit.
 
 Task 1 evidence: the executable history stub failed 32 assertions in seven tests;
 the matcher stub failed ten assertions across eleven tests. Final qualification
@@ -90,27 +90,57 @@ automatic policy integration is claimed by this foundation commit.
 Files: VideoFrameObservationOwner, new native `WorkerSourceIntervalObservation.swift`,
 CaptureStreamingModel, Film model tests and VideoObservationFixture.
 
-- [ ] Add optional bounded history to the observation owner and explicitly enable
-  it for production publishing. Sample PTS/time within the existing serialized
-  callback. Snapshot on the control path; archive queues remain independent.
-- [ ] Add a model accumulator accepting validatedPublication and
-  WorkerDecodedVideoFreshness, plus scoped native clock/history. Baseline the first
-  window; same sequence/equal immutable contents is a no-op, contradictory contents
-  invalidate, next sequence alone may match. Any gap, expiry, empty/invalid window,
-  scope/clock/profile change clears previous interval and re-baselines. A completed
-  match remains historical; it must carry freshness separately for any policy use.
-- [ ] Add model tests using exact deterministic local/remote timestamps, delayed
-  duplicate reports, restart, gap, stale response, invalid history and capture stop.
-- [ ] Export bounded matched evidence with the existing owned native fixture;
-  validate exact source-frame denominators independently from barcode/native clock
-  evidence, without treating export-time reconstruction as runtime measurement.
+- [x] Add optional bounded history to the observation owner and explicitly enable
+      it for production publishing. Sample PTS/time within the existing serialized
+      callback. Snapshot on the control path; archive queues remain independent.
+- [x] Add a model accumulator accepting validatedPublication and
+      WorkerDecodedVideoFreshness, plus scoped native clock/history. Baseline the first
+      window; same sequence/equal immutable contents is a no-op, contradictory contents
+      invalidate, next sequence alone may match. Any gap, expiry, empty/invalid window,
+      scope/clock/profile change clears previous interval and re-baselines. A completed
+      match remains historical; it must carry freshness separately for any policy use.
+- [x] Add model tests using exact deterministic local/remote timestamps, delayed
+      duplicate reports, restart, gap, stale response, invalid history and capture stop.
+- [x] Export bounded matched evidence with the existing owned native fixture;
+      validate exact source-frame denominators independently from barcode/native clock
+      evidence, without treating export-time reconstruction as runtime measurement.
 
 ## Task 3: Runtime media qualification and policy handoff
 
-- [ ] Run the existing full native streaming workflow with clock-v2 publication
-  enabled and unchanged archive, A/V, frame, score, drain and cleanup gates.
-- [ ] Add deterministic loss/gap fixtures that prove edge losses are counted and
-  missing reports/acquisition are not misrepresented as successful intervals.
-- [ ] Document measured evidence and outstanding capacity, pressure, monotonic
-  window alignment and applied-profile-boundary requirements. Keep automatic
-  quality changes disabled until those runtime inputs and impairment tests pass.
+- [x] Run the existing full native streaming workflow with clock-v2 publication
+      enabled and unchanged archive, A/V, frame, score, drain and cleanup gates.
+- [x] Add deterministic loss/gap fixtures that prove edge losses are counted and
+      missing reports/acquisition are not misrepresented as successful intervals.
+- [x] Document measured evidence and outstanding capacity, pressure, monotonic
+      window alignment and applied-profile-boundary requirements. Keep automatic
+      quality changes disabled until those runtime inputs and impairment tests pass.
+
+Tasks 2–3 evidence: production history is opt-in at the publishing model and remains
+bounded to 2,048 scalar entries per stage. The full Media suite passes 177 tests;
+native Film model tests pass 123, and tooling passes 646, including 35 independent
+source-interval oracle tests. Executable failing regressions reproduced lost export
+on capture stop and loss of the expiry reason; both pass after fixes. Independent
+review approved the integration and oracle with one sequence-test correction, now
+covered using valid nonconsecutive values. Leading/interior loss fixtures and native
+missed-report/acquisition tests are deterministic; no physical impairment result is
+claimed.
+
+The complete iPhone 14/iOS 17.5 streaming fixture `native-app-D1xobo` passed unchanged
+A/V, frame, score, archive, drain and cleanup gates. Seven runtime intervals, sequences
+2–8, matched independent decoded source identities: each has 150 capture, encoder and
+decoder frames, with no leading/interior losses. Archive: frames 0–1904 (1,905),
+63.5 seconds, approximately 30 fps. Live: frames 229–1691 (1,463), 48.767 source seconds,
+approximately 30 fps, no gaps in the decoded range. Sixty encoded startup frames
+169–228 remain explicitly acquisition; there is no missing encoded tail. Maximum
+A/V pulse offset is 0.021 ms archive and 65.25 ms live; endpoint offsets are 8.0 ms
+and 16.669 ms. Score overlay changed 350 sampled pixels. Recorder, worker encoder
+and worker all exited zero without forced recorder termination. Owned simulator
+and relay cleanup completed. Final unsigned Release build includes iPhone and Watch.
+
+Final source and evidence hashes are in
+`artifacts/qa/source-interval-runtime-final-verification.json`.
+Automatic adaptation remains disabled. Next work must establish usable video
+capacity after overhead/retransmission, thermal and worker pressure, first affected
+source frames of applied profile changes, and monotonic policy-window alignment,
+then qualify behavior under impairment. Watch radio behavior, physical-device media
+and other-host GPU/cloud qualification remain separate outstanding work.

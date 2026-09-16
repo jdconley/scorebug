@@ -89,4 +89,45 @@ final class VideoSourceHistoryTests: XCTestCase {
         XCTAssertEqual(history.snapshot.capture.count, 1)
         XCTAssertNil(history.snapshot.invalidity)
     }
+
+    func testOwnerHistoryUsesSameAdmissionClockAndRetainsBoundedStages() throws {
+        let owner = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 3)
+        for i in 0..<5 {
+            let pts = CMTime(value: Int64(i), timescale: 30)
+            owner.observe(.captureVideo, sourcePTS: pts)
+            owner.observe(.encodedVideo, sourcePTS: pts)
+        }
+        let history = try XCTUnwrap(owner.sourceHistorySnapshot)
+        let ordinary = owner.snapshot
+        XCTAssertEqual(history.scope, ordinary.scope)
+        XCTAssertEqual(history.capture.map { $0.sourcePTS.value }, [2, 3, 4])
+        XCTAssertEqual(history.encoded.count, 3)
+        XCTAssertEqual(history.omittedCaptureFrames, 2)
+        XCTAssertEqual(history.omittedEncodedFrames, 2)
+        XCTAssertEqual(history.capture.last?.observedAt, ordinary.current.captureVideo.lastObservationTime)
+        XCTAssertEqual(history.encoded.last?.observedAt, ordinary.current.encodedVideo.lastObservationTime)
+        XCTAssertNil(history.invalidity)
+    }
+
+    func testOwnerHistoryIsOptInAndCloseFreezesItWithOrdinaryObservation() throws {
+        XCTAssertNil(try VideoFrameObservationOwner(scope: scope).sourceHistorySnapshot)
+        XCTAssertThrowsError(try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 0))
+        let owner = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 8)
+        owner.observe(.captureVideo, sourcePTS: .zero)
+        _ = owner.close()
+        owner.observe(.captureVideo, sourcePTS: CMTime(value: 1, timescale: 30))
+        let history = try XCTUnwrap(owner.sourceHistorySnapshot)
+        XCTAssertTrue(history.isClosed)
+        XCTAssertEqual(history.capture.count, 1)
+        XCTAssertEqual(owner.snapshot.current.captureVideo.callbackCount, 1)
+    }
+
+    func testOwnerHistoryQuarantineDoesNotStopOrdinaryCallbacks() throws {
+        let owner = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 8)
+        for value in [0, 0, 1] { XCTAssertTrue(owner.observe(.captureVideo, sourcePTS: CMTime(value: Int64(value), timescale: 30))) }
+        let history = try XCTUnwrap(owner.sourceHistorySnapshot)
+        XCTAssertEqual(history.invalidity, .sourceOrder)
+        XCTAssertEqual(history.capture.count, 1)
+        XCTAssertEqual(owner.snapshot.current.captureVideo.callbackCount, 3)
+    }
 }

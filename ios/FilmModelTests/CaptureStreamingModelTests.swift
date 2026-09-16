@@ -5,6 +5,118 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testNativeSourceIntervalFollowsPublishingAndClearsOnCaptureReplacement() async throws {
+        let (model, server, owner) = try await sourceIntervalModel()
+        let result = try XCTUnwrap(model.workerSourceInterval)
+        XCTAssertEqual(result.sequence, 2)
+        XCTAssertEqual(result.interval.encodedFrames, 150)
+        XCTAssertEqual(result.interval.encodedNotDecodedFrames, 0)
+        XCTAssertEqual(result.interval.scope, owner.snapshot.scope)
+        XCTAssertEqual(model.localState, .publishing)
+        // A reused recording ID with another capture tap cannot inherit evidence.
+        model.captureChanged(captureContext())
+        XCTAssertNil(model.workerSourceInterval)
+        await model.pollControl()
+        XCTAssertNil(model.workerSourceInterval)
+        let requests = await server.requestCount
+        XCTAssertGreaterThan(requests, 0)
+        await model.stopStreaming()
+    }
+
+    func testNativeSourceIntervalExpiresWithoutStoppingRecordingAndStopClearsIt() async throws {
+        let (model, _, _) = try await sourceIntervalModel()
+        XCTAssertNotNil(model.workerSourceInterval)
+        model.pollLocalHealth(at: ContinuousClock.now + .seconds(6))
+        XCTAssertNil(model.workerSourceInterval)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertEqual(model.localState, .publishing)
+        await model.stopStreaming()
+        XCTAssertNil(model.workerSourceInterval)
+    }
+
+    func testSourceIntervalExportPreservesMeasuredCountsAndRejectsOtherAttemptClock() async throws {
+        let (model, _, owner) = try await sourceIntervalModel()
+        let interval = try XCTUnwrap(model.workerSourceInterval)
+        var accumulator = try VideoFrameObservationAccumulator(scope: owner.snapshot.scope, monotonicAnchor: 0)
+        let closed = accumulator.close(at: 1)
+        let clock = PublishingClockObservation(scope: closed.scope, transportClock: interval.nativeClock, isClosed: true)
+        let data = try VideoObservationFixture.data(for: closed, captureDetachedAt: 0.9,
+            publishingClockObservation: clock, sourceIntervals: [interval])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let proofs = try XCTUnwrap(json["sourceIntervals"] as? [[String: Any]])
+        XCTAssertEqual(proofs.count, 1)
+        XCTAssertEqual(proofs[0]["encodedFrames"] as? Int, 150)
+        XCTAssertEqual(proofs[0]["sequence"] as? String, "2")
+        XCTAssertEqual(proofs[0]["previousDecodedPTS"] as? String, "445081")
+        let differentClock = PublishingClockObservation(scope: closed.scope,
+            transportClock: PublishingTransportClock(sourceOrigin: CMTime(value: 1, timescale: 30), publishingGeneration: 1)!, isClosed: true)
+        XCTAssertThrowsError(try VideoObservationFixture.data(for: closed, captureDetachedAt: 0.9,
+            publishingClockObservation: differentClock, sourceIntervals: [interval]))
+        await model.stopStreaming()
+    }
+
+    func testBothStreamAndCaptureStopExportSourceIntervalsBeforeClearing() async throws {
+        for stopCapture in [false, true] {
+            let (model, _, _) = try await sourceIntervalModel()
+            XCTAssertEqual(model.workerSourceIntervalHistory.count, 1)
+            var exported: [WorkerSourceIntervalObservation] = []
+            model.videoObservationFixtureWriter = { snapshot, _, _, _, _, intervals in
+                XCTAssertTrue(snapshot.isClosed)
+                exported = intervals
+            }
+            if stopCapture { model.captureChanged(nil) }
+            await model.stopStreaming()
+            XCTAssertEqual(exported.count, 1)
+            XCTAssertEqual(exported.first?.interval.encodedFrames, 150)
+            XCTAssertTrue(model.workerSourceIntervalHistory.isEmpty)
+            XCTAssertNil(model.workerSourceInterval)
+        }
+    }
+
+    private func sourceIntervalModel() async throws -> (CaptureStreamingModel, CaptureTestServer, VideoFrameObservationOwner) {
+        let server = CaptureTestServer()
+        let publisher = CaptureTestPublisher()
+        await publisher.setTransportClock(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1))
+        var owner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, publisher: publisher, observationFactory: { scope in
+            let result = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 2048)
+            owner = result
+            return result
+        })
+        model.workerReportAgeProofsEnabled = true
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        let observed = try XCTUnwrap(owner)
+        for i in 0..<450 {
+            let pts = CMTime(value: Int64(i), timescale: 30)
+            observed.observe(.captureVideo, sourcePTS: pts)
+            observed.observe(.encodedVideo, sourcePTS: pts)
+        }
+        let deadline = ContinuousClock.now + .seconds(3)
+        repeat {
+            model.pollLocalHealth()
+            if model.publishingClockObservation != nil { break }
+            await Task.yield()
+        } while ContinuousClock.now < deadline
+        XCTAssertNotNil(model.publishingClockObservation)
+        for sequence: Int64 in [1, 2] {
+            var response = workerAgeResponse()
+            response.status.workerEpoch = "22222222-2222-2222-2222-222222222222"
+            response.status.publication = .init(readerId: "33333333-3333-3333-3333-333333333333",
+                publisherId: "44444444-4444-4444-4444-444444444444",
+                publishingAttemptId: observed.snapshot.scope.publishingAttemptID.uuidString.lowercased(),
+                clock: .init(convention: "mpegts-ingress-origin-90k-v1", originPTS: "10919"))
+            response.status.observation?.decodedVideo?.clock = "mpegts-pts-90k-v1"
+            response.status.observation?.decodedVideo?.completed = .init(sequence: sequence, durationMs: 5000, ageMs: 250,
+                firstPTS: (sequence - 1) * 450_000 - 1919, lastPTS: sequence * 450_000 - 4919,
+                freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)
+            await server.setStatusOverride(response)
+            await model.pollControl()
+        }
+        return (model, server, observed)
+    }
+
     func testStartActionDuringBackgroundPollIsNotLost() async throws {
         let server = CaptureTestServer()
         let gate = FilmTestGate()
@@ -938,7 +1050,7 @@ import XCTest
         let model = makeModel(server: CaptureTestServer(), publisher: publisher)
         model.workerReportAgeProofsEnabled = true
         var exported: PublishingClockObservation?
-        model.videoObservationFixtureWriter = { snapshot, _, _, _, clock in
+        model.videoObservationFixtureWriter = { snapshot, _, _, _, clock, _ in
             XCTAssertEqual(clock?.scope, snapshot.scope)
             XCTAssertEqual(clock?.isClosed, true)
             XCTAssertTrue(snapshot.isClosed)
@@ -1354,7 +1466,7 @@ import XCTest
             model.workerReportAgeProofsEnabled = true
             var exported: [WorkerReportAgeProof]?
             var closed: VideoFrameObservationSnapshot?
-            model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock in
+            model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock, _ in
                 XCTAssertTrue(snapshot.isClosed)
                 XCTAssertGreaterThanOrEqual(detached, snapshot.monotonicAnchor)
                 XCTAssertEqual(ingress?.scope, snapshot.scope)
@@ -1384,7 +1496,7 @@ import XCTest
         model.workerReportAgeProofsEnabled = true
         let gate = FilmTestGate()
         var exported: [WorkerReportAgeProof] = []
-        model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock in
+        model.videoObservationFixtureWriter = { snapshot, detached, proofs, ingress, clock, _ in
             XCTAssertEqual(ingress?.scope, snapshot.scope)
             XCTAssertEqual(ingress?.isClosed, true)
             XCTAssertGreaterThanOrEqual(ingress?.current.monotonicEnd ?? 0, detached)

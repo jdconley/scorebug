@@ -314,18 +314,25 @@ public struct VideoFrameObservationAccumulator: Sendable {
 public final class VideoFrameObservationOwner: @unchecked Sendable {
     private let lock = NSLock()
     private var accumulator: VideoFrameObservationAccumulator
+    private var sourceHistory: VideoSourceHistory?
 
     public init(scope: VideoFrameObservationScope,
-                windowDuration: Double = 5, completedWindowLimit: Int = 8) throws {
+                windowDuration: Double = 5, completedWindowLimit: Int = 8, sourceHistoryCapacity: Int? = nil) throws {
         accumulator = try VideoFrameObservationAccumulator(scope: scope,
             monotonicAnchor: ProcessInfo.processInfo.systemUptime,
             windowDuration: windowDuration, completedWindowLimit: completedWindowLimit)
+        sourceHistory = try sourceHistoryCapacity.map { try VideoSourceHistory(scope: scope, capacity: $0) }
     }
     public var snapshot: VideoFrameObservationSnapshot { lock.withLock { accumulator.snapshot } }
+    /// Copies bounded scalar history only when a control-path consumer requests it.
+    public var sourceHistorySnapshot: VideoSourceHistorySnapshot? { lock.withLock { sourceHistory?.snapshot } }
     @discardableResult
     public func observe(_ stage: VideoFrameObservationStage, sourcePTS: CMTime) -> Bool {
         lock.withLock {
-            accumulator.observe(stage, sourcePTS: sourcePTS, at: ProcessInfo.processInfo.systemUptime)
+            let time = ProcessInfo.processInfo.systemUptime
+            let accepted = accumulator.observe(stage, sourcePTS: sourcePTS, at: time)
+            sourceHistory?.observe(stage, sourcePTS: sourcePTS, at: time)
+            return accepted
         }
     }
     @discardableResult
@@ -335,6 +342,9 @@ public final class VideoFrameObservationOwner: @unchecked Sendable {
     /// Call only after the desired encoder drain; the final snapshot is retained.
     @discardableResult
     public func close() -> VideoFrameObservationSnapshot {
-        lock.withLock { accumulator.close(at: ProcessInfo.processInfo.systemUptime) }
+        lock.withLock {
+            sourceHistory?.close()
+            return accumulator.close(at: ProcessInfo.processInfo.systemUptime)
+        }
     }
 }

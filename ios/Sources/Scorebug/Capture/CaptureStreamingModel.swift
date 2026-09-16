@@ -28,6 +28,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var commandState: BroadcastCoordinatorState?
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
+    @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
@@ -47,10 +48,11 @@ struct PublishingClockObservation: Equatable, Sendable {
         #endif
     }()
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
-    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?, PublishingClockObservation?) async -> Void)? = {
+    private(set) var workerSourceIntervalHistory: [WorkerSourceIntervalObservation] = []
+    var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?, PublishingClockObservation?, [WorkerSourceIntervalObservation]) async -> Void)? = {
         #if targetEnvironment(simulator)
-        return { snapshot, detached, proofs, ingress, clock in
-            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress, publishingClockObservation: clock)
+        return { snapshot, detached, proofs, ingress, clock, sourceIntervals in
+            await VideoObservationFixture.writeClosed(snapshot, captureDetachedAt: detached, workerReportAgeProofs: proofs, ingressObservation: ingress, publishingClockObservation: clock, sourceIntervals: sourceIntervals)
         }
         #else
         return nil
@@ -61,6 +63,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var activeRecordingID: String?
     private var workerEpoch = UUID()
     private var workerFreshness: WorkerStatusFreshness?
+    private var workerSourceTracker = WorkerSourceIntervalTracker()
     private var setup: SavedCaptureSetup?
     var watchSetupConnection: (endpoint: String, installationToken: String)? {
         guard !needsStorageRetry, let setup, !setup.installationToken.isEmpty else { return nil }
@@ -97,9 +100,9 @@ struct PublishingClockObservation: Equatable, Sendable {
          observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
              #if DEBUG && targetEnvironment(simulator)
              let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)
-             return try VideoFrameObservationOwner(scope: scope, completedWindowLimit: limit)
+             return try VideoFrameObservationOwner(scope: scope, completedWindowLimit: limit, sourceHistoryCapacity: 2048)
              #else
-             return try VideoFrameObservationOwner(scope: scope)
+             return try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 2048)
              #endif
          }) {
         self.storage = storage; self.pendingStore = pendingStore
@@ -143,6 +146,13 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// archive drain, storage, HTTP or encoder awaits. Detach/cancel is immediate.
     func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
         let previous = current
+        if context?.id != previous?.id || context?.tap !== previous?.tap {
+            workerSourceTracker.clear()
+            workerSourceInterval = nil
+            #if DEBUG
+            if context != nil { workerSourceIntervalHistory = [] }
+            #endif
+        }
         if let requestedStart, context?.id != requestedStart.id || context?.tap !== requestedStart.tap {
             self.requestedStart = nil
             localState = .idle
@@ -384,7 +394,26 @@ struct PublishingClockObservation: Equatable, Sendable {
             let requestDuration = requestStart.duration(to: received)
             workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+            if let publishing, localState == .publishing,
+               publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+               current?.tap === publishing.context.tap, response.status.validatedPublication != nil,
+               let history = publishing.observations?.sourceHistorySnapshot {
+                workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
+                    clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
+                    receivedAt: received, requestDuration: requestDuration)
+            } else {
+                workerSourceTracker.clear()
+                workerSourceInterval = nil
+            }
             #if DEBUG
+            if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
+                let previous = workerSourceIntervalHistory.last
+                if previous?.sequence != interval.sequence || previous?.workerEpoch != interval.workerEpoch ||
+                    previous?.workerAttempt != interval.workerAttempt || previous?.publication != interval.publication {
+                    workerSourceIntervalHistory.append(interval)
+                    if workerSourceIntervalHistory.count > 128 { workerSourceIntervalHistory.removeFirst() }
+                }
+            }
             if workerReportAgeProofsEnabled, let publishing, localState == .publishing,
                publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
                let scope = publishing.observations?.snapshot.scope {
@@ -410,6 +439,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
+        workerSourceTracker.expire(at: instant)
+        workerSourceInterval = workerSourceTracker.latest
         if workerFreshness?.isFresh(at: instant) == false {
             workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil
             #if DEBUG
@@ -491,6 +522,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             // A final callback cannot establish capture detach or hide a stall.
             let captureDetachedAt = fixtureWriter == nil ? nil : ProcessInfo.processInfo.systemUptime
             let workerReportAgeProofs = workerReportAgeProofHistory.proofs
+            let sourceIntervals = workerSourceIntervalHistory
             #endif
             publishing.session.cancel()
             if diagnosticAttemptID == publishing.attempt {
@@ -518,7 +550,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                             scope: final?.scope, isClosed: true)
                         #if DEBUG
                         if let final, let captureDetachedAt, let fixtureWriter {
-                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation, publishingClockObservation)
+                            await fixtureWriter(final, captureDetachedAt, workerReportAgeProofs, ingressObservation, publishingClockObservation, sourceIntervals)
                         }
                         #endif
                     }
@@ -532,8 +564,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
     private func clearWorker() {
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil
+        workerSourceTracker.clear(); workerSourceInterval = nil
         #if DEBUG
         workerReportAgeProofHistory.clear()
+        workerSourceIntervalHistory = []
         #endif
     }
     private func reserveStopOwnership(_ id: String) throws {
