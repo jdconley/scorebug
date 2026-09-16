@@ -201,6 +201,8 @@ export async function nativeStreamingFixture({
     if (uplinkProfile)
       uplink = await createUDPImpairmentProxy({
         receiverPort: ingestPort,
+        forward: { recordTimeline: true },
+        reverse: { recordTimeline: true },
         ...(uplinkProfile === 'rate4m'
           ? {
               forwardRateSchedule: [

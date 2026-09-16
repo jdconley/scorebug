@@ -1019,3 +1019,20 @@ Next inspect encoded-frame bursts and packet/drop/IDR recovery around the downwa
 geometry changes; compare native receipts and source identities before increasing
 buffering again. Production adaptation, physical devices, long soaks and remote
 hosts remain unqualified.
+
+
+The [uplink queue timeline checkpoint](2026-09-16-uplink-queue-timeline.md)
+adds bounded payload-free 100-ms event bins and independent chronological/counter
+validation to the local test proxy. All 990 tooling tests and final review pass.
+In unchanged 400-ms run `native-app-4J8Soo`, both timelines reconcile without
+omission. The forward queue drops 1190 overflow packets during two pressure
+clusters; a 100-ms bin receives 374 KB while forwarding 51 KB, and observed queue
+residence reaches 526 ms. Reverse traffic has no drops. Receiver counters include
+late/duplicate traffic and cannot be equated with unique missing video packets.
+
+All 8165 archive frames and 135 audio markers remain intact. Live still fails at
+22-fps worst receiver cadence, 102 absent identities, 46 repeated observations and
+−145.3 ms end coverage. Next observe actual native SRT pacing settings and distinguish
+original/retransmitted/control packet pressure, then test bounded sender pacing.
+Do not enlarge queues, freshness limits, or declare the 400-ms setting reliable.
+Production adaptation and device/host/soak qualification remain open.

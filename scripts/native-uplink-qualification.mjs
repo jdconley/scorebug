@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { qualifyDatagramTimeline } from './datagram-timeline-qualification.mjs';
 
 /** Send attempts prove fixture accounting only. Native media and receiver gates
  * independently establish delivered frame continuity and timing. */
@@ -17,6 +18,7 @@ export function qualifyNativeUplinkProxy(snapshot) {
     const d = snapshot[direction],
       q = d.queue,
       c = q.configuration;
+    if (q.timeline !== undefined) qualifyDatagramTimeline(q);
     assert.equal(d.pendingPackets, 0);
     assert.equal(d.pendingPayloadBytes, 0);
     assert.equal(q.closed, true);
@@ -77,6 +79,7 @@ const safe = (n, maximum = Number.MAX_SAFE_INTEGER) =>
   Number.isSafeInteger(n) && n >= 0 && n <= maximum;
 function validateScheduledDirection(d, { rate, closed, at, previous, allowOverflow }) {
   const q = d.queue;
+  if (q.timeline !== undefined) qualifyDatagramTimeline(q);
   assert.equal(q.closed, closed);
   assert.deepEqual(q.configuration, {
     rateBitsPerSecond: rate,

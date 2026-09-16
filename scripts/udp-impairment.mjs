@@ -12,6 +12,69 @@ const defaults = Object.freeze({
   maxQueueBytes: 262144,
 });
 const counters = () => ({ packets: 0, wireBytes: 0 });
+const dispositions = [
+  'received',
+  'forwarded',
+  'injectedDrop',
+  'overflowDrop',
+  'oversizeDrop',
+  'closeDiscard',
+];
+const allCounters = () => Object.fromEntries(dispositions.map((k) => [k, counters()]));
+
+/** Payload-free sparse bins on the queue's existing monotonic clock. Never controls delivery. */
+class QueueTimeline {
+  scope =
+    'Sparse event bins; queue peaks observe occupancy before/after packet dispositions, not continuously sampled coverage.';
+  windowMilliseconds = 100;
+  capacity = 8192;
+  windows = [];
+  omitted = allCounters();
+  omittedEvents = 0;
+  firstObservedAt = null;
+  lastObservedAt = null;
+  time(now) {
+    this.firstObservedAt ??= now;
+    this.lastObservedAt = now;
+  }
+  window(now) {
+    const start = Math.floor(now / this.windowMilliseconds) * this.windowMilliseconds;
+    if (this.windows.at(-1)?.start === start) return this.windows.at(-1);
+    if (this.windows.length === this.capacity) return null;
+    const value = {
+      start,
+      end: start + this.windowMilliseconds,
+      ...allCounters(),
+      peakQueuePackets: 0,
+      peakQueueBytes: 0,
+      maximumForwardResidenceMilliseconds: 0,
+    };
+    this.windows.push(value);
+    return value;
+  }
+  account(kind, bytes, now, packets, queueBytes, residence) {
+    const row = this.window(now);
+    const target = row ?? this.omitted;
+    target[kind].packets++;
+    target[kind].wireBytes += bytes;
+    if (!row) {
+      this.omittedEvents++;
+      return;
+    }
+    row.peakQueuePackets = Math.max(row.peakQueuePackets, packets);
+    row.peakQueueBytes = Math.max(row.peakQueueBytes, queueBytes);
+    row.maximumForwardResidenceMilliseconds = Math.max(
+      row.maximumForwardResidenceMilliseconds,
+      residence,
+    );
+  }
+  queued(now, packets, bytes) {
+    const row = this.window(now);
+    if (!row) return;
+    row.peakQueuePackets = Math.max(row.peakQueuePackets, packets);
+    row.peakQueueBytes = Math.max(row.peakQueueBytes, bytes);
+  }
+}
 function validateRate(rate) {
   assert.ok(rate === null || (Number.isFinite(rate) && rate >= 1 && rate <= 1e12), 'Invalid rate');
 }
@@ -51,6 +114,7 @@ function validateSchedule(schedule, initialRate) {
  * token bucket: delayed timers cannot accumulate an unbounded catch-up burst. */
 export class DatagramImpairmentQueue {
   #configuration;
+  #timeline;
   #storage;
   #head = 0;
   #count = 0;
@@ -70,8 +134,10 @@ export class DatagramImpairmentQueue {
   constructor(configuration = {}) {
     assert.ok(configuration && typeof configuration === 'object' && !Array.isArray(configuration));
     for (const key of Object.keys(configuration))
-      assert.ok(key in defaults, `Unknown impairment option ${key}`);
-    const c = { ...defaults, ...configuration };
+      assert.ok(key in defaults || key === 'recordTimeline', `Unknown impairment option ${key}`);
+    const { recordTimeline = false, ...queueConfiguration } = configuration;
+    assert.equal(typeof recordTimeline, 'boolean', 'Invalid timeline selection');
+    const c = { ...defaults, ...queueConfiguration };
     validateRate(c.rateBitsPerSecond);
     assert.ok(
       Number.isFinite(c.delayMilliseconds) &&
@@ -88,6 +154,7 @@ export class DatagramImpairmentQueue {
     ])
       assert.ok(Number.isSafeInteger(c[key]) && c[key] >= min && c[key] <= max, `Invalid ${key}`);
     this.#configuration = Object.freeze(c);
+    if (recordTimeline) this.#timeline = new QueueTimeline();
     this.#storage = Array(c.maxQueuePackets);
     this.#tokens = c.burstBytes;
   }
@@ -106,6 +173,7 @@ export class DatagramImpairmentQueue {
         this.#tokens + ((now - this.#lastTime) * c.rateBitsPerSecond) / 8000,
       );
     this.#lastTime = now;
+    this.#timeline?.time(now);
   }
   setRate(rateBitsPerSecond, now) {
     assert.ok(!this.#closed, 'Cannot change a closed queue');
@@ -114,9 +182,10 @@ export class DatagramImpairmentQueue {
     this.#advance(now);
     this.#configuration = Object.freeze({ ...this.#configuration, rateBitsPerSecond });
   }
-  #account(kind, bytes) {
+  #account(kind, bytes, residence = 0) {
     this.#counts[kind].packets++;
     this.#counts[kind].wireBytes += bytes;
+    this.#timeline?.account(kind, bytes, this.#lastTime, this.#count, this.#bytes, residence);
   }
   enqueue(data, now) {
     if (this.#closed) return false;
@@ -141,11 +210,13 @@ export class DatagramImpairmentQueue {
       data: Buffer.from(data),
       bytes,
       readyAt: now + c.delayMilliseconds,
+      enqueuedAt: now,
     };
     this.#count++;
     this.#bytes += bytes;
     this.#peakPackets = Math.max(this.#peakPackets, this.#count);
     this.#peakBytes = Math.max(this.#peakBytes, this.#bytes);
+    this.#timeline?.queued(now, this.#count, this.#bytes);
     return true;
   }
   takeReady(now) {
@@ -160,11 +231,12 @@ export class DatagramImpairmentQueue {
       return null;
     if (this.#configuration.rateBitsPerSecond !== null)
       this.#tokens = Math.max(0, this.#tokens - item.bytes);
+    this.#timeline?.queued(now, this.#count, this.#bytes);
     this.#storage[this.#head] = undefined;
     this.#head = (this.#head + 1) % this.#storage.length;
     this.#count--;
     this.#bytes -= item.bytes;
-    this.#account('forwarded', item.bytes);
+    this.#account('forwarded', item.bytes, now - item.enqueuedAt);
     this.#firstForwardedAt ??= now;
     this.#lastForwardedAt = now;
     return item.data;
@@ -181,8 +253,9 @@ export class DatagramImpairmentQueue {
       rate === null ? 0 : ((item.bytes - this.#tokens) * 8000) / rate,
     );
   }
-  close() {
+  close(now = this.#lastTime ?? 0) {
     if (this.#closed) return;
+    this.#advance(now);
     this.#closed = true;
     for (let i = 0; i < this.#count; i++) {
       const index = (this.#head + i) % this.#storage.length;
@@ -195,6 +268,7 @@ export class DatagramImpairmentQueue {
   snapshot() {
     return structuredClone({
       configuration: this.#configuration,
+      ...(this.#timeline ? { timeline: this.#timeline } : {}),
       ...this.#counts,
       queue: {
         packets: this.#count,
@@ -296,7 +370,7 @@ export async function createUDPImpairmentProxy(configuration) {
     for (const direction of [outgoing, incoming]) {
       clearTimeout(direction.timer);
       direction.timer = null;
-      direction.queue.close();
+      direction.queue.close(performance.now());
     }
     const pendingDrained = new Promise((resolve) => {
       resolvePending = resolve;

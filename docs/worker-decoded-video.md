@@ -269,3 +269,15 @@ actual sender delivery delay is authoritative. Additional recovery buffering add
 latency and can exhaust the source-evidence freshness budget; qualify the complete
 media path before choosing a value. It does not itself repair missing media or
 qualify adaptation.
+
+
+## Local uplink timeline diagnostics
+
+The owned native fixture records payload-free 100-ms event bins for each UDP
+impairment direction. `DatagramImpairmentQueue` keeps this off unless explicitly
+constructed with `recordTimeline: true`. Up to 8192 sparse bins retain dispositions,
+event-observed queue peaks and maximum forwarded residence; excess event counters
+are reported separately. These are send attempts on the proxy clock, not continuous
+occupancy sampling or native frame/packet causality. The independent qualifier
+rejects impossible chronological balances and missing/inconsistent byte evidence.
+Queue limits, rate schedule and packet delivery behavior are unchanged.
