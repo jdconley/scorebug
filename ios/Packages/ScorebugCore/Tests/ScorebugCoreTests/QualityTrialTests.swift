@@ -37,6 +37,25 @@ final class QualityTrialTests: XCTestCase {
         try policy.acknowledge(advice, applied: advice.settings, at: 30)
         return policy
     }
+    func testExternalInvalidationRevokesAdviceAndRestartsRecovery() throws {
+        var policy = try controller()
+        let advice = try ready(&policy)
+        policy.invalidateTelemetry()
+        XCTAssertEqual(policy.appliedRevision, 0)
+        XCTAssertThrowsError(try policy.acknowledge(advice, applied: advice.settings, at: 30))
+        for start in stride(from: 30.0, through: 50, by: 5) {
+            XCTAssertNil(try policy.evaluate(window(start), at: start + 5).recommendation)
+        }
+        XCTAssertEqual(try policy.evaluate(window(55), at: 60).recommendation?.kind, .trial)
+    }
+    func testExternalInvalidationRequiresStickyRollbackWithoutChangingAppliedState() throws {
+        var policy = try probing()
+        policy.invalidateTelemetry()
+        XCTAssertEqual(policy.appliedRevision, 1)
+        XCTAssertEqual(policy.applied.videoBitrate, 2_200_000)
+        XCTAssertEqual(try policy.checkTrialDeadline(at: 31)?.kind, .rollback)
+        XCTAssertEqual(try policy.evaluate(window(30, revision: 1), at: 35).recommendation?.kind, .rollback)
+    }
     func testUnknownCapacityCanRecommendExplicitBoundedTrialAfterThirtySeconds() throws {
         var policy = try controller()
         let advice = try ready(&policy)

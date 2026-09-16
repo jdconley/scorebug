@@ -159,3 +159,34 @@ mixed or unavailable intervals instead of assigning them the current bitrate mer
 because their reports arrived later. Initial unchecked settings remain unverified;
 verified startup/application acknowledgment and pressure-window alignment are still
 needed before runtime control is enabled.
+
+
+## Verified application owner
+
+The opt-in app-layer `PublishingQualitySession` now binds policy state to
+PublishingSession's verified native receipts. The caller supplies qualified profiles
+and invokes bootstrap after an encoder exists. A successful verified initial write
+establishes policy revision zero. A recommendation remains unapplied until a matching
+native write returns within its deadline; acknowledgment uses current uptime, not
+the receipt's earlier acceptance time. Each revision retains its corresponding
+configuration receipt. Settings remain historical after terminal stop.
+
+Only the latest advice for the same attempt and revision can dispatch. Profile
+changes are rejected because this path verifies bitrate only. Evaluation/deadline
+polling cannot mutate policy during a suspended application. Cancellation, terminal
+stop, expired completion or contradictory receipt prevents a late acknowledgment;
+dispatched failures retire live publishing independently of recording. Concurrent
+stop callers join one shielded shutdown task. The production initializer delegates
+native mutation deadlines and task ownership to PublishingSession.
+
+`QualityController.invalidateTelemetry()` supports evidence rejected before a policy
+window can be formed. It clears recovery and pending advice and makes active trial
+rollback sticky, while preserving actual settings, applied revision and clock/order
+watermarks. This also prevents an invalid outer clock from bypassing policy evidence
+invalidation. It invents neither a window nor a new time value.
+
+This owner is compiled into the app but CaptureStreamingModel does not start it yet.
+Tests use deterministic application receipts and include one real PublishingSession
+integration with a controlled publisher. They do not qualify actual automatic media
+trials, native startup timing or aligned telemetry. Source/queue/transport/pressure
+alignment and receiver freshness must be connected before enabling the runtime path.

@@ -141,6 +141,13 @@ public struct QualityController: Sendable {
         lastNow = now; appliedAt = now
     }
 
+    /// Invalidate evidence rejected by an outer adapter without inventing a window
+    /// or advancing clocks/revisions. Actual settings remain historical; active
+    /// trials require rollback and recovery must accumulate again from scratch.
+    public mutating func invalidateTelemetry() {
+        recoveryStart = nil; pending = nil; trial?.rollbackRequired = true
+    }
+
     /// Windows must be complete, nonoverlapping, 1–5 seconds long and received
     /// within 2 seconds of their end. Consecutive windows share exact boundaries.
     /// Invalid input clears recovery and pending recommendations; callers must
@@ -150,7 +157,7 @@ public struct QualityController: Sendable {
             try recordTime(now)
             try validate(window, at: now)
         }
-        catch { recoveryStart = nil; pending = nil; trial?.rollbackRequired = true; throw error }
+        catch { invalidateTelemetry(); throw error }
         var reasons: [Reason] = []
         if let lastEnd, window.start != lastEnd {
             recoveryStart = nil
@@ -342,7 +349,7 @@ public struct QualityController: Sendable {
     /// evidence is absent. Rollback intent survives failed/expired applications.
     public mutating func checkTrialDeadline(at now: Double) throws -> Recommendation? {
         do { try recordTime(now) }
-        catch { trial?.rollbackRequired = true; throw error }
+        catch { invalidateTelemetry(); throw error }
         guard var active = trial else { return nil }
         if now >= active.deadline { active.rollbackRequired = true }
         trial = active

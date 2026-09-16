@@ -391,3 +391,12 @@ mutation and deadline tasks, joins them on terminal shutdown, and rejects stale 
 contradictory application evidence. Successful receipts remain historical after stop.
 This completes mutation ownership; binding receipts to policy acknowledgments and
 aligning source/pressure windows are still required before automatic control.
+
+
+The [quality application owner](superpowers/plans/2026-09-15-quality-application-owner.md)
+now binds verified receipts to initial settings and policy revisions, and rejects
+stale advice or pre-acknowledgment telemetry. Outer evidence/clock rejection resets
+policy recovery and preserves rollback intent. Its deterministic trial-to-rollback
+sequence passes, but the capture model does not invoke this owner yet. The next
+integration must build complete, configuration-matched source/pressure windows and
+qualify receiver freshness before actual automatic media trials.

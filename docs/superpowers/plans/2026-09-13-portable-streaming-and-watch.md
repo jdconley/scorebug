@@ -343,6 +343,13 @@ live state intact; uncertain dispatched writes retire the live attempt and shutd
 joins the operation. The clean archive stays independent. Policy acknowledgment,
 aligned pressure windows and automatic trial/rollback qualification remain open.
 
+The [quality application owner](2026-09-15-quality-application-owner.md) now binds
+verified initial/application receipts to policy revisions and current acknowledgment
+time. It rejects stale advice and unsupported profile transitions, and terminal stop
+prevents late commits. Outer evidence rejection invalidates recovery and preserves
+trial rollback. The owner remains opt-in; source/pressure window alignment and actual
+automatic media trials are next before the capture model can enable it.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live
