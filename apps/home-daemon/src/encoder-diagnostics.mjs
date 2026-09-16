@@ -11,6 +11,11 @@ const patterns = {
   corruptPacket: /Packet corrupt|Continuity check failed/i,
   decodeError: /Error submitting packet to decoder|Error while decoding|corrupt decoded frame/i,
   endOfFile: /End of file/i,
+  missingReference:
+    /reference picture missing|Missing reference picture|co located POCs unavailable|mmco: unref (?:short|long) failure/i,
+  invalidSlice: /decode_slice_header error|non-existing PPS \d+ referenced/i,
+  concealment:
+    /concealing \d+ DC, \d+ AC, \d+ MV errors in [IPB?] frame|Cannot use (?:previous|next) picture in error concealment/i,
 };
 /** @param {number} value */
 const increment = (value) => Math.min(Number.MAX_SAFE_INTEGER, value + 1);
@@ -29,6 +34,9 @@ export class EncoderDiagnostics {
       corruptPacket: 0,
       decodeError: 0,
       endOfFile: 0,
+      missingReference: 0,
+      invalidSlice: 0,
+      concealment: 0,
     },
     unmatchedLines: 0,
     oversizedLines: 0,

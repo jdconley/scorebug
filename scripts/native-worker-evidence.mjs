@@ -95,6 +95,13 @@ function diagnostics(value) {
       typeof value.incompleteLine === 'boolean' &&
       typeof value.ended === 'boolean',
   );
+  // Older runs did not classify these messages. Absence is not a zero count.
+  for (const key of ['missingReference', 'invalidSlice', 'concealment']) {
+    if (Object.hasOwn(value.counts, key)) {
+      requireValue(count(value.counts[key]));
+      keys.push(key);
+    }
+  }
   const flags = {};
   // Earlier diagnostic fixtures lack these fields; absence remains explicit.
   for (const key of ['pipeError', 'drainTimedOut']) {

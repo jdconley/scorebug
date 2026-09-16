@@ -145,3 +145,14 @@ it('adds encoder timing statistics only when explicitly enabled', () => {
   expect(measured[measured.indexOf('-stats_enc_post_fmt:v:0') + 1]).toBe('post {n} {tb} {pts}');
   expect(measured.slice(-3)).toEqual(normal.slice(-3));
 });
+
+it('enables uncompressed INFO diagnostics only when explicitly requested', () => {
+  const spec = { ...baseSpec, nvenc: false };
+  const normal = buildFfmpegArgs(spec);
+  const detailed = buildFfmpegArgs(spec, { decoderDiagnostics: true });
+  expect(normal[normal.indexOf('-loglevel') + 1]).toBe('warning');
+  expect(detailed[detailed.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
+  const stripped = [...detailed];
+  stripped[stripped.indexOf('-loglevel') + 1] = 'warning';
+  expect(stripped).toEqual(normal);
+});

@@ -223,3 +223,41 @@ test('retains only bounded diagnostic categories and rejects malformed counters'
   assert.equal(value.events[0].diagnostics.drainTimedOut, true);
   assert.ok(!JSON.stringify(value).includes('SECRET'));
 });
+
+test('preserves optional fixed decoder damage counts and rejects malformed values', () => {
+  const base = {
+    counts: {
+      inputReadError: 0,
+      outputOpenError: 0,
+      connectionRefused: 0,
+      connectionTimeout: 0,
+      ioError: 0,
+      invalidData: 0,
+      corruptPacket: 0,
+      decodeError: 0,
+      endOfFile: 0,
+    },
+    unmatchedLines: 0,
+    oversizedLines: 0,
+    incompleteLine: false,
+    ended: true,
+  };
+  for (const key of ['missingReference', 'invalidSlice', 'concealment']) {
+    const collector = new NativeWorkerEvidence();
+    push(collector, {
+      ...terminal,
+      diagnostics: { ...base, counts: { ...base.counts, [key]: 3, raw: 'SECRET' } },
+    });
+    for (const bad of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, 'SECRET', null, true])
+      push(collector, {
+        ...terminal,
+        diagnostics: { ...base, counts: { ...base.counts, [key]: bad } },
+      });
+    collector.end();
+    const value = collector.snapshot();
+    assert.equal(value.events.length, 1);
+    assert.equal(value.events[0].diagnostics.counts[key], 3);
+    assert.equal(value.invalidLines, 6);
+    assert(!JSON.stringify(value).includes('SECRET'));
+  }
+});

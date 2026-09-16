@@ -968,3 +968,21 @@ non-increasing barcodes. The remaining anomalies cluster at the two downward
 geometry changes. Next investigate damaged access-unit/IDR recovery and transport
 recovery time together with the bounded receiver freshness budget. Keep production
 adaptation disabled and all device/host/soak requirements open.
+
+
+The [decoder damage diagnostics checkpoint](2026-09-16-decoder-damage-diagnostics.md)
+adds bounded missing-reference, invalid-slice and concealment categories, with
+INFO diagnostics only for the existing opt-in terminal collector. Worker tests
+(341), tooling tests (980), worker build and read-only review pass. Native run
+`native-app-OY8jUj` records 175 decode-error and 30 concealment messages while its
+PTS telemetry reports unique frames. Full live media still fails: 98 absent source
+identities, 35 repeated observations and a worst receiver window of 18.2 fps.
+Thus the prior 25-fps run is a promising observation, not sustained qualification.
+The clean archive again preserves every frame (8123) and all 135 A/V markers.
+
+Both SRT legs are observed at 120 ms; accepted source evidence remains about
+1.82 seconds old. Next measure worker decoder frame-thread buffering separately
+from transport recovery delay. A validated slice-threading mode may recover
+freshness headroom for a later transport experiment without changing any existing
+freshness/media gates. No production adaptation, physical-device or remote-host
+completion is claimed.

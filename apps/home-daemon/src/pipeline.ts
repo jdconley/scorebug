@@ -62,7 +62,7 @@ function filterPath(value: string): string {
  */
 export function buildFfmpegArgs(
   spec: PipelineSpec,
-  options: { encoderTiming?: boolean } = {},
+  options: { encoderTiming?: boolean; decoderDiagnostics?: boolean } = {},
 ): string[] {
   const profile = spec.profile;
   if (
@@ -140,7 +140,7 @@ export function buildFfmpegArgs(
     '-progress',
     'pipe:1',
     '-loglevel',
-    'warning',
+    options.decoderDiagnostics ? 'repeat+level+info' : 'warning',
     '-fflags',
     '+genpts',
     '-copyts',
@@ -287,7 +287,12 @@ export function startPipeline(
   if (!Number.isInteger(stopTimeoutMs) || stopTimeoutMs < 0 || stopTimeoutMs > 60_000) {
     throw new RangeError('stopTimeoutMs must be an integer from 0 to 60000');
   }
-  const args = buildFfmpegArgs(spec, options);
+  // Concealment is logged at INFO. Enable it only for the bounded terminal
+  // diagnostic collector; raw stderr remains inside the guardian process.
+  const args = buildFfmpegArgs(spec, {
+    ...options,
+    decoderDiagnostics: Boolean(options.onTerminal),
+  });
   const encoderTiming = options.encoderTiming
     ? new EncoderTimingTelemetry(options.monotonicNow)
     : undefined;

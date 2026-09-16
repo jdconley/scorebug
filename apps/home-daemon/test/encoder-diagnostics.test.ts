@@ -22,6 +22,9 @@ it('classifies split lines without retaining diagnostic text or credentials', ()
       corruptPacket: 0,
       decodeError: 0,
       endOfFile: 0,
+      missingReference: 0,
+      invalidSlice: 0,
+      concealment: 0,
     },
     unmatchedLines: 1,
     oversizedLines: 0,
@@ -76,4 +79,32 @@ it('absorbs pipe errors before and after finalization without retaining error te
   expect(() => pipe.emit('error', new Error('LATE_SECRET'))).not.toThrow();
   expect(JSON.stringify(parser.snapshot())).not.toContain('SECRET');
   pipe.destroy();
+});
+
+it('classifies H264 reference, slice and concealment diagnostics without exporting raw lines', () => {
+  const parser = new EncoderDiagnostics();
+  for (const line of [
+    '[h264 @ 0x1] reference picture missing during reorder',
+    'Missing reference picture, default is 0',
+    'co located POCs unavailable',
+    'mmco: unref short failure',
+    'mmco: unref long failure',
+    'decode_slice_header error',
+    'non-existing PPS 0 referenced',
+    'concealing 12 DC, 12 AC, 12 MV errors in P frame',
+    'Cannot use previous picture in error concealment',
+    'Cannot use next picture in error concealment',
+  ]) {
+    const bytes = Buffer.from(line + ' SECRET\n');
+    parser.push(bytes.subarray(0, 9));
+    parser.push(bytes.subarray(9));
+  }
+  parser.end();
+  expect(parser.snapshot().counts).toMatchObject({
+    missingReference: 5,
+    invalidSlice: 2,
+    concealment: 3,
+  });
+  expect(parser.snapshot().unmatchedLines).toBe(0);
+  expect(JSON.stringify(parser.snapshot())).not.toContain('SECRET');
 });
