@@ -35,6 +35,11 @@ public struct PublishingTransportStatistics: Equatable, Sendable {
 
 public struct PublishingTransportStatisticsSnapshot: Equatable, Sendable {
     public let latest: PublishingTransportStatistics?
+    public let window: PublishingTransportWindow?
+    public func freshWindow(at uptime: Double, maximumAge: Double = 2) -> PublishingTransportWindow? {
+        guard freshSample(at: uptime, maximumAge: maximumAge) != nil else { return nil }
+        return window
+    }
     public let isQuarantined: Bool
     public let isClosed: Bool
     public func freshSample(at uptime: Double, maximumAge: Double = 2) -> PublishingTransportStatistics? {
@@ -47,10 +52,11 @@ public struct PublishingTransportStatisticsSnapshot: Equatable, Sendable {
 
 public struct PublishingTransportStatisticsTracker: Sendable {
     private var latest: PublishingTransportStatistics?
+    private var history = PublishingTransportWindowHistory()
     private var quarantined = false
     private var closed = false
     public init() {}
-    public var snapshot: PublishingTransportStatisticsSnapshot { .init(latest: latest, isQuarantined: quarantined, isClosed: closed) }
+    public var snapshot: PublishingTransportStatisticsSnapshot { .init(latest: latest, window: history.window, isQuarantined: quarantined, isClosed: closed) }
     public mutating func observe(_ sample: PublishingTransportStatistics?) {
         guard !closed, !quarantined, let sample else { return }
         if let latest {
@@ -62,8 +68,9 @@ public struct PublishingTransportStatisticsTracker: Sendable {
                   sample.retransmittedBytes >= latest.retransmittedBytes,
                   sample.droppedPackets >= latest.droppedPackets,
                   sample.retransmittedBytes - latest.retransmittedBytes <= sample.sentBytes - latest.sentBytes
-            else { quarantined = true; return }
+            else { quarantined = true; history.clear(); return }
         }
+        history.append(sample)
         latest = sample
     }
     public mutating func close() { closed = true }

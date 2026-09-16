@@ -28,6 +28,27 @@ import XCTest
         XCTAssertNil(session.snapshot.transportStatistics.freshSample(at: 10))
     }
 
+    func testSessionExposesAdvancingWindowAndClosesFreshAccessOnStop() async throws {
+        let publisher = StatisticsPublisher()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2))
+        publisher.setClock(statisticsSample())
+        try await session.start()
+        await eventually { session.snapshot.transportStatistics.latest != nil }
+        XCTAssertNil(session.snapshot.transportStatistics.window)
+        publisher.setClock(.init(publishingGeneration: 1, sampledAt: 11, elapsedMilliseconds: 2000,
+                                sentBytes: 11000, retransmittedBytes: 200, droppedPackets: 0,
+                                rttMilliseconds: 20, estimatedBandwidthMbps: 200,
+                                senderBufferedBytes: 100, senderBufferMilliseconds: 2, availableSenderBytes: 1000))
+        await eventually { session.snapshot.transportStatistics.window != nil }
+        let window = try XCTUnwrap(session.snapshot.transportStatistics.freshWindow(at: 11))
+        XCTAssertEqual(window.sentBytes, 1000)
+        XCTAssertEqual(window.retransmittedBytes, 100)
+        XCTAssertEqual(window.meanBufferedBytes, 50)
+        await session.stop()
+        XCTAssertEqual(session.snapshot.transportStatistics.window, window)
+        XCTAssertNil(session.snapshot.transportStatistics.freshWindow(at: 11))
+    }
+
     func testStopOrCancellationUnblocksGetterAndRejectsLateEvidence() async throws {
         for cancel in [false, true] {
             let publisher = StatisticsPublisher(gated: true)

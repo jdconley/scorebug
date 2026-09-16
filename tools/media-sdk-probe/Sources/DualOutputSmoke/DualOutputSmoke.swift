@@ -31,6 +31,17 @@ private func statisticsEvidence(_ sample: PublishingTransportStatistics?) -> Any
             "availableSenderBytes": String(sample.availableSenderBytes)] as [String: Any]
 }
 
+private func windowEvidence(_ window: PublishingTransportWindow?) -> Any {
+    guard let w = window else { return NSNull() }
+    return ["publishingGeneration": String(w.publishingGeneration), "start": w.start, "end": w.end,
+            "sampleCount": w.sampleCount, "sentBytes": String(w.sentBytes),
+            "retransmittedBytes": String(w.retransmittedBytes), "droppedPackets": String(w.droppedPackets),
+            "meanBufferedBytes": w.meanBufferedBytes, "meanBufferMilliseconds": w.meanBufferMilliseconds,
+            "meanRTTMilliseconds": w.meanRTTMilliseconds, "maximumBufferedBytes": String(w.maximumBufferedBytes),
+            "maximumBufferMilliseconds": String(w.maximumBufferMilliseconds),
+            "maximumRTTMilliseconds": w.maximumRTTMilliseconds] as [String: Any]
+}
+
 private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, pcm }
 
 private final class PublisherHealth: @unchecked Sendable {
@@ -159,14 +170,19 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 // Telemetry has one independent task. A slow socket observation
                 // must not stall the consumer responsible for live sample ingress.
                 monitor = Task {
+                    var statisticsTracker = PublishingTransportStatisticsTracker()
+                    defer { statisticsTracker.close() }
                     do {
                         while !Task.isCancelled {
                             let publishing = await publisher.isPublishing()
                             let transport = await publisher.metrics()
                             let statistics = await publisher.transportStatistics()
+                            statisticsTracker.observe(statistics)
+                            let observedAt = ProcessInfo.processInfo.systemUptime
                             try emit(["event": "publisher-observation", "publishing": publishing,
                                       "transportStatistics": statisticsEvidence(statistics),
-                                      "statisticsObservedAt": ProcessInfo.processInfo.systemUptime,
+                                      "statisticsObservedAt": observedAt,
+                                      "transportWindow": windowEvidence(statisticsTracker.snapshot.freshWindow(at: observedAt)),
                                       "sentBytes": transport.map { $0.2 as Any } ?? NSNull(),
                                       "packetDrops": transport.map { $0.1 as Any } ?? NSNull()])
                             if !publishing { health.fail(); liveQueue.cancel(); return }

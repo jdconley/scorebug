@@ -615,7 +615,7 @@ try {
         'Offline recording must not start a publisher',
       );
     }
-    if (normal) {
+    if (normal || scenario === 'proxy-overload') {
       assert.ok(native.events.some((x) => x.event === 'bitrate-changed'));
       const sent = native.events.find((x) => x.event === 'publisher-finished');
       assert.ok(sent?.sentBytes > 0 && sent.publishingBeforeStop);
@@ -629,8 +629,11 @@ try {
         sent,
         transportClock.publishingGeneration,
       );
-      liveResult = await analyze(live, `${scenario}-live`, false);
-      bitrateChange = await measureBitrateChange(live);
+      assert.ok(transportStatistics.windows.length >= 2, 'Missing complete transport windows');
+      if (normal) {
+        liveResult = await analyze(live, `${scenario}-live`, false);
+        bitrateChange = await measureBitrateChange(live);
+      }
     }
     if (scenario === 'proxy-overload') {
       impairedLive = await inspectImpairedLive(live, `${scenario}-live`);

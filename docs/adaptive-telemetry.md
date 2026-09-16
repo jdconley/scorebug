@@ -20,7 +20,10 @@ explicit; these observations still require capacity/overhead qualification. The
 [local network impairment fixture](local-network-impairment.md) now exercises actual
 bidirectional loss and bandwidth ceilings with the native sender and clean archive.
 Recoverable loss preserves all live frames; deliberate overload corrupts live output
-while recording stays complete. Capacity estimation and automatic control remain open.
+while recording stays complete. The [bounded transport windows](transport-pressure-windows.md)
+now carry exact counter deltas and time-weighted sampled buffering/RTT through the
+publishing session, with actual collection endpoints and explicit gaps/freshness.
+Capacity estimation, thermal/worker pressure and automatic control remain open.
 
 | Existing observation                                                                  | What it measures                                                                                                                                | Missing evidence                                                                                                        |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

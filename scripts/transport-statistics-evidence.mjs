@@ -88,9 +88,83 @@ export function qualifyTransportStatistics(events, finished, publishingGeneratio
   return {
     method: 'Actual timestamped native SRT collections; capacity remains unqualified',
     samples,
+    windows: qualifyWindows(observations),
     sentByteDelta: String(BigInt(last.sentBytes) - BigInt(first.sentBytes)),
     retransmittedByteDelta: String(
       BigInt(last.retransmittedBytes) - BigInt(first.retransmittedBytes),
     ),
   };
+}
+
+// Independently reconstruct actual endpoints and left-held gauge weights from raw
+// validated collections. This fixture oracle never infers delivery or capacity.
+function qualifyWindows(observations) {
+  let retained = [],
+    previous = null;
+  const windows = [];
+  for (const observation of observations) {
+    const sample = observation.transportStatistics;
+    const now = finite(observation.statisticsObservedAt, 'window read time');
+    if (sample && sample.sampledAt !== previous?.sampledAt) {
+      if (previous && sample.sampledAt - previous.sampledAt > 2) retained = [];
+      retained.push(sample);
+      if (retained.length > 64) retained.shift();
+      previous = sample;
+    }
+    let expected = null;
+    if (previous && now >= previous.sampledAt && now - previous.sampledAt <= 2) {
+      const points = retained.filter((x) => previous.sampledAt - x.sampledAt <= 5);
+      const first = points[0],
+        last = points.at(-1);
+      const duration = last.sampledAt - first.sampledAt;
+      if (duration >= 1) {
+        const mean = (key) => {
+          const maximum = Math.max(...points.map((x) => Number(x[key])));
+          if (maximum === 0) return 0;
+          let weighted = 0;
+          for (let i = 0; i < points.length - 1; i++)
+            weighted +=
+              (Number(points[i][key]) / maximum) *
+              ((points[i + 1].sampledAt - points[i].sampledAt) / duration);
+          return Math.min(1, weighted) * maximum;
+        };
+        expected = {
+          publishingGeneration: last.publishingGeneration,
+          start: first.sampledAt,
+          end: last.sampledAt,
+          sampleCount: points.length,
+          sentBytes: String(BigInt(last.sentBytes) - BigInt(first.sentBytes)),
+          retransmittedBytes: String(
+            BigInt(last.retransmittedBytes) - BigInt(first.retransmittedBytes),
+          ),
+          droppedPackets: String(BigInt(last.droppedPackets) - BigInt(first.droppedPackets)),
+          meanBufferedBytes: mean('senderBufferedBytes'),
+          meanBufferMilliseconds: mean('senderBufferMilliseconds'),
+          meanRTTMilliseconds: mean('rttMilliseconds'),
+          maximumBufferedBytes: String(
+            Math.max(...points.map((x) => Number(x.senderBufferedBytes))),
+          ),
+          maximumBufferMilliseconds: String(
+            Math.max(...points.map((x) => Number(x.senderBufferMilliseconds))),
+          ),
+          maximumRTTMilliseconds: Math.max(...points.map((x) => x.rttMilliseconds)),
+        };
+      }
+    }
+    const actual = observation.transportWindow;
+    if (expected === null) {
+      assert.equal(actual, null, 'Window without complete fresh coverage');
+      continue;
+    }
+    assert.ok(actual && typeof actual === 'object', 'Missing transport window');
+    assert.deepEqual(Object.keys(actual).sort(), Object.keys(expected).sort(), 'Window fields');
+    for (const [key, value] of Object.entries(expected)) {
+      if (key.startsWith('mean')) {
+        finite(actual[key], key);
+        assert.ok(Math.abs(actual[key] - value) <= Math.max(1, value) * 1e-12, `Incorrect ${key}`);
+      } else assert.equal(actual[key], value, `Incorrect window ${key}`);
+    }
+    if (windows.at(-1)?.end !== actual.end) windows.push(actual);
+  }
+  return windows;
 }
