@@ -325,3 +325,15 @@ This local estimate cannot qualify upward admission. Archive media passes again
 (8200 frames / 136 markers); live identity, cadence (15 fps) and A/V coverage fail.
 The next experiment is a bounded, receiver-observed capacity probe; production
 adaptation remains disabled.
+
+
+### Bounded delivered-traffic probe
+
+The [local probe checkpoint](superpowers/plans/2026-09-16-bounded-capacity-probe.md)
+uses actual SRT message receipt and sender pressure to ramp extra traffic on a
+fixed baseline. `capacity-probe-4sg89u` withdraws on the 4 Mbps constraint and later
+delivers 5.989 Mbps against a 6 Mbps target after recovery, preserving every
+message. The native lease, byte budget, cumulative loss accounting and owned
+process cleanup are verified. This synthetic installed-library result does not
+qualify the worker's encoded A/V path, the Apple SDK, or usable video capacity.
+Production adaptation remains disabled pending actual media integration and gates.

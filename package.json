@@ -41,6 +41,7 @@
     "test:paired-watch": "node scripts/test-paired-watch.mjs",
     "test:relay-clock": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs",
     "test:relay-origin": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs --mapping-image=scorebug/ingest:recovery-v1",
+    "test:capacity-probe": "node scripts/test-capacity-probe.mjs",
     "test:encoder-payload": "node scripts/test-encoder-payload.mjs",
     "test:encoder-preparation": "node scripts/test-encoder-payload.mjs --preparation",
     "test:encoder-resolution": "node scripts/test-encoder-payload.mjs --resolution",

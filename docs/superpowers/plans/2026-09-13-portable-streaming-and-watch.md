@@ -1083,3 +1083,18 @@ additional-traffic probe while preserving the current video profile and archive,
 then admit upgrades only with receiver-verified headroom against actual candidate
 cost. Do not inject the fixture rate into decisions or disable future upgrades
 permanently. Phone/Watch, remote-host and soak qualification remain open.
+
+
+The [bounded SRT probe checkpoint](2026-09-16-bounded-capacity-probe.md) implements
+and qualifies a local installed-libsrt synthetic-load ramp. It withdraws at an
+active 4.25 Mbps step on a 4 Mbps path, then delivers 5.989 Mbps against a 6 Mbps
+target after independent recovery. All 11,302 baseline and 2,781 probe messages
+arrive without loss/duplicates; an expiring native lease stops extra load while
+baseline continues. All 1061 tooling tests pass, including review regressions.
+
+This is a transport prototype. It does not qualify native A/V or provide usable
+video capacity. Next carry a bounded probe on the actual publishing connection,
+obtain attempt-bound receiver byte evidence, and repeat all native archive,
+picture/cadence and A/V gates. Preserve the distinction between fast local
+pressure and the slower receiver-control feedback path. Production adaptation
+remains disabled; phone/Watch, remote hosts and soaks remain open.
