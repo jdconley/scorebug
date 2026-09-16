@@ -811,3 +811,23 @@ Validation passes: 252 media tests, 61 streaming tests, 183 app-model tests and 
 unsigned combined iPhone/Watch Release build. This checkpoint supplies the app API;
 production still selects fixed profiles. Next add the controlled simulator down/up
 fixture and qualify decoded worker output plus independent clean local recording.
+
+
+The [controlled app transition experiment](2026-09-16-app-profile-transitions.md)
+now passes end to end on iPhone 14 / iOS 17.5: actual native 1080→540→1080 sessions,
+independently matched callback identities and receipts, decoded worker output,
+scoring overlay, A/V sync, and normally finalized independent 1080p recording.
+`native-app-HCtRdN` preserves 3378 native frames; all 3318 frames after the explicit
+60-frame stream acquisition arrive in the recorder. The archive preserves all
+3720 frames. Both media outputs run at approximately 30 fps with zero qualified
+source loss. The two compressed-output arrival pauses are 339/419 ms; receiver
+wall-clock continuity and automatic adaptation are not inferred from source PTS.
+
+The experiment exposed and fixed FFmpeg filter-state resets and stale padding on
+input format changes. Fixed-canvas workers now preserve telemetry/frame-selector
+state and evaluate padding per frame; strict decoder/encoder ordinal checks remain.
+Software and VideoToolbox probes use square-pixel geometry changes on odd 60fps source
+indices and retain all 180 inputs and precisely 90 selected output identities.
+191 app-model / 334 worker / 919 tooling tests, type checking and the combined Apple
+Release build pass. Next qualify pressure/recovery and newer-runtime behavior before
+automatic resolution selection, followed by the remaining soak/device/host gates.

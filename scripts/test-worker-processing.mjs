@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertMediaCoverage } from './media-sync.mjs';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { probeEncoderStatistics } from '../apps/home-daemon/src/encoder-statistics-capability.ts';
@@ -19,6 +20,8 @@ import { createLogger } from '../apps/home-daemon/src/logger.ts';
 const encoder = process.argv[2] ?? 'software';
 const sourceFPS = Number(process.argv[3] ?? '30');
 const paced = process.argv[4] === '--paced';
+const aspectTransitions = process.argv[4] === '--transitions-aspect';
+const transitions = process.argv[4] === '--transitions' || aspectTransitions;
 const durationSeconds = paced ? 24 : 3;
 assert(
   ['software', 'videotoolbox', 'nvenc'].includes(encoder),
@@ -27,8 +30,12 @@ assert(
 assert(
   ['25', '30', '60'].includes(process.argv[3] ?? '30') &&
     process.argv.length <= 5 &&
-    (process.argv[4] === undefined || paced),
-  'Source fps must be 25, 30 or 60; optional final flag is --paced',
+    (process.argv[4] === undefined || paced || transitions),
+  'Source fps must be 25, 30 or 60; optional final flag is --paced, --transitions or --transitions-aspect',
+);
+assert(
+  !transitions || sourceFPS === 60,
+  'Transition qualification requires a 60fps source with odd switch indices',
 );
 const root = fileURLToPath(new URL('..', import.meta.url));
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -45,6 +52,8 @@ await writeFile(
       font,
       durationSeconds,
       paced,
+      transitions,
+      aspectTransitions,
       profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
     },
     null,
@@ -75,36 +84,112 @@ const input = join(artifact, 'input.ts'),
   output = join(artifact, 'output.flv'),
   scoreFile = join(artifact, 'score.txt');
 await writeFile(scoreFile, 'Home 12 - Away 11');
-await run(
-  ffmpeg,
-  [
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-f',
-    'lavfi',
-    '-i',
-    `testsrc2=duration=${durationSeconds}:size=640x360:rate=${sourceFPS}`,
-    '-f',
-    'lavfi',
-    '-i',
-    `sine=frequency=1000:sample_rate=44100:duration=${durationSeconds}`,
-    '-vf',
-    sourceFrameCodeFilter,
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-bf',
-    '0',
-    '-c:a',
-    'aac',
-    '-shortest',
-    '-y',
-    input,
-  ],
-  'generate',
-);
+if (transitions) {
+  // Odd switch indices expose accidental resetting of the 30fps selector anchor.
+  const parts = [];
+  for (const [index, start, count, width, height] of [
+    [0, 0, 61, 640, 360],
+    [1, 61, 60, 320, aspectTransitions ? 240 : 180],
+    [2, 121, 59, 640, 360],
+  ]) {
+    const part = join(artifact, `phase-${index}.ts`);
+    await run(
+      ffmpeg,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=size=640x360:rate=60',
+        '-frames:v',
+        String(count),
+        '-vf',
+        sourceFrameCodeFilter.replaceAll('N', `(N+${start})`) +
+          `,scale=${width}:${height},setsar=1`,
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-bf',
+        '0',
+        '-g',
+        '30',
+        '-output_ts_offset',
+        String(start / 60),
+        '-muxdelay',
+        '0',
+        '-f',
+        'mpegts',
+        '-y',
+        part,
+      ],
+      `generate-phase-${index}`,
+    );
+    parts.push(await readFile(part));
+  }
+  const video = join(artifact, 'changing-video.ts');
+  await writeFile(video, Buffer.concat(parts));
+  await run(
+    ffmpeg,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'warning',
+      '-copyts',
+      '-i',
+      video,
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=1000:sample_rate=44100:duration=3',
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0',
+      '-c:v',
+      'copy',
+      '-c:a',
+      'aac',
+      '-shortest',
+      '-y',
+      input,
+    ],
+    'mux-changing-source',
+  );
+} else {
+  await run(
+    ffmpeg,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      `testsrc2=duration=${durationSeconds}:size=640x360:rate=${sourceFPS}`,
+      '-f',
+      'lavfi',
+      '-i',
+      `sine=frequency=1000:sample_rate=44100:duration=${durationSeconds}`,
+      '-vf',
+      sourceFrameCodeFilter,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-bf',
+      '0',
+      '-c:a',
+      'aac',
+      '-shortest',
+      '-y',
+      input,
+    ],
+    'generate',
+  );
+}
 const probe = JSON.parse(
   await run(
     ffprobe,
@@ -114,7 +199,7 @@ const probe = JSON.parse(
       '-select_streams',
       'v:0',
       '-show_entries',
-      'stream=time_base:frame=pts',
+      'stream=time_base:frame=pts,width,height,sample_aspect_ratio',
       '-show_streams',
       '-show_frames',
       '-of',
@@ -130,6 +215,22 @@ assert.equal(sourcePTS.length, sourceFPS * durationSeconds);
 assert(
   sourcePTS.every((pts, i) => Number.isSafeInteger(pts) && (i === 0 || pts > sourcePTS[i - 1])),
 );
+if (transitions) {
+  assert(
+    probe.frames.every((frame) => frame.sample_aspect_ratio === '1:1'),
+    'Fixture pixels must be square so display aspect really changes',
+  );
+  assert.deepEqual(
+    probe.frames.map((f) => [f.width, f.height]),
+    Array.from({ length: 180 }, (_, i) =>
+      i >= 61 && i < 121 ? [320, aspectTransitions ? 240 : 180] : [640, 360],
+    ),
+  );
+  assert(
+    sourcePTS.every((pts, i) => i === 0 || pts - sourcePTS[i - 1] === 1500),
+    'Source PTS discontinuity',
+  );
+}
 let pipeline, server, source, sourceExit, sampleTimer;
 const samples = [];
 let sourceError = '';
@@ -281,7 +382,7 @@ try {
       '-i',
       output,
       '-vf',
-      frameCodeReadFilter,
+      aspectTransitions ? 'crop=iw:2:0:16,format=gray' : frameCodeReadFilter,
       '-fps_mode',
       'passthrough',
       '-pix_fmt',
@@ -293,8 +394,67 @@ try {
     ],
     'frame-codes',
   );
-  const codes = decodeFrameCodes(await readFile(raw));
+  let barcodeBytes = await readFile(raw);
+  if (aspectTransitions) {
+    assert.equal(barcodeBytes.length, expectedCodes.length * 640 * 2);
+    const cells = Buffer.alloc(expectedCodes.length * 16);
+    expectedCodes.forEach((sourceID, i) => {
+      const middle = sourceID >= 61 && sourceID < 121;
+      for (let bit = 0; bit < 16; bit++) {
+        const x = Math.floor((middle ? 80 : 0) + (bit + 0.5) * (middle ? 15 : 20));
+        cells[i * 16 + bit] = barcodeBytes[i * 1280 + x];
+      }
+      if (middle) {
+        assert(
+          barcodeBytes[i * 1280 + 5] < 32 && barcodeBytes[i * 1280 + 635] < 32,
+          'Changed aspect ratio must remain centered within black bars',
+        );
+      }
+    });
+    barcodeBytes = cells;
+  }
+  const codes = decodeFrameCodes(barcodeBytes);
   assert.deepEqual(codes, expectedCodes);
+  let transitionOutput;
+  if (transitions) {
+    const outputProbe = JSON.parse(
+      await run(
+        ffprobe,
+        [
+          '-v',
+          'error',
+          '-show_streams',
+          '-show_frames',
+          '-show_entries',
+          'stream=codec_type,width,height,sample_rate:frame=media_type,best_effort_timestamp_time,width,height,nb_samples',
+          '-of',
+          'json',
+          output,
+        ],
+        'transition-output-probe',
+      ),
+    );
+    const video = outputProbe.frames.filter((f) => f.media_type === 'video');
+    const audio = outputProbe.frames.filter((f) => f.media_type === 'audio');
+    const audioStream = outputProbe.streams.find((s) => s.codec_type === 'audio');
+    assert.equal(video.length, expectedCodes.length);
+    assert(
+      video.every((f) => f.width === 640 && f.height === 360),
+      'Worker canvas changed with input size',
+    );
+    const times = video.map((f) => Number(f.best_effort_timestamp_time));
+    const offset = times[0] - sourcePTS[expectedCodes[0]] / 90000;
+    assert(
+      times.every((t, i) => Math.abs(t - sourcePTS[expectedCodes[i]] / 90000 - offset) <= 0.0011),
+      'Resolution change shifted the output source clock',
+    );
+    transitionOutput = assertMediaCoverage({
+      videoTimes: times,
+      audioStartTime: Number(audio[0].best_effort_timestamp_time),
+      audioSampleCount: audio.reduce((sum, f) => sum + Number(f.nb_samples), 0),
+      sampleRate: Number(audioStream.sample_rate),
+    });
+  }
   const replay = (snapshot, startPTS, endPTS, interval) => {
     const includedCodes = expectedCodes.filter(
       (id) => sourcePTS[id] > startPTS && sourcePTS[id] <= endPTS,
@@ -412,6 +572,8 @@ try {
   );
   assert(streams.streams.some((stream) => stream.codec_type === 'audio'));
   const result = {
+    transitions,
+    transitionOutput,
     encoder,
     sourceFPS,
     sourceFrames: sourcePTS.length,

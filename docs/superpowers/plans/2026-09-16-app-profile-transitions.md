@@ -41,13 +41,13 @@ and diagnostics rather than weaken the gates. Then test constrained uplink recov
   exclusion with bitrate; test rejected state, late native results and error privacy.
 - [x] Add PublishingSession profile admission, two-second deadline, receipt/scope
   validation and joined shutdown; preserve existing bitrate tests.
-- [ ] Add the controlled app fixture and runner/verifier options with strict flag
+- [x] Add the controlled app fixture and runner/verifier options with strict flag
   prerequisites, real phase receipts and bounded scalar evidence.
-- [ ] Run Mac packages and app-model tests, unsigned iPhone/Watch build, then the
+- [x] Run Mac packages and app-model tests, unsigned iPhone/Watch build, then the
   owned simulator full-pipeline experiment sequentially. Inspect actual decoded
   output and archive evidence before claiming the transition qualified.
-- [ ] Review, record terminal evidence hashes and commit. Continue into pressure,
-  recovery and remaining physical/device/other-host gates.
+- [x] Review, record terminal evidence hashes and commit this controlled transition slice.
+- [ ] Continue into pressure, recovery and remaining physical/device/other-host gates.
 
 ## Typed API checkpoint
 
@@ -90,3 +90,92 @@ or qualify automatic resolution adaptation. The next slice adds an explicitly
 selected DEBUG simulator fixture with bounded three-phase format evidence and two
 validated receipts, runs it through the direct local recorder, and checks the
 independent 1080p archive before pressure/recovery work.
+
+## Controlled app experiment and worker format changes
+
+The explicit `SCOREBUG_TEST_PROFILE_TRANSITIONS=1` runner mode requires streaming,
+processing/publication evidence, direct recorder, blocks16 motion, and a 90–600 second
+hold. It rejects fixed540, automatic bitrate, confirmation and uplink modes. The
+DEBUG simulator factory alone creates the wrapper. The schedule changes the live
+profile after 20 seconds, then restores 1080p 40 seconds after that receipt. This
+is a controlled experiment, not an adaptive policy. The production default remains
+1080p and the archive configuration stays independent.
+
+Evidence version 2 contains bounded three-phase actual compressed format intervals,
+three independently observed native encoder sessions, and two validated receipts.
+Every encoder ID/source interval/count must match the compressed-format phase and
+receipt. Native completion and compressed-output observation clocks are separate;
+receipts cannot precede the first completion or observed new output. Export waits
+for schedule cancellation, PublishingSession stop, and all native callbacks. No
+media buffers are retained by these observers. The verifier checks decoded identities
+through every phase, native phase tails, complete coverage and the existing A/V,
+archive, worker and scoring gates. Source-time cadence is not wall-clock delivery
+latency; measured callback/output pauses are reported separately.
+
+The first complete simulator attempt, `native-app-FRYHoE`, preserved a finalized
+1080p archive with all 3750 frame identities (0–3749), approximately 30 fps and decoded
+audio. Native output contained 3379 consecutive frames in 600/1214/1565-frame
+1080/540/1080 phases; both receipts reported zero raw evictions. Qualification still
+failed: FFmpeg rebuilt the filter graph on input format changes, resetting its
+filter-local frame ordinal. The worker's strict decoder telemetry rejected that
+reset after 540 accepted frames. This run is retained as failed evidence.
+
+The worker now preserves the graph only when it has an explicit fixed output
+canvas, keeping metadata ordinals and the frame-selector time anchor intact. The
+profile-less path retains its previous behavior. Padding evaluates dimensions per
+frame: a separate changing-shape probe demonstrated stale left alignment with the
+old padding, and the regression now requires centered barcodes and black bars.
+No parser ordinal or PTS integrity check was relaxed.
+
+The existing worker processing harness accepts `--transitions` and
+`--transitions-aspect` after encoder and source fps. Both require a 60fps source and
+switch at source indices 61 and 121, exposing selector-anchor resets. The aspect
+fixture uses square pixels and independently checks 640×360→320×240→640×360 input
+geometry. Both software and VideoToolbox must retain all 180 decoded inputs, precisely
+90 even-numbered output source identities, fixed 640×360 output, original source
+clock alignment, complete encoder telemetry and A/V coverage. Full phone simulator
+A/V markers and scoring overlay remain the integration test.
+
+Reproduce the experiments on this machine with Xcode 26.2 selected:
+
+```sh
+pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-worker-processing.mjs software 60 --transitions-aspect
+pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-worker-processing.mjs videotoolbox 60 --transitions-aspect
+SCOREBUG_TEST_RELAY_PUBLICATION=1 SCOREBUG_TEST_WORKER_PROCESSING=1 SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1 SCOREBUG_TEST_MOTION_FIXTURE=blocks16 SCOREBUG_TEST_STREAM_HOLD_SECONDS=90 SCOREBUG_TEST_PROFILE_TRANSITIONS=1 pnpm test:native-streaming
+```
+
+## Full-pipeline result
+
+`native-app-HCtRdN` passes on the iPhone 14 / iOS 17.5 simulator with the real native
+SRT encoder, local worker and direct recorder. All owning processes and cleanup
+completed before evidence hashing. The three actual native phases contain
+600/1214/1564 frames (3378 total), with boundaries 758→759 and 1972→1973. Independent
+native callback IDs match both receipts and all phase source intervals. There are
+zero raw evictions and no source discontinuities. The recorder contains every frame
+219–3536 (3318 frames, 110.6 seconds), with 60 initial acquisition frames explicitly
+excluded and no encoded tail missing. Each phase sustains 30 source fps; decoded
+output averages approximately 30 fps with zero qualified source loss.
+
+The independent archive contains all 3720 frames 0–3719 at 1920×1080, approximately
+30 fps, and normal finalization/export. All 61 archive and 55 live audio markers match.
+Live A/V offset is approximately 65.25 ms with negligible measured drift. Scoring
+changes the live overlay, while source/publication/processing/ingress/archive and
+saved-tail checks all pass.
+
+The measured native completion gaps are 353.6/425.8 ms. The separate compressed-output
+arrival gaps are 338.7/419.0 ms. These are real pauses, despite complete source-frame
+preservation; they are not measurements of receiver wall-clock playback stalls.
+Do not label this seamless switching, automatic adaptation or pressure recovery.
+
+Current validation passes 191 app-model tests, 334 serialized worker tests, 919 tooling
+tests, worker type checking, software and VideoToolbox aspect/cap probes, the full
+simulator pipeline, and unsigned combined iPhone/Watch Release build. Source review
+approved ownership, independent identity/clock proof and the fixed-canvas worker
+change. `artifacts/qa/profile-fixture-final-verification.json` records terminal
+source/evidence hashes. Earlier media/streaming package API evidence remains in
+`13d25fb`; no package or SDK source changed in this slice.
+
+Next qualify controlled reduction/recovery under uplink pressure and the newer iOS
+runtime before enabling automatic resolution selection. Longer soaks, actual camera
+thermal/storage pressure, physical phone/Watch and other-host qualification remain
+open. Existing native phone/watch scoring requirements are unchanged.

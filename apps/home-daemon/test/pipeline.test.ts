@@ -93,12 +93,16 @@ describe.each(['software', 'videotoolbox', 'nvenc'] as const)('%s source timesta
     expect(filter).not.toContain('setpts');
 
     if (withProfile) {
+      expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
+      expect(filter).toContain(':(ow-iw)/2:(oh-ih)/2:eval=frame,drawtext=');
+      expect(args.indexOf('-reinit_filter:v:0')).toBeLessThan(inputIndex);
       expect(filter).toContain(
         "nullsink;[live]select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*30),floor((prev_selected_t-start_t+1.5*TB)*30))',scale=1280:720",
       );
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeGreaterThan(-1);
       expect(filter.indexOf('[decoded]settb=1/90000')).toBeLessThan(filter.indexOf('select='));
     } else {
+      expect(args).not.toContain('-reinit_filter:v:0');
       expect(filter).not.toContain('select=');
     }
   });

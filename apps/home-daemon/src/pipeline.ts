@@ -123,7 +123,7 @@ export function buildFfmpegArgs(
     ? `select='isnan(prev_selected_t)+gt(floor((t-start_t+1.5*TB)*${profile.fps}),floor((prev_selected_t-start_t+1.5*TB)*${profile.fps}))',`
     : '';
   const filter = profile
-    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2,${drawtext}`
+    ? `${cap}scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:eval=frame,${drawtext}`
     : drawtext;
   // A sink-only side branch observes every decoder frame without changing the
   // live branch's timebase (the cap uses its rounding tolerance). The simple
@@ -143,6 +143,10 @@ export function buildFfmpegArgs(
     '-fflags',
     '+genpts',
     '-copyts',
+    // The fixed scale/pad canvas absorbs input dimension changes. Keep filter
+    // state so telemetry ordinals and the source-FPS cap anchor cannot reset.
+    // The legacy profile-less graph has no canvas normalization guarantee.
+    ...(profile ? ['-reinit_filter:v:0', '0'] : []),
     '-i',
     spec.pullUrl,
     '-map',

@@ -75,6 +75,9 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var coordinator: BroadcastCommandCoordinator?
     var controlPollInterval: Duration { qualityDriver == nil ? .seconds(2) : .milliseconds(100) }
     private var qualityDriver: PublishingQualityDriver?
+    #if DEBUG
+    private var transitionDriver: NativeProfileTransitionDriver?
+    #endif
     private var action: Task<Void, Never>?
     private var actionID: UUID?
     private var stoppingTask: Task<Void, Never>?
@@ -102,6 +105,10 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             if try NativeProfileTransitionEvidence.requested(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeProfileTransitionPublisher(url: url, observations: observations)
+             }
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
              let proof = profile == .sd540 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
@@ -298,8 +305,10 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let observations = try? observationFactory(scope)
                 videoObservation = observations?.snapshot
                 let session: PublishingSession
+                let publisher: any MediaPublisher
                 do {
-                    session = try PublishingSession(publisher: publisherFactory(access.publishUrl, observations),
+                    publisher = try publisherFactory(access.publishUrl, observations)
+                    session = try PublishingSession(publisher: publisher,
                         ingressObservation: ingressConfiguration(for: videoObservation))
                     ingressObservation = session.snapshot.ingressObservation
                 } catch {
@@ -311,6 +320,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try await session.start()
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
+                #if DEBUG
+                if let fixture = publisher as? NativeProfileTransitionPublisher {
+                    transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence)
+                }
+                #endif
                 localState = .publishing
                 shouldStopOwnedBroadcast = false
                 message = "Sending camera media. Worker output is reported separately."
@@ -549,6 +563,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             publishing.context.tap.detach(publishing.session)
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
+            let transitions = transitionDriver; transitionDriver = nil; transitions?.cancel()
             // Production fixture I/O defaults only on explicitly enabled simulators.
             // Tests may inject an in-memory writer to exercise this same joined boundary.
             let fixtureWriter = workerReportAgeProofsEnabled ? videoObservationFixtureWriter : nil
@@ -571,6 +586,9 @@ struct PublishingClockObservation: Equatable, Sendable {
             publisherStopping = true
             publisherTeardown = Task { [self] in
                 await quality?.stop()
+                #if DEBUG
+                await transitions?.stop()
+                #endif
                 await session.stop()
                 // Drain completion owns closure, even when an old task can no longer
                 // publish diagnostics. Normal stop changes epoch before this returns.

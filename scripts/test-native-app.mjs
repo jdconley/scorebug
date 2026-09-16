@@ -1,3 +1,7 @@
+import {
+  nativeProfileTransitions,
+  qualifyNativeProfileTransitions,
+} from './native-profile-transitions.mjs';
 import { nativeLiveProfile, nativeMediaGeometry } from './native-live-profile.mjs';
 import { qualifyNativeFormat } from './native-format-qualification.mjs';
 import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs';
@@ -68,6 +72,13 @@ const liveProfile = nativeLiveProfile({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const profileTransitions = nativeProfileTransitions({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const uplinkProfile = nativeUplinkOptions({
   liveProfile,
   environment: process.env,
@@ -102,6 +113,7 @@ await writeFile(
       fixtureWorkload,
       uplinkProfile,
       liveProfile,
+      profileTransitions,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
@@ -275,7 +287,10 @@ async function analyze(path, index, live = false) {
       ),
     );
     videoPayload = measureVideoPayloadRate(packetProbe);
-    if (fixtureWorkload === 'motion-blocks16' && (!live || liveProfile === '1080p30')) {
+    if (
+      fixtureWorkload === 'motion-blocks16' &&
+      (!live || (liveProfile === '1080p30' && !profileTransitions))
+    ) {
       workloadQualification = qualifyStructuredMotionPayload(
         videoPayload,
         live ? 'live' : 'archive',
@@ -444,6 +459,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
+      `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitions ? '1' : ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
@@ -538,7 +554,7 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let nativeFormatQualification;
+  let nativeFormatQualification, profileTransitionQualification;
   if (liveProfile === '540p30') {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
@@ -590,6 +606,21 @@ try {
       ),
     );
     liveSegments.sort((a, b) => a[0] - b[0]);
+    if (profileTransitions) {
+      const path = join(artifact, 'native-profile-transitions.json');
+      await cp(
+        join(container, 'Library/Application Support/Scorebug/QA/native-profile-transitions.json'),
+        path,
+        { errorOnExist: true, force: false },
+      );
+      const bytes = await readFile(path);
+      assert.ok(bytes.length <= 12000, 'Oversized native transition evidence');
+      profileTransitionQualification = qualifyNativeProfileTransitions(
+        JSON.parse(bytes.toString('utf8')),
+        observationSnapshot,
+        liveSegments.flat(),
+      );
+    }
     videoObservation = qualifyVideoObservation({
       snapshot: observationSnapshot,
       expectedScope: {
@@ -692,6 +723,8 @@ try {
         fixtureWorkload,
         liveProfile,
         nativeFormatQualification,
+        profileTransitions,
+        profileTransitionQualification,
         streamingBudget,
         media,
         live,
@@ -714,7 +747,7 @@ try {
     ),
   );
   console.log(
-    `${uplinkProfile === 'rate4m' || liveProfile === '540p30' ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${uplinkProfile === 'rate4m' || liveProfile === '540p30' || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;
