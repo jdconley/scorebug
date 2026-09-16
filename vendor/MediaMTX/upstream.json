@@ -20,11 +20,16 @@
     "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_64_TAR_GZ": "1a75b5d943dfa8ca964fb44fe429efbd4d3b985c235f0c621c462c3c205bc6ca",
     "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_32_TAR_GZ": "f384a49249ca2066c967d3462c607d3c199010b9bcda0f6d32b4594e0d0174d3",
     "internal/core/path.go": "28ee3d8c6722ed44f2e59f6713cbecbed2028883492b08299b43ba0033252789",
-    "internal/defs/path.go": "000e20711cfb62dfdc914f5fe42240d888c812e5fde24079384e4a4571f4406f"
+    "internal/defs/path.go": "000e20711cfb62dfdc914f5fe42240d888c812e5fde24079384e4a4571f4406f",
+    "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1"
   },
-  "patchSHA256": "3c9934038970f678ee8f1ae3334ae2d0d3c094880704167112adf0e7e8fffa06",
+  "patchSHA256": "84afa8617b61e862a646033e05c55d1776c51ccb1dff00459567e5b3f466394a",
   "addedFiles": [
     "internal/core/path_reader_source_test.go",
+    "internal/protocols/mpegts/from_stream_recovery_test.go",
+    "internal/protocols/mpegts/h264_recovery.go",
+    "internal/protocols/mpegts/h264_recovery_prefix.go",
+    "internal/protocols/mpegts/h264_recovery_test.go",
     "internal/protocols/mpegts/to_stream_clock_origin_test.go",
     "internal/servers/srt/conn_clock_origin_test.go",
     "internal/servers/srt/conn_reader_source_test.go"

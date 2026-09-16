@@ -131,7 +131,7 @@ export async function nativeStreamingFixture({
   try {
     let ingestImage = 'bluenviron/mediamtx:1.21.0';
     if (requirePublication) {
-      const tag = 'scorebug/ingest:clock-v2';
+      const tag = 'scorebug/ingest:recovery-v1';
       ingestImage = await run(
         'docker',
         ['image', 'inspect', tag, '--format', '{{.Id}}'],

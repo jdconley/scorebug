@@ -1,7 +1,7 @@
-# MediaMTX relay origin and reader source patch
+# MediaMTX relay metadata and H.264 reader recovery
 
 Scorebug's qualification build uses MediaMTX 1.21.0, revision
-`2c6727904fbf233615de74a6c54a9b94dbf6025d`, with a small diagnostic patch.
+`2c6727904fbf233615de74a6c54a9b94dbf6025d`, with relay metadata and bounded H.264 reader recovery patches.
 The MIT notice is retained in `LICENSE`. `upstream.json` pins the upstream archive
 and touched-file hashes; `scorebug.patch` contains the source changes and Go tests.
 Go dependencies remain pinned by the original `go.mod` / `go.sum`. The Docker build
@@ -45,7 +45,7 @@ the qualification fixture's read query is only a unique test marker.
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:clock-v2 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:recovery-v1 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
@@ -78,3 +78,32 @@ See the [origin plan](../../docs/superpowers/plans/2026-09-15-relay-origin-metad
 and [boundary contract](../../docs/relay-clock-correspondence.md) for qualification
 results and remaining production association work. This build is not yet selected
 by the regular local or remote deployment configurations.
+
+## H.264 recovery qualification build
+
+`recovery-v1` retains the clock-v2 origin and reader-source metadata. In the shared
+MPEG-TS H.264 writer used by SRT reads/forwarding, a timing-extraction error starts
+bounded resynchronization instead of immediately terminating the reader. Audio
+continues. A fresh IDR needs current SPS/PPS and consistent timing-header references;
+its original PTS is preserved and its DTS cannot precede the last emitted DTS.
+Healthy B-frame extraction and upstream initial header parsing are preserved;
+initial waiting is also bounded.
+
+Recovery examines at most 128 bytes of each PPS/slice prefix, does not claim full
+PPS or pixel decoding, and does not change upstream NAL handling before this helper.
+It fails after 300 discarded access units or ten seconds, checked on arriving video.
+There is no separate timer promising termination when no video arrives at all.
+Missing/invalid pictures remain missing; independent downstream frame-loss and
+freshness qualification must still pass. Test fixture constants derived from
+mediacommon retain its notice in `LICENSE.mediacommon`.
+
+Relevant Go tests, after applying the cumulative patch to the pinned archive:
+
+```sh
+go test ./internal/protocols/mpegts ./internal/servers/srt ./internal/forward/srt
+go test -race ./internal/protocols/mpegts ./internal/servers/srt ./internal/forward/srt
+```
+
+See the [recovery plan](../../docs/superpowers/plans/2026-09-16-ingest-h264-recovery.md)
+for red regressions, packaging evidence and pending native pressure qualification.
+The regular local/remote deployment configurations remain unchanged.

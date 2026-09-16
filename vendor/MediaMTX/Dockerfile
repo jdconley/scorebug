@@ -8,7 +8,7 @@ RUN tar -xzf /tmp/upstream.tar.gz --strip-components=1 && patch -p1 < /tmp/score
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # Upstream downloaders verify the pinned HLS/RPi asset SHA-256 values.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build go generate ./internal/servers/hls ./internal/staticsources/rpicamera
-RUN printf '%s' 'v1.21.0-scorebug-clock-v2' > internal/core/VERSION
+RUN printf '%s' 'v1.21.0-scorebug-recovery-v1' > internal/core/VERSION
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -18,6 +18,7 @@ FROM scratch
 COPY --from=build /out/mediamtx /mediamtx
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY LICENSE /LICENSE
+COPY LICENSE.mediacommon /LICENSE.mediacommon
 ENTRYPOINT ["/mediamtx"]
 # Require an explicit mounted configuration rather than silently using defaults.
 CMD ["/mediamtx.yml"]

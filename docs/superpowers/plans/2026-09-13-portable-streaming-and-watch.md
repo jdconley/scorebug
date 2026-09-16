@@ -856,3 +856,25 @@ one-shot recording listener. Fixed-category diagnostics now distinguish those
 failures without raw logs; shutdown review fixes and 339 worker/934 tooling tests
 plus worker build pass. Next reproduce and repair reader resynchronization and
 reconnectable fixture recording before rerunning adaptive recovery qualification.
+
+
+The [bounded H.264 reader recovery](2026-09-16-ingest-h264-recovery.md) now
+reproduces and repairs the DTS-extractor termination caused by missing pictures.
+The integrated reader test preserves original timestamps and all test audio units,
+resumes video at a validated IDR, and leaves missing frames visible. Relevant Go
+and race suites plus 934 tooling tests pass; the pinned patch round-trips exactly.
+ARM64/AMD64 images build and launch (AMD64 via local emulation), and all three
+relay-clock cases pass with the recovery image.
+
+The native pressure repeat (`native-app-JD0l78`) confirms same-reader recovery
+after PES damage and healthy 540p receiver windows. It then fails during the higher
+profile trial. The trial had only 227 ms remaining on its source-window-based
+recommendation deadline; the underlying native failure needs a causal reproduction.
+The live UI check remains failed, without relaxed media gates. Local recording was
+stopped/exported and independently passed: all 9824 consecutive 1080p/30 frames
+(327.47 seconds), all 163 A/V markers, and no archive drops. One receiver window
+contains only 28 fresh frames in five seconds, and the early publishing stop leaves
+recovery-traffic coverage incomplete. Next
+resolve fresh recommendation admission versus bounded native execution, retain
+reconnectable destination work, and rerun adaptive pressure before production
+activation. Long soaks, physical phone/Watch and other-host gates remain open.
