@@ -57,10 +57,176 @@ public actor SRTStream {
     public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoBitRateReceipt {
         try Task.checkCancellation()
         guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
+        guard videoReplacement == nil else { throw VideoBitRateUpdateError.sessionInvalidated }
         _ = try outgoing.setVerifiedVideoBitRate(bitRate)
         guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
         return .init(publishingGeneration: expected, change: change)
     }
+    public enum VideoReplacementError: Swift.Error, Equatable, Sendable {
+        case notEncoding, busy, invalidSettings, interrupted, deadline, invalidOutput
+    }
+    /// Pre-mux new-session evidence, not receiver delivery or achieved bitrate.
+    public struct VideoReplacementReceipt: Sendable {
+        public let publishingGeneration: UInt64
+        public let encoderSessionID: UUID
+        public let previousEncoderSessionID: UUID
+        public let lastOldSourcePTS: CMTime
+        public let firstNewSourcePTS: CMTime
+        public let width: Int32
+        public let height: Int32
+        public let rawVideoFramesDropped: UInt64
+    }
+    /// Replaces a running raw H.264 encoder while audio and compressed consumers
+    /// continue. Newest-frame raw buffering remains bounded; evictions are counted.
+    /// Success requires a sync sample at the requested dimensions from the current
+    /// new encoder. Cancellation/deadline/finish abort the change and join its native
+    /// drain. A deadline requests invalidation; a wedged native call can delay join.
+    public func replaceVideoSettings(_ settings: VideoCodecSettings,
+        publishingGeneration expected: UInt64, timeout: Duration = .seconds(2)) async throws -> VideoReplacementReceipt {
+        try Task.checkCancellation()
+        guard videoReplacement == nil else { throw VideoReplacementError.busy }
+        guard publishingGeneration == expected, videoInputIsRaw,
+              let previous = outgoing.lastVideoSubmission else { throw VideoReplacementError.notEncoding }
+        let dimensions: [CGFloat] = [settings.videoSize.width, settings.videoSize.height]
+        let validDimensions = dimensions.allSatisfy { value in
+            guard value.isFinite, value >= 16, value <= 8192, value.rounded() == value else { return false }
+            return Int(value) % 2 == 0
+        }
+        guard settings.format == .h264, settings.allowFrameReordering == false,
+              validDimensions, settings.bitRate > 0 else { throw VideoReplacementError.invalidSettings }
+        let operation = try outgoing.prepareVideoReplacement(settings)
+        let state = VideoReplacement(generation: expected, operation: operation, settings: settings,
+            oldPTS: previous.sourcePTS, dropped: outgoing.rawVideoFramesDropped)
+        videoReplacement = state
+        let task = Task { try await runVideoReplacement(state, timeout: timeout) }
+        state.task = task
+        let operationID = state.id
+        return try await withTaskCancellationHandler {
+            let receipt = try await task.value
+            return try await acceptVideoReplacementReceipt(receipt)
+        } onCancel: {
+            Task { await self.abortVideoReplacement(id: operationID, error: .interrupted) }
+        }
+    }
+
+    /// The owning task has joined. Recheck caller-side ownership at this final boundary.
+    func acceptVideoReplacementReceipt(_ receipt: VideoReplacementReceipt) async throws -> VideoReplacementReceipt {
+        if Task.isCancelled {
+            if generation == receipt.publishingGeneration {
+                failure.fail(.outputTerminated(boundary: "SRT video replacement cancelled return"))
+                await close()
+            }
+            throw CancellationError()
+        }
+        guard publishingGeneration == receipt.publishingGeneration,
+              outgoing.lastVideoSubmission?.sessionID == receipt.encoderSessionID else { throw VideoReplacementError.interrupted }
+        return receipt
+    }
+
+    /// Only accessed on this stream actor. One raw consumer and one caller wait;
+    /// no unbounded continuation list or extra retained media queue is introduced.
+    private final class VideoReplacement {
+        let id = UUID()
+        let generation: UInt64
+        let operation: VideoEncoderReplacement
+        let settings: VideoCodecSettings
+        let oldPTS: CMTime
+        let dropped: UInt64
+        let drain: Task<Void, Never>
+        var task: Task<VideoReplacementReceipt, Swift.Error>?
+        var committed = false
+        var first: (sessionID: UUID, sourcePTS: CMTime)?
+        var input: CheckedContinuation<Void, Never>?
+        var output: CheckedContinuation<VideoReplacementReceipt, Swift.Error>?
+        var error: VideoReplacementError?
+        init(generation: UInt64, operation: VideoEncoderReplacement, settings: VideoCodecSettings,
+             oldPTS: CMTime, dropped: UInt64) {
+            self.generation = generation; self.operation = operation; self.settings = settings
+            self.oldPTS = oldPTS; self.dropped = dropped
+            drain = Task.detached(priority: .utility) { operation.drain() }
+        }
+        func interrupt(_ error: VideoReplacementError) {
+            self.error = self.error ?? error
+            input?.resume(); input = nil
+            output?.resume(throwing: self.error!); output = nil
+        }
+    }
+    private var videoReplacement: VideoReplacement?
+
+    private func runVideoReplacement(_ state: VideoReplacement, timeout: Duration) async throws -> VideoReplacementReceipt {
+        let deadline = Task {
+            do { try await Task.sleep(for: max(.zero, timeout)) } catch { return }
+            await abortVideoReplacement(id: state.id, error: .deadline)
+        }
+        let result: Result<VideoReplacementReceipt, Swift.Error>
+        do {
+            await state.drain.value
+            guard state.error == nil, publishingGeneration == state.generation else {
+                throw state.error ?? VideoReplacementError.interrupted
+            }
+            try outgoing.commitVideoReplacement(state.operation)
+            state.committed = true
+            state.input?.resume(); state.input = nil
+            let receipt: VideoReplacementReceipt = try await withCheckedThrowingContinuation { state.output = $0 }
+            result = .success(receipt)
+        } catch {
+            if generation == state.generation {
+                failure.fail(.outputTerminated(boundary: "SRT video replacement"))
+                await close()
+            }
+            result = .failure(error)
+        }
+        deadline.cancel(); await deadline.value
+        // Close can interleave with deadline join. It cannot resurrect a receipt.
+        if videoReplacement === state { videoReplacement = nil }
+        if let error = state.error { throw error }
+        guard publishingGeneration == state.generation else { throw VideoReplacementError.interrupted }
+        return try result.get()
+    }
+
+    private func abortVideoReplacement(id: UUID, error: VideoReplacementError) async {
+        guard let state = videoReplacement, state.id == id else { return }
+        state.interrupt(error)
+        guard generation == state.generation else { return }
+        failure.fail(.outputTerminated(boundary: "SRT video replacement \(error)"))
+        await close()
+    }
+
+    private func consumeVideoInput(_ buffer: CMSampleBuffer, generation session: UInt64) async {
+        if let state = videoReplacement, !state.committed, state.error == nil {
+            await withCheckedContinuation { state.input = $0 }
+        }
+        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+        outgoing.append(video: buffer)
+        if let state = videoReplacement, state.committed, state.first == nil,
+           let submitted = outgoing.lastVideoSubmission,
+           submitted.sessionID != state.operation.revision,
+           CMTimeCompare(submitted.sourcePTS, buffer.presentationTimeStamp) == 0 {
+            state.first = submitted
+        }
+    }
+
+    private func observeVideoReplacement(_ sample: CMSampleBuffer, wasEncoded: Bool) {
+        guard let state = videoReplacement, state.committed, state.output != nil, let first = state.first,
+              CMTimeCompare(sample.presentationTimeStamp, state.oldPTS) > 0 else { return }
+        let frame = CompressedVideoFrame(sampleBuffer: sample, generation: generation, wasEncoded: wasEncoded)
+        let valid = outgoing.lastVideoSubmission?.sessionID == first.sessionID &&
+            frame.valid && wasEncoded && frame.codec == kCMVideoCodecType_H264 &&
+            frame.width == Int32(state.settings.videoSize.width) && frame.height == Int32(state.settings.videoSize.height) &&
+            CMTimeCompare(frame.sourcePTS, first.sourcePTS) == 0 && !sample.isNotSync
+        guard valid else {
+            state.interrupt(.invalidOutput)
+            failure.fail(.outputTerminated(boundary: "SRT video replacement output"))
+            return
+        }
+        let receipt = VideoReplacementReceipt(publishingGeneration: state.generation,
+            encoderSessionID: first.sessionID, previousEncoderSessionID: state.operation.revision,
+            lastOldSourcePTS: state.oldPTS, firstNewSourcePTS: first.sourcePTS,
+            width: frame.width, height: frame.height,
+            rawVideoFramesDropped: outgoing.rawVideoFramesDropped &- state.dropped)
+        state.output?.resume(returning: receipt); state.output = nil
+    }
+
     private struct PublishingTasks {
         let video, audio, input, transport, errors: Task<Void, Never>
         var all: [Task<Void, Never>] { [video, audio, input, transport, errors] }
@@ -105,6 +271,13 @@ public actor SRTStream {
         Task { await connection.addStream(self) }
     }
 
+    init(connection: SRTConnection, outgoing: sending OutgoingStream,
+         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
+        self.outgoing = outgoing; self.connection = connection
+        self.compressedVideoObserver = compressedVideoObserver
+        Task { await connection.addStream(self) }
+    }
+
     deinit {
         outputs.removeAll()
     }
@@ -125,7 +298,7 @@ public actor SRTStream {
             }
             return
         }
-        guard readyState == .idle, finishingGeneration == nil else { return }
+        guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
         generation &+= 1
         videoInputIsRaw = false
         let session = generation
@@ -166,7 +339,7 @@ public actor SRTStream {
             input: Task {
                 for await buffer in videoInput {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    outgoing.append(video: buffer)
+                    await consumeVideoInput(buffer, generation: session)
                 }
             },
             transport: Task {
@@ -217,6 +390,11 @@ public actor SRTStream {
     /// operation. Failure is latched in publishingError. close() remains immediate
     /// abort, and publication cannot restart until this operation has joined.
     public func finish(timeout: Duration = .seconds(2)) async {
+        if let state = videoReplacement {
+            await abortVideoReplacement(id: state.id, error: .interrupted)
+            _ = await state.task?.result
+            return // A newer publication may start once the replacement owner joins.
+        }
         if let finishTask { await finishTask.value; return }
         guard readyState == .publishing, let tasks = publishingTasks else { return }
         let session = generation
@@ -262,6 +440,7 @@ public actor SRTStream {
 
     /// Stops playing or publishing and makes available other uses.
     public func close() async {
+        videoReplacement?.interrupt(.interrupted)
         generation &+= 1
         videoInputIsRaw = false
         for task in publishingTasks?.all ?? [] { task.cancel() }
@@ -296,6 +475,7 @@ extension SRTStream: _Stream {
     }
 
     public func setVideoSettings(_ videoSettings: VideoCodecSettings) throws {
+        guard videoReplacement == nil else { throw VideoReplacementError.busy }
         guard Self.supportedVideoCodecs.contains(videoSettings.format) else {
             throw Error.unsupportedCodec
         }
@@ -307,6 +487,11 @@ extension SRTStream: _Stream {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
+                if let state = videoReplacement {
+                    state.interrupt(.invalidOutput)
+                    failure.fail(.outputTerminated(boundary: "SRT video replacement passthrough"))
+                    return
+                }
                 videoInputIsRaw = false
                 appendCompressedVideo(sampleBuffer, wasEncoded: false)
             } else {
@@ -334,6 +519,8 @@ extension SRTStream: _Stream {
 
     private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool) {
         guard readyState == .publishing, publishingError == nil else { return }
+        observeVideoReplacement(sampleBuffer, wasEncoded: wasEncoded)
+        guard publishingError == nil else { return }
         compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded))
         writer.videoFormat = sampleBuffer.formatDescription
         writer.append(sampleBuffer)

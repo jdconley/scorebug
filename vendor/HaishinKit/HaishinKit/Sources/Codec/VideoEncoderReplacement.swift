@@ -9,9 +9,9 @@ enum VideoEncoderReplacementError: Error, Equatable {
 /// Captures one native session without transferring mutable VideoCodec state.
 /// Native completion runs once, outside the state lock. The stream owner must
 /// execute it off its actor and join it even after terminal invalidation.
-final class VideoEncoderReplacement: @unchecked Sendable {
+package final class VideoEncoderReplacement: @unchecked Sendable {
     let settings: VideoCodecSettings
-    let revision: UUID
+    package let revision: UUID
     let failure: PublishingFailureLatch
     private let session: any VTSessionConvertible
     private let lock = NSLock()
@@ -22,7 +22,7 @@ final class VideoEncoderReplacement: @unchecked Sendable {
         self.settings = settings; self.revision = revision; self.session = session; self.failure = failure
     }
     var drainResult: Int32? { lock.withLock { result } }
-    func drain() {
+    package func drain() {
         let begin = lock.withLock { if started { return false }; started = true; return true }
         guard begin else { return }
         let status = session.completeFrames()

@@ -30,6 +30,14 @@ final class VideoCodec {
         return recordedBitRateChange
     }
 
+    var lastSubmission: (sessionID: UUID, sourcePTS: CMTime)? {
+        guard isRunning, failure.error == nil, sessionMode == .compression,
+              let lastSubmittedSourcePTS else { return nil }
+        let current = invalidation.snapshot
+        guard !current.pending else { return nil }
+        return (current.revision, lastSubmittedSourcePTS)
+    }
+
     func requestSessionInvalidation() { invalidation.invalidate() }
 
     func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {

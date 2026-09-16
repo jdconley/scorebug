@@ -5,6 +5,7 @@ import Foundation
 package final class OutgoingStream {
     package private(set) var isRunning = false
     private var inputFinished = false
+    package private(set) var rawVideoFramesDropped: UInt64 = 0
 
     /// The asynchronous sequence for audio output.
     package var audioOutputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
@@ -43,6 +44,15 @@ package final class OutgoingStream {
         guard isRunning, !inputFinished else { throw VideoBitRateUpdateError.notEncoding }
         return try videoCodec.setVerifiedBitRate(bitRate)
     }
+
+    package func prepareVideoReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
+        guard isRunning, !inputFinished else { throw VideoEncoderReplacementError.notEncoding }
+        return try videoCodec.prepareReplacement(settings)
+    }
+    package func commitVideoReplacement(_ operation: VideoEncoderReplacement) throws {
+        try videoCodec.commitReplacement(operation)
+    }
+    package var lastVideoSubmission: (sessionID: UUID, sourcePTS: CMTime)? { videoCodec.lastSubmission }
 
     package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }
 
@@ -85,6 +95,8 @@ package final class OutgoingStream {
                                 encoderConfigurationObserver: encoderConfigurationObserver)
     }
 
+    init(videoCodec: VideoCodec) { self.videoCodec = videoCodec }
+
     /// Appends a sample buffer for publish.
     package func append(_ sampleBuffer: CMSampleBuffer) {
         guard !inputFinished else { return }
@@ -94,7 +106,7 @@ package final class OutgoingStream {
             audioCodec.append(sampleBuffer)
         case .video:
             videoInputFormat = sampleBuffer.formatDescription
-            videoInputContinuation?.yield(sampleBuffer)
+            if case .dropped = videoInputContinuation?.yield(sampleBuffer) { rawVideoFramesDropped &+= 1 }
         default:
             break
         }
@@ -130,6 +142,7 @@ extension OutgoingStream: Runner {
             return
         }
         inputFinished = false
+        rawVideoFramesDropped = 0
         videoCodec.startRunning()
         audioCodec.startRunning()
         isRunning = true

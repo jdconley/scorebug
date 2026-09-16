@@ -786,3 +786,16 @@ combined Apple Release pass. SDK patch provenance again round-trips all 162 orig
 hashes. Next integrate stream-owned ingress pause/deadline/cancellation and actual
 profile receipts, then qualify downstream decode and independent recording before
 automatic adaptation. Production profile selection remains disabled.
+
+
+The [stream-owned profile replacement](2026-09-16-stream-profile-replacement.md)
+now pauses bounded raw-video consumption during native drain while audio/compressed
+output consumers continue. Actual first new-format output and a current encoder
+revision establish the receipt; staged settings alone cannot. Cancellation, deadline,
+finish and close reject stale state and join native work before reuse. Ten new tests
+cover these lifetimes, native errors, counted ingress evictions and continued AAC
+transport. All 155 SDK / 55 streaming tests and unsigned combined Apple Release pass.
+The app still uses fixed profiles. Next qualify paced down/up transitions through
+worker decoding with independent full-resolution local recording, then pressure and
+recovery before automatic selection. No seamless transition or physical-device
+qualification is claimed by this SDK checkpoint.

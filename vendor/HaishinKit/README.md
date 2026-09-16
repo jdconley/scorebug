@@ -113,7 +113,26 @@ invalidation. The output queue and source timestamp ordering survive the change.
 Pending replacement rejects concurrent settings/input/terminal-finish work, and a
 previously captured terminal completion excludes replacement. Stop clears ownership;
 stale or failed completions cannot commit into a restarted codec. The stream owner
-must supply an ingress pause policy, deadline and joined cancellation before this
-primitive can be exposed as a production profile change. No such integration is
-enabled yet. See [lifetime validation](../../docs/superpowers/plans/2026-09-16-encoder-replacement-lifetime.md).
+now supplies an ingress pause policy, deadline and joined cancellation through
+`SRTStream.replaceVideoSettings`. The app does not yet select profiles automatically. See [lifetime validation](../../docs/superpowers/plans/2026-09-16-encoder-replacement-lifetime.md).
 The provenance verifier also rejects source files omitted from its inventory.
+
+
+`SRTStream.replaceVideoSettings` pauses its single raw-video consumer while the old
+encoder drains off the actor. Audio, compressed video and transport consumers remain
+active. It retains the existing bounded newest-frame ingress queue and counts raw
+queue evictions during the change. A receipt requires a first sync compressed sample
+at the requested H.264 dimensions from the new, still-current encoder revision; it
+includes old/new source boundaries, session identities and eviction count. Both
+output and return gates reject obsolete revisions and publication generations.
+This is pre-mux format evidence, not achieved bitrate or downstream decoding proof.
+
+Only one change may run. Competing settings/bitrate changes are rejected; crossing
+into compressed passthrough fails the live operation. Cancellation, deadline, close
+or finish prevents stale commit and receipt. Replacement callers and finish join
+the native drain; publish cannot reuse the stream before it joins. The deadline
+requests invalidation but cannot forcibly interrupt a wedged native platform call.
+Immediate socket-send cancellation remains terminal and can require a fresh
+connection. The app's independent archive and native scoring are unaffected by this
+SDK API addition; dynamic app/worker/archive qualification is still required.
+See [stream replacement validation](../../docs/superpowers/plans/2026-09-16-stream-profile-replacement.md).
