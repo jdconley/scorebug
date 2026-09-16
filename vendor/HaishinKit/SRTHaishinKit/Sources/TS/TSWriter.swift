@@ -13,12 +13,19 @@ final class TSWriter {
     /// An asynchronous sequence for writing data.
     public var output: AsyncStream<Data> {
         outputQueue?.finish()
+        outputAccounting = TransportOutputAccounting()
         let queue = PublishingQueue<Data>(boundary: "transport muxer", limits: outputLimits, failure: failure)
         outputQueue = queue
         return queue.stream
     }
     var failure = PublishingFailureLatch()
     private var outputQueue: PublishingQueue<Data>?
+    /// Stream-actor accounting; excludes the payload held by its sole consumer.
+    private(set) var outputAccounting = TransportOutputAccounting()
+    var pendingOutputCount: Int { outputAccounting.pending }
+    func didDequeueOutput() {
+        guard outputAccounting.dequeue() else { fail(.invalidPayload); return }
+    }
     private let outputLimits: PublishingQueue<Data>.Limits
     private let maximumPayloadBytes: Int
     /// Specifies the exptected medias = [.video, .audio].
@@ -281,6 +288,7 @@ final class TSWriter {
         expectedMedias.removeAll()
         outputQueue?.finish()
         outputQueue = nil
+        outputAccounting = TransportOutputAccounting()
         failure.finish()
         failure = PublishingFailureLatch()
     }
@@ -320,8 +328,10 @@ final class TSWriter {
 
     private func write(_ data: Data) {
         guard error == nil else { return }
-        if let outputQueue, !outputQueue.yield(data, byteCount: data.count) {
-            fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
+        if let outputQueue {
+            if !outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) {
+                fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
+            }
         }
     }
 

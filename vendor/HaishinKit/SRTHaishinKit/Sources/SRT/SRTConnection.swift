@@ -206,6 +206,15 @@ public actor SRTConnection: NetworkConnection {
         }
     }
 
+    func sendPadding(_ probe: SRTBandwidthProbe, pendingMedia: TransportOutputAccounting, generation session: UInt64) async {
+        guard generation == session, connected, !closing, !Task.isCancelled, let socket else { return }
+        do { try await socket.sendPadding(probe, pendingMedia: pendingMedia) }
+        catch {
+            guard generation == session else { return }
+            await failPublishing(.transportWriteFailed, generation: session)
+        }
+    }
+
     func recv() {
         let session = generation
         receiveTask?.cancel()

@@ -1117,3 +1117,20 @@ attempt-bound receiver accounting before GoSRT demux, with separate fast local
 pressure/lease ownership and slower bounded receiver confirmation. Keep existing
 picture, cadence, A/V, local archive and measured-profile-cost gates. Production
 adaptation and physical phone/Watch, other-host and soak qualification remain open.
+
+
+The [native padding checkpoint](2026-09-16-native-padding-probe.md) adds a
+default-disabled same-connection probe to the Swift publisher SDK. It offers
+bounded nonblocking null padding only after media, with synchronized queue
+priority, a renewable 300 ms lease and fresh local pressure checks. Finish,
+close and configuration changes revoke the shared permit. Review regressions
+cover stale queue observations, settings changes during admission and acceptance
+accounting when native option restoration fails.
+
+All 190 SDK and 61 streaming-package tests pass, as do exact vendor provenance
+verification and the unsigned combined iPhone/Watch Release build. This proves
+the native primitive's tested lifecycle and accounting behavior, not receiver
+delivery or the 24-fps requirement. App/DEBUG fixture integration and authenticated
+pre-demux receiver accounting come next. Production adaptation stays disabled;
+native archive/live media, physical devices, other hosts and soaks still require
+their existing qualification gates.

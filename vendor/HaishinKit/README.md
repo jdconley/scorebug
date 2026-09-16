@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and eight added publishing/bitrate/clock/replacement source primitives. Original upstream hashes
+files and eleven added publishing/bitrate/clock/replacement/probe source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -167,3 +167,21 @@ held by the consumer is additional to the bounded queue. The scalar observer cop
 `dequeuedAt` before the pacing wait and `sourceCadencePaced` from the executed path;
 these are distinct from encoder completion and post-pacing observation times.
 This experimental mode is not evidence of sustainable bitrate or receiver delivery.
+
+`SRTStream` accepts immutable `allowsBandwidthProbes: false` by default. When
+explicitly enabled, one generation/UUID-scoped attempt may submit seven-packet
+MPEG-TS null messages after media writes. Queue admission and the optional native
+write share synchronized accounting, so media queued during an actor hop wins.
+The socket temporarily uses nonblocking sends and restores its original mode.
+Backpressure stops only the probe; native or option-restoration errors retain the
+existing terminal publishing failure behavior, including accepted-byte evidence.
+
+The probe has a 300 ms renewable lease, 60-second/16 MiB bounds, a maximum 2 Mbps
+accounted target and no initial or catch-up burst. Fresh native statistics must
+show RTT and send buffer at most 50 ms with no new retransmission/drop counts.
+Missing statistics, pressure, finish, close or configuration changes revoke it.
+Configuration revision checks reject starts that overlap a settings change.
+There is no added queue, timer or consumer. Opportunities may underdeliver the
+requested rate; snapshots prove local acceptance only, never receiver delivery
+or usable capacity. App integration and live media qualification remain open.
+See [native probe validation](../../docs/superpowers/plans/2026-09-16-native-padding-probe.md).

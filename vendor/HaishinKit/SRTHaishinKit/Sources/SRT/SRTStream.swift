@@ -32,6 +32,50 @@ public actor SRTStream {
     private let pacesEncodedVideo: Bool
     private let pacingSleep: @Sendable (Double) async throws -> Void
     private var sourceCadenceClock = SourceCadenceClock()
+    private let allowsBandwidthProbes: Bool
+    private var bandwidthProbe: SRTBandwidthProbe?
+    private var probeStarting = false
+    private var probeConfigurationRevision: UInt64 = 0
+    private func invalidateProbeConfiguration() {
+        probeConfigurationRevision &+= 1
+        bandwidthProbe?.cancel(.replaced)
+    }
+    /// Last attempt survives close for diagnostics; a new publish clears it.
+    public var bandwidthProbeSnapshot: SRTBandwidthProbeSnapshot? {
+        bandwidthProbe?.snapshot(now: { ProcessInfo.processInfo.systemUptime })
+    }
+    public func beginBandwidthProbe(bitRate: Int, publishingGeneration expected: UInt64) async throws -> SRTBandwidthProbeSnapshot {
+        try Task.checkCancellation()
+        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
+        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
+              let connection else { throw SRTBandwidthProbeError.notPublishing }
+        guard bandwidthProbe == nil, !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
+        probeStarting = true
+        let configuration = probeConfigurationRevision
+        defer { probeStarting = false }
+        let statistics = await connection.samplePerformanceData()
+        try Task.checkCancellation()
+        guard publishingGeneration == expected, videoReplacement == nil,
+              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
+        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
+        let at = ProcessInfo.processInfo.systemUptime
+        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at)
+        bandwidthProbe = probe
+        return probe.snapshot(now: { at })
+    }
+    public func renewBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws -> SRTBandwidthProbeSnapshot {
+        try Task.checkCancellation()
+        guard publishingGeneration == expected, let probe = bandwidthProbe, probe.id == id,
+              probe.generation == expected else { throw SRTBandwidthProbeError.obsolete }
+        _ = probe.renew(now: { ProcessInfo.processInfo.systemUptime })
+        return probe.snapshot(now: { ProcessInfo.processInfo.systemUptime })
+    }
+    public func cancelBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws {
+        guard publishingGeneration == expected, let probe = bandwidthProbe,
+              probe.id == id, probe.generation == expected else { throw SRTBandwidthProbeError.obsolete }
+        probe.cancel(.cancelled)
+    }
     private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
     /// Identity for an active publication, not proof that its encoder is ready.
     public var publishingGeneration: UInt64? {
@@ -61,6 +105,7 @@ public actor SRTStream {
         try Task.checkCancellation()
         guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
         guard videoReplacement == nil else { throw VideoBitRateUpdateError.sessionInvalidated }
+        invalidateProbeConfiguration()
         _ = try outgoing.setVerifiedVideoBitRate(bitRate)
         guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
         return .init(publishingGeneration: expected, change: change)
@@ -97,6 +142,7 @@ public actor SRTStream {
         }
         guard settings.format == .h264, settings.allowFrameReordering == false,
               validDimensions, settings.bitRate > 0 else { throw VideoReplacementError.invalidSettings }
+        invalidateProbeConfiguration()
         let operation = try outgoing.prepareVideoReplacement(settings)
         let state = VideoReplacement(generation: expected, operation: operation, settings: settings,
             oldPTS: previous.sourcePTS, dropped: outgoing.rawVideoFramesDropped)
@@ -267,7 +313,8 @@ public actor SRTStream {
     public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
-                pacesEncodedVideo: Bool = false) {
+                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
+        self.allowsBandwidthProbes = allowsBandwidthProbes
         self.pacesEncodedVideo = pacesEncodedVideo
         pacingSleep = { try await Task.sleep(for: .seconds($0)) }
         outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
@@ -280,7 +327,9 @@ public actor SRTStream {
     init(connection: SRTConnection, outgoing: sending OutgoingStream,
          compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
+         allowsBandwidthProbes: Bool = false,
          pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
+        self.allowsBandwidthProbes = allowsBandwidthProbes
         self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
         self.outgoing = outgoing; self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
@@ -310,6 +359,7 @@ public actor SRTStream {
         guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
+        bandwidthProbe = nil
         videoInputIsRaw = false
         let session = generation
         failure = PublishingFailureLatch()
@@ -371,7 +421,12 @@ public actor SRTStream {
             transport: Task {
                 for await data in transportOutput {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    writer.didDequeueOutput()
                     await connection.send(data, generation: connectionSession)
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    if publishingGeneration == session, writer.pendingOutputCount == 0, let probe = bandwidthProbe {
+                        await connection.sendPadding(probe, pendingMedia: writer.outputAccounting, generation: connectionSession)
+                    }
                 }
             },
             errors: Task { [failure] in
@@ -416,6 +471,7 @@ public actor SRTStream {
     /// operation. Failure is latched in publishingError. close() remains immediate
     /// abort, and publication cannot restart until this operation has joined.
     public func finish(timeout: Duration = .seconds(2)) async {
+        bandwidthProbe?.cancel(.finished)
         if let state = videoReplacement {
             await abortVideoReplacement(id: state.id, error: .interrupted)
             _ = await state.task?.result
@@ -466,6 +522,7 @@ public actor SRTStream {
 
     /// Stops playing or publishing and makes available other uses.
     public func close() async {
+        bandwidthProbe?.cancel(.closed)
         videoReplacement?.interrupt(.interrupted)
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
@@ -498,6 +555,7 @@ extension SRTStream: _Stream {
         guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
             throw Error.unsupportedCodec
         }
+        invalidateProbeConfiguration()
         outgoing.audioSettings = audioSettings
     }
 
@@ -506,6 +564,7 @@ extension SRTStream: _Stream {
         guard Self.supportedVideoCodecs.contains(videoSettings.format) else {
             throw Error.unsupportedCodec
         }
+        invalidateProbeConfiguration()
         outgoing.videoSettings = videoSettings
     }
 

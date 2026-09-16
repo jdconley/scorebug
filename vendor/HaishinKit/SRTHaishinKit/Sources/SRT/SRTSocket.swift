@@ -277,6 +277,44 @@ final actor SRTSocket {
         }
     }
 
+    /// Optional one-message write, serialized with media and never waiting for
+    /// send-buffer space. The shared permit rechecks revocation after actor hops.
+    func sendPadding(_ probe: SRTBandwidthProbe, pendingMedia: TransportOutputAccounting) throws {
+        guard isRunning, connected, failure.error == nil, !Task.isCancelled else {
+            probe.cancel(.closed); return
+        }
+        guard sendingGeneration == nil,
+              probe.isEligible(now: { ProcessInfo.processInfo.systemUptime }) else { return }
+        let statistics = samplePerformanceData()
+        do {
+            try pendingMedia.whileEmpty {
+                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) {
+                    try SRTNonblockingSend.perform(get: {
+                        var value = false
+                        var size = Int32(MemoryLayout<Bool>.size)
+                        guard srt_getsockflag(socket, SRTO_SNDSYN, &value, &size) == 0,
+                              size == MemoryLayout<Bool>.size else { throw PublishingError.transportWriteFailed }
+                        return value
+                    }, set: { value in
+                        var value = value
+                        guard srt_setsockflag(socket, SRTO_SNDSYN, &value, Int32(MemoryLayout<Bool>.size)) == 0 else {
+                            throw PublishingError.transportWriteFailed
+                        }
+                    }, send: {
+                        let sent = sendmsg(SRTBandwidthProbe.message)
+                        if sent == SRTBandwidthProbe.message.count { return true }
+                        // Capture the native thread-local error before restoring an option.
+                        if sent == SRT_ERROR, srt_getlasterror(nil) == SRT_EASYNCSND.rawValue { return false }
+                        throw PublishingError.transportWriteFailed
+                    })
+                }
+            }
+        } catch {
+            failure.fail(.transportWriteFailed)
+            throw PublishingError.transportWriteFailed
+        }
+    }
+
     private func configure(_ options: [SRTSocketOption], restriction: SRTSocketOption.Restriction) -> Bool {
         var failures: [String] = []
         for option in options where option.name.restriction == restriction {
