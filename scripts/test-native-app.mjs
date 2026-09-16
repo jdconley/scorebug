@@ -24,6 +24,7 @@ import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
+  nativeQualityOptions,
   nativeFixtureWorkload,
   nativeStreamingTestBudget,
   qualifyNativeStreamingHold,
@@ -47,15 +48,11 @@ assert.ok(
 const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
-assert.ok(
-  qualityFlag === undefined ||
-    (qualityFlag === '1' &&
-      requireProcessing &&
-      streamingOptions.holdSeconds >= 90 &&
-      process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1'),
-  'Native quality requires exact opt-in 1, processing/publication evidence, direct recorder and at least90s hold',
-);
-const requireQuality = qualityFlag === '1';
+const { requireQuality, requireConfirmation } = nativeQualityOptions({
+  environment: process.env,
+  requireProcessing,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
 const fixtureMotionFlag = process.env.SCOREBUG_TEST_MOTION_FIXTURE ?? '';
@@ -75,6 +72,7 @@ await writeFile(
       requirePublication,
       requireProcessing,
       requireQuality,
+      requireConfirmation,
       streamingOptions,
       fixtureWorkload,
       streamingBudget,
@@ -582,6 +580,7 @@ try {
     if (requireQuality)
       nativeQualityQualification = qualifyNativeQuality({
         quality: qualitySnapshot,
+        requireConfirmation,
         snapshot: observationSnapshot,
         sourceIntervalQualification,
       });

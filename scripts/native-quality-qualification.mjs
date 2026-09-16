@@ -6,7 +6,12 @@ const uuid = (value) =>
   value.length === 36;
 const finite = (value) => Number.isFinite(value) && value >= 0;
 /** Native receipt and matched-source gate. It does not prove achieved payload rate. */
-export function qualifyNativeQuality({ quality, snapshot, sourceIntervalQualification }) {
+export function qualifyNativeQuality({
+  quality,
+  snapshot,
+  sourceIntervalQualification,
+  requireConfirmation = false,
+}) {
   assert.equal(quality.formatVersion, 1);
   assert.equal(quality.overflow, false);
   assert(Array.isArray(quality.events) && quality.events.length <= 512);
@@ -107,6 +112,11 @@ export function qualifyNativeQuality({ quality, snapshot, sourceIntervalQualific
       lastEvaluatedAt = row.evaluatedAt;
       if (trial) {
         if (
+          row.evaluatedAt >= trial.deadline ||
+          (probationStart === undefined && w.start > trial.appliedAt + 5.25)
+        )
+          trial.rollbackRequired = true;
+        if (
           !strong ||
           scope !== trial.scope ||
           (probationEnd !== undefined && probationEnd !== w.start)
@@ -163,7 +173,8 @@ export function qualifyNativeQuality({ quality, snapshot, sourceIntervalQualific
         );
         trial = {
           baseline: current.bitRate,
-          deadline: row.acknowledgedAt + 15,
+          deadline: row.acknowledgedAt + 22.5,
+          appliedAt: row.acknowledgedAt,
           scope: lastScope,
           rollbackRequired: false,
         };
@@ -196,6 +207,7 @@ export function qualifyNativeQuality({ quality, snapshot, sourceIntervalQualific
   assert.equal(stopped.revision, String(revision));
   assert.deepEqual(stopped.receipt, current);
   assert(evaluated >= 6 && trials >= 1, 'Need matched policy evidence and an actual native trial');
+  if (requireConfirmation) assert(confirmed >= 1, 'Need an actual confirmed native trial');
   return {
     evaluated,
     trials,

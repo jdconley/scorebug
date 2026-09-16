@@ -80,8 +80,11 @@ one-bit step at tiny rates. It never changes resolution. Successful exact-settin
 acknowledgment starts probation; it does not confirm a sustainable higher rate.
 
 Probation requires 10 contiguous post-application seconds of the same strong receiver
-and pressure evidence, before a fixed 15-second deadline. A first complete window may
-start after application; subsequent gaps invalidate probation. Bad/unknown evidence,
+and pressure evidence, before a 22.5-second hard deadline. The first uniform window
+must start within 5.25 seconds of application; a later start or subsequent gap
+invalidates probation. The deadline allows one initial transition, ten actual seconds
+of coverage, up to one additional 5.25-second completed window, and the unchanged
+two-second evidence-arrival allowance. Actual coverage is never rounded up. Bad/unknown evidence,
 disconnection, invalid window input or invalid deadline-poll time makes rollback
 mandatory. Confirmation reports `trialConfirmed` but never claims spare capacity.
 A confirmed trial starts a fresh 30-second recovery period before another experiment.
@@ -260,7 +263,12 @@ native receipts with complete saved-video continuity. The independent verifier
 replays raw queue, thermal, transport and worker processing observations instead of
 trusting nominal labels, and enforces probation invalidation and rollback cooldown.
 
-The trial timed out rather than confirming: two post-change windows covered slightly
-less than ten seconds before the 15-second deadline. Confirmation timing is the next
-open gate. Neither this barcode workload nor its test-only pressure/cadence limits
-qualifies production capacity, physical devices or remote workers.
+The initial trial timed out: two post-change windows covered slightly less than ten
+seconds before the former 15-second deadline. The [bounded confirmation correction](superpowers/plans/2026-09-16-native-trial-confirmation.md)
+now permits a third strong window and rejects an excessively late first window.
+`native-app-3Tq0lq` confirms the actual 6.6 Mbps trial and begins a second 7.26 Mbps
+trial before stop; the latter is not claimed confirmed. The 90-second structured-motion
+repeat `native-app-UN3C23` also confirms one trial, preserves all 3696 archive and
+3266 acquired live frames, and passes the frozen workload bands at roughly 12 Mbps
+local / 7.3–7.6 Mbps live. All saved media gates pass. Test-only pressure/cadence limits
+still do not qualify production capacity, physical devices or remote workers.

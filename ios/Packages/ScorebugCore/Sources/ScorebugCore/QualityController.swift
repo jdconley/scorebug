@@ -7,6 +7,10 @@ public struct QualityController: Sendable {
     /// Measured source spans may exceed nominal five-second decoder windows.
     /// This ingestion allowance never changes actual elapsed-time rate calculations.
     public static let maximumWindowDuration: Double = 5.25
+    public static let minimumTrialCoverage: Double = 10
+    /// One initial transition, required actual coverage, one complete-window
+    /// overshoot, and the unchanged two-second evidence arrival allowance.
+    public static let maximumTrialDuration = minimumTrialCoverage + 2 * maximumWindowDuration + 2
     public struct Profile: Equatable, Sendable {
         public let id: String
         public let width: Int
@@ -216,6 +220,10 @@ public struct QualityController: Sendable {
                 active.rollbackRequired = true
                 reasons.append(.trialTimedOut)
             }
+            if active.healthyStart == nil, window.start > appliedAt + Self.maximumWindowDuration {
+                active.rollbackRequired = true
+                if !reasons.contains(.telemetryGap) { reasons.append(.telemetryGap) }
+            }
             if let end = active.healthyEnd, window.start != end { active.rollbackRequired = true }
             if !strongObservations { active.rollbackRequired = true }
             if active.rollbackRequired {
@@ -229,7 +237,7 @@ public struct QualityController: Sendable {
             }
             active.healthyStart = active.healthyStart ?? window.start
             active.healthyEnd = window.end
-            if window.end - active.healthyStart! >= 10 {
+            if window.end - active.healthyStart! >= Self.minimumTrialCoverage {
                 trial = nil; recoveryStart = nil
                 return .init(state: unknown ? .unknown : .healthy,
                              reasons: reasons + [.trialConfirmed], recommendation: nil)
@@ -305,7 +313,7 @@ public struct QualityController: Sendable {
                 }
             }
             if recommendation.kind == .trial {
-                trial = .init(baseline: applied, deadline: now + 15)
+                trial = .init(baseline: applied, deadline: now + Self.maximumTrialDuration)
             } else if recommendation.kind == .rollback {
                 trial = nil
                 trialCooldownUntil = now + 60

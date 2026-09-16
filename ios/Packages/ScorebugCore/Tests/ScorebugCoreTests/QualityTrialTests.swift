@@ -37,6 +37,33 @@ final class QualityTrialTests: XCTestCase {
         try policy.acknowledge(advice, applied: advice.settings, at: 30)
         return policy
     }
+    func testMeasuredNativeTimelineRequiresThirdWindowWithoutPrematureTimeout() throws {
+        var policy = try controller()
+        let advice = try ready(&policy)
+        // Actual native-app-r29PCh boundaries shifted to the recovery endpoint30.
+        let ack = 31.9388389168
+        try policy.acknowledge(advice, applied: advice.settings, at: ack)
+        let start = 35.0015033751, middle = 40.0017947917, end = 45.0014831251
+        let first = try policy.evaluate(window(start, revision: 1, duration: middle - start), at: 41.8298047918)
+        XCTAssertEqual(first.state, .probing)
+        let second = try policy.evaluate(window(middle, revision: 1, duration: end - middle), at: 46.9056670833)
+        XCTAssertLessThan(end - start, 10)
+        XCTAssertFalse(second.reasons.contains(.trialConfirmed))
+        XCTAssertNil(try policy.checkTrialDeadline(at: ack + 15))
+        let third = try policy.evaluate(window(end, revision: 1), at: 51.85)
+        XCTAssertTrue(third.reasons.contains(.trialConfirmed))
+        XCTAssertNil(third.recommendation)
+        XCTAssertNil(try policy.checkTrialDeadline(at: 100))
+    }
+    func testInitialProbationGapHasAnExactBoundAndCannotBeRehabilitated() throws {
+        var boundary = try probing()
+        let accepted = try boundary.evaluate(window(35.25, revision: 1), at: 40.25)
+        XCTAssertEqual(accepted.state, .probing)
+        var late = try probing()
+        let rejected = try late.evaluate(window(35.250001, revision: 1), at: 40.250001)
+        XCTAssertEqual(rejected.recommendation?.kind, .rollback)
+        XCTAssertEqual(try late.evaluate(window(40.250001, revision: 1), at: 45.250001).recommendation?.kind, .rollback)
+    }
     func testMeasuredDurationAllowanceDoesNotClampActualFrameRates() throws {
         for duration in [5.000622458290309, 5.00198454153724, 5.25] {
             var policy = try controller()
@@ -173,14 +200,14 @@ final class QualityTrialTests: XCTestCase {
     }
     func testDeadlinePollRollsBackWithoutReceiverWindowsAndSupersedesExpiredAdvice() throws {
         var policy = try probing()
-        XCTAssertNil(try policy.checkTrialDeadline(at: 44.999))
-        let first = try XCTUnwrap(policy.checkTrialDeadline(at: 45))
+        XCTAssertNil(try policy.checkTrialDeadline(at: 52.499))
+        let first = try XCTUnwrap(policy.checkTrialDeadline(at: 52.5))
         XCTAssertEqual(first.kind, .rollback)
-        XCTAssertEqual(first.validUntil, 47)
-        let next = try XCTUnwrap(policy.checkTrialDeadline(at: 48))
-        XCTAssertEqual(next.validUntil, 50)
-        XCTAssertThrowsError(try policy.acknowledge(first, applied: first.settings, at: 48))
-        try policy.acknowledge(next, applied: next.settings, at: 48)
+        XCTAssertEqual(first.validUntil, 54.5)
+        let next = try XCTUnwrap(policy.checkTrialDeadline(at: 55.5))
+        XCTAssertEqual(next.validUntil, 57.5)
+        XCTAssertThrowsError(try policy.acknowledge(first, applied: first.settings, at: 55.5))
+        try policy.acknowledge(next, applied: next.settings, at: 55.5)
         XCTAssertEqual(policy.applied.videoBitrate, 2_000_000)
     }
     func testFailedRollbackStaysRequiredAndSuccessfulRollbackStartsCooldown() throws {
@@ -213,7 +240,7 @@ final class QualityTrialTests: XCTestCase {
     func testLateCompleteTrialCannotConfirmAfterDeadline() throws {
         var policy = try probing()
         _ = try policy.evaluate(window(35, revision: 1), at: 40)
-        let result = try policy.evaluate(window(40, revision: 1), at: 46)
+        let result = try policy.evaluate(window(47.5, revision: 1), at: 52.5)
         XCTAssertEqual(result.recommendation?.kind, .rollback)
         XCTAssertTrue(result.reasons.contains(.trialTimedOut))
     }

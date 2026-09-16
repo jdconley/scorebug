@@ -317,8 +317,9 @@ continuous during network-only impairment. No false sustained quality or latency
 The [receiver-validated trial extension](2026-09-15-receiver-validated-quality-trials.md)
 adds an explicit optional strategy for unknown passive capacity: 30 seconds of strong
 receiver/pressure evidence can propose a <=10% same-profile bitrate trial, followed
-by 10 seconds of confirmation under a 15-second deadline, or sticky rollback and a
-60-second retry cooldown. Actual known-ceiling traces refute treating SRT packet-pair
+by 10 actual seconds of confirmation under a bounded 22.5-second deadline, or sticky
+rollback and a 60-second retry cooldown. The first probation window must start within
+5.25 seconds of acknowledgment; see the [native timing correction](2026-09-16-native-trial-confirmation.md). Actual known-ceiling traces refute treating SRT packet-pair
 estimates as spare bandwidth. This changes the intended upward-adaptation design;
 the default legacy strategy and fixed native runtime remain unchanged. Runtime
 frame boundaries/alignment, real trial transients, resolution changes and soak/radio
@@ -662,3 +663,12 @@ worker/phone polling defaults are preserved. The 15-second trial deadline was to
 short to confirm ten full seconds of post-change source coverage, so confirmation
 timing is the next gate before motion and impairment qualification. This does not
 enable adaptive production behavior or finish physical phone/Watch/remote-host work.
+
+
+The [confirmation timing correction](2026-09-16-native-trial-confirmation.md) now
+passes confirmation-required barcode and structured-motion native runs. The motion
+run preserves 3696 archive / 3266 acquired live frames at 30fps, with roughly 12 Mbps
+local and7.3–7.6Mbps live payload. One6.6Mbps trial is confirmed; a subsequent7.26Mbps
+trial is unconfirmed at stop. Network impairment is next, including the driver's
+need for an independently qualified local-pressure decrease path when matched
+receiver windows expire. Longer adaptive soaks and resolution/device/host gates remain.

@@ -593,5 +593,7 @@ pressure limits. It retains unknown evidence and nil capacity. The actor binds t
 conversion atomically and prevents worker restarts from extending prior recovery.
 The DEBUG simulator-only [native loop](superpowers/plans/2026-09-16-native-quality-loop.md)
 now has actual trial/rollback and saved-media evidence, including independent raw
-pressure replay. Confirmation timing, motion/impairment, production activation and
-physical/remote-host thresholds remain open.
+pressure replay. [Bounded probation timing](superpowers/plans/2026-09-16-native-trial-confirmation.md)
+also has actual confirmed native trials on the barcode and structured-motion sources,
+with complete recording/live-video checks. Network impairment, longer adaptive
+soaks, production activation and physical/remote-host thresholds remain open.

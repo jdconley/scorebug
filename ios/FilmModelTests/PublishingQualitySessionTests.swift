@@ -151,7 +151,7 @@ final class PublishingQualitySessionTests: XCTestCase {
         try await owner.apply(proposed)
         var state = await owner.snapshot
         XCTAssertEqual(state.revision, 1); XCTAssertEqual(state.applied?.videoBitrate, 2_200_000)
-        native.setNow(146)
+        native.setNow(153)
         let pending = try await owner.checkTrialDeadline()
         let rollback = try XCTUnwrap(pending)
         XCTAssertEqual(rollback.kind, .rollback)

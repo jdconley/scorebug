@@ -60,3 +60,22 @@ export function nativeFixtureWorkload({ streaming, environment }) {
   );
   return raw === 'blocks16' ? 'motion-blocks16' : 'motion';
 }
+
+/** Verification strength is explicit and validated before creating fixture resources. */
+export function nativeQualityOptions({ environment, requireProcessing, holdSeconds }) {
+  const quality = environment.SCOREBUG_TEST_NATIVE_QUALITY;
+  const confirmation = environment.SCOREBUG_TEST_NATIVE_CONFIRMATION;
+  assert.ok(
+    quality === undefined ||
+      (quality === '1' &&
+        requireProcessing &&
+        holdSeconds >= 90 &&
+        environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1'),
+    'Native quality requires exact opt-in 1, processing/publication evidence, direct recorder and at least90s hold',
+  );
+  assert.ok(
+    confirmation === undefined || (confirmation === '1' && quality === '1'),
+    'Native confirmation requires exact opt-in 1 and native quality qualification',
+  );
+  return { requireQuality: quality === '1', requireConfirmation: confirmation === '1' };
+}

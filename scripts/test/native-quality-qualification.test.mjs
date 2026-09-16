@@ -116,14 +116,14 @@ for (const [name, mutate] of Object.entries({
     mutate(f);
     assert.throws(() => qualifyNativeQuality(f));
   });
-function probation(f, { bad, rejected, scope, gap } = {}) {
+function probation(f, { bad, rejected, scope, gap, jitter, firstStart = 32 } = {}) {
   const trial = f.quality.events.at(-2);
   f.quality.events.pop();
   if (rejected) f.quality.events.push({ kind: 'rejected', at: 31.6 });
-  let start = 32;
-  for (let index = 0; index < (bad ? 3 : 2); index++) {
+  let start = firstStart;
+  for (let index = 0; index < (bad || jitter ? 3 : 2); index++) {
     const row = structuredClone(f.quality.events[6]);
-    const duration = bad && index === 0 ? 1 : 5;
+    const duration = bad && index === 0 ? 1 : jitter && index === 0 ? 4.99997975 : 5;
     if (gap && index === 1) start += 0.1;
     const end = start + duration;
     row.at = end + 0.25;
@@ -135,10 +135,10 @@ function probation(f, { bad, rejected, scope, gap } = {}) {
       end,
       sequence: String(7 + index),
       revision: '1',
-      captured: duration * 30,
-      encoded: duration * 30,
-      received: duration * 30,
-      expected: duration * 30,
+      captured: Math.round(duration * 30),
+      encoded: Math.round(duration * 30),
+      received: Math.round(duration * 30),
+      expected: Math.round(duration * 30),
     };
     row.window.observedAt = end;
     if (bad && index === 0) row.window.worker = 'unknown';
@@ -149,7 +149,7 @@ function probation(f, { bad, rejected, scope, gap } = {}) {
       sequence: String(8 + index),
       workerEpoch: scope ? 'new-epoch' : 'epoch',
     };
-    row.reasons = index === (bad ? 2 : 1) ? ['trialConfirmed'] : [];
+    row.reasons = index === (bad || jitter ? 2 : 1) ? ['trialConfirmed'] : [];
     const source = {
       ...structuredClone(f.snapshot.sourceIntervals[5]),
       ...row.source,
@@ -164,9 +164,9 @@ function probation(f, { bad, rejected, scope, gap } = {}) {
     f.snapshot.sourceIntervals.push(source);
     f.sourceIntervalQualification.intervals.push({
       sequence: Number(row.source.sequence),
-      capturedFrames: duration * 30,
-      encodedFrames: duration * 30,
-      decodedFrames: duration * 30,
+      capturedFrames: Math.round(duration * 30),
+      encodedFrames: Math.round(duration * 30),
+      decodedFrames: Math.round(duration * 30),
     });
     f.quality.events.push(row);
     start = end;
@@ -202,9 +202,9 @@ function evidence(f) {
     s.publishingGeneration = row.receipt.generation;
     s.publication = { readerId: row.source.readerID };
     s.previousSequence = String(Number(s.sequence) - 1);
-    s.previousDecodedPTS = String(w.start * 90000);
-    s.firstDecodedPTS = String(w.start * 90000 + 3000);
-    s.lastDecodedPTS = String(w.end * 90000);
+    s.previousDecodedPTS = String(Math.round(w.start * 90000));
+    s.firstDecodedPTS = String(Math.round(w.start * 90000) + 3000);
+    s.lastDecodedPTS = String(Math.round(w.end * 90000));
     const processing = {
       encoder: 'videotoolbox',
       scopeID: row.source.processingScopeID,
@@ -237,6 +237,10 @@ function evidence(f) {
         rttMilliseconds: 2,
         senderBufferMilliseconds: 10,
       });
+    }
+    if (thermal.at(-1).sampledAt !== w.end) {
+      thermal.push({ sampledAt: w.end, state: 0 });
+      transport.push({ ...transport.at(-1), sampledAt: w.end });
     }
     row.evaluatedAt = row.at;
     row.evidence = {
@@ -387,4 +391,25 @@ test('rejects a receipt from another publishing generation', () => {
   const f = fixture();
   f.snapshot.sourceIntervals[0].publishingGeneration = '2';
   assert.throws(() => qualifyNativeQuality(f));
+});
+
+test('confirms a jittered trial with a third window beyond the former deadline', () => {
+  const f = probation(fixture(), { jitter: true, firstStart: 36 });
+  assert.equal(qualifyNativeQuality(f).confirmed, 1);
+});
+test('never rounds two short probation windows up to ten seconds', () => {
+  const f = probation(fixture(), { jitter: true, firstStart: 36 });
+  f.quality.events.splice(-2, 1);
+  f.quality.events.at(-2).reasons = ['trialConfirmed'];
+  assert.throws(() => qualifyNativeQuality(f));
+});
+test('rejects confirmation following an excessively late first probation window', () => {
+  assert.throws(() => qualifyNativeQuality(probation(fixture(), { firstStart: 36.750001 })));
+});
+test('requires a confirmed trial when the fixture requests confirmation', () => {
+  assert.throws(() => qualifyNativeQuality({ ...fixture(), requireConfirmation: true }));
+  assert.equal(
+    qualifyNativeQuality({ ...probation(fixture()), requireConfirmation: true }).confirmed,
+    1,
+  );
 });

@@ -128,3 +128,10 @@ arm64_32 watchOS 10 Core compilation and changed-code formatting checks pass.
 Independent source review approves this scoped checkpoint. The local manifest is
 `artifacts/qa/native-quality-final-verification.json`, including source and retained
 native/media/test evidence hashes. Failed diagnostic runs remain preserved.
+
+
+The [subsequent confirmation checkpoint](2026-09-16-native-trial-confirmation.md)
+resolves the measured deadline issue with a bounded 22.5-second budget and an
+explicit initial-window-start limit, without rounding coverage or relaxing freshness.
+Confirmation-required barcode and structured-motion simulator runs both pass.
+Network impairment and production/physical qualification remain open.
