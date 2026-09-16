@@ -138,6 +138,13 @@ startup observation is retained as an unresolved reliability investigation rathe
 than attributed to the publication metadata or claimed fixed. Both runs cleaned up
 their owned resources.
 
+Follow-up: the poll/action overlap was separately reproduced in a controlled
+model test and fixed by synchronous, recording-scoped start intent. The full
+native workflow then passed in `native-app-8uryKd`; see
+[the start-intent plan](superpowers/plans/2026-09-15-native-start-intent.md).
+This establishes the model fix without retroactively proving the cause of the
+earlier simulator input failure.
+
 API tests pass 355, worker tests 220, tooling tests 611, and native Core tests 254.
 The ten native publication tests include exact malformed scope, optional decode,
 clock boundaries and mutation checks. Four valid shared fixture rows also pass

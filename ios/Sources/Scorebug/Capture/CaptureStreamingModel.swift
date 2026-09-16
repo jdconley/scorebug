@@ -78,6 +78,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private var publisherStopping = false
     private var epoch = UUID()
     @Published private var controlBusy = false
+    private var requestedStart: CurrentCapture?
     private var shouldStopOwnedBroadcast = false
     private var ownedRecordingIDs: Set<String> = []
     private let storage: any CaptureSetupStorage
@@ -105,9 +106,9 @@ struct PublishingClockObservation: Equatable, Sendable {
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
         self.observationFactory = observationFactory
     }
-    var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && !controlBusy && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
+    var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
-        guard !busy, !stopping, !publisherStopping, !controlBusy, publishing == nil, !needsStorageRetry else { return false }
+        guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
         do { return try pendingStore.load() == nil && (setup?.reports.isEmpty ?? true) && (setup?.stopRecordingIDs?.isEmpty ?? true) } catch { return false }
     }
 
@@ -142,6 +143,11 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// archive drain, storage, HTTP or encoder awaits. Detach/cancel is immediate.
     func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
         let previous = current
+        if let requestedStart, context?.id != requestedStart.id || context?.tap !== requestedStart.tap {
+            self.requestedStart = nil
+            localState = .idle
+            message = "Streaming start canceled because the recording changed."
+        }
         current = context
         activeRecordingID = context?.id
         #if DEBUG
@@ -189,12 +195,46 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func startStreaming() async {
-        guard !busy, !stopping, !publisherStopping, !controlBusy, publishing == nil, let context = current else { return }
+        await beginStreaming()?.value
+    }
+
+    /// Called synchronously by the button so a poll cannot steal an accepted tap
+    /// before an unstructured Task reaches the start guard. Only one intent exists.
+    func requestStartStreaming() {
+        guard canStart, let context = current else { return }
+        if controlBusy {
+            requestedStart = context
+            localState = .starting
+            message = "Waiting for the current connection check before starting streaming."
+        } else {
+            _ = beginStreaming()
+        }
+    }
+
+    private func resumeRequestedStart(controlFailed: Bool) {
+        guard let requested = requestedStart else { return }
+        requestedStart = nil
+        guard current?.id == requested.id, current?.tap === requested.tap, !stopping, !publisherStopping else {
+            localState = .idle
+            return
+        }
+        guard !controlFailed else { localState = .failed; return }
+        guard canStart else {
+            localState = .failed
+            message = "Streaming could not start while the connection has unresolved changes. Retry the connection, then start streaming again."
+            return
+        }
+        _ = beginStreaming()
+    }
+
+    private func beginStreaming() -> Task<Void, Never>? {
+        guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, let context = current else { return nil }
         busy = true
         let attempt = UUID(); epoch = attempt; actionID = attempt
         diagnosticAttemptID = attempt; videoObservation = nil; ingressObservation = nil; publishingClockObservation = nil
         localState = .starting; message = nil; clearWorker()
         let task = Task { [self] in
+            defer { if actionID == attempt { action = nil; actionID = nil; busy = false } }
             do {
                 await restore()
                 try check(context, attempt)
@@ -249,11 +289,11 @@ struct PublishingClockObservation: Equatable, Sendable {
             }
         }
         action = task
-        await task.value
-        if actionID == attempt { action = nil; actionID = nil; busy = false }
+        return task
     }
 
     func stopStreaming() async {
+        requestedStart = nil
         if let stoppingTask { await stoppingTask.value; return }
         stopping = true
         epoch = UUID()
@@ -285,7 +325,11 @@ struct PublishingClockObservation: Equatable, Sendable {
         // control await can reenter a local stop on MainActor.
         guard !busy, !controlBusy, !publisherStopping, let setup, setup.credential != nil else { return }
         controlBusy = true
-        defer { controlBusy = false }
+        var controlFailed = false
+        defer {
+            controlBusy = false
+            resumeRequestedStart(controlFailed: controlFailed)
+        }
         do {
             try persist()
             if coordinator == nil { try makeCoordinator() }
@@ -357,6 +401,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             #endif
             workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
+            controlFailed = true
             clearWorker()
             if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
             if let coordinator { commandState = await coordinator.state() }

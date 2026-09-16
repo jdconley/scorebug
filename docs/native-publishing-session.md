@@ -165,3 +165,35 @@ The budget bounds intentional waiting, while native VideoToolbox completion and
 socket close still require their platform calls to return. Cleanup is joined on
 every path; it does not hold the capture or archive queues. Thirteen bridge and
 stop-policy tests cover these lifecycle, timing, health, and cancellation contracts.
+
+## Native start intent during polling
+
+The Start streaming button calls `requestStartStreaming()` synchronously on the
+MainActor. A routine background poll no longer disables it. If control is occupied,
+the model retains exactly one request for the current recording ID and capture tap,
+shows a waiting message and presents Stop. The poll releases control before reserving
+the publisher start; immediate requests reserve before launching their asynchronous
+work. Duplicate taps cannot create another attempt or concurrent control mutation.
+
+Stop discards the request immediately when its handler runs. Ending or replacing
+the recording also discards it, including a replacement tap with a reused recording
+ID. Poll failure, unresolved command or storage failure produces a visible failure
+and requires a new deliberate start action. Queued intent is not persisted across
+app launches, and never blocks the local archive. The awaited `startStreaming()`
+entry point remains an immediate attempt for internal callers; it does not queue
+behind polling. UI callers must use `requestStartStreaming()`.
+
+This fixes a deterministically reproduced poll/action overlap. It does not establish
+that every missed physical or simulator input has the same cause. The earlier
+`native-app-4Ved1t` failure had no delivered-action instrumentation to prove that.
+
+Qualification: all 107 FilmModel tests and the combined unsigned iPhone/Watch
+Release build pass. The iPhone 14/iOS 17.5 workflow `native-app-8uryKd` passes
+recording, live streaming, native score updates and export. It retains 1,909 clean
+archive frames and 1,495 live frames at 30 fps with no loss inside their measured
+intervals; 60 pre-acquisition encoded frames remain explicit. Both A/V files fully
+decode, the encoded tail is complete, all three media processes exit 0, and owned
+resource cleanup is verified. See the
+[start-intent plan](superpowers/plans/2026-09-15-native-start-intent.md) for evidence
+and limits; this finite diagnostic fixture does not qualify physical radio handoffs
+or high-motion capacity.

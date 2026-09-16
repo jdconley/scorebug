@@ -22,7 +22,7 @@ struct StreamingControlsView: View {
                 Button("Stop streaming", role: .destructive) { Task { await model.stopStreaming() } }
                     .buttonStyle(.bordered).accessibilityIdentifier("streaming.stop")
             } else {
-                Button("Start streaming") { Task { await model.startStreaming() } }
+                Button("Start streaming") { model.requestStartStreaming() }
                     .buttonStyle(.bordered).disabled(!model.canStart)
                     .accessibilityIdentifier("streaming.start")
             }

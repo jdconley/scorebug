@@ -5,6 +5,277 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testStartActionDuringBackgroundPollIsNotLost() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setStatusGate(gate)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        XCTAssertTrue(model.canStart, "Background polling must not disable the start control")
+        model.requestStartStreaming()
+        XCTAssertEqual(model.localState, .starting)
+        XCTAssertFalse(model.canStart)
+        XCTAssertFalse(model.canChangeSetup)
+        model.requestStartStreaming() // Duplicate tap cannot create another attempt.
+        let startsWhilePolling = await publisher.startCount
+        XCTAssertEqual(startsWhilePolling, 0)
+        await gate.release()
+        await polling.value
+        await waitForPublishing(model)
+        XCTAssertEqual(model.localState, .publishing, "A start action must survive overlap with a background poll")
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 1)
+        await model.stopStreaming()
+    }
+
+    private func waitForPublishing(_ model: CaptureStreamingModel) async {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while model.localState == .starting, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(model.localState, .publishing)
+    }
+
+    func testStartRequestReservesImmediatelyBeforeTaskScheduling() async throws {
+        let server = CaptureTestServer()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        model.requestStartStreaming()
+        XCTAssertTrue(model.busy)
+        XCTAssertEqual(model.localState, .starting)
+        XCTAssertFalse(model.canStart)
+        model.requestStartStreaming()
+        await model.pollControl()
+        await waitForPublishing(model)
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 1)
+        await model.stopStreaming()
+    }
+
+    func testImmediateStopCancelsReservedStartBeforeItsTaskRuns() async throws {
+        let server = CaptureTestServer()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        model.requestStartStreaming()
+        await model.stopStreaming()
+        let starts = await publisher.startCount
+        let operations = await server.operations
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(operations.isEmpty)
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertFalse(model.busy)
+    }
+
+    func testStorageFailureAfterQueuedStartPreventsPublisherAndAutomaticRetry() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let storage = CaptureMemoryStorage(captureSetup())
+        let model = makeModel(server: server, storage: storage, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setStatusGate(gate)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        model.requestStartStreaming()
+        storage.fails = true
+        await gate.release()
+        await polling.value
+        let deadline = ContinuousClock.now + .seconds(3)
+        while model.busy, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertTrue(model.needsStorageRetry)
+        XCTAssertNotNil(model.message)
+        XCTAssertFalse(model.canStart)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        storage.fails = false
+        await model.pollControl()
+        let starts = await publisher.startCount
+        let operations = await server.operations
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(operations.isEmpty)
+        XCTAssertTrue(model.canStart)
+        await model.stopStreaming()
+    }
+
+    func testUnresolvedCommandDiscoveredByPollEndsQueuedStart() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let saved = captureSetup()
+        let pending = CaptureMemoryPending()
+        pending.value = PendingBroadcastCommand(endpointScope: saved.endpointScope,
+            command: BroadcastCommand(commandId: UUID().uuidString, gameId: "game-1", expectedGeneration: 0,
+                issuedAt: ISO8601DateFormatter().string(from: Date()), operation: .start(selection:
+                    .init(workerId: "worker-1", outputId: "output-1", captureDeviceId: "capture-1", recordingId: "older-recording"))),
+            captureDeviceId: "capture-1")
+        let model = CaptureStreamingModel(storage: CaptureMemoryStorage(saved), pendingStore: pending,
+            clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
+            publisherFactory: { _, _ in publisher })
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setSnapshotGate(gate)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        XCTAssertTrue(model.canStart)
+        model.requestStartStreaming()
+        await gate.release()
+        await polling.value
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertNotNil(model.commandState?.pending)
+        XCTAssertNotNil(model.message)
+        XCTAssertFalse(model.canStart)
+        let starts = await publisher.startCount
+        let operations = await server.operations
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(operations.isEmpty)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+
+    func testStopCancelsQueuedStartBeforePollCompletes() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setStatusGate(gate)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        model.requestStartStreaming()
+        XCTAssertEqual(model.localState, .starting)
+        await model.stopStreaming()
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await gate.release()
+        await polling.value
+        let starts = await publisher.startCount
+        let operations = await server.operations
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(operations.isEmpty)
+        XCTAssertEqual(model.localState, .idle)
+    }
+
+    func testRecordingChangeCancelsQueuedStartIncludingReusedIdentifier() async throws {
+        for replacementID in [nil, "recording-2", "recording-1"] as [String?] {
+            let server = CaptureTestServer()
+            let gate = FilmTestGate()
+            let publisher = CaptureTestPublisher()
+            let model = makeModel(server: server, publisher: publisher)
+            await model.restore()
+            model.captureChanged(captureContext())
+            await server.setStatusGate(gate)
+            let polling = Task { await model.pollControl() }
+            let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+            XCTAssertTrue(entered)
+            model.requestStartStreaming()
+            model.captureChanged(replacementID.map {
+                CurrentCapture(id: $0, startedAt: "2026-09-15T00:00:00Z", tap: PublishingTap())
+            })
+            XCTAssertEqual(model.localState, .idle)
+            await gate.release()
+            await polling.value
+            let starts = await publisher.startCount
+            let operations = await server.operations
+            XCTAssertEqual(starts, 0)
+            XCTAssertTrue(operations.isEmpty)
+            XCTAssertEqual(model.localState, .idle)
+            XCTAssertEqual(model.activeRecordingID, replacementID)
+            await model.stopStreaming()
+        }
+    }
+
+    func testFailedPollEndsQueuedStartWithVisibleFailureAndRequiresNewTap() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setStatusGate(gate)
+        await server.setStatusFailure(true)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        model.requestStartStreaming()
+        await gate.release()
+        await polling.value
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertNotNil(model.message)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await server.setStatusFailure(false)
+        await model.pollControl()
+        let startsBeforeRetry = await publisher.startCount
+        XCTAssertEqual(startsBeforeRetry, 0)
+        model.requestStartStreaming()
+        await waitForPublishing(model)
+        await model.stopStreaming()
+    }
+
+    func testQueuedStartPreservesUnresolvedCommandWithoutStartingPublisher() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setSnapshotGate(gate)
+        await server.setFailBeforeCommand()
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        model.requestStartStreaming()
+        await gate.release()
+        await polling.value
+        let deadline = ContinuousClock.now + .seconds(3)
+        while model.busy, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertNotNil(model.commandState?.pending)
+        XCTAssertFalse(model.canStart)
+        model.requestStartStreaming()
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+
+    func testStopThenFreshQueuedStartIgnoresObsoletePollFailure() async throws {
+        let server = CaptureTestServer()
+        let gate = FilmTestGate()
+        let publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore()
+        model.captureChanged(captureContext())
+        await server.setStatusGate(gate)
+        await server.setStatusFailure(true)
+        let polling = Task { await model.pollControl() }
+        let entered = await gate.waitUntilEntered(timeout: .seconds(3))
+        XCTAssertTrue(entered)
+        model.requestStartStreaming()
+        await model.stopStreaming()
+        model.requestStartStreaming()
+        XCTAssertEqual(model.localState, .starting)
+        await gate.release()
+        await polling.value
+        await waitForPublishing(model)
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 1)
+        await server.setStatusFailure(false)
+        await model.stopStreaming()
+    }
+
     func testOfflineRecordDoesNotCallAPI() async throws {
         let server = CaptureTestServer()
         let model = makeModel(server: server, saved: nil)
