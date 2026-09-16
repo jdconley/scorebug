@@ -45,6 +45,32 @@ paired filming-phone/watch workflow requires no second phone or iPad.
 Defaults: clean recording includes gym audio, 30 fps initial target, YouTube remains
 the first external destination, and volleyball rules are configurable.
 
+## Progressive streaming amendment — September 16
+
+[Progressive sender adaptation](../specs/2026-09-16-progressive-streaming-design.md)
+is now an explicit delivery requirement. Start at the lowest qualified live profile
+without waiting for a probe, ramp cautiously with fresh measured headroom, reset to
+the lowest profile after sustained excessive video-frame loss, and recover only
+after a healthy hold. The researched baseline is OBS-style dynamic bitrate control;
+SRT packet loss is separate from actual missing/late video frames.
+
+Initial qualification thresholds are >5% missing/late frames in two seconds, or
+<24 fresh fps over one second, with proactive queue/transport-pressure reductions.
+These are product test settings, not an industry standard. Current five-second
+worker windows cannot prove them; short-window telemetry is required. Existing
+experimental high startup and gradual-only downshift do not satisfy this amendment.
+
+- [ ] Qualify 240p/360p low-end profiles and the supported intermediate ladder.
+- [ ] Add scoped short-window delivery health and a no-progress watchdog.
+- [ ] Add direct minimum reset, precedence over trial rollback, recovery holds and
+      bounded retry backoff to the existing policy.
+- [ ] Start the actual native encoder at the minimum before its first sample;
+      acknowledge actual dimensions and configuration during policy bootstrap.
+- [ ] Complete candidate-cost and repeated/staged admission, then qualify real
+      upward/downward transitions before enabling production automatic adaptation.
+- [ ] Measure startup, collapse/reset and recovery on this Mac, then physical
+      phone/watch and portable remote workers, preserving independent local A/V.
+
 ## Order and release gates
 
 | Milestone | Deliverable                                   | Required evidence before proceeding                                |
