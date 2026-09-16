@@ -19,6 +19,7 @@ public struct PublishingSourceInterval: Sendable {
     public var captureNotEncodedFrames: Int { capturedFrames - encodedFrames }
     public var encodedNotDecodedFrames: Int { encodedFrames - decodedFrames }
     public let leadingMissingEncodedFrames: Int
+    public let encodingCoverage: VideoEncodingCoverage
 
     public static func match(history: VideoSourceHistorySnapshot, clock: PublishingTransportClock,
                              relayOriginPTS: Int64, previousDecodedPTS: Int64,
@@ -66,7 +67,20 @@ public struct PublishingSourceInterval: Sendable {
             captureBoundaryStartTime: capture[captureStart].frame.observedAt,
             captureBoundaryEndTime: capture[captureEnd].frame.observedAt,
             capturedFrames: captureEnd - captureStart, encodedFrames: last - previous,
-            decodedFrames: Int(decodedFrames), leadingMissingEncodedFrames: first - previous - 1)
+            decodedFrames: Int(decodedFrames), leadingMissingEncodedFrames: first - previous - 1,
+            encodingCoverage: coverage(encoded[(previous + 1)...last]))
+    }
+
+    private static func coverage(_ frames: ArraySlice<Projected>) -> VideoEncodingCoverage {
+        // All native frames in the source interval count, including leading and
+        // interior receiver losses. The exclusive anchor is deliberately absent.
+        guard let first = frames.first?.frame.encoding,
+              frames.allSatisfy({ $0.frame.encoding != nil }) else { return .unavailable }
+        guard frames.allSatisfy({
+            $0.frame.encoding?.encoderSessionID == first.encoderSessionID &&
+                $0.frame.encoding?.configuration == first.configuration
+        }) else { return .mixed }
+        return first.configuration.map(VideoEncodingCoverage.verified) ?? .unverified
     }
 
     private struct Projected {

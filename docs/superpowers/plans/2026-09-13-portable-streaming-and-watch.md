@@ -330,6 +330,13 @@ verified receipt naming the last raw submission before a bitrate write. This pre
 runtime frame partitioning; policy acknowledgment, pressure alignment and actual
 trial/rollback qualification remain separate work before adaptation is enabled.
 
+The [configuration-associated source interval slice](2026-09-15-configuration-source-intervals.md)
+now carries this immutable identity through the production bounded source history.
+Matched receiver intervals distinguish verified, unverified, mixed and unavailable
+configurations, including native frames lost at the receiver and excluding the prior
+anchor. Real fixture history agrees with native callbacks and decoded normal media;
+this prepares runtime acknowledgment without enabling automatic adaptation.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

@@ -42,24 +42,24 @@ No classification proves rate convergence, receiver freshness or current health.
 
 ## Tasks
 
-- [ ] Add model stubs and tests in ScorebugMedia for invalid rate/time/session,
+- [x] Add model stubs and tests in ScorebugMedia for invalid rate/time/session,
   capture metadata rejection, missing/future metadata, ring eviction and closure.
   Extend VideoSourceHistoryTests with actual source metadata; preserve old counts.
-- [ ] Implement validated values in `VideoEncodingObservation.swift`, add optional
+- [x] Implement validated values in `VideoEncodingObservation.swift`, add optional
   encoding to VideoSourceFrame and observe(), and pass it through
   VideoFrameObservationOwner's existing lock. No new tasks or media retention.
-- [ ] Add failing PublishingSourceIntervalTests for uniform verified/unverified,
+- [x] Add failing PublishingSourceIntervalTests for uniform verified/unverified,
   missing metadata, mixed IDs/sessions, exact exclusive boundary and leading loss.
   Implement `encodingCoverage` from precisely the matched encoded index range.
-- [ ] Update SRTPublisher's immutable native configuration callback to call the
+- [x] Update SRTPublisher's immutable native configuration callback to call the
   observation owner once with source/configuration metadata. Preserve optional
   external configuration observer and aggregate notification semantics.
-- [ ] Extend DualOutputSmoke to exercise the actual production observation owner,
+- [x] Extend DualOutputSmoke to exercise the actual production observation owner,
   export bounded encoded history and interval coverage after joined stop, and
   independently compare it with the existing native descriptors and barcode set.
   Add Node regressions before qualifier implementation for missing/relabelled history,
   mismatched interval count/range/coverage and exclusive-boundary behavior.
-- [ ] Run Media, Streaming, tooling, both native suites and combined unsigned
+- [x] Run Media, Streaming, tooling, both native suites and combined unsigned
   iPhone/Watch Release build sequentially. Obtain bounded independent source review,
   preserve raw events and evidence hashes, document results and commit verified work.
 
@@ -72,10 +72,10 @@ PublishingSourceInterval/SRTPublisher and interval tests; DualOutputSmoke;
 `scripts/encoder-configuration-evidence.mjs` and its tests/test-dual-output runner;
 configuration boundary and adaptive telemetry documentation.
 
-Example assertions: an interval spanning frames150...299 with a change before150
-must be verified; including149 must be mixed; omitting any included metadata must
-be unavailable; missing decoded leading frames150...154 cannot remove their native
-configuration from classification. Source counts remain150 and decoded count145.
+Example assertions: an interval spanning frames 150–299 with a change before frame 150
+must be verified; including frame 149 must be mixed; omitting any included metadata must
+be unavailable; missing decoded leading frames 150–154 cannot remove their native
+configuration from classification. Source counts remain 150 and decoded count 145.
 
 Use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer` for all Swift
 commands: `swift test --package-path ios/Packages/ScorebugMedia`,
@@ -86,3 +86,34 @@ commands: `swift test --package-path ios/Packages/ScorebugMedia`,
 The next runtime step uses this classification with verified write receipts and
 source/pressure window alignment to acknowledge policy changes. This slice keeps
 automatic adaptation disabled and does not replace physical/radio/remote-host gates.
+
+## Verified checkpoint
+
+All 198 Media tests (143 XCTest plus 55 Swift Testing), 51 Streaming tests and 755
+tooling tests pass, including five new Media cases, seven interval cases and 23
+independent history-oracle cases. Combined unsigned iPhone/Watch Release build
+passes. Independent source review approved production and fixture code; suggested
+mixed/missing metadata, interior receiver loss, duplicate notification and reversed
+admission-time coverage is included.
+
+Default suite `artifacts/qa/dual-output-Bzn0sg` and network suite
+`artifacts/qa/dual-output-uerkep` both pass. All eight archives retain 420 frames.
+All five successful publishers retain 420 native descriptors, 420 history entries
+and 420 aggregate callbacks. Each probe set independently verifies unverified,
+verified and mixed coverage around the actual write boundary. Normal/recoverable
+live media retain 420 frames. Overload has 394 best-effort decoded frames with invalid
+identities and fails strict live decode; no fresh-frame/loss claim is made. Peak
+measured process RSS is below 96 MiB. Saved evidence replays independently for both
+suites. Complete events are retained separately from bounded diagnostic log tails.
+
+A stale Streaming SwiftPM dependency source list initially omitted the new Media
+file. That failed build is retained separately; only owned package caches were
+cleaned, including the two native tools after inspecting their stale source lists.
+No media gates or lifecycle behavior were relaxed.
+
+Hashes are recorded in `artifacts/qa/configuration-interval-final-verification.json`.
+The native interval probes explicitly use declared finite-fixture receiver endpoints;
+they do not substitute for production worker reports. Runtime verified startup and
+application acknowledgment, pressure-window alignment, actual automatic trial and
+rollback behavior, resolution transitions and physical/radio/remote-host validation
+remain open in the parent plan.

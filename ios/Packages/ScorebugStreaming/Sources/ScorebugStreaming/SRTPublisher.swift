@@ -47,16 +47,25 @@ public actor SRTPublisher {
         self.stopPolicy = stopPolicy
         // Immutable ownership prevents late native completions from reaching a
         // later publishing attempt. Observe synchronously without retaining media.
-        let observer: VideoEncoderCompletionObserver?
-        if let observations {
-            observer = { sourcePTS, _ in observations.observe(.encodedVideo, sourcePTS: sourcePTS) }
-        } else { observer = nil }
         let configurationObserver: VideoEncoderConfigurationObserver?
-        if let encoderConfigurationObserver {
-            configurationObserver = { encoderConfigurationObserver(EncoderFrame($0)) }
+        if observations != nil || encoderConfigurationObserver != nil {
+            configurationObserver = { frame in
+                let configuration = frame.configuration.flatMap {
+                    VideoEncodingConfiguration(id: $0.id, encoderSessionID: $0.encoderSessionID, bitRate: $0.bitRate)
+                }
+                // A failed conversion of a present configuration must remain
+                // missing evidence, never become an unverified native submission.
+                let encoding: VideoEncodingObservation?
+                if frame.configuration != nil && configuration == nil { encoding = nil }
+                else {
+                    encoding = .init(encoderSessionID: frame.encoderSessionID, configuration: configuration,
+                                     submittedAt: frame.submittedAt, completedAt: frame.completedAt)
+                }
+                observations?.observe(.encodedVideo, sourcePTS: frame.sourcePTS, encoding: encoding)
+                encoderConfigurationObserver?(EncoderFrame(frame))
+            }
         } else { configurationObserver = nil }
-        stream = SRTStream(connection: connection, encoderCompletionObserver: observer,
-                           encoderConfigurationObserver: configurationObserver)
+        stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver)
     }
     public func configure() async throws {
         try await stream.setVideoSettings(VideoCodecSettings(

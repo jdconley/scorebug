@@ -327,11 +327,11 @@ public final class VideoFrameObservationOwner: @unchecked Sendable {
     /// Copies bounded scalar history only when a control-path consumer requests it.
     public var sourceHistorySnapshot: VideoSourceHistorySnapshot? { lock.withLock { sourceHistory?.snapshot } }
     @discardableResult
-    public func observe(_ stage: VideoFrameObservationStage, sourcePTS: CMTime) -> Bool {
+    public func observe(_ stage: VideoFrameObservationStage, sourcePTS: CMTime, encoding: VideoEncodingObservation? = nil) -> Bool {
         lock.withLock {
             let time = ProcessInfo.processInfo.systemUptime
             let accepted = accumulator.observe(stage, sourcePTS: sourcePTS, at: time)
-            sourceHistory?.observe(stage, sourcePTS: sourcePTS, at: time)
+            sourceHistory?.observe(stage, sourcePTS: sourcePTS, at: time, encoding: encoding)
             return accepted
         }
     }

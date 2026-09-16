@@ -58,6 +58,63 @@ private final class EncoderEvidence: @unchecked Sendable {
     }
 }
 
+private func configurationEvidence(_ configuration: VideoEncodingConfiguration) -> [String: Any] {
+    ["id": configuration.id.uuidString, "encoderSessionID": configuration.encoderSessionID.uuidString,
+     "bitRate": configuration.bitRate]
+}
+
+private func coverageEvidence(_ coverage: VideoEncodingCoverage) -> [String: Any] {
+    switch coverage {
+    case .unavailable: return ["state": "unavailable"]
+    case .unverified: return ["state": "unverified"]
+    case .mixed: return ["state": "mixed"]
+    case .verified(let configuration): return ["state": "verified", "configuration": configurationEvidence(configuration)]
+    }
+}
+
+private func sourceEvidence(_ history: VideoSourceHistorySnapshot?, clock: PublishingTransportClock?,
+                            receipt: SDKProbe.BitRateChangeReceipt?, aggregate: VideoFrameObservationSnapshot?) -> Any {
+    guard let history else { return NSNull() }
+    var probes: [[String: Any]] = []
+    if let clock, let boundary = receipt?.lastSubmittedSourcePTS,
+       let index = history.encoded.firstIndex(where: { CMTimeCompare($0.sourcePTS, boundary) == 0 }),
+       index > 0, index + 150 < history.encoded.count {
+        // Finite fixture probes use declared receiver endpoints, not a production
+        // worker report. Decoded barcodes independently validate normal media.
+        func ticks(_ i: Int) -> Int64 {
+            CMTimeConvertScale(CMTimeSubtract(history.encoded[i].sourcePTS, clock.sourceOrigin),
+                timescale: 90_000, method: .roundTowardNegativeInfinity).value + 9_000
+        }
+        for (name, previous, end) in [("before", 0, index), ("after", index, index + 150),
+                                      ("crossing", index - 1, index + 150)] {
+            if let interval = PublishingSourceInterval.match(history: history, clock: clock, relayOriginPTS: 0,
+                previousDecodedPTS: ticks(previous), firstDecodedPTS: ticks(previous + 1),
+                lastDecodedPTS: ticks(end), decodedFrames: Int64(end - previous)) {
+                probes.append(["name": name, "sourceStartExclusive": timeEvidence(interval.sourceStartExclusive),
+                    "sourceEndInclusive": timeEvidence(interval.sourceEndInclusive),
+                    "capturedFrames": interval.capturedFrames, "encodedFrames": interval.encodedFrames,
+                    "decodedFrames": interval.decodedFrames, "leadingMissingEncodedFrames": interval.leadingMissingEncodedFrames,
+                    "coverage": coverageEvidence(interval.encodingCoverage)])
+            }
+        }
+    }
+    let windows = aggregate.map { $0.completed + [$0.current] } ?? []
+    return ["aggregateEncodedCallbacks": String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount }),
+            "aggregateCaptureCallbacks": String(windows.reduce(UInt64(0)) { $0 + $1.captureVideo.callbackCount }),
+            "aggregateValid": aggregate.map { $0.isClosed && $0.invalidity.isEmpty && $0.omittedCompletedWindowCount == 0 && $0.rejectedClockOperationCount == 0 } ?? false,
+            "isClosed": history.isClosed, "invalidity": history.invalidity.map { String(describing: $0) } as Any? ?? NSNull(),
+            "omittedCaptureFrames": String(history.omittedCaptureFrames), "omittedEncodedFrames": String(history.omittedEncodedFrames),
+            "captureFrameCount": history.capture.count, "intervalProbes": probes,
+            "encoded": history.encoded.map { frame -> [String: Any] in
+                let encoding: Any = frame.encoding.map { value in
+                    ["encoderSessionID": value.encoderSessionID.uuidString,
+                     "configuration": value.configuration.map(configurationEvidence) as Any? ?? NSNull(),
+                     "submittedAt": value.submittedAt, "completedAt": value.completedAt] as [String: Any]
+                } ?? NSNull()
+                return ["sourcePTS": timeEvidence(frame.sourcePTS), "observedAt": frame.observedAt, "encoding": encoding]
+            }] as [String: Any]
+}
+
 private func statisticsEvidence(_ sample: PublishingTransportStatistics?) -> Any {
     guard let sample else { return NSNull() }
     return ["publishingGeneration": String(sample.publishingGeneration), "sampledAt": sample.sampledAt,
@@ -183,6 +240,10 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
         guard let firstVideo = nextVideo, let firstAudio = nextAudio else { throw Failure.missingTracks }
         let origin = min(firstVideo.presentationTimeStamp, firstAudio.presentationTimeStamp)
         let originSeconds = origin.seconds
+        let observations = try url.map { _ in
+            try VideoFrameObservationOwner(scope: .init(recordingID: "dual-output", matchID: "fixture",
+                broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), sourceHistoryCapacity: 512)
+        }
         let archive = try SegmentedArchiveWriter(directory: directory)
         let archiveSession = try RecordingSession(sink: SegmentedArchiveSink(writer: archive))
         let captureSource = FixtureCaptureSource(origin: origin)
@@ -196,10 +257,11 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 return
             }
             let encoderEvidence = EncoderEvidence()
-            let publisher = SDKProbe(encoderConfigurationObserver: { encoderEvidence.record($0) })
+            let publisher = SDKProbe(observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
+            var acceptedReceipt: SDKProbe.BitRateChangeReceipt?
             let health = PublisherHealth()
             var monitor: Task<Void, Never>?
             do {
@@ -234,6 +296,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 while let sample = try await liveQueue.next() {
                     if !changed && sample.sampleBuffer.presentationTimeStamp.seconds - originSeconds >= 5 {
                         let receipt = try await publisher.setBitRateWithReceipt(2_000_000)
+                        acceptedReceipt = receipt
                         changed = true
                         try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000,
                                   "receipt": receiptEvidence(receipt)])
@@ -256,6 +319,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 monitor?.cancel()
                 await publisher.stop()
                 await monitor?.value
+                let finalObservations = observations?.close()
                 let transportClockAfterStop = await publisher.transportClock()
                 let statisticsAfterStop = await publisher.transportStatistics()
                 try emit(["event": "publisher-finished", "videoSubmitted": publishedVideo,
@@ -266,7 +330,9 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                           "transportClockBeforeStop": clockEvidence(transportClockBeforeStop),
                           "transportClockAfterStop": clockEvidence(transportClockAfterStop),
                           "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop),
-                          "encoderEvidence": encoderEvidence.snapshot()])
+                          "encoderEvidence": encoderEvidence.snapshot(),
+                          "encoderSourceHistory": sourceEvidence(observations?.sourceHistorySnapshot,
+                              clock: transportClockBeforeStop, receipt: acceptedReceipt, aggregate: finalObservations)])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()
@@ -287,6 +353,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 let elapsed = buffer.presentationTimeStamp.seconds - originSeconds
                 try await ContinuousClock().sleep(until: started.advanced(by: .seconds(elapsed)))
                 let sample = try CapturedMediaSample(sampleBuffer: buffer, kind: isVideo ? .video : .audio)
+                if isVideo { observations?.observe(.captureVideo, sourcePTS: buffer.presentationTimeStamp) }
                 guard captureSource.submit(sample), recording.snapshot.failure == nil else { throw Failure.archiveOverflow }
                 if url != nil { _ = liveQueue.offer(sample, bytes: sample.retainedByteCount) }
                 if isVideo {

@@ -98,3 +98,68 @@ export function qualifyEncoderConfiguration({ clock, receipt, evidence, decodedS
     scope: 'Verified configuration at native submission; rate convergence measured separately',
   };
 }
+
+/** Cross-check the production owner against independent native callbacks. */
+export function qualifyEncoderSourceHistory(input) {
+  const verified = qualifyEncoderConfiguration(input);
+  const { history, evidence } = input;
+  assert.ok(history);
+  assert.equal(history.isClosed, true);
+  assert.equal(history.invalidity, null);
+  assert.equal(history.omittedCaptureFrames, '0');
+  assert.equal(history.omittedEncodedFrames, '0');
+  assert.equal(history.captureFrameCount, 420);
+  assert.equal(history.aggregateValid, true);
+  assert.equal(history.aggregateCaptureCallbacks, '420');
+  assert.equal(history.aggregateEncodedCallbacks, '420');
+  assert.equal(history.encoded.length, 420);
+  const frames = [...evidence.frames].sort((a, b) => {
+    const x = time(a.sourcePTS),
+      y = time(b.sourcePTS);
+    const delta = x.n * y.d - y.n * x.d;
+    return delta < 0n ? -1 : delta > 0n ? 1 : 0;
+  });
+  let previousAdmission = 0;
+  history.encoded.forEach((frame, index) => {
+    const native = frames[index];
+    assert.ok(sameTime(time(frame.sourcePTS), time(native.sourcePTS)));
+    assert.deepEqual(frame.encoding, {
+      encoderSessionID: native.encoderSessionID,
+      configuration: native.configuration,
+      submittedAt: native.submittedAt,
+      completedAt: native.completedAt,
+    });
+    uptime(frame.observedAt);
+    assert.ok(frame.observedAt >= native.completedAt && frame.observedAt >= previousAdmission);
+    previousAdmission = frame.observedAt;
+  });
+  const boundary = verified.lastUnverifiedSourceFrame;
+  assert.ok(boundary > 0 && boundary + 150 < 420);
+  assert.equal(history.intervalProbes.length, 3);
+  const expected = [
+    ['before', 0, boundary, { state: 'unverified' }],
+    [
+      'after',
+      boundary,
+      boundary + 150,
+      { state: 'verified', configuration: verified.configuration },
+    ],
+    ['crossing', boundary - 1, boundary + 150, { state: 'mixed' }],
+  ];
+  expected.forEach(([name, start, end, coverage], index) => {
+    const probe = history.intervalProbes[index];
+    assert.equal(probe.name, name);
+    assert.ok(sameTime(time(probe.sourceStartExclusive), time(frames[start].sourcePTS)));
+    assert.ok(sameTime(time(probe.sourceEndInclusive), time(frames[end].sourcePTS)));
+    for (const field of ['capturedFrames', 'encodedFrames', 'decodedFrames'])
+      assert.equal(probe[field], end - start);
+    assert.equal(probe.leadingMissingEncodedFrames, 0);
+    assert.deepEqual(probe.coverage, coverage);
+  });
+  return {
+    frames: history.encoded.length,
+    aggregateEncodedCallbacks: 420,
+    coverageStates: history.intervalProbes.map((p) => p.coverage.state),
+    scope: 'Production native history with declared finite-fixture receiver interval probes',
+  };
+}

@@ -152,3 +152,10 @@ receipt naming the last previously submitted source PTS. It preserves delayed
 callback history; it does not measure instantaneous rate convergence. Runtime
 policy acknowledgment still needs to bind those identities to complete source and
 pressure windows before automatic bitrate trials can be enabled.
+
+Matched receiver source intervals now expose actual native configuration coverage
+through the existing bounded source history. The controller integration can reject
+mixed or unavailable intervals instead of assigning them the current bitrate merely
+because their reports arrived later. Initial unchecked settings remain unverified;
+verified startup/application acknowledgment and pressure-window alignment are still
+needed before runtime control is enabled.

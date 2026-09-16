@@ -8,7 +8,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { command, mediaTools } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
 import { validatePublishingClockEvidence } from './publishing-clock-evidence.mjs';
-import { qualifyEncoderConfiguration } from './encoder-configuration-evidence.mjs';
+import {
+  qualifyEncoderConfiguration,
+  qualifyEncoderSourceHistory,
+} from './encoder-configuration-evidence.mjs';
 import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
 import { inspectFrameCodeSamples } from './impaired-media-diagnostics.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
@@ -614,6 +617,7 @@ try {
     let transportClock;
     let transportStatistics;
     let encoderConfiguration;
+    let encoderSourceHistory;
     let impairedLive;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
@@ -644,6 +648,15 @@ try {
         clock: transportClock,
         receipt: changes[0].receipt,
         evidence: sent.encoderEvidence,
+        decodedSourceFrames: decodeFrameCodes(
+          await readFile(join(artifact, `${scenario}-archive.codes`)),
+        ),
+      });
+      encoderSourceHistory = qualifyEncoderSourceHistory({
+        clock: transportClock,
+        receipt: changes[0].receipt,
+        evidence: sent.encoderEvidence,
+        history: sent.encoderSourceHistory,
         decodedSourceFrames: decodeFrameCodes(
           await readFile(join(artifact, `${scenario}-archive.codes`)),
         ),
@@ -685,6 +698,7 @@ try {
       transportClock,
       transportStatistics,
       encoderConfiguration,
+      encoderSourceHistory,
       networkImpairment,
       impairedLive,
       counters: finished,

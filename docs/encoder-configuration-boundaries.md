@@ -103,3 +103,53 @@ retention fix and is superseded for replay by the final run above. Stale SwiftPM
 source/ABI failures and the abort/reuse test failure are retained separately from
 successful evidence. The evidence hash manifest is
 `artifacts/qa/encoder-boundary-final-verification.json`.
+
+## Configuration coverage of receiver source intervals
+
+The production `VideoFrameObservationOwner` now retains optional validated scalar
+encoding metadata alongside each encoded frame in its existing bounded source ring.
+One owner admission updates the aggregate count and source history. Missing or
+invalid metadata leaves valid source counts intact; it cannot create a verified
+configuration. Capture entries never carry encoder metadata. Ring eviction and
+close retain their previous bounded, immutable snapshot behavior.
+
+`PublishingSourceInterval.encodingCoverage` classifies every encoded source frame
+in the matched interval `(previous decoded endpoint, current decoded endpoint]`:
+
+- `unavailable`: at least one included frame lacks valid native metadata.
+- `unverified`: every included frame belongs to one native session, with no verified configuration.
+- `mixed`: included frames span configurations or native sessions.
+- `verified(configuration)`: all included frames share the same verified configuration.
+
+The exclusive anchor does not belong to the interval. A new-configuration interval
+can therefore begin immediately after an old anchor. Leading and interior receiver
+losses remain in the source denominator and configuration check. An absent decoded
+frame cannot hide an older configuration. Closed history describes the completed
+attempt and does not imply current readiness or freshness.
+
+The dual-output fixture now exercises this production owner and exports its full
+closed encoded history, aggregate callback counts and three declared interval
+probes around the actual verified write boundary. These probes use finite-fixture
+receiver endpoints over real source history; they are not production worker reports.
+Independent checks compare every history record with its native callback descriptor,
+require exactly one aggregate completion per retained frame, and check unverified,
+verified and mixed intervals with exact rational boundaries. Existing decoded media,
+A/V, bitrate, cadence and archive gates still run separately.
+
+This completes configuration association for matched source intervals. The app's
+initial unchecked settings remain unverified, and automatic bitrate control remains
+disabled. Runtime control still needs verified startup/application acknowledgment,
+source and pressure window alignment, deadline ownership, and actual trial/rollback
+qualification before these classifications can govern live adaptation.
+
+The source-interval checkpoint passes 198 Media tests, 51 Streaming tests, 755 tooling
+tests (23 new history-oracle cases) and the combined unsigned iPhone/Watch Release
+build. Independent review approves the final source. Default evidence is
+`artifacts/qa/dual-output-Bzn0sg`; network evidence is `artifacts/qa/dual-output-uerkep`.
+All eight archives retain 420 frames, and all five successful publishers retain 420
+matching native descriptors, source-history entries and aggregate callbacks. Each
+set of declared interval probes reports unverified, verified and mixed coverage as
+expected. Normal/recoverable live media retain 420 frames; overload fails strict live
+decode with 394 best-effort frames and invalid source identities. Both suites replay
+from saved structured events and barcode files. Evidence hashes are in
+`artifacts/qa/configuration-interval-final-verification.json`.

@@ -374,3 +374,12 @@ with its prior raw submission boundary. Historical callbacks retain their origin
 identity. These scalars prepare source-window partitioning; they do not by themselves
 make a receiver window entirely post-application or prove bitrate convergence.
 Automatic adaptation remains disabled until runtime alignment and media trials pass.
+
+The [configuration-associated source interval slice](superpowers/plans/2026-09-15-configuration-source-intervals.md)
+now carries each immutable encoder submission identity through the production source
+history. Matched intervals report unavailable, unverified, mixed, or uniformly
+verified configurations. The exclusive prior endpoint is excluded, while every
+included native frame—including receiver losses—participates. Counts remain available
+when configuration metadata is absent. This is configuration association, not policy
+window freshness or proof of rate convergence; runtime acknowledgment and pressure
+alignment remain outstanding.

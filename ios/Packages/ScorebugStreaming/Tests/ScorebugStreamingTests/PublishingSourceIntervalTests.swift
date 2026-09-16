@@ -29,6 +29,76 @@ final class PublishingSourceIntervalTests: XCTestCase {
             lastDecodedPTS: Int64(last) * 3000 + 9000 - relayOrigin, decodedFrames: decoded)
     }
 
+    private func encodingHistory(_ values: [VideoEncodingObservation?]) throws -> VideoSourceHistory {
+        var history = try VideoSourceHistory(scope: scope)
+        for (i, value) in values.enumerated() {
+            let pts = CMTime(value: Int64(i), timescale: 30)
+            history.observe(.captureVideo, sourcePTS: pts, at: Double(i) + 1)
+            history.observe(.encodedVideo, sourcePTS: pts, at: Double(i) + 1, encoding: value)
+        }
+        return history
+    }
+    private func encoding(_ configuration: VideoEncodingConfiguration?, session: UUID) throws -> VideoEncodingObservation {
+        try XCTUnwrap(.init(encoderSessionID: session, configuration: configuration, submittedAt: 0, completedAt: 0))
+    }
+    func testVerifiedCoverageExcludesPriorAnchorConfiguration() throws {
+        let session = UUID(), config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let old = try encoding(nil, session: session), new = try encoding(config, session: session)
+        let h = try encodingHistory([old, old, old, new, new, new])
+        XCTAssertEqual(try match(h, first: 3, last: 5, previous: 2, decoded: 3)?.encodingCoverage, .verified(config))
+        XCTAssertEqual(try match(h, first: 2, last: 5, previous: 1, decoded: 4)?.encodingCoverage, .mixed)
+    }
+    func testLeadingMissingDecodedFramesStillParticipateInCoverage() throws {
+        let session = UUID(), config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let old = try encoding(nil, session: session), new = try encoding(config, session: session)
+        let h = try encodingHistory([old, old, old, new, new, new])
+        let value = try XCTUnwrap(match(h, first: 3, last: 5, previous: 1, decoded: 3))
+        XCTAssertEqual(value.encodedFrames, 4)
+        XCTAssertEqual(value.leadingMissingEncodedFrames, 1)
+        XCTAssertEqual(value.encodingCoverage, .mixed)
+    }
+    func testUnverifiedCoverageRequiresOneSessionAcrossAllIncludedFrames() throws {
+        let a = try encoding(nil, session: UUID()), b = try encoding(nil, session: UUID())
+        XCTAssertEqual(try match(encodingHistory([nil, a, a, a]), first: 1, last: 3, previous: 0, decoded: 3)?.encodingCoverage, .unverified)
+        XCTAssertEqual(try match(encodingHistory([a, a, b, a]), first: 1, last: 3, previous: 0, decoded: 3)?.encodingCoverage, .mixed)
+    }
+    func testMissingMetadataPreservesCountsButCannotVerifyConfiguration() throws {
+        let session = UUID(), config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let known = try encoding(config, session: session)
+        for missing in 1...3 {
+            var frames: [VideoEncodingObservation?] = [known, known, known, known]
+            frames[missing] = nil
+            let value = try XCTUnwrap(match(encodingHistory(frames), first: 1, last: 3, previous: 0, decoded: 3))
+            XCTAssertEqual(value.encodedFrames, 3)
+            XCTAssertEqual(value.encodingCoverage, .unavailable)
+        }
+    }
+    func testSameBitrateDifferentWriteIDsAndSessionReplacementAreMixed() throws {
+        let session = UUID()
+        let a = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let b = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let other = UUID(), c = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: other, bitRate: 2_000_000))
+        let first = try encoding(a, session: session)
+        for value in [try encoding(b, session: session), try encoding(c, session: other)] {
+            XCTAssertEqual(try match(encodingHistory([first, first, value, first]), first: 1, last: 3, previous: 0, decoded: 3)?.encodingCoverage, .mixed)
+        }
+    }
+    func testMissingMetadataOverridesMixedAndInteriorLossCannotHideAConfiguration() throws {
+        let session = UUID(), config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let old = try encoding(nil, session: session), new = try encoding(config, session: session)
+        XCTAssertEqual(try match(encodingHistory([old, old, nil, new]), first: 1, last: 3, previous: 0, decoded: 3)?.encodingCoverage, .unavailable)
+        let value = try XCTUnwrap(match(encodingHistory([new, new, old, new]), first: 1, last: 3, previous: 0, decoded: 2))
+        XCTAssertEqual(value.encodedNotDecodedFrames, 1)
+        XCTAssertEqual(value.encodingCoverage, .mixed)
+    }
+
+    func testClosedHistoryKeepsVerifiedCoverageHistorical() throws {
+        let session = UUID(), config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: session, bitRate: 2_000_000))
+        let known = try encoding(config, session: session)
+        var h = try encodingHistory([known, known, known, known]); h.close()
+        XCTAssertEqual(try match(h, first: 1, last: 3, previous: 0, decoded: 3)?.encodingCoverage, .verified(config))
+    }
+
     func testHealthyIntervalCountsSameSourceRangeAtEveryStage() throws {
         let history = try history()
         let result = try XCTUnwrap(match(history))

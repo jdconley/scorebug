@@ -4,6 +4,7 @@ import Foundation
 public struct VideoSourceFrame: Sendable {
     public let sourcePTS: CMTime
     public let observedAt: Double
+    public let encoding: VideoEncodingObservation?
 }
 
 public enum VideoSourceHistoryInvalidity: Sendable, Equatable {
@@ -45,7 +46,7 @@ public struct VideoSourceHistory: Sendable {
               invalidity: invalidity, isClosed: closed)
     }
     @discardableResult
-    public mutating func observe(_ stage: VideoFrameObservationStage, sourcePTS: CMTime, at time: Double) -> Bool {
+    public mutating func observe(_ stage: VideoFrameObservationStage, sourcePTS: CMTime, at time: Double, encoding: VideoEncodingObservation? = nil) -> Bool {
         guard !closed, invalidity == nil else { return false }
         guard time.isFinite, time >= 0, lastTime.map({ time >= $0 }) ?? true else {
             invalidity = .monotonicClock; return false
@@ -58,7 +59,10 @@ public struct VideoSourceHistory: Sendable {
         guard previous.map({ CMTimeCompare(sourcePTS, $0) > 0 }) ?? true else {
             invalidity = .sourceOrder; return false
         }
-        let frame = VideoSourceFrame(sourcePTS: sourcePTS, observedAt: time)
+        // Metadata failure cannot erase valid source counts or manufacture a
+        // verified configuration. Capture has no native encoder submission.
+        let validEncoding = stage == .encodedVideo && encoding.map({ $0.completedAt <= time }) == true ? encoding : nil
+        let frame = VideoSourceFrame(sourcePTS: sourcePTS, observedAt: time, encoding: validEncoding)
         switch stage {
         case .captureVideo: if !capture.append(frame) { invalidity = .overflow }
         case .encodedVideo: if !encoded.append(frame) { invalidity = .overflow }
