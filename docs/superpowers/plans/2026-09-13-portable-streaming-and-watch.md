@@ -930,3 +930,23 @@ SRT delivery delay and compare it with observed buildup and pressure thresholds;
 the source default is 120 ms but the runtime value was not retained. Keep any
 threshold and latency experiments separate. Production activation, device/host
 qualification and long soaks remain open.
+
+
+The [negotiated delay checkpoint](2026-09-16-negotiated-srt-delay.md) retains the
+actual native sender delivery delay on each timestamped transport sample. Model,
+export and independent-verifier checks pass (253 media, 61 streaming, 204 app-model,
+968 tooling), as do the unsigned Apple Release build and read-only review. Native
+run `native-app-HUreDi` measures 120 ms in all 998 retained samples. Its clean archive
+preserves all 8105 consecutive 1080p/30 frames and all 134 A/V markers without drops.
+Live media remains failed: 124 ms end coverage discrepancy, 130-frame count deficit
+plus 48 non-increasing barcodes, and worst receiver cadence 14.2 fps.
+
+The measured response budgets now guide the next design: one second of post-change
+local evidence plus roughly half a second of geometry-application time cannot
+reliably protect a 120 ms recovery delay, while accepted receiver evidence is
+already about 1.82 seconds old under a two-second cap. Develop a shorter strictly
+downward-only local pressure path using actual transport recovery-budget evidence;
+preserve longer source/receiver health checks and upward probation. Earlier native
+rate-control limitations remain relevant; do not replace the profile-transition
+stress test with a trivially passing bitrate request or relax media qualification.
+Production adaptation, long soaks, physical devices and other hosts remain open.

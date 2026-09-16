@@ -13,23 +13,27 @@ public struct PublishingTransportStatistics: Equatable, Sendable {
     public let estimatedBandwidthMbps: Double
     public let senderBufferedBytes: Int32
     public let senderBufferMilliseconds: Int32
+    /// Actual native sender TSBPD delay from this collection; nil is unavailable.
+    public let senderDeliveryDelayMilliseconds: Int32?
     public let availableSenderBytes: Int32
 
     public init?(publishingGeneration: UInt64, sampledAt: Double, elapsedMilliseconds: Int64,
                  sentBytes: UInt64, retransmittedBytes: UInt64, droppedPackets: Int32,
                  rttMilliseconds: Double, estimatedBandwidthMbps: Double, senderBufferedBytes: Int32,
-                 senderBufferMilliseconds: Int32, availableSenderBytes: Int32) {
+                 senderBufferMilliseconds: Int32, availableSenderBytes: Int32, senderDeliveryDelayMilliseconds: Int32? = nil) {
         guard publishingGeneration > 0, sampledAt.isFinite, (0...1e12).contains(sampledAt),
               elapsedMilliseconds >= 0, retransmittedBytes <= sentBytes, droppedPackets >= 0,
               rttMilliseconds.isFinite, rttMilliseconds >= 0,
               estimatedBandwidthMbps.isFinite, estimatedBandwidthMbps >= 0,
-              senderBufferedBytes >= 0, senderBufferMilliseconds >= 0, availableSenderBytes >= 0 else { return nil }
+              senderBufferedBytes >= 0, senderBufferMilliseconds >= 0, availableSenderBytes >= 0,
+              senderDeliveryDelayMilliseconds.map({ $0 >= 0 }) ?? true else { return nil }
         self.publishingGeneration = publishingGeneration; self.sampledAt = sampledAt
         self.elapsedMilliseconds = elapsedMilliseconds; self.sentBytes = sentBytes
         self.retransmittedBytes = retransmittedBytes; self.droppedPackets = droppedPackets
         self.rttMilliseconds = rttMilliseconds; self.estimatedBandwidthMbps = estimatedBandwidthMbps
         self.senderBufferedBytes = senderBufferedBytes; self.senderBufferMilliseconds = senderBufferMilliseconds
         self.availableSenderBytes = availableSenderBytes
+        self.senderDeliveryDelayMilliseconds = senderDeliveryDelayMilliseconds
     }
 }
 

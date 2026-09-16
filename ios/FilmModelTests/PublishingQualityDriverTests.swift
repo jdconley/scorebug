@@ -5,6 +5,24 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testTransportEvidenceKeepsNegotiatedDelayOnItsActualSampleAndPreservesUnknown() throws {
+        var history = PublishingTransportStatisticsTracker()
+        for (time, delay) in [(10.0, nil as Int32?), (10.25, 120), (10.5, 0)] {
+            history.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(time * 1000),
+                sentBytes: UInt64(time * 1000), retransmittedBytes: 0, droppedPackets: 0,
+                rttMilliseconds: 1, estimatedBandwidthMbps: 100, senderBufferedBytes: 1,
+                senderBufferMilliseconds: 1, availableSenderBytes: 1000, senderDeliveryDelayMilliseconds: delay))
+        }
+        let evidence = PublishingQualityDriver.transportEvidence(history.snapshot)
+        let samples = try XCTUnwrap(evidence["samples"] as? [[String: Any]])
+        XCTAssertEqual(samples.count, 3)
+        XCTAssertTrue(samples[0]["senderDeliveryDelayMilliseconds"] is NSNull)
+        XCTAssertEqual(samples[1]["senderDeliveryDelayMilliseconds"] as? Int32, 120)
+        XCTAssertEqual(samples[1]["sampledAt"] as? Double, 10.25)
+        XCTAssertEqual(samples[2]["senderDeliveryDelayMilliseconds"] as? Int32, 0)
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: evidence))
+    }
+
     private func make(_ native: DriverNative) throws -> (PublishingQualityDriver, PublishingQualityTelemetry.Diagnostics) {
         let owner = try PublishingQualitySession(operations: native.operations,
             profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],

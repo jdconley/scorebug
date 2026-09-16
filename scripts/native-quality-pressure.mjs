@@ -69,6 +69,13 @@ function classifyNativePressure(row, snapshot, source, { local = false } = {}) {
           integer(s.senderBufferMilliseconds) &&
           finite(s.rttMilliseconds),
       );
+      // Optional observation only: preserve unknown/legacy evidence and zero.
+      // This gauge never establishes capacity or receiver delivery.
+      if (s.senderDeliveryDelayMilliseconds != null)
+        assert(
+          integer(s.senderDeliveryDelayMilliseconds) &&
+            s.senderDeliveryDelayMilliseconds <= 2147483647,
+        );
       if (p) {
         assert(s.droppedPackets >= p.droppedPackets);
         assert(

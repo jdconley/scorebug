@@ -204,15 +204,19 @@ import ScorebugMedia
          "acceptedAt": receipt.acceptedAt,
          "lastSubmittedPTS": optional(receipt.lastSubmittedSourcePTS.map { ["value": String($0.value), "timescale": $0.timescale] as [String: Any] })]
     }
+    static func transportEvidence(_ transport: PublishingTransportStatisticsSnapshot) -> [String: Any] {
+        ["isClosed": transport.isClosed, "isQuarantined": transport.isQuarantined,
+                "samples": transport.samples.map { s in ["sampledAt": s.sampledAt, "generation": String(s.publishingGeneration),
+                    "elapsedMilliseconds": String(s.elapsedMilliseconds), "sentBytes": String(s.sentBytes),
+                    "retransmittedBytes": String(s.retransmittedBytes), "droppedPackets": s.droppedPackets,
+                    "rttMilliseconds": s.rttMilliseconds, "senderBufferMilliseconds": s.senderBufferMilliseconds,
+                    "senderDeliveryDelayMilliseconds": optional(s.senderDeliveryDelayMilliseconds)] as [String: Any] }]
+    }
     private static func evidence(_ d: PublishingQualityTelemetry.Diagnostics, source: WorkerSourceIntervalObservation?, window: QualityController.Window) -> [String: Any] {
         var result: [String: Any] = [
             "thermal": ["isClosed": d.thermal.isClosed, "isQuarantined": d.thermal.isQuarantined,
                 "samples": d.thermal.samples.map { ["sampledAt": $0.sampledAt, "state": $0.state.rawValue] as [String: Any] }],
-            "transport": ["isClosed": d.transport.isClosed, "isQuarantined": d.transport.isQuarantined,
-                "samples": d.transport.samples.map { s in ["sampledAt": s.sampledAt, "generation": String(s.publishingGeneration),
-                    "elapsedMilliseconds": String(s.elapsedMilliseconds), "sentBytes": String(s.sentBytes),
-                    "retransmittedBytes": String(s.retransmittedBytes), "droppedPackets": s.droppedPackets,
-                    "rttMilliseconds": s.rttMilliseconds, "senderBufferMilliseconds": s.senderBufferMilliseconds] as [String: Any] }],
+            "transport": transportEvidence(d.transport),
             "processing": NSNull(), "queue": NSNull()]
         if let processing = source?.processing, let data = try? JSONEncoder().encode(processing),
            let json = try? JSONSerialization.jsonObject(with: data) { result["processing"] = json }

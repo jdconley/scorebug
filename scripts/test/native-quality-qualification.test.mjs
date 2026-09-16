@@ -1139,3 +1139,19 @@ for (const [name, mutate] of Object.entries({
     mutate(r);
     assert.throws(() => qualifyNativeQuality(f));
   });
+
+for (const delay of [null, 0, 120, 2147483647])
+  test(`optional negotiated SRT delay preserves valid value ${delay}`, () => {
+    const f = rapidLocalFixture();
+    for (const row of f.quality.events)
+      for (const sample of row.evidence?.transport?.samples ?? [])
+        sample.senderDeliveryDelayMilliseconds = delay;
+    assert.equal(qualifyNativeQuality(f).localEvaluated, 1);
+  });
+for (const delay of [-1, 0.5, '120', true, 2147483648])
+  test(`rejects malformed negotiated SRT delay ${JSON.stringify(delay)}`, () => {
+    const f = rapidLocalFixture();
+    const row = f.quality.events.find((e) => e.kind === 'localPressure');
+    row.evidence.transport.samples[0].senderDeliveryDelayMilliseconds = delay;
+    assert.throws(() => qualifyNativeQuality(f));
+  });

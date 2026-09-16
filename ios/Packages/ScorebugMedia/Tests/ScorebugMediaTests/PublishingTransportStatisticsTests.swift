@@ -5,12 +5,30 @@ final class PublishingTransportStatisticsTests: XCTestCase {
     private func sample(generation: UInt64 = 1, time: Double = 10, elapsed: Int64 = 1000,
                         sent: UInt64 = 10000, retrans: UInt64 = 100, drops: Int32 = 0,
                         rtt: Double = 10, bandwidth: Double = 100, buffered: Int32 = 50,
-                        bufferMS: Int32 = 1, available: Int32 = 1000) -> PublishingTransportStatistics? {
+                        bufferMS: Int32 = 1, available: Int32 = 1000, delay: Int32? = nil) -> PublishingTransportStatistics? {
         .init(publishingGeneration: generation, sampledAt: time, elapsedMilliseconds: elapsed,
               sentBytes: sent, retransmittedBytes: retrans, droppedPackets: drops,
               rttMilliseconds: rtt, estimatedBandwidthMbps: bandwidth, senderBufferedBytes: buffered,
-              senderBufferMilliseconds: bufferMS, availableSenderBytes: available)
+              senderBufferMilliseconds: bufferMS, availableSenderBytes: available, senderDeliveryDelayMilliseconds: delay)
     }
+    func testNegotiatedDelayPreservesUnknownZeroAndActualValueWithoutInventingFreshness() throws {
+        XCTAssertNil(try XCTUnwrap(sample()).senderDeliveryDelayMilliseconds)
+        XCTAssertEqual(try XCTUnwrap(sample(delay: 0)).senderDeliveryDelayMilliseconds, 0)
+        XCTAssertEqual(try XCTUnwrap(sample(delay: 120)).senderDeliveryDelayMilliseconds, 120)
+        XCTAssertEqual(try XCTUnwrap(sample(delay: .max)).senderDeliveryDelayMilliseconds, .max)
+        XCTAssertNil(sample(delay: -1))
+        var tracker = PublishingTransportStatisticsTracker()
+        let measured = try XCTUnwrap(sample(delay: 120))
+        tracker.observe(measured); tracker.observe(nil); tracker.observe(measured)
+        XCTAssertEqual(tracker.snapshot.samples.count, 1)
+        XCTAssertEqual(tracker.snapshot.samples.first?.senderDeliveryDelayMilliseconds, 120)
+        XCTAssertNil(tracker.snapshot.freshSample(at: 12.01))
+        let historical = tracker.snapshot
+        tracker.close()
+        tracker.observe(sample(time: 11, delay: 500))
+        XCTAssertEqual(tracker.snapshot.samples, historical.samples)
+    }
+
     func testRejectsMalformedStatisticsAndAcceptsExactCounterExtremes() throws {
         for bad in [sample(generation: 0), sample(time: .nan), sample(time: .infinity), sample(time: -1),
                     sample(time: 1e12 + 1), sample(elapsed: -1), sample(retrans: 10001), sample(drops: -1),

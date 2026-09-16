@@ -219,7 +219,7 @@ public actor SRTPublisher {
             retransmittedBytes: stats.byteRetransTotal, droppedPackets: stats.pktSndDropTotal,
             rttMilliseconds: stats.msRTT, estimatedBandwidthMbps: stats.mbpsBandwidth,
             senderBufferedBytes: stats.byteSndBuf, senderBufferMilliseconds: stats.msSndBuf,
-            availableSenderBytes: stats.byteAvailSndBuf)
+            availableSenderBytes: stats.byteAvailSndBuf, senderDeliveryDelayMilliseconds: stats.msSndTsbPdDelay)
     }
 
     public func metrics() async -> (Double, Int32, UInt64)? {
