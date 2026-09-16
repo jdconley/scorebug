@@ -13,6 +13,7 @@ import {
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
+import { qualifyWorkerProcessingReports } from './worker-processing-qualification.mjs';
 import { qualifySourceIntervals } from './source-interval-qualification.mjs';
 import { qualifyPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 import { qualifyWorkerReportAge } from './worker-report-age-qualification.mjs';
@@ -37,6 +38,12 @@ assert.ok(
   'Publication qualification requires streaming and exact opt-in 1',
 );
 const requirePublication = publicationFlag === '1';
+const processingFlag = process.env.SCOREBUG_TEST_WORKER_PROCESSING;
+assert.ok(
+  processingFlag === undefined || (processingFlag === '1' && streaming && requirePublication),
+  'Processing qualification requires streaming, publication evidence and exact opt-in 1',
+);
+const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
@@ -55,6 +62,7 @@ await writeFile(
       deviceType,
       streaming,
       requirePublication,
+      requireProcessing,
       streamingOptions,
       fixtureWorkload,
       streamingBudget,
@@ -479,6 +487,7 @@ try {
     publishingAttemptEvidence,
     workerPublicationEvidence,
     sourceIntervalQualification,
+    workerProcessingQualification,
     publishingClockObservation,
     ingressObservation,
     workerReportAge,
@@ -543,6 +552,14 @@ try {
         liveIDs: liveSegments.flat(),
       });
     }
+    if (requireProcessing)
+      workerProcessingQualification = qualifyWorkerProcessingReports({
+        snapshot: observationSnapshot,
+        sourceIntervalQualification,
+        processingEvidence: JSON.parse(
+          await readFile(join(artifact, 'worker-processing-status.json'), 'utf8'),
+        ),
+      });
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
       archive: media[0],
@@ -603,6 +620,7 @@ try {
         publishingAttemptEvidence,
         workerPublicationEvidence,
         sourceIntervalQualification,
+        workerProcessingQualification,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

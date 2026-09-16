@@ -61,7 +61,7 @@ enum VideoObservationFixture {
                       observation.nativeClock == publishingClockObservation?.transportClock else {
                     throw ExportError.sourceIntervalMismatch
                 }
-                return ["scope": object["scope"]!, "workerId": observation.workerId,
+                var row: [String: Any] = ["scope": object["scope"]!, "workerId": observation.workerId,
                     "workerEpoch": observation.workerEpoch, "workerAttempt": observation.workerAttempt,
                     "publication": try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation.publication)),
                     "previousSequence": String(observation.previousSequence), "sequence": String(observation.sequence),
@@ -75,6 +75,10 @@ enum VideoObservationFixture {
                     "decodedFrames": interval.decodedFrames, "captureNotEncodedFrames": interval.captureNotEncodedFrames,
                     "encodedNotDecodedFrames": interval.encodedNotDecodedFrames,
                     "leadingMissingEncodedFrames": interval.leadingMissingEncodedFrames]
+                if let processing = observation.processing {
+                    row["processing"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(processing))
+                }
+                return row
             }
         }
         // JSONSerialization rejects nonfinite numbers. Optional values are explicit

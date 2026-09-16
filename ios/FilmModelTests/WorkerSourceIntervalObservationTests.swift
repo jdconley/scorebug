@@ -231,4 +231,52 @@ final class WorkerSourceIntervalObservationTests: XCTestCase {
         closed.close()
         XCTAssertNil(try feed(&tracker, response(sequence: 4), at: now, history: closed.snapshot))
     }
+    private func withProcessing(_ original: WorkerMediaStatusResponse, pending: Int64 = 1) -> WorkerMediaStatusResponse {
+        var response = original
+        let window = response.status.observation!.decodedVideo!.completed!
+        response.status.observation!.processing = WorkerProcessingReport(
+            scopeID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", encoder: "videotoolbox",
+            previousSequence: window.sequence - 1, sequence: window.sequence, firstPTS: window.firstPTS!,
+            interval: .init(sourceStartExclusive: (window.sequence - 1) * 450000 - 3000 - 1919,
+                sourceEndInclusive: window.lastPTS!, decodedFrames: window.freshFrames,
+                submittedFrames: window.freshFrames, completedFrames: window.freshFrames - pending,
+                pendingFrames: pending, omittedBeforeEncoderFrames: 0, filterDuration: .init(meanMs: 1, maximumMs: 2),
+                processingDuration: pending == 0 ? .init(meanMs: 400, maximumMs: 650) : nil))
+        return response
+    }
+    func testProcessingMatchesNativeSourceAndUpdatesPendingOnRepeatedWindow() throws {
+        let now = ContinuousClock.now
+        var tracker = WorkerSourceIntervalTracker()
+        try feed(&tracker, response(sequence: 1), at: now)
+        let pending = try XCTUnwrap(feed(&tracker, withProcessing(response(sequence: 2)), at: now + .seconds(1)))
+        XCTAssertEqual(pending.processing?.interval.pendingFrames, 1)
+        XCTAssertNil(pending.processing?.interval.processingDuration)
+        let complete = try XCTUnwrap(feed(&tracker, withProcessing(response(sequence: 2), pending: 0), at: now + .seconds(2)))
+        XCTAssertEqual(complete.processing?.interval.pendingFrames, 0)
+        XCTAssertEqual(complete.processing?.interval.processingDuration?.maximumMs, 650)
+        XCTAssertEqual(complete.freshness.ageUpperBound(at: now + .seconds(2)), .milliseconds(1250))
+        let omitted = try XCTUnwrap(feed(&tracker, response(sequence: 2), at: now + .seconds(3)))
+        XCTAssertNil(omitted.processing)
+    }
+    func testProcessingWithWrongExclusiveAnchorRemainsUnknownOnValidNativeInterval() throws {
+        let now = ContinuousClock.now
+        var tracker = WorkerSourceIntervalTracker()
+        try feed(&tracker, response(sequence: 1), at: now)
+        var report = withProcessing(response(sequence: 2), pending: 0)
+        report.status.observation!.processing!.interval.sourceStartExclusive -= 1
+        let result = try XCTUnwrap(feed(&tracker, report, at: now + .seconds(1)))
+        XCTAssertEqual(result.interval.decodedFrames, 150)
+        XCTAssertNil(result.processing)
+    }
+    func testMalformedProcessingCannotEraseValidSourceCorrespondence() throws {
+        let now = ContinuousClock.now
+        var tracker = WorkerSourceIntervalTracker()
+        try feed(&tracker, response(sequence: 1), at: now)
+        var report = withProcessing(response(sequence: 2), pending: 0)
+        report.status.observation!.processing!.interval.completedFrames = 999
+        let result = try XCTUnwrap(feed(&tracker, report, at: now + .seconds(1)))
+        XCTAssertEqual(result.interval.decodedFrames, 150)
+        XCTAssertNil(result.processing)
+    }
+
 }

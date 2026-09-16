@@ -6,7 +6,7 @@ import { testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 
 const stores: MatchStore[] = [];
-it.each(['decoded-video-v1.json', 'decoded-video-clock-v1.json'])(
+it.each(['decoded-video-v1.json', 'decoded-video-clock-v1.json', 'worker-processing-v1.json'])(
   'accepts the exact shared Swift observations in %s',
   async (fixtureName) => {
     const examples = JSON.parse(
@@ -890,4 +890,213 @@ it('rejects supplied public epochs and invalid reports without changing the acce
     (await f.report({ ...f.body, observation: { ...f.body.observation, frame: 13 } })).status,
   ).toBe(409);
   expect((await f.status()).status.workerEpoch).toBe(first);
+});
+
+function processingObservation() {
+  return {
+    gameId: 'match',
+    generation: 1,
+    state: 'producing_output' as const,
+    reason: null,
+    attempt: 1,
+    frame: 300,
+    outTimeUs: 10_000_000,
+    scoreRevision: 1,
+    decodedVideo: {
+      clock: 'mpegts-pts-90k-v1',
+      ended: false,
+      invalidReason: null,
+      completed: {
+        sequence: 2,
+        durationMs: 5000 as const,
+        ageMs: 0,
+        firstPTS: 3000,
+        lastPTS: 450000,
+        freshFrames: 150,
+        duplicateFrames: 0,
+        reorderedFrames: 0,
+        valid: true,
+      },
+    },
+    processing: {
+      scopeID: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      encoder: 'software' as const,
+      previousSequence: 1,
+      sequence: 2,
+      firstPTS: 3000,
+      interval: {
+        sourceStartExclusive: 0,
+        sourceEndInclusive: 450000,
+        decodedFrames: 150,
+        submittedFrames: 150,
+        completedFrames: 149,
+        pendingFrames: 1,
+        omittedBeforeEncoderFrames: 0,
+        filterDuration: { meanMs: 1, maximumMs: 2 },
+        processingDuration: null as { meanMs: number; maximumMs: number } | null,
+      },
+    },
+  };
+}
+it('negotiates processing and accepts pending-to-complete reports without changing decoder identity', async () => {
+  const f = await fixture();
+  expect(f.session.workerProcessing).toBe('source-processing-v1');
+  const o = processingObservation();
+  const report = (sequence: number) =>
+    f.report({ ...f.body, sequence, timingToken: f.session.timingToken, observation: o });
+  expect((await report(1)).status).toBe(200);
+  const pending = await f.status();
+  expect(pending.status.observation.processing).toEqual(o.processing);
+  Object.assign(o.processing.interval, {
+    completedFrames: 150,
+    pendingFrames: 0,
+    processingDuration: { meanMs: 4, maximumMs: 8 },
+  });
+  expect((await report(2)).status).toBe(200);
+  const complete = await f.status();
+  expect(complete.status.observation.processing).toEqual(o.processing);
+  expect(complete.status.decodedVideoAgeUpperBoundMs).toBeGreaterThanOrEqual(0);
+});
+it('accepts missing processing and does not restore omitted public evidence', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const { processing, ...without } = o;
+  expect((await f.report({ ...f.body, sequence: 2, observation: without })).status).toBe(200);
+  expect((await f.status()).status.observation).not.toHaveProperty('processing');
+  const changed = structuredClone(o);
+  changed.processing.interval.completedFrames--;
+  changed.processing.interval.pendingFrames++;
+  expect((await f.report({ ...f.body, sequence: 3, observation: changed })).status).toBe(409);
+  expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+});
+it.each([
+  'scope',
+  'encoder',
+  'sequence',
+  'first',
+  'end',
+  'count',
+  'pending',
+  'omitted',
+  'duration',
+  'pendingDuration',
+  'unknownKey',
+  'state',
+  'clock',
+  'ended',
+  'duplicates',
+])('rejects malformed processing correspondence: %s', async (kind) => {
+  const f = await fixture(),
+    o: any = processingObservation();
+  if (kind === 'scope') o.processing.scopeID = 'bad';
+  if (kind === 'encoder') o.processing.encoder = 'other';
+  if (kind === 'sequence') o.processing.previousSequence = 0;
+  if (kind === 'first') o.processing.firstPTS++;
+  if (kind === 'end') o.processing.interval.sourceEndInclusive++;
+  if (kind === 'count') o.processing.interval.decodedFrames++;
+  if (kind === 'pending') o.processing.interval.pendingFrames++;
+  if (kind === 'omitted') o.processing.interval.omittedBeforeEncoderFrames++;
+  if (kind === 'duration') o.processing.interval.filterDuration = { meanMs: 3, maximumMs: 2 };
+  if (kind === 'pendingDuration')
+    o.processing.interval.processingDuration = { meanMs: 1, maximumMs: 1 };
+  if (kind === 'unknownKey') o.processing.secret = 'never';
+  if (kind === 'state') o.state = 'stopping';
+  if (kind === 'clock') delete o.decodedVideo.clock;
+  if (kind === 'ended') o.decodedVideo.ended = true;
+  if (kind === 'duplicates') o.decodedVideo.completed.duplicateFrames = 1;
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(400);
+});
+it.each(['scope', 'encoder', 'filter', 'regression', 'frozen', 'reuse'])(
+  'rejects conflicting processing progression: %s',
+  async (kind) => {
+    const f = await fixture(),
+      o = processingObservation();
+    if (kind === 'frozen')
+      Object.assign(o.processing.interval, { completedFrames: 150, pendingFrames: 0 });
+    expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+    if (kind === 'scope') o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    if (kind === 'encoder') o.processing.encoder = 'videotoolbox' as 'software';
+    if (kind === 'filter') o.processing.interval.filterDuration.meanMs = 0;
+    if (kind === 'regression')
+      Object.assign(o.processing.interval, { completedFrames: 148, pendingFrames: 2 });
+    if (kind === 'frozen') o.processing.interval.processingDuration = { meanMs: 1, maximumMs: 1 };
+    if (kind === 'reuse') o.attempt = 2;
+    expect((await f.report({ ...f.body, sequence: 2, observation: o })).status).toBe(409);
+  },
+);
+it('accepts a fresh processing scope for a new attempt and rejects adjacent source-anchor changes', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const next = structuredClone(o);
+  Object.assign(next.decodedVideo.completed, { sequence: 3, firstPTS: 453000, lastPTS: 900000 });
+  Object.assign(next.processing, { previousSequence: 2, sequence: 3, firstPTS: 453000 });
+  Object.assign(next.processing.interval, {
+    sourceStartExclusive: 449999,
+    sourceEndInclusive: 900000,
+  });
+  expect((await f.report({ ...f.body, sequence: 2, observation: next })).status).toBe(409);
+  next.processing.interval.sourceStartExclusive = 450000;
+  expect((await f.report({ ...f.body, sequence: 2, observation: next })).status).toBe(200);
+  o.attempt = 2;
+  o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+});
+
+it.each(['old', 'replacement'])(
+  'processing attempt ownership survives generation changes and omission (%s scope)',
+  async (scope) => {
+    const f = await fixture(),
+      o = processingObservation();
+    expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+    f.matches.media.execute({
+      commandId: 'replace-processing',
+      gameId: 'match',
+      expectedGeneration: 1,
+      issuedAt: new Date().toISOString(),
+      operation: {
+        type: 'start',
+        selection: {
+          workerId: 'mac',
+          outputId: 'other-sink',
+          captureDeviceId: 'phone',
+          recordingId: 'archive',
+        },
+      },
+    });
+    o.generation = 2;
+    const { processing, ...without } = o;
+    expect((await f.report({ ...f.body, sequence: 2, observation: without })).status).toBe(200);
+    if (scope === 'replacement') {
+      o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+      o.processing.encoder = 'videotoolbox' as 'software';
+    }
+    expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(409);
+    o.attempt = 2;
+    o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    expect((await f.report({ ...f.body, sequence: 3, observation: o })).status).toBe(200);
+  },
+);
+
+it('rejected processing does not consume read IDs, scopes, sequences or timing tokens', async () => {
+  const f = await fixture(),
+    o = processingObservation();
+  expect((await f.report({ ...f.body, observation: o })).status).toBe(200);
+  const register = () =>
+    f.request('/v1/worker/sessions', f.config.HOME_TOKEN, { workerId: 'mac', runId: 'run' });
+  const before = await (await register()).json();
+  o.processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  const body = {
+    ...f.body,
+    sequence: 2,
+    timingToken: before.timingToken,
+    pipelineReadId: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    observation: o,
+  };
+  expect((await f.report(body)).status).toBe(409);
+  expect((await (await register()).json()).timingToken).toBe(before.timingToken);
+  o.attempt = 2;
+  expect((await f.report(body)).status).toBe(200);
+  expect((await f.status()).status.observation.processing.scopeID).toBe(o.processing.scopeID);
 });

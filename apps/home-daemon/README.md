@@ -109,10 +109,13 @@ POSIX process-group cleanup covers configured wrappers and cancellation during s
 Native Windows skips the optional probe until job-object ownership is implemented;
 WSL follows the Linux path. None of this constitutes Windows host qualification.
 
-`snapshotProcessingWindow()` is currently an internal pipeline observation. It can
-update pending work while the decoder window is current, freezes completed results,
-and clears them on invalid/ended/superseded evidence. Negotiated API/native reporting,
-current-load classification and automatic quality control remain the next steps.
+`snapshotVideoEvidence()` samples decoder and processing evidence together for
+negotiated `source-processing-v1` API reports. `snapshotProcessingWindow()` remains
+available to direct callers. Pending work can update while its decoder window is
+current; completed results freeze and invalid/ended/superseded evidence clears.
+The native app attaches validated reports to matching source intervals. Current-load
+classification and automatic quality control remain the next steps; completion is
+not a capacity estimate. See [worker status](../../docs/worker-status.md).
 
 ## Linux container
 

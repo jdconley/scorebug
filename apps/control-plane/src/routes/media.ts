@@ -1,3 +1,4 @@
+import { workerProcessingSchema, processingFitsObservation } from '../worker-processing.js';
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
@@ -220,8 +221,10 @@ export function workerRoutes(
               outTimeUs: sequence.nullable(),
               scoreRevision: sequence.nullable(),
               decodedVideo: decodedVideo.optional(),
+              processing: workerProcessingSchema.optional(),
             })
             .strict()
+            .refine(processingFitsObservation)
             .refine(
               (o) =>
                 o.state !== 'producing_output' ||
@@ -232,14 +235,18 @@ export function workerRoutes(
     ),
     (c) => {
       const body = c.req.valid('json');
-      const { decodedVideo, ...observation } = body.observation;
+      const { decodedVideo, processing, ...observation } = body.observation;
       const { timingToken, pipelineReadId, ...request } = body;
       return c.json(
         observations.report({
           ...request,
           ...(timingToken !== undefined ? { timingToken } : {}),
           ...(pipelineReadId !== undefined ? { pipelineReadId } : {}),
-          observation: { ...observation, ...(decodedVideo ? { decodedVideo } : {}) },
+          observation: {
+            ...observation,
+            ...(decodedVideo ? { decodedVideo } : {}),
+            ...(processing ? { processing } : {}),
+          },
         }),
       );
     },

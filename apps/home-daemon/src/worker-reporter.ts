@@ -1,5 +1,6 @@
 import {
   DECODED_VIDEO_TRANSPORT_CLOCK,
+  WORKER_PROCESSING_PROTOCOL,
   WORKER_PIPELINE_READ_IDENTITY,
   type WorkerPipelineObservation,
 } from '@scorebug/protocol';
@@ -12,6 +13,7 @@ const session = z.object({
   timingToken: identifier.optional(),
   decodedVideoClock: z.string().optional(),
   pipelineReadIdentity: z.string().optional(),
+  workerProcessing: z.string().optional(),
 });
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
@@ -132,6 +134,18 @@ export class WorkerReporter {
           observation.decodedVideo.clock !== DECODED_VIDEO_TRANSPORT_CLOCK)
       )
         delete observation.decodedVideo.clock;
+      const canIdentifyRead =
+        registered.pipelineReadIdentity === WORKER_PIPELINE_READ_IDENTITY &&
+        typeof pipelineReadId === 'string' &&
+        pipelineReadId.length === 36 &&
+        canonicalUUID.test(pipelineReadId);
+      if (
+        registered.workerProcessing !== WORKER_PROCESSING_PROTOCOL ||
+        !canIdentifyRead ||
+        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+      )
+        delete observation.processing;
       if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
       const sequence = ++this.sequence;
       try {
@@ -142,12 +156,7 @@ export class WorkerReporter {
             sessionId: registered.sessionId,
             timingToken: registered.timingToken,
             sequence,
-            ...(registered.pipelineReadIdentity === WORKER_PIPELINE_READ_IDENTITY &&
-            typeof pipelineReadId === 'string' &&
-            pipelineReadId.length === 36 &&
-            canonicalUUID.test(pipelineReadId)
-              ? { pipelineReadId }
-              : {}),
+            ...(canIdentifyRead ? { pipelineReadId } : {}),
             observation,
           },
           accepted,

@@ -412,6 +412,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                     previous?.workerAttempt != interval.workerAttempt || previous?.publication != interval.publication {
                     workerSourceIntervalHistory.append(interval)
                     if workerSourceIntervalHistory.count > 128 { workerSourceIntervalHistory.removeFirst() }
+                } else if !workerSourceIntervalHistory.isEmpty {
+                    // Keep the original source/age anchor while recording later completion evidence.
+                    workerSourceIntervalHistory[workerSourceIntervalHistory.count - 1].processing = interval.processing
                 }
             }
             if workerReportAgeProofsEnabled, let publishing, localState == .publishing,

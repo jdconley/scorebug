@@ -1,6 +1,13 @@
+import {
+  processingFitsObservation,
+  processingProgresses,
+  workerProcessingSchema,
+} from './worker-processing.js';
 import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
+  WORKER_PROCESSING_PROTOCOL,
+  type WorkerProcessingReport,
   WORKER_PIPELINE_READ_IDENTITY,
   DECODED_VIDEO_TRANSPORT_CLOCK,
   type DecodedVideoSnapshot,
@@ -46,6 +53,8 @@ type Report = {
   observedAt: number;
   receivedAt: number | undefined;
   decodedVideo?: DecodedVideoSnapshot;
+  processing?: WorkerProcessingReport;
+  processingAssignment?: { gameId: string; generation: number };
   lastDecodedPTS?: number;
   decodedAge?: { sequence: number; ageMs: number; at: number | undefined };
   decodedUpperAge?: UpperAge;
@@ -58,6 +67,7 @@ type Session = {
   sessionId: string;
   workerEpoch: string;
   readIds: Set<string>;
+  processingScopes: Set<string>;
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
@@ -131,6 +141,7 @@ export class WorkerObservations {
         sessionId: worker.current.sessionId,
         decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
         pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
+        workerProcessing: WORKER_PROCESSING_PROTOCOL,
         ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
@@ -139,6 +150,7 @@ export class WorkerObservations {
       sessionId: randomUUID(),
       workerEpoch: randomUUID(),
       readIds: new Set(),
+      processingScopes: new Set(),
       ...(sampled !== undefined
         ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
         : {}),
@@ -154,6 +166,7 @@ export class WorkerObservations {
       sessionId: current.sessionId,
       decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
       pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
+      workerProcessing: WORKER_PROCESSING_PROTOCOL,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
     };
@@ -225,6 +238,21 @@ export class WorkerObservations {
       sameAttempt &&
       previous?.observation.gameId === observation.gameId &&
       previous.observation.generation === observation.generation;
+    const beforeProcessing = sameAttempt ? previous?.processing : undefined;
+    const beforeProcessingAssignment = sameAttempt ? previous?.processingAssignment : undefined;
+    const processing = observation.processing;
+    if (
+      processing &&
+      (!workerProcessingSchema.safeParse(processing).success ||
+        !processingFitsObservation(observation) ||
+        (beforeProcessingAssignment &&
+          (beforeProcessingAssignment.gameId !== observation.gameId ||
+            beforeProcessingAssignment.generation !== observation.generation)) ||
+        (beforeProcessing && !processingProgresses(beforeProcessing, processing)) ||
+        (worker.current.processingScopes.has(processing.scopeID) &&
+          beforeProcessing?.scopeID !== processing.scopeID))
+    )
+      throw new WorkerObservationError('observation_conflict');
     const beforeVideo = sameAttempt ? previous?.decodedVideo : undefined;
     const afterVideo = observation.decodedVideo;
     let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
@@ -310,6 +338,7 @@ export class WorkerObservations {
     }
     const now = this.now();
     if (pipelineReadId !== undefined) worker.current.readIds.add(pipelineReadId);
+    if (processing) worker.current.processingScopes.add(processing.scopeID);
     worker.current.report = {
       ...(knownReadId !== undefined ? { pipelineReadId: knownReadId } : {}),
       ...(pipelineReadId !== undefined ? { activeReadId: pipelineReadId } : {}),
@@ -317,6 +346,15 @@ export class WorkerObservations {
       request,
       observation: structuredClone(observation),
       counters,
+      ...(processing || beforeProcessing
+        ? {
+            processing: structuredClone(processing ?? beforeProcessing!),
+            processingAssignment: beforeProcessingAssignment ?? {
+              gameId: observation.gameId,
+              generation: observation.generation,
+            },
+          }
+        : {}),
       observedAt: now,
       receivedAt,
       ...(afterVideo || beforeVideo

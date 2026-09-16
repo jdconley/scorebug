@@ -91,3 +91,33 @@ Current logs are under `artifacts/qa/worker-status-*` and
 `artifacts/qa/native-worker-status-ios*.log`. The [ten-minute local 720p30 qualification](media-soak.md) now passes. Native
 recording/publishing, sustained higher profiles, adaptive quality, Watch workflows,
 and physical-device testing remain required.
+
+## Optional source processing reports
+
+Session registration advertises `workerProcessing: "source-processing-v1"`. A worker
+sends the optional `observation.processing` only after negotiating that exact version,
+the transport clock and private pipeline-read identity. Legacy and unsupported workers
+continue without it. Decoder and processing fields come from one synchronous pipeline
+sample, bound to the current publishing attempt.
+
+Reports identify one immutable pipeline UUID/backend and an adjacent decoder interval.
+They separate decoded, submitted, completed, pending and omitted counts, with nullable
+reader-observed filter/completion durations. The API validates source bounds/counts,
+permits pending-to-complete updates and freezes completed contents. Omissions retain
+server progression guards while removing public metadata. A new assignment requires
+a new attempt before processing can resume; neither pipeline UUIDs nor read IDs can
+be reused across attempts. Rejected reports consume no token or identity state.
+
+Swift tolerates malformed optional metadata, then validates usable processing against
+the existing publication and decoder age proof. The film app attaches it only when
+its reconstructed native source interval has the same exclusive anchor, first/end PTS,
+sequences and frame count. Repeated reports can update completion without refreshing
+the original source-age anchor; omission clears attached processing. No pressure or
+capacity classification follows from completion counts alone.
+
+For the owned local simulator fixture, add `SCOREBUG_TEST_WORKER_PROCESSING=1` alongside
+`SCOREBUG_TEST_RELAY_PUBLICATION=1` to `pnpm test:native-streaming`. The gate requires
+two completed API/native processing intervals matching independently qualified source
+intervals and saved frame identities. It validates historical correspondence, not
+fresh health, raw timing arithmetic, sustained load or remote-host performance.
+See the [processing report plan](superpowers/plans/2026-09-15-worker-processing-reports.md).

@@ -1,3 +1,4 @@
+import type { WorkerProcessingReport } from '@scorebug/protocol';
 import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
 import { observeDecodedPipe } from './decoded-pipe.js';
 import type { WorkerProcessingSnapshot } from './worker-processing.js';
@@ -43,6 +44,10 @@ export type PipelineHandle = {
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
   snapshotProcessing?: () => WorkerProcessingSnapshot | null;
   snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
+  snapshotVideoEvidence?: () => {
+    decodedVideo: DecodedVideoSnapshot;
+    processing?: WorkerProcessingReport;
+  };
 };
 
 function filterPath(value: string): string {
@@ -413,6 +418,27 @@ export function startPipeline(
     if (!child?.pid) failedBeforeSpawn();
   }
 
+  const sampleVideoEvidence = () => {
+    const video = { ...decodedVideo.snapshot(), clock: DECODED_VIDEO_TRANSPORT_CLOCK };
+    const processing =
+      processingWindows && decodedHistory && encoderTiming
+        ? processingWindows.observe(video, {
+            decoded: decodedHistory.snapshot(),
+            encoded: encoderTiming.snapshot(),
+          })
+        : null;
+    return {
+      decodedVideo: video,
+      ...(processing
+        ? {
+            processing: {
+              ...processing,
+              encoder: spec.encoder ?? (spec.nvenc ? ('nvenc' as const) : ('software' as const)),
+            },
+          }
+        : {}),
+    };
+  };
   const alive = () => !settled && child?.exitCode === null && child.signalCode === null;
   return {
     spec,
@@ -427,13 +453,8 @@ export function startPipeline(
       decodedHistory && encoderTiming
         ? { decoded: decodedHistory.snapshot(), encoded: encoderTiming.snapshot() }
         : null,
-    snapshotProcessingWindow: () =>
-      processingWindows && decodedHistory && encoderTiming
-        ? processingWindows.observe(decodedVideo.snapshot(), {
-            decoded: decodedHistory.snapshot(),
-            encoded: encoderTiming.snapshot(),
-          })
-        : null,
+    snapshotVideoEvidence: sampleVideoEvidence,
+    snapshotProcessingWindow: () => sampleVideoEvidence().processing ?? null,
     snapshotDecodedVideo: () => ({
       ...decodedVideo.snapshot(),
       clock: DECODED_VIDEO_TRANSPORT_CLOCK,

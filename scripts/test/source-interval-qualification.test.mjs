@@ -257,3 +257,59 @@ test('counts interior losses separately from leading losses', () => {
   assert.equal(interval.encodedNotDecodedFrames, 1);
   assert.equal(interval.leadingMissingEncodedFrames, 0);
 });
+
+test('processing reports match independent API evidence and qualified native/output source intervals', async () => {
+  const { qualifyWorkerProcessingReports } = await import('../worker-processing-qualification.mjs');
+  const f = fixture();
+  const sourceIntervalQualification = qualifySourceIntervals(f);
+  for (const row of f.snapshot.sourceIntervals)
+    row.processing = {
+      scopeID: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      encoder: 'videotoolbox',
+      previousSequence: Number(row.previousSequence),
+      sequence: Number(row.sequence),
+      firstPTS: Number(row.firstDecodedPTS),
+      interval: {
+        sourceStartExclusive: Number(row.previousDecodedPTS),
+        sourceEndInclusive: Number(row.lastDecodedPTS),
+        decodedFrames: 150,
+        submittedFrames: 150,
+        completedFrames: 150,
+        pendingFrames: 0,
+        omittedBeforeEncoderFrames: 0,
+        filterDuration: { meanMs: 1, maximumMs: 2 },
+        processingDuration: null,
+      },
+    };
+  const processingEvidence = f.snapshot.sourceIntervals.map((row) => ({
+    gameId: 'match',
+    generation: 1,
+    workerId: row.workerId,
+    workerEpoch: row.workerEpoch,
+    attempt: row.workerAttempt,
+    publication: structuredClone(row.publication),
+    processing: structuredClone(row.processing),
+  }));
+  const args = { snapshot: f.snapshot, sourceIntervalQualification, processingEvidence };
+  assert.equal(qualifyWorkerProcessingReports(args).completed.length, 2);
+  for (const mutate of [
+    (a) => a.snapshot.sourceIntervals[0].processing.sequence++,
+    (a) => a.snapshot.sourceIntervals[0].processing.interval.sourceStartExclusive++,
+    (a) => (a.snapshot.sourceIntervals[0].processing.interval.completedFrames = 151),
+    (a) => (a.snapshot.sourceIntervals[0].processing.interval.submittedFrames = 149),
+    (a) => (a.processingEvidence[0].processing.scopeID = 'cccccccc-cccc-cccc-cccc-cccccccccccc'),
+    (a) => (a.processingEvidence[0].processing.interval.filterDuration.meanMs = 0),
+    (a) =>
+      (a.processingEvidence[0].processing.interval.processingDuration = {
+        meanMs: 1,
+        maximumMs: 2,
+      }),
+    (a) => (a.processingEvidence[0].workerEpoch = 'other'),
+    (a) => (a.processingEvidence[0].publication.readerId = 'other'),
+    (a) => delete a.snapshot.sourceIntervals[0].processing,
+  ]) {
+    const changed = structuredClone(args);
+    mutate(changed);
+    assert.throws(() => qualifyWorkerProcessingReports(changed));
+  }
+});

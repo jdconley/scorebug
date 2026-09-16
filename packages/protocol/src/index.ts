@@ -3,3 +3,4 @@ export * from './matches.js';
 export * from './media.js';
 export * from './worker-status.js';
 export * from './watch-pairing.js';
+export * from './worker-processing.js';

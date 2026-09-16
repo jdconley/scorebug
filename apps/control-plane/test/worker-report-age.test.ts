@@ -619,3 +619,32 @@ it('rounds fractional elapsed endpoints outward before subtracting', async () =>
   // ceil(status)-floor(receipt)=201 keeps the complete residence conservative.
   expect((await f.status()).status.decodedVideoAgeUpperBoundMs).toBe(552);
 });
+
+it('processing completion cannot refresh the age of its original decoder window', async () => {
+  const f = await fixture(100);
+  const wire = JSON.parse(
+    readFileSync(
+      new URL('../../../packages/protocol/fixtures/worker-processing-v1.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  const body = {
+    ...f.body,
+    timingToken: f.session.timingToken,
+    observation: wire.pending.status.observation,
+  };
+  body.observation.decodedVideo.completed.ageMs = 50;
+  f.time(300);
+  const acknowledgement = await f.accept(body);
+  expect((await f.status()).status.decodedVideoAgeUpperBoundMs).toBe(250);
+  f.time(1300);
+  body.sequence = 2;
+  body.timingToken = acknowledgement.timingToken;
+  body.observation.processing = wire.complete.status.observation.processing;
+  body.observation.decodedVideo.completed.ageMs = 1050;
+  await f.accept(body);
+  const completed = await f.status();
+  expect(completed.status.decodedVideoAgeUpperBoundMs).toBe(2050);
+  expect(completed.status.observation.decodedVideo.completed.ageMs).toBe(1050);
+  expect(completed.status.observation.processing.interval.pendingFrames).toBe(0);
+});

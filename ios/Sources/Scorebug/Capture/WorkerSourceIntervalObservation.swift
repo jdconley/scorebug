@@ -17,6 +17,7 @@ struct WorkerSourceIntervalObservation: Sendable {
     let firstDecodedPTS: Int64
     let lastDecodedPTS: Int64
     let freshness: WorkerDecodedVideoFreshness
+    var processing: WorkerProcessingReport? = nil
 }
 
 struct WorkerSourceIntervalTracker {
@@ -63,6 +64,7 @@ struct WorkerSourceIntervalTracker {
         if let latest, latest.freshness.ageUpperBound(at: receivedAt) == nil {
             self.latest = nil; gapReason = .expired
         }
+        let processingEvidence = WorkerProcessingEvidence(response: response, receivedAt: receivedAt, requestDuration: requestDuration)
         let window = helper.completed
         if let lastWindow {
             if window.sequence < lastWindow.sequence {
@@ -72,6 +74,10 @@ struct WorkerSourceIntervalTracker {
             if window.sequence == lastWindow.sequence {
                 if !Self.sameContents(window, lastWindow) {
                     baseline = nil; latest = nil; gapReason = .contradiction
+                }
+                if var current = latest {
+                    current.processing = Self.matchedProcessing(processingEvidence, observation: current)
+                    latest = current
                 }
                 return latest
             }
@@ -91,13 +97,27 @@ struct WorkerSourceIntervalTracker {
             lastDecodedPTS: last, decodedFrames: window.freshFrames) else {
             gapReason = .unmatchedHistory; return nil
         }
-        let observation = WorkerSourceIntervalObservation(interval: interval, nativeClock: clock.transportClock, workerId: workerId,
+        var observation = WorkerSourceIntervalObservation(interval: interval, nativeClock: clock.transportClock, workerId: workerId,
             workerEpoch: workerEpoch, workerAttempt: helper.attempt, publication: publication,
             previousSequence: previous.sequence, sequence: window.sequence,
             previousDecodedPTS: previousPTS, firstDecodedPTS: first, lastDecodedPTS: last, freshness: helper)
+        observation.processing = Self.matchedProcessing(processingEvidence, observation: observation)
         latest = observation
         gapReason = nil
         return observation
+    }
+
+    private static func matchedProcessing(_ evidence: WorkerProcessingEvidence?, observation: WorkerSourceIntervalObservation) -> WorkerProcessingReport? {
+        guard let evidence, evidence.workerEpoch == observation.workerEpoch,
+              evidence.publication == observation.publication, evidence.freshness.workerId == observation.workerId,
+              evidence.freshness.attempt == observation.workerAttempt else { return nil }
+        let report = evidence.report
+        guard report.previousSequence == observation.previousSequence, report.sequence == observation.sequence,
+              report.firstPTS == observation.firstDecodedPTS,
+              report.interval.sourceStartExclusive == observation.previousDecodedPTS,
+              report.interval.sourceEndInclusive == observation.lastDecodedPTS,
+              report.interval.decodedFrames == Int64(observation.interval.decodedFrames) else { return nil }
+        return report
     }
 
     /// Decoder window age is separate from the report lease. Accepted historical

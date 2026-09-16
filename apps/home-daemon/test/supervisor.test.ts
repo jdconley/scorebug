@@ -547,3 +547,27 @@ it.each([
   expect(r.start.mock.calls[0]![0].readUrl).toBe(readUrl);
   expect(r.supervisor.observation()).not.toHaveProperty('pipelineReadId');
 });
+
+it('samples processing and decoder evidence atomically and clears processing outside a live owned publication', async () => {
+  const r = rig();
+  r.set(input({ readUrl: productionReadUrl }));
+  await r.supervisor.tick();
+  const sample: any = {
+    decodedVideo: { completed: null, invalidReason: null, ended: false },
+    processing: { scopeID: 'owned' },
+  };
+  r.children[0]!.handle.snapshotVideoEvidence = () => sample;
+  r.children[0]!.handle.snapshotDecodedVideo = () => {
+    throw new Error('second read forbidden');
+  };
+  r.children[0]!.progress({ frame: 300, outTimeUs: 10000000 });
+  const report = r.supervisor.observation();
+  expect(report?.processing).toEqual(sample.processing);
+  expect(report?.decodedVideo).toEqual(sample.decodedVideo);
+  report!.processing!.scopeID = 'mutated';
+  expect(sample.processing.scopeID).toBe('owned');
+  const closing = r.supervisor.close();
+  expect(r.supervisor.observation()?.processing).toBeUndefined();
+  r.children[0]!.exit();
+  await closing;
+});

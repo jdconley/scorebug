@@ -384,14 +384,12 @@ when configuration metadata is absent. This is configuration association, not po
 window freshness or proof of rate convergence; runtime acknowledgment and pressure
 alignment remain outstanding.
 
-
 The [owned bitrate update slice](superpowers/plans/2026-09-15-owned-bitrate-updates.md)
 adds a typed, validated native receipt to PublishingSession. The session owns its
 mutation and deadline tasks, joins them on terminal shutdown, and rejects stale or
 contradictory application evidence. Successful receipts remain historical after stop.
 This completes mutation ownership; binding receipts to policy acknowledgments and
 aligning source/pressure windows are still required before automatic control.
-
 
 The [quality application owner](superpowers/plans/2026-09-15-quality-application-owner.md)
 now binds verified receipts to initial settings and policy revisions, and rejects
@@ -400,7 +398,6 @@ policy recovery and preserves rollback intent. Its deterministic trial-to-rollba
 sequence passes, but the capture model does not invoke this owner yet. The next
 integration must build complete, configuration-matched source/pressure windows and
 qualify receiver freshness before actual automatic media trials.
-
 
 ## Source-aligned ingress pressure
 
@@ -430,7 +427,6 @@ It requires the post-write interval to have complete admission coverage, while a
 interval overlapping startup remains unknown. Existing native configuration, decoded
 video, A/V, cadence, memory and clean archive checks remain separate gates.
 
-
 The source-aligned queue checkpoint passes 224 Media, 54 Streaming and 769 tooling
 tests, independent review and the combined unsigned iPhone/Watch Release build.
 Evidence is `artifacts/qa/dual-output-zFS9sf` and `artifacts/qa/dual-output-1Y9Lmx`;
@@ -443,7 +439,6 @@ few milliseconds. The current policy rejects those durations. Alignment must acc
 for measured elapsed time with a specified input-duration contract; clipping times
 to fit existing tests would invent evidence. The separate rolling-five-second output
 quality gate remains unchanged.
-
 
 ## Source-aligned sampled transport gauges
 
@@ -468,7 +463,6 @@ per-source-probe intervals. Independent reconstruction first qualifies original
 native collections and source/capture correspondence, then checks retention,
 bracketing, normalized gauge integration and exact enclosing counters. Source probes
 remain declared finite-fixture endpoints, not production worker reports.
-
 
 ## Session-owned thermal samples
 
@@ -495,7 +489,6 @@ explicit thresholds without turning missing or unknown evidence into nominal. Se
 [Apple's state definitions](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.enum)
 and the [thermal history plan](superpowers/plans/2026-09-15-publishing-thermal-history.md).
 
-
 ## Optional worker encoder timing
 
 `startPipeline(..., {encoderTiming: true})` adds a separate FFmpeg pre/post encoder
@@ -516,8 +509,8 @@ They are not processor utilization, network capacity, viewer delivery or proof o
 nominal overall worker pressure. Real CPU and VideoToolbox probes show that normal
 pending depth differs by backend. Standalone pipeline callers still opt in explicitly.
 Worker startup now checks option availability as described below; older FFmpeg builds
-keep publishing without these optional diagnostics. Fresh reports and policy
-classification still require further integration.
+keep publishing without these optional diagnostics. Negotiated source reports are now available as described below; policy
+classification still requires further integration.
 The source correlation below adds observations after decode. See the
 [worker timing plan](superpowers/plans/2026-09-15-worker-encoder-timing.md) and
 [FFmpeg's statistics documentation](https://ffmpeg.org/ffmpeg.html).
@@ -572,6 +565,23 @@ independently reconstructs their counts and timing from retained raw collections
 The oracle rejects stale frozen sequences and requires two completed live windows.
 Input analysis consumes about five seconds in the local fixture, so the original
 18-second attempt correctly failed that gate. No startup coverage was invented to
-make it pass. These observations remain internal to the pipeline pending negotiated
-API/native reporting; they are not yet inputs to automatic adaptation. See the
+make it pass. These observations now travel through negotiated API/native reports as described
+below; they are not yet inputs to automatic adaptation. See the
 [live processing plan](superpowers/plans/2026-09-15-live-worker-processing-windows.md).
+
+## Negotiated processing evidence in the native app
+
+`snapshotVideoEvidence()` samples decoder and processing evidence atomically. The
+worker advertises only current, owned processing after exact protocol/clock/read-identity
+negotiation. API progression guards preserve immutable pipeline/backend/assignment
+ownership through omissions. Pending completion updates retain the decoder window's
+existing age proof; missing metadata stays missing in public status.
+
+Swift validates optional reports without letting malformed additions invalidate older
+status fields. Native source matching checks the same publication, epoch, attempt,
+sequences, exclusive anchor, first/end timestamps and decoded count. Debug fixtures
+retain these matched historical reports for independent API/output-frame comparison.
+This supplies source-correlated measurements; backend/load thresholds, configuration
+revision mapping and automatic quality trials remain separate unqualified work.
+See [worker status](worker-status.md#optional-source-processing-reports) and the
+[implementation evidence](superpowers/plans/2026-09-15-worker-processing-reports.md).

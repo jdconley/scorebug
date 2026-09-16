@@ -128,9 +128,26 @@ export class WorkerSupervisor {
       return null;
     const active = this.active;
     let decodedVideo: WorkerPipelineObservation['decodedVideo'];
+    let processing: WorkerPipelineObservation['processing'];
     try {
-      const snapshot = active?.handle.snapshotDecodedVideo?.();
+      const evidence = active?.handle.snapshotVideoEvidence?.();
+      const snapshot =
+        evidence?.decodedVideo ??
+        (active?.handle.snapshotVideoEvidence
+          ? undefined
+          : active?.handle.snapshotDecodedVideo?.());
       if (snapshot) decodedVideo = structuredClone(snapshot);
+      if (
+        evidence?.processing &&
+        active &&
+        !active.stopping &&
+        !this.closed &&
+        state.state === 'producing_output' &&
+        active.input.gameId === state.gameId &&
+        active.input.generation === state.generation &&
+        active.pipelineReadId
+      )
+        processing = structuredClone(evidence.processing);
     } catch {
       // Measurement failure is unknown evidence, never an encoder/control failure.
     }
@@ -144,6 +161,7 @@ export class WorkerSupervisor {
       outTimeUs: active?.progress?.outTimeUs ?? null,
       scoreRevision: active?.input.scoreRevision ?? null,
       ...(decodedVideo ? { decodedVideo } : {}),
+      ...(processing ? { processing } : {}),
       ...(active &&
       !active.stopping &&
       active.input.gameId === state.gameId &&

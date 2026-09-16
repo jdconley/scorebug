@@ -384,14 +384,16 @@ VideoToolbox 30/60 fps with independent source probes, saved output barcodes and
 replay. Overall worker pressure still requires runtime capability checks, fresh reports
 and backend thresholds qualified on paced media; automatic adaptation remains unwired.
 
-
 The [live processing window slice](2026-09-15-live-worker-processing-windows.md)
 adds pipeline-owned intervals matching the native app's adjacent decoder boundaries,
 with pending-to-complete updates and stable completed evidence. Worker startup now
 checks optional FFmpeg statistics support with bounded cleanup and keeps unsupported
 workers publishing without those diagnostics. A paced local fixture independently
-checks real live windows; negotiated API/native reporting and threshold qualification
-remain next. Automatic adaptation is still unwired.
+checks real live windows. The [negotiated reporting slice](2026-09-15-worker-processing-reports.md)
+now carries atomically sampled processing through the API into exactly matched native
+source intervals, retaining decoder-age provenance through pending completion. Threshold
+qualification and actual automatic trial/rollback remain next. Automatic adaptation is
+still unwired.
 
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS

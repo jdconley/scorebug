@@ -1,3 +1,4 @@
+import type { WorkerProcessingReport } from './worker-processing.js';
 /** Sanitized process observations and decoder-ingress cadence; never viewer delivery. */
 export const WORKER_STATES = [
   'idle',
@@ -73,6 +74,7 @@ export type WorkerObservation = {
   scoreRevision: number | null;
   /** Omitted by legacy workers; absence is unknown, never healthy. */
   decodedVideo?: DecodedVideoSnapshot;
+  processing?: WorkerProcessingReport;
 };
 /** Private worker-to-API correlation, not a new authorization capability. */
 export const WORKER_PIPELINE_READ_IDENTITY = 'srt-read-query-v1';
@@ -88,6 +90,7 @@ export type WorkerSessionResponse = {
   /** Clock convention accepted by this API session. */
   decodedVideoClock?: string;
   pipelineReadIdentity?: string;
+  workerProcessing?: string;
   sessionId: string;
   serverTime: string;
   /** Opaque server monotonic timing provenance; echo with a later snapshot. */

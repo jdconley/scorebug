@@ -11,6 +11,7 @@ import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
 import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
+import { recordWorkerProcessingEvidence } from './worker-processing-qualification.mjs';
 import { recordWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
 import { recordPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
 
@@ -31,6 +32,7 @@ export async function nativeStreamingFixture({
   const decodedWindows = new Map();
   const publications = new Map();
   const workerPublications = new Map();
+  const workerProcessing = new Map();
   async function stopStatus() {
     statusAbort?.abort();
     await statusTask;
@@ -197,6 +199,7 @@ export async function nativeStreamingFixture({
             assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
             const { status } = await result.json();
             recordDecodedVideoEvidence(decodedWindows, status, decodedWindowLimit);
+            recordWorkerProcessingEvidence(workerProcessing, status, decodedWindowLimit);
             if (status.generation > 0 && status.workerId) {
               const mediaResponse = await fetch(`${baseURL}/v1/matches/${matchID}/media`, {
                 headers: { authorization: `Bearer ${created.credential.token}` },
@@ -299,6 +302,10 @@ export async function nativeStreamingFixture({
             join(artifact, 'worker-publication-status.json'),
             JSON.stringify([...workerPublications.values()], null, 2),
           );
+        await writeFile(
+          join(artifact, 'worker-processing-status.json'),
+          JSON.stringify([...workerProcessing.values()], null, 2),
+        );
         if (statusError) throw statusError;
         const evidence = [...decodedWindows.values()];
         await writeFile(

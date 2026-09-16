@@ -623,3 +623,100 @@ it.each([
   expect(posts.every((r) => !Object.hasOwn(r.body.observation, 'pipelineReadId'))).toBe(true);
   expect(samples).toBe(2);
 });
+
+it.each([undefined, 'future', 'source-processing-v1'])(
+  'negotiates processing extension %s without changing the source snapshot',
+  async (version) => {
+    const supported = {
+      sessionId: 'one',
+      decodedVideoClock: 'mpegts-pts-90k-v1',
+      pipelineReadIdentity: 'srt-read-query-v1',
+      workerProcessing: version,
+    };
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions') ? supported : { accepted: true },
+    }));
+    const sampled: any = {
+      ...observation,
+      pipelineReadId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      processing: { scopeID: 'test-only' },
+    };
+    await f.reporter.report(() => sampled);
+    const actual = f.requests.at(-1)!.body.observation;
+    expect(actual.processing).toEqual(
+      version === 'source-processing-v1' ? sampled.processing : undefined,
+    );
+    expect(sampled.processing).toEqual({ scopeID: 'test-only' });
+  },
+);
+it.each(['clock', 'readIdentity', 'readId'])(
+  'omits processing when %s negotiation is unavailable',
+  async (missing) => {
+    const supported: any = {
+      sessionId: 'one',
+      decodedVideoClock: 'mpegts-pts-90k-v1',
+      pipelineReadIdentity: 'srt-read-query-v1',
+      workerProcessing: 'source-processing-v1',
+    };
+    if (missing === 'clock') delete supported.decodedVideoClock;
+    if (missing === 'readIdentity') delete supported.pipelineReadIdentity;
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions') ? supported : { accepted: true },
+    }));
+    await f.reporter.report(
+      () =>
+        ({
+          ...observation,
+          ...(missing === 'readId'
+            ? {}
+            : { pipelineReadId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }),
+          processing: { scopeID: 'test-only' },
+        }) as any,
+    );
+    expect(f.requests.at(-1)!.body.observation).not.toHaveProperty('processing');
+  },
+);
+
+it('renegotiates processing on session renewal and omits it after capability downgrade', async () => {
+  let registrations = 0,
+    samples = 0;
+  const f = await fixture((path, body) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: `s${++registrations}`,
+            decodedVideoClock: 'mpegts-pts-90k-v1',
+            pipelineReadIdentity: 'srt-read-query-v1',
+            ...(registrations === 1 ? { workerProcessing: 'source-processing-v1' } : {}),
+          },
+        }
+      : body.sessionId === 's1'
+        ? { status: 409, body: { error: 'worker_session_unknown' } }
+        : { body: { accepted: true } },
+  );
+  await f.reporter.report(
+    () =>
+      ({
+        ...observation,
+        scoreRevision: ++samples,
+        pipelineReadId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        decodedVideo: {
+          clock: 'mpegts-pts-90k-v1',
+          completed: null,
+          invalidReason: null,
+          ended: false,
+        },
+        processing: { scopeID: 'test-only' },
+      }) as any,
+  );
+  const reports = f.requests.filter((r) => r.path.endsWith('observations'));
+  expect(reports[0]!.body.observation).toHaveProperty('processing');
+  expect(reports[1]!.body.observation).not.toHaveProperty('processing');
+  expect(reports[1]!.body.observation.scoreRevision).toBe(2);
+});

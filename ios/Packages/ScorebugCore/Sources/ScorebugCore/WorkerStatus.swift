@@ -43,15 +43,26 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
     public var outTimeUs: Int?
     public var scoreRevision: Int?
     public var decodedVideo: DecodedVideoSnapshot?
+    public var processing: WorkerProcessingReport?
 
     public init(gameId: String, generation: Int, state: WorkerState, reason: WorkerReason?, attempt: Int,
-                frame: Int?, outTimeUs: Int?, scoreRevision: Int?, decodedVideo: DecodedVideoSnapshot? = nil) {
+                frame: Int?, outTimeUs: Int?, scoreRevision: Int?, decodedVideo: DecodedVideoSnapshot? = nil, processing: WorkerProcessingReport? = nil) {
         self.gameId = gameId; self.generation = generation; self.state = state; self.reason = reason
         self.attempt = attempt; self.frame = frame; self.outTimeUs = outTimeUs; self.scoreRevision = scoreRevision
         self.decodedVideo = decodedVideo
+        self.processing = processing
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, decodedVideo }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, decodedVideo, processing }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        gameId = try c.decode(String.self, forKey: .gameId); generation = try c.decode(Int.self, forKey: .generation)
+        state = try c.decode(WorkerState.self, forKey: .state); reason = try c.decodeIfPresent(WorkerReason.self, forKey: .reason)
+        attempt = try c.decode(Int.self, forKey: .attempt); frame = try c.decodeIfPresent(Int.self, forKey: .frame)
+        outTimeUs = try c.decodeIfPresent(Int.self, forKey: .outTimeUs); scoreRevision = try c.decodeIfPresent(Int.self, forKey: .scoreRevision)
+        decodedVideo = try c.decodeIfPresent(DecodedVideoSnapshot.self, forKey: .decodedVideo)
+        processing = try? c.decodeIfPresent(WorkerProcessingReport.self, forKey: .processing)
+    }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(gameId, forKey: .gameId)
@@ -63,6 +74,7 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
         try container.encode(outTimeUs, forKey: .outTimeUs)
         try container.encode(scoreRevision, forKey: .scoreRevision)
         try container.encodeIfPresent(decodedVideo, forKey: .decodedVideo)
+        try container.encodeIfPresent(processing, forKey: .processing)
     }
 }
 

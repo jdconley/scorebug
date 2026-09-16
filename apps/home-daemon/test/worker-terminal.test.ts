@@ -133,3 +133,39 @@ it('routes diagnostic warnings and errors through the real logger stdout channel
     vi.restoreAllMocks();
   }
 });
+
+it('keeps terminal log records small when optional processing histories are present', () => {
+  const f = fixture();
+  const terminal: any = {
+    telemetryEOF: true,
+    encoderExit: { code: 0, signal: null },
+    outputProgress: null,
+    decodedVideo: {
+      acceptedFrames: 0,
+      freshFrames: 0,
+      duplicateFrames: 0,
+      reorderedFrames: 0,
+      firstPTS: null,
+      lastPTS: null,
+      highestPTS: null,
+      timeBase: '1/90000',
+      invalidReason: null,
+      ended: true,
+    },
+    decodedFrameHistory: {
+      frames: Array.from({ length: 512 }, (_, i) => ({ pts: i * 3000, observedAt: i * 33 })),
+    },
+    encoderTiming: {
+      frames: Array.from({ length: 256 }, (_, i) => ({
+        pts: String(i),
+        submittedAt: i,
+        completedAt: i + 1,
+      })),
+    },
+  };
+  diagnostics.createWorkerTerminalDiagnostics(f.log, '1').scope({ gameId: 'game', generation: 1 })
+    .onTerminal!(terminal);
+  expect(f.records[0]).not.toHaveProperty('decodedFrameHistory');
+  expect(f.records[0]).not.toHaveProperty('encoderTiming');
+  expect(JSON.stringify(f.records[0]).length).toBeLessThan(4096);
+});
