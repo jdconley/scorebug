@@ -35,6 +35,7 @@ import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
+  fixtureDecoderThreading,
   nativeQualityOptions,
   nativeUplinkOptions,
   nativeFixtureWorkload,
@@ -46,6 +47,8 @@ import { measureVideoPayloadRate, qualifyStructuredMotionPayload } from './video
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
+const decoderThreading = fixtureDecoderThreading(process.env);
+assert.ok(streaming || decoderThreading === 'automatic', 'Decoder experiment requires streaming');
 const publicationFlag = process.env.SCOREBUG_TEST_RELAY_PUBLICATION;
 assert.ok(
   publicationFlag === undefined || (publicationFlag === '1' && streaming),
@@ -112,6 +115,7 @@ await writeFile(
     {
       runtime,
       deviceType,
+      decoderThreading,
       streaming,
       requirePublication,
       requireProcessing,
@@ -409,6 +413,7 @@ try {
       requirePublication,
       uplinkProfile,
       liveProfile,
+      decoderThreading,
       artifact,
       root,
       run,

@@ -156,3 +156,17 @@ it('enables uncompressed INFO diagnostics only when explicitly requested', () =>
   stripped[stripped.indexOf('-loglevel') + 1] = 'warning';
   expect(stripped).toEqual(normal);
 });
+
+it('applies slice threading to input video only without altering output encoder options', () => {
+  const spec = { ...baseSpec, nvenc: false };
+  const normal = buildFfmpegArgs(spec);
+  expect(buildFfmpegArgs({ ...spec, decoderThreading: 'automatic' })).toEqual(normal);
+  const slice = buildFfmpegArgs({ ...spec, decoderThreading: 'slice' });
+  const at = slice.indexOf('-thread_type:v:0');
+  expect(at).toBeGreaterThan(-1);
+  expect(at).toBeLessThan(slice.indexOf('-i'));
+  expect(slice[at + 1]).toBe('slice');
+  slice.splice(at, 2);
+  expect(slice).toEqual(normal);
+  expect(() => buildFfmpegArgs({ ...spec, decoderThreading: 'invalid' as 'slice' })).toThrow();
+});

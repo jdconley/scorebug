@@ -239,3 +239,15 @@ null, so that run proves negotiation rather than source-interval correlation.
 Known/legacy/unknown completed-window examples round-trip in shared HTTP/Swift
 fixtures. Logs and proof snapshots are under `artifacts/qa/worker-clock-*` and
 `native-worker-software/clock-observations.json`.
+
+## Input decoder threading
+
+`DECODER_THREADING=automatic` preserves FFmpeg's default threading. An explicit
+`DECODER_THREADING=slice` sets `-thread_type:v:0 slice` before the input, leaving
+output encoder threading and settings unchanged. Slice mode can reduce decoder
+buffering, but single-slice video may offer less decoding parallelism; qualify
+actual throughput and source-frame integrity on the chosen host before selecting
+it. This setting does not itself qualify receiver health or repair damaged media.
+The owned native and worker-processing fixtures use the validated
+`SCOREBUG_TEST_DECODER_THREADING` override and save the selected mode in their
+configuration evidence.

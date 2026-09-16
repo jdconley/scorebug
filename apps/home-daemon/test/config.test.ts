@@ -62,3 +62,10 @@ it('supports an explicit reduced live output independently of the default profil
   expect(videoProfiles['540p30']).toEqual({ width: 960, height: 540, fps: 30, bitrateKbps: 1500 });
   expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
 });
+
+it('requires an explicit supported input decoder threading mode', () => {
+  expect(loadConfig(base).DECODER_THREADING).toBe('automatic');
+  expect(loadConfig({ ...base, DECODER_THREADING: 'slice' }).DECODER_THREADING).toBe('slice');
+  for (const mode of ['', '1', 'frame', 'Slice'])
+    expect(() => loadConfig({ ...base, DECODER_THREADING: mode })).toThrow();
+});

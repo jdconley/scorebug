@@ -122,3 +122,13 @@ export function nativeUplinkOptions({
   );
   return profile;
 }
+
+/** Exact input-decoder experiment, validated before creating owned resources. */
+export function fixtureDecoderThreading(environment) {
+  const mode = environment.SCOREBUG_TEST_DECODER_THREADING;
+  assert.ok(
+    mode === undefined || ['automatic', 'slice'].includes(mode),
+    'Unsupported fixture decoder threading',
+  );
+  return mode ?? 'automatic';
+}

@@ -26,8 +26,10 @@ export async function nativeStreamingFixture({
   requirePublication = false,
   uplinkProfile = null,
   liveProfile = '1080p30',
+  decoderThreading = 'automatic',
 }) {
   assert.ok(['1080p30', '540p30'].includes(liveProfile));
+  assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
     uplinkProfile === null || ['passthrough', 'rate4m'].includes(uplinkProfile),
@@ -332,6 +334,7 @@ export async function nativeStreamingFixture({
                 directRecorder?.url ??
                 `rtmp://127.0.0.1:${sinkPort}/live/fixture?user=qa-worker&pass=qa-output-not-production`,
               ENCODER: 'videotoolbox',
+              DECODER_THREADING: decoderThreading,
               WORKER_REPORT_INTERVAL_MS:
                 process.env.SCOREBUG_TEST_NATIVE_QUALITY === '1' ? '100' : '1000',
               VIDEO_PROFILE: liveProfile,

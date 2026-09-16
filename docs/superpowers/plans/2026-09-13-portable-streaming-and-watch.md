@@ -986,3 +986,19 @@ from transport recovery delay. A validated slice-threading mode may recover
 freshness headroom for a later transport experiment without changing any existing
 freshness/media gates. No production adaptation, physical-device or remote-host
 completion is claimed.
+
+
+The [input decoder threading checkpoint](2026-09-16-worker-decoder-threading.md)
+adds explicit automatic/slice input decoding while preserving automatic defaults.
+343 worker tests, 981 tooling tests, worker build, review and real software plus
+VideoToolbox resolution/aspect-transition media checks pass. Native pressure run
+`native-app-a0fhIU` reduces median accepted receiver evidence age from 1.824 to
+1.324 seconds. All 8153 clean archive frames and 135 A/V markers remain intact.
+
+Streaming still fails: worst receiver window 20.2 fps, 57 absent source identities,
+five repeated observations and −169.8 ms end coverage discrepancy. The worker logs
+no concealment in this run, but ingest reports damaged PES and timing recovery;
+zero decoder messages do not qualify delivery. Next use the measured freshness
+headroom for a separate publish-leg SRT recovery-delay experiment, keeping read-leg
+settings and every media/freshness gate unchanged. Production adaptation, physical
+devices, long soaks and other hosts remain unqualified.

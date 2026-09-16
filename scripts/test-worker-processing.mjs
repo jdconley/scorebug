@@ -1,3 +1,4 @@
+import { fixtureDecoderThreading } from './native-streaming-options.mjs';
 import assert from 'node:assert/strict';
 import { assertMediaCoverage } from './media-sync.mjs';
 import { createServer } from 'node:http';
@@ -18,6 +19,7 @@ import { workerProcessingInterval } from '../apps/home-daemon/src/worker-process
 import { createLogger } from '../apps/home-daemon/src/logger.ts';
 
 const encoder = process.argv[2] ?? 'software';
+const decoderThreading = fixtureDecoderThreading(process.env);
 const sourceFPS = Number(process.argv[3] ?? '30');
 const paced = process.argv[4] === '--paced';
 const aspectTransitions = process.argv[4] === '--transitions-aspect';
@@ -46,6 +48,7 @@ await writeFile(
   JSON.stringify(
     {
       encoder,
+      decoderThreading,
       sourceFPS,
       ffmpeg,
       ffprobe,
@@ -309,6 +312,7 @@ try {
       scoreFile,
       nvenc: false,
       encoder,
+      decoderThreading,
       profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
       ffmpegPath: ffmpeg,
       fontPath: font,

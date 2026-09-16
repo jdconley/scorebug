@@ -171,3 +171,11 @@ test('motion workload requires native streaming and direct recorder', () => {
         );
       }
 });
+
+test('decoder threading fixture mode is explicit and rejects unsupported values before setup', () => {
+  assert.equal(options.fixtureDecoderThreading({}), 'automatic');
+  for (const mode of ['automatic', 'slice'])
+    assert.equal(options.fixtureDecoderThreading({ SCOREBUG_TEST_DECODER_THREADING: mode }), mode);
+  for (const mode of ['', 'frame', 'Slice', '1', 1, null])
+    assert.throws(() => options.fixtureDecoderThreading({ SCOREBUG_TEST_DECODER_THREADING: mode }));
+});

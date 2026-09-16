@@ -31,6 +31,8 @@ export type PipelineSpec = {
   scoreFile: string;
   nvenc: boolean;
   encoder?: 'software' | 'videotoolbox' | 'nvenc';
+  /** Input decoder only; automatic preserves FFmpeg defaults. */
+  decoderThreading?: 'automatic' | 'slice';
   profile?: { width: number; height: number; fps: number; bitrateKbps: number };
   ffmpegPath?: string;
   fontPath?: string;
@@ -64,6 +66,9 @@ export function buildFfmpegArgs(
   spec: PipelineSpec,
   options: { encoderTiming?: boolean; decoderDiagnostics?: boolean } = {},
 ): string[] {
+  const decoderThreading = spec.decoderThreading ?? 'automatic';
+  if (!['automatic', 'slice'].includes(decoderThreading))
+    throw new Error('invalid_decoder_threading');
   const profile = spec.profile;
   if (
     profile &&
@@ -148,6 +153,8 @@ export function buildFfmpegArgs(
     // state so telemetry ordinals and the source-FPS cap anchor cannot reset.
     // The legacy profile-less graph has no canvas normalization guarantee.
     ...(profile ? ['-reinit_filter:v:0', '0'] : []),
+    // Input-scoped: never changes the selected output encoder's threading.
+    ...(decoderThreading === 'slice' ? ['-thread_type:v:0', 'slice'] : []),
     '-i',
     spec.pullUrl,
     '-map',
