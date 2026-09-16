@@ -6,7 +6,7 @@ const counter = (n) => {
   assert(typeof n === 'string' && /^(0|[1-9][0-9]*)$/.test(n));
   return BigInt(n);
 };
-function enclosed(history, window, now, validate) {
+function enclosed(history, window, now, validate, minimumStart) {
   assert(history && Array.isArray(history.samples) && history.samples.length <= 64);
   assert(typeof history.isClosed === 'boolean' && typeof history.isQuarantined === 'boolean');
   const samples = history.samples;
@@ -27,18 +27,23 @@ function enclosed(history, window, now, validate) {
     latest.sampledAt > now ||
     now - latest.sampledAt > 2 ||
     left < 0 ||
-    right <= left
+    right <= left ||
+    (minimumStart !== undefined && samples[left].sampledAt < minimumStart)
   )
     return null;
   return samples.slice(left, right + 1);
 }
 /** Replay only explicit simulator limits; OS samples and worker timings are observations, not capacity. */
-export function replayNativePressure(row, snapshot, source) {
+function classifyNativePressure(row, snapshot, source, { local = false } = {}) {
   const e = row.evidence,
     w = row.window;
   assert(e, 'Missing evaluated raw diagnostic evidence');
-  const thermalSamples = enclosed(e.thermal, w, row.evaluatedAt, (s) =>
-    assert([-1, 0, 1, 2, 3].includes(s.state)),
+  const thermalSamples = enclosed(
+    e.thermal,
+    w,
+    row.evaluatedAt,
+    (s) => assert([-1, 0, 1, 2, 3].includes(s.state)),
+    local ? row.acknowledgedAt : undefined,
   );
   const maximum =
     thermalSamples &&
@@ -46,24 +51,35 @@ export function replayNativePressure(row, snapshot, source) {
       ? -1
       : Math.max(...thermalSamples.map((s) => s.state)));
   const thermal = maximum === 0 ? 'nominal' : maximum >= 2 ? 'elevated' : 'unknown';
-  const transportSamples = enclosed(e.transport, w, row.evaluatedAt, (s, p) => {
-    assert.equal(s.generation, row.receipt.generation);
-    for (const key of ['elapsedMilliseconds', 'sentBytes', 'retransmittedBytes']) {
-      counter(s[key]);
-      if (p) assert(counter(s[key]) >= counter(p[key]));
-    }
-    assert(counter(s.retransmittedBytes) <= counter(s.sentBytes));
-    assert(
-      integer(s.droppedPackets) && integer(s.senderBufferMilliseconds) && finite(s.rttMilliseconds),
-    );
-    if (p) {
-      assert(s.droppedPackets >= p.droppedPackets);
+  let transportSamples = enclosed(
+    e.transport,
+    w,
+    row.evaluatedAt,
+    (s, p) => {
+      assert(typeof s.generation === 'string' && /^[1-9][0-9]*$/.test(s.generation));
+      if (p) assert.equal(s.generation, p.generation);
+      if (!local) assert.equal(s.generation, row.receipt.generation);
+      for (const key of ['elapsedMilliseconds', 'sentBytes', 'retransmittedBytes']) {
+        counter(s[key]);
+        if (p) assert(counter(s[key]) >= counter(p[key]));
+      }
+      assert(counter(s.retransmittedBytes) <= counter(s.sentBytes));
       assert(
-        counter(s.retransmittedBytes) - counter(p.retransmittedBytes) <=
-          counter(s.sentBytes) - counter(p.sentBytes),
+        integer(s.droppedPackets) &&
+          integer(s.senderBufferMilliseconds) &&
+          finite(s.rttMilliseconds),
       );
-    }
-  });
+      if (p) {
+        assert(s.droppedPackets >= p.droppedPackets);
+        assert(
+          counter(s.retransmittedBytes) - counter(p.retransmittedBytes) <=
+            counter(s.sentBytes) - counter(p.sentBytes),
+        );
+      }
+    },
+    local ? row.acknowledgedAt : undefined,
+  );
+  if (local && transportSamples?.[0].generation !== row.receipt.generation) transportSamples = null;
   let transport = 'unknown';
   if (transportSamples) {
     const first = transportSamples[0],
@@ -115,6 +131,7 @@ export function replayNativePressure(row, snapshot, source) {
   }
   let worker = 'unknown';
   const p = e.processing;
+  if (local) assert.equal(p, null);
   if (p) {
     // Later completion may improve the saved history; never retroactively improve
     // the pending evidence that was actually supplied to this decision.
@@ -176,13 +193,70 @@ export function replayNativePressure(row, snapshot, source) {
             : 'unknown';
     }
   }
-  for (const [k, value] of Object.entries({ thermal, transport, worker }))
-    assert.equal(w[k], value, `${k} disagrees with raw evidence`);
-  if (queue === null) assert.equal(w.queue, null);
+  return { thermal, transport, worker, queue };
+}
+function assertPressure(window, values) {
+  for (const k of ['thermal', 'transport', 'worker'])
+    assert.equal(window[k], values[k], `${k} disagrees with raw evidence`);
+  if (values.queue === null) assert.equal(window.queue, null);
   else
     assert(
-      finite(w.queue) && Math.abs(w.queue - queue) < 1e-9,
+      finite(window.queue) && Math.abs(window.queue - values.queue) < 1e-9,
       'Queue pressure disagrees with raw integration',
     );
-  return { thermal, transport, worker, queue };
+  return values;
+}
+export function replayNativePressure(row, snapshot, source) {
+  return assertPressure(row.window, classifyNativePressure(row, snapshot, source));
+}
+/** Reconstruct bounded local endpoint selection; absence never proves delivery. */
+export function replayNativeLocalPressure(row, snapshot, { after } = {}) {
+  const w = row.window,
+    e = row.evidence;
+  assert.equal(row.source, undefined);
+  for (const k of ['captured', 'encoded', 'received', 'observedAt', 'expected', 'lost', 'capacity'])
+    assert.equal(w[k], null);
+  assert.equal(w.connectivity, 'unknown');
+  assert.equal(w.worker, 'unknown');
+  assert.equal(w.end - w.start, 5);
+  assert.equal(e?.local?.isPublishing, true);
+  assert.equal(e.local.ingressClosed, false);
+  assert.equal(e.local.clockGeneration, row.receipt.generation);
+  assert.deepEqual(e.local.receipt, row.receipt);
+  assert.deepEqual(e.queue?.scope, snapshot.scope);
+  assert(finite(row.acknowledgedAt) && row.acknowledgedAt >= row.receipt.acceptedAt);
+  const endpoints = [
+    ['thermal', e.thermal?.samples?.at(-1)?.sampledAt],
+    ['transport', e.transport?.samples?.at(-1)?.sampledAt],
+    ['queue', e.queue?.coveredThrough],
+  ];
+  const candidates = new Map();
+  for (const [metric, end] of endpoints) {
+    if (
+      !finite(end) ||
+      end > row.evaluatedAt ||
+      row.evaluatedAt - end > 2 ||
+      end - 5 < row.acknowledgedAt ||
+      (after !== undefined && end - 5 < after)
+    )
+      continue;
+    const candidate = { ...row, window: { ...w, start: end - 5, end } };
+    const values = classifyNativePressure(candidate, snapshot, undefined, { local: true });
+    if (values[metric] !== null && values[metric] !== 'unknown') candidates.set(end, values);
+  }
+  const selected = [...candidates]
+    .sort(([a], [b]) => b - a)
+    .find(
+      ([, p]) =>
+        p.thermal === 'elevated' ||
+        p.transport === 'elevated' ||
+        (p.queue !== null && p.queue >= 0.75),
+    );
+  assert(selected, 'Local window lacks independently qualified unhealthy pressure');
+  assert.equal(
+    w.end,
+    selected[0],
+    'Local window did not select the newest eligible unhealthy endpoint',
+  );
+  return assertPressure(w, selected[1]);
 }

@@ -130,6 +130,27 @@ actor PublishingQualitySession {
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
     }
+    /// Uses the same ordinal/watermark as matched receiver windows. A valid nil
+    /// probe consumes no evidence and preserves the current pending decision.
+    func evaluateLocalPressure(diagnostics: PublishingQualityTelemetry.Diagnostics,
+                               transportLimits: PublishingQualityTelemetry.TransportLimits?) throws -> QualityController.Decision? {
+        try admit()
+        guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        defer { self.policy = policy }
+        do {
+            let now = try time()
+            guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
+            guard let window = try PublishingQualityTelemetry.localPressureWindow(
+                applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
+                    settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+                diagnostics: diagnostics, transportLimits: transportLimits, sequence: lastPolicySequence + 1,
+                after: lastWindow?.end, at: now) else { return nil }
+            let decision = try policy.evaluate(window, at: now)
+            pending = decision.recommendation
+            lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
+            return decision
+        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+    }
     func checkTrialDeadline() throws -> QualityController.Recommendation? {
         try admit()
         guard var policy else { throw Failure.notReady }

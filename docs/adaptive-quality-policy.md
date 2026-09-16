@@ -276,12 +276,20 @@ still do not qualify production capacity, physical devices or remote workers.
 
 ## Local pressure without receiver evidence
 
-The [local-pressure fallback plan](superpowers/plans/2026-09-16-local-pressure-fallback.md)
-adds a separately tested, currently inactive app adapter for congestion when matched
-receiver evidence is unavailable. It permits only known local pressure to reach
-Core; receiver delivery, source loss and capacity remain unknown. Each candidate
-uses a complete fresh five-second interval after acknowledgment and prior evaluated
-coverage, with exact queue integration and enclosing thermal/transport samples.
-Nine new regressions pass in the 171-test FilmModel suite. Actor/driver scheduling,
-independent raw-evidence replay and actual impaired native qualification remain
-required before the fallback can operate.
+The [local-pressure fallback](superpowers/plans/2026-09-16-local-pressure-fallback.md)
+now connects the app adapter to the opt-in simulator control loop. Fresh matched
+receiver evidence takes priority. Missing, duplicate, transitioning, pending or
+rejected receiver intervals allow independently known local congestion to recommend
+a decrease or active-trial rollback. Delivery, source loss and capacity remain
+unknown. Complete five-second pressure windows use exact queue integration and
+post-acknowledgment thermal/transport samples. Source and local decisions share one
+policy sequence and nonoverlapping timeline, including at minimum bitrate.
+
+The independent verifier reconstructs bounded endpoint selection from raw local
+histories and native ownership evidence, rejects fabricated receiver data, and
+checks decreases against the policy's 20% step and minimum rate. All 178 FilmModel
+and 869 tooling tests pass. A fresh confirmation-required structured-motion native
+run (`native-app-XDjE3w`) preserves all 3607 local and 3209 acquired live frames at
+30 fps with zero qualified loss and confirms the 6.6 Mbps trial. It produces no
+local-pressure event on the healthy connection; actual impaired-network adaptation
+and recovery still require qualification. Production remains disabled.

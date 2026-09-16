@@ -597,3 +597,12 @@ pressure replay. [Bounded probation timing](superpowers/plans/2026-09-16-native-
 also has actual confirmed native trials on the barcode and structured-motion sources,
 with complete recording/live-video checks. Network impairment, longer adaptive
 soaks, production activation and physical/remote-host thresholds remain open.
+
+
+The [local-pressure fallback](superpowers/plans/2026-09-16-local-pressure-fallback.md)
+now supplies independent downward-only evidence to the simulator control loop when
+matched receiver evidence is unavailable. It exports raw bounded local histories
+and native ownership, with delivery/frame/loss/capacity fields explicitly unknown.
+Source and local intervals share one nonoverlapping policy timeline. The fresh
+`native-app-XDjE3w` motion run confirms the healthy integrated path at 30 fps with
+zero qualified local/live frame loss. Actual impairment and recovery remain open.

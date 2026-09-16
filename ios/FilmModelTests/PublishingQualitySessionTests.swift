@@ -119,7 +119,11 @@ final class PublishingQualitySessionTests: XCTestCase {
         await fails(.busy) { try await owner.apply(next) }
         await fails(.busy) { _ = try await owner.evaluate(self.window(105)) }
         await fails(.busy) { _ = try await owner.checkTrialDeadline() }
+        let missing = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: nil, receipt: nil, ingress: nil,
+            transport: PublishingTransportStatisticsTracker().snapshot, thermal: PublishingThermalTracker().snapshot)
+        await fails(.busy) { _ = try await owner.evaluateLocalPressure(diagnostics: missing, transportLimits: nil) }
         await owner.stop()
+        await fails(.closed) { _ = try await owner.evaluateLocalPressure(diagnostics: missing, transportLimits: nil) }
         await fails(.closed) { try await task.value }
         let state = await owner.snapshot
         XCTAssertEqual(state.revision, 0); XCTAssertTrue(state.isClosed)

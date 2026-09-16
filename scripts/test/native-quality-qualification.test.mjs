@@ -413,3 +413,250 @@ test('requires a confirmed trial when the fixture requests confirmation', () => 
     1,
   );
 });
+
+function localFixture({ duringTrial = false } = {}) {
+  const f = duringTrial ? fixture() : probation(fixture());
+  f.quality.events.pop();
+  const previous = f.quality.events.at(-1);
+  const receipt = previous.receipt,
+    revision = previous.revision;
+  const start = duringTrial ? 32 : 43,
+    end = start + 5;
+  const row = {
+    kind: 'localPressure',
+    at: end + 0.25,
+    evaluatedAt: end + 0.25,
+    revision,
+    receipt,
+    acknowledgedAt: 31.5,
+    reasons: ['transportPressure', 'missingReceiver'],
+    window: {
+      sequence: duringTrial ? '7' : '9',
+      revision,
+      start,
+      end,
+      captured: null,
+      encoded: null,
+      received: null,
+      observedAt: null,
+      expected: null,
+      lost: null,
+      queue: 0,
+      capacity: null,
+      thermal: 'nominal',
+      worker: 'unknown',
+      transport: 'elevated',
+      connectivity: 'unknown',
+    },
+    evidence: {
+      local: {
+        isPublishing: true,
+        clockGeneration: receipt.generation,
+        receipt,
+        ingressClosed: false,
+      },
+      queue: {
+        scope: f.snapshot.scope,
+        isClosed: false,
+        isQuarantined: false,
+        coveredThrough: end,
+        states: [{ at: start, itemFraction: 0, byteFraction: 0, phase: 'admitting' }],
+      },
+      thermal: { isClosed: false, isQuarantined: false, samples: [] },
+      transport: { isClosed: false, isQuarantined: false, samples: [] },
+      processing: null,
+    },
+  };
+  for (let t = start; t <= end; t += 0.5) {
+    row.evidence.thermal.samples.push({ sampledAt: t, state: 0 });
+    row.evidence.transport.samples.push({
+      sampledAt: t,
+      generation: receipt.generation,
+      elapsedMilliseconds: String(t * 1000),
+      sentBytes: String(t * 100000),
+      retransmittedBytes: '0',
+      droppedPackets: 0,
+      rttMilliseconds: 2,
+      senderBufferMilliseconds: 501,
+    });
+  }
+  const rate = duringTrial ? 6000000 : 5280000;
+  const next = {
+    ...receipt,
+    bitRate: rate,
+    acceptedAt: end + 0.3,
+    configurationID: '66666666-6666-6666-6666-666666666666',
+  };
+  f.quality.events.push(
+    row,
+    {
+      kind: 'applied',
+      at: end + 0.4,
+      acknowledgedAt: end + 0.4,
+      revision: String(Number(revision) + 1),
+      receipt: next,
+      action: {
+        kind: duringTrial ? 'rollback' : 'decrease',
+        fromRevision: revision,
+        bitRate: rate,
+        validUntil: end + 2,
+      },
+    },
+    {
+      kind: 'stopped',
+      at: end + 0.5,
+      revision: String(Number(revision) + 1),
+      receipt: next,
+      closed: true,
+    },
+  );
+  return f;
+}
+test('qualifies raw local pressure decrease with unknown receiver delivery', () => {
+  const result = qualifyNativeQuality(localFixture());
+  assert.equal(result.localEvaluated, 1);
+  assert.equal(result.finalBitRate, 5280000);
+});
+test('local pressure during probation permits baseline rollback only', () => {
+  assert.equal(qualifyNativeQuality(localFixture({ duringTrial: true })).rollbacks, 1);
+});
+for (const [name, corrupt] of Object.entries({
+  receiver: (r) => (r.window.received = 150),
+  frames: (r) => (r.window.captured = 150),
+  capacity: (r) => (r.window.capacity = 100000000),
+  connectivity: (r) => (r.window.connectivity = 'connected'),
+  worker: (r) => (r.window.worker = 'nominal'),
+  source: (r) => (r.source = {}),
+  owner: (r) => (r.evidence.local.isPublishing = false),
+  generation: (r) => (r.evidence.local.clockGeneration = '2'),
+  receipt: (r) => (r.evidence.local.receipt = { ...r.receipt, acceptedAt: 31.3 }),
+  scope: (r) => (r.evidence.queue.scope = { publishingAttemptID: 'other' }),
+  closed: (r) => (r.evidence.local.ingressClosed = true),
+  invented: (r) => r.evidence.transport.samples.forEach((s) => (s.senderBufferMilliseconds = 500)),
+  preack: (r) => {
+    r.evidence.transport.samples[0].sampledAt = 31;
+    r.evidence.transport.samples.splice(1, 2);
+  },
+  short: (r) => (r.window.start += 0.1),
+  overlap: (r) => {
+    r.window.start = 40;
+    r.window.end = 45;
+  },
+  sequence: (r) => (r.window.sequence = '8'),
+  ordinal: (r) => (r.window.sequence = '9007199254740993'),
+  stale: (r) => {
+    r.evaluatedAt = r.window.end + 2.01;
+    r.at = r.evaluatedAt;
+  },
+}))
+  test(`rejects local-pressure ${name} corruption`, () => {
+    const f = localFixture();
+    corrupt(f.quality.events.at(-3));
+    assert.throws(() => qualifyNativeQuality(f));
+  });
+test('rejects local-evidence growth and wrong downward step or expiry', () => {
+  for (const change of ['trial', 'step', 'expiry', 'decreaseDuringTrial']) {
+    const f = localFixture({ duringTrial: change === 'decreaseDuringTrial' });
+    const row = f.quality.events.at(-2);
+    if (change === 'trial') {
+      row.action.kind = 'trial';
+      row.action.bitRate = row.receipt.bitRate = 7000000;
+    }
+    if (change === 'step') row.action.bitRate = row.receipt.bitRate = 5200000;
+    if (change === 'expiry') row.action.validUntil++;
+    if (change === 'decreaseDuringTrial') row.action.kind = 'decrease';
+    assert.throws(() => qualifyNativeQuality(f));
+  }
+});
+test('a local window cannot confirm probation even if its labels claim confirmation', () => {
+  const f = localFixture({ duringTrial: true });
+  f.quality.events.at(-3).reasons.push('trialConfirmed');
+  assert.throws(() => qualifyNativeQuality(f));
+});
+test('local transport pressure cannot borrow a pre-ack enclosing sample', () => {
+  const f = localFixture({ duringTrial: true });
+  f.quality.events.at(-3).evidence.transport.samples[0].sampledAt = 31.4;
+  assert.throws(() => qualifyNativeQuality(f));
+});
+test('local pressure can be independently established by thermal or queue evidence', () => {
+  for (const cause of ['thermal', 'queue']) {
+    const f = localFixture(),
+      r = f.quality.events.at(-3);
+    r.evidence.transport.samples = [];
+    r.window.transport = 'unknown';
+    if (cause === 'thermal') {
+      r.evidence.thermal.samples[3].state = 2;
+      r.window.thermal = 'elevated';
+    } else {
+      r.evidence.queue.states[0].itemFraction = 0.75;
+      r.window.queue = 0.75;
+      r.evidence.thermal.samples = [];
+      r.window.thermal = 'unknown';
+    }
+    assert.equal(qualifyNativeQuality(f).localEvaluated, 1);
+  }
+});
+test('unhealthy local evaluation without a write still prevents overlapping source reuse', () => {
+  const f = localFixture(),
+    local = f.quality.events.at(-3);
+  f.quality.events.splice(-2, 2);
+  const row = structuredClone(f.quality.events[9]); // Last confirmed source interval37..42.
+  row.reasons = [];
+  row.window.sequence = '10';
+  row.window.start += 7;
+  row.window.end += 7;
+  row.window.observedAt += 7;
+  row.at += 7;
+  row.source.start += 7;
+  row.source.end += 7;
+  row.source.sequence = '10';
+  const source = {
+    ...structuredClone(f.snapshot.sourceIntervals.at(-1)),
+    ...row.source,
+    captureBoundaryStartTime: row.window.start,
+    captureBoundaryEndTime: row.window.end,
+  };
+  f.snapshot.sourceIntervals.push(source);
+  f.sourceIntervalQualification.intervals.push({
+    sequence: 10,
+    capturedFrames: 150,
+    encodedFrames: 150,
+    decodedFrames: 150,
+  });
+  f.quality.events.push(row, {
+    kind: 'stopped',
+    at: row.at + 0.1,
+    revision: '1',
+    receipt: local.receipt,
+    closed: true,
+  });
+  evidence(f);
+  assert.throws(() => qualifyNativeQuality(f), /overlap/);
+});
+test('local endpoint reconstruction permits older thermal pressure but prefers newer unhealthy transport', () => {
+  for (const newerTransport of [false, true]) {
+    const f = localFixture(),
+      r = f.quality.events.at(-3);
+    r.evidence.thermal.samples.forEach((s) => {
+      s.sampledAt -= 0.1;
+      s.state = 2;
+    });
+    r.evidence.queue.states[0].at = 42;
+    if (newerTransport) r.window.thermal = 'unknown';
+    else {
+      r.evidence.transport.samples.forEach((s) => (s.senderBufferMilliseconds = 500));
+      r.window.start = 42.9;
+      r.window.end = 47.9;
+      r.window.thermal = 'elevated';
+      r.window.transport = 'unknown';
+      f.quality.events.at(-2).action.validUntil = 49.9;
+    }
+    assert.equal(qualifyNativeQuality(f).localEvaluated, 1);
+  }
+});
+test('one recorded local rejection makes later apparent confirmation invalid', () => {
+  const f = probation(fixture(), { rejected: true });
+  const rejected = f.quality.events.find((r) => r.kind === 'rejected');
+  rejected.reason = 'local-ownership';
+  assert.throws(() => qualifyNativeQuality(f));
+});

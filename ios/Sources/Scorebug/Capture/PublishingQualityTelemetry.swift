@@ -97,7 +97,7 @@ enum PublishingQualityTelemetry {
             thermalPressure: thermal, workerPressure: workerPressure(source, limits: workerLimits), transportPressure: transport)
     }
     /// Independent local pressure may justify a reduction, never receiver health.
-    /// Initially unused by the runtime driver pending scheduling/trace qualification.
+    /// The owner supplies the shared watermark for source and local decisions.
     static func localPressureWindow(applied: Applied, diagnostics: Diagnostics,
                                     transportLimits: TransportLimits?, sequence: UInt64,
                                     after previousEnd: Double?, at now: Double) throws -> QualityController.Window? {

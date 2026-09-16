@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { replayNativePressure } from './native-quality-pressure.mjs';
+import { replayNativePressure, replayNativeLocalPressure } from './native-quality-pressure.mjs';
 const uuid = (value) =>
   typeof value === 'string' &&
   /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value) &&
@@ -38,7 +38,16 @@ export function qualifyNativeQuality({
     ack = boot.acknowledgedAt,
     lastTime = boot.at,
     lastPolicy = 0;
-  let recoveryStart, lastEnd, lastScope, trial, probationStart, probationEnd, adviceEnd;
+  let recoveryStart,
+    lastEnd,
+    lastScope,
+    trial,
+    probationStart,
+    probationEnd,
+    adviceEnd,
+    lastWindowEnd;
+  let decreaseAllowed = false,
+    localEvaluated = 0;
   let cooldownUntil = 0,
     lastEvaluatedAt = 0;
   let evaluated = 0,
@@ -49,57 +58,85 @@ export function qualifyNativeQuality({
     assert(finite(row.at) && row.at >= lastTime);
     lastTime = row.at;
     assert.notEqual(row.kind, 'failed', 'Quality loop retired publishing');
-    if (row.kind === 'evaluated') {
+    if (row.kind === 'evaluated' || row.kind === 'localPressure') {
       assert.equal(row.revision, String(revision));
       assert.deepEqual(row.receipt, current);
       const s = row.source,
-        w = row.window;
-      assert.equal(s.attemptID.toLowerCase(), snapshot.scope.publishingAttemptID.toLowerCase());
-      const source = snapshot.sourceIntervals.find(
-        (x) =>
-          x.sequence === s.sequence &&
-          x.workerEpoch === s.workerEpoch &&
-          x.workerAttempt === s.workerAttempt,
-      );
-      const proof = sourceIntervalQualification.intervals.find(
-        (x) => x.sequence === Number(s.sequence),
-      );
-      assert(source && proof, 'Missing independently qualified source interval');
-      assert.equal(source.publishingGeneration, current.generation);
-      assert.deepEqual(source.encodingConfiguration, {
-        id: current.configurationID,
-        encoderSessionID: current.encoderSessionID,
-        bitRate: current.bitRate,
-      });
-      assert.equal(w.start, source.captureBoundaryStartTime);
-      assert.equal(w.end, source.captureBoundaryEndTime);
-      assert.equal(s.start, w.start);
-      assert.equal(s.end, w.end);
-      assert.equal(w.captured, proof.capturedFrames);
-      assert.equal(w.encoded, proof.encodedFrames);
-      assert.equal(w.received, proof.decodedFrames);
-      assert.equal(w.expected, w.captured);
-      assert.equal(w.lost, w.captured - w.received);
+        w = row.window,
+        local = row.kind === 'localPressure';
+      let source;
+      if (!local) {
+        assert.equal(s.attemptID.toLowerCase(), snapshot.scope.publishingAttemptID.toLowerCase());
+        source = snapshot.sourceIntervals.find(
+          (x) =>
+            x.sequence === s.sequence &&
+            x.workerEpoch === s.workerEpoch &&
+            x.workerAttempt === s.workerAttempt,
+        );
+        const proof = sourceIntervalQualification.intervals.find(
+          (x) => x.sequence === Number(s.sequence),
+        );
+        assert(source && proof, 'Missing independently qualified source interval');
+        assert.equal(source.publishingGeneration, current.generation);
+        assert.deepEqual(source.encodingConfiguration, {
+          id: current.configurationID,
+          encoderSessionID: current.encoderSessionID,
+          bitRate: current.bitRate,
+        });
+        assert.equal(w.start, source.captureBoundaryStartTime);
+        assert.equal(w.end, source.captureBoundaryEndTime);
+        assert.equal(s.start, w.start);
+        assert.equal(s.end, w.end);
+        assert.equal(w.captured, proof.capturedFrames);
+        assert.equal(w.encoded, proof.encodedFrames);
+        assert.equal(w.received, proof.decodedFrames);
+        assert.equal(w.expected, w.captured);
+        assert.equal(w.lost, w.captured - w.received);
+        if (w.connectivity !== undefined) assert.equal(w.connectivity, 'connected');
+      }
       assert.equal(w.revision, String(revision));
-      assert(Number(w.sequence) > lastPolicy);
+      assert(typeof w.sequence === 'string' && /^[1-9][0-9]*$/.test(w.sequence));
+      assert(Number.isSafeInteger(Number(w.sequence)) && Number(w.sequence) > lastPolicy);
       lastPolicy = Number(w.sequence);
       assert(w.start >= ack && w.end <= row.evaluatedAt && row.evaluatedAt - w.end <= 2);
+      assert(lastWindowEnd === undefined || w.start >= lastWindowEnd, 'Policy windows overlap');
       const duration = w.end - w.start;
       assert(duration >= 1 && duration <= 5.25);
-      assert(
-        finite(w.observedAt) &&
-          w.observedAt >= w.end &&
-          w.observedAt <= row.evaluatedAt &&
-          row.evaluatedAt - w.observedAt <= 2,
-      );
+      if (!local)
+        assert(
+          finite(w.observedAt) &&
+            w.observedAt >= w.end &&
+            w.observedAt <= row.evaluatedAt &&
+            row.evaluatedAt - w.observedAt <= 2,
+        );
       assert.equal(w.capacity, null);
-      assert(finite(row.evaluatedAt) && row.evaluatedAt <= row.at && row.evaluatedAt >= w.end);
-      replayNativePressure(row, snapshot, source);
-      assert.equal(s.workerID, source.workerId);
-      assert.equal(s.readerID, source.publication.readerId);
-      assert.equal(s.processingScopeID, row.evidence.processing?.scopeID ?? null);
-      const scope = `${s.workerID}/${s.workerEpoch}/${s.workerAttempt}/${s.readerID}/${s.processingScopeID}`;
+      assert(
+        finite(row.evaluatedAt) &&
+          row.evaluatedAt <= row.at &&
+          row.evaluatedAt >= w.end &&
+          row.evaluatedAt >= lastEvaluatedAt,
+      );
+      if (local) {
+        assert.equal(row.acknowledgedAt, ack);
+        replayNativeLocalPressure(row, snapshot, { after: lastWindowEnd });
+      } else {
+        replayNativePressure(row, snapshot, source);
+        assert.equal(s.workerID, source.workerId);
+        assert.equal(s.readerID, source.publication.readerId);
+        assert.equal(s.processingScopeID, row.evidence.processing?.scopeID ?? null);
+      }
+      const scope = local
+        ? undefined
+        : `${s.workerID}/${s.workerEpoch}/${s.workerAttempt}/${s.readerID}/${s.processingScopeID}`;
+      const unhealthy =
+        ['thermal', 'worker', 'transport'].some((k) => w[k] === 'elevated') ||
+        (finite(w.queue) && w.queue >= 0.75) ||
+        (!local &&
+          ([w.captured, w.encoded, w.received].some((n) => n / duration < 24) ||
+            w.lost / w.expected > 0.01));
+      decreaseAllowed = !trial && unhealthy;
       const strong =
+        !local &&
         [w.captured, w.encoded, w.received].every((n) => n / duration >= 29.7) &&
         w.lost / w.expected <= 0.01 &&
         finite(w.queue) &&
@@ -142,9 +179,11 @@ export function qualifyNativeQuality({
         confirmed++;
         recoveryStart = undefined;
       }
+      lastWindowEnd = w.end;
       lastEnd = w.end;
       lastScope = scope;
-      evaluated++;
+      if (local) localEvaluated++;
+      else evaluated++;
     } else if (row.kind === 'applied') {
       const action = row.action;
       receipt(row.receipt);
@@ -189,6 +228,13 @@ export function qualifyNativeQuality({
         rollbacks++;
       } else {
         assert.equal(action.kind, 'decrease');
+        assert(
+          decreaseAllowed && !trial,
+          'Decrease lacks current unhealthy evidence outside probation',
+        );
+        assert.equal(action.validUntil, adviceEnd + 2);
+        assert(row.receipt.acceptedAt >= lastEvaluatedAt);
+        assert.equal(action.bitRate, Math.max(1000000, Math.floor(current.bitRate * 0.8)));
         assert(action.bitRate < current.bitRate);
       }
       current = row.receipt;
@@ -196,8 +242,12 @@ export function qualifyNativeQuality({
       ack = row.acknowledgedAt;
       recoveryStart = undefined;
       lastEnd = undefined;
+      adviceEnd = undefined;
+      decreaseAllowed = false;
     } else if (row.kind === 'rejected') {
       recoveryStart = undefined;
+      adviceEnd = undefined;
+      decreaseAllowed = false;
       if (trial) trial.rollbackRequired = true;
     } else assert(['transition', 'skipped', 'stopped'].includes(row.kind));
   }
@@ -210,6 +260,7 @@ export function qualifyNativeQuality({
   if (requireConfirmation) assert(confirmed >= 1, 'Need an actual confirmed native trial');
   return {
     evaluated,
+    ...(localEvaluated > 0 ? { localEvaluated } : {}),
     trials,
     rollbacks,
     confirmed,

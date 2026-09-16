@@ -28,7 +28,8 @@ final class PublishingQualityTelemetryTests: XCTestCase {
                          thermalState: PublishingThermalState = .nominal,
                          retransmitted: UInt64 = 0, drops: Int32 = 0, buffer: Int32 = 0,
                          rtt: Double = 10, frameOffset: Int = 0, workerEpoch: String? = nil,
-                         windowSequence: Int64 = 2, encodingConfiguration: VideoEncodingConfiguration? = nil) throws -> Fixture {
+                         windowSequence: Int64 = 2, encodingConfiguration: VideoEncodingConfiguration? = nil,
+                         receivedAt: ContinuousClock.Instant? = nil) throws -> Fixture {
         let config = encodingConfiguration ?? self.config
         var history = try VideoSourceHistory(scope: scope, capacity: 1024)
         for i in 0...330 {
@@ -68,9 +69,9 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         }
         var tracker = WorkerSourceIntervalTracker()
         let mapping = PublishingClockObservation(scope: scope, transportClock: clock, isClosed: false)
-        _ = tracker.observe(response: response(windowSequence - 1), history: history.snapshot, clock: mapping, receivedAt: now, requestDuration: .milliseconds(50))
+        _ = tracker.observe(response: response(windowSequence - 1), history: history.snapshot, clock: mapping, receivedAt: receivedAt ?? now, requestDuration: .milliseconds(50))
         let source = try XCTUnwrap(tracker.observe(response: response(windowSequence), history: history.snapshot, clock: mapping,
-            receivedAt: now, requestDuration: .milliseconds(50)))
+            receivedAt: receivedAt ?? now, requestDuration: .milliseconds(50)))
         let receipt = PublishingBitRateChange(publishingGeneration: 7, configuration: config, acceptedAt: 100,
             lastSubmittedSourcePTS: .zero)!
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
@@ -459,6 +460,177 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         try .init(operations: .init(setBitRate: { rate, _ in native.write(rate) }, stop: { native.stop() }),
             profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)],
             attemptID: attempt, initial: f.applied.settings, uptime: { native.now })
+    }
+    func testOwnerLocalWindowSharesOrdinalAndNilProbePreservesPendingAdvice() async throws {
+        let f = try fixture(buffer: 501), native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+        try await owner.bootstrap(); native.setNow(f.now)
+        let result = try await owner.evaluateLocalPressure(diagnostics: f.diagnostics, transportLimits: transportLimits)
+        let advice = try XCTUnwrap(result?.recommendation)
+        XCTAssertEqual(advice.kind, .decrease)
+        let first = await owner.snapshot
+        XCTAssertEqual(first.lastWindow?.sequence, 1); XCTAssertEqual(first.lastWindow?.end, 111)
+        let repeated = try await owner.evaluateLocalPressure(diagnostics: f.diagnostics, transportLimits: transportLimits)
+        XCTAssertNil(repeated)
+        let unchanged = await owner.snapshot
+        XCTAssertEqual(unchanged.lastWindow?.sequence, 1)
+        try await owner.apply(advice)
+        let applied = await owner.snapshot
+        XCTAssertEqual(applied.revision, 1); XCTAssertEqual(applied.applied?.videoBitrate, 1_600_000)
+        var next = try fixture(frameOffset: 210, windowSequence: 3, encodingConfiguration: XCTUnwrap(applied.receipt).configuration)
+        next.diagnostics.receipt = applied.receipt; native.setNow(next.now)
+        _ = try await owner.evaluate(source: next.source, diagnostics: next.diagnostics,
+            workerLimits: workerLimits, transportLimits: transportLimits, instant: now)
+        let resumed = await owner.snapshot
+        XCTAssertEqual(resumed.lastWindow?.sequence, 2); XCTAssertEqual(resumed.lastWindow?.capturedFreshFrames, 150)
+        await owner.stop()
+    }
+    func testOwnerLocalRejectionRevokesAdviceAndMinimumPressureStillAdvances() async throws {
+        for rate in [1_000_000, 2_000_000] {
+            let config = VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: rate)!
+            var f = try fixture(buffer: 501, encodingConfiguration: config)
+            let native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+            try await owner.bootstrap(); native.setNow(f.now)
+            let decision = try await owner.evaluateLocalPressure(diagnostics: f.diagnostics, transportLimits: transportLimits)
+            let state = await owner.snapshot
+            XCTAssertEqual(state.lastWindow?.sequence, 1)
+            if rate == 1_000_000 { XCTAssertNil(decision?.recommendation); XCTAssertEqual(native.calls, 1) }
+            else {
+                let pending = try XCTUnwrap(decision?.recommendation)
+                f.diagnostics.receipt = nil
+                do { _ = try await owner.evaluateLocalPressure(diagnostics: f.diagnostics, transportLimits: transportLimits); XCTFail("Missing receipt") } catch {}
+                do { try await owner.apply(pending); XCTFail("Invalidated advice") } catch {}
+                XCTAssertEqual(native.calls, 1)
+            }
+            await owner.stop()
+        }
+    }
+    func testOwnerLocalPressureAndRejectionMakeTrialRollbackSticky() async throws {
+        for rejected in [false, true] {
+            let f = try fixture(), native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+            try await owner.bootstrap()
+            var advice: QualityController.Recommendation?
+            for i in 0..<6 {
+                let start = 101 + Double(i) * 5; native.setNow(start + 5)
+                advice = try await owner.evaluate(.init(attemptID: attempt, sequence: UInt64(i + 1), appliedRevision: 0,
+                    start: start, end: start + 5, capturedFreshFrames: 150, encodedFreshFrames: 150,
+                    receiver: .init(freshFrames: 150, observedAt: start + 5), sourceLoss: .init(expectedFrames: 150, lostFrames: 0),
+                    meanQueueOccupancy: 0, usableVideoCapacity: nil, connectivity: .connected,
+                    thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal)).recommendation
+            }
+            try await owner.apply(XCTUnwrap(advice))
+            let state = await owner.snapshot
+            var local = try fixture(buffer: 501, frameOffset: 26 * 30, encodingConfiguration: XCTUnwrap(state.receipt).configuration)
+            local.diagnostics.receipt = rejected ? nil : state.receipt; native.setNow(local.now)
+            if rejected {
+                do { _ = try await owner.evaluateLocalPressure(diagnostics: local.diagnostics, transportLimits: transportLimits); XCTFail("Missing receipt") } catch {}
+            } else {
+                let bad = try await owner.evaluateLocalPressure(diagnostics: local.diagnostics, transportLimits: transportLimits)
+                XCTAssertEqual(bad?.recommendation?.kind, .rollback)
+            }
+            let rollback = try await owner.checkTrialDeadline()
+            XCTAssertEqual(rollback?.kind, .rollback)
+            try await owner.apply(XCTUnwrap(rollback))
+            let restored = await owner.snapshot
+            XCTAssertEqual(restored.applied?.videoBitrate, 2_000_000); XCTAssertEqual(restored.revision, 2)
+            await owner.stop()
+        }
+    }
+    @MainActor func testDriverLocalFallbackForMissingTransitionPendingAndRejectedSource() async throws {
+        for kind in ["missing", "transition", "pending", "rejected"] {
+            var f = try fixture(configurations: kind == "transition" ? [160: nil] : [:], buffer: 501,
+                receivedAt: kind == "rejected" ? .now - .seconds(3) : .now)
+            if kind == "pending", let p = f.source.processing {
+                f.source.processing = .init(scopeID: p.scopeID, encoder: p.encoder, previousSequence: p.previousSequence,
+                    sequence: p.sequence, firstPTS: p.firstPTS,
+                    interval: .init(sourceStartExclusive: p.interval.sourceStartExclusive, sourceEndInclusive: p.interval.sourceEndInclusive,
+                        decodedFrames: 150, submittedFrames: 150, completedFrames: 149, pendingFrames: 1, omittedBeforeEncoderFrames: 0,
+                        filterDuration: p.interval.filterDuration, processingDuration: nil))
+            }
+            let native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+            var exported: Data?
+            let driver = PublishingQualityDriver(owner: owner, workerLimits: workerLimits, transportLimits: transportLimits,
+                uptime: { native.now }, export: { exported = $0 })
+            await driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)?.value
+            native.setNow(f.now)
+            await driver.tick(encoderReady: true, source: kind == "missing" ? nil : f.source, diagnostics: f.diagnostics)?.value
+            let state = await owner.snapshot
+            XCTAssertEqual(state.revision, 1, kind); XCTAssertEqual(state.applied?.videoBitrate, 1_600_000, kind)
+            await driver.stop()
+            let trace = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+            let events = try XCTUnwrap(trace["events"] as? [[String: Any]])
+            let local = try XCTUnwrap(events.first { $0["kind"] as? String == "localPressure" })
+            XCTAssertNil(local["source"])
+            let window = try XCTUnwrap(local["window"] as? [String: Any])
+            XCTAssertTrue(window["received"] is NSNull); XCTAssertEqual(window["connectivity"] as? String, "unknown")
+            XCTAssertNotNil(local["evidence"])
+        }
+    }
+    @MainActor func testDriverSourcePriorityDuplicateFallbackAndOverlapSkipping() async throws {
+        let f = try fixture(receivedAt: .now), native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: workerLimits, transportLimits: transportLimits, uptime: { native.now })
+        await driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)?.value
+        native.setNow(f.now)
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: f.diagnostics)?.value
+        var state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.capturedFreshFrames, 150); XCTAssertEqual(native.calls, 1)
+        var pressured = try fixture(buffer: 501, frameOffset: 150, windowSequence: 3, receivedAt: .now)
+        native.setNow(pressured.now)
+        // Duplicate source cannot conceal newer local pressure.
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: pressured.diagnostics)?.value
+        state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 2); XCTAssertNil(state.lastWindow?.capturedFreshFrames)
+        XCTAssertEqual(state.revision, 1); XCTAssertEqual(native.calls, 2)
+        pressured.diagnostics.receipt = state.receipt
+        await driver.tick(encoderReady: true, source: pressured.source, diagnostics: pressured.diagnostics)?.value
+        state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 2); XCTAssertEqual(native.calls, 2)
+        var resumed = try fixture(frameOffset: 360, windowSequence: 4, encodingConfiguration: XCTUnwrap(state.receipt).configuration, receivedAt: .now)
+        resumed.diagnostics.receipt = state.receipt; native.setNow(resumed.now)
+        await driver.tick(encoderReady: true, source: resumed.source, diagnostics: resumed.diagnostics)?.value
+        state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 3); XCTAssertEqual(state.lastWindow?.capturedFreshFrames, 150)
+        await driver.stop()
+    }
+    @MainActor func testDriverMinimumPressureSkipsOverlappingSourceWithoutChangingReceipt() async throws {
+        let config = VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: 1_000_000)!
+        let f = try fixture(buffer: 501, encodingConfiguration: config, receivedAt: .now)
+        let native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: workerLimits, transportLimits: transportLimits, uptime: { native.now })
+        await driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)?.value
+        native.setNow(f.now)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)?.value
+        var state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 1); XCTAssertEqual(state.lastWindow?.end, 111)
+        XCTAssertEqual(state.revision, 0); XCTAssertEqual(native.calls, 1)
+        let overlap = try fixture(frameOffset: 150, windowSequence: 3, encodingConfiguration: config, receivedAt: .now)
+        native.setNow(overlap.now)
+        await driver.tick(encoderReady: true, source: overlap.source, diagnostics: overlap.diagnostics)?.value
+        state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 1); XCTAssertNil(state.lastWindow?.capturedFreshFrames)
+        let resumed = try fixture(frameOffset: 300, windowSequence: 4, encodingConfiguration: config, receivedAt: .now)
+        native.setNow(resumed.now)
+        await driver.tick(encoderReady: true, source: resumed.source, diagnostics: resumed.diagnostics)?.value
+        state = await owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 2); XCTAssertEqual(state.lastWindow?.capturedFreshFrames, 150)
+        XCTAssertEqual(state.revision, 0); XCTAssertEqual(native.calls, 1)
+        await driver.stop()
+    }
+    @MainActor func testDriverLocalRejectionsAreBoundedAndStopPreventsQueuedFallbackWrite() async throws {
+        let f = try fixture(buffer: 501), native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: workerLimits, transportLimits: transportLimits,
+            uptime: { native.now }, export: { exported = $0 })
+        await driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)?.value
+        native.setNow(f.now)
+        var invalid = f.diagnostics; invalid.receipt = nil
+        for _ in 0..<20 { await driver.tick(encoderReady: true, source: nil, diagnostics: invalid)?.value }
+        _ = driver.tick(encoderReady: true, source: nil, diagnostics: f.diagnostics)
+        await driver.stop()
+        XCTAssertEqual(native.calls, 1)
+        let trace = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(trace["events"] as? [[String: Any]])
+        XCTAssertEqual(events.filter { $0["kind"] as? String == "rejected" }.count, 1)
+        XCTAssertEqual(events.last?["kind"] as? String, "stopped")
     }
     func testOwnerUsesActualAcknowledgmentAndBoundWindowWithoutChangingSettings() async throws {
         let f = try fixture(), native = TelemetryNative(receipt: f.applied.receipt), owner = try owner(f, native)

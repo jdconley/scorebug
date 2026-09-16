@@ -85,7 +85,7 @@ remote CPU/GPU hosts remain later gates.
 
 - [x] Independent stage-1 design review, including bounded endpoint refinement.
 - [x] Stage-1 red/green tests, implementation, source review and verified commit.
-- [ ] Stage-2 owner/driver/oracle integration with deterministic validation.
+- [x] Stage-2 owner/driver/oracle integration with deterministic validation.
 - [ ] Actual native impairment/recovery qualification with independent archive gate.
 
 ## Stage-1 validation record
@@ -103,7 +103,7 @@ All 171 FilmModel tests now pass, including existing matched-source pressure tes
 and nine new local tests. Core evaluation of these local windows produces a 20%
 decrease outside a trial and baseline rollback during a trial, with frame delivery,
 source loss, capacity, worker health and connectivity unknown. A nominal interval
-returns no window. The runtime driver has no call to this new adapter yet.
+returns no window. At that checkpoint the runtime driver had no call to the new adapter.
 
 Retained red/green logs use the `artifacts/qa/local-pressure-*` prefix. The final
 verification manifest records staged source hashes, validation logs and review.
@@ -113,3 +113,87 @@ The combined unsigned iPhone/Watch Release build also passes.
 Independent final source review approves the corrected endpoint regressions and
 finds no remaining stage-1 blocker. Evidence hashes are retained in
 `artifacts/qa/local-pressure-adapter-final-verification.json`.
+
+## Stage-2 integration details
+
+`PublishingQualitySession.evaluateLocalPressure` owns the next shared policy
+sequence and derives the lower time boundary from its last accepted policy window.
+A nil local result consumes no sequence and does not replace advice or recovery;
+invalid ownership/time invalidates telemetry through the existing policy rule.
+A real local decision advances the same watermark as receiver decisions and goes
+through the existing verified native write path.
+
+The driver first polls trial rollback, then prefers an eligible source window.
+Source windows overlapping the last accepted policy window are skipped as whole
+windows. Missing/duplicate/transition/pending/rejected source evidence falls through
+to local evaluation. An accepted source decision ends that cycle. Local rejection
+is recorded once per revision/reason until successful evaluation resets its notice;
+no missing-history polling flood. Coalesced ticks return their owned task so tests
+can join a cycle without sleeps or unbounded polling. Stop still cancels and joins
+that same task and its native owner.
+
+The trace adds `localPressure` events, with explicit unknown connectivity/frame/
+receiver/loss/capacity/worker fields and no source reference. Raw evidence includes
+native generation, exact diagnostic receipt, ingress lifecycle/scope and bounded
+thermal/transport/queue histories. For local events, preserve the full bounded
+queue history so the independent verifier can reconstruct all endpoint candidates.
+Normal source-event queue evidence stays clipped to the evaluated source interval.
+
+The JavaScript verifier independently selects the newest eligible unhealthy local
+interval, reconstructs pressure, checks acknowledgment/nonoverlap, and refuses
+local growth or fabricated delivery. Shared policy ordinals remain increasing;
+local windows break recovery and require an active trial to roll back. Require a
+known unhealthy decision and the normal 20%/minimum-clamped step for decreases.
+Preserve the existing source/trial qualification minimums in this stage; impairment
+fixture acceptance modes belong to the next stage. Replay both saved confirmation
+runs with unchanged results before any further native qualification.
+
+## Stage-2 deterministic results and next fixture boundary
+
+All 178 FilmModel tests pass, including seven new owner/driver tests and additional
+busy/closed admission assertions. The 869 tooling tests pass, including 69 quality
+oracle tests. These cover source priority, missing/transition/pending/rejected and
+duplicate fallback, minimum-rate watermark advancement, resumed source evidence,
+queued-stop ownership, exact decrease/rollback, local rejection invalidation and
+bounded notice logging. Driver fixtures now stamp remote freshness at creation;
+using XCTest instance construction time correctly caused those reports to expire.
+
+Independent implementation review approves the source. Its suggested shifted-
+endpoint oracle cases now pass: older thermal pressure is usable when newer
+transport is nominal, while newer independently unhealthy transport takes priority.
+Both saved native confirmation runs replay with identical outcomes under the stricter
+verifier. The fresh structured-motion native run also passes below.
+
+The existing UDP impairment fixture accepts only one sender. The native fixture's
+control plane currently advertises the same ingest host/port to both publisher and
+worker. Replacing `INGEST_PORT` globally with that one-peer proxy would break the
+worker connection rather than isolate the filming uplink. The next impairment hook
+must explicitly route only the native publishing connection through the owned
+proxy while preserving the worker's direct ingest reader, publication identity,
+source clock and credentials. Keep any fixture override confined to DEBUG simulator
+qualification and validate it before resource creation. Dynamic impairment/recovery
+phases and live acceptance gates still need a bounded design review.
+
+
+## Stage-2 fresh native confirmation
+
+`native-app-XDjE3w` passes the complete 90-second confirmation-required `blocks16`
+fixture on iPhone 14 / iOS 17.5 with the fallback connected. All 3607 clean archive
+frames (0–3606) and 3209 acquired live frames (217–3425) survive at 30 fps with zero
+qualified loss. The live file reaches final encoded frame 3425. Native scoring,
+overlay, complete A/V decode, export, source/processing/raw-pressure/publication-age
+and archive gates pass. Clean video payload measures 12.0265392–12.1295472 Mbps
+across 24 complete five-second windows; live measures 7.3236848–7.66676 Mbps across
+20 windows. The workload/continuity gates were not relaxed.
+
+The trace records 17 source evaluations, two native trials, one confirmed 6.6 Mbps
+trial, no rollback and no local-pressure event on this healthy path. The second
+7.26 Mbps trial remains unconfirmed at stop. This proves the integrated fallback
+preserves the healthy native path; it does not prove actual downward adaptation
+under impairment. That next gate remains open along with longer adaptive soaks,
+resolution changes, production activation, physical phone/Watch and remote hosts.
+
+The combined unsigned iPhone/Watch Release build and changed-JavaScript formatting
+check pass. Independent source and saved-evidence reviews report no blocking issue
+or material mismatch. Staged source and retained test/native evidence hashes are
+recorded in `artifacts/qa/local-control-final-verification.json`.

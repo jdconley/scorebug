@@ -674,8 +674,10 @@ need for an independently qualified local-pressure decrease path when matched
 receiver windows expire. Longer adaptive soaks and resolution/device/host gates remain.
 
 
-The [local-pressure fallback](2026-09-16-local-pressure-fallback.md) now has a pure
-app adapter tested against Core for downward-only action without receiver evidence.
-Nine new cases pass with all 171 FilmModel tests. It remains disconnected from the
-runtime driver; owner/driver/oracle integration and actual native impairment are
-the next stages. No new physical-device or remote-host qualification is claimed.
+The [local-pressure fallback](2026-09-16-local-pressure-fallback.md) is now connected
+to the opt-in native loop, with shared source/local ordering and independent raw
+pressure replay. All 178 FilmModel and 869 tooling tests pass. A fresh structured-
+motion confirmation run preserves 3607 local / 3209 acquired live frames at 30 fps
+with zero qualified loss. Its healthy connection triggers no local reduction and
+confirms one 6.6 Mbps trial. Actual network impairment/downward adaptation/recovery
+is the next gate; physical phone/Watch and remote-host qualification remain open.
