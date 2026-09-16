@@ -337,6 +337,12 @@ configurations, including native frames lost at the receiver and excluding the p
 anchor. Real fixture history agrees with native callbacks and decoded normal media;
 this prepares runtime acknowledgment without enabling automatic adaptation.
 
+The [owned bitrate update slice](2026-09-15-owned-bitrate-updates.md) adds typed native
+receipts and session-owned mutation/deadline tasks. Invalid predispatch requests leave
+live state intact; uncertain dispatched writes retire the live attempt and shutdown
+joins the operation. The clean archive stays independent. Policy acknowledgment,
+aligned pressure windows and automatic trial/rollback qualification remain open.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

@@ -19,8 +19,10 @@ public actor SRTMediaPublisher: MediaPublisher {
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
-    public init(url: URL, stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil) {
-        let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations)
+    public init(url: URL, stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
+                encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil) {
+        let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
+            encoderConfigurationObserver: encoderConfigurationObserver)
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
@@ -31,7 +33,7 @@ public actor SRTMediaPublisher: MediaPublisher {
                     await adapter.audio(pcm, when: when)
                 }
             }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop() },
-            setBitRate: { try await adapter.setBitRate($0) }, metrics: { await adapter.metrics() },
+            setBitRate: { try await adapter.setBitRateWithReceipt($0) }, metrics: { await adapter.metrics() },
             transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() })
     }
 
@@ -41,7 +43,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         let append: @Sendable (CapturedMediaSample) async throws -> Void
         let isPublishing: @Sendable () async -> Bool
         let stop: @Sendable () async -> Void
-        let setBitRate: @Sendable (Int) async throws -> Void
+        let setBitRate: @Sendable (Int) async throws -> PublishingBitRateChange
         let metrics: @Sendable () async -> TransportMetrics?
         var transportClock: @Sendable () async -> PublishingTransportClock? = { nil }
         var transportStatistics: @Sendable () async -> PublishingTransportStatistics? = { nil }
@@ -112,12 +114,16 @@ public actor SRTMediaPublisher: MediaPublisher {
     }
 
     public func setBitRate(_ bitsPerSecond: Int) async throws {
+        _ = try await setVideoBitRate(bitsPerSecond)
+    }
+    public func setVideoBitRate(_ bitsPerSecond: Int) async throws -> PublishingBitRateChange {
         guard state == .publishing else { throw PublisherError.notPublishing }
         guard !Task.isCancelled else { throw PublisherError.cancelled }
         guard !bitRateUpdating else { throw PublisherError.invalidState }
         bitRateUpdating = true
         defer { bitRateUpdating = false }
-        do { try await operations.setBitRate(bitsPerSecond) }
+        let receipt: PublishingBitRateChange
+        do { receipt = try await operations.setBitRate(bitsPerSecond) }
         catch {
             if state == .stopped || Task.isCancelled {
                 // A dispatched operation may already have changed native settings.
@@ -132,6 +138,7 @@ public actor SRTMediaPublisher: MediaPublisher {
             await stop()
             throw PublisherError.cancelled
         }
+        return receipt
     }
 
     public func transportClock() async -> PublishingTransportClock? {

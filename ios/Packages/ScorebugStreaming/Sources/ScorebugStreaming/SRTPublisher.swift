@@ -29,12 +29,7 @@ public actor SRTPublisher {
             submittedAt = value.submittedAt; completedAt = value.completedAt
         }
     }
-    public struct BitRateChangeReceipt: Sendable {
-        public let publishingGeneration: UInt64
-        public let configuration: EncoderConfiguration
-        public let acceptedAt: Double
-        public let lastSubmittedSourcePTS: CMTime?
-    }
+    public typealias BitRateChangeReceipt = PublishingBitRateChange
     public enum PublisherError: Error { case notPublishing }
     private let connection = SRTConnection()
     private let stream: SRTStream
@@ -108,9 +103,15 @@ public actor SRTPublisher {
             await stop()
             throw CancellationError()
         }
-        return .init(publishingGeneration: receipt.publishingGeneration,
-                     configuration: .init(receipt.change.configuration), acceptedAt: receipt.change.acceptedAt,
-                     lastSubmittedSourcePTS: receipt.change.lastSubmittedSourcePTS)
+        guard let configuration = VideoEncodingConfiguration(id: receipt.change.configuration.id,
+            encoderSessionID: receipt.change.configuration.encoderSessionID, bitRate: receipt.change.configuration.bitRate),
+              let change = PublishingBitRateChange(publishingGeneration: receipt.publishingGeneration,
+                configuration: configuration, acceptedAt: receipt.change.acceptedAt,
+                lastSubmittedSourcePTS: receipt.change.lastSubmittedSourcePTS) else {
+            await stop()
+            throw PublisherError.notPublishing
+        }
+        return change
     }
     public func transportClock() async -> PublishingTransportClock? {
         guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }

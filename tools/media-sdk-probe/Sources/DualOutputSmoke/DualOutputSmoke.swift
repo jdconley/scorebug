@@ -257,7 +257,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 return
             }
             let encoderEvidence = EncoderEvidence()
-            let publisher = SDKProbe(observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) })
+            let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
@@ -265,8 +265,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             let health = PublisherHealth()
             var monitor: Task<Void, Never>?
             do {
-                try await publisher.configure()
-                try await publisher.start(url)
+                try await publisher.start()
                 try emit(["event": "publisher-started"])
                 // Telemetry has one independent task. A slow socket observation
                 // must not stall the consumer responsible for live sample ingress.
@@ -275,7 +274,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                     defer { statisticsTracker.close() }
                     do {
                         while !Task.isCancelled {
-                            let publishing = await publisher.isPublishing()
+                            let publishing = await publisher.isPublishing
                             let transport = await publisher.metrics()
                             let statistics = await publisher.transportStatistics()
                             statisticsTracker.observe(statistics)
@@ -295,18 +294,17 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 }
                 while let sample = try await liveQueue.next() {
                     if !changed && sample.sampleBuffer.presentationTimeStamp.seconds - originSeconds >= 5 {
-                        let receipt = try await publisher.setBitRateWithReceipt(2_000_000)
+                        let receipt = try await publisher.setVideoBitRate(2_000_000)
                         acceptedReceipt = receipt
                         changed = true
                         try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000,
                                   "receipt": receiptEvidence(receipt)])
                     }
                     if sample.kind == .video {
-                        await publisher.video(sample.sampleBuffer)
+                        try await publisher.append(sample)
                         publishedVideo += 1
                     } else {
-                        guard let (pcm, when) = copyPCM(sample.sampleBuffer) else { throw Failure.pcm }
-                        await publisher.audio(pcm, when: when)
+                        try await publisher.append(sample)
                         publishedAudio += sample.sampleBuffer.numSamples
                     }
                 }
@@ -315,7 +313,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 // hide codec or receiver-buffer loss at shutdown.
                 let status = await publisher.metrics()
                 let transportClockBeforeStop = await publisher.transportClock()
-                let publishing = await publisher.isPublishing()
+                let publishing = await publisher.isPublishing
                 monitor?.cancel()
                 await publisher.stop()
                 await monitor?.value

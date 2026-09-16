@@ -153,3 +153,50 @@ expected. Normal/recoverable live media retain 420 frames; overload fails strict
 decode with 394 best-effort frames and invalid source identities. Both suites replay
 from saved structured events and barcode files. Evidence hashes are in
 `artifacts/qa/configuration-interval-final-verification.json`.
+
+## Owned publishing bitrate updates
+
+`PublishingBitRateChange` is a platform-neutral, immutable receipt containing the
+native publishing generation, verified configuration, acceptance uptime and optional
+last prior submitted source PTS. `SRTPublisher` and `SRTMediaPublisher` forward the
+same receipt. The legacy void setter uses the same single-update gate.
+
+`PublishingSession.setVideoBitRate(_:before:)` owns one mutation task and one deadline
+task per request. The optional deadline uses system uptime and is capped at two
+seconds from entry. Invalid rates/deadlines, an inactive session, an already-cancelled
+caller or an overlapping request fail without dispatch or changing live state.
+Admission and dispatch both check current expiry. After reservation, cancellation,
+timeout, native failure or an unverifiable receipt retires the live attempt. Shutdown
+calls publisher stop to release suspended operations and joins the mutation and timer,
+as well as its existing workers. The publisher must cooperate with stop or complete
+in bounded time; a timer cannot interrupt a blocked synchronous native call.
+
+Acceptance checks the requested rate, current health, native generation against any
+known clock and prior receipt, a fresh configuration UUID, and acceptance time inside
+the request deadline. The prior source boundary cannot disappear or move backward
+within the same encoder session; a replacement encoder session can reset it. A clock
+first observed after acceptance must also agree with that receipt's generation, or
+clock evidence is quarantined for the remainder of the attempt. The last accepted
+receipt stays explicitly historical after shutdown. It does not prove bitrate
+convergence, receiver delivery or current health.
+
+Controlled Media tests qualify ownership, deadlines and cancellation, including a
+publisher write that remains suspended after stop until a second completion gate
+releases. The dual-output fixture separately qualifies the real typed SRT adapter
+with direct asynchronous appends and its existing native drain. It does not claim to
+exercise PublishingSession's bounded mailbox or introduce a graceful mailbox drain.
+
+Automatic control remains disabled. Verified startup and policy acknowledgment,
+aligned source/pressure windows, and actual automatic trial/rollback qualification
+remain required. Local archive ownership and settings are independent of this API.
+
+
+The owned-update checkpoint passes 213 Media, 52 Streaming and 755 tooling tests,
+independent source review and the combined unsigned iPhone/Watch Release build.
+Native evidence is `artifacts/qa/dual-output-bnx985` and
+`artifacts/qa/dual-output-I0yfww`: all eight archives retain 420 frames, and all five
+successful publishers retain matching 420-frame submission/history evidence.
+Normal/recoverable live media remain complete. Overload fails strict live decode
+with 377 best-effort frames and invalid source identities; fresh-frame/loss metrics
+remain unknown. Saved evidence replays for both suites. The evidence manifest is
+`artifacts/qa/owned-bitrate-final-verification.json`.

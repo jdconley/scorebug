@@ -25,15 +25,16 @@ or destination details. Existing publishers remain source-compatible.
 
 `PublishingSession.setVideoBitRate(_:before:)` accepts an optional system-uptime
 expiry. Its effective deadline is the earlier of caller expiry and two seconds
-from request admission. Invalid rate/deadline, inactive session, already-cancelled
+from request entry. Invalid rate/deadline, inactive session, already-cancelled
 caller or concurrent request fails before dispatch without changing live state.
-After reservation, one owned task runs the publisher operation. A separate owned
+Admission and predispatch both check fresh expiry. After reservation, one owned task runs the publisher operation. A separate owned
 deadline task may terminate the live attempt; there are no per-frame tasks.
 
 A successful receipt must match requested bitrate, known native publishing generation
 (from accepted clock and previous receipt), acceptance between request and validation
 within deadline, a fresh configuration UUID and nondecreasing prior source boundary
 within the same encoder session. Native session replacement may reset that boundary.
+A clock first observed after a receipt must agree with that generation or be quarantined.
 Health must still hold when validation commits. Only accepted receipts update the
 snapshot; the latest accepted receipt remains explicitly historical after stop.
 
@@ -48,24 +49,24 @@ timer cannot forcibly terminate a blocked synchronous native API.
 
 ## Tasks and evidence
 
-- [ ] Add receipt/API stubs and focused Media tests. Exercise invalid scalars,
+- [x] Add receipt/API stubs and focused Media tests. Exercise invalid scalars,
   inactive/cancelled/overlapping calls, healthy acceptance, historical retention,
   native errors, mismatch/reused UUID/backward boundary, deadline expiry, stop and
   caller cancellation during suspended writes, and stop joining late completion.
   Use bounded gates; record behavioral red before implementation.
-- [ ] Implement `PublishingBitRateChange.swift`, MediaPublisher default method,
+- [x] Implement `PublishingBitRateChange.swift`, MediaPublisher default method,
   session-owned update/deadline tasks and snapshot history. Keep cancellation handlers
   outside locks. Split locked shutdown creation from request entry so deadline and
   completion checks are atomic with state transitions.
-- [ ] Forward typed receipts through SRTPublisher and SRTMediaPublisher; preserve
+- [x] Forward typed receipts through SRTPublisher and SRTMediaPublisher; preserve
   the old setter and shared single-update gate. Extend existing adapter lifecycle
   tests to check typed values and failure/stop/cancellation rejection.
-- [ ] Use SRTMediaPublisher's typed path in the real dual-output fixture while
+- [x] Use SRTMediaPublisher's typed path in the real dual-output fixture while
   preserving its direct asynchronous append/drain semantics and all existing gates.
   This qualifies the adapter with real encoding; controlled Media tests separately
   qualify session task ownership. Do not invent a graceful session drain or bypass
   the production ingress contract just to make a fixture pass.
-- [ ] Run Media/Streaming/tooling tests, both native suites and combined unsigned
+- [x] Run Media/Streaming/tooling tests, both native suites and combined unsigned
   iPhone/Watch Release build. Obtain bounded independent review, preserve evidence
   hashes and raw events, document the ownership contract and remaining policy work,
   then commit verified source.
@@ -93,3 +94,40 @@ Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`:
 Automatic quality control remains disabled until verified startup/application receipts
 are bound to policy acknowledgments and aligned source/pressure windows, followed by
 actual automatic trial/rollback qualification. Physical/radio/remote-host gates remain.
+
+
+## Verified checkpoint
+
+Behavioral red is preserved in `artifacts/qa/owned-bitrate-media-red.log`,
+`owned-bitrate-streaming-red.log`, and `owned-bitrate-review-red.log`. Initial test
+compilation diagnostics are retained separately. The complete Media suite passes
+213 tests (158 XCTest plus 55 Swift Testing), including 15 new ownership/receipt
+cases. Streaming passes 52 tests; tooling passes 755. The combined unsigned
+Scorebug iPhone/Watch Release build passes with Xcode 26.2.
+
+Independent review found and then approved fixes for a first clock contradicting
+an earlier receipt and expiry between entry/admission/dispatch. Added regressions
+also cover replacement encoder sessions, missing same-session boundaries, stale
+prior deadlines, and the two-second cap. Review was source-only; the parent ran all
+Swift/native/build checks sequentially.
+
+Default native evidence: `artifacts/qa/dual-output-bnx985`.
+Network evidence: `artifacts/qa/dual-output-I0yfww`.
+All eight archives contain 420 frames. All five successful publishers retain 420
+native descriptors, matching source-history records and aggregate callbacks, with
+the verified write boundary between frames 149 and 150. Normal and recoverable live
+streams contain all 420 frames; measured payload changes from approximately 6 to
+2 Mbps. Peak measured RSS remains below 96 MiB. Both suites replay successfully from
+saved events and decoded barcode files.
+
+The overload receiver fails strict decode: its 377 best-effort frames contain invalid
+source identities, so fresh-frame rate/loss stay unknown. Complete source history
+and clean local recording do not qualify this damaged live output. The fixture
+qualifies typed SRTMediaPublisher operations; controlled Media tests qualify the
+PublishingSession ownership layer. No automatic policy, resolution transition,
+physical phone/watch/radio, remote-host or adaptive soak qualification is implied.
+
+Source and complete native evidence hashes, including actual media files, are in
+`artifacts/qa/owned-bitrate-final-verification.json`. The next slice must bind verified
+startup and mutation receipts to policy acknowledgment and align source/pressure
+windows before enabling automatic trials and rollback.

@@ -207,6 +207,18 @@ final class SRTMediaPublisherTests: XCTestCase {
         withExtendedLifetime(publisher) {}
     }
 
+    func testTypedBitRateReceiptCarriesVerifiedNativeBoundary() async throws {
+        let fixture = AdapterFixture()
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        try await publisher.start()
+        let receipt = try await publisher.setVideoBitRate(3_000_000)
+        XCTAssertEqual(receipt.publishingGeneration, 7)
+        XCTAssertEqual(receipt.configuration.bitRate, 3_000_000)
+        XCTAssertEqual(receipt.lastSubmittedSourcePTS, CMTime(value: 42, timescale: 30))
+        XCTAssertLessThanOrEqual(receipt.acceptedAt, ProcessInfo.processInfo.systemUptime)
+        await publisher.stop()
+    }
+
     func testBitRateRejectsPreparedAndStoppedWithoutCallingEncoder() async throws {
         let fixture = AdapterFixture()
         let publisher = SRTMediaPublisher(operations: await fixture.operations())
@@ -353,7 +365,7 @@ private actor AdapterFixture {
     func operations() -> SRTMediaPublisher.Operations {
         .init(configure: { try await self.configure() }, start: { await self.start() },
               append: { _ in }, isPublishing: { await self.isHealthy() }, stop: { await self.stop() },
-              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil }, transportClock: { await self.transportClock() }, transportStatistics: { await self.transportStatistics() })
+              setBitRate: { try await self.setBitRate($0) }, metrics: { nil }, transportClock: { await self.transportClock() }, transportStatistics: { await self.transportStatistics() })
     }
     func configure() async throws {
         if fails { throw NSError(domain: "srt://private-secret", code: 1) }
@@ -364,10 +376,13 @@ private actor AdapterFixture {
         if gated == .start { await wait() }
         healthy = true // Model reusable SDK: a late start can reopen after close.
     }
-    func setBitRate() async throws {
+    func setBitRate(_ rate: Int) async throws -> PublishingBitRateChange {
         bitRateCalls += 1
         if gated == .bitRate, bitRateCalls == 1 { await wait() }
         if bitRateFails { throw NSError(domain: "private encoder details", code: -1) }
+        return PublishingBitRateChange(publishingGeneration: 7,
+            configuration: VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: rate)!,
+            acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: CMTime(value: 42, timescale: 30))!
     }
     func transportClock() async -> PublishingTransportClock? {
         clockCalls += 1

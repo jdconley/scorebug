@@ -383,3 +383,11 @@ included native frame—including receiver losses—participates. Counts remain 
 when configuration metadata is absent. This is configuration association, not policy
 window freshness or proof of rate convergence; runtime acknowledgment and pressure
 alignment remain outstanding.
+
+
+The [owned bitrate update slice](superpowers/plans/2026-09-15-owned-bitrate-updates.md)
+adds a typed, validated native receipt to PublishingSession. The session owns its
+mutation and deadline tasks, joins them on terminal shutdown, and rejects stale or
+contradictory application evidence. Successful receipts remain historical after stop.
+This completes mutation ownership; binding receipts to policy acknowledgments and
+aligning source/pressure windows are still required before automatic control.
