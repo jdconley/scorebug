@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { command, mediaTools } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
 import { validatePublishingClockEvidence } from './publishing-clock-evidence.mjs';
+import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
 import {
   sourceFrameCodeFilter,
   frameCodeReadFilter,
@@ -439,6 +440,7 @@ try {
     let liveResult;
     let bitrateChange;
     let transportClock;
+    let transportStatistics;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
       assert.deepEqual(
@@ -455,6 +457,11 @@ try {
         sent.transportClockBeforeStop,
         sent.transportClockAfterStop,
         { value: scenario === 'normal-clock-offset' ? 493n : 0n, timescale: 4n },
+      );
+      transportStatistics = qualifyTransportStatistics(
+        native.events,
+        sent,
+        transportClock.publishingGeneration,
       );
       liveResult = await analyze(live, `${scenario}-live`, false);
       bitrateChange = await measureBitrateChange(live);
@@ -474,6 +481,7 @@ try {
       live: liveResult,
       bitrateChange,
       transportClock,
+      transportStatistics,
       counters: finished,
       peakRSS,
     });

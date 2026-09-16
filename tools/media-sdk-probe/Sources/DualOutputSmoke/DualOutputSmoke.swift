@@ -20,6 +20,17 @@ private func clockEvidence(_ clock: PublishingTransportClock?) -> Any {
             "wireModulus": String(PublishingTransportClock.wireModulus)] as [String: Any]
 }
 
+private func statisticsEvidence(_ sample: PublishingTransportStatistics?) -> Any {
+    guard let sample else { return NSNull() }
+    return ["publishingGeneration": String(sample.publishingGeneration), "sampledAt": sample.sampledAt,
+            "elapsedMilliseconds": String(sample.elapsedMilliseconds), "sentBytes": String(sample.sentBytes),
+            "retransmittedBytes": String(sample.retransmittedBytes), "droppedPackets": String(sample.droppedPackets),
+            "rttMilliseconds": sample.rttMilliseconds, "estimatedBandwidthMbps": sample.estimatedBandwidthMbps,
+            "senderBufferedBytes": String(sample.senderBufferedBytes),
+            "senderBufferMilliseconds": String(sample.senderBufferMilliseconds),
+            "availableSenderBytes": String(sample.availableSenderBytes)] as [String: Any]
+}
+
 private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, pcm }
 
 private final class PublisherHealth: @unchecked Sendable {
@@ -152,7 +163,10 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                         while !Task.isCancelled {
                             let publishing = await publisher.isPublishing()
                             let transport = await publisher.metrics()
+                            let statistics = await publisher.transportStatistics()
                             try emit(["event": "publisher-observation", "publishing": publishing,
+                                      "transportStatistics": statisticsEvidence(statistics),
+                                      "statisticsObservedAt": ProcessInfo.processInfo.systemUptime,
                                       "sentBytes": transport.map { $0.2 as Any } ?? NSNull(),
                                       "packetDrops": transport.map { $0.1 as Any } ?? NSNull()])
                             if !publishing { health.fail(); liveQueue.cancel(); return }
@@ -187,13 +201,15 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 await publisher.stop()
                 await monitor?.value
                 let transportClockAfterStop = await publisher.transportClock()
+                let statisticsAfterStop = await publisher.transportStatistics()
                 try emit(["event": "publisher-finished", "videoSubmitted": publishedVideo,
                           "audioSamplesSubmitted": publishedAudio, "changedBitrate": changed,
                           "sentBytes": status.map { $0.2 as Any } ?? NSNull(),
                           "packetDrops": status.map { $0.1 as Any } ?? NSNull(),
                           "publishingBeforeStop": publishing,
                           "transportClockBeforeStop": clockEvidence(transportClockBeforeStop),
-                          "transportClockAfterStop": clockEvidence(transportClockAfterStop)])
+                          "transportClockAfterStop": clockEvidence(transportClockAfterStop),
+                          "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop)])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()

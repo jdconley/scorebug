@@ -815,7 +815,12 @@
 
  final actor SRTSocket {
      static let payloadSize: Int = 1316
-@@ -79,52 +85,86 @@
+@@ -75,56 +81,91 @@
+     }
+
+     var performanceData: SRTPerformanceData {
+-        .init(mon: perf)
++        .init(mon: perf, sampledAt: performanceSampledAt)
      }
 
      var status: Status {
@@ -827,6 +832,7 @@
 
      private(set) var isRunning = false
      private var perf: CBytePerfMon = .init()
++    private var performanceSampledAt: TimeInterval?
      private var socket: SRTSOCKET = SRT_INVALID_SOCK
 -    private var outputs: AsyncStream<Data>.Continuation? {
 -        didSet {
@@ -909,7 +915,7 @@
          let status: Int32 = try {
              switch url.mode {
              case .caller:
-@@ -163,6 +203,7 @@
+@@ -163,6 +204,7 @@
              guard configure(url.options, restriction: .post) else {
                  throw makeSocketError()
              }
@@ -917,7 +923,7 @@
              if incomingBuffer.count < windowSizeC {
                  incomingBuffer = .init(count: Int(windowSizeC))
              }
-@@ -188,12 +229,46 @@
+@@ -188,12 +230,46 @@
          }
      }
 
@@ -970,7 +976,36 @@
          }
      }
 
-@@ -234,6 +309,7 @@
+@@ -213,11 +289,24 @@
+         return true
+     }
+
++    func collectPerformanceData(using read: (inout CBytePerfMon) -> Int32,
++                                now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> Int32 {
++        guard socket != SRT_INVALID_SOCK else { performanceSampledAt = nil; return SRT_ERROR }
++        // Sampling at entry includes native-call time in subsequent sample age.
++        // A failed call cannot retimestamp old counters or commit partial output.
++        let sampledAt = now()
++        var next = perf
++        let result = read(&next)
++        if result == 0 {
++            perf = next
++            performanceSampledAt = sampledAt.isFinite && sampledAt >= 0 ? sampledAt : nil
++        } else { performanceSampledAt = nil }
++        return result
++    }
++
+     private func bstats() -> Int32 {
+-        guard socket != SRT_INVALID_SOCK else {
+-            return SRT_ERROR
+-        }
+-        return srt_bstats(socket, &perf, 1)
++        let currentSocket = socket
++        return collectPerformanceData { srt_bstats(currentSocket, &$0, 1) }
+     }
+
+     private func makeSocketError() -> Error {
+@@ -234,6 +323,7 @@
 
      @inline(__always)
      private func sendmsg(_ data: Data) -> Int32 {
@@ -978,7 +1013,7 @@
          return data.withUnsafeBytes { pointer in
              guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
                  return SRT_ERROR
-@@ -256,38 +332,36 @@
+@@ -256,38 +346,37 @@
  extension SRTSocket: AsyncRunner {
      // MARK: AsyncRunner
      func startRunning() async {
@@ -1008,6 +1043,7 @@
 -        srt_close(socket)
 -        socket = SRT_INVALID_SOCK
 -        outputs = nil
++        performanceSampledAt = nil
 +        generation &+= 1
          isRunning = false
 +        sendingGeneration = nil
@@ -2245,3 +2281,25 @@
 +        return ticks.overflow ? nil : ticks.partialValue
 +    }
 +}
+--- a/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
++++ b/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
+@@ -4,6 +4,9 @@
+ /// The SRTPerformanceData represents the SRT's performance statistics. This struct is wrapper for an CBytePerfMon.
+ /// - seealso: https://github.com/Haivision/srt/blob/master/srtcore/srt.h
+ public struct SRTPerformanceData: Sendable {
++    /// System uptime at the start of successful native collection. Cached reads
++    /// retain this time; unavailable/failed/closed collection has no timestamp.
++    public let sampledAt: TimeInterval?
+     /// The time since the UDT entity is started, in milliseconds.
+     public let msTimeStamp: Int64
+     /// The total number of sent data packets, including retransmissions.
+@@ -153,7 +156,8 @@
+     /// The packet reorder tolerance value
+     public let pktReorderTolerance: Int32
+
+-    init(mon: CBytePerfMon) {
++    init(mon: CBytePerfMon, sampledAt: TimeInterval? = nil) {
++        self.sampledAt = sampledAt
+         self.msTimeStamp = mon.msTimeStamp
+         self.pktSentTotal = mon.pktSentTotal
+         self.pktRecvTotal = mon.pktRecvTotal

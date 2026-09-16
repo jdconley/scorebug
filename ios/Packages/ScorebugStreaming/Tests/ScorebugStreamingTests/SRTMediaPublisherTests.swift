@@ -5,6 +5,91 @@ import XCTest
 @testable import ScorebugStreaming
 
 final class SRTMediaPublisherTests: XCTestCase {
+    func testTransportStatisticsRejectsHealthFailureDuringSuspendedRead() async throws {
+        let fixture = AdapterFixture(gated: .statistics)
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        try await publisher.start()
+        let read = Task { await publisher.transportStatistics() }
+        await fixture.waitUntilEntered()
+        await fixture.setHealthy(false)
+        await fixture.releaseBitRate()
+        let statistics = await read.value
+        XCTAssertNil(statistics, "Health must still hold after a suspended statistics read")
+        await publisher.stop()
+    }
+
+    func testNativeTransportStatisticsIsAbsentBeforeConnectionAndAfterStop() async throws {
+        let adapter = SRTPublisher()
+        var clock = await adapter.transportStatistics()
+        XCTAssertNil(clock)
+        try await adapter.configure()
+        clock = await adapter.transportStatistics()
+        XCTAssertNil(clock)
+        await adapter.stop()
+        clock = await adapter.transportStatistics()
+        XCTAssertNil(clock)
+    }
+
+    func testTransportStatisticsForwardsOnlyForHealthyPublishingAttempt() async throws {
+        let fixture = AdapterFixture()
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        var clock = await publisher.transportStatistics()
+        XCTAssertNil(clock)
+        try await publisher.start()
+        clock = await publisher.transportStatistics()
+        XCTAssertEqual(clock?.sampledAt, 10)
+        XCTAssertEqual(clock?.sentBytes, 10000)
+        XCTAssertEqual(clock?.publishingGeneration, 7)
+        await fixture.setHealthy(false)
+        clock = await publisher.transportStatistics()
+        XCTAssertNil(clock)
+        await fixture.setHealthy(true)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await publisher.transportStatistics()
+        }
+        clock = await cancelled.value
+        XCTAssertNil(clock)
+        await publisher.stop()
+        clock = await publisher.transportStatistics()
+        XCTAssertNil(clock)
+        let reads = await fixture.statisticsCalls
+        XCTAssertEqual(reads, 1, "Inactive, unhealthy and cancelled getters must not query native clock")
+        let writes = await fixture.bitRateCalls
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testTransportStatisticsIsUnavailableDuringStartup() async throws {
+        let fixture = AdapterFixture(gated: .start)
+        let publisher = SRTMediaPublisher(operations: await fixture.operations())
+        let start = Task { try await publisher.start() }
+        await fixture.waitUntilEntered()
+        let clock = await publisher.transportStatistics()
+        XCTAssertNil(clock)
+        let reads = await fixture.statisticsCalls
+        XCTAssertEqual(reads, 0)
+        await fixture.releaseBitRate()
+        try await start.value
+        await publisher.stop()
+    }
+
+    func testTransportStatisticsRejectsStopOrCancellationDuringSuspendedRead() async throws {
+        for stop in [false, true] {
+            let fixture = AdapterFixture(gated: .statistics)
+            let publisher = SRTMediaPublisher(operations: await fixture.operations())
+            try await publisher.start()
+            let read = Task { await publisher.transportStatistics() }
+            await fixture.waitUntilEntered()
+            if stop { await publisher.stop() }
+            else { read.cancel(); await fixture.releaseBitRate() }
+            let clock = await read.value
+            XCTAssertNil(clock)
+            let counts = await fixture.counts()
+            XCTAssertEqual(counts.stops, stop ? 1 : 0, "Diagnostic getters must not own shutdown")
+            await publisher.stop()
+        }
+    }
+
     func testNativeTransportClockIsAbsentBeforeConnectionAndAfterStop() async throws {
         let adapter = SRTPublisher()
         var clock = await adapter.transportClock()
@@ -249,12 +334,13 @@ final class SRTMediaPublisherTests: XCTestCase {
 }
 
 private actor AdapterFixture {
-    enum Gate { case configure, start, bitRate, clock }
+    enum Gate { case configure, start, bitRate, clock, statistics }
     private let gated: Gate?
     private let fails: Bool
     private let bitRateFails: Bool
     private(set) var bitRateCalls = 0
     private(set) var clockCalls = 0
+    private(set) var statisticsCalls = 0
     private var entered = false
     private var continuation: CheckedContinuation<Void, Never>?
     private var healthy = false
@@ -267,7 +353,7 @@ private actor AdapterFixture {
     func operations() -> SRTMediaPublisher.Operations {
         .init(configure: { try await self.configure() }, start: { await self.start() },
               append: { _ in }, isPublishing: { await self.isHealthy() }, stop: { await self.stop() },
-              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil }, transportClock: { await self.transportClock() })
+              setBitRate: { _ in try await self.setBitRate() }, metrics: { nil }, transportClock: { await self.transportClock() }, transportStatistics: { await self.transportStatistics() })
     }
     func configure() async throws {
         if fails { throw NSError(domain: "srt://private-secret", code: 1) }
@@ -287,6 +373,13 @@ private actor AdapterFixture {
         clockCalls += 1
         if gated == .clock { await wait() }
         return PublishingTransportClock(sourceOrigin: CMTime(value: 493, timescale: 4), publishingGeneration: 7)
+    }
+    func transportStatistics() async -> PublishingTransportStatistics? {
+        statisticsCalls += 1
+        if gated == .statistics { await wait() }
+        return .init(publishingGeneration: 7, sampledAt: 10, elapsedMilliseconds: 1000,
+            sentBytes: 10000, retransmittedBytes: 100, droppedPackets: 0, rttMilliseconds: 10,
+            estimatedBandwidthMbps: 100, senderBufferedBytes: 50, senderBufferMilliseconds: 1, availableSenderBytes: 1000)
     }
     func releaseBitRate() { continuation?.resume(); continuation = nil }
     func isHealthy() -> Bool { healthy }

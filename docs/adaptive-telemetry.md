@@ -13,6 +13,10 @@ bounded native timestamp history and exact same-interval counting to worker stat
 including leading losses between decoder windows and scoped freshness sequencing.
 Usable video capacity, pressure, policy-window alignment and profile-boundary
 qualification remain open. Historical interval counts do not enable quality changes.
+The [timestamped transport statistics path](native-transport-statistics.md) now supplies
+actual collection uptime, exact sent/retransmitted counters and sender-buffer
+readings through the publishing session. Freshness and counter consistency are
+explicit; these observations still require capacity/overhead qualification.
 
 | Existing observation                                                                  | What it measures                                                                                                                                | Missing evidence                                                                                                        |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

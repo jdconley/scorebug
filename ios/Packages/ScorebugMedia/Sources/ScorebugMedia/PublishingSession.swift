@@ -3,7 +3,7 @@ import Foundation
 
 /// One transport/encoder instance for one publishing attempt. Capture callbacks
 /// never invoke these methods. start() returns only when publication is ready.
-/// start/append/health/transportClock must finish in bounded time or cooperate with cancellation.
+/// start/append/health/transportClock/transportStatistics must finish in bounded time or cooperate with cancellation.
 /// stop() is terminal and safe concurrently with suspended operations: it must
 /// unblock append/start/health/transportClock and prevent a late startup from resurrecting publication.
 /// Stop must finish even if its caller is cancelled. Destination credentials belong
@@ -16,10 +16,12 @@ public protocol MediaPublisher: Sendable {
     /// Optional diagnostic read; must be bounded or cooperate with cancellation.
     /// stop() must unblock suspended reads. Never owns shutdown or encoder settings.
     func transportClock() async -> PublishingTransportClock?
+    func transportStatistics() async -> PublishingTransportStatistics?
 }
 
 public extension MediaPublisher {
     func transportClock() async -> PublishingTransportClock? { nil }
+    func transportStatistics() async -> PublishingTransportStatistics? { nil }
 }
 
 public enum PublishingSessionState: Sendable { case prepared, starting, publishing, stopping, stopped, failed }
@@ -37,6 +39,7 @@ public struct PublishingSessionSnapshot: Sendable {
     /// evidence, not current readiness, transport receipt, or a profile revision.
     /// A contradictory mapping makes this unknown for the rest of this session.
     public let transportClock: PublishingTransportClock?
+    public let transportStatistics: PublishingTransportStatisticsSnapshot
     public let ingressObservation: LiveIngressObservationSnapshot?
 }
 
@@ -77,6 +80,7 @@ private final class PublishingCore: @unchecked Sendable {
     private var sentSamples = 0
     private var transportClock: PublishingTransportClock?
     private var transportClockQuarantined = false
+    private var transportStatistics = PublishingTransportStatisticsTracker()
     private var startup: Task<Void, Error>?
     private var consumer: Task<Void, Never>?
     private var monitor: Task<Void, Never>?
@@ -98,7 +102,7 @@ private final class PublishingCore: @unchecked Sendable {
         lock.withLock {
             let measured = mailbox.snapshot
             return PublishingSessionSnapshot(state: state, failure: failure, sentSamples: sentSamples,
-                queue: measured.statistics, transportClock: transportClock, ingressObservation: measured.ingressObservation)
+                queue: measured.statistics, transportClock: transportClock, transportStatistics: transportStatistics.snapshot, ingressObservation: measured.ingressObservation)
         }
     }
     func start() async throws {
@@ -181,6 +185,12 @@ private final class PublishingCore: @unchecked Sendable {
                         transportClock = observedClock
                     }
                 }
+                let statistics = await publisher.transportStatistics()
+                try Task.checkCancellation()
+                lock.withLock {
+                    guard state == .publishing else { return }
+                    transportStatistics.observe(statistics)
+                }
             }
         } catch { /* Cancellation is shutdown, never a transport failure. */ }
     }
@@ -189,6 +199,7 @@ private final class PublishingCore: @unchecked Sendable {
             if let shutdown { return shutdown }
             if let error { failure = error; state = .failed }
             else { state = .stopping }
+            transportStatistics.close()
             mailbox.cancel()
             let startup = self.startup, consumer = self.consumer, monitor = self.monitor
             let pending = Task.detached {

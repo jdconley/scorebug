@@ -81,7 +81,7 @@ final actor SRTSocket {
     }
 
     var performanceData: SRTPerformanceData {
-        .init(mon: perf)
+        .init(mon: perf, sampledAt: performanceSampledAt)
     }
 
     var status: Status {
@@ -92,6 +92,7 @@ final actor SRTSocket {
 
     private(set) var isRunning = false
     private var perf: CBytePerfMon = .init()
+    private var performanceSampledAt: TimeInterval?
     private var socket: SRTSOCKET = SRT_INVALID_SOCK
     private var sendingGeneration: UInt64?
     private let maxPayloadBytes: Int
@@ -288,11 +289,24 @@ final actor SRTSocket {
         return true
     }
 
+    func collectPerformanceData(using read: (inout CBytePerfMon) -> Int32,
+                                now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> Int32 {
+        guard socket != SRT_INVALID_SOCK else { performanceSampledAt = nil; return SRT_ERROR }
+        // Sampling at entry includes native-call time in subsequent sample age.
+        // A failed call cannot retimestamp old counters or commit partial output.
+        let sampledAt = now()
+        var next = perf
+        let result = read(&next)
+        if result == 0 {
+            perf = next
+            performanceSampledAt = sampledAt.isFinite && sampledAt >= 0 ? sampledAt : nil
+        } else { performanceSampledAt = nil }
+        return result
+    }
+
     private func bstats() -> Int32 {
-        guard socket != SRT_INVALID_SOCK else {
-            return SRT_ERROR
-        }
-        return srt_bstats(socket, &perf, 1)
+        let currentSocket = socket
+        return collectPerformanceData { srt_bstats(currentSocket, &$0, 1) }
     }
 
     private func makeSocketError() -> Error {
@@ -338,6 +352,7 @@ extension SRTSocket: AsyncRunner {
     }
 
     func stopRunning() async {
+        performanceSampledAt = nil
         generation &+= 1
         isRunning = false
         sendingGeneration = nil

@@ -75,6 +75,23 @@ public actor SRTPublisher {
                                         publishingGeneration: snapshot.publishingGeneration)
     }
 
+    public func transportStatistics() async -> PublishingTransportStatistics? {
+        guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }
+        let healthy = await isPublishing()
+        guard healthy, !stopping, !Task.isCancelled, activeGeneration == generation else { return nil }
+        let stats = await connection.performanceData
+        guard !stopping, !Task.isCancelled, activeGeneration == generation else { return nil }
+        let stillHealthy = await isPublishing()
+        guard stillHealthy, !stopping, !Task.isCancelled, activeGeneration == generation,
+              let stats, let sampledAt = stats.sampledAt else { return nil }
+        return .init(publishingGeneration: generation, sampledAt: sampledAt,
+            elapsedMilliseconds: stats.msTimeStamp, sentBytes: stats.byteSentTotal,
+            retransmittedBytes: stats.byteRetransTotal, droppedPackets: stats.pktSndDropTotal,
+            rttMilliseconds: stats.msRTT, estimatedBandwidthMbps: stats.mbpsBandwidth,
+            senderBufferedBytes: stats.byteSndBuf, senderBufferMilliseconds: stats.msSndBuf,
+            availableSenderBytes: stats.byteAvailSndBuf)
+    }
+
     public func metrics() async -> (Double, Int32, UInt64)? {
         guard let stats = await connection.performanceData else { return nil }
         return (stats.msRTT, stats.pktSndDropTotal, stats.byteSentTotal)

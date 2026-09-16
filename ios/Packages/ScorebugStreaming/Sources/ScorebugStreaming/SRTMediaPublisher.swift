@@ -32,7 +32,7 @@ public actor SRTMediaPublisher: MediaPublisher {
                 }
             }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop() },
             setBitRate: { try await adapter.setBitRate($0) }, metrics: { await adapter.metrics() },
-            transportClock: { await adapter.transportClock() })
+            transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() })
     }
 
     struct Operations: Sendable {
@@ -44,6 +44,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         let setBitRate: @Sendable (Int) async throws -> Void
         let metrics: @Sendable () async -> TransportMetrics?
         var transportClock: @Sendable () async -> PublishingTransportClock? = { nil }
+        var transportStatistics: @Sendable () async -> PublishingTransportStatistics? = { nil }
     }
     init(operations: Operations) { self.operations = operations }
 
@@ -140,6 +141,17 @@ public actor SRTMediaPublisher: MediaPublisher {
         let clock = await operations.transportClock()
         guard state == .publishing, !Task.isCancelled else { return nil }
         return clock
+    }
+
+    public func transportStatistics() async -> PublishingTransportStatistics? {
+        guard state == .publishing, !Task.isCancelled else { return nil }
+        let healthy = await operations.isPublishing()
+        guard state == .publishing, !Task.isCancelled, healthy else { return nil }
+        let statistics = await operations.transportStatistics()
+        guard state == .publishing, !Task.isCancelled else { return nil }
+        let stillHealthy = await operations.isPublishing()
+        guard state == .publishing, !Task.isCancelled, stillHealthy else { return nil }
+        return statistics
     }
 
     public func metrics() async -> TransportMetrics? {

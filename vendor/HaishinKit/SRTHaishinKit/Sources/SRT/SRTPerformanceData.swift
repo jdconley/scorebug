@@ -4,6 +4,9 @@ import libsrt
 /// The SRTPerformanceData represents the SRT's performance statistics. This struct is wrapper for an CBytePerfMon.
 /// - seealso: https://github.com/Haivision/srt/blob/master/srtcore/srt.h
 public struct SRTPerformanceData: Sendable {
+    /// System uptime at the start of successful native collection. Cached reads
+    /// retain this time; unavailable/failed/closed collection has no timestamp.
+    public let sampledAt: TimeInterval?
     /// The time since the UDT entity is started, in milliseconds.
     public let msTimeStamp: Int64
     /// The total number of sent data packets, including retransmissions.
@@ -153,7 +156,8 @@ public struct SRTPerformanceData: Sendable {
     /// The packet reorder tolerance value
     public let pktReorderTolerance: Int32
 
-    init(mon: CBytePerfMon) {
+    init(mon: CBytePerfMon, sampledAt: TimeInterval? = nil) {
+        self.sampledAt = sampledAt
         self.msTimeStamp = mon.msTimeStamp
         self.pktSentTotal = mon.pktSentTotal
         self.pktRecvTotal = mon.pktRecvTotal

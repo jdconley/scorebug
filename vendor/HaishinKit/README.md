@@ -5,7 +5,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `dc880cb540b8feeb98f64e8b7dcfaaf320b6b2bd`. The original BSD-3-Clause notice is in
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
-`scorebug.patch` is the diff against that revision for the 17 modified upstream
+`scorebug.patch` is the diff against that revision for the 18 modified upstream
 files and four added publishing/bitrate/clock source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
@@ -79,3 +79,10 @@ ticks, avoiding precision loss at large absolute source clocks.
 `SRTStream.transportClockSnapshot` exposes the muxer-selected origin with its current
 publishing generation, only after startup and before finishing/failure/close.
 The snapshot is an immutable mapping, not a receipt, loss or profile-transition claim.
+
+
+SRT performance data now includes optional `sampledAt` system uptime from the start
+of a successful native statistics call. Repeated cached reads preserve this time;
+failed calls and socket stop clear availability. Native errors cannot commit partially
+updated counters. Existing collection frequency and transport behavior are unchanged.
+The app retains exact transport counters separately from video capacity or receipt.
