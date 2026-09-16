@@ -288,7 +288,7 @@ final actor SRTSocket {
         let statistics = samplePerformanceData()
         do {
             try pendingMedia.whileEmpty {
-                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) {
+                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) { message in
                     try SRTNonblockingSend.perform(get: {
                         var value = false
                         var size = Int32(MemoryLayout<Bool>.size)
@@ -301,8 +301,8 @@ final actor SRTSocket {
                             throw PublishingError.transportWriteFailed
                         }
                     }, send: {
-                        let sent = sendmsg(SRTBandwidthProbe.message)
-                        if sent == SRTBandwidthProbe.message.count { return true }
+                        let sent = sendmsg(message)
+                        if sent == message.count { return true }
                         // Capture the native thread-local error before restoring an option.
                         if sent == SRT_ERROR, srt_getlasterror(nil) == SRT_EASYNCSND.rawValue { return false }
                         throw PublishingError.transportWriteFailed

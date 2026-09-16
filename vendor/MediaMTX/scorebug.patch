@@ -1,8 +1,6 @@
-diff --git a/internal/core/path.go b/internal/core/path.go
-index 83e4e6d..29cfd04 100644
 --- a/internal/core/path.go
 +++ b/internal/core/path.go
-@@ -1090,9 +1090,21 @@ func (pa *path) executeRemovePublisher() {
+@@ -1090,9 +1090,21 @@
  	pa.source = nil
  }
  
@@ -25,7 +23,7 @@ index 83e4e6d..29cfd04 100644
  		return
  	}
  
-@@ -1117,7 +1129,7 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
+@@ -1117,7 +1129,7 @@
  		}
  	}
  
@@ -34,9 +32,6 @@ index 83e4e6d..29cfd04 100644
  }
  
  // reloadConf is called by pathManager.
-diff --git a/internal/core/path_reader_source_test.go b/internal/core/path_reader_source_test.go
-new file mode 100644
-index 0000000..daa2aec
 --- /dev/null
 +++ b/internal/core/path_reader_source_test.go
 @@ -0,0 +1,105 @@
@@ -145,11 +140,9 @@ index 0000000..daa2aec
 +	require.Nil(t, res.Source)
 +	require.NoError(t, readerSourceRegister(pa, reader).Err, "duplicate registration must still succeed at the reader limit")
 +}
-diff --git a/internal/defs/api_srt.go b/internal/defs/api_srt.go
-index 1e3d871..1a16a05 100644
 --- a/internal/defs/api_srt.go
 +++ b/internal/defs/api_srt.go
-@@ -23,6 +23,13 @@ const (
+@@ -23,6 +23,30 @@
  	APISRTConnStatePublish APISRTConnState = "publish"
  )
  
@@ -160,24 +153,40 @@ index 1e3d871..1a16a05 100644
 +	OriginPTS  string `json:"originPTS"`
 +}
 +
++// APISRTBandwidthProbe counts complete marked messages delivered before demux.
++// Scope and authority come from the enclosing authenticated publisher connection.
++type APISRTBandwidthProbe struct {
++	Convention                  string  `json:"convention"`
++	ID                          string  `json:"id"`
++	PublishingGeneration        string  `json:"publishingGeneration"`
++	BitRate                     int     `json:"bitRate"`
++	DeliveredMessages           string  `json:"deliveredMessages"`
++	DeliveredPayloadBytes       string  `json:"deliveredPayloadBytes"`
++	NextSequence                string  `json:"nextSequence"`
++	PendingPackets              int     `json:"pendingPackets"`
++	ObservedAtNanoseconds       string  `json:"observedAtNanoseconds"`
++	FirstDeliveredAtNanoseconds *string `json:"firstDeliveredAtNanoseconds,omitempty"`
++	LastDeliveredAtNanoseconds  *string `json:"lastDeliveredAtNanoseconds,omitempty"`
++	InvalidReason               string  `json:"invalidReason,omitempty"`
++}
++
  // APISRTConn is a SRT connection.
  type APISRTConn struct {
  	ID         uuid.UUID       `json:"id"`
-@@ -33,6 +40,9 @@ type APISRTConn struct {
+@@ -32,6 +56,10 @@
+ 	Path       string          `json:"path"`
  	Query      string          `json:"query"`
  	User       string          `json:"user"`
- 
++
++	ScorebugBandwidthProbe *APISRTBandwidthProbe `json:"scorebugBandwidthProbe,omitempty"`
 +	ScorebugTransportClock *APISRTTransportClock `json:"scorebugTransportClock,omitempty"`
 +	ScorebugReaderSource   *APIPathSource        `json:"scorebugReaderSource,omitempty"`
-+
+ 
  	// The metric names/comments are pulled from GoSRT
  
- 	// The total number of sent DATA packets, including retransmitted packets
-diff --git a/internal/defs/path.go b/internal/defs/path.go
-index 6ffca69..2b4ab90 100644
 --- a/internal/defs/path.go
 +++ b/internal/defs/path.go
-@@ -89,6 +89,8 @@ type PathAddReaderRes struct {
+@@ -89,6 +89,8 @@
  	Path   Path
  	User   string
  	Stream *stream.Stream
@@ -186,11 +195,9 @@ index 6ffca69..2b4ab90 100644
  	Err    error
  }
  
-diff --git a/internal/protocols/mpegts/from_stream.go b/internal/protocols/mpegts/from_stream.go
-index 4840d73..f57c01e 100644
 --- a/internal/protocols/mpegts/from_stream.go
 +++ b/internal/protocols/mpegts/from_stream.go
-@@ -9,7 +9,6 @@ import (
+@@ -9,7 +9,6 @@
  	"github.com/bluenviron/gortsplib/v5/pkg/description"
  	"github.com/bluenviron/gortsplib/v5/pkg/format"
  	"github.com/bluenviron/mediacommon/v2/pkg/codecs/ac3"
@@ -198,19 +205,21 @@ index 4840d73..f57c01e 100644
  	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
  	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
  	mcmpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
-@@ -97,7 +96,7 @@ func FromStream(
+@@ -97,30 +96,30 @@
  			case *format.H264: //nolint:dupl
  				track := &mcmpegts.Track{Codec: &tscodecs.H264{}}
  
 -				var dtsExtractor *h264.DTSExtractor
-+				var timing h264RecoveringDTS
- 
- 				addTrack(
- 					media,
-@@ -108,20 +107,20 @@ func FromStream(
- 							return nil
- 						}
- 
+-
+-				addTrack(
+-					media,
+-					forma,
+-					track,
+-					func(u *unit.Unit) error {
+-						if u.NilPayload() {
+-							return nil
+-						}
+-
 -						idrPresent := h264.IsRandomAccess(u.Payload.(unit.PayloadH264))
 -
 -						if dtsExtractor == nil {
@@ -222,11 +231,24 @@ index 4840d73..f57c01e 100644
 -						}
 -
 -						dts, err := dtsExtractor.Extract(u.Payload.(unit.PayloadH264), u.PTS)
+-						if err != nil {
+-							return err
++				var timing h264RecoveringDTS
++
++				addTrack(
++					media,
++					forma,
++					track,
++					func(u *unit.Unit) error {
++						if u.NilPayload() {
++							return nil
++						}
++
 +						wasWaiting, discarded, established := timing.waiting, timing.discarded, timing.hasLastDTS
 +						dts, emit, err := timing.extract(u.Payload.(unit.PayloadH264), u.PTS, time.Now())
- 						if err != nil {
- 							return err
- 						}
++						if err != nil {
++							return err
++						}
 +						if !emit {
 +							if established && !wasWaiting {
 +								r.Parent.Log(logger.Warn, "H264 timing lost; waiting for random access")
@@ -235,13 +257,9 @@ index 4840d73..f57c01e 100644
 +						}
 +						if established && wasWaiting && discarded > 0 {
 +							r.Parent.Log(logger.Info, "H264 timing recovered after discarding %d access units", discarded)
-+						}
+ 						}
  
  						sconn.SetWriteDeadline(time.Now().Add(writeTimeout))
- 						err = (*w).WriteH264(
-diff --git a/internal/protocols/mpegts/from_stream_recovery_test.go b/internal/protocols/mpegts/from_stream_recovery_test.go
-new file mode 100644
-index 0000000..051d17f
 --- /dev/null
 +++ b/internal/protocols/mpegts/from_stream_recovery_test.go
 @@ -0,0 +1,148 @@
@@ -393,9 +411,6 @@ index 0000000..051d17f
 +	require.Equal(t, []int64{0, 3000, 6000, 9000, 12000, 15000, 18000, 90000, 93000}, gotVideo)
 +	require.Equal(t, []int64{0, 9000, 18000, 27000, 36000, 45000, 54000, 63000, 72000, 81000, 90000}, gotAudio)
 +}
-diff --git a/internal/protocols/mpegts/h264_recovery.go b/internal/protocols/mpegts/h264_recovery.go
-new file mode 100644
-index 0000000..98962c1
 --- /dev/null
 +++ b/internal/protocols/mpegts/h264_recovery.go
 @@ -0,0 +1,91 @@
@@ -490,9 +505,6 @@ index 0000000..98962c1
 +	}
 +	return hasSPS && hasPPS
 +}
-diff --git a/internal/protocols/mpegts/h264_recovery_prefix.go b/internal/protocols/mpegts/h264_recovery_prefix.go
-new file mode 100644
-index 0000000..989a1e9
 --- /dev/null
 +++ b/internal/protocols/mpegts/h264_recovery_prefix.go
 @@ -0,0 +1,139 @@
@@ -635,9 +647,6 @@ index 0000000..989a1e9
 +	}
 +	return true
 +}
-diff --git a/internal/protocols/mpegts/h264_recovery_test.go b/internal/protocols/mpegts/h264_recovery_test.go
-new file mode 100644
-index 0000000..2ef70e5
 --- /dev/null
 +++ b/internal/protocols/mpegts/h264_recovery_test.go
 @@ -0,0 +1,289 @@
@@ -930,15 +939,12 @@ index 0000000..2ef70e5
 +		require.EqualValues(t, 90000, dts)
 +	}
 +}
-diff --git a/internal/protocols/mpegts/to_stream.go b/internal/protocols/mpegts/to_stream.go
-index 5b0bbea..1fccc32 100644
 --- a/internal/protocols/mpegts/to_stream.go
 +++ b/internal/protocols/mpegts/to_stream.go
-@@ -26,12 +26,33 @@ func ToStream(
- 	r *EnhancedReader,
+@@ -27,11 +27,32 @@
  	subStream **stream.SubStream,
  	l logger.Writer,
-+) ([]*description.Media, error) {
+ ) ([]*description.Media, error) {
 +	return ToStreamWithClockOrigin(r, subStream, l, nil)
 +}
 +
@@ -948,7 +954,7 @@ index 5b0bbea..1fccc32 100644
 +	subStream **stream.SubStream,
 +	l logger.Writer,
 +	onOrigin func(int64),
- ) ([]*description.Media, error) {
++) ([]*description.Media, error) {
  	var medias []*description.Media //nolint:prealloc
  	var unsupportedTracks []int
  
@@ -968,7 +974,7 @@ index 5b0bbea..1fccc32 100644
  
  	for i, track := range r.Tracks() { //nolint:dupl
  		var medi *description.Media
-@@ -46,7 +67,7 @@ func ToStream(
+@@ -46,7 +67,7 @@
  			}
  
  			r.OnDataH265(track, func(pts int64, _ int64, au [][]byte) error {
@@ -977,7 +983,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-@@ -65,7 +86,7 @@ func ToStream(
+@@ -65,7 +86,7 @@
  			}
  
  			r.OnDataH264(track, func(pts int64, _ int64, au [][]byte) error {
@@ -986,7 +992,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-@@ -83,7 +104,7 @@ func ToStream(
+@@ -83,7 +104,7 @@
  			}
  
  			r.OnDataMPEG4Video(track, func(pts int64, frame []byte) error {
@@ -995,7 +1001,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-@@ -99,7 +120,7 @@ func ToStream(
+@@ -99,7 +120,7 @@
  			}
  
  			r.OnDataMPEG1Video(track, func(pts int64, frame []byte) error {
@@ -1004,7 +1010,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-@@ -118,7 +139,7 @@ func ToStream(
+@@ -118,7 +139,7 @@
  			}
  
  			r.OnDataOpus(track, func(pts int64, packets [][]byte) error {
@@ -1013,7 +1019,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
-@@ -135,7 +156,7 @@ func ToStream(
+@@ -135,7 +156,7 @@
  				}},
  			}
  			r.OnDataKLV(track, func(pts int64, uni []byte) error {
@@ -1022,7 +1028,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts,
-@@ -157,7 +178,7 @@ func ToStream(
+@@ -157,7 +178,7 @@
  			}
  
  			r.OnDataMPEG4Audio(track, func(pts int64, aus [][]byte) error {
@@ -1031,7 +1037,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
-@@ -184,7 +205,7 @@ func ToStream(
+@@ -184,7 +205,7 @@
  			clockRate := medi.Formats[0].ClockRate()
  
  			r.OnDataMPEG4AudioLATM(track, func(pts int64, els [][]byte) error {
@@ -1040,7 +1046,7 @@ index 5b0bbea..1fccc32 100644
  
  				pts = multiplyAndDivide(pts, int64(clockRate), 90000)
  
-@@ -228,7 +249,7 @@ func ToStream(
+@@ -228,7 +249,7 @@
  			}
  
  			r.OnDataMPEG1Audio(track, func(pts int64, frames [][]byte) error {
@@ -1049,7 +1055,7 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-@@ -248,7 +269,7 @@ func ToStream(
+@@ -248,7 +269,7 @@
  			}
  
  			r.OnDataAC3(track, func(pts int64, frame []byte) error {
@@ -1058,9 +1064,6 @@ index 5b0bbea..1fccc32 100644
  
  				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
  					PTS:     multiplyAndDivide(pts, int64(medi.Formats[0].ClockRate()), 90000),
-diff --git a/internal/protocols/mpegts/to_stream_clock_origin_test.go b/internal/protocols/mpegts/to_stream_clock_origin_test.go
-new file mode 100644
-index 0000000..7bb785b
 --- /dev/null
 +++ b/internal/protocols/mpegts/to_stream_clock_origin_test.go
 @@ -0,0 +1,138 @@
@@ -1202,11 +1205,9 @@ index 0000000..7bb785b
 +		}
 +	}
 +}
-diff --git a/internal/servers/srt/conn.go b/internal/servers/srt/conn.go
-index 46aedc4..2d0ca49 100644
 --- a/internal/servers/srt/conn.go
 +++ b/internal/servers/srt/conn.go
-@@ -6,6 +6,7 @@ import (
+@@ -6,6 +6,7 @@
  	"errors"
  	"fmt"
  	"net"
@@ -1214,7 +1215,7 @@ index 46aedc4..2d0ca49 100644
  	"sync"
  	"time"
  
-@@ -56,17 +57,19 @@ type conn struct {
+@@ -56,17 +57,20 @@
  	pathManager         serverPathManager
  	parent              *Server
  
@@ -1240,24 +1241,33 @@ index 46aedc4..2d0ca49 100644
 +	user           string
 +	sconn          srt.Conn
 +	reader         *stream.Reader
++	bandwidthProbe *probeReader
 +	transportClock *defs.APISRTTransportClock
 +	readerSource   *defs.APIPathSource
  }
  
  func (c *conn) initialize() {
-@@ -194,6 +197,11 @@ func (c *conn) runPublish(streamID *streamID) error {
+@@ -194,8 +198,18 @@
  }
  
  func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *conf.Path) error {
 +	defer func() {
 +		c.mutex.Lock()
 +		c.transportClock = nil
++		c.bandwidthProbe = nil
 +		c.mutex.Unlock()
 +	}()
  	sconn.SetReadDeadline(time.Now().Add(time.Duration(c.readTimeout)))
- 	r := &mpegts.EnhancedReader{R: sconn}
+-	r := &mpegts.EnhancedReader{R: sconn}
++	observer := newProbeReader(sconn, time.Now)
++	c.mutex.Lock()
++	c.bandwidthProbe = observer
++	c.mutex.Unlock()
++	r := &mpegts.EnhancedReader{R: observer}
  	err := r.Initialize()
-@@ -220,7 +228,20 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
+ 	if err != nil {
+ 		return err
+@@ -220,7 +234,20 @@
  
  	var subStream *stream.SubStream
  
@@ -1279,7 +1289,7 @@ index 46aedc4..2d0ca49 100644
  	if err != nil {
  		return err
  	}
-@@ -262,6 +283,12 @@ func (c *conn) runPublishReader(sconn srt.Conn, streamID *streamID, pathConf *co
+@@ -262,6 +289,12 @@
  }
  
  func (c *conn) runRead(streamID *streamID) error {
@@ -1292,7 +1302,7 @@ index 46aedc4..2d0ca49 100644
  	res, err := c.pathManager.AddReader(defs.PathAddReaderReq{
  		Author: c,
  		AccessRequest: defs.PathAccessRequest{
-@@ -287,6 +314,16 @@ func (c *conn) runRead(streamID *streamID) error {
+@@ -287,6 +320,16 @@
  		return err
  	}
  
@@ -1309,7 +1319,7 @@ index 46aedc4..2d0ca49 100644
  	defer res.Path.RemoveReader(defs.PathRemoveReaderReq{Author: c})
  
  	err = srtCheckPassphrase(c.connReq, res.Path.SafeConf().SRTReadPassphrase)
-@@ -339,6 +376,7 @@ func (c *conn) runRead(streamID *streamID) error {
+@@ -339,6 +382,7 @@
  
  	c.mutex.Lock()
  	c.reader = r
@@ -1317,10 +1327,15 @@ index 46aedc4..2d0ca49 100644
  	c.mutex.Unlock()
  
  	select {
-@@ -380,6 +418,16 @@ func (c *conn) apiItem() *defs.APISRTConn {
+@@ -378,6 +422,19 @@
+ 		Path:       c.pathName,
+ 		Query:      c.query,
  		User:       c.user,
- 	}
- 
++	}
++
++	if c.state == defs.APISRTConnStatePublish && c.bandwidthProbe != nil {
++		item.ScorebugBandwidthProbe = c.bandwidthProbe.snapshot()
++	}
 +	if c.state == defs.APISRTConnStatePublish && c.transportClock != nil {
 +		clock := *c.transportClock
 +		item.ScorebugTransportClock = &clock
@@ -1329,17 +1344,12 @@ index 46aedc4..2d0ca49 100644
 +	if c.state == defs.APISRTConnStateRead && c.readerSource != nil {
 +		source := *c.readerSource
 +		item.ScorebugReaderSource = &source
-+	}
-+
+ 	}
+ 
  	if c.sconn != nil {
- 		var s srt.Statistics
- 		c.sconn.Stats(&s)
-diff --git a/internal/servers/srt/conn_clock_origin_test.go b/internal/servers/srt/conn_clock_origin_test.go
-new file mode 100644
-index 0000000..190fad2
 --- /dev/null
 +++ b/internal/servers/srt/conn_clock_origin_test.go
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,194 @@
 +package srt
 +
 +import (
@@ -1409,6 +1419,7 @@ index 0000000..190fad2
 +		for _, origin := range []int64{0, 9000, (1 << 33) - 2000} {
 +			t.Run(fmt.Sprintf("always_%v/origin_%d", always, origin), func(t *testing.T) {
 +				var buf bytes.Buffer
++				buf.Write(probeTestMessage(0))
 +				audio := &mpegts.Track{Codec: &codecs.MPEG4Audio{Config: mpeg4audio.AudioSpecificConfig{Type: 2, SampleRate: 48000, ChannelConfig: 2}}}
 +				video := &mpegts.Track{Codec: &codecs.H264{}}
 +				w := &mpegts.Writer{W: &buf, Tracks: []*mpegts.Track{video, audio}}
@@ -1418,6 +1429,7 @@ index 0000000..190fad2
 +				require.NoError(t, w.WriteMPEG4Audio(audio, origin, [][]byte{{1, 2, 3, 4}}))
 +				require.NoError(t, w.WriteH264(video, (origin+3000)&((1<<33)-1), (origin+3000)&((1<<33)-1), [][]byte{test.FormatH264.SPS, test.FormatH264.PPS, {5, 1}}))
 +				require.NoError(t, w.WriteMPEG4Audio(audio, (origin+6000)&((1<<33)-1), [][]byte{{1, 2, 3, 4}}))
++				buf.Write(probeTestMessage(1))
 +				transport := &clockConn{data: bytes.NewReader(buf.Bytes()), stop: make(chan struct{})}
 +				defer func() {
 +					select {
@@ -1465,6 +1477,17 @@ index 0000000..190fad2
 +				case <-time.After(time.Second):
 +					t.Fatal("missing callback")
 +				}
++				require.Eventually(t, func() bool {
++					item := clockJSON(t, c)
++					p, ok := item["scorebugBandwidthProbe"].(map[string]any)
++					return ok && p["deliveredMessages"] == "2" && p["deliveredPayloadBytes"] == "2632"
++				}, time.Second, time.Millisecond)
++				snapshotProbe := c.apiItem().ScorebugBandwidthProbe
++				require.NotNil(t, snapshotProbe)
++				snapshotProbe.ID = "mutated"
++				*snapshotProbe.LastDeliveredAtNanoseconds = "mutated"
++				require.NotEqual(t, "mutated", c.apiItem().ScorebugBandwidthProbe.ID)
++				require.NotEqual(t, "mutated", *c.apiItem().ScorebugBandwidthProbe.LastDeliveredAtNanoseconds)
 +				item := clockJSON(t, c)
 +				if always {
 +					require.NotContains(t, item, "scorebugTransportClock")
@@ -1482,12 +1505,14 @@ index 0000000..190fad2
 +						c.state = state
 +						c.mutex.Unlock()
 +						require.NotContains(t, clockJSON(t, c), "scorebugTransportClock")
++						require.NotContains(t, clockJSON(t, c), "scorebugBandwidthProbe")
 +					}
 +					c.mutex.Lock()
 +					c.state = defs.APISRTConnStatePublish
 +					c.mutex.Unlock()
 +					other := &conn{uuid: uuid.New(), connReq: clockConnRequest{}, state: defs.APISRTConnStatePublish, pathName: "clock-test"}
 +					require.NotContains(t, clockJSON(t, other), "scorebugTransportClock", "new publication must not inherit origin")
++					require.NotContains(t, clockJSON(t, other), "scorebugBandwidthProbe")
 +				}
 +				// Concurrent snapshots race with teardown and mutate only their own copy.
 +				var wg sync.WaitGroup
@@ -1495,6 +1520,9 @@ index 0000000..190fad2
 +					wg.Go(func() {
 +						for range 100 {
 +							v := c.apiItem()
++							if v.ScorebugBandwidthProbe != nil {
++								v.ScorebugBandwidthProbe.ID = "local"
++							}
 +							if v.ScorebugTransportClock != nil {
 +								v.ScorebugTransportClock.OriginPTS = "local"
 +							}
@@ -1511,13 +1539,11 @@ index 0000000..190fad2
 +				wg.Wait()
 +				<-path.removed
 +				require.NotContains(t, clockJSON(t, c), "scorebugTransportClock", "reader teardown clears origin")
++				require.NotContains(t, clockJSON(t, c), "scorebugBandwidthProbe", "publisher teardown clears probe")
 +			})
 +		}
 +	}
 +}
-diff --git a/internal/servers/srt/conn_reader_source_test.go b/internal/servers/srt/conn_reader_source_test.go
-new file mode 100644
-index 0000000..8115d48
 --- /dev/null
 +++ b/internal/servers/srt/conn_reader_source_test.go
 @@ -0,0 +1,197 @@
@@ -1718,11 +1744,381 @@ index 0000000..8115d48
 +		})
 +	}
 +}
-diff --git a/internal/servers/srt/server_test.go b/internal/servers/srt/server_test.go
-index bdea48c..6c059a5 100644
+--- /dev/null
++++ b/internal/servers/srt/probe_reader.go
+@@ -0,0 +1,159 @@
++package srt
++
++import (
++	"bytes"
++	"encoding/binary"
++	"io"
++	"strconv"
++	"sync"
++	"time"
++
++	"github.com/bluenviron/mediamtx/internal/defs"
++	"github.com/google/uuid"
++)
++
++// probeReader observes delivered TS bytes without changing demux input or errors.
++// It owns one partial packet and one attempt; invalid evidence never stops media.
++type probeReader struct {
++	r           io.Reader
++	now         func() time.Time
++	origin      time.Time
++	mutex       sync.Mutex
++	partial     [188]byte
++	used        int
++	seen        bool
++	id          uuid.UUID
++	generation  uint64
++	rate        uint32
++	messages    uint64
++	pending     int
++	first, last *int64
++	clock       int64
++	invalid     string
++}
++
++func newProbeReader(r io.Reader, now func() time.Time) *probeReader {
++	return &probeReader{r: r, now: now, origin: now()}
++}
++func (r *probeReader) fail(reason string) {
++	if r.invalid == "" {
++		r.invalid = reason
++	}
++}
++func (r *probeReader) stamp() int64 {
++	at := r.now().Sub(r.origin).Nanoseconds()
++	if at < r.clock || at < 0 {
++		r.fail("clock")
++		return r.clock
++	}
++	r.clock = at
++	return at
++}
++func (r *probeReader) Read(p []byte) (int, error) {
++	n, err := r.r.Read(p)
++	r.mutex.Lock()
++	defer r.mutex.Unlock()
++	at := r.stamp()
++	if r.invalid == "" {
++		data := p[:n]
++		for len(data) > 0 {
++			if r.used == 0 && len(data) >= 188 {
++				r.packet(data[:188], at)
++				data = data[188:]
++			} else {
++				size := copy(r.partial[r.used:], data)
++				r.used += size
++				data = data[size:]
++				if r.used == 188 {
++					r.packet(r.partial[:], at)
++					r.used = 0
++				}
++			}
++			if r.invalid != "" {
++				break
++			}
++		}
++		if err != nil && (r.used != 0 || r.pending != 0) {
++			r.fail("truncated")
++		}
++	}
++	return n, err
++}
++func (r *probeReader) packet(p []byte, at int64) {
++	if p[0] != 0x47 {
++		r.fail("alignment")
++		return
++	}
++	// Other TS packets, including ordinary anonymous null packets, are not probes.
++	if p[1]&0x1f != 0x1f || p[2] != 0xff || !bytes.Equal(p[4:12], []byte("SBUGPRB1")) {
++		return
++	}
++	r.seen = true
++	if !bytes.Equal(p[:4], []byte{0x47, 0x1f, 0xff, 0x10}) {
++		r.fail("shape")
++		return
++	}
++	for _, v := range p[49:] {
++		if v != 0xff {
++			r.fail("shape")
++			return
++		}
++	}
++	id := uuid.UUID(p[12:28])
++	generation := binary.BigEndian.Uint64(p[28:36])
++	sequence := binary.BigEndian.Uint64(p[36:44])
++	rate := binary.BigEndian.Uint32(p[44:48])
++	if id == uuid.Nil || generation == 0 || rate == 0 || rate > 2000000 || p[48] > 6 {
++		r.fail("shape")
++		return
++	}
++	if r.id == uuid.Nil {
++		r.id = id
++		r.generation = generation
++		r.rate = rate
++	} else if r.id != id || r.generation != generation || r.rate != rate {
++		r.fail("scope")
++		return
++	}
++	if sequence != r.messages || int(p[48]) != r.pending {
++		r.fail("sequence")
++		return
++	}
++	if (r.messages+1)*1316 > 16*1024*1024 {
++		r.fail("byteLimit")
++		return
++	}
++	r.pending++
++	if r.pending == 7 {
++		r.pending = 0
++		r.messages++
++		if r.first == nil {
++			first := at
++			r.first = &first
++		}
++		last := at
++		r.last = &last
++	}
++}
++func (r *probeReader) snapshot() *defs.APISRTBandwidthProbe {
++	r.mutex.Lock()
++	defer r.mutex.Unlock()
++	if !r.seen {
++		return nil
++	}
++	at := r.stamp()
++	value := &defs.APISRTBandwidthProbe{Convention: "mpegts-null-probe-v1", ID: r.id.String(),
++		PublishingGeneration: strconv.FormatUint(r.generation, 10), BitRate: int(r.rate),
++		DeliveredMessages: strconv.FormatUint(r.messages, 10), DeliveredPayloadBytes: strconv.FormatUint(r.messages*1316, 10),
++		NextSequence: strconv.FormatUint(r.messages, 10), PendingPackets: r.pending,
++		ObservedAtNanoseconds: strconv.FormatInt(at, 10), InvalidReason: r.invalid}
++	if r.first != nil {
++		s := strconv.FormatInt(*r.first, 10)
++		value.FirstDeliveredAtNanoseconds = &s
++	}
++	if r.last != nil {
++		s := strconv.FormatInt(*r.last, 10)
++		value.LastDeliveredAtNanoseconds = &s
++	}
++	return value
++}
+--- /dev/null
++++ b/internal/servers/srt/probe_reader_test.go
+@@ -0,0 +1,207 @@
++package srt
++
++import (
++	"bytes"
++	"encoding/binary"
++	"encoding/hex"
++	"io"
++	"strconv"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++// Fixed independent wire prefix agrees with the Swift vector, with sequence zero.
++func probeTestMessage(sequence uint64) []byte {
++	prefix, _ := hex.DecodeString("471fff10534255475052423100112233445566778899aabbccddeeff01020304050607080000000000000000000f4240")
++	b := bytes.Repeat([]byte{0xff}, 1316)
++	for part := 0; part < 7; part++ {
++		at := part * 188
++		copy(b[at:], prefix)
++		binary.BigEndian.PutUint64(b[at+36:], sequence)
++		b[at+48] = byte(part)
++	}
++	return b
++}
++
++type probeChunkReader struct {
++	data       []byte
++	chunk      int
++	finalError error
++}
++
++func (r *probeChunkReader) Read(p []byte) (int, error) {
++	if len(r.data) == 0 {
++		return 0, io.EOF
++	}
++	n := min(len(p), len(r.data), r.chunk)
++	copy(p, r.data[:n])
++	r.data = r.data[n:]
++	if len(r.data) == 0 {
++		return n, r.finalError
++	}
++	return n, nil
++}
++func TestProbeReaderDeliveredIdentityAcrossReadBoundaries(t *testing.T) {
++	for _, chunk := range []int{1, 17, 187, 188, 189, 1316, 4096} {
++		t.Run(strconv.Itoa(chunk), func(t *testing.T) {
++			ordinary := bytes.Repeat([]byte{0xff}, 188)
++			copy(ordinary, []byte{0x47, 0x1f, 0xff, 0x10})
++			input := append(append(append([]byte{}, ordinary...), probeTestMessage(0)...), probeTestMessage(1)...)
++			input = append(input, ordinary...)
++			base := time.Unix(0, 0)
++			now := base
++			observer := newProbeReader(&probeChunkReader{input, chunk, io.EOF}, func() time.Time { now = now.Add(time.Millisecond); return now })
++			output, err := io.ReadAll(observer)
++			require.NoError(t, err)
++			require.Equal(t, input, output)
++			s := observer.snapshot()
++			require.NotNil(t, s)
++			require.Empty(t, s.InvalidReason)
++			require.Equal(t, "00112233-4455-6677-8899-aabbccddeeff", s.ID)
++			require.Equal(t, "72623859790382856", s.PublishingGeneration)
++			require.Equal(t, 1000000, s.BitRate)
++			require.Equal(t, "2", s.DeliveredMessages)
++			require.Equal(t, "2632", s.DeliveredPayloadBytes)
++			require.Equal(t, "2", s.NextSequence)
++			require.Equal(t, 0, s.PendingPackets)
++			require.NotEmpty(t, s.FirstDeliveredAtNanoseconds)
++			require.NotEmpty(t, s.LastDeliveredAtNanoseconds)
++			s.ID = "mutated"
++			require.NotEqual(t, s.ID, observer.snapshot().ID)
++		})
++	}
++}
++
++func TestProbeReaderRejectsMalformedAndCrossedEvidenceWithoutChangingInput(t *testing.T) {
++	tests := []struct {
++		name, reason string
++		make         func() []byte
++	}{
++		{"skipped", "sequence", func() []byte { return probeTestMessage(1) }},
++		{"duplicate", "sequence", func() []byte { return append(probeTestMessage(0), probeTestMessage(0)...) }},
++		{"ordinal", "sequence", func() []byte { b := probeTestMessage(0); b[48] = 1; return b }},
++		{"ordinalRange", "shape", func() []byte { b := probeTestMessage(0); b[48] = 7; return b }},
++		{"generation", "scope", func() []byte { b := probeTestMessage(0); b[188+35]++; return b }},
++		{"identity", "scope", func() []byte { b := probeTestMessage(0); b[188+12]++; return b }},
++		{"rate", "scope", func() []byte { b := probeTestMessage(0); b[188+47]++; return b }},
++		{"header", "shape", func() []byte { b := probeTestMessage(0); b[3] = 0x30; return b }},
++		{"tail", "shape", func() []byte { b := probeTestMessage(0); b[187] = 0; return b }},
++		{"zeroID", "shape", func() []byte { b := probeTestMessage(0); clear(b[12:28]); return b }},
++		{"zeroGeneration", "shape", func() []byte { b := probeTestMessage(0); clear(b[28:36]); return b }},
++		{"zeroRate", "shape", func() []byte { b := probeTestMessage(0); clear(b[44:48]); return b }},
++		{"excessRate", "shape", func() []byte { b := probeTestMessage(0); binary.BigEndian.PutUint32(b[44:], 2000001); return b }},
++		{"partialMessage", "truncated", func() []byte { return probeTestMessage(0)[:188] }},
++		{"partialPacket", "truncated", func() []byte { return probeTestMessage(0)[:189] }},
++		{"alignment", "alignment", func() []byte { b := append(probeTestMessage(0), probeTestMessage(1)...); b[1316] = 0; return b }},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			data := tt.make()
++			r := newProbeReader(&probeChunkReader{data, 71, io.EOF}, time.Now)
++			out, err := io.ReadAll(r)
++			require.NoError(t, err)
++			require.Equal(t, data, out)
++			s := r.snapshot()
++			require.NotNil(t, s)
++			require.Equal(t, tt.reason, s.InvalidReason)
++			before := s.DeliveredPayloadBytes
++			r.r = bytes.NewReader(probeTestMessage(0))
++			_, err = io.ReadAll(r)
++			require.NoError(t, err)
++			require.Equal(t, before, r.snapshot().DeliveredPayloadBytes)
++			require.Equal(t, tt.reason, r.snapshot().InvalidReason)
++		})
++	}
++}
++func TestProbeReaderOrdinaryNullAndMediaAreNotProbeTraffic(t *testing.T) {
++	data := bytes.Repeat([]byte{0xff}, 188)
++	copy(data, []byte{0x47, 0x1f, 0xff, 0x10})
++	media := probeTestMessage(0)
++	for at := 0; at < len(media); at += 188 {
++		media[at+1] = 1
++		media[at+2] = 0
++	}
++	data = append(data, media...)
++	r := newProbeReader(bytes.NewReader(data), time.Now)
++	out, err := io.ReadAll(r)
++	require.NoError(t, err)
++	require.Equal(t, data, out)
++	require.Nil(t, r.snapshot())
++}
++func TestProbeReaderPartialMessageAndErrorPreservation(t *testing.T) {
++	r := newProbeReader(bytes.NewReader(probeTestMessage(0)), time.Now)
++	b := make([]byte, 188)
++	n, err := r.Read(b)
++	require.Equal(t, 188, n)
++	require.NoError(t, err)
++	s := r.snapshot()
++	require.Equal(t, 1, s.PendingPackets)
++	require.Equal(t, "0", s.DeliveredMessages)
++	require.Nil(t, s.FirstDeliveredAtNanoseconds)
++	_, err = io.Copy(io.Discard, r)
++	require.NoError(t, err)
++	require.Equal(t, "1", r.snapshot().DeliveredMessages)
++	failure := io.ErrUnexpectedEOF
++	data := probeTestMessage(0)
++	r = newProbeReader(&probeChunkReader{data, 1316, failure}, time.Now)
++	b = make([]byte, 2000)
++	n, err = r.Read(b)
++	require.Equal(t, 1316, n)
++	require.ErrorIs(t, err, failure)
++	require.Equal(t, data, b[:n])
++	require.Equal(t, "1", r.snapshot().DeliveredMessages)
++	require.Empty(t, r.snapshot().InvalidReason)
++}
++func TestProbeReaderClockAndDeliveryTimes(t *testing.T) {
++	base := time.Unix(10, 0)
++	now := base
++	r := newProbeReader(bytes.NewReader(probeTestMessage(0)), func() time.Time { return now })
++	now = base.Add(2 * time.Second)
++	_, err := io.Copy(io.Discard, r)
++	require.NoError(t, err)
++	now = base.Add(3 * time.Second)
++	s := r.snapshot()
++	require.Equal(t, "2000000000", *s.FirstDeliveredAtNanoseconds)
++	require.Equal(t, "2000000000", *s.LastDeliveredAtNanoseconds)
++	require.Equal(t, "3000000000", s.ObservedAtNanoseconds)
++	*s.LastDeliveredAtNanoseconds = "mutated"
++	require.Equal(t, "2000000000", *r.snapshot().LastDeliveredAtNanoseconds)
++	now = base.Add(time.Second)
++	require.Equal(t, "clock", r.snapshot().InvalidReason)
++}
++func TestProbeReaderByteBudgetAndConcurrentSnapshots(t *testing.T) {
++	var input []byte
++	const messages = 16 * 1024 * 1024 / 1316
++	for seq := 0; seq <= messages; seq++ {
++		input = append(input, probeTestMessage(uint64(seq))...)
++	}
++	r := newProbeReader(bytes.NewReader(input), time.Now)
++	done := make(chan struct{})
++	var wg sync.WaitGroup
++	for range 4 {
++		wg.Go(func() {
++			for {
++				select {
++				case <-done:
++					return
++				default:
++					if s := r.snapshot(); s != nil {
++						s.ID = "local"
++					}
++				}
++			}
++		})
++	}
++	out, err := io.ReadAll(r)
++	close(done)
++	wg.Wait()
++	require.NoError(t, err)
++	require.Equal(t, input, out)
++	s := r.snapshot()
++	require.Equal(t, "byteLimit", s.InvalidReason)
++	require.Equal(t, strconv.Itoa(messages), s.DeliveredMessages)
++	require.Equal(t, strconv.Itoa(messages*1316), s.DeliveredPayloadBytes)
++}
 --- a/internal/servers/srt/server_test.go
 +++ b/internal/servers/srt/server_test.go
-@@ -252,6 +252,7 @@ func TestServerPublish(t *testing.T) {
+@@ -252,6 +252,7 @@
  				Path:                          "teststream",
  				Query:                         "param=value",
  				User:                          "myuser",

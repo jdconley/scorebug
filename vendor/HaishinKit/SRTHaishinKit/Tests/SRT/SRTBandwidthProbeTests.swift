@@ -4,12 +4,50 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite struct SRTBandwidthProbeTests {
+    @Test func probeWireVectorIsNetworkOrderAndEveryPacketHasIdentity() throws {
+        let id = try #require(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff"))
+        let data = SRTProbeMessage.encode(id: id, generation: 0x0102030405060708,
+                                          sequence: 0x1112131415161718, bitRate: 1_000_000)
+        // The Go parser uses this independently specified wire vector too.
+        let prefix: [UInt8] = [0x47,0x1f,0xff,0x10, 0x53,0x42,0x55,0x47,0x50,0x52,0x42,0x31,
+            0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff,
+            1,2,3,4,5,6,7,8, 0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18, 0,0x0f,0x42,0x40]
+        #expect(data.count == 1316)
+        for part in 0..<7 {
+            #expect(Array(data[part * 188..<part * 188 + 48]) == prefix)
+            #expect(data[part * 188 + 48] == UInt8(part))
+            #expect(data[part * 188 + 49..<part * 188 + 188].allSatisfy { $0 == 0xff })
+        }
+    }
+    @Test func offeredMessagesKeepAttemptIdentityAndAdvanceOnlyAcceptedSequence() throws {
+        let probe = try makeProbe()
+        var seen: [Data] = []
+        #expect(try !probe.offer(statistics: stats(10), now: { 10 }, send: { seen.append($0); return true }))
+        #expect(seen.isEmpty)
+        for index in 0..<2 {
+            let at = 10.02 + Double(index) * 0.02
+            #expect(try probe.offer(statistics: stats(at), now: { at }, send: { seen.append($0); return true }))
+        }
+        #expect(try !probe.offer(statistics: stats(10.06), now: { 10.06 }, send: { seen.append($0); return false }))
+        #expect(seen.count == 3)
+        for (index, data) in seen.enumerated() {
+            let uuidBytes = Array(data[12..<28])
+            let hex = uuidBytes.map { String(format: "%02x", $0) }.joined()
+            #expect(hex == probe.id.uuidString.replacingOccurrences(of: "-", with: "").lowercased())
+            #expect(Array(data[28..<36]) == [0,0,0,0,0,0,0,1])
+            #expect(Array(data[36..<44]) == [0,0,0,0,0,0,0,UInt8(index)])
+            #expect(Array(data[44..<48]) == [0,0x0f,0x42,0x40])
+        }
+        #expect(probe.snapshot(now: { 10.06 }).acceptedPayloadBytes == 2632)
+        #expect(probe.snapshot(now: { 10.06 }).reason == .transportBackpressure)
+        #expect(try !probe.offer(statistics: stats(10.08), now: { 10.08 }, send: { _ in Issue.record("terminal send"); return true }))
+    }
     @Test func opportunityDelayTracksTokensWithoutBankingCatchUpTraffic() throws {
         let probe = try makeProbe()
         #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10 })) - 0.01088) < 0.000001)
         #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10.005 })) - 0.00588) < 0.000001)
         #expect(probe.nextOpportunityDelay(now: { 10.2 }) == 0)
-        #expect(try probe.offer(statistics: stats(10.2), now: { 10.2 }, send: { true }))
+        #expect(try probe.offer(statistics: stats(10.2), now: { 10.2 }, send: { _ in true }))
         #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10.2 })) - 0.01088) < 0.000001)
         #expect(probe.nextOpportunityDelay(now: { 10.3 }) == nil)
         #expect(probe.snapshot(now: { 10.3 }).reason == .leaseExpired)
@@ -56,19 +94,19 @@ import Testing
         #expect(entries == 1)
     }
     @Test func nullPacketShapeAndOneMessageTokenBound() throws {
-        let data = SRTBandwidthProbe.message
+        let data = SRTProbeMessage.encode(id: UUID(), generation: 1, sequence: 0, bitRate: 1_000_000)
         #expect(data.count == 1316)
         for at in stride(from: 0, to: data.count, by: 188) {
             #expect(Array(data[at..<at + 4]) == [0x47, 0x1f, 0xff, 0x10])
-            #expect(data[at + 4..<at + 188].allSatisfy { $0 == 0xff })
+            #expect(data[at + 49..<at + 188].allSatisfy { $0 == 0xff })
         }
         let probe = try makeProbe()
         #expect(!probe.isEligible(now: { 10 }))
         #expect(probe.isEligible(now: { 10.02 }))
-        #expect(try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { true }))
+        #expect(try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in true }))
         #expect(!probe.isEligible(now: { 10.02 }))
         #expect(probe.renew(now: { 10.1 }))
-        #expect(try probe.offer(statistics: stats(10.3), now: { 10.3 }, send: { true }))
+        #expect(try probe.offer(statistics: stats(10.3), now: { 10.3 }, send: { _ in true }))
         #expect(!probe.isEligible(now: { 10.3 }))
         #expect(probe.snapshot(now: { 10.3 }).acceptedPayloadBytes == 2632)
     }
@@ -78,7 +116,7 @@ import Testing
         #expect(probe.snapshot(now: { 10.3 }).reason == .leaseExpired)
         #expect(!probe.renew(now: { 10.4 }))
         #expect(!probe.isEligible(now: { 10.4 }))
-        #expect(try !probe.offer(statistics: stats(10.4), now: { 10.4 }, send: { Issue.record("Expired probe submitted"); return true }))
+        #expect(try !probe.offer(statistics: stats(10.4), now: { 10.4 }, send: { _ in Issue.record("Expired probe submitted"); return true }))
     }
     @Test(arguments: 0..<9) func invalidOrPressuredStatisticsWithdrawWithoutSending(mode: Int) throws {
         let probe = try makeProbe()
@@ -95,7 +133,7 @@ import Testing
         case 7: mon.byteRetransTotal = 9
         default: mon.msRTT = .nan
         }
-        #expect(try !probe.offer(statistics: .init(mon: mon, sampledAt: at), now: { 10.02 }, send: { Issue.record("Unhealthy probe submitted"); return true }))
+        #expect(try !probe.offer(statistics: .init(mon: mon, sampledAt: at), now: { 10.02 }, send: { _ in Issue.record("Unhealthy probe submitted"); return true }))
         #expect(probe.snapshot(now: { 10.02 }).reason != nil)
         #expect(!probe.renew(now: { 10.03 }))
     }
@@ -103,19 +141,19 @@ import Testing
         let cancelled = try makeProbe(); cancelled.cancel(.cancelled)
         #expect(!cancelled.isEligible(now: { 10.02 }))
         let blocked = try makeProbe()
-        #expect(try !blocked.offer(statistics: stats(10.02), now: { 10.02 }, send: { false }))
+        #expect(try !blocked.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in false }))
         #expect(blocked.snapshot(now: { 10.02 }).reason == .transportBackpressure)
         #expect(blocked.snapshot(now: { 10.02 }).acceptedPayloadBytes == 0)
         let failed = try makeProbe()
         #expect(throws: Failure.injected) {
-            try failed.offer(statistics: stats(10.02), now: { 10.02 }, send: { throw Failure.injected })
+            try failed.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in throw Failure.injected })
         }
         #expect(failed.snapshot(now: { 10.02 }).reason == .transportFailed)
         #expect(failed.snapshot(now: { 10.02 }).acceptedPayloadBytes == 0)
     }
     @Test func acceptanceRecordsCompletionAndExposesExpiryCrossedDuringNativeCall() throws {
         let probe = try makeProbe(); var clock = 10.29
-        #expect(try probe.offer(statistics: stats(10.29), now: { clock }, send: { clock = 10.31; return true }))
+        #expect(try probe.offer(statistics: stats(10.29), now: { clock }, send: { _ in clock = 10.31; return true }))
         let result = probe.snapshot(now: { clock })
         #expect(result.lastAcceptedAt == 10.31)
         #expect(result.acceptedPayloadBytes == 1316)
@@ -131,7 +169,7 @@ import Testing
         while at < 70 {
             at += 0.05
             _ = probe.renew(now: { at })
-            _ = try probe.offer(statistics: stats(at), now: { at }, send: { true })
+            _ = try probe.offer(statistics: stats(at), now: { at }, send: { _ in true })
         }
         let value = probe.snapshot(now: { at })
         #expect(value.reason == .timeLimit)
@@ -143,7 +181,7 @@ import Testing
     @Test func acceptedPaddingRemainsCountedWhenRestoringSocketModeFails() throws {
         let probe = try makeProbe()
         #expect(throws: (any Error).self) {
-            try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: {
+            try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in
                 try SRTNonblockingSend.perform(get: { true }, set: { if $0 { throw Failure.injected } }, send: { true }, now: { 10.02 })
             })
         }
@@ -156,7 +194,7 @@ import Testing
         let probe = try makeProbe(), gate = ProbeSubmissionGate()
         defer { gate.release() }
         let sending = Task.detached {
-            try probe.offer(statistics: self.stats(10.02), now: { 10.02 }, send: { gate.enter(); return true })
+            try probe.offer(statistics: self.stats(10.02), now: { 10.02 }, send: { _ in gate.enter(); return true })
         }
         let end = ContinuousClock.now + .seconds(2)
         while !gate.entered && ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(1)) }
@@ -167,7 +205,7 @@ import Testing
         await cancelling.value
         #expect(probe.snapshot(now: { 10.03 }).acceptedPayloadBytes == 1316)
         #expect(probe.snapshot(now: { 10.03 }).reason == .cancelled)
-        #expect(try !probe.offer(statistics: stats(10.04), now: { 10.04 }, send: {
+        #expect(try !probe.offer(statistics: stats(10.04), now: { 10.04 }, send: { _ in
             Issue.record("Revoked permit submitted"); return true
         }))
     }

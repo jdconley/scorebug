@@ -9,6 +9,8 @@ export async function saveNativeStatusEvidence(
     artifact,
     decodedWindowLimit,
     requirePublication,
+    requireReceiverProbe = false,
+    receiverProbes,
     collectorError,
     publications,
     workerPublications,
@@ -19,8 +21,11 @@ export async function saveNativeStatusEvidence(
 ) {
   assert.ok([64, 128].includes(decodedWindowLimit));
   assert.equal(typeof requirePublication, 'boolean');
+  assert.equal(typeof requireReceiverProbe, 'boolean');
+  assert.ok(!requireReceiverProbe || requirePublication);
   const histories = [
     ['publishing-attempt-status.json', publications, 16],
+    ...(requireReceiverProbe ? [['receiver-probe-status.json', receiverProbes, 2048]] : []),
     ...(requirePublication ? [['worker-publication-status.json', workerPublications, 16]] : []),
     ['worker-processing-status.json', workerProcessing, decodedWindowLimit],
     ['decoded-video-status.json', decodedWindows, decodedWindowLimit],

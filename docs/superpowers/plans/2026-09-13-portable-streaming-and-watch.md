@@ -1239,3 +1239,24 @@ run does not reproduce the original source stall; the dedicated regression cover
 that defect. Authenticated receiver-attributed probe delivery and measured candidate
 cost remain next, before quality upgrades. Physical capture, Watch routes, other
 hosts and sustained soaks remain open.
+
+
+[Receiver-attributed probe accounting](2026-09-16-receiver-probe-accounting.md)
+now marks valid null packets and counts complete probe messages before relay
+remultiplexing. The private relay API binds snapshots to the publisher connection;
+the native fixture verifies its signed application attempt before redacting/saving
+measurements. Malformed, stale, crossed or incomplete evidence cannot pass.
+
+Actual pressure run `native-app-IK5Ns7` delivers all 3,693 sender-accepted messages
+(4,859,988 bytes), at ~0.9923 Mbps accounted against 1 Mbps. The independent archive
+preserves 6,387 frames; retained live output preserves 6,010 consecutive frames and
+30 fps minimum reported receiver cadence. All expected audio markers, full decodes,
+proxy conservation and joined teardown pass. The 199 SDK, 70 adapter and 1,139
+tooling tests, three relevant Go package suites with race checks, both Apple builds
+and exact vendor provenance pass.
+
+Next integrate fresh receiver intervals into production status/policy and measured
+candidate-cost admission, including bounded repeated probes/stages. Current proof
+is a finite fixed-profile scenario and retains one attempt per connection; it does
+not authorize automatic upgrades. Phone/Watch, remote hosts and long soaks remain
+unqualified.

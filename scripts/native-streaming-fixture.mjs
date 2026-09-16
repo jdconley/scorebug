@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { recordReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +25,7 @@ export async function nativeStreamingFixture({
   run,
   decodedWindowLimit = 64,
   requirePublication = false,
+  requireReceiverProbe = false,
   uplinkProfile = null,
   liveProfile = '1080p30',
   decoderThreading = 'automatic',
@@ -48,6 +50,8 @@ export async function nativeStreamingFixture({
     uplinkProfile === null || ['passthrough', 'rate4m'].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
+  assert.equal(typeof requireReceiverProbe, 'boolean');
+  assert.ok(!requireReceiverProbe || requirePublication);
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
@@ -55,6 +59,7 @@ export async function nativeStreamingFixture({
   let statusTask, statusAbort, statusError;
   const decodedWindows = new Map();
   const publications = new Map();
+  const receiverProbes = new Map();
   const workerPublications = new Map();
   const workerProcessing = new Map();
   async function stopStatus() {
@@ -66,6 +71,8 @@ export async function nativeStreamingFixture({
       artifact,
       decodedWindowLimit,
       requirePublication,
+      requireReceiverProbe,
+      receiverProbes,
       collectorError: statusError,
       publications,
       workerPublications,
@@ -146,7 +153,9 @@ export async function nativeStreamingFixture({
   try {
     let ingestImage = 'bluenviron/mediamtx:1.21.0';
     if (requirePublication) {
-      const tag = 'scorebug/ingest:recovery-v1';
+      const tag = requireReceiverProbe
+        ? 'scorebug/ingest:receiver-probe-v1'
+        : 'scorebug/ingest:recovery-v1';
       ingestImage = await run(
         'docker',
         ['image', 'inspect', tag, '--format', '{{.Id}}'],
@@ -292,6 +301,7 @@ export async function nativeStreamingFixture({
                 snapshot.broadcast.generation === status.generation &&
                 snapshot.broadcast.selection
               ) {
+                const receiverRequestStarted = performance.now();
                 const connections = await fetch(
                   `http://127.0.0.1:${relayPort}/v3/srtconns/list?itemsPerPage=100&page=0`,
                   {
@@ -303,6 +313,21 @@ export async function nativeStreamingFixture({
                 );
                 assert.ok(connections.ok, 'Read private publication evidence');
                 const listing = await connections.json();
+                if (requireReceiverProbe)
+                  recordReceiverProbeEvidence(
+                    receiverProbes,
+                    listing,
+                    {
+                      gameId: matchID,
+                      generation: snapshot.broadcast.generation,
+                      selection: snapshot.broadcast.selection,
+                    },
+                    scoringTestToken,
+                    {
+                      startedAtMilliseconds: receiverRequestStarted,
+                      receivedAtMilliseconds: performance.now(),
+                    },
+                  );
                 recordPublishingAttemptEvidence(
                   publications,
                   listing,

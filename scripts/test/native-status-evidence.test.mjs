@@ -82,3 +82,16 @@ test('refuses count/byte overflow while preserving the other bounded files', asy
     assert.ok(attempted.includes('/owned/status-collector.json'));
   }
 });
+test('receiver probe evidence is retained alongside other histories on collector failure', async () => {
+  const f = fixture(),
+    writes = new Map();
+  f.requireReceiverProbe = true;
+  f.receiverProbes = new Map([[0, { probe: { id: 'probe' } }]]);
+  f.collectorError = new Error('probe validation failed');
+  await assert.rejects(
+    saveNativeStatusEvidence(f, async (path, value) => writes.set(path, JSON.parse(value))),
+    AggregateError,
+  );
+  assert.deepEqual(writes.get('/owned/receiver-probe-status.json'), [...f.receiverProbes.values()]);
+  assert.equal(writes.get('/owned/status-collector.json').failed, true);
+});

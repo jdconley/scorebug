@@ -1,7 +1,7 @@
-# MediaMTX relay metadata and H.264 reader recovery
+# MediaMTX relay metadata, recovery and probe accounting
 
 Scorebug's qualification build uses MediaMTX 1.21.0, revision
-`2c6727904fbf233615de74a6c54a9b94dbf6025d`, with relay metadata and bounded H.264 reader recovery patches.
+`2c6727904fbf233615de74a6c54a9b94dbf6025d`, with relay metadata, bounded H.264 reader recovery and pre-demux probe accounting patches.
 The MIT notice is retained in `LICENSE`. `upstream.json` pins the upstream archive
 and touched-file hashes; `scorebug.patch` contains the source changes and Go tests.
 Go dependencies remain pinned by the original `go.mod` / `go.sum`. The Docker build
@@ -45,7 +45,7 @@ the qualification fixture's read query is only a unique test marker.
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:recovery-v1 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:receiver-probe-v1 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
@@ -107,3 +107,34 @@ go test -race ./internal/protocols/mpegts ./internal/servers/srt ./internal/forw
 See the [recovery plan](../../docs/superpowers/plans/2026-09-16-ingest-h264-recovery.md)
 for red regressions, packaging evidence and pending native pressure qualification.
 The regular local/remote deployment configurations remain unchanged.
+
+## Receiver probe accounting
+
+`receiver-probe-v1` retains the recovery-v1 behavior and adds a bounded publisher
+reader wrapper. Before demultiplexing, it counts only complete seven-packet null
+messages carrying the versioned probe identity, generation, rate, sequence and
+packet ordinals. Other media and anonymous null packets do not count. The wrapper
+passes every byte and read error through unchanged, retains one 188-byte partial
+packet and scalar state for one attempt, and invalidates proof on malformed,
+crossed, duplicated, missing, reversed or over-budget traffic. Invalidation does
+not stop media.
+
+The private authenticated publisher API item exposes `scorebugBandwidthProbe`
+with convention `mpegts-null-probe-v1`, identity and decimal-string counters.
+Receiver timestamps are elapsed nanoseconds since observer creation, measuring
+pre-demux reads rather than exact network arrival. Independent snapshots include
+complete delivered messages/payload bytes, pending packet count and optional
+invalid reason. Teardown clears the observer; idle/read/replacement connections
+cannot inherit it. Ordinary publishers omit the field.
+
+The marker is not an authentication credential. Consumers must match the enclosing
+publisher UUID and authenticated attempt proof, then the native probe UUID,
+generation and offered rate. Missing/invalid/stale evidence cannot authorize a
+quality upgrade. The native fixture selects this image only for explicit bandwidth
+probe runs, verifies signed publication scope, bounds request/response clock
+correspondence and requires all accepted probe messages to arrive. Production
+freshness/interval and candidate-cost admission are still separate work.
+
+See the [receiver accounting plan](../../docs/superpowers/plans/2026-09-16-receiver-probe-accounting.md).
+The regular deployment configurations and previously tagged recovery-v1 image
+remain unchanged.

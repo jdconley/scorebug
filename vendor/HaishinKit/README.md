@@ -188,8 +188,18 @@ Its deadline follows token availability with a 2 ms minimum and 50 ms maximum.
 Finish and close revoke the permit, cancel the owner and join the dispatch
 cancellation handler, including an already entered callback. Timer precision is
 best-effort; opportunities can still underdeliver. Snapshots prove local acceptance
-only, never receiver delivery or usable capacity. A finite renewed-probe simulator run reaches ~0.990 Mbps accounted against a
-1 Mbps target with intact archive/live gates. A pressure attempt fails archive
-capacity before probe admission; pressure and recording reliability remain open.
+only, never receiver delivery or usable capacity. Finite renewal and scheduled-pressure
+simulator runs reach ~0.990 Mbps accounted against a 1 Mbps target with intact
+archive/live gates. The initially failed pressure recording remains retained; a
+synthetic catch-up pacing fix and dedicated stalled-source regression precede the
+subsequent passing pressure run. Physical recording reliability remains open.
 See [opportunity scheduling](../../docs/superpowers/plans/2026-09-16-probe-opportunity-scheduling.md).
 See [native probe validation](../../docs/superpowers/plans/2026-09-16-native-padding-probe.md).
+
+Each optional message now carries `SBUGPRB1`, its probe UUID, publishing generation,
+accepted-message sequence, requested rate and packet ordinal inside each null
+packet payload. Encoding occurs inside the existing synchronized offer; failed
+sends do not advance the accepted sequence. This marker is attribution, not a
+credential. The pre-demux receiver must bind it to its authenticated publication;
+remultiplexed null counts cannot establish delivery. See the
+[receiver accounting design](../../docs/superpowers/specs/2026-09-16-receiver-probe-accounting-design.md).

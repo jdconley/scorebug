@@ -24,13 +24,6 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
 /// The lock serializes revocation with one nonblocking native send; its closure
 /// must not suspend, perform I/O other than that send, or reenter this object.
 final class SRTBandwidthProbe: @unchecked Sendable {
-    static let message: Data = {
-        var bytes = [UInt8](repeating: 0xff, count: 1316)
-        for at in stride(from: 0, to: bytes.count, by: 188) {
-            bytes[at] = 0x47; bytes[at + 1] = 0x1f; bytes[at + 3] = 0x10
-        }
-        return Data(bytes)
-    }()
     let id = UUID()
     let generation: UInt64
     private let lock = NSLock()
@@ -99,7 +92,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     func cancel(_ reason: SRTBandwidthProbeSnapshot.Reason) { lock.withLock { _ = stop(reason) } }
 
     @discardableResult func offer(statistics: SRTPerformanceData?, now: () -> Double,
-                                  send: () throws -> Bool) throws -> Bool {
+                                  send: (Data) throws -> Bool) throws -> Bool {
         try lock.withLock {
             let at = now()
             guard eligible(at) else { return false }
@@ -115,7 +108,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
                 return stop(.transportPressure)
             }
             do {
-                guard try send() else { return stop(.transportBackpressure) }
+                guard try send(SRTProbeMessage.encode(id: id, generation: generation, sequence: bytes / 1316, bitRate: bitRate)) else { return stop(.transportBackpressure) }
             } catch {
                 if let restoration = error as? SRTNonblockingSend.RestorationFailure,
                    let completed = restoration.acceptedAt {

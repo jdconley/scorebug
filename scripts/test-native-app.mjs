@@ -1,3 +1,4 @@
+import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { nativeBandwidthProbe, qualifyNativeBandwidthProbe } from './native-bandwidth-probe.mjs';
 import {
   nativeProfileTransitions,
@@ -101,9 +102,18 @@ const adaptiveProfiles = nativeAdaptiveProfiles({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
-const bandwidthProbe = nativeBandwidthProbe({ environment: process.env, streaming, requireProcessing,
-  requirePublication, holdSeconds: streamingOptions.holdSeconds, liveProfile });
-const sourceCadencePacing = nativeSourceCadencePacing({ environment: process.env, adaptiveProfiles });
+const bandwidthProbe = nativeBandwidthProbe({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+  liveProfile,
+});
+const sourceCadencePacing = nativeSourceCadencePacing({
+  environment: process.env,
+  adaptiveProfiles,
+});
 const uplinkProfile = nativeUplinkOptions({
   liveProfile,
   environment: process.env,
@@ -428,6 +438,7 @@ try {
   if (streaming)
     proxy = await nativeStreamingFixture({
       requirePublication,
+      requireReceiverProbe: bandwidthProbe !== null,
       uplinkProfile,
       liveProfile,
       decoderThreading,
@@ -590,7 +601,10 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let nativeFormatQualification, profileTransitionQualification, bandwidthProbeQualification;
+  let nativeFormatQualification,
+    profileTransitionQualification,
+    bandwidthProbeQualification,
+    receiverProbeQualification;
   if (liveProfile === '540p30') {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
@@ -650,15 +664,16 @@ try {
         { errorOnExist: true, force: false },
       );
       const bytes = await readFile(path);
-      assert.ok(
-        bytes.length <= 8 * 1024 * 1024,
-        'Oversized native transition evidence',
-      );
+      assert.ok(bytes.length <= 8 * 1024 * 1024, 'Oversized native transition evidence');
       profileTransitionQualification = qualifyNativeProfileTransitions(
         JSON.parse(bytes.toString('utf8')),
         observationSnapshot,
         liveSegments.flat(),
-        { adaptive: adaptiveProfiles, requireFrameEvidence: true, requirePacingEvidence: sourceCadencePacing },
+        {
+          adaptive: adaptiveProfiles,
+          requireFrameEvidence: true,
+          requirePacingEvidence: sourceCadencePacing,
+        },
       );
     }
     videoObservation = qualifyVideoObservation({
@@ -678,14 +693,28 @@ try {
     });
     if (bandwidthProbe) {
       const path = join(artifact, 'native-bandwidth-probe.json');
-      await cp(join(container, 'Library/Application Support/Scorebug/QA/native-bandwidth-probe.json'), path,
-        { errorOnExist: true, force: false });
+      await cp(
+        join(container, 'Library/Application Support/Scorebug/QA/native-bandwidth-probe.json'),
+        path,
+        { errorOnExist: true, force: false },
+      );
       const bytes = await readFile(path);
       assert.ok(bytes.length <= 512 * 1024, 'Oversized native probe evidence');
-      bandwidthProbeQualification = qualifyNativeBandwidthProbe(JSON.parse(bytes.toString('utf8')), {
-        mode: bandwidthProbe, scope: videoObservation.scope,
-        publishingGeneration: publishingClockObservation.publishingGeneration,
-      });
+      bandwidthProbeQualification = qualifyNativeBandwidthProbe(
+        JSON.parse(bytes.toString('utf8')),
+        {
+          mode: bandwidthProbe,
+          scope: videoObservation.scope,
+          publishingGeneration: publishingClockObservation.publishingGeneration,
+        },
+      );
+      const receiverBytes = await readFile(join(artifact, 'receiver-probe-status.json'));
+      assert.ok(receiverBytes.length <= 4 * 1024 * 1024, 'Oversized receiver probe evidence');
+      receiverProbeQualification = qualifyReceiverProbeEvidence(
+        JSON.parse(receiverBytes.toString('utf8')),
+        videoObservation.scope,
+        bandwidthProbeQualification,
+      );
     }
     publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
       JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
@@ -780,6 +809,7 @@ try {
         adaptiveProfiles,
         profileTransitionQualification,
         bandwidthProbeQualification,
+        receiverProbeQualification,
         streamingBudget,
         media,
         live,

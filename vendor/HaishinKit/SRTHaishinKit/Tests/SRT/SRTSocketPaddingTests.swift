@@ -13,7 +13,9 @@ import Testing
         let now = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: sample(now - 0.02), at: now - 0.02)
         try await socket.sendPadding(probe, pendingMedia: TransportOutputAccounting())
-        #expect(sent.data == SRTBandwidthProbe.message)
+        #expect(sent.data == SRTProbeMessage.encode(id: probe.id, generation: 1, sequence: 0, bitRate: 2_000_000))
+        #expect(sent.data.count == 1316)
+        #expect(sent.data[4..<12] == Data("SBUGPRB1".utf8))
         #expect(probe.snapshot(now: { ProcessInfo.processInfo.systemUptime }).acceptedPayloadBytes == 1316)
         #expect(try await socket.getSocketOption(sndsyn).intValue == (original ? 1 : 0))
         await socket.stopRunning()

@@ -1167,7 +1167,7 @@
 +        let statistics = samplePerformanceData()
 +        do {
 +            try pendingMedia.whileEmpty {
-+                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) {
++                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) { message in
 +                    try SRTNonblockingSend.perform(get: {
 +                        var value = false
 +                        var size = Int32(MemoryLayout<Bool>.size)
@@ -1180,8 +1180,8 @@
 +                            throw PublishingError.transportWriteFailed
 +                        }
 +                    }, send: {
-+                        let sent = sendmsg(SRTBandwidthProbe.message)
-+                        if sent == SRTBandwidthProbe.message.count { return true }
++                        let sent = sendmsg(message)
++                        if sent == message.count { return true }
 +                        // Capture the native thread-local error before restoring an option.
 +                        if sent == SRT_ERROR, srt_getlasterror(nil) == SRT_EASYNCSND.rawValue { return false }
 +                        throw PublishingError.transportWriteFailed
@@ -3015,7 +3015,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,136 @@
 +import Foundation
 +
 +public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
@@ -3042,13 +3042,6 @@
 +/// The lock serializes revocation with one nonblocking native send; its closure
 +/// must not suspend, perform I/O other than that send, or reenter this object.
 +final class SRTBandwidthProbe: @unchecked Sendable {
-+    static let message: Data = {
-+        var bytes = [UInt8](repeating: 0xff, count: 1316)
-+        for at in stride(from: 0, to: bytes.count, by: 188) {
-+            bytes[at] = 0x47; bytes[at + 1] = 0x1f; bytes[at + 3] = 0x10
-+        }
-+        return Data(bytes)
-+    }()
 +    let id = UUID()
 +    let generation: UInt64
 +    private let lock = NSLock()
@@ -3117,7 +3110,7 @@
 +    func cancel(_ reason: SRTBandwidthProbeSnapshot.Reason) { lock.withLock { _ = stop(reason) } }
 +
 +    @discardableResult func offer(statistics: SRTPerformanceData?, now: () -> Double,
-+                                  send: () throws -> Bool) throws -> Bool {
++                                  send: (Data) throws -> Bool) throws -> Bool {
 +        try lock.withLock {
 +            let at = now()
 +            guard eligible(at) else { return false }
@@ -3133,7 +3126,7 @@
 +                return stop(.transportPressure)
 +            }
 +            do {
-+                guard try send() else { return stop(.transportBackpressure) }
++                guard try send(SRTProbeMessage.encode(id: id, generation: generation, sequence: bytes / 1316, bitRate: bitRate)) else { return stop(.transportBackpressure) }
 +            } catch {
 +                if let restoration = error as? SRTNonblockingSend.RestorationFailure,
 +                   let completed = restoration.acceptedAt {
@@ -3273,5 +3266,33 @@
 +        } onCancel: {
 +            schedule.timer.cancel()
 +        }
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/SRT/SRTProbeMessage.swift
+@@ -0,0 +1,25 @@
++import Foundation
++
++/// Versioned payload in valid null TS packets. Observe before demultiplexing;
++/// this identifier is attribution, not authentication or receiver capacity.
++enum SRTProbeMessage {
++    static func encode(id: UUID, generation: UInt64, sequence: UInt64, bitRate: Int) -> Data {
++        var prefix = Array("SBUGPRB1".utf8)
++        var uuid = id.uuid
++        withUnsafeBytes(of: &uuid) { prefix.append(contentsOf: $0) }
++        for value in [generation, sequence] {
++            var network = value.bigEndian
++            withUnsafeBytes(of: &network) { prefix.append(contentsOf: $0) }
++        }
++        var rate = UInt32(bitRate).bigEndian
++        withUnsafeBytes(of: &rate) { prefix.append(contentsOf: $0) }
++        var bytes = [UInt8](repeating: 0xff, count: 1316)
++        for part in 0..<7 {
++            let at = part * 188
++            bytes.replaceSubrange(at..<at + 4, with: [0x47, 0x1f, 0xff, 0x10])
++            bytes.replaceSubrange(at + 4..<at + 48, with: prefix)
++            bytes[at + 48] = UInt8(part)
++        }
++        return Data(bytes)
 +    }
 +}

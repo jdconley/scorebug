@@ -273,7 +273,7 @@ private final class StreamPaddingBytes: @unchecked Sendable {
     var intervals: [Double] { lock.withLock { zip(accepted, accepted.dropFirst()).map { ($1 - $0) * 1000 } } }
     func append(_ data: Data) {
         lock.withLock {
-            if data == SRTBandwidthProbe.message { accepted.append(ProcessInfo.processInfo.systemUptime) }
+            if data.count == 1316 && data[4..<12] == Data("SBUGPRB1".utf8) { accepted.append(ProcessInfo.processInfo.systemUptime) }
             for at in stride(from: 0, to: data.count, by: 188) {
                 if at + 188 <= data.count, let p = TSPacket(data: data.subdata(in: at..<at + 188)) { packets.append(p) }
             }
