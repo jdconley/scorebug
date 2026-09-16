@@ -7,7 +7,7 @@ import ScorebugMedia
 /// feed PublishingSession's bounded mailbox, never this actor directly.
 public actor SRTMediaPublisher: MediaPublisher {
     public enum PublisherError: Error, Equatable, Sendable {
-        case invalidState, cancelled, startFailed, appendFailed, invalidSample, notPublishing, bitRateUpdateFailed
+        case invalidState, cancelled, startFailed, appendFailed, invalidSample, notPublishing, bitRateUpdateFailed, profileUpdateFailed
     }
     public typealias TransportMetrics = (rttMilliseconds: Double, droppedPackets: Int32, sentBytes: UInt64)
     private enum State { case prepared, starting, publishing, stopped }
@@ -15,7 +15,8 @@ public actor SRTMediaPublisher: MediaPublisher {
     private var state = State.prepared
     private var startup: Task<Void, Error>?
     private var shutdown: Task<Void, Never>?
-    private var bitRateUpdating = false
+    private var encoderUpdating = false
+    private var profileChange: Task<PublishingVideoProfileChange, Error>?
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
@@ -38,6 +39,7 @@ public actor SRTMediaPublisher: MediaPublisher {
                 }
             }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop(); didStop?() },
             setBitRate: { try await adapter.setBitRateWithReceipt($0) }, metrics: { await adapter.metrics() },
+            setProfile: { try await adapter.setVideoProfile($0) },
             transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() })
     }
 
@@ -49,6 +51,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         let stop: @Sendable () async -> Void
         let setBitRate: @Sendable (Int) async throws -> PublishingBitRateChange
         let metrics: @Sendable () async -> TransportMetrics?
+        var setProfile: @Sendable (PublishingVideoProfile) async throws -> PublishingVideoProfileChange = { _ in throw PublisherError.profileUpdateFailed }
         var transportClock: @Sendable () async -> PublishingTransportClock? = { nil }
         var transportStatistics: @Sendable () async -> PublishingTransportStatistics? = { nil }
     }
@@ -101,16 +104,16 @@ public actor SRTMediaPublisher: MediaPublisher {
         else {
             let close = operations.stop
             let starting = startup
-            starting?.cancel()
+            let changing = profileChange
+            starting?.cancel(); changing?.cancel()
             pending = Task.detached {
                 // Close first so a blocked configure/connect/readiness operation
                 // can finish. The reusable SDK can reopen on a late actor hop;
                 // join that operation and close again before shutdown completes.
                 await close()
-                if let starting {
-                    _ = await starting.result
-                    await close()
-                }
+                if let starting { _ = await starting.result }
+                if let changing { _ = await changing.result }
+                if starting != nil || changing != nil { await close() }
             }
             shutdown = pending
         }
@@ -123,9 +126,9 @@ public actor SRTMediaPublisher: MediaPublisher {
     public func setVideoBitRate(_ bitsPerSecond: Int) async throws -> PublishingBitRateChange {
         guard state == .publishing else { throw PublisherError.notPublishing }
         guard !Task.isCancelled else { throw PublisherError.cancelled }
-        guard !bitRateUpdating else { throw PublisherError.invalidState }
-        bitRateUpdating = true
-        defer { bitRateUpdating = false }
+        guard !encoderUpdating else { throw PublisherError.invalidState }
+        encoderUpdating = true
+        defer { encoderUpdating = false }
         let receipt: PublishingBitRateChange
         do { receipt = try await operations.setBitRate(bitsPerSecond) }
         catch {
@@ -143,6 +146,34 @@ public actor SRTMediaPublisher: MediaPublisher {
             throw PublisherError.cancelled
         }
         return receipt
+    }
+
+    public func setVideoProfile(_ profile: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
+        guard state == .publishing else { throw PublisherError.notPublishing }
+        guard !Task.isCancelled else { throw PublisherError.cancelled }
+        guard !encoderUpdating else { throw PublisherError.invalidState }
+        encoderUpdating = true
+        let change = operations.setProfile
+        let pending = Task { try await change(profile) }
+        profileChange = pending
+        defer { profileChange = nil; encoderUpdating = false }
+        return try await withTaskCancellationHandler {
+            do {
+                let receipt = try await pending.value
+                let healthy = await operations.isPublishing()
+                guard state == .publishing, !Task.isCancelled else { throw PublisherError.cancelled }
+                guard healthy, receipt.profile == profile else { throw PublisherError.profileUpdateFailed }
+                return receipt
+            } catch {
+                let reason: PublisherError = state == .stopped || Task.isCancelled || error is CancellationError
+                    ? .cancelled : .profileUpdateFailed
+                await stop()
+                throw reason
+            }
+        } onCancel: {
+            pending.cancel()
+            Task { await self.stop() }
+        }
     }
 
     public func transportClock() async -> PublishingTransportClock? {

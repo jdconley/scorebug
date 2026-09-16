@@ -799,3 +799,15 @@ The app still uses fixed profiles. Next qualify paced down/up transitions throug
 worker decoding with independent full-resolution local recording, then pressure and
 recovery before automatic selection. No seamless transition or physical-device
 qualification is claimed by this SDK checkpoint.
+
+
+The [typed app profile API](2026-09-16-app-profile-transitions.md) now carries native
+format/source/encoder receipts through both streaming adapters and PublishingSession.
+Bitrate and resolution mutations share admission and shutdown ownership. New tests
+reject overlapping mutations, stale source or encoder history, invalid native
+receipts and stopped startup. Stop joins late native startup/profile work before
+final closure. Source review approved the corrected lifecycle and receipt guards.
+Validation passes: 252 media tests, 61 streaming tests, 183 app-model tests and the
+unsigned combined iPhone/Watch Release build. This checkpoint supplies the app API;
+production still selects fixed profiles. Next add the controlled simulator down/up
+fixture and qualify decoded worker output plus independent clean local recording.

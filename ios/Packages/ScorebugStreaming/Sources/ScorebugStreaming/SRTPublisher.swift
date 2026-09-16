@@ -32,12 +32,16 @@ public actor SRTPublisher {
         }
     }
     public typealias BitRateChangeReceipt = PublishingBitRateChange
-    public enum PublisherError: Error { case notPublishing }
+    public enum PublisherError: Error { case notPublishing, mutationInProgress }
     private let connection = SRTConnection()
     private let stream: SRTStream
     private let stopPolicy: SRTStopPolicy
     private var activeGeneration: UInt64?
     private var stopping = false
+    private var encoderUpdating = false
+    private var profileChange: Task<PublishingVideoProfileChange, Error>?
+    private var startup: Task<Void, Error>?
+    private var shutdown: Task<Void, Never>?
     public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
     public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
                 encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil,
@@ -69,13 +73,42 @@ public actor SRTPublisher {
                            compressedVideoObserver: compressedVideoObserver)
     }
     public func configure() async throws {
+        try Task.checkCancellation()
+        guard !stopping else { throw PublisherError.notPublishing }
         try await stream.setVideoSettings(videoProfile.settings)
         try await stream.setAudioSettings(AudioCodecSettings(bitRate: 128_000))
         await stream.setExpectedMedias([.video, .audio])
         await stream.setVideoInputBufferCounts(4)
+        try Task.checkCancellation()
+        guard !stopping else { throw PublisherError.notPublishing }
     }
     public func start(_ url: URL) async throws {
+        try Task.checkCancellation()
+        guard !stopping, startup == nil, activeGeneration == nil else { throw PublisherError.notPublishing }
+        let pending = Task { try await performStart(url) }
+        startup = pending
+        defer { startup = nil }
+        try await withTaskCancellationHandler {
+            do {
+                try await pending.value
+                try Task.checkCancellation()
+                guard !stopping else { throw PublisherError.notPublishing }
+            } catch {
+                // The owned operation has terminated, so joining it cannot self-wait.
+                await stop()
+                throw error
+            }
+        } onCancel: {
+            pending.cancel()
+            Task { await self.stop() }
+        }
+    }
+    private func performStart(_ url: URL) async throws {
+        try Task.checkCancellation()
+        guard !stopping else { throw PublisherError.notPublishing }
         try await connection.connect(url)
+        try Task.checkCancellation()
+        guard !stopping else { throw PublisherError.notPublishing }
         await stream.publish()
         guard await connection.connected, await stream.readyState == .publishing,
               await stream.muxerError == nil, await stream.publishingError == nil,
@@ -95,6 +128,9 @@ public actor SRTPublisher {
     public func setBitRateWithReceipt(_ bitRate: Int) async throws -> BitRateChangeReceipt {
         try Task.checkCancellation()
         guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
+        guard !encoderUpdating else { throw PublisherError.mutationInProgress }
+        encoderUpdating = true
+        defer { encoderUpdating = false }
         let healthy = await isPublishing()
         try Task.checkCancellation()
         guard healthy, !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
@@ -115,6 +151,49 @@ public actor SRTPublisher {
         }
         return change
     }
+    public func setVideoProfile(_ profile: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
+        try Task.checkCancellation()
+        guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
+        guard !encoderUpdating else { throw PublisherError.mutationInProgress }
+        encoderUpdating = true
+        let pending = Task { try await performProfileChange(profile, generation: generation) }
+        profileChange = pending
+        defer { profileChange = nil; encoderUpdating = false }
+        return try await withTaskCancellationHandler {
+            do {
+                let receipt = try await pending.value
+                guard !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
+                try Task.checkCancellation()
+                return receipt
+            } catch {
+                await stop()
+                throw error
+            }
+        } onCancel: {
+            pending.cancel()
+            Task { await self.stop() }
+        }
+    }
+    private func performProfileChange(_ profile: PublishingVideoProfile, generation: UInt64) async throws -> PublishingVideoProfileChange {
+        try Task.checkCancellation()
+        let healthy = await isPublishing()
+        try Task.checkCancellation()
+        guard healthy, !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
+        let native = try await stream.replaceVideoSettings(profile.settings, publishingGeneration: generation)
+        let acknowledgedAt = ProcessInfo.processInfo.systemUptime
+        let stillHealthy = await isPublishing()
+        try Task.checkCancellation()
+        guard stillHealthy, !stopping, activeGeneration == generation,
+              native.publishingGeneration == generation,
+              let receipt = PublishingVideoProfileChange(profile: profile,
+                publishingGeneration: native.publishingGeneration,
+                previousEncoderSessionID: native.previousEncoderSessionID, encoderSessionID: native.encoderSessionID,
+                lastOldSourcePTS: native.lastOldSourcePTS, firstNewSourcePTS: native.firstNewSourcePTS,
+                width: Int(native.width), height: Int(native.height), rawVideoFramesDropped: native.rawVideoFramesDropped,
+                acknowledgedAt: acknowledgedAt) else { throw PublisherError.notPublishing }
+        return receipt
+    }
+
     public func transportClock() async -> PublishingTransportClock? {
         guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }
         let healthy = await isPublishing()
@@ -158,16 +237,33 @@ public actor SRTPublisher {
     public func stop() async {
         stopping = true
         activeGeneration = nil
-        // isPublishing remains a raw health predicate so the stop policy can drain
-        // this now-stopping stream rather than treating it as already closed.
-        lastStopOutcome = await stopPolicy.run(operations: .init(
-            isPublishing: { await self.isPublishing() },
-            finish: { await self.stream.finish(timeout: $0) },
-            snapshot: { await self.stopSnapshot() },
-            close: {
-                await self.stream.close()
-                await self.connection.close()
-            }))
+        if let shutdown { await shutdown.value; return }
+        let changing = profileChange
+        let starting = startup
+        changing?.cancel()
+        starting?.cancel()
+        let pending = Task {
+            // Keep the raw health predicate available to the drain policy after
+            // admission closes. Join native replacement even when health failed.
+            lastStopOutcome = await stopPolicy.run(operations: .init(
+                isPublishing: { await self.isPublishing() },
+                finish: { await self.stream.finish(timeout: $0) },
+                snapshot: { await self.stopSnapshot() },
+                close: {
+                    await self.stream.close()
+                    await self.connection.close()
+                }))
+            _ = await changing?.result
+            _ = await starting?.result
+            if starting != nil || changing != nil {
+                // A native actor call admitted before shutdown can complete after
+                // the first close. Its owner must finish before this final close.
+                await stream.close()
+                await connection.close()
+            }
+        }
+        shutdown = pending
+        await pending.value
     }
 
     private func stopSnapshot() async -> SRTStopPolicy.Snapshot? {
