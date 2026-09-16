@@ -28,7 +28,7 @@ extension NativeBandwidthProbeSample {
 
 /// DEBUG-only optional traffic owner. PublishingSession still owns media admission;
 /// recording never waits for this task. Shutdown joins work before exporting proof.
-actor NativeBandwidthProbePublisher: MediaPublisher {
+actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     enum Mode: String, Sendable { case renew, expire }
     struct Timing: Sendable {
         var delay: Duration = .seconds(20)
@@ -82,6 +82,12 @@ actor NativeBandwidthProbePublisher: MediaPublisher {
         guard !stopped, !Task.isCancelled else { await publisher.stop(); throw CancellationError() }
         started = true
         work = Task { await run() }
+    }
+    func probeObservation() async -> PublishingProbeObservation? {
+        guard let value = await operations.snapshot() else { return nil }
+        return .init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
+            startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
+            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason)
     }
     func append(_ sample: CapturedMediaSample) async throws { try await publisher.append(sample) }
     var isPublishing: Bool { get async { await publisher.isPublishing } }

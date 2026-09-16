@@ -9,11 +9,13 @@ public struct WorkerReceiverProbeFreshness: Sendable {
     public let workerAttempt: Int
     public let publication: WorkerPublication
     public let snapshot: ReceiverProbeSnapshot
+    public let serverAgeUpperBoundMs: Double
 
     private static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
     private static let maximumAge: Duration = .milliseconds(maximumSafeInteger)
-    private let receivedAt: ContinuousClock.Instant
-    private let ageAtReceipt: Duration
+    public let receivedAt: ContinuousClock.Instant
+    let ageAtReceipt: Duration
+    public let requestStartedAt: ContinuousClock.Instant
     private let lastDeliveryAgeAtSnapshot: Duration?
     private let statusFreshness: WorkerStatusFreshness
 
@@ -39,7 +41,9 @@ public struct WorkerReceiverProbeFreshness: Sendable {
         guard freshness.isFresh(at: receivedAt) else { return nil }
         self.expected = expected; self.workerEpoch = workerEpoch; self.workerAttempt = observation.attempt
         self.publication = publication; self.snapshot = report.snapshot
+        self.serverAgeUpperBoundMs = report.ageUpperBoundMs
         self.receivedAt = receivedAt; self.ageAtReceipt = age + requestDuration
+        self.requestStartedAt = receivedAt - requestDuration
         self.statusFreshness = freshness
         // Validated timestamps are bounded to one day, well inside Int64 even on Watch.
         self.lastDeliveryAgeAtSnapshot = validated.last.map { .nanoseconds(Int64(validated.observed - $0)) }

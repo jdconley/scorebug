@@ -28,6 +28,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var commandState: BroadcastCoordinatorState?
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
+    @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness?
+    @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
+    private var receiverProbeTracker = WorkerReceiverProbeTracker()
+    private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
@@ -48,6 +52,15 @@ struct PublishingClockObservation: Equatable, Sendable {
         #endif
     }()
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
+    private var receiverProbeHistory = ReceiverProbeFixtureHistory()
+    var receiverProbeFixtureWriter: ((Data) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        guard ["renew", "expire"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? "") else { return nil }
+        return { await ReceiverProbeFixtureHistory.persist($0) }
+        #else
+        return nil
+        #endif
+    }()
     private(set) var workerSourceIntervalHistory: [WorkerSourceIntervalObservation] = []
     var videoObservationFixtureWriter: ((VideoFrameObservationSnapshot, Double, [WorkerReportAgeProof], LiveIngressObservationSnapshot?, PublishingClockObservation?, [WorkerSourceIntervalObservation]) async -> Void)? = {
         #if targetEnvironment(simulator)
@@ -71,7 +84,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
     private var restored = false
     private var current: CurrentCapture?
-    private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?)?
+    private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?, probeObserver: (any PublishingProbeObserving)?)?
     private var coordinator: BroadcastCommandCoordinator?
     var controlPollInterval: Duration { qualityDriver == nil ? .seconds(2) : .milliseconds(100) }
     private var qualityDriver: PublishingQualityDriver?
@@ -328,7 +341,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                     videoObservation = observations?.close()
                     throw error
                 }
-                publishing = (context, session, broadcast.generation, attempt, observations)
+                publishing = (context, session, broadcast.generation, attempt, observations, publisher as? any PublishingProbeObserving)
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()
                 try check(context, attempt)
@@ -427,6 +440,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             }
             guard let credential = setup.credential else { return }
             let observedEpoch = workerEpoch
+            let requestStartedAtUptime = ProcessInfo.processInfo.systemUptime
             let requestStart = ContinuousClock.now
             let response: WorkerMediaStatusResponse
             do {
@@ -440,7 +454,17 @@ struct PublishingClockObservation: Equatable, Sendable {
             guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
                   response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return }
             let received = ContinuousClock.now
+            let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
             let requestDuration = requestStart.duration(to: received)
+            // Read sender acceptance after the receiver response; earlier local
+            // counts could legitimately lag bytes already observed by the relay.
+            let probeReadStartedAt = ProcessInfo.processInfo.systemUptime
+            let probe = await publishing?.probeObserver?.probeObservation()
+            let probeReadFinishedAt = ProcessInfo.processInfo.systemUptime
+            guard observedEpoch == workerEpoch else { return }
+            updateReceiverProbe(response: response, probe: probe, receivedAt: received, requestDuration: requestDuration,
+                requestStartedAtUptime: requestStartedAtUptime, responseReceivedAtUptime: responseReceivedAtUptime,
+                probeReadStartedAt: probeReadStartedAt, probeReadFinishedAt: probeReadFinishedAt)
             workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             if let publishing, localState == .publishing,
@@ -497,6 +521,15 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
+        receiverProbeTracker.expire(at: instant)
+        workerReceiverProbeInterval = receiverProbeTracker.latest
+        if receiverProbeLeaseDeadline.map({ instant < $0 }) != true {
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+        }
+        if workerReceiverProbeFreshness?.snapshotAgeUpperBound(at: instant).map({ $0 <= WorkerReceiverProbeTracker.maximumAge }) != true ||
+            workerReceiverProbeFreshness?.lastDeliveryAgeUpperBound(at: instant).map({ $0 <= WorkerReceiverProbeTracker.maximumAge }) != true {
+            workerReceiverProbeFreshness = nil
+        }
         workerSourceTracker.expire(at: instant)
         workerSourceInterval = workerSourceTracker.latest
         if workerFreshness?.isFresh(at: instant) == false {
@@ -519,6 +552,43 @@ struct PublishingClockObservation: Equatable, Sendable {
             localState = .failed
             message = "Camera publishing stopped. Your local recording continues. Retry streaming when the connection is ready."
         }
+    }
+
+    private func updateReceiverProbe(response: WorkerMediaStatusResponse, probe: PublishingProbeObservation?,
+                                     receivedAt: ContinuousClock.Instant, requestDuration: Duration,
+                                     requestStartedAtUptime: Double, responseReceivedAtUptime: Double,
+                                     probeReadStartedAt: Double, probeReadFinishedAt: Double) {
+        let now = ContinuousClock.now
+        let nativeNow = ProcessInfo.processInfo.systemUptime
+        guard let publishing, localState == .publishing, publishing.session.snapshot.state == .publishing,
+              publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+              current?.tap === publishing.context.tap, let probe, probe.isActive(at: nativeNow),
+              probe.publishingGeneration == publishing.session.snapshot.transportClock?.publishingGeneration,
+              let worker = commandState?.snapshot?.broadcast.selection?.workerId else {
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: now)
+            receiverProbeLeaseDeadline = nil
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil; return
+        }
+        // ContinuousClock was sampled before uptime: conversion errs toward expiry.
+        receiverProbeLeaseDeadline = now + .seconds(probe.leaseDeadline - nativeNow)
+        let expected = WorkerReceiverProbeExpectation(gameId: response.status.gameId, generation: publishing.generation,
+            workerId: worker, publishingAttemptId: publishing.attempt.uuidString.lowercased(),
+            probeId: probe.id.uuidString.lowercased(), publishingGeneration: probe.publishingGeneration, bitRate: probe.bitRate)
+        let evidence = WorkerReceiverProbeFreshness(response: response, expected: expected,
+            receivedAt: receivedAt, requestDuration: requestDuration)
+        workerReceiverProbeInterval = receiverProbeTracker.observe(evidence, acceptedPayloadBytes: probe.acceptedPayloadBytes,
+            senderActive: true, at: now)
+        let fresh = evidence?.snapshotAgeUpperBound(at: now).map { $0 <= WorkerReceiverProbeTracker.maximumAge } == true &&
+            (evidence?.snapshot.deliveredMessages == "0" || evidence?.lastDeliveryAgeUpperBound(at: now).map { $0 <= WorkerReceiverProbeTracker.maximumAge } == true)
+        workerReceiverProbeFreshness = !receiverProbeTracker.isQuarantined && fresh ? evidence : nil
+        #if DEBUG
+        if workerReportAgeProofsEnabled {
+            receiverProbeHistory.record(workerReceiverProbeInterval, accepted: probe, at: now,
+                timing: .init(requestStartedAt: requestStartedAtUptime, responseReceivedAt: responseReceivedAtUptime,
+                    nativeReadStartedAt: probeReadStartedAt, nativeReadFinishedAt: probeReadFinishedAt, evaluatedAt: nativeNow),
+                quarantined: receiverProbeTracker.isQuarantined)
+        }
+        #endif
     }
 
     private func joinActiveMatch() async throws {
@@ -586,6 +656,8 @@ struct PublishingClockObservation: Equatable, Sendable {
             let captureDetachedAt = fixtureWriter == nil ? nil : ProcessInfo.processInfo.systemUptime
             let workerReportAgeProofs = workerReportAgeProofHistory.proofs
             let sourceIntervals = workerSourceIntervalHistory
+            let probeWriter = workerReportAgeProofsEnabled ? receiverProbeFixtureWriter : nil
+            let probeData = probeWriter == nil ? nil : publishing.observations.flatMap { try? receiverProbeHistory.data(scope: $0.snapshot.scope) }
             #endif
             publishing.session.cancel()
             if diagnosticAttemptID == publishing.attempt {
@@ -606,6 +678,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 #endif
                 await session.stop()
                 #if DEBUG
+                if let probeData, let probeWriter { await probeWriter(probeData) }
                 if let adaptiveProof {
                     adaptiveProof.close()
                     if let data = try? adaptiveProof.data() { await NativeProfileTransitionEvidence.persist(data) }
@@ -638,9 +711,13 @@ struct PublishingClockObservation: Equatable, Sendable {
     private func clearWorker() {
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil
         workerSourceTracker.clear(); workerSourceInterval = nil
+        if publishing == nil { receiverProbeTracker.reset() }
+        else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }
+        receiverProbeLeaseDeadline = nil; workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
         #if DEBUG
         workerReportAgeProofHistory.clear()
         workerSourceIntervalHistory = []
+        if publishing == nil { receiverProbeHistory = ReceiverProbeFixtureHistory() }
         #endif
     }
     private func reserveStopOwnership(_ id: String) throws {

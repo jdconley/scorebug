@@ -5,6 +5,153 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testProbeEvidenceExpiresAtObservedNativeLeaseWithoutStoppingRecording() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let nativeValue = await publisher.probeValue()
+        var sample = try XCTUnwrap(nativeValue)
+        sample.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.3
+        await publisher.setProbe(sample)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        model.pollLocalHealth(at: ContinuousClock.now + .milliseconds(500))
+        XCTAssertNil(model.workerReceiverProbeFreshness); XCTAssertNil(model.workerReceiverProbeInterval)
+        XCTAssertEqual(model.localState, .publishing); XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+
+    func testWrongStatusScopeCannotWashSameNativeProbeQuarantine() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let nativeValue = await publisher.probeValue()
+        let accepted = try XCTUnwrap(nativeValue)
+        var impossible = accepted; impossible.acceptedPayloadBytes = 0; impossible.lastAcceptedAt = nil
+        await publisher.setProbe(impossible)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        var wrong = response; wrong.status.gameId = "other"
+        await server.setStatusOverride(wrong); await model.pollControl()
+        await publisher.setProbe(accepted)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        await model.stopStreaming()
+    }
+
+    func testReceiverProbeMatchesActualPublisherAndExpiresIndependentlyOfRecording() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        XCTAssertEqual(model.workerReceiverProbeFreshness?.expected.publishingGeneration, 1)
+        XCTAssertNil(model.workerReceiverProbeInterval)
+        model.pollLocalHealth(at: ContinuousClock.now + .seconds(2))
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        XCTAssertEqual(model.localState, .publishing); XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await publisher.setProbe(nil); await model.pollControl()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        await model.stopStreaming()
+    }
+
+    func testWrongReceiverProbeIdentityNativeGenerationOrTerminatedLeaseCannotMatch() async throws {
+        for fault in ["id", "nativeGeneration", "ended", "lease", "accepted", "stale"] {
+            let (model, server, publisher, initial) = try await receiverProbeModel()
+            var response = initial
+            if fault == "id" { response.status.receiverProbe?.snapshot.id = UUID().uuidString.lowercased() }
+            if fault == "stale" { response.status.receiverProbe?.ageUpperBoundMs = 1501 }
+            if fault == "nativeGeneration" { await publisher.setTransportClock(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 2)); await publisher.waitForTransportClockReads(2) }
+            if var sample = await publisher.probe {
+                if fault == "ended" { sample.reason = "cancelled" }
+                if fault == "lease" { sample.leaseDeadline = sample.startedAt }
+                if fault == "accepted" { sample.acceptedPayloadBytes = 0; sample.lastAcceptedAt = nil }
+                await publisher.setProbe(sample)
+            }
+            await server.setStatusOverride(response); await model.pollControl()
+            XCTAssertNil(model.workerReceiverProbeFreshness, fault)
+            XCTAssertNil(model.workerReceiverProbeInterval, fault)
+            XCTAssertEqual(model.localState, .publishing)
+            await model.stopStreaming()
+        }
+    }
+
+    func testLateNativeProbeReadCannotResurrectDetachedCaptureEvidence() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let gate = FilmTestGate(); await publisher.setProbeGate(gate)
+        await server.setStatusOverride(response)
+        let polling = Task { await model.pollControl() }
+        await gate.waitUntilEntered()
+        model.captureChanged(nil)
+        await gate.release(); await polling.value
+        XCTAssertNil(model.workerReceiverProbeFreshness); XCTAssertNil(model.workerReceiverProbeInterval)
+        await model.stopStreaming()
+    }
+
+    func testReceiverIntervalFixtureSerializesActualTrackerAndDeduplicates() async throws {
+        let (model, _, publisher, initial) = try await receiverProbeModel()
+        let nativeValue = await publisher.probeValue()
+        let native = try XCTUnwrap(nativeValue)
+        let scope = try XCTUnwrap(model.videoObservation?.scope)
+        let expected = WorkerReceiverProbeExpectation(gameId: "game-1", generation: 1, workerId: "worker-1",
+            publishingAttemptId: scope.publishingAttemptID.uuidString.lowercased(), probeId: native.id.uuidString.lowercased(),
+            publishingGeneration: 1, bitRate: 1_000_000)
+        var tracker = WorkerReceiverProbeTracker(), history = ReceiverProbeFixtureHistory()
+        let anchor = ContinuousClock.now
+        var end: WorkerReceiverProbeInterval?
+        for n in [1, 2] {
+            var response = initial
+            response.status.receiverProbe?.snapshot.observedAtNanoseconds = String(n * 1_000_000_000)
+            response.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = String(n * 1_000_000_000 - 10_000_000)
+            response.status.receiverProbe?.snapshot.deliveredMessages = String(n * 2)
+            response.status.receiverProbe?.snapshot.deliveredPayloadBytes = String(n * 2632)
+            response.status.receiverProbe?.snapshot.nextSequence = String(n * 2)
+            let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response, expected: expected,
+                receivedAt: anchor + .seconds(n), requestDuration: .zero))
+            end = tracker.observe(evidence, acceptedPayloadBytes: UInt64(n * 2632), senderActive: true, at: anchor + .seconds(n))
+        }
+        let interval = try XCTUnwrap(end)
+        var accepted = native; accepted.acceptedPayloadBytes = 5264
+        let timing = PublishingProbeReadTiming(requestStartedAt: 1.98, responseReceivedAt: 2,
+            nativeReadStartedAt: 2, nativeReadFinishedAt: 2, evaluatedAt: 2)
+        history.record(interval, accepted: accepted, at: anchor + .seconds(2), timing: timing, quarantined: false)
+        history.record(interval, accepted: accepted, at: anchor + .seconds(2.1), timing: timing, quarantined: false)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: history.data(scope: scope)) as? [String: Any])
+        XCTAssertEqual(json["isClosed"] as? Bool, true)
+        XCTAssertEqual(json["invalid"] as? Bool, false)
+        let rows = try XCTUnwrap(json["intervals"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?["serverAgeUpperBoundMs"] as? Double, 10)
+        XCTAssertEqual(rows.first?["requestDurationMs"] as? Double, 0)
+        XCTAssertEqual(rows.first?["residenceDurationMs"] as? Double, 0)
+        XCTAssertEqual(rows.first?["nativeReadFinishedAt"] as? Double, 2)
+        XCTAssertEqual(rows.first?["deliveredMessages"] as? String, "2")
+        XCTAssertEqual(rows.first?["deliveredPayloadBytesLowerBound"] as? String, "2632")
+        history.record(nil, accepted: accepted, at: anchor + .seconds(2.1), timing: timing, quarantined: true)
+        let failed = try XCTUnwrap(JSONSerialization.jsonObject(with: history.data(scope: scope)) as? [String: Any])
+        XCTAssertEqual(failed["invalid"] as? Bool, true)
+        await model.stopStreaming()
+    }
+
+    private func receiverProbeModel() async throws -> (CaptureStreamingModel, CaptureTestServer, CaptureTestPublisher, WorkerMediaStatusResponse) {
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        await publisher.setTransportClock(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1))
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await publisher.waitForTransportClockReads(1)
+        let scope = try XCTUnwrap(model.videoObservation?.scope)
+        let now = ProcessInfo.processInfo.systemUptime
+        let id = UUID()
+        await publisher.setProbe(.init(id: id, publishingGeneration: 1, bitRate: 1_000_000,
+            startedAt: now - 1, leaseDeadline: now + 10, acceptedPayloadBytes: 2632,
+            lastAcceptedAt: now - 0.01, reason: nil))
+        var response = workerAgeResponse()
+        response.status.workerEpoch = "22222222-2222-2222-2222-222222222222"
+        response.status.publication = .init(readerId: "33333333-3333-3333-3333-333333333333",
+            publisherId: "44444444-4444-4444-4444-444444444444",
+            publishingAttemptId: scope.publishingAttemptID.uuidString.lowercased(),
+            clock: .init(convention: "mpegts-ingress-origin-90k-v1", originPTS: "0"))
+        response.status.receiverProbe = .init(snapshot: .init(convention: "mpegts-null-probe-v1",
+            id: id.uuidString.lowercased(), publishingGeneration: "1", bitRate: 1_000_000,
+            deliveredMessages: "2", deliveredPayloadBytes: "2632", nextSequence: "2", pendingPackets: 0,
+            observedAtNanoseconds: "1000000000", firstDeliveredAtNanoseconds: "100000000", lastDeliveredAtNanoseconds: "990000000"), ageUpperBoundMs: 10)
+        return (model, server, publisher, response)
+    }
+
     func testQualityDriverJoinsPublishingStopWhileRecordingContextSurvives() async throws {
         let server = CaptureTestServer()
         var driver: PublishingQualityDriver?
@@ -1596,7 +1743,17 @@ final class CaptureStopOrderTrace: @unchecked Sendable {
     var events: [String] { lock.withLock { history } }
     func record(_ event: String) { lock.withLock { history.append(event) } }
 }
-actor CaptureTestPublisher: MediaPublisher {
+actor CaptureTestPublisher: MediaPublisher, PublishingProbeObserving {
+    var probe: PublishingProbeObservation?
+    private var probeGate: FilmTestGate?
+    func probeValue() -> PublishingProbeObservation? { probe }
+    func setProbe(_ value: PublishingProbeObservation?) { probe = value }
+    func setProbeGate(_ value: FilmTestGate?) { probeGate = value }
+    func probeObservation() async -> PublishingProbeObservation? {
+        let value = probe
+        if let probeGate { await probeGate.enter() }
+        return value
+    }
     var isPublishing = false
     var startCount = 0
     var appendCount = 0

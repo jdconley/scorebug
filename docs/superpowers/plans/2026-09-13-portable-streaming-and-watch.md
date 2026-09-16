@@ -1281,3 +1281,27 @@ Next wire the production probe owner, causal receiver intervals and measured
 candidate cost, including bounded repeat/stage behavior. No automatic upgrades
 are enabled by this status contract. Physical-device, Watch networking, remote
 host and long-soak qualification remains open.
+
+
+[Native receiver intervals](2026-09-16-native-receiver-probe-intervals.md) now bind
+status to the actual local publishing probe and derive causal 1–5 second intervals.
+Missing status cannot wash contradictions; lease and report expiry independently
+remove usable evidence. Complete-message arithmetic subtracts baseline partial
+packets and excludes incomplete endpoint packets. The opt-in fixture exports actual
+app observations and checks them against independent publication, receiver and
+native owner histories, including conservative request-to-evaluation timing.
+
+All 317 shared-core, 228 capture-model and 1,168 tooling tests pass, as do the
+simulator test build and combined unsigned iPhone/Watch Release build. Actual
+pressure run `native-app-aNh21w` preserves 6,416 archive frames and 6,040 consecutive
+retained live frames, all expected audio markers and clean decodes, with 29.8 fps
+minimum reported receiver cadence. All 3,683 accepted probe messages reach the
+relay; 18 native intervals cover 36.599 seconds of receiver reads. Probing withdraws
+under pressure while media continues another 142.065 seconds. Proxy conservation,
+joined teardown and 19 independent damaged-evidence rejections pass. Evidence is
+frozen in `artifacts/qa/receiver-interval-final-verification-v2.json`.
+
+Next implement measured candidate cost and bounded repeated/staged probe ownership
+before qualified quality-increase admission. Production probing and automatic
+upgrades remain disabled. Physical-device/Watch networking, remote hosts and long
+soaks remain unqualified.

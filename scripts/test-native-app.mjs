@@ -1,3 +1,4 @@
+import { qualifyNativeReceiverIntervals } from './native-receiver-intervals.mjs';
 import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { nativeBandwidthProbe, qualifyNativeBandwidthProbe } from './native-bandwidth-probe.mjs';
 import {
@@ -604,7 +605,8 @@ try {
   let nativeFormatQualification,
     profileTransitionQualification,
     bandwidthProbeQualification,
-    receiverProbeQualification;
+    receiverProbeQualification,
+    nativeReceiverIntervalQualification;
   if (liveProfile === '540p30') {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
@@ -715,6 +717,22 @@ try {
         videoObservation.scope,
         bandwidthProbeQualification,
       );
+      const intervalPath = join(artifact, 'native-receiver-intervals.json');
+      await cp(
+        join(container, 'Library/Application Support/Scorebug/QA/native-receiver-intervals.json'),
+        intervalPath,
+        { errorOnExist: true, force: false },
+      );
+      const intervalBytes = await readFile(intervalPath);
+      assert.ok(intervalBytes.length <= 1024 * 1024, 'Oversized native receiver interval evidence');
+      nativeReceiverIntervalQualification = qualifyNativeReceiverIntervals(
+        JSON.parse(intervalBytes.toString('utf8')),
+        JSON.parse(receiverBytes.toString('utf8')),
+        videoObservation.scope,
+        bandwidthProbeQualification,
+        JSON.parse(await readFile(join(artifact, 'worker-publication-status.json'), 'utf8')),
+        JSON.parse(bytes.toString('utf8')),
+      );
     }
     publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
       JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
@@ -810,6 +828,7 @@ try {
         profileTransitionQualification,
         bandwidthProbeQualification,
         receiverProbeQualification,
+        nativeReceiverIntervalQualification,
         streamingBudget,
         media,
         live,
