@@ -16,7 +16,11 @@ qualification remain open. Historical interval counts do not enable quality chan
 The [timestamped transport statistics path](native-transport-statistics.md) now supplies
 actual collection uptime, exact sent/retransmitted counters and sender-buffer
 readings through the publishing session. Freshness and counter consistency are
-explicit; these observations still require capacity/overhead qualification.
+explicit; these observations still require capacity/overhead qualification. The
+[local network impairment fixture](local-network-impairment.md) now exercises actual
+bidirectional loss and bandwidth ceilings with the native sender and clean archive.
+Recoverable loss preserves all live frames; deliberate overload corrupts live output
+while recording stays complete. Capacity estimation and automatic control remain open.
 
 | Existing observation                                                                  | What it measures                                                                                                                                | Missing evidence                                                                                                        |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

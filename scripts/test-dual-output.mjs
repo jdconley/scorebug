@@ -9,6 +9,8 @@ import { command, mediaTools } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
 import { validatePublishingClockEvidence } from './publishing-clock-evidence.mjs';
 import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
+import { inspectFrameCodeSamples } from './impaired-media-diagnostics.mjs';
+import { createUDPImpairmentProxy } from './udp-impairment.mjs';
 import {
   sourceFrameCodeFilter,
   frameCodeReadFilter,
@@ -22,6 +24,11 @@ import {
 } from './media-sync.mjs';
 import { measureFreshCadence } from './media-soak.mjs';
 
+const impairment = process.argv.includes('--impairment');
+assert.ok(
+  process.argv.slice(2).every((arg) => arg === '--impairment'),
+  'Unknown native test option',
+);
 assert.equal(process.platform, 'darwin', 'Native dual-output qualification requires macOS');
 const root = fileURLToPath(new URL('..', import.meta.url));
 const checkCancellation = cancellation();
@@ -31,6 +38,7 @@ const artifact = await mkdtemp(join(root, 'artifacts/qa/dual-output-'));
 const binary = join(root, 'tools/media-sdk-probe/.build/debug/DualOutputSmoke');
 const archiveBinary = join(root, 'tools/media-harness/.build/debug/ArchiveHarness');
 const children = new Set();
+const proxies = new Set();
 async function run(binary, args, label, timeout = 60_000) {
   checkCancellation();
   const result = await command(binary, args, timeout);
@@ -287,6 +295,119 @@ async function measureBitrateChange(path) {
   };
 }
 
+function qualifyProxy(snapshot, scenario) {
+  assert.equal(snapshot.closed, true);
+  assert.deepEqual(snapshot.errors, []);
+  assert.equal(snapshot.foreignPeerPackets, 0);
+  for (const direction of [snapshot.forward, snapshot.reverse]) {
+    const queue = direction.queue,
+      config = queue.configuration;
+    assert.ok(
+      queue.received.packets > 0 && queue.forwarded.packets > 0,
+      'Missing bidirectional proxy traffic',
+    );
+    assert.equal(direction.pendingPackets, 0);
+    assert.equal(direction.pendingPayloadBytes, 0);
+    assert.ok(
+      direction.peakPendingPackets <= 16 &&
+        direction.peakPendingPayloadBytes <= 16 * config.maxDatagramBytes,
+    );
+    assert.equal(queue.closed, true);
+    assert.equal(queue.queue.packets, 0);
+    assert.equal(queue.queue.wireBytes, 0);
+    assert.equal(queue.oversizeDrop.packets, 0);
+    assert.ok(
+      queue.queue.peakPackets <= config.maxQueuePackets &&
+        queue.queue.peakWireBytes <= config.maxQueueBytes,
+    );
+    for (const key of ['packets', 'wireBytes'])
+      assert.equal(
+        queue.received[key],
+        ['forwarded', 'injectedDrop', 'overflowDrop', 'oversizeDrop', 'closeDiscard'].reduce(
+          (n, k) => n + queue[k][key],
+          0,
+        ),
+      );
+    if (config.rateBitsPerSecond !== null) {
+      const elapsed = queue.lastForwardedAt - queue.firstForwardedAt;
+      assert.ok(
+        queue.forwarded.wireBytes <=
+          config.burstBytes + (elapsed * config.rateBitsPerSecond) / 8000 + 1e-6,
+        'Actual proxy departures exceed rate plus burst',
+      );
+    }
+  }
+  if (scenario === 'proxy-recoverable') {
+    assert.ok(snapshot.forward.queue.injectedDrop.packets > 0);
+    assert.ok(snapshot.reverse.queue.injectedDrop.packets > 0);
+  }
+  if (scenario === 'proxy-overload')
+    assert.ok(
+      snapshot.forward.queue.overflowDrop.packets > 0,
+      'Overload did not exercise bounded queue loss',
+    );
+}
+
+async function inspectImpairedLive(path, label) {
+  let qualificationError;
+  try {
+    return { qualified: true, media: await analyze(path, label, false) };
+  } catch (error) {
+    qualificationError = String(error.message).slice(0, 4000);
+  }
+  const codeFile = join(artifact, `${label}-best-effort.codes`);
+  const decoded = await command(
+    ffmpeg,
+    [
+      '-v',
+      'error',
+      '-y',
+      '-i',
+      path,
+      '-an',
+      '-vf',
+      frameCodeReadFilter,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      codeFile,
+    ],
+    30000,
+  );
+  await writeFile(join(artifact, `${label}-best-effort.log`), decoded.stdout + decoded.stderr);
+  let codeSamples = null;
+  try {
+    codeSamples = await readFile(codeFile);
+  } catch {}
+  const probed = await command(
+    ffprobe,
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_frames',
+      '-show_entries',
+      'frame=best_effort_timestamp_time',
+      '-of',
+      'json',
+      path,
+    ],
+    30000,
+  );
+  let times = [];
+  try {
+    times = JSON.parse(probed.stdout).frames.map((x) => Number(x.best_effort_timestamp_time));
+  } catch {}
+  return {
+    qualified: false,
+    qualificationError,
+    bestEffortDecodeSucceeded: decoded.ok,
+    ...inspectFrameCodeSamples(codeSamples, times),
+  };
+}
+
 try {
   await run(
     'swift',
@@ -340,18 +461,17 @@ try {
     'Fixture source',
   );
   const results = [];
-  for (const scenario of [
-    'record-only',
-    'normal',
-    'normal-clock-offset',
-    'stalled-receiver',
-    'no-receiver',
-  ]) {
-    const normal = scenario.startsWith('normal');
+  const scenarios = impairment
+    ? ['proxy-transparent', 'proxy-recoverable', 'proxy-overload']
+    : ['record-only', 'normal', 'normal-clock-offset', 'stalled-receiver', 'no-receiver'];
+  for (const scenario of scenarios) {
+    const normal =
+      scenario.startsWith('normal') ||
+      ['proxy-transparent', 'proxy-recoverable'].includes(scenario);
     const port = await freePort();
     const live = join(artifact, `${scenario}.ts`);
     let receiver;
-    if (normal || scenario === 'stalled-receiver') {
+    if (normal || scenario === 'stalled-receiver' || scenario === 'proxy-overload') {
       receiver = start(ffmpeg, [
         '-nostdin',
         '-v',
@@ -380,6 +500,27 @@ try {
         ).ok;
       }, 'owned UDP listener');
     }
+    let proxyRecord;
+    if (impairment) {
+      const forward =
+        scenario === 'proxy-recoverable'
+          ? { rateBitsPerSecond: 12000000, delayMilliseconds: 10, dropEvery: 100 }
+          : scenario === 'proxy-overload'
+            ? { rateBitsPerSecond: 3000000, delayMilliseconds: 10, maxQueueBytes: 32768 }
+            : {};
+      const reverse =
+        scenario === 'proxy-transparent'
+          ? {}
+          : {
+              rateBitsPerSecond: 1000000,
+              delayMilliseconds: 10,
+              dropEvery: scenario === 'proxy-recoverable' ? 80 : 0,
+            };
+      const proxy = await createUDPImpairmentProxy({ receiverPort: port, forward, reverse });
+      proxyRecord = { proxy, path: join(artifact, `${scenario}-proxy.json`) };
+      proxies.add(proxyRecord);
+    }
+    const publisherPort = proxyRecord?.proxy.port ?? port;
     const directory = join(artifact, `${scenario}-archive`);
     // SDK URI values use libsrt milliseconds; FFmpeg latency above uses microseconds.
     const nativeArgs = [
@@ -387,7 +528,7 @@ try {
       directory,
       scenario === 'record-only'
         ? 'record-only'
-        : `srt://127.0.0.1:${port}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
+        : `srt://127.0.0.1:${publisherPort}?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000`,
     ];
     if (scenario === 'normal-clock-offset') nativeArgs.push('123.25');
     const native = start(binary, nativeArgs);
@@ -397,6 +538,12 @@ try {
     await until(
       async () => {
         const elapsed = (performance.now() - started) / 1000;
+        if (proxyRecord)
+          assert.deepEqual(
+            proxyRecord.proxy.snapshot().errors,
+            [],
+            'Owned impairment proxy failed',
+          );
         if (scenario === 'stalled-receiver' && !receiver.stopped && elapsed >= 6) {
           assert.ok(!receiver.exited, receiver.error);
           assert.ok(receiver.child.kill('SIGSTOP'));
@@ -432,6 +579,24 @@ try {
     assert.ok(finished.livePeakBytes <= 12 * 1024 * 1024);
     const peakRSS = Math.max(...memory.map((x) => x.bytes));
     assert.ok(peakRSS < 512 * 1024 * 1024, `Native memory exceeded 512 MiB: ${peakRSS}`);
+    let networkImpairment;
+    if (proxyRecord) {
+      await until(
+        () => {
+          const snapshot = proxyRecord.proxy.snapshot();
+          return [snapshot.forward, snapshot.reverse].every(
+            (direction) => direction.queue.queue.packets === 0 && direction.pendingPackets === 0,
+          );
+        },
+        'owned proxy drain',
+        2000,
+      );
+      await proxyRecord.proxy.close();
+      networkImpairment = proxyRecord.proxy.snapshot();
+      await writeFile(proxyRecord.path, JSON.stringify(networkImpairment, null, 2));
+      proxies.delete(proxyRecord);
+      qualifyProxy(networkImpairment, scenario);
+    }
     await stop(receiver);
     if (receiver) await writeFile(join(artifact, `${scenario}-receiver.log`), receiver.error);
     const exported = join(artifact, `${scenario}-archive.mp4`);
@@ -441,6 +606,7 @@ try {
     let bitrateChange;
     let transportClock;
     let transportStatistics;
+    let impairedLive;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
       assert.deepEqual(
@@ -466,6 +632,13 @@ try {
       liveResult = await analyze(live, `${scenario}-live`, false);
       bitrateChange = await measureBitrateChange(live);
     }
+    if (scenario === 'proxy-overload') {
+      impairedLive = await inspectImpairedLive(live, `${scenario}-live`);
+      assert.ok(
+        native.events.some((x) => ['publisher-finished', 'publisher-failed'].includes(x.event)),
+        'Overloaded publisher did not settle',
+      );
+    }
     if (scenario === 'no-receiver')
       assert.ok(native.events.some((x) => x.event === 'publisher-failed'));
     if (scenario === 'stalled-receiver') {
@@ -482,6 +655,8 @@ try {
       bitrateChange,
       transportClock,
       transportStatistics,
+      networkImpairment,
+      impairedLive,
       counters: finished,
       peakRSS,
     });
@@ -493,4 +668,8 @@ try {
   console.log(`PASS: native dual output; evidence in ${artifact}`);
 } finally {
   for (const child of [...children]) await stop(child);
+  for (const { proxy, path } of proxies) {
+    await proxy.close();
+    await writeFile(path, JSON.stringify(proxy.snapshot(), null, 2));
+  }
 }

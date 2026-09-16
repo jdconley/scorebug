@@ -25,6 +25,7 @@
     "test:apple": "pnpm --filter @scorebug/protocol build && node scripts/test-apple.mjs",
     "test:archive": "node scripts/test-archive.mjs",
     "test:dual-output": "node scripts/test-dual-output.mjs",
+    "test:native-network": "node scripts/test-dual-output.mjs --impairment",
     "test:scoring": "pnpm --filter @scorebug/protocol build && node scripts/test-scoring.mjs",
     "doctor": "node scripts/doctor.mjs",
     "dev:api": "pnpm --filter @scorebug/protocol build && node --env-file=infra/local/.env.example apps/control-plane/node_modules/tsx/dist/cli.mjs apps/control-plane/src/index.ts",
