@@ -125,7 +125,7 @@ import ScorebugMedia
             await work?.value
             await record("stopped", allowClosed: true)
             if let export, let data = try? JSONSerialization.data(withJSONObject:
-                ["formatVersion": 2, "overflow": overflow, "events": events], options: [.sortedKeys]) {
+                ["formatVersion": 3, "overflow": overflow, "events": events], options: [.sortedKeys]) {
                 await export(data)
             }
         }

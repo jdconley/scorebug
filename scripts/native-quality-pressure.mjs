@@ -210,7 +210,8 @@ export function replayNativePressure(row, snapshot, source) {
   return assertPressure(row.window, classifyNativePressure(row, snapshot, source));
 }
 /** Reconstruct bounded local endpoint selection; absence never proves delivery. */
-export function replayNativeLocalPressure(row, snapshot, { after } = {}) {
+export function replayNativeLocalPressure(row, snapshot, { after, duration = 5 } = {}) {
+  assert([1, 5].includes(duration));
   const w = row.window,
     e = row.evidence;
   assert.equal(row.source, undefined);
@@ -218,7 +219,7 @@ export function replayNativeLocalPressure(row, snapshot, { after } = {}) {
     assert.equal(w[k], null);
   assert.equal(w.connectivity, 'unknown');
   assert.equal(w.worker, 'unknown');
-  assert.equal(w.end - w.start, 5);
+  assert.equal(w.end - w.start, duration);
   assert.equal(e?.local?.isPublishing, true);
   assert.equal(e.local.ingressClosed, false);
   assert.equal(e.local.clockGeneration, row.receipt.generation);
@@ -236,11 +237,11 @@ export function replayNativeLocalPressure(row, snapshot, { after } = {}) {
       !finite(end) ||
       end > row.evaluatedAt ||
       row.evaluatedAt - end > 2 ||
-      end - 5 < row.acknowledgedAt ||
-      (after !== undefined && end - 5 < after)
+      end - duration < row.acknowledgedAt ||
+      (after !== undefined && end - duration < after)
     )
       continue;
-    const candidate = { ...row, window: { ...w, start: end - 5, end } };
+    const candidate = { ...row, window: { ...w, start: end - duration, end } };
     const values = classifyNativePressure(candidate, snapshot, undefined, { local: true });
     if (values[metric] !== null && values[metric] !== 'unknown') candidates.set(end, values);
   }

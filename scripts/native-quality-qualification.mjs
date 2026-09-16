@@ -15,7 +15,7 @@ export function qualifyNativeQuality({
   adaptiveProfiles = false,
   profileQualification,
 }) {
-  assert([1, 2].includes(quality.formatVersion));
+  assert([1, 2, 3].includes(quality.formatVersion));
   assert.equal(quality.overflow, false);
   assert(Array.isArray(quality.events) && quality.events.length <= 512);
   const events = quality.events,
@@ -134,7 +134,10 @@ export function qualifyNativeQuality({
       );
       if (local) {
         assert.equal(row.acknowledgedAt, ack);
-        replayNativeLocalPressure(row, snapshot, { after: lastWindowEnd });
+        replayNativeLocalPressure(row, snapshot, {
+          after: lastWindowEnd,
+          duration: quality.formatVersion === 3 ? 1 : 5,
+        });
       } else {
         replayNativePressure(row, snapshot, source);
         assert.equal(s.workerID, source.workerId);
@@ -215,7 +218,7 @@ export function qualifyNativeQuality({
           row.acknowledgedAt <= row.at,
       );
       let admittedAt;
-      if (quality.formatVersion === 2) {
+      if (quality.formatVersion >= 2) {
         const application = row.application;
         assert(application && uuid(application.id) && uuid(application.attemptID));
         const id = application.id.toLowerCase();

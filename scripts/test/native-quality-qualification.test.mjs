@@ -414,14 +414,14 @@ test('requires a confirmed trial when the fixture requests confirmation', () => 
   );
 });
 
-function localFixture({ duringTrial = false } = {}) {
+function localFixture({ duringTrial = false, duration = 5 } = {}) {
   const f = duringTrial ? fixture() : probation(fixture());
   f.quality.events.pop();
   const previous = f.quality.events.at(-1);
   const receipt = previous.receipt,
     revision = previous.revision;
   const start = duringTrial ? 32 : 43,
-    end = start + 5;
+    end = start + duration;
   const row = {
     kind: 'localPressure',
     at: end + 0.25,
@@ -1088,3 +1088,54 @@ test('version-two completion is bounded at acknowledgment rather than delayed lo
   f.quality.formatVersion = 1;
   assert.throws(() => qualifyNativeQuality(f));
 });
+
+function rapidLocalFixture(duringTrial = false) {
+  const f = admittedEvidence(localFixture({ duringTrial, duration: 1 }));
+  f.quality.formatVersion = 3;
+  return f;
+}
+test('version-three local pressure permits a one-second post-ack trial rollback', () => {
+  const f = rapidLocalFixture(true);
+  const row = f.quality.events.find((e) => e.kind === 'localPressure');
+  assert.equal(row.window.end - row.window.start, 1);
+  assert(row.window.end - row.acknowledgedAt < 5);
+  assert.equal(qualifyNativeQuality(f).rollbacks, 1);
+});
+test('version-three local pressure can reduce after recent receiver evidence', () => {
+  assert.equal(qualifyNativeQuality(rapidLocalFixture()).localEvaluated, 1);
+});
+for (const version of [1, 2])
+  test(`version-${version} cannot borrow the rapid local window contract`, () => {
+    const f = rapidLocalFixture(true);
+    f.quality.formatVersion = version;
+    assert.throws(() => qualifyNativeQuality(f));
+  });
+test('version-three rejects an old five-second local window', () => {
+  const f = admittedEvidence(localFixture());
+  f.quality.formatVersion = 3;
+  assert.throws(() => qualifyNativeQuality(f));
+});
+for (const [name, mutate] of Object.entries({
+  overlap: (r) => {
+    r.window.start -= 0.01;
+  },
+  unknown: (r) => {
+    r.evidence.transport.samples = [];
+  },
+  stale: (r) => {
+    r.evaluatedAt = r.window.end + 2.01;
+    r.at = r.evaluatedAt;
+  },
+  forgedDelivery: (r) => {
+    r.window.received = 30;
+  },
+  preAck: (r) => {
+    r.evidence.transport.samples[0].sampledAt = r.acknowledgedAt - 0.01;
+  },
+}))
+  test(`rapid local pressure still rejects ${name} evidence`, () => {
+    const f = rapidLocalFixture(true),
+      r = f.quality.events.find((e) => e.kind === 'localPressure');
+    mutate(r);
+    assert.throws(() => qualifyNativeQuality(f));
+  });

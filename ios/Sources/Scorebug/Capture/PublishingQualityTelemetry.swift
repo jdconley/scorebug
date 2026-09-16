@@ -112,35 +112,38 @@ enum PublishingQualityTelemetry {
               applied.acknowledgedAt >= receipt.acceptedAt, applied.acknowledgedAt <= now, sequence > 0,
               previousEnd.map({ $0.isFinite && (0...now).contains($0) }) ?? true else { throw Failure.time }
         let boundary = max(applied.acknowledgedAt, previousEnd ?? applied.acknowledgedAt)
+        // Fast local evidence can reduce or roll back, never establish receiver
+        // health. Do not wait five seconds after a change while congestion grows.
+        let duration = 1.0
         func thermal(_ end: Double) -> QualityController.Pressure {
-            thermalPressure(diagnostics.thermal, from: end - 5, to: end, at: now,
+            thermalPressure(diagnostics.thermal, from: end - duration, to: end, at: now,
                 minimumSampleStart: applied.acknowledgedAt)
         }
         func transport(_ end: Double) -> QualityController.Pressure {
             transportPressure(diagnostics.transport, generation: receipt.publishingGeneration,
-                limits: transportLimits, from: end - 5, to: end, at: now,
+                limits: transportLimits, from: end - duration, to: end, at: now,
                 minimumSampleStart: applied.acknowledgedAt)
         }
         func queue(_ end: Double) -> Double? {
             let p = ingress.pressure
             guard !p.isClosed, p.coveredThrough <= now, now - p.coveredThrough <= 2 else { return nil }
-            return p.interval(from: end - 5, to: end)?.meanMaxPressure
+            return p.interval(from: end - duration, to: end)?.meanMaxPressure
         }
         // Only independently covered metrics select an endpoint. An unavailable
         // metric cannot move another metric's evidence into an uncovered interval.
         var ends: [Double] = []
-        if let sample = diagnostics.thermal.freshSample(at: now), sample.sampledAt - 5 >= boundary,
+        if let sample = diagnostics.thermal.freshSample(at: now), sample.sampledAt - duration >= boundary,
            thermal(sample.sampledAt) != .unknown { ends.append(sample.sampledAt) }
-        if let sample = diagnostics.transport.freshSample(at: now), sample.sampledAt - 5 >= boundary,
+        if let sample = diagnostics.transport.freshSample(at: now), sample.sampledAt - duration >= boundary,
            transport(sample.sampledAt) != .unknown { ends.append(sample.sampledAt) }
         let queueEnd = ingress.pressure.coveredThrough
-        if queueEnd - 5 >= boundary, queue(queueEnd) != nil { ends.append(queueEnd) }
+        if queueEnd - duration >= boundary, queue(queueEnd) != nil { ends.append(queueEnd) }
         for end in Set(ends).sorted(by: >) {
-            guard end <= now, now - end <= 2, end - 5 >= boundary else { continue }
+            guard end <= now, now - end <= 2, end - duration >= boundary else { continue }
             let localThermal = thermal(end), localTransport = transport(end), localQueue = queue(end)
             guard localThermal == .elevated || localTransport == .elevated || (localQueue.map { $0 >= 0.75 } ?? false) else { continue }
             return .init(attemptID: applied.attemptID, sequence: sequence, appliedRevision: applied.revision,
-                start: end - 5, end: end, capturedFreshFrames: nil, encodedFreshFrames: nil,
+                start: end - duration, end: end, capturedFreshFrames: nil, encodedFreshFrames: nil,
                 receiver: nil, sourceLoss: nil, meanQueueOccupancy: localQueue, usableVideoCapacity: nil,
                 connectivity: .unknown, thermalPressure: localThermal, workerPressure: .unknown, transportPressure: localTransport)
         }

@@ -897,3 +897,19 @@ receiver window at 8 fps. These gates remain unchanged. Next improve timely loca
 pressure response and verify actual media recovery; controller confirmation alone
 does not authorize production adaptation. Physical phone/Watch, longer soaks and
 other-host gates remain separate.
+
+
+The [rapid local pressure checkpoint](2026-09-16-rapid-local-pressure.md) shortens
+only downward local evidence to one second and independently verifies the new
+version-three contract. All 203 app-model / 959 tooling tests and the unsigned
+combined Apple Release build pass. Native pressure run `native-app-HAW17U` completes
+its UI workflow and rolls back its first higher trial in 2.53 seconds instead of
+about six. The independent archive preserves all 8110 consecutive 1080p/30 frames
+and all 135 A/V markers, with no drops.
+
+Live media still fails: 292 ms A/V end discrepancy, a 221-frame count deficit plus
+46 non-increasing source barcodes, and a worst five-second receiver window at 5 fps.
+The shorter decision window is verified, but is insufficient to protect delivery.
+Next isolate earlier congestion detection using actual statistics sampling and
+transport thresholds, then backlog/keyframe recovery as indicated by evidence.
+Production adaptation, longer soaks, physical devices and remote hosts remain open.
