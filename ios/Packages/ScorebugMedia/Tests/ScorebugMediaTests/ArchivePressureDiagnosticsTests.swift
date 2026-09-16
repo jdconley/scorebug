@@ -21,13 +21,15 @@ final class ArchivePressureDiagnosticsTests: XCTestCase {
         let owner = ArchivePressureDiagnostics(recordingID: "recording", now: clock.now)
         XCTAssertTrue(owner.attachProducer())
         clock.advance(3)
-        owner.beginFrame(index: 7, deadline: clock.origin.advanced(by: .seconds(1)))
+        owner.beginFrame(index: 7, deadline: clock.origin.advanced(by: .seconds(1)),
+                         nominalDeadline: clock.origin.advanced(by: .seconds(0.5)))
         clock.advance(0.25)
         owner.generationFinished()
         owner.callbacksStarted()
         let active = owner.snapshot.observations.activeProducer
         XCTAssertEqual(active?.frameIndex, "7")
         XCTAssertEqual(active?.deadline, 1)
+        XCTAssertEqual(active?.nominalDeadline, 0.5)
         XCTAssertEqual(active?.generationStart, 3)
         XCTAssertEqual(active?.generationEnd, 3.25)
         XCTAssertEqual(active?.callbackStart, 3.25)

@@ -50,15 +50,17 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             let diagnostics = archivePressureDiagnostics
             let motion = motion
             pump = Task.detached {
-                let began = ContinuousClock.now
+                var cadence = FixtureFrameCadence(origin: ContinuousClock.now)
                 do {
                     var frame = 0
                     while true {
                         try Task.checkCancellation()
-                        let deadline = began + .seconds(Double(frame) / 30)
+                        let deadline = cadence.deadline(frame: frame)
                         try await ContinuousClock().sleep(until: deadline)
                         if let failAfterFrames, frame >= failAfterFrames { callbacks.event(.interrupted); return }
-                        diagnostics?.beginFrame(index: Int64(frame), deadline: deadline)
+                        cadence.began(frame: frame, at: ContinuousClock.now)
+                        diagnostics?.beginFrame(index: Int64(frame), deadline: deadline,
+                                                nominalDeadline: cadence.nominalDeadline(frame: frame))
                         let samples = try autoreleasepool {
                             (try Self.video(frame: frame, profile: profile, origin: origin, motion: motion),
                              try Self.audio(frame: frame, origin: origin))
@@ -165,6 +167,24 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
             sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size,
             sampleBufferOut: &sample) == noErr, let sample else { throw FixtureError.buffer }
         return sample
+    }
+}
+/// Keep normal timer jitter phase-locked. After a whole missed frame period,
+/// discard overdue wake opportunities without dropping source video/audio.
+/// The nominal source clock remains separate, exposing accumulated wall lag.
+struct FixtureFrameCadence {
+    let origin: ContinuousClock.Instant
+    private var adjustment: Duration = .zero
+    init(origin: ContinuousClock.Instant) { self.origin = origin }
+    func nominalDeadline(frame: Int) -> ContinuousClock.Instant {
+        origin + .seconds(Double(frame) / 30)
+    }
+    func deadline(frame: Int) -> ContinuousClock.Instant {
+        nominalDeadline(frame: frame) + adjustment
+    }
+    mutating func began(frame: Int, at: ContinuousClock.Instant) {
+        let late = deadline(frame: frame).duration(to: at)
+        if late >= .seconds(1.0 / 30) { adjustment += late }
     }
 }
 #endif

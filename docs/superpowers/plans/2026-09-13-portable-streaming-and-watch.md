@@ -1221,3 +1221,21 @@ is an unresolved recording failure, not a successful pressure trial. Next reprod
 and address that archive/source burst, then repeat pressure qualification before
 receiver capacity or adaptive upgrades. Physical devices, native Watch networking,
 remote hosts and long soaks remain open.
+
+
+The [synthetic source pacing repair](2026-09-16-fixture-catch-up-cadence.md)
+prevents overdue frame deadlines from flooding the archive after a stall, without
+changing queue limits or media identities. A deliberate 1.5-second callback stall
+preserves all 90 frames and matching audio through the real writer. All 222 app-model,
+254 media and 1,112 tooling tests, simulator test build and combined iPhone/Watch
+Release build pass.
+
+Actual scheduled-pressure run `native-app-MefG1k` now passes: 6,366 intact archive
+frames, 5,990 consecutive retained live frames, all expected audio markers, clean
+full decodes and 30 fps minimum reported receiver cadence. The probe reaches
+0.991219 Mbps accounted, withdraws on transport pressure, and media continues for
+140.312 seconds. The proxy drops nothing; every owner terminates and joins. This
+run does not reproduce the original source stall; the dedicated regression covers
+that defect. Authenticated receiver-attributed probe delivery and measured candidate
+cost remain next, before quality upgrades. Physical capture, Watch routes, other
+hosts and sustained soaks remain open.

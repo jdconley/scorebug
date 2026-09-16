@@ -4,6 +4,98 @@ import ScorebugMedia
 import XCTest
 
 final class FixtureCameraSourceTests: XCTestCase {
+    func testLateFixtureCallbackDoesNotBurstRemainingFrames() async throws {
+        let profile = ArchiveProfile(width: 320, height: 240)
+        let source = FixtureCameraSource(profile: profile, failAfterFrames: 8)
+        let diagnostics = ArchivePressureDiagnostics(recordingID: "late-producer")
+        XCTAssertTrue(source.attachArchivePressureDiagnostics(diagnostics))
+        let ledger = FixtureHookLedger()
+        let done = expectation(description: "Eight delayed frame pairs")
+        let origin = try await source.prepare(callbacks: CaptureSourceCallbacks(sample: { sample in
+            ledger.record(sample, snapshot: diagnostics.snapshot)
+            if sample.kind == .video, diagnostics.snapshot.observations.activeProducer?.frameIndex == "0" {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }, event: { _ in done.fulfill() }))
+        try await source.start()
+        await fulfillment(of: [done], timeout: 3)
+        await source.stop()
+        let spans = diagnostics.snapshot.observations.producers.completed
+        XCTAssertEqual(spans.count, 8)
+        let starts = try spans.map { try XCTUnwrap($0.generationStart) }
+        for start in starts {
+            XCTAssertLessThanOrEqual(starts.filter { $0 >= start && $0 < start + 0.01 }.count, 2,
+                                    "A late callback must not release its accumulated frame backlog")
+        }
+        // Nominal deadlines are not rewritten to hide a delayed producer.
+        XCTAssertGreaterThan(try XCTUnwrap(spans[2].generationStart) - XCTUnwrap(spans[2].nominalDeadline), 0.15)
+        XCTAssertEqual(ledger.entries.count, 16)
+        for (index, entry) in ledger.entries.enumerated() {
+            XCTAssertEqual(CMTimeCompare(entry.pts, origin + CMTime(value: Int64(index / 2), timescale: 30)), 0)
+        }
+    }
+
+    func testFrameCadencePreservesNormalPhaseButDiscardsMissedWakeBacklog() {
+        func seconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        }
+        let origin = ContinuousClock.now
+        var cadence = FixtureFrameCadence(origin: origin)
+        cadence.began(frame: 0, at: origin)
+        let normal = origin + .seconds(1.0 / 30)
+        XCTAssertEqual(cadence.deadline(frame: 1), normal)
+        cadence.began(frame: 1, at: normal + .milliseconds(5))
+        // Ordinary timer jitter must not compound into a slower target rate.
+        XCTAssertEqual(cadence.deadline(frame: 2), origin + .seconds(2.0 / 30))
+        let resumed = origin + .seconds(1.5)
+        cadence.began(frame: 2, at: resumed)
+        XCTAssertEqual(seconds(resumed.duration(to: cadence.deadline(frame: 3))), 1.0 / 30, accuracy: 1e-9)
+        XCTAssertEqual(cadence.nominalDeadline(frame: 3), origin + .seconds(3.0 / 30))
+        cadence.began(frame: 3, at: cadence.deadline(frame: 3) + .milliseconds(2))
+        XCTAssertEqual(seconds(resumed.duration(to: cadence.deadline(frame: 4))), 2.0 / 30, accuracy: 1e-9)
+    }
+
+    func testDelayedFixturePreservesEverySampleThroughDefaultNativeArchiveQueue() async throws {
+        let root = testRecordingRoot()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let profile = ArchiveProfile()
+        let writer = try SegmentedArchiveWriter(directory: root.appendingPathComponent("part"), profile: profile)
+        let session = try RecordingSession(sink: SegmentedArchiveSink(writer: writer))
+        let source = FixtureCameraSource(profile: profile, failAfterFrames: 90, motionFlag: "blocks16")
+        let diagnostics = ArchivePressureDiagnostics(recordingID: "delayed-native-archive")
+        XCTAssertTrue(source.attachArchivePressureDiagnostics(diagnostics))
+        XCTAssertTrue(session.attachArchivePressureDiagnostics(diagnostics))
+        XCTAssertTrue(writer.attachArchivePressureDiagnostics(diagnostics))
+        let done = expectation(description: "Ninety source pairs")
+        let origin = try await source.prepare(callbacks: CaptureSourceCallbacks(sample: { sample in
+            if sample.kind == .video, diagnostics.snapshot.observations.activeProducer?.frameIndex == "10" {
+                Thread.sleep(forTimeInterval: 1.5)
+            }
+            XCTAssertTrue(session.offer(sample))
+        }, event: { event in
+            // failAfterFrames is the finite test source boundary, not a device event.
+            XCTAssertEqual(event, .interrupted)
+            done.fulfill()
+        }))
+        try await session.start(at: origin)
+        try await source.start()
+        await fulfillment(of: [done], timeout: 15)
+        await source.stop()
+        let recovered = try await session.stop()
+        diagnostics.close(snapshot: session.snapshot)
+        let exported = try await ArchiveExporter().export(recovered, to: root.appendingPathComponent("movie.mp4"))
+        XCTAssertEqual(exported.videoFrames, 90)
+        XCTAssertGreaterThanOrEqual(exported.audioSamples, 144_000)
+        XCTAssertLessThanOrEqual(exported.audioSamples, 146_048)
+        XCTAssertEqual(session.snapshot.writtenSamples, 180)
+        XCTAssertEqual(session.snapshot.queue.rejectedCount, 0)
+        XCTAssertEqual(session.snapshot.queue.droppedCount, 0)
+        XCTAssertEqual(session.snapshot.state, .finished)
+        XCTAssertNil(diagnostics.snapshot.firstFailure)
+        XCTAssertEqual(diagnostics.snapshot.queueLimits?.maxBytes, String(24 * 1024 * 1024))
+    }
+
     func testAudioMarkersHaveSilenceBetweenDistinctTimedBursts() {
         XCTAssertEqual(FixtureCameraSource.markerPCM(at: 0.5), 0)
         XCTAssertEqual(FixtureCameraSource.markerPCM(at: 1.99), 0)

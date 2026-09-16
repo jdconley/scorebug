@@ -192,3 +192,17 @@ test('retains signed Int32 PTS scalars without imposing timestamp validity', asy
   snapshot.firstFailure.sample.pts.timescale = -2147483649;
   assert.throws(() => validate(snapshot));
 });
+
+test('validates optional nominal deadline separately from actual scheduled wake', async () => {
+  for (const failure of [false, true]) {
+    const snapshot = await fixture();
+    const observations = failure ? snapshot.firstFailure.observations : snapshot.observations;
+    const producer = { frameIndex: '1', nominalDeadline: 1, deadline: 2, generationStart: 2.1 };
+    observations.activeProducer = producer;
+    assert.doesNotThrow(() => validate(snapshot));
+    for (const invalid of [-1, NaN, Infinity, '1', 1e13]) {
+      producer.nominalDeadline = invalid;
+      assert.throws(() => validate(snapshot));
+    }
+  }
+});

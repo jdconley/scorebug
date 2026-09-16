@@ -77,6 +77,8 @@ public final class ArchivePressureDiagnostics: @unchecked Sendable {
     public struct Producer: Codable, Equatable, Sendable {
         public let frameIndex: String
         public let deadline: Double?
+        /// Unadjusted source deadline; absent in older diagnostic snapshots.
+        public let nominalDeadline: Double?
         public let generationStart: Double?
         public internal(set) var generationEnd: Double?
         public internal(set) var callbackStart: Double?
@@ -207,12 +209,14 @@ public final class ArchivePressureDiagnostics: @unchecked Sendable {
             coverage.persistence = true; self.profile = profile; return true
         }
     }
-    public func beginFrame(index: Int64, deadline: ContinuousClock.Instant) {
+    public func beginFrame(index: Int64, deadline: ContinuousClock.Instant,
+                           nominalDeadline: ContinuousClock.Instant? = nil) {
         lock.withLock {
             guard closedSnapshot == nil else { return }
             let time = stamp()
             guard producer == nil else { validity.invalidSequence = true; return }
-            producer = Producer(frameIndex: String(index), deadline: relative(deadline), generationStart: time)
+            producer = Producer(frameIndex: String(index), deadline: relative(deadline),
+                                nominalDeadline: nominalDeadline.flatMap { relative($0) }, generationStart: time)
         }
     }
     public func generationFinished() {
