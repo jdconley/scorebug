@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,127 @@
+@@ -8,72 +8,159 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -139,12 +139,23 @@
 -                settings.apply(self, rhs: oldValue)
 -            }
 +    private let encoderCompletionObserver: VideoEncoderCompletionObserver?
++    private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
++    private var recordedBitRateChange: VideoBitRateChange?
++    private var lastSubmittedSourcePTS: CMTime?
 +
 +    private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
 +    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
++         encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
 +         sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)? = nil) {
 +        self.encoderCompletionObserver = encoderCompletionObserver
++        self.encoderConfigurationObserver = encoderConfigurationObserver
 +        self.sessionFactory = sessionFactory
++    }
++
++    var lastBitRateChange: VideoBitRateChange? {
++        guard isRunning, failure.error == nil, let recordedBitRateChange,
++              invalidation.isCurrent(recordedBitRateChange.configuration.encoderSessionID) else { return nil }
++        return recordedBitRateChange
 +    }
 +
 +    func requestSessionInvalidation() { invalidation.invalidate() }
@@ -176,6 +187,9 @@
 +        // This is accepted configuration at this point, not a frame boundary or
 +        // achieved output rate. Do not repeat settings' legacy unchecked apply.
 +        storedSettings = updated
++        recordedBitRateChange = .init(settings: updated,
++            configuration: .init(id: UUID(), encoderSessionID: observed.revision, bitRate: updated.bitRate),
++            acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: lastSubmittedSourcePTS)
 +        return updated
 +    }
 +
@@ -185,6 +199,7 @@
 +        get { storedSettings }
 +        set {
 +            let previous = storedSettings
++            recordedBitRateChange = nil
 +            storedSettings = newValue
 +            if newValue.invalidateSession(previous) { requestSessionInvalidation() }
 +            else { newValue.apply(self, rhs: previous) }
@@ -248,6 +263,7 @@
 +            if observed.pending {
 +                let mode: VTSessionMode = sampleBuffer.formatDescription?.isCompressed == true ? .decompression : .compression
 +                session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
++                recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
 +                sessionMode = mode
 +                invalidation.installed(observed.revision)
 +            }
@@ -261,7 +277,9 @@
              } else {
                  if useFrame(sampleBuffer.presentationTimeStamp) {
 -                    try session.convert(sampleBuffer, continuation: continuation)
-+                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
++                    let observer = submissionObserver(sessionID: observed.revision)
++                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: observer)
++                    if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
                      presentationTimeStamp = sampleBuffer.presentationTimeStamp
                  }
              }
@@ -269,6 +287,20 @@
 +            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
              logger.warn(error)
          }
++    }
++
++    private func submissionObserver(sessionID: UUID) -> VideoEncoderCompletionObserver? {
++        guard let configurationObserver = encoderConfigurationObserver else { return encoderCompletionObserver }
++        let legacyObserver = encoderCompletionObserver
++        let configuration = recordedBitRateChange?.configuration
++        let submittedAt = ProcessInfo.processInfo.systemUptime
++        return { source, output in
++            let completedAt = ProcessInfo.processInfo.systemUptime
++            legacyObserver?(source, output)
++            configurationObserver(.init(sourcePTS: source, outputPTS: output,
++                encoderSessionID: sessionID, configuration: configuration,
++                submittedAt: submittedAt, completedAt: completedAt))
++        }
 +    }
 +
 +    /// Capture after raw input drains. The caller runs this off its stream actor
@@ -280,7 +312,7 @@
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -97,19 +152,24 @@
+@@ -97,19 +184,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -308,7 +340,7 @@
      }
 
      @objc
-@@ -122,7 +182,7 @@
+@@ -122,7 +214,7 @@
          }
          switch type {
          case .ended:
@@ -317,12 +349,13 @@
          default:
              break
          }
-@@ -160,10 +220,11 @@
+@@ -160,10 +252,12 @@
          }
          isRunning = false
          session = nil
 -        invalidateSession = true
 +        sessionMode = nil
++        recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
 +        requestSessionInvalidation()
          inputFormat = nil
          outputFormat = nil
@@ -331,7 +364,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +233,18 @@
+@@ -172,3 +266,18 @@
          #endif
      }
  }
@@ -501,7 +534,7 @@
 
      /// The asynchronous sequence for audio output.
      package var audioOutputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
-@@ -38,6 +39,11 @@
+@@ -38,6 +39,13 @@
          }
      }
 
@@ -510,10 +543,12 @@
 +        return try videoCodec.setVerifiedBitRate(bitRate)
 +    }
 +
++    package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }
++
      /// Specifies the video buffering count.
      package var videoInputBufferCounts = -1
 
-@@ -58,19 +64,26 @@
+@@ -58,19 +66,28 @@
      package private(set) var videoInputFormat: CMFormatDescription?
 
      private var audioCodec = AudioCodec()
@@ -532,8 +567,10 @@
 +
      /// Create a new instance.
 -    package init() {
-+    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
-+        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver)
++    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
++                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
++        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver,
++                                encoderConfigurationObserver: encoderConfigurationObserver)
      }
 
      /// Appends a sample buffer for publish.
@@ -542,7 +579,7 @@
          switch sampleBuffer.formatDescription?.mediaType {
          case .audio:
              audioInputFormat = sampleBuffer.formatDescription
-@@ -85,9 +98,20 @@
+@@ -85,9 +102,20 @@
 
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -563,7 +600,7 @@
 
      /// Appends a video buffer.
      package func append(video sampleBuffer: CMSampleBuffer) {
-@@ -101,12 +125,14 @@
+@@ -101,12 +129,14 @@
          guard !isRunning else {
              return
          }
@@ -800,6 +837,28 @@
              await close()
          }
      }
+--- a/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
++++ b/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
+@@ -4,6 +4,9 @@
+ /// The SRTPerformanceData represents the SRT's performance statistics. This struct is wrapper for an CBytePerfMon.
+ /// - seealso: https://github.com/Haivision/srt/blob/master/srtcore/srt.h
+ public struct SRTPerformanceData: Sendable {
++    /// System uptime at the start of successful native collection. Cached reads
++    /// retain this time; unavailable/failed/closed collection has no timestamp.
++    public let sampledAt: TimeInterval?
+     /// The time since the UDT entity is started, in milliseconds.
+     public let msTimeStamp: Int64
+     /// The total number of sent data packets, including retransmissions.
+@@ -153,7 +156,8 @@
+     /// The packet reorder tolerance value
+     public let pktReorderTolerance: Int32
+
+-    init(mon: CBytePerfMon) {
++    init(mon: CBytePerfMon, sampledAt: TimeInterval? = nil) {
++        self.sampledAt = sampledAt
+         self.msTimeStamp = mon.msTimeStamp
+         self.pktSentTotal = mon.pktSentTotal
+         self.pktRecvTotal = mon.pktRecvTotal
 --- a/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTSocket.swift
 @@ -2,6 +2,12 @@
@@ -1100,7 +1159,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,58 @@
+@@ -8,6 +8,65 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1143,11 +1202,18 @@
 +    /// Point-in-time native configuration acknowledgment. It is not a source-frame
 +    /// boundary, achieved output rate, or authorization to relabel queued frames.
 +    public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
++        try setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected).change.settings
++    }
++    public struct VideoBitRateReceipt: Sendable {
++        public let publishingGeneration: UInt64
++        public let change: VideoBitRateChange
++    }
++    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoBitRateReceipt {
 +        try Task.checkCancellation()
-+        guard publishingGeneration == expected, videoInputIsRaw else {
-+            throw VideoBitRateUpdateError.notEncoding
-+        }
-+        return try outgoing.setVerifiedVideoBitRate(bitRate)
++        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
++        _ = try outgoing.setVerifiedVideoBitRate(bitRate)
++        guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
++        return .init(publishingGeneration: expected, change: change)
 +    }
 +    private struct PublishingTasks {
 +        let video, audio, input, transport, errors: Task<Void, Never>
@@ -1159,7 +1225,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +74,7 @@
+@@ -22,7 +81,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1168,7 +1234,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,7 +84,11 @@
+@@ -32,7 +91,13 @@
      }
 
      /// Creates a new stream object.
@@ -1176,12 +1242,14 @@
 +    /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
 +    ///   notification for this stream, including final drain. Compressed passthrough
 +    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
-+    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
-+        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver)
++    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
++                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
++        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
++                                  encoderConfigurationObserver: encoderConfigurationObserver)
          self.connection = connection
          Task { await connection.addStream(self) }
      }
-@@ -45,7 +101,7 @@
+@@ -45,7 +110,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1190,7 +1258,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +113,22 @@
+@@ -57,8 +122,22 @@
              }
              return
          }
@@ -1214,7 +1282,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +138,39 @@
+@@ -68,26 +147,39 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1274,7 +1342,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +199,67 @@
+@@ -116,16 +208,67 @@
          readyState = .playing
      }
 
@@ -1347,7 +1415,7 @@
      }
 
      /// Sets the expected media.
-@@ -157,12 +291,14 @@
+@@ -157,12 +300,14 @@
      }
 
      public func append(_ sampleBuffer: CMSampleBuffer) {
@@ -1364,7 +1432,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +308,29 @@
+@@ -172,16 +317,29 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -2281,25 +2349,36 @@
 +        return ticks.overflow ? nil : ticks.partialValue
 +    }
 +}
---- a/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
-+++ b/SRTHaishinKit/Sources/SRT/SRTPerformanceData.swift
-@@ -4,6 +4,9 @@
- /// The SRTPerformanceData represents the SRT's performance statistics. This struct is wrapper for an CBytePerfMon.
- /// - seealso: https://github.com/Haivision/srt/blob/master/srtcore/srt.h
- public struct SRTPerformanceData: Sendable {
-+    /// System uptime at the start of successful native collection. Cached reads
-+    /// retain this time; unavailable/failed/closed collection has no timestamp.
-+    public let sampledAt: TimeInterval?
-     /// The time since the UDT entity is started, in milliseconds.
-     public let msTimeStamp: Int64
-     /// The total number of sent data packets, including retransmissions.
-@@ -153,7 +156,8 @@
-     /// The packet reorder tolerance value
-     public let pktReorderTolerance: Int32
-
--    init(mon: CBytePerfMon) {
-+    init(mon: CBytePerfMon, sampledAt: TimeInterval? = nil) {
-+        self.sampledAt = sampledAt
-         self.msTimeStamp = mon.msTimeStamp
-         self.pktSentTotal = mon.pktSentTotal
-         self.pktRecvTotal = mon.pktRecvTotal
+--- /dev/null
++++ b/HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift
+@@ -0,0 +1,30 @@
++import CoreMedia
++import Foundation
++
++/// Native verified configuration at submission, not achieved per-frame bitrate.
++public struct VideoEncoderConfiguration: Equatable, Sendable {
++    public let id: UUID
++    public let encoderSessionID: UUID
++    public let bitRate: Int
++}
++
++/// Historical scalar evidence from a qualifying native compression completion.
++public struct VideoEncoderFrame: Sendable {
++    public let sourcePTS: CMTime
++    public let outputPTS: CMTime
++    public let encoderSessionID: UUID
++    public let configuration: VideoEncoderConfiguration?
++    public let submittedAt: Double
++    public let completedAt: Double
++}
++
++public typealias VideoEncoderConfigurationObserver = @Sendable (VideoEncoderFrame) -> Void
++
++/// Accepted write boundary. A later matching frame proves a submission used this
++/// configuration; convergence of the average rate still needs media measurement.
++public struct VideoBitRateChange: Sendable {
++    public let settings: VideoCodecSettings
++    public let configuration: VideoEncoderConfiguration
++    public let acceptedAt: Double
++    public let lastSubmittedSourcePTS: CMTime?
++}

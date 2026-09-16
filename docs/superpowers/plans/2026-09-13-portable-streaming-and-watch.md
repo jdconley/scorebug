@@ -315,7 +315,7 @@ transients/outages separately, without excluding them from the report. Archive s
 continuous during network-only impairment. No false sustained quality or latency claim.
 
 The [receiver-validated trial extension](2026-09-15-receiver-validated-quality-trials.md)
-adds an explicit optional strategy for unknown passive capacity:30seconds of strong
+adds an explicit optional strategy for unknown passive capacity: 30 seconds of strong
 receiver/pressure evidence can propose a <=10% same-profile bitrate trial, followed
 by 10 seconds of confirmation under a 15-second deadline, or sticky rollback and a
 60-second retry cooldown. Actual known-ceiling traces refute treating SRT packet-pair
@@ -323,6 +323,12 @@ estimates as spare bandwidth. This changes the intended upward-adaptation design
 the default legacy strategy and fixed native runtime remain unchanged. Runtime
 frame boundaries/alignment, real trial transients, resolution changes and soak/radio
 qualification remain open.
+
+The [encoder configuration boundary slice](2026-09-15-encoder-configuration-boundaries.md)
+adds immutable session/configuration identity to qualifying native completions and a
+verified receipt naming the last raw submission before a bitrate write. This prepares
+runtime frame partitioning; policy acknowledgment, pressure alignment and actual
+trial/rollback qualification remain separate work before adaptation is enabled.
 
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS

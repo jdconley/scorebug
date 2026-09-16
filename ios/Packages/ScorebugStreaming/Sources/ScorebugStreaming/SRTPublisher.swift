@@ -8,6 +8,33 @@ import ScorebugMedia
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
+    public struct EncoderConfiguration: Equatable, Sendable {
+        public let id: UUID
+        public let encoderSessionID: UUID
+        public let bitRate: Int
+        fileprivate init(_ value: VideoEncoderConfiguration) {
+            id = value.id; encoderSessionID = value.encoderSessionID; bitRate = value.bitRate
+        }
+    }
+    public struct EncoderFrame: Sendable {
+        public let sourcePTS: CMTime
+        public let outputPTS: CMTime
+        public let encoderSessionID: UUID
+        public let configuration: EncoderConfiguration?
+        public let submittedAt: Double
+        public let completedAt: Double
+        fileprivate init(_ value: VideoEncoderFrame) {
+            sourcePTS = value.sourcePTS; outputPTS = value.outputPTS; encoderSessionID = value.encoderSessionID
+            configuration = value.configuration.map(EncoderConfiguration.init)
+            submittedAt = value.submittedAt; completedAt = value.completedAt
+        }
+    }
+    public struct BitRateChangeReceipt: Sendable {
+        public let publishingGeneration: UInt64
+        public let configuration: EncoderConfiguration
+        public let acceptedAt: Double
+        public let lastSubmittedSourcePTS: CMTime?
+    }
     public enum PublisherError: Error { case notPublishing }
     private let connection = SRTConnection()
     private let stream: SRTStream
@@ -15,7 +42,8 @@ public actor SRTPublisher {
     private var activeGeneration: UInt64?
     private var stopping = false
     public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
-    public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil) {
+    public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
+                encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil) {
         self.stopPolicy = stopPolicy
         // Immutable ownership prevents late native completions from reaching a
         // later publishing attempt. Observe synchronously without retaining media.
@@ -23,7 +51,12 @@ public actor SRTPublisher {
         if let observations {
             observer = { sourcePTS, _ in observations.observe(.encodedVideo, sourcePTS: sourcePTS) }
         } else { observer = nil }
-        stream = SRTStream(connection: connection, encoderCompletionObserver: observer)
+        let configurationObserver: VideoEncoderConfigurationObserver?
+        if let encoderConfigurationObserver {
+            configurationObserver = { encoderConfigurationObserver(EncoderFrame($0)) }
+        } else { configurationObserver = nil }
+        stream = SRTStream(connection: connection, encoderCompletionObserver: observer,
+                           encoderConfigurationObserver: configurationObserver)
     }
     public func configure() async throws {
         try await stream.setVideoSettings(VideoCodecSettings(
@@ -51,18 +84,24 @@ public actor SRTPublisher {
     public func video(_ sample: CMSampleBuffer) async { await stream.append(sample) }
     public func audio(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) async { await stream.append(buffer, when: when) }
     public func setBitRate(_ bitRate: Int) async throws {
+        _ = try await setBitRateWithReceipt(bitRate)
+    }
+    public func setBitRateWithReceipt(_ bitRate: Int) async throws -> BitRateChangeReceipt {
         try Task.checkCancellation()
         guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
         let healthy = await isPublishing()
         try Task.checkCancellation()
         guard healthy, !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
-        _ = try await stream.setVerifiedVideoBitRate(bitRate, publishingGeneration: generation)
+        let receipt = try await stream.setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: generation)
         guard !stopping, activeGeneration == generation else { throw PublisherError.notPublishing }
         if Task.isCancelled {
             // Native settings were committed; retire the abandoned live attempt.
             await stop()
             throw CancellationError()
         }
+        return .init(publishingGeneration: receipt.publishingGeneration,
+                     configuration: .init(receipt.change.configuration), acceptedAt: receipt.change.acceptedAt,
+                     lastSubmittedSourcePTS: receipt.change.lastSubmittedSourcePTS)
     }
     public func transportClock() async -> PublishingTransportClock? {
         guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }

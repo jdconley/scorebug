@@ -92,6 +92,7 @@ import VideoToolbox
         session.onWrite = { codec.requestSessionInvalidation() }
         #expect(throws: VideoBitRateUpdateError.sessionInvalidated) { try codec.setVerifiedBitRate(3_000_000) }
         #expect(codec.settings.bitRate == previous); #expect(codec.failure.error != nil)
+        #expect(codec.lastBitRateChange == nil)
         session.onWrite = nil; codec.stopRunning()
     }
 
@@ -102,6 +103,7 @@ import VideoToolbox
         #expect(throws: VideoBitRateUpdateError.notEncoding) { try codec.setVerifiedBitRate(3_000_000) }
         #expect(codec.settings.bitRate == previous)
         #expect(codec.failure.error == .codecFailed(status: -88))
+        #expect(codec.lastBitRateChange == nil)
         session.onWrite = nil; codec.stopRunning()
     }
 

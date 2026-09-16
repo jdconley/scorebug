@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { command, mediaTools } from './media-tools.mjs';
 import { cancellation } from './cancellation.mjs';
 import { validatePublishingClockEvidence } from './publishing-clock-evidence.mjs';
+import { qualifyEncoderConfiguration } from './encoder-configuration-evidence.mjs';
 import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
 import { inspectFrameCodeSamples } from './impaired-media-diagnostics.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
@@ -564,6 +565,12 @@ try {
       35_000,
     );
     await writeFile(join(artifact, `${scenario}.log`), native.output + native.error);
+    // Structured evidence is intentionally separate from the bounded diagnostic tail.
+    // The joined 420-frame descriptor event can exceed that log's character limit.
+    await writeFile(
+      join(artifact, `${scenario}-events.json`),
+      JSON.stringify(native.events, null, 2),
+    );
     await writeFile(join(artifact, `${scenario}-memory.json`), JSON.stringify(memory, null, 2));
     assert.equal(native.code, 0, native.output + native.error);
     const finished = native.events.find((x) => x.event === 'archive-finished');
@@ -606,6 +613,7 @@ try {
     let bitrateChange;
     let transportClock;
     let transportStatistics;
+    let encoderConfiguration;
     let impairedLive;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
@@ -630,9 +638,27 @@ try {
         transportClock.publishingGeneration,
       );
       assert.ok(transportStatistics.windows.length >= 2, 'Missing complete transport windows');
+      const changes = native.events.filter((x) => x.event === 'bitrate-changed');
+      assert.equal(changes.length, 1);
+      encoderConfiguration = qualifyEncoderConfiguration({
+        clock: transportClock,
+        receipt: changes[0].receipt,
+        evidence: sent.encoderEvidence,
+        decodedSourceFrames: decodeFrameCodes(
+          await readFile(join(artifact, `${scenario}-archive.codes`)),
+        ),
+      });
       if (normal) {
         liveResult = await analyze(live, `${scenario}-live`, false);
         bitrateChange = await measureBitrateChange(live);
+        qualifyEncoderConfiguration({
+          clock: transportClock,
+          receipt: changes[0].receipt,
+          evidence: sent.encoderEvidence,
+          decodedSourceFrames: decodeFrameCodes(
+            await readFile(join(artifact, `${scenario}-live.codes`)),
+          ),
+        });
       }
     }
     if (scenario === 'proxy-overload') {
@@ -658,6 +684,7 @@ try {
       bitrateChange,
       transportClock,
       transportStatistics,
+      encoderConfiguration,
       networkImpairment,
       impairedLive,
       counters: finished,

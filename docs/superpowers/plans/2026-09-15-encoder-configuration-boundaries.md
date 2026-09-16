@@ -44,24 +44,24 @@ convergence, source/worker policy alignment and resolution transitions remain di
 
 ## Tasks
 
-- [ ] Preserve a reconstructed original SDK baseline and verify maintained patch
+- [x] Preserve a reconstructed original SDK baseline and verify maintained patch
   provenance before edits. Add public immutable configuration/receipt/frame types
   in `HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift` and a parallel optional
   observer argument through VideoCodec, OutgoingStream and SRTStream. Keep the old
   observer API and ordinary setter compatible.
-- [ ] Write delayed fake-session tests for old/new callback interleaving, same-rate
+- [x] Write delayed fake-session tests for old/new callback interleaving, same-rate
   IDs, failed writes, legacy writes, invalidation/recreation/stop, no-image input,
   and last-submission boundary. Compile stubs and capture behavioral red, then
   implement descriptor capture and receipt creation after successful verification.
-- [ ] Add `SRTStream.setVerifiedVideoBitRateWithReceipt` scoped to current publishing
+- [x] Add `SRTStream.setVerifiedVideoBitRateWithReceipt` scoped to current publishing
   generation, with the old setter delegating to it. Wrap SDK descriptor types in
   SRTPublisher's public adapter types and expose optional frame observer plus
   `setBitRateWithReceipt`; keep lifecycle/cancellation guards and ordinary setter.
-- [ ] Extend the real dual-output fixture with a bounded scalar descriptor recorder.
+- [x] Extend the real dual-output fixture with a bounded scalar descriptor recorder.
   Export joined records and change receipt, independently verify old/unverified
   versus new configuration source PTS and decoded source barcodes, and preserve
   existing bitrate, frame, A/V, clock, pressure-window and archive gates.
-- [ ] Run SDK/Streaming tests, both native suites if their shared path changes,
+- [x] Run SDK/Streaming tests, both native suites if their shared path changes,
   full tooling tests and combined unsigned iPhone/Watch Release build. Review source,
   regenerate the patch from the preserved original hashes, verify exact round trip,
   document evidence/limits and commit only verified work.
@@ -76,3 +76,33 @@ Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`:
 `swift test --package-path ios/Packages/ScorebugStreaming`,
 `pnpm test:dual-output`, `pnpm test:native-network`, `pnpm test:tools`, and
 `xcodebuild -project ios/Scorebug.xcodeproj -scheme Scorebug -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`.
+
+## Verified checkpoint
+
+SDK 133 tests (six new configuration tests), Streaming 44, tooling 732 (26 new oracle
+cases), both native suites, the combined unsigned iPhone/Watch Release build and
+all 162 upstream hash/patch round-trip checks pass. Independent review approved the
+SDK/adapter and fixture/oracle after adding complete structured event retention and
+correcting the exact-rational regression input.
+
+Final default evidence: `artifacts/qa/dual-output-2i77D4`; impairment evidence:
+`artifacts/qa/dual-output-3s6nEf`. All eight scenario archives retain 420 frames. Each
+successful publisher has 420 qualifying configuration descriptors, partitioned at
+149/150 around the verified write. Normal and recoverable live media retain 420 frames.
+Overload strict live decode fails, with 378 best-effort frames and invalid identities;
+its fresh-frame/loss metrics remain unknown. Both final suites replay from retained
+structured events and decoded barcode files. No receiver-delivery claim is inferred
+from encoder callbacks.
+
+Retained diagnostic failures: stale SwiftPM source discovery before the new SDK file
+was included (owned probe cache cleaned), stale SDK ABI link before its owned cache
+clean, and the existing abort/reuse clock-test race. The reuse test now drains via
+finish rather than assuming abort can preserve an in-flight socket. Dedicated
+terminal-cancellation behavior remains unchanged and tested. Initial successful
+native run `dual-output-FRwoTH` preceded the raw-event retention fix; final evidence
+uses the repeated default run above.
+
+Hashes and exact commands/results are recorded in
+`artifacts/qa/encoder-boundary-final-verification.json`. Runtime adaptive integration,
+source/pressure alignment, real trial/rollback media behavior, resolution changes and
+physical Watch/phone/remote-host qualification remain open in the parent plan.

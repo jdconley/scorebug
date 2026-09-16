@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and four added publishing/bitrate/clock source primitives. Original upstream hashes
+files and five added publishing/bitrate/clock source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -66,8 +66,9 @@ an active publishing-generation token. They require a ready raw-video encoder,
 check native writes and readback of bitrate plus effective data-rate limits, and
 commit settings only after verification. Uncertain native application fails live
 publishing explicitly. A lock-protected invalidation revision preserves notifications
-that overlap session creation or property writes. Configuration acknowledgment does
-not identify a source-frame transition or prove achieved bitrate/capacity. See the
+that overlap session creation or property writes. The ordinary settings acknowledgment does not prove achieved bitrate/capacity.
+The optional configuration observer and receipt described below identify native
+submission boundaries. See the
 [implementation plan](../../docs/superpowers/plans/2026-09-15-verified-live-bitrate.md).
 
 Native transport timestamps now share an exact rational `TransportClock` projection:
@@ -86,3 +87,12 @@ of a successful native statistics call. Repeated cached reads preserve this time
 failed calls and socket stop clear availability. Native errors cannot commit partially
 updated counters. Existing collection frequency and transport behavior are unchanged.
 The app retains exact transport counters separately from video capacity or receipt.
+
+`setVerifiedVideoBitRateWithReceipt` additionally returns an immutable configuration
+UUID, encoder-session UUID, acceptance uptime and last successful raw submission
+PTS before the write. The optional `encoderConfigurationObserver` captures this
+identity at submission and delivers it only for qualifying native completions.
+Initial/legacy unchecked settings are explicitly unverified. Delayed completions
+retain their historical identity across later writes, recreation and stop. This
+does not assert instantaneous rate convergence. See
+[the frame-boundary contract](../../docs/encoder-configuration-boundaries.md).

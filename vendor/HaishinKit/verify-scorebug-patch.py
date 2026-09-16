@@ -10,7 +10,7 @@ import tempfile
 root = Path(__file__).resolve().parent
 manifest = json.loads((root / "upstream-files.json").read_text())["files"]
 patch = (root / "scorebug.patch").read_bytes()
-added = ['HaishinKit/Sources/Util/PublishingQueue.swift', 'HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift', 'HaishinKit/Sources/Codec/VideoCodecInvalidation.swift', 'SRTHaishinKit/Sources/TS/TransportClock.swift']
+added = ['HaishinKit/Sources/Util/PublishingQueue.swift', 'HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift', 'HaishinKit/Sources/Codec/VideoCodecInvalidation.swift', 'SRTHaishinKit/Sources/TS/TransportClock.swift', 'HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift']
 paths = list(manifest) + added
 
 with tempfile.TemporaryDirectory(prefix="scorebug-sdk-provenance-") as directory:

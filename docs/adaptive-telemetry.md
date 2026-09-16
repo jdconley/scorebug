@@ -365,3 +365,12 @@ frames absent from the sink. Passing A/V alignment cannot prove complete end
 delivery when both tracks truncate together. Terminal delivery, production source
 mapping, qualified capacity/queue inputs, profile transitions, impairment and
 sustained hardware qualification remain required; adaptation remains disabled.
+
+## Encoder configuration at submission
+
+The [configuration boundary contract](encoder-configuration-boundaries.md) now
+provides native per-frame session/configuration identity and a verified write receipt
+with its prior raw submission boundary. Historical callbacks retain their original
+identity. These scalars prepare source-window partitioning; they do not by themselves
+make a receiver window entirely post-application or prove bitrate convergence.
+Automatic adaptation remains disabled until runtime alignment and media trials pass.

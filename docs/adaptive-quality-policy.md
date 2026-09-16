@@ -99,8 +99,8 @@ rejected acknowledgment, the caller must retire or reconcile that publishing att
 It must serialize live reconfiguration and impose bounded application/stop behavior.
 Trial state never changes archive settings. Disconnection/stall states stay explicit
 alongside rollback recommendations. Profile transitions, runtime telemetry alignment,
-actual first-affected-frame boundaries and impaired-media trial qualification remain
-required before enabling this strategy in the native app.
+runtime use of verified submission boundaries and impaired-media trial qualification
+remain required before enabling this strategy in the native app.
 
 ## Recommendation acknowledgment
 
@@ -145,3 +145,10 @@ rollback behavior. Behavioral red logs also cover integer rounding, required tra
 pressure and explicit outage/stall states. These are policy/build checks, not physical
 Watch or adaptive live-media qualification. Final evidence hashes are in
 `artifacts/qa/quality-trials-final-verification.json`.
+
+The [encoder configuration boundary contract](encoder-configuration-boundaries.md)
+adds immutable per-submission configuration/session identity and a verified write
+receipt naming the last previously submitted source PTS. It preserves delayed
+callback history; it does not measure instantaneous rate convergence. Runtime
+policy acknowledgment still needs to bind those identities to complete source and
+pressure windows before automatic bitrate trials can be enabled.

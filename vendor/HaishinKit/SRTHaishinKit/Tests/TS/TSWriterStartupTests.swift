@@ -151,7 +151,10 @@ import Testing
         #expect(first.publishingGeneration == generation)
         #expect(first.clock.origin == CMTime(value: 10, timescale: 1))
         #expect(first.clock.presentationTimestamp(for: CMTime(value: 41, timescale: 4)) == 31_500)
-        await stream.close()
+        // Reuse requires a graceful drain: aborting an in-flight socket send is
+        // terminal for the connection, even when the muxer has selected a clock.
+        await stream.finish()
+        #expect(await stream.publishingError == nil)
         #expect(await stream.transportClockSnapshot == nil)
         await stream.setExpectedMedias([.video]); await stream.publish()
         #expect(await stream.transportClockSnapshot == nil)

@@ -44,6 +44,8 @@ package final class OutgoingStream {
         return try videoCodec.setVerifiedBitRate(bitRate)
     }
 
+    package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }
+
     /// Specifies the video buffering count.
     package var videoInputBufferCounts = -1
 
@@ -77,8 +79,10 @@ package final class OutgoingStream {
     }
 
     /// Create a new instance.
-    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
-        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver)
+    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
+                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
+        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver,
+                                encoderConfigurationObserver: encoderConfigurationObserver)
     }
 
     /// Appends a sample buffer for publish.

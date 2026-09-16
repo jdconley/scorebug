@@ -20,6 +20,44 @@ private func clockEvidence(_ clock: PublishingTransportClock?) -> Any {
             "wireModulus": String(PublishingTransportClock.wireModulus)] as [String: Any]
 }
 
+private func timeEvidence(_ time: CMTime) -> [String: Any] {
+    ["value": String(time.value), "timescale": time.timescale,
+     "epoch": String(time.epoch), "flags": time.flags.rawValue]
+}
+
+private func configurationEvidence(_ configuration: SDKProbe.EncoderConfiguration) -> [String: Any] {
+    ["id": configuration.id.uuidString, "encoderSessionID": configuration.encoderSessionID.uuidString,
+     "bitRate": configuration.bitRate]
+}
+
+private func receiptEvidence(_ receipt: SDKProbe.BitRateChangeReceipt) -> [String: Any] {
+    ["publishingGeneration": String(receipt.publishingGeneration),
+     "configuration": configurationEvidence(receipt.configuration), "acceptedAt": receipt.acceptedAt,
+     "lastSubmittedSourcePTS": receipt.lastSubmittedSourcePTS.map(timeEvidence) as Any? ?? NSNull()]
+}
+
+/// Only bounded immutable scalars cross the native callback; JSON is produced after joined stop.
+private final class EncoderEvidence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames: [SDKProbe.EncoderFrame] = []
+    private var overflow = false
+    func record(_ frame: SDKProbe.EncoderFrame) {
+        lock.withLock {
+            guard frames.count < 512 else { overflow = true; return }
+            frames.append(frame)
+        }
+    }
+    func snapshot() -> [String: Any] {
+        let (records, exceeded) = lock.withLock { (frames, overflow) }
+        return ["overflow": exceeded, "frames": records.map { frame in
+            ["sourcePTS": timeEvidence(frame.sourcePTS), "outputPTS": timeEvidence(frame.outputPTS),
+             "encoderSessionID": frame.encoderSessionID.uuidString,
+             "configuration": frame.configuration.map(configurationEvidence) as Any? ?? NSNull(),
+             "submittedAt": frame.submittedAt, "completedAt": frame.completedAt] as [String: Any]
+        }]
+    }
+}
+
 private func statisticsEvidence(_ sample: PublishingTransportStatistics?) -> Any {
     guard let sample else { return NSNull() }
     return ["publishingGeneration": String(sample.publishingGeneration), "sampledAt": sample.sampledAt,
@@ -157,7 +195,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 try emit(["event": "publisher-disabled"])
                 return
             }
-            let publisher = SDKProbe()
+            let encoderEvidence = EncoderEvidence()
+            let publisher = SDKProbe(encoderConfigurationObserver: { encoderEvidence.record($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
@@ -194,9 +233,10 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 }
                 while let sample = try await liveQueue.next() {
                     if !changed && sample.sampleBuffer.presentationTimeStamp.seconds - originSeconds >= 5 {
-                        try await publisher.setBitRate(2_000_000)
+                        let receipt = try await publisher.setBitRateWithReceipt(2_000_000)
                         changed = true
-                        try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000])
+                        try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000,
+                                  "receipt": receiptEvidence(receipt)])
                     }
                     if sample.kind == .video {
                         await publisher.video(sample.sampleBuffer)
@@ -225,7 +265,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                           "publishingBeforeStop": publishing,
                           "transportClockBeforeStop": clockEvidence(transportClockBeforeStop),
                           "transportClockAfterStop": clockEvidence(transportClockAfterStop),
-                          "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop)])
+                          "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop),
+                          "encoderEvidence": encoderEvidence.snapshot()])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()

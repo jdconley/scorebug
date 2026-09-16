@@ -9,12 +9,23 @@ final class VideoCodec {
     static let frameInterval: Double = 0.0
 
     private let encoderCompletionObserver: VideoEncoderCompletionObserver?
+    private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
+    private var recordedBitRateChange: VideoBitRateChange?
+    private var lastSubmittedSourcePTS: CMTime?
 
     private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
     init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
+         encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
          sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)? = nil) {
         self.encoderCompletionObserver = encoderCompletionObserver
+        self.encoderConfigurationObserver = encoderConfigurationObserver
         self.sessionFactory = sessionFactory
+    }
+
+    var lastBitRateChange: VideoBitRateChange? {
+        guard isRunning, failure.error == nil, let recordedBitRateChange,
+              invalidation.isCurrent(recordedBitRateChange.configuration.encoderSessionID) else { return nil }
+        return recordedBitRateChange
     }
 
     func requestSessionInvalidation() { invalidation.invalidate() }
@@ -46,6 +57,9 @@ final class VideoCodec {
         // This is accepted configuration at this point, not a frame boundary or
         // achieved output rate. Do not repeat settings' legacy unchecked apply.
         storedSettings = updated
+        recordedBitRateChange = .init(settings: updated,
+            configuration: .init(id: UUID(), encoderSessionID: observed.revision, bitRate: updated.bitRate),
+            acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: lastSubmittedSourcePTS)
         return updated
     }
 
@@ -55,6 +69,7 @@ final class VideoCodec {
         get { storedSettings }
         set {
             let previous = storedSettings
+            recordedBitRateChange = nil
             storedSettings = newValue
             if newValue.invalidateSession(previous) { requestSessionInvalidation() }
             else { newValue.apply(self, rhs: previous) }
@@ -102,6 +117,7 @@ final class VideoCodec {
             if observed.pending {
                 let mode: VTSessionMode = sampleBuffer.formatDescription?.isCompressed == true ? .decompression : .compression
                 session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
+                recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
                 sessionMode = mode
                 invalidation.installed(observed.revision)
             }
@@ -113,13 +129,29 @@ final class VideoCodec {
                 try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
-                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
+                    let observer = submissionObserver(sessionID: observed.revision)
+                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: observer)
+                    if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 }
             }
         } catch {
             failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
             logger.warn(error)
+        }
+    }
+
+    private func submissionObserver(sessionID: UUID) -> VideoEncoderCompletionObserver? {
+        guard let configurationObserver = encoderConfigurationObserver else { return encoderCompletionObserver }
+        let legacyObserver = encoderCompletionObserver
+        let configuration = recordedBitRateChange?.configuration
+        let submittedAt = ProcessInfo.processInfo.systemUptime
+        return { source, output in
+            let completedAt = ProcessInfo.processInfo.systemUptime
+            legacyObserver?(source, output)
+            configurationObserver(.init(sourcePTS: source, outputPTS: output,
+                encoderSessionID: sessionID, configuration: configuration,
+                submittedAt: submittedAt, completedAt: completedAt))
         }
     }
 
@@ -221,6 +253,7 @@ extension VideoCodec: Runner {
         isRunning = false
         session = nil
         sessionMode = nil
+        recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
         requestSessionInvalidation()
         inputFormat = nil
         outputFormat = nil

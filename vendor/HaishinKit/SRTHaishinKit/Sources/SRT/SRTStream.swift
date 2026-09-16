@@ -47,11 +47,18 @@ public actor SRTStream {
     /// Point-in-time native configuration acknowledgment. It is not a source-frame
     /// boundary, achieved output rate, or authorization to relabel queued frames.
     public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
+        try setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected).change.settings
+    }
+    public struct VideoBitRateReceipt: Sendable {
+        public let publishingGeneration: UInt64
+        public let change: VideoBitRateChange
+    }
+    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoBitRateReceipt {
         try Task.checkCancellation()
-        guard publishingGeneration == expected, videoInputIsRaw else {
-            throw VideoBitRateUpdateError.notEncoding
-        }
-        return try outgoing.setVerifiedVideoBitRate(bitRate)
+        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
+        _ = try outgoing.setVerifiedVideoBitRate(bitRate)
+        guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
+        return .init(publishingGeneration: expected, change: change)
     }
     private struct PublishingTasks {
         let video, audio, input, transport, errors: Task<Void, Never>
@@ -87,8 +94,10 @@ public actor SRTStream {
     /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
     ///   notification for this stream, including final drain. Compressed passthrough
     ///   does not notify. The callback must remain bounded and perform no I/O or waits.
-    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil) {
-        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver)
+    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
+                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
+        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
+                                  encoderConfigurationObserver: encoderConfigurationObserver)
         self.connection = connection
         Task { await connection.addStream(self) }
     }
