@@ -8,6 +8,8 @@ import ScorebugStreaming
 final class NativeProfileTransitionEvidence: @unchecked Sendable {
     private let lock = NSLock()
     private let scope: VideoFrameObservationScope
+    private let adaptive: Bool
+    private var phaseLimit: Int { adaptive ? 17 : 3 }
     private struct Phase {
         let width: Int32, height: Int32, first: CMTime
         var last: CMTime, frames: Int, maximumSourceGap: Double
@@ -26,7 +28,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     private var frames = 0
     private var generation: UInt64?
     private var invalid = false, closed = false
-    init(scope: VideoFrameObservationScope) { self.scope = scope }
+    init(scope: VideoFrameObservationScope, adaptive: Bool = false) { self.scope = scope; self.adaptive = adaptive }
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
                height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264)
@@ -50,7 +52,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                     return
                 }
             }
-            guard phases.count < 3 else { invalid = true; return }
+            guard phases.count < phaseLimit else { invalid = true; return }
             phases.append(.init(width: width, height: height, first: pts, last: pts, frames: 1, maximumSourceGap: 0, firstObservedAt: observedAt, lastObservedAt: observedAt, maximumObservationGap: 0))
         }
     }
@@ -75,14 +77,14 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                     return
                 }
             }
-            guard encoderSessions.count < 3, !encoderSessions.contains(where: { $0.id == id }) else { invalid = true; return }
+            guard encoderSessions.count < phaseLimit, !encoderSessions.contains(where: { $0.id == id }) else { invalid = true; return }
             encoderSessions.append(.init(id: id, first: pts, firstCompletedAt: completedAt, last: pts, frames: 1,
                 lastCompletedAt: completedAt, maximumCompletionGap: 0, maximumEncodeLatency: completedAt - submittedAt))
         }
     }
     func receipt(_ value: PublishingVideoProfileChange) {
         lock.withLock {
-            guard !closed, receipts.count < 2 else { invalid = true; return }
+            guard !closed, receipts.count < phaseLimit - 1 else { invalid = true; return }
             receipts.append(value)
         }
     }
@@ -90,7 +92,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     func close() { lock.withLock { closed = true } }
     func data() throws -> Data {
         let object: [String: Any] = lock.withLock {
-            ["formatVersion": 2, "isClosed": closed, "invalid": invalid, "frames": frames,
+            ["formatVersion": adaptive ? 3 : 2, "isClosed": closed, "invalid": invalid, "frames": frames,
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],
@@ -123,10 +125,23 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
               (environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? "").isEmpty,
               (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,
               (environment["SCOREBUG_TEST_NATIVE_CONFIRMATION"] ?? "").isEmpty,
+              (environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] ?? "").isEmpty,
               (environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? "").isEmpty,
               (environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "").isEmpty,
               let raw = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"], let hold = Int(raw),
               String(hold) == raw, (90...600).contains(hold) else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+        return true
+    }
+    static func adaptiveRequested(environment: [String: String]) throws -> Bool {
+        guard let flag = environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"], !flag.isEmpty else { return false }
+        guard flag == "1", VideoObservationFixture.requested(environment: environment),
+              environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1", environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
+              (environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? "").isEmpty,
+              (environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] ?? "").isEmpty,
+              let raw = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"], let hold = Int(raw),
+              String(hold) == raw, (240...600).contains(hold),
+              let rawPort = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], let port = Int(rawPort),
+              String(port) == rawPort, (1...65535).contains(port) else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
         return true
     }
     static func persist(_ data: Data) async {
@@ -143,9 +158,11 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
 /// This wrapper adds observation ownership only; PublishingSession still owns admission.
 final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
     let evidence: NativeProfileTransitionEvidence
+    let adaptive: Bool
     private let publisher: any MediaPublisher
-    init(url: URL, observations: VideoFrameObservationOwner) {
-        let evidence = NativeProfileTransitionEvidence(scope: observations.snapshot.scope)
+    init(url: URL, observations: VideoFrameObservationOwner, adaptive: Bool = false) {
+        self.adaptive = adaptive
+        let evidence = NativeProfileTransitionEvidence(scope: observations.snapshot.scope, adaptive: adaptive)
         self.evidence = evidence
         publisher = SRTMediaPublisher(url: url, observations: observations,
             encoderConfigurationObserver: { evidence.observeEncoder($0) },
@@ -159,7 +176,9 @@ final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
     func transportStatistics() async -> PublishingTransportStatistics? { await publisher.transportStatistics() }
     func setVideoBitRate(_ rate: Int) async throws -> PublishingBitRateChange { try await publisher.setVideoBitRate(rate) }
     func setVideoProfile(_ profile: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
-        try await publisher.setVideoProfile(profile)
+        let receipt = try await publisher.setVideoProfile(profile)
+        if adaptive { evidence.receipt(receipt) }
+        return receipt
     }
 }
 

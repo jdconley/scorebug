@@ -148,7 +148,9 @@ import ScorebugMedia
         row["reason"] = reason
         row["revision"] = state.revision.map(String.init)
         row["acknowledgedAt"] = state.acknowledgedAt
+        row["profileID"] = state.applied?.profileID
         if let receipt = state.receipt { row["receipt"] = Self.receiptJSON(receipt) }
+        if let receipt = state.profileReceipt { row["profileReceipt"] = Self.profileReceiptJSON(receipt) }
         if let source {
             row["source"] = ["workerEpoch": source.workerEpoch, "workerAttempt": source.workerAttempt,
                 "sequence": String(source.sequence), "previousSequence": String(source.previousSequence),
@@ -175,8 +177,19 @@ import ScorebugMedia
             }
         }
         if let advice { row["action"] = ["kind": String(describing: advice.kind), "bitRate": advice.settings.videoBitrate,
+            "profileID": advice.settings.profileID,
             "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil] }
         events.append(row)
+    }
+    private static func profileReceiptJSON(_ receipt: PublishingVideoProfileChange) -> [String: Any] {
+        func time(_ pts: CMTime) -> [String: Any] {
+            ["value": String(pts.value), "timescale": pts.timescale, "epoch": String(pts.epoch), "flags": pts.flags.rawValue]
+        }
+        return ["profile": receipt.profile.rawValue, "publishingGeneration": String(receipt.publishingGeneration),
+            "previousEncoderSessionID": receipt.previousEncoderSessionID.uuidString, "encoderSessionID": receipt.encoderSessionID.uuidString,
+            "lastOldSourcePTS": time(receipt.lastOldSourcePTS), "firstNewSourcePTS": time(receipt.firstNewSourcePTS),
+            "width": receipt.width, "height": receipt.height, "rawVideoFramesDropped": String(receipt.rawVideoFramesDropped),
+            "acknowledgedAt": receipt.acknowledgedAt]
     }
     private static func receiptJSON(_ receipt: PublishingBitRateChange) -> [String: Any] {
         ["generation": String(receipt.publishingGeneration), "configurationID": receipt.configuration.id.uuidString,
@@ -218,9 +231,14 @@ import ScorebugMedia
         let environment = ProcessInfo.processInfo.environment
         guard environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1",
               VideoObservationFixture.requested(environment: environment) else { return nil }
+        let adaptive = try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment)
+        let profiles: [QualityController.Profile] = adaptive ? [
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000),
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
+        ] : [.init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)]
         let owner = try PublishingQualitySession(session: session,
-            profiles: [.init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],
-            attemptID: attemptID, initial: .init(profileID: "1080p30", videoBitrate: 6_000_000))
+            profiles: profiles, attemptID: attemptID, initial: .init(profileID: "1080p30", videoBitrate: 6_000_000),
+            strategy: adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),

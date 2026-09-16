@@ -77,6 +77,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var qualityDriver: PublishingQualityDriver?
     #if DEBUG
     private var transitionDriver: NativeProfileTransitionDriver?
+    private var adaptiveProfileEvidence: NativeProfileTransitionEvidence?
     #endif
     private var action: Task<Void, Never>?
     private var actionID: UUID?
@@ -105,6 +106,11 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             if try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 let target = try VideoObservationFixture.publishingURL(url, environment: environment)
+                 return NativeProfileTransitionPublisher(url: target, observations: observations, adaptive: true)
+             }
              if try NativeProfileTransitionEvidence.requested(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeProfileTransitionPublisher(url: url, observations: observations)
@@ -322,7 +328,8 @@ struct PublishingClockObservation: Equatable, Sendable {
                 qualityDriver = try qualityFactory(session, attempt)
                 #if DEBUG
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
-                    transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence)
+                    if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
+                    else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }
                 }
                 #endif
                 localState = .publishing
@@ -564,6 +571,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
             let transitions = transitionDriver; transitionDriver = nil; transitions?.cancel()
+            let adaptiveProof = adaptiveProfileEvidence; adaptiveProfileEvidence = nil
             // Production fixture I/O defaults only on explicitly enabled simulators.
             // Tests may inject an in-memory writer to exercise this same joined boundary.
             let fixtureWriter = workerReportAgeProofsEnabled ? videoObservationFixtureWriter : nil
@@ -590,6 +598,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                 await transitions?.stop()
                 #endif
                 await session.stop()
+                #if DEBUG
+                if let adaptiveProof {
+                    adaptiveProof.close()
+                    if let data = try? adaptiveProof.data() { await NativeProfileTransitionEvidence.persist(data) }
+                }
+                #endif
                 // Drain completion owns closure, even when an old task can no longer
                 // publish diagnostics. Normal stop changes epoch before this returns.
                 let final = observations?.close()

@@ -28,7 +28,13 @@ public struct QualityController: Sendable {
         public let videoBitrate: Int
         public init(profileID: String, videoBitrate: Int) { self.profileID = profileID; self.videoBitrate = videoBitrate }
     }
-    public enum RecoveryStrategy: Sendable { case capacityQualified, receiverValidatedTrials }
+    public enum RecoveryStrategy: Sendable {
+        case capacityQualified, receiverValidatedTrials
+        /// Explicit opt-in for qualified native profiles. Unlike bitrate trials,
+        /// a next-profile probe may exceed a 10% rate step; probation and rollback
+        /// still apply, and callers must support owned native profile replacement.
+        case receiverValidatedProfileTrials
+    }
     public enum Connectivity: Sendable { case connected, disconnected, unknown }
     public enum Pressure: Sendable { case nominal, elevated, unknown }
     public struct Receiver: Sendable {
@@ -195,7 +201,7 @@ public struct QualityController: Sendable {
         if window.meanQueueOccupancy == nil { missing(.missingQueue) }
         if window.usableVideoCapacity == nil { missing(.missingCapacity) }
         if window.thermalPressure == .unknown || window.workerPressure == .unknown { missing(.unknownPressure) }
-        if recoveryStrategy == .receiverValidatedTrials && window.transportPressure == .unknown {
+        if recoveryStrategy != .capacityQualified && window.transportPressure == .unknown {
             missing(.unknownTransportPressure)
         }
         let duration = window.end - window.start
@@ -253,13 +259,17 @@ public struct QualityController: Sendable {
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded
             return .init(state: state, reasons: reasons, recommendation: pending)
         }
-        if recoveryStrategy == .receiverValidatedTrials {
+        if recoveryStrategy != .capacityQualified {
             // Integer division rounds the <=10% step down. Bound the addition
             // before doing it, including on arm64_32. No minimum +1 may exceed10%.
             let profile = profiles[profileIndex]
             let step = min(applied.videoBitrate / 10, profile.maximumBitrate - applied.videoBitrate)
-            let candidate: Settings? = step > 0
+            var candidate: Settings? = step > 0
                 ? .init(profileID: applied.profileID, videoBitrate: applied.videoBitrate + step) : nil
+            if recoveryStrategy == .receiverValidatedProfileTrials,
+               applied.videoBitrate == profile.maximumBitrate {
+                candidate = higherSettings(profileIndex: profileIndex)
+            }
             let fitsKnownCapacity = candidate.map { settings in
                 window.usableVideoCapacity.map { $0 >= Double(settings.videoBitrate) * 1.25 } ?? true
             } ?? false

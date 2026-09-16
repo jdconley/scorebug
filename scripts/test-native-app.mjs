@@ -1,5 +1,6 @@
 import {
   nativeProfileTransitions,
+  nativeAdaptiveProfiles,
   qualifyNativeProfileTransitions,
 } from './native-profile-transitions.mjs';
 import { nativeLiveProfile, nativeMediaGeometry } from './native-live-profile.mjs';
@@ -79,6 +80,13 @@ const profileTransitions = nativeProfileTransitions({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const adaptiveProfiles = nativeAdaptiveProfiles({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const uplinkProfile = nativeUplinkOptions({
   liveProfile,
   environment: process.env,
@@ -114,6 +122,7 @@ await writeFile(
       uplinkProfile,
       liveProfile,
       profileTransitions,
+      adaptiveProfiles,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
@@ -289,7 +298,7 @@ async function analyze(path, index, live = false) {
     videoPayload = measureVideoPayloadRate(packetProbe);
     if (
       fixtureWorkload === 'motion-blocks16' &&
-      (!live || (liveProfile === '1080p30' && !profileTransitions))
+      (!live || (liveProfile === '1080p30' && !profileTransitions && !adaptiveProfiles))
     ) {
       workloadQualification = qualifyStructuredMotionPayload(
         videoPayload,
@@ -460,6 +469,7 @@ try {
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitions ? '1' : ''}`,
+      `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
@@ -606,7 +616,7 @@ try {
       ),
     );
     liveSegments.sort((a, b) => a[0] - b[0]);
-    if (profileTransitions) {
+    if (profileTransitions || adaptiveProfiles) {
       const path = join(artifact, 'native-profile-transitions.json');
       await cp(
         join(container, 'Library/Application Support/Scorebug/QA/native-profile-transitions.json'),
@@ -614,11 +624,15 @@ try {
         { errorOnExist: true, force: false },
       );
       const bytes = await readFile(path);
-      assert.ok(bytes.length <= 12000, 'Oversized native transition evidence');
+      assert.ok(
+        bytes.length <= (adaptiveProfiles ? 64000 : 12000),
+        'Oversized native transition evidence',
+      );
       profileTransitionQualification = qualifyNativeProfileTransitions(
         JSON.parse(bytes.toString('utf8')),
         observationSnapshot,
         liveSegments.flat(),
+        { adaptive: adaptiveProfiles },
       );
     }
     videoObservation = qualifyVideoObservation({
@@ -667,6 +681,8 @@ try {
       nativeQualityQualification = qualifyNativeQuality({
         quality: qualitySnapshot,
         requireConfirmation,
+        adaptiveProfiles,
+        profileQualification: profileTransitionQualification,
         snapshot: observationSnapshot,
         sourceIntervalQualification,
       });
@@ -724,6 +740,7 @@ try {
         liveProfile,
         nativeFormatQualification,
         profileTransitions,
+        adaptiveProfiles,
         profileTransitionQualification,
         streamingBudget,
         media,

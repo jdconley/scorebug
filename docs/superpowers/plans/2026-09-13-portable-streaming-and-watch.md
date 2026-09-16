@@ -652,7 +652,6 @@ The reviewed [motion workload plan](2026-09-14-native-motion-load-validation.md)
 next because current actual encoded payload rates are far below configured rates.
 Physical phone/Watch, adaptive quality and other hosts remain unqualified.
 
-
 ### Native adaptive control checkpoint
 
 The [opt-in native quality loop](2026-09-16-native-quality-loop.md) now passes an
@@ -664,7 +663,6 @@ short to confirm ten full seconds of post-change source coverage, so confirmatio
 timing is the next gate before motion and impairment qualification. This does not
 enable adaptive production behavior or finish physical phone/Watch/remote-host work.
 
-
 The [confirmation timing correction](2026-09-16-native-trial-confirmation.md) now
 passes confirmation-required barcode and structured-motion native runs. The motion
 run preserves 3696 archive / 3266 acquired live frames at 30 fps, with roughly 12 Mbps
@@ -672,7 +670,6 @@ local and 7.3–7.6 Mbps live payload. One 6.6 Mbps trial is confirmed; a subseq
 trial is unconfirmed at stop. Network impairment is next, including the driver's
 need for an independently qualified local-pressure decrease path when matched
 receiver windows expire. Longer adaptive soaks and resolution/device/host gates remain.
-
 
 The [local-pressure fallback](2026-09-16-local-pressure-fallback.md) is now connected
 to the opt-in native loop, with shared source/local ordering and independent raw
@@ -682,7 +679,6 @@ with zero qualified loss. Its healthy connection triggers no local reduction and
 confirms one 6.6 Mbps trial. Actual network impairment/downward adaptation/recovery
 is the next gate; physical phone/Watch and remote-host qualification remain open.
 
-
 The [publishing-only proxy route](2026-09-16-native-uplink-impairment.md) now passes
 an actual 90-second structured-motion simulator run: 3671 clean archive / 3236
 acquired live frames at 30 fps, zero qualified loss, native score overlay, complete
@@ -691,7 +687,6 @@ connection. All proxy counters conserve, with no drops/errors/foreign peers and
 joined closure. All 180 FilmModel / 872 tooling tests and unsigned Apple Release
 pass. This is a pass-through baseline; scheduled bandwidth pressure and recovery
 remain the next gate.
-
 
 The first [scheduled 4 Mbps diagnostic](2026-09-16-native-uplink-impairment.md#first-limited-rate-result-live-recovery-fails)
 fails live recovery: bitrate settings decrease, but output stalls and publishing
@@ -720,7 +715,6 @@ qualify 7208 frames, and 897 tooling tests pass. Native property evidence is now
 bounded and tied to encoder-session ownership. Physical encoder behavior, reliable
 live recovery and archive finalization during failed live tests remain next gates.
 
-
 The [failed-live finalization checkpoint](2026-09-16-native-failure-finalization.md)
 now preserves a normally stopped/exported archive during the scheduled 4 Mbps
 failure: 8020 consecutive frames (267.333 seconds) at 30 fps, complete A/V decode
@@ -743,7 +737,6 @@ live profile through the complete pipeline while local recording remains 1080p,
 then implement and test bounded dynamic profile changes. Production adaptation,
 actual bandwidth recovery and physical phone/Watch/remote-host gates remain open.
 
-
 The [fixed reduced-profile integration](2026-09-16-native-reduced-profile.md) now
 passes both pass-through and scheduled 4 Mbps simulator diagnostics. Actual native
 compressed-sample evidence confirms 960×540 before worker scaling. During the
@@ -762,7 +755,6 @@ build succeeds. This checkpoint has 55 streaming, 135 vendor, 183 app-model, 334
 serialized worker and 908 tooling tests passing, plus worker typechecking. Retained
 parallel worker timing failures are documented in the reduced-profile plan.
 
-
 The [native resolution transition experiment](2026-09-16-native-resolution-transitions.md)
 now preserves all 3600 frames across iOS 17.5 and 26.2 runs of 1080p→540p→1080p.
 Actual dimensions, ordered source identity, distinct encoder sessions and sync/IDR
@@ -773,7 +765,6 @@ pipeline or adaptive recovery qualification. Next prove outstanding-callback and
 stop/cancellation lifetime behavior, then integrate bounded profile changes through
 the worker while preserving the independent 1080p archive. Production selection,
 physical phone/Watch and other-host gates remain open.
-
 
 The [explicit encoder replacement lifetime](2026-09-16-encoder-replacement-lifetime.md)
 now prepares, drains off the owner and commits only the same healthy native session.
@@ -787,7 +778,6 @@ hashes. Next integrate stream-owned ingress pause/deadline/cancellation and actu
 profile receipts, then qualify downstream decode and independent recording before
 automatic adaptation. Production profile selection remains disabled.
 
-
 The [stream-owned profile replacement](2026-09-16-stream-profile-replacement.md)
 now pauses bounded raw-video consumption during native drain while audio/compressed
 output consumers continue. Actual first new-format output and a current encoder
@@ -800,7 +790,6 @@ worker decoding with independent full-resolution local recording, then pressure 
 recovery before automatic selection. No seamless transition or physical-device
 qualification is claimed by this SDK checkpoint.
 
-
 The [typed app profile API](2026-09-16-app-profile-transitions.md) now carries native
 format/source/encoder receipts through both streaming adapters and PublishingSession.
 Bitrate and resolution mutations share admission and shutdown ownership. New tests
@@ -811,7 +800,6 @@ Validation passes: 252 media tests, 61 streaming tests, 183 app-model tests and 
 unsigned combined iPhone/Watch Release build. This checkpoint supplies the app API;
 production still selects fixed profiles. Next add the controlled simulator down/up
 fixture and qualify decoded worker output plus independent clean local recording.
-
 
 The [controlled app transition experiment](2026-09-16-app-profile-transitions.md)
 now passes end to end on iPhone 14 / iOS 17.5: actual native 1080→540→1080 sessions,
@@ -849,3 +837,13 @@ Release build pass; review found no blocking issues. The app's automatic fixture
 still selects one profile. Next add measured multi-profile pressure/recovery
 qualification before production activation; the original rate4m recovery failure
 is not yet resolved by an end-to-end adaptive test.
+
+The [adaptive profile fixture](2026-09-16-adaptive-profile-fixture.md) now exercises
+pressure-driven native resolution changes through the quality owner. Its first
+240-second pressure hold (`native-app-TffI7s`) downshifted 1080p to 540p, but the
+worker decoder ended and recovery remains unqualified. The one-shot destination
+recorder also prevents worker retries, independently of the unresolved first exit.
+The local archive passed complete verification: 8712 consecutive 1080p/30 frames,
+290.4 seconds, all 145 A/V markers, no archive drops. Core (284), model (200), tooling
+(933) and unsigned iPhone/Watch Release checks pass. Next diagnose receiver input
+termination and retry recording; production adaptation remains disabled.

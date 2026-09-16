@@ -512,6 +512,334 @@ function localFixture({ duringTrial = false } = {}) {
   );
   return f;
 }
+function adaptiveFixture() {
+  const f = probation(fixture()),
+    boot = f.quality.events[0];
+  boot.profileID = '1080p30';
+  const lower = {
+    ...boot.receipt,
+    bitRate: 1500000,
+    acceptedAt: 6.4,
+    configurationID: '66666666-6666-6666-6666-666666666666',
+    encoderSessionID: '77777777-7777-7777-7777-777777777777',
+    lastSubmittedPTS: { value: '200', timescale: 30 },
+  };
+  const upper = {
+    ...boot.receipt,
+    acceptedAt: 37.4,
+    configurationID: '44444444-4444-4444-4444-444444444444',
+    encoderSessionID: '88888888-8888-8888-8888-888888888888',
+    lastSubmittedPTS: { value: '1200', timescale: 30 },
+  };
+  const pts = (value) => ({ value: String(value), timescale: 30, epoch: '0', flags: 1 });
+  const formats = [lower, upper].map((r, i) => ({
+    profile: i ? '1080p30' : '540p30',
+    publishingGeneration: '1',
+    previousEncoderSessionID: i ? lower.encoderSessionID : boot.receipt.encoderSessionID,
+    encoderSessionID: r.encoderSessionID,
+    firstNewSourcePTS: pts(i ? 1150 : 190),
+    lastOldSourcePTS: pts(i ? 1149 : 189),
+    width: i ? 1920 : 960,
+    height: i ? 1080 : 540,
+    rawVideoFramesDropped: '0',
+    acknowledgedAt: i ? 37.3 : 6.3,
+  }));
+  for (const row of f.quality.events.slice(1)) {
+    const isUpper = row.revision === '1';
+    row.at += 6;
+    row.revision = isUpper ? '2' : '1';
+    row.receipt = isUpper ? upper : lower;
+    row.profileID = isUpper ? '1080p30' : '540p30';
+    row.profileReceipt = formats[isUpper ? 1 : 0];
+    if (row.acknowledgedAt !== undefined) row.acknowledgedAt += 6;
+    if (row.action)
+      Object.assign(row.action, {
+        bitRate: 6000000,
+        profileID: '1080p30',
+        fromRevision: '1',
+        validUntil: row.action.validUntil + 6,
+      });
+    if (row.window) {
+      row.window.start += 6;
+      row.window.end += 6;
+      row.window.observedAt += 6;
+      row.window.sequence = String(Number(row.window.sequence) + 1);
+      row.window.revision = row.revision;
+      row.source.start += 6;
+      row.source.end += 6;
+      const s = f.snapshot.sourceIntervals.find((s) => s.sequence === row.source.sequence);
+      s.captureBoundaryStartTime += 6;
+      s.captureBoundaryEndTime += 6;
+      s.encodingConfiguration = {
+        id: row.receipt.configurationID,
+        encoderSessionID: row.receipt.encoderSessionID,
+        bitRate: row.receipt.bitRate,
+      };
+    }
+  }
+  evidence(f);
+  const local = structuredClone(
+    localFixture().quality.events.find((r) => r.kind === 'localPressure'),
+  );
+  local.at -= 42;
+  local.evaluatedAt -= 42;
+  local.revision = '0';
+  local.receipt = boot.receipt;
+  local.profileID = '1080p30';
+  local.acknowledgedAt = boot.acknowledgedAt;
+  local.window.start -= 42;
+  local.window.end -= 42;
+  local.window.sequence = '1';
+  local.window.revision = '0';
+  local.evidence.local.receipt = boot.receipt;
+  local.evidence.queue.coveredThrough -= 42;
+  local.evidence.queue.states[0].at -= 42;
+  for (const k of ['thermal', 'transport'])
+    for (const s of local.evidence[k].samples) s.sampledAt -= 42;
+  f.quality.events.splice(1, 0, local, {
+    kind: 'applied',
+    at: 6.5,
+    acknowledgedAt: 6.5,
+    revision: '1',
+    receipt: lower,
+    profileID: '540p30',
+    profileReceipt: formats[0],
+    action: {
+      kind: 'decrease',
+      fromRevision: '0',
+      bitRate: 1500000,
+      profileID: '540p30',
+      validUntil: 8,
+    },
+  });
+  f.adaptiveProfiles = true;
+  f.requireConfirmation = true;
+  f.profileQualification = {
+    scope: f.snapshot.scope,
+    receipts: formats,
+    phases: [
+      { firstFrame: 0, lastFrame: 189, encoderSessionID: boot.receipt.encoderSessionID },
+      { firstFrame: 190, lastFrame: 1149, encoderSessionID: lower.encoderSessionID },
+      { firstFrame: 1150, lastFrame: 2000, encoderSessionID: upper.encoderSessionID },
+    ],
+  };
+  for (const r of [lower, upper]) {
+    r.lastSubmittedPTS = {
+      value: String(7395 + 2 * Number(r.lastSubmittedPTS.value)),
+      timescale: 60,
+    };
+  }
+  for (const r of formats)
+    for (const k of ['lastOldSourcePTS', 'firstNewSourcePTS']) {
+      r[k] = { ...r[k], value: String(7395 + 2 * Number(r[k].value)), timescale: 60 };
+    }
+  return f;
+}
+function adaptiveRollbackFixture({
+  deadlineOnly = false,
+  earlyFormat = false,
+  earlyRetry = false,
+} = {}) {
+  const f = adaptiveFixture(),
+    events = f.quality.events,
+    upper = events[9].receipt;
+  const template = structuredClone(events[3]),
+    sourceTemplate = structuredClone(f.snapshot.sourceIntervals[0]);
+  events.splice(10);
+  const rollbackAt = deadlineOnly ? 60.3 : 44.5;
+  if (!deadlineOnly) {
+    const local = structuredClone(
+      localFixture().quality.events.find((r) => r.kind === 'localPressure'),
+    );
+    local.at -= 4;
+    local.evaluatedAt -= 4;
+    local.revision = '2';
+    local.receipt = upper;
+    local.acknowledgedAt = 37.5;
+    local.profileID = '1080p30';
+    local.window.start -= 4;
+    local.window.end -= 4;
+    local.window.sequence = '8';
+    local.window.revision = '2';
+    local.evidence.local.receipt = upper;
+    local.evidence.queue.coveredThrough -= 4;
+    local.evidence.queue.states[0].at -= 4;
+    for (const k of ['thermal', 'transport'])
+      for (const s of local.evidence[k].samples) s.sampledAt -= 4;
+    events.push(local);
+  }
+  const pts = (n) => ({ value: String(7395 + 2 * n), timescale: 60, epoch: '0', flags: 1 });
+  const lower = {
+    ...upper,
+    configurationID: '99999999-9999-9999-9999-999999999999',
+    encoderSessionID: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    bitRate: 1500000,
+    acceptedAt: rollbackAt - 0.1,
+    lastSubmittedPTS: { value: pts(1401).value, timescale: 60 },
+  };
+  const downFormat = {
+    ...f.profileQualification.receipts[0],
+    previousEncoderSessionID: upper.encoderSessionID,
+    encoderSessionID: lower.encoderSessionID,
+    lastOldSourcePTS: pts(1399),
+    firstNewSourcePTS: pts(1400),
+    acknowledgedAt: deadlineOnly && earlyFormat ? 59.9 : rollbackAt - 0.2,
+  };
+  events.push({
+    kind: 'applied',
+    at: rollbackAt,
+    acknowledgedAt: rollbackAt,
+    revision: '3',
+    receipt: lower,
+    profileID: '540p30',
+    profileReceipt: downFormat,
+    action: {
+      kind: 'rollback',
+      bitRate: 1500000,
+      profileID: '540p30',
+      fromRevision: '2',
+      validUntil: deadlineOnly ? 62 : 46,
+    },
+  });
+  let sequence = 9;
+  function healthy(start, revision, receipt, profileID, format, reasons = []) {
+    const row = structuredClone(template),
+      end = start + 5;
+    Object.assign(row, {
+      at: end + 0.25,
+      revision,
+      receipt,
+      profileID,
+      profileReceipt: format,
+      reasons,
+    });
+    Object.assign(row.window, {
+      start,
+      end,
+      observedAt: end,
+      sequence: String(sequence),
+      revision,
+    });
+    Object.assign(row.source, { start, end, sequence: String(100 + sequence) });
+    const s = structuredClone(sourceTemplate);
+    Object.assign(s, {
+      sequence: row.source.sequence,
+      captureBoundaryStartTime: start,
+      captureBoundaryEndTime: end,
+      encodingConfiguration: {
+        id: receipt.configurationID,
+        encoderSessionID: receipt.encoderSessionID,
+        bitRate: receipt.bitRate,
+      },
+    });
+    f.snapshot.sourceIntervals.push(s);
+    f.sourceIntervalQualification.intervals.push({
+      sequence: 100 + sequence,
+      capturedFrames: 150,
+      encodedFrames: 150,
+      decodedFrames: 150,
+    });
+    sequence++;
+    events.push(row);
+  }
+  const count = earlyRetry ? 6 : 12,
+    first = rollbackAt + 0.5;
+  for (let n = 0; n < count; n++) healthy(first + n * 5, '3', lower, '540p30', downFormat);
+  const end = first + count * 5;
+  const final = {
+    ...upper,
+    configurationID: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    encoderSessionID: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    acceptedAt: end + 0.4,
+    lastSubmittedPTS: { value: pts(3301).value, timescale: 60 },
+  };
+  const upFormat = {
+    ...f.profileQualification.receipts[1],
+    previousEncoderSessionID: lower.encoderSessionID,
+    encoderSessionID: final.encoderSessionID,
+    lastOldSourcePTS: pts(3299),
+    firstNewSourcePTS: pts(3300),
+    acknowledgedAt: end + 0.3,
+  };
+  events.push({
+    kind: 'applied',
+    at: end + 0.5,
+    acknowledgedAt: end + 0.5,
+    revision: '4',
+    receipt: final,
+    profileID: '1080p30',
+    profileReceipt: upFormat,
+    action: {
+      kind: 'trial',
+      bitRate: 6000000,
+      profileID: '1080p30',
+      fromRevision: '3',
+      validUntil: end + 2,
+    },
+  });
+  healthy(end + 1, '4', final, '1080p30', upFormat);
+  healthy(end + 6, '4', final, '1080p30', upFormat, ['trialConfirmed']);
+  events.push({
+    kind: 'stopped',
+    at: end + 12,
+    revision: '4',
+    receipt: final,
+    profileID: '1080p30',
+    closed: true,
+  });
+  f.profileQualification.receipts.push(downFormat, upFormat);
+  f.profileQualification.phases[2].lastFrame = 1399;
+  f.profileQualification.phases.push(
+    { firstFrame: 1400, lastFrame: 3299, encoderSessionID: lower.encoderSessionID },
+    { firstFrame: 3300, lastFrame: 5000, encoderSessionID: final.encoderSessionID },
+  );
+  return evidence(f);
+}
+test('adaptive rollback restores baseline and retries only after cooldown before confirmation', () => {
+  for (const deadlineOnly of [false, true]) {
+    const r = qualifyNativeQuality(adaptiveRollbackFixture({ deadlineOnly }));
+    assert.equal(r.profileChanges, 4);
+    assert.equal(r.rollbacks, 1);
+    assert.equal(r.confirmed, 1);
+  }
+  assert.throws(() => qualifyNativeQuality(adaptiveRollbackFixture({ earlyRetry: true })));
+  const wrong = adaptiveRollbackFixture();
+  wrong.quality.events.find((r) => r.action?.kind === 'rollback').action.profileID = '1080p30';
+  assert.throws(() => qualifyNativeQuality(wrong));
+});
+test('adaptive timeout rollback cannot precede deadline merely because bitrate follows it', () => {
+  assert.throws(() =>
+    qualifyNativeQuality(adaptiveRollbackFixture({ deadlineOnly: true, earlyFormat: true })),
+  );
+});
+test('adaptive native quality binds pressure decrease and confirmed profile recovery to independent formats', () => {
+  const result = qualifyNativeQuality(adaptiveFixture());
+  assert.equal(result.profileChanges, 2);
+  assert.equal(result.finalProfile, '1080p30');
+  assert.equal(result.confirmed, 1);
+});
+for (const [name, corrupt] of Object.entries({
+  scope: (f) => (f.profileQualification.scope = {}),
+  missing: (f) => delete f.profileQualification,
+  encoder: (f) =>
+    (f.quality.events[2].receipt.encoderSessionID = f.quality.events[0].receipt.encoderSessionID),
+  profile: (f) => (f.quality.events[2].action.profileID = '1080p30'),
+  source: (f) => (f.quality.events[2].receipt.lastSubmittedPTS.value = '189'),
+  tail: (f) => (f.quality.events[2].receipt.lastSubmittedPTS.value = String(7395 + 2 * 1150)),
+  clock: (f) => (f.quality.events[2].receipt.acceptedAt = 6.2),
+  extra: (f) =>
+    (f.profileQualification.receipts = [
+      ...f.profileQualification.receipts,
+      f.profileQualification.receipts[0],
+    ]),
+  unconfirmed: (f) =>
+    (f.quality.events.find((r) => r.reasons?.includes('trialConfirmed')).reasons = []),
+}))
+  test(`rejects adaptive policy/format ${name} mismatch`, () => {
+    const f = adaptiveFixture();
+    corrupt(f);
+    assert.throws(() => qualifyNativeQuality(f));
+  });
 test('qualifies raw local pressure decrease with unknown receiver delivery', () => {
   const result = qualifyNativeQuality(localFixture());
   assert.equal(result.localEvaluated, 1);

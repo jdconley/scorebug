@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   nativeProfileTransitions,
+  nativeAdaptiveProfiles,
   qualifyNativeProfileTransitions,
 } from '../native-profile-transitions.mjs';
 const options = {
@@ -49,7 +50,7 @@ const ids = [
   '22222222-2222-4222-8222-222222222222',
   '33333333-3333-4333-8333-333333333333',
 ];
-function fixture() {
+function fixture(phaseCount = 3, adaptive = false) {
   const scope = {
     recordingID: 'recording',
     matchID: 'match',
@@ -57,9 +58,13 @@ function fixture() {
     publishingAttemptID: 'attempt',
     appliedProfileRevision: '1',
   };
-  const phases = [0, 1, 2].map((n) => ({
-    width: n === 1 ? 960 : 1920,
-    height: n === 1 ? 540 : 1080,
+  const indices = Array.from({ length: phaseCount }, (_, n) => n);
+  const sessionIDs = indices.map(
+    (n) => ids[n] ?? `${String(n + 1).padStart(8, '0')}-4444-4444-8444-444444444444`,
+  );
+  const phases = indices.map((n) => ({
+    width: n % 2 ? 960 : 1920,
+    height: n % 2 ? 540 : 1080,
     frames: 900,
     firstSourcePTS: pts(n * 900),
     lastSourcePTS: pts(n * 900 + 899),
@@ -69,15 +74,15 @@ function fixture() {
     maximumObservationGapSeconds: 1 / 30,
   }));
   const format = {
-    formatVersion: 2,
+    formatVersion: adaptive ? 3 : 2,
     scope,
     isClosed: true,
     invalid: false,
-    frames: 2700,
+    frames: 900 * phaseCount,
     publishingGeneration: '2',
     phases,
     encoderSessions: phases.map((p, n) => ({
-      encoderSessionID: ids[n],
+      encoderSessionID: sessionIDs[n],
       frames: p.frames,
       firstSourcePTS: p.firstSourcePTS,
       lastSourcePTS: p.lastSourcePTS,
@@ -86,11 +91,11 @@ function fixture() {
       maximumCompletionGapSeconds: 1 / 30,
       maximumEncodeLatencySeconds: 0.2,
     })),
-    receipts: [1, 2].map((n) => ({
-      profile: n === 1 ? '540p30' : '1080p30',
+    receipts: indices.slice(1).map((n) => ({
+      profile: n % 2 ? '540p30' : '1080p30',
       publishingGeneration: '2',
-      previousEncoderSessionID: ids[n - 1],
-      encoderSessionID: ids[n],
+      previousEncoderSessionID: sessionIDs[n - 1],
+      encoderSessionID: sessionIDs[n],
       lastOldSourcePTS: pts(n * 900 - 1),
       firstNewSourcePTS: pts(n * 900),
       width: phases[n].width,
@@ -103,16 +108,87 @@ function fixture() {
     scope,
     isClosed: true,
     monotonicAnchor: 99,
-    captureDetachedAt: 191,
+    captureDetachedAt: 101 + 30 * phaseCount,
     omittedCompletedWindowCount: '0',
     publishingClockObservation: { publishingGeneration: '2' },
     completed: [
-      { encodedVideo: { callbackCount: '2700', firstSourcePTS: pts(0), lastSourcePTS: pts(2699) } },
+      {
+        encodedVideo: {
+          callbackCount: String(900 * phaseCount),
+          firstSourcePTS: pts(0),
+          lastSourcePTS: pts(900 * phaseCount - 1),
+        },
+      },
     ],
     current: { encodedVideo: { callbackCount: '0' } },
   };
-  return { format, snapshot, liveIDs: Array.from({ length: 2670 }, (_, n) => n + 30) };
+  return {
+    format,
+    snapshot,
+    liveIDs: Array.from({ length: 900 * phaseCount - 30 }, (_, n) => n + 30),
+  };
 }
+test('adaptive profile fixture requires explicit isolated pressure and recovery prerequisites', () => {
+  const o = {
+    ...options,
+    holdSeconds: 240,
+    environment: {
+      SCOREBUG_TEST_ADAPTIVE_PROFILES: '1',
+      SCOREBUG_TEST_NATIVE_QUALITY: '1',
+      SCOREBUG_TEST_NATIVE_CONFIRMATION: '1',
+      SCOREBUG_TEST_UPLINK_PROFILE: 'rate4m',
+      SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
+      SCOREBUG_TEST_MOTION_FIXTURE: 'blocks16',
+    },
+  };
+  assert.equal(nativeAdaptiveProfiles(o), true);
+  assert.equal(nativeAdaptiveProfiles({ environment: {} }), false);
+  for (const [k, v] of Object.entries({
+    SCOREBUG_TEST_ADAPTIVE_PROFILES: '',
+    SCOREBUG_TEST_NATIVE_QUALITY: '0',
+    SCOREBUG_TEST_NATIVE_CONFIRMATION: '0',
+    SCOREBUG_TEST_UPLINK_PROFILE: 'passthrough',
+    SCOREBUG_TEST_MOTION_FIXTURE: '1',
+    SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '0',
+    SCOREBUG_TEST_PROFILE_TRANSITIONS: '1',
+    SCOREBUG_TEST_LIVE_PROFILE: '540p30',
+  })) {
+    assert.throws(() =>
+      nativeAdaptiveProfiles({ ...o, environment: { ...o.environment, [k]: v } }),
+    );
+  }
+  for (const patch of [
+    { streaming: false },
+    { requireProcessing: false },
+    { requirePublication: false },
+    { holdSeconds: 239 },
+    { holdSeconds: 601 },
+  ]) {
+    assert.throws(() => nativeAdaptiveProfiles({ ...o, ...patch }));
+  }
+});
+test('adaptive evidence supports bounded rollback and recovery phases without weakening fixed mode', () => {
+  for (const n of [3, 5, 17]) {
+    const f = fixture(n, true);
+    assert.equal(
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, { adaptive: true }).phases
+        .length,
+      n,
+    );
+    assert.throws(() => qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs));
+  }
+  for (const n of [1, 2, 4, 19]) {
+    const f = fixture(n, true);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, { adaptive: true }),
+    );
+  }
+  const f = fixture(5, true);
+  f.format.receipts[3].encoderSessionID = ids[0];
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, { adaptive: true }),
+  );
+});
 test('requires real phone phases, exact receipts and decoded coverage across both changes', () => {
   const { format, snapshot, liveIDs } = fixture();
   const result = qualifyNativeProfileTransitions(format, snapshot, liveIDs);

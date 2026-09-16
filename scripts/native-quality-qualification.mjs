@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { replayNativePressure, replayNativeLocalPressure } from './native-quality-pressure.mjs';
+import { fixtureFrameID } from './video-observation-qualification.mjs';
 const uuid = (value) =>
   typeof value === 'string' &&
   /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value) &&
@@ -11,6 +12,8 @@ export function qualifyNativeQuality({
   snapshot,
   sourceIntervalQualification,
   requireConfirmation = false,
+  adaptiveProfiles = false,
+  profileQualification,
 }) {
   assert.equal(quality.formatVersion, 1);
   assert.equal(quality.overflow, false);
@@ -21,6 +24,16 @@ export function qualifyNativeQuality({
   assert.equal(boot.revision, '0');
   assert.equal(boot.receipt.bitRate, 6000000);
   assert(finite(boot.acknowledgedAt));
+  let profile = '1080p30',
+    profileChanges = 0,
+    decreases = 0;
+  if (adaptiveProfiles) {
+    assert.equal(boot.profileID, profile);
+    assert(profileQualification, 'Adaptive policy requires independently qualified native formats');
+    assert.deepEqual(profileQualification.scope, snapshot.scope);
+    assert(Array.isArray(profileQualification.receipts));
+    assert.equal(profileQualification.phases?.length, profileQualification.receipts.length + 1);
+  }
   const configurationIDs = new Set();
   function receipt(value) {
     assert(uuid(value.configurationID) && uuid(value.encoderSessionID));
@@ -58,6 +71,7 @@ export function qualifyNativeQuality({
     assert(finite(row.at) && row.at >= lastTime);
     lastTime = row.at;
     assert.notEqual(row.kind, 'failed', 'Quality loop retired publishing');
+    if (adaptiveProfiles && row.kind !== 'applied') assert.equal(row.profileID, profile);
     if (row.kind === 'evaluated' || row.kind === 'localPressure') {
       assert.equal(row.revision, String(revision));
       assert.deepEqual(row.receipt, current);
@@ -199,6 +213,44 @@ export function qualifyNativeQuality({
           row.acknowledgedAt <= row.at,
       );
       assert(row.acknowledgedAt <= action.validUntil && row.at <= action.validUntil);
+      if (adaptiveProfiles) {
+        const format = profileQualification.receipts[profileChanges];
+        assert(format, 'Profile action lacks independent native format');
+        assert.deepEqual(row.profileReceipt, format);
+        assert.equal(action.profileID, row.profileID);
+        assert.equal(row.profileID, format.profile);
+        assert.notEqual(row.profileID, profile);
+        assert.equal(format.previousEncoderSessionID, current.encoderSessionID);
+        assert.equal(format.encoderSessionID, row.receipt.encoderSessionID);
+        assert.equal(format.publishingGeneration, row.receipt.generation);
+        assert(
+          format.acknowledgedAt >= lastEvaluatedAt &&
+            format.acknowledgedAt >= ack &&
+            format.acknowledgedAt <= row.receipt.acceptedAt,
+        );
+        assert.equal(row.receipt.bitRate, row.profileID === '1080p30' ? 6000000 : 1500000);
+        const a = row.receipt.lastSubmittedPTS,
+          b = format.firstNewSourcePTS;
+        for (const p of [a, b])
+          assert(
+            p &&
+              typeof p.value === 'string' &&
+              /^\d+$/.test(p.value) &&
+              Number.isSafeInteger(p.timescale) &&
+              p.timescale > 0 &&
+              p.timescale <= 2147483647,
+          );
+        assert(BigInt(a.value) * BigInt(b.timescale) >= BigInt(b.value) * BigInt(a.timescale));
+        const phase = profileQualification.phases[profileChanges + 1];
+        assert.equal(phase.encoderSessionID, row.receipt.encoderSessionID);
+        assert.equal(phase.firstFrame, fixtureFrameID(b));
+        const frame = fixtureFrameID({ ...a, epoch: '0', flags: 1 });
+        assert(
+          frame >= phase.firstFrame && frame <= phase.lastFrame,
+          'Bitrate receipt escapes observed native phase',
+        );
+        profileChanges++;
+      }
       if (action.kind === 'trial') {
         assert.equal(action.validUntil, adviceEnd + 2);
         assert(lastEvaluatedAt >= cooldownUntil, 'Trial is inside rollback cooldown');
@@ -206,12 +258,17 @@ export function qualifyNativeQuality({
           !trial && recoveryStart !== undefined && lastEnd - recoveryStart >= 30,
           'Trial lacks30 seconds of strong source evidence',
         );
-        assert(
-          action.bitRate > current.bitRate &&
-            action.bitRate <= current.bitRate + Math.floor(current.bitRate / 10),
-        );
+        if (adaptiveProfiles) {
+          assert.equal(profile, '540p30');
+          assert.equal(action.profileID, '1080p30');
+        } else
+          assert(
+            action.bitRate > current.bitRate &&
+              action.bitRate <= current.bitRate + Math.floor(current.bitRate / 10),
+          );
         trial = {
           baseline: current.bitRate,
+          baselineProfile: profile,
           deadline: row.acknowledgedAt + 22.5,
           appliedAt: row.acknowledgedAt,
           scope: lastScope,
@@ -223,6 +280,13 @@ export function qualifyNativeQuality({
       } else if (action.kind === 'rollback') {
         assert(trial);
         assert.equal(action.bitRate, trial.baseline);
+        if (adaptiveProfiles) {
+          assert.equal(action.profileID, trial.baselineProfile);
+          assert(
+            trial.rollbackRequired || row.profileReceipt.acknowledgedAt >= trial.deadline,
+            'Rollback lacks pressure, invalid evidence or expiry',
+          );
+        }
         trial = undefined;
         cooldownUntil = row.acknowledgedAt + 60;
         rollbacks++;
@@ -234,10 +298,16 @@ export function qualifyNativeQuality({
         );
         assert.equal(action.validUntil, adviceEnd + 2);
         assert(row.receipt.acceptedAt >= lastEvaluatedAt);
-        assert.equal(action.bitRate, Math.max(1000000, Math.floor(current.bitRate * 0.8)));
+        if (adaptiveProfiles) {
+          assert.equal(profile, '1080p30');
+          assert.equal(action.profileID, '540p30');
+          assert.equal(action.bitRate, 1500000);
+          decreases++;
+        } else assert.equal(action.bitRate, Math.max(1000000, Math.floor(current.bitRate * 0.8)));
         assert(action.bitRate < current.bitRate);
       }
       current = row.receipt;
+      if (adaptiveProfiles) profile = row.profileID;
       revision++;
       ack = row.acknowledgedAt;
       recoveryStart = undefined;
@@ -258,6 +328,18 @@ export function qualifyNativeQuality({
   assert.deepEqual(stopped.receipt, current);
   assert(evaluated >= 6 && trials >= 1, 'Need matched policy evidence and an actual native trial');
   if (requireConfirmation) assert(confirmed >= 1, 'Need an actual confirmed native trial');
+  if (adaptiveProfiles) {
+    assert.equal(
+      profileChanges,
+      profileQualification.receipts.length,
+      'Unmatched native profile change',
+    );
+    assert(
+      decreases >= 1 && confirmed >= 1 && !trial,
+      'Need pressure reduction and completed recovery',
+    );
+    assert.equal(profile, '1080p30');
+  }
   return {
     evaluated,
     ...(localEvaluated > 0 ? { localEvaluated } : {}),
@@ -265,6 +347,7 @@ export function qualifyNativeQuality({
     rollbacks,
     confirmed,
     finalBitRate: current.bitRate,
+    ...(adaptiveProfiles ? { profileChanges, decreases, finalProfile: profile } : {}),
     scope:
       'Native control and verified receipts with saved source correspondence; not achieved payload rate or production capacity qualification.',
   };

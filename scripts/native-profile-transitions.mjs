@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 
+export function nativeAdaptiveProfiles({
+  environment,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds,
+}) {
+  const flag = environment.SCOREBUG_TEST_ADAPTIVE_PROFILES;
+  if (flag === undefined) return false;
+  assert.ok(
+    flag === '1' &&
+      streaming &&
+      requireProcessing &&
+      requirePublication &&
+      Number.isSafeInteger(holdSeconds) &&
+      holdSeconds >= 240 &&
+      holdSeconds <= 600 &&
+      environment.SCOREBUG_TEST_NATIVE_QUALITY === '1' &&
+      environment.SCOREBUG_TEST_NATIVE_CONFIRMATION === '1' &&
+      environment.SCOREBUG_TEST_UPLINK_PROFILE === 'rate4m' &&
+      environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
+      environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
+      environment.SCOREBUG_TEST_PROFILE_TRANSITIONS === undefined &&
+      environment.SCOREBUG_TEST_LIVE_PROFILE === undefined,
+    'Adaptive profiles require explicit isolated rate4m quality confirmation, full-pipeline structured motion and 240–600s hold',
+  );
+  return true;
+}
+
 export function nativeProfileTransitions({
   environment,
   streaming,
@@ -23,14 +52,20 @@ export function nativeProfileTransitions({
       environment.SCOREBUG_TEST_NATIVE_QUALITY === undefined &&
       environment.SCOREBUG_TEST_NATIVE_CONFIRMATION === undefined &&
       environment.SCOREBUG_TEST_LIVE_PROFILE === undefined &&
+      environment.SCOREBUG_TEST_ADAPTIVE_PROFILES === undefined &&
       environment.SCOREBUG_TEST_UPLINK_PROFILE === undefined,
     'Profile transitions require explicit standalone structured-motion qualification, processing/publication, direct recorder and 90–600s hold',
   );
   return true;
 }
 
-export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
-  assert.equal(format.formatVersion, 2);
+export function qualifyNativeProfileTransitions(
+  format,
+  snapshot,
+  liveIDs,
+  { adaptive = false } = {},
+) {
+  assert.equal(format.formatVersion, adaptive ? 3 : 2);
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);
   assert.equal(snapshot.isClosed, true);
@@ -42,9 +77,13 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
   );
   assert.match(format.publishingGeneration, /^[1-9]\d*$/);
   assert.ok(Number.isSafeInteger(format.frames) && format.frames > 0 && format.frames <= 25000);
-  assert.equal(format.phases.length, 3);
-  assert.equal(format.receipts.length, 2);
-  assert.equal(format.encoderSessions.length, 3);
+  if (adaptive)
+    assert.ok(
+      format.phases.length >= 3 && format.phases.length <= 17 && format.phases.length % 2 === 1,
+    );
+  else assert.equal(format.phases.length, 3);
+  assert.equal(format.receipts.length, format.phases.length - 1);
+  assert.equal(format.encoderSessions.length, format.phases.length);
   const clock = (value) =>
     assert.ok(
       Number.isFinite(value) &&
@@ -69,8 +108,8 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
     'Every encoded frame needs native format evidence',
   );
   const phases = format.phases.map((p, i) => {
-    assert.equal(p.width, i === 1 ? 960 : 1920);
-    assert.equal(p.height, i === 1 ? 540 : 1080);
+    assert.equal(p.width, i % 2 ? 960 : 1920);
+    assert.equal(p.height, i % 2 ? 540 : 1080);
     assert.ok(Number.isSafeInteger(p.frames) && p.frames > 0);
     const first = fixtureFrameID(p.firstSourcePTS),
       last = fixtureFrameID(p.lastSourcePTS);
@@ -98,7 +137,11 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
     ]) {
       assert.ok(Number.isFinite(gap) && gap >= 0 && gap <= 1e12);
     }
-    assert.ok(last - first >= 15 * 30, 'Each format needs at least 15s of source coverage');
+    const shortTrial = adaptive && i > 0 && i % 2 === 0 && i < format.phases.length - 1;
+    assert.ok(
+      last - first >= (shortTrial ? 1 : 15) * 30,
+      'Insufficient native phase source coverage',
+    );
     assert.ok(
       Number.isFinite(p.maximumSourceGapSeconds) &&
         p.maximumSourceGapSeconds > 0 &&
@@ -152,14 +195,17 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
     phases[0].firstFrame,
     Math.min(...rows.map((r) => fixtureFrameID(r.firstSourcePTS))),
   );
-  assert.equal(phases[2].lastFrame, Math.max(...rows.map((r) => fixtureFrameID(r.lastSourcePTS))));
-  assert.ok(liveIDs[0] >= phases[0].firstFrame && liveIDs.at(-1) <= phases[2].lastFrame);
+  assert.equal(
+    phases.at(-1).lastFrame,
+    Math.max(...rows.map((r) => fixtureFrameID(r.lastSourcePTS))),
+  );
+  assert.ok(liveIDs[0] >= phases[0].firstFrame && liveIDs.at(-1) <= phases.at(-1).lastFrame);
   const sessions = new Set();
   const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
   format.receipts.forEach((r, i) => {
     const before = phases[i],
       after = phases[i + 1];
-    assert.equal(r.profile, i === 0 ? '540p30' : '1080p30');
+    assert.equal(r.profile, i % 2 === 0 ? '540p30' : '1080p30');
     assert.equal(r.publishingGeneration, format.publishingGeneration);
     assert.equal(
       r.previousEncoderSessionID.toLowerCase(),
@@ -206,7 +252,7 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
     publishingGeneration: format.publishingGeneration,
     phases,
     receipts: format.receipts,
-    transitions: [0, 1].map((i) => {
+    transitions: format.receipts.map((_, i) => {
       const nativeCompletionGapSeconds =
         format.encoderSessions[i + 1].firstCompletedAt - format.encoderSessions[i].lastCompletedAt;
       const compressedOutputGapSeconds =
@@ -214,6 +260,8 @@ export function qualifyNativeProfileTransitions(format, snapshot, liveIDs) {
       assert.ok(nativeCompletionGapSeconds >= 0 && compressedOutputGapSeconds >= 0);
       return { nativeCompletionGapSeconds, compressedOutputGapSeconds };
     }),
-    note: 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
+    note: adaptive
+      ? 'Adaptive native formats and saved source correspondence; pressure decisions require separate policy replay, and receiver wall-clock continuity is not inferred.'
+      : 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
   };
 }

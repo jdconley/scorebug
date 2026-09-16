@@ -4,6 +4,53 @@ import XCTest
 
 final class QualityTrialTests: XCTestCase {
     private let attempt = UUID()
+    private func profileController(strategy: QualityController.RecoveryStrategy = .receiverValidatedProfileTrials) throws -> QualityController {
+        try .init(profiles: [
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000),
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
+        ], attemptID: attempt, applied: .init(profileID: "540p30", videoBitrate: 1_500_000), at: 0, recoveryStrategy: strategy)
+    }
+    func testProfileTrialRequiresExplicitStrategyAndThirtySecondsOfHealthyEvidence() throws {
+        var policy = try profileController(), unchanged = try profileController(strategy: .receiverValidatedTrials)
+        let trial = try ready(&policy)
+        XCTAssertEqual(trial.kind, .trial)
+        XCTAssertEqual(trial.settings, .init(profileID: "1080p30", videoBitrate: 6_000_000))
+        for start in stride(from: 0.0, to: 60, by: 5) {
+            XCTAssertNil(try unchanged.evaluate(window(start), at: start + 5).recommendation)
+        }
+        try policy.acknowledge(trial, applied: trial.settings, at: 30)
+        XCTAssertEqual(try policy.evaluate(window(30, revision: 1), at: 35).state, .probing)
+        XCTAssertTrue(try policy.evaluate(window(35, revision: 1), at: 40).reasons.contains(.trialConfirmed))
+        XCTAssertNil(try policy.checkTrialDeadline(at: 60))
+    }
+    func testProfileTrialRollsBackExactBaselineOnPressureUnknownOrTimeout() throws {
+        for mode in 0..<3 {
+            var policy = try profileController()
+            let trial = try ready(&policy)
+            try policy.acknowledge(trial, applied: trial.settings, at: 30)
+            let rollback: QualityController.Recommendation?
+            if mode == 2 { rollback = try policy.checkTrialDeadline(at: 53) }
+            else { rollback = try policy.evaluate(window(30, revision: 1,
+                transport: mode == 0 ? .elevated : .unknown), at: 35).recommendation }
+            let change = try XCTUnwrap(rollback)
+            XCTAssertEqual(change.kind, .rollback)
+            XCTAssertEqual(change.settings, .init(profileID: "540p30", videoBitrate: 1_500_000))
+            try policy.acknowledge(change, applied: change.settings, at: mode == 2 ? 53 : 35)
+        }
+    }
+    func testProfileTrialHonorsKnownCapacityAndUnknownTransportCannotQualify() throws {
+        for capacity in [7_499_999.0, 7_500_000.0] {
+            var policy = try profileController(), last: QualityController.Recommendation?
+            for start in stride(from: 0.0, to: 30, by: 5) {
+                last = try policy.evaluate(window(start, capacity: capacity), at: start + 5).recommendation
+            }
+            XCTAssertEqual(last != nil, capacity == 7_500_000)
+        }
+        var unknown = try profileController()
+        for start in stride(from: 0.0, to: 60, by: 5) {
+            XCTAssertNil(try unknown.evaluate(window(start, transport: .unknown), at: start + 5).recommendation)
+        }
+    }
     private func controller(rate: Int = 2_000_000) throws -> QualityController {
         try .init(profiles: [
             .init(id: "720", width: 1280, height: 720, minimumBitrate: 1_000_000, maximumBitrate: 3_000_000),

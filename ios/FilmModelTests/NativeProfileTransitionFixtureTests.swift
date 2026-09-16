@@ -4,6 +4,29 @@ import ScorebugMedia
 import XCTest
 
 final class NativeProfileTransitionFixtureTests: XCTestCase {
+    func testAdaptiveEvidenceRetainsSeventeenPhasesAndRejectsOverflow() throws {
+        let proof = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), adaptive: true)
+        for n in 0..<17 { record(proof, n, n.isMultiple(of: 2) ? .hd1080 : .sd540) }
+        XCTAssertEqual(try snapshot(proof)["formatVersion"] as? Int, 3)
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, false)
+        XCTAssertEqual((try snapshot(proof)["phases"] as? [Any])?.count, 17)
+        record(proof, 17, .sd540)
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+    }
+    func testAdaptiveFixtureFlagsRequireQualityUplinkAndExclusiveBoundedHold() throws {
+        let environment = ["SCOREBUG_TEST_ADAPTIVE_PROFILES": "1", "SCOREBUG_TEST_NATIVE_QUALITY": "1",
+            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "240", "SCOREBUG_TEST_UPLINK_PROXY_PORT": "50000"]
+        XCTAssertTrue(try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment))
+        XCTAssertFalse(try NativeProfileTransitionEvidence.adaptiveRequested(environment: [:]))
+        for (key, value) in [("SCOREBUG_TEST_ADAPTIVE_PROFILES", "true"), ("SCOREBUG_TEST_NATIVE_QUALITY", ""),
+            ("SCOREBUG_TEST_UPLINK_PROXY_PORT", "0"), ("SCOREBUG_TEST_STREAM_HOLD_SECONDS", "239"),
+            ("SCOREBUG_TEST_LIVE_PROFILE", "540p30"), ("SCOREBUG_TEST_PROFILE_TRANSITIONS", "1")] {
+            var bad = environment; bad[key] = value
+            XCTAssertThrowsError(try NativeProfileTransitionEvidence.adaptiveRequested(environment: bad))
+        }
+    }
     private func evidence() -> NativeProfileTransitionEvidence {
         .init(scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1))

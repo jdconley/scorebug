@@ -48,6 +48,13 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue(qualityFlag == "1" || liveProfile == "540p30"); XCTAssertEqual(motionFlag, "blocks16")
             app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = uplinkPort
         }
+        let adaptive = ProcessInfo.processInfo.environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] ?? ""
+        if !adaptive.isEmpty {
+            XCTAssertEqual(adaptive, "1"); XCTAssertEqual(qualityFlag, "1")
+            XCTAssertTrue(transitions.isEmpty && liveProfile.isEmpty && !uplinkPort.isEmpty)
+            XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 240)
+            app.launchEnvironment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] = adaptive
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])
