@@ -2,6 +2,15 @@ import XCTest
 @testable import ScorebugStreaming
 
 final class PublishingVideoProfileTests: XCTestCase {
+    func testLow360CandidateHasIndependentRealTimeSettings() throws {
+        let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "360p30"))
+        XCTAssertEqual(profile.width, 640); XCTAssertEqual(profile.height, 360)
+        XCTAssertEqual(profile.bitRate, 600_000)
+        XCTAssertEqual(profile.settings.videoSize.width, 640)
+        XCTAssertEqual(profile.settings.videoSize.height, 360)
+        XCTAssertEqual(profile.settings.expectedFrameRate, 30)
+    }
+
     func testProfilesPreserveRateAndSizeWhileSharingRealTimeDefaults() {
         let full = PublishingVideoProfile.hd1080.settings
         let reduced = PublishingVideoProfile.sd540.settings

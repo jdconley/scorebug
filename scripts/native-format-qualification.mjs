@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 /** Actual pre-mux sample format, independent of the worker's resize operation. */
 export function qualifyNativeFormat(format, snapshot, profile) {
-  assert.equal(profile, '540p30');
+  assert.ok(['540p30', '360p30'].includes(profile));
+  const geometry = nativeMediaGeometry(profile, true);
   assert.equal(format.formatVersion, 1);
   assert.equal(format.profile, profile);
   assert.equal(format.isClosed, true);
@@ -13,8 +15,8 @@ export function qualifyNativeFormat(format, snapshot, profile) {
     format.publishingGeneration,
     snapshot.publishingClockObservation.publishingGeneration,
   );
-  assert.equal(format.width, 960);
-  assert.equal(format.height, 540);
+  assert.equal(format.width, geometry.width);
+  assert.equal(format.height, geometry.height);
   assert.ok(Number.isSafeInteger(format.frames) && format.frames > 0 && format.frames <= 25000);
   assert.equal(snapshot.omittedCompletedWindowCount, '0');
   const rows = [...snapshot.completed, snapshot.current]

@@ -53,6 +53,20 @@ final class NativePublishingFormatFixtureTests: XCTestCase {
         XCTAssertEqual(result["invalid"] as? Bool, true)
         XCTAssertLessThan(try proof.data().count, 2048)
     }
+    func testLow360FixtureUsesExplicitGateAndLeavesArchiveUnchanged() throws {
+        let environment = ["SCOREBUG_TEST_LIVE_PROFILE":"360p30", "SCOREBUG_TEST_VIDEO_OBSERVATIONS":"1",
+            "SCOREBUG_TEST_MOTION_FIXTURE":"blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS":"180",
+            "SCOREBUG_TEST_UPLINK_PROXY_PORT":"55555"]
+        let profile = try VideoObservationFixture.liveProfile(environment: environment)
+        XCTAssertEqual(profile.rawValue, "360p30")
+        XCTAssertEqual(profile.width, 640); XCTAssertEqual(profile.height, 360)
+        XCTAssertEqual(ArchiveProfile().width, 1920); XCTAssertEqual(ArchiveProfile().height, 1080)
+        XCTAssertEqual(try VideoObservationFixture.publishingURL(URL(string: "srt://127.0.0.1:8890?streamid=publish%3Afixture")!, environment: environment).port, 55555)
+        for key in ["SCOREBUG_TEST_VIDEO_OBSERVATIONS", "SCOREBUG_TEST_MOTION_FIXTURE", "SCOREBUG_TEST_STREAM_HOLD_SECONDS"] {
+            var invalid = environment; invalid.removeValue(forKey: key)
+            XCTAssertThrowsError(try VideoObservationFixture.liveProfile(environment: invalid))
+        }
+    }
     func testReducedFixtureRequiresExplicitModeAndIndependentRecordingHold() throws {
         let environment = ["SCOREBUG_TEST_LIVE_PROFILE":"540p30", "SCOREBUG_TEST_VIDEO_OBSERVATIONS":"1",
             "SCOREBUG_TEST_MOTION_FIXTURE":"blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS":"90"]

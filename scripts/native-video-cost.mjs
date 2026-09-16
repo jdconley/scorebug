@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 const finite = (n) => Number.isFinite(n) && n >= 0 && n <= 1e12;
 const uuid = (s) =>
@@ -17,7 +18,10 @@ export function qualifyNativeVideoCost(proof, format) {
   assert.equal(proof.formatVersion, 1);
   assert.equal(proof.isClosed, true);
   assert.equal(proof.invalidReason, null);
-  assert.equal(proof.profile, '540p30');
+  assert.ok(['540p30', '360p30'].includes(proof.profile));
+  const geometry = nativeMediaGeometry(proof.profile, true);
+  assert.equal(format.width, geometry.width);
+  assert.equal(format.height, geometry.height);
   assert.deepEqual(proof.scope, format.scope);
   for (const rows of [proof.compressed, proof.encoded])
     assert.ok(Array.isArray(rows) && rows.length > 0 && rows.length <= 1024);

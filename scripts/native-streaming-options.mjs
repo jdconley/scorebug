@@ -92,7 +92,7 @@ export function nativeUplinkOptions({
   holdSeconds,
   liveProfile = '1080p30',
 }) {
-  assert.ok(['1080p30', '540p30'].includes(liveProfile));
+  assert.ok(['1080p30', '540p30', '360p30'].includes(liveProfile));
   assert.equal(
     environment.SCOREBUG_TEST_UPLINK_PROXY_PORT,
     undefined,
@@ -109,10 +109,10 @@ export function nativeUplinkOptions({
   assert.ok(
     streaming &&
       ((requireQuality && requireConfirmation) ||
-        (liveProfile === '540p30' &&
+        (['540p30', '360p30'].includes(liveProfile) &&
           !requireQuality &&
           !requireConfirmation &&
-          environment.SCOREBUG_TEST_LIVE_PROFILE === '540p30' &&
+          environment.SCOREBUG_TEST_LIVE_PROFILE === liveProfile &&
           holdSeconds >= 90)) &&
       requireProcessing &&
       requirePublication &&

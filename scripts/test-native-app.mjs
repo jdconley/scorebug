@@ -509,7 +509,7 @@ try {
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
       `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
-      `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
+      `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30'].includes(liveProfile) ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
     'workflow',
@@ -609,7 +609,7 @@ try {
     bandwidthProbeQualification,
     receiverProbeQualification,
     nativeReceiverIntervalQualification;
-  if (liveProfile === '540p30') {
+  if (['540p30', '360p30'].includes(liveProfile)) {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/native-publishing-format.json'),
@@ -866,7 +866,7 @@ try {
     ),
   );
   console.log(
-    `${uplinkProfile === 'rate4m' || liveProfile === '540p30' || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${uplinkProfile === 'rate4m' || ['540p30', '360p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

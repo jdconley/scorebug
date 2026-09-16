@@ -5,9 +5,16 @@ import Foundation
 public enum PublishingVideoProfile: String, Sendable, CaseIterable {
     case hd1080 = "1080p30"
     case sd540 = "540p30"
-    public var width: Int { self == .hd1080 ? 1920 : 960 }
-    public var height: Int { self == .hd1080 ? 1080 : 540 }
-    public var bitRate: Int { self == .hd1080 ? 6_000_000 : 1_500_000 }
+    case low360 = "360p30"
+    public var width: Int {
+        switch self { case .hd1080: 1920; case .sd540: 960; case .low360: 640 }
+    }
+    public var height: Int {
+        switch self { case .hd1080: 1080; case .sd540: 540; case .low360: 360 }
+    }
+    public var bitRate: Int {
+        switch self { case .hd1080: 6_000_000; case .sd540: 1_500_000; case .low360: 600_000 }
+    }
 }
 
 /// Historical pre-mux format evidence, not achieved bitrate or receiver delivery.

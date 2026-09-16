@@ -132,7 +132,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              }
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
-             let proof = profile == .sd540 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
+             let proof = profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
              let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
              let didStop: (@Sendable () -> Void)?
              if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }

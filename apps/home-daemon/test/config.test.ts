@@ -69,3 +69,9 @@ it('requires an explicit supported input decoder threading mode', () => {
   for (const mode of ['', '1', 'frame', 'Slice'])
     expect(() => loadConfig({ ...base, DECODER_THREADING: mode })).toThrow();
 });
+
+it('supports the measured360 publishing candidate without changing the default', () => {
+  expect(loadConfig({ ...base, VIDEO_PROFILE: '360p30' }).VIDEO_PROFILE).toBe('360p30');
+  expect(videoProfiles['360p30']).toEqual({ width: 640, height: 360, fps: 30, bitrateKbps: 600 });
+  expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
+});

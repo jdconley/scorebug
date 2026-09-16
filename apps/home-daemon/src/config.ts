@@ -13,7 +13,7 @@ const schema = z.object({
   DECODER_THREADING: z.enum(['automatic', 'slice']).default('automatic'),
   WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(1000),
   WORKER_PROCESSING: z.enum(['auto', 'off']).default('auto'),
-  VIDEO_PROFILE: z.enum(['540p30', '720p30', '1080p30', '2160p30']).default('1080p30'),
+  VIDEO_PROFILE: z.enum(['360p30', '540p30', '720p30', '1080p30', '2160p30']).default('1080p30'),
   FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
   FFPROBE_PATH: z.string().min(1).default('ffprobe'),
   FONT_PATH: z.string().min(1).default('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
@@ -31,6 +31,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 export const videoProfiles = {
+  '360p30': { width: 640, height: 360, fps: 30, bitrateKbps: 600 },
   '540p30': { width: 960, height: 540, fps: 30, bitrateKbps: 1500 },
   '720p30': { width: 1280, height: 720, fps: 30, bitrateKbps: 3000 },
   '1080p30': { width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },

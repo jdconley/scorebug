@@ -49,3 +49,10 @@ test('requires every actual pre-mux frame and its scope, not worker-scaled dimen
     qualifyNativeFormat(format, { ...snapshot, omittedCompletedWindowCount: '1' }, '540p30'),
   );
 });
+
+test('fixed360 requires actual native360 dimensions and exact profile identity', () => {
+  const low = { ...format, profile: '360p30', width: 640, height: 360 };
+  assert.equal(qualifyNativeFormat(low, snapshot, '360p30').width, 640);
+  assert.throws(() => qualifyNativeFormat({ ...low, width: 960, height: 540 }, snapshot, '360p30'));
+  assert.throws(() => qualifyNativeFormat(low, snapshot, '540p30'));
+});

@@ -1358,3 +1358,21 @@ and distinguish transport packet loss from actual missing/late video frames.
 Automatic upgrades remain disabled until candidate cost, repeated/staged ownership,
 and real transition media continuity are qualified. Physical-device/Watch networking,
 remote hosts and long soaks remain open.
+
+
+[Fixed360 native qualification](2026-09-16-low-profile-qualification.md) adds a
+640×360/30 fps candidate with a requested 600 kbps rate to the explicit simulator
+fixture and portable worker. The independent archive remains 1080p. 79 streaming,
+254 media, 230 model, 344 worker and 1,192 tooling tests, worker typechecking and both
+Apple builds pass. Actual run `native-app-3Zrmzl` preserves 6,354 archive frames and
+5,961 consecutive retained live frames with all expected audio markers, clean full
+decodes, 29.8 fps minimum reported receiver cadence and no proxy drops. Independent
+verification and 11 damaged-evidence rejections pass; every owner joins. The initial
+540-only UI launcher restriction was reproduced and corrected before the passing run.
+
+Measured video payload still reaches 3.546 Mbps, close to the preceding 540p run's
+3.527 Mbps. The nominal 600 kbps setting is not achieved. This qualifies the finite
+360p media scenario, not a lower-bandwidth recovery tier. Effective encoder-rate
+control/cheaper candidate qualification remains a prerequisite for low startup and
+reset-to-minimum. Automatic adaptation and production defaults remain unchanged.
+Evidence is frozen in `artifacts/qa/low360-final-verification.json`.
