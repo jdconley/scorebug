@@ -46,6 +46,8 @@ public struct PublishingSessionSnapshot: Sendable {
     /// A contradictory mapping makes this unknown for the rest of this session.
     public let transportClock: PublishingTransportClock?
     public let transportStatistics: PublishingTransportStatisticsSnapshot
+    /// Sampled OS thermal history owned by this attempt; closed history is not fresh.
+    public let thermalObservation: PublishingThermalSnapshot
     public let ingressObservation: LiveIngressObservationSnapshot?
     /// Last accepted receipt, retained as historical evidence after terminal stop.
     public let lastBitRateChange: PublishingBitRateChange?
@@ -74,6 +76,13 @@ public final class PublishingSession: Sendable {
     init(publisher: any MediaPublisher, bitRateClock: @escaping @Sendable () -> Double) throws {
         core = try PublishingCore(publisher: publisher, maxItems: 8, maxBytes: 12 * 1024 * 1024,
             healthCheckInterval: .milliseconds(250), ingressObservation: nil, bitRateClock: bitRateClock)
+    }
+    // Internal synchronous sampler seam; production reads only Foundation scalars.
+    init(publisher: any MediaPublisher, healthCheckInterval: Duration,
+         thermalSampler: @escaping @Sendable () -> PublishingThermalSample) throws {
+        guard healthCheckInterval > .zero else { throw PublishingSessionError.invalidHealthCheckInterval }
+        core = try PublishingCore(publisher: publisher, maxItems: 8, maxBytes: 12 * 1024 * 1024,
+            healthCheckInterval: healthCheckInterval, ingressObservation: nil, thermalSampler: thermalSampler)
     }
     deinit { core.cancel() }
     public var snapshot: PublishingSessionSnapshot { core.snapshot }
@@ -104,6 +113,8 @@ private final class PublishingCore: @unchecked Sendable {
     private var transportClock: PublishingTransportClock?
     private var transportClockQuarantined = false
     private var transportStatistics = PublishingTransportStatisticsTracker()
+    private var thermalObservation = PublishingThermalTracker()
+    private let thermalSampler: @Sendable () -> PublishingThermalSample
     private var startup: Task<Void, Error>?
     private var consumer: Task<Void, Never>?
     private var monitor: Task<Void, Never>?
@@ -111,9 +122,13 @@ private final class PublishingCore: @unchecked Sendable {
 
     init(publisher: any MediaPublisher, maxItems: Int, maxBytes: Int, healthCheckInterval: Duration,
          ingressObservation: LiveIngressObservationConfiguration?,
-         bitRateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }) throws {
+         bitRateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
+         thermalSampler: @escaping @Sendable () -> PublishingThermalSample = {
+             let state = PublishingThermalState(ProcessInfo.processInfo.thermalState)
+             return .init(state: state, sampledAt: ProcessInfo.processInfo.systemUptime)
+         }) throws {
         self.publisher = publisher; self.healthCheckInterval = healthCheckInterval
-        self.bitRateClock = bitRateClock
+        self.bitRateClock = bitRateClock; self.thermalSampler = thermalSampler
         // Readiness belongs to this session, regardless of the generic mailbox's
         // default admission phase. Configuration is immutable and diagnostic only.
         let configuration = ingressObservation.map {
@@ -127,7 +142,7 @@ private final class PublishingCore: @unchecked Sendable {
         lock.withLock {
             let measured = mailbox.snapshot
             return PublishingSessionSnapshot(state: state, failure: failure, sentSamples: sentSamples,
-                queue: measured.statistics, transportClock: transportClock, transportStatistics: transportStatistics.snapshot, ingressObservation: measured.ingressObservation, lastBitRateChange: lastBitRateChange)
+                queue: measured.statistics, transportClock: transportClock, transportStatistics: transportStatistics.snapshot, thermalObservation: thermalObservation.snapshot, ingressObservation: measured.ingressObservation, lastBitRateChange: lastBitRateChange)
         }
     }
     func start() async throws {
@@ -149,8 +164,12 @@ private final class PublishingCore: @unchecked Sendable {
             try Task.checkCancellation()
             try await publisher.start()
             guard await publisher.isPublishing else { throw PublishingSessionError.publisherUnhealthy }
+            try Task.checkCancellation()
+            guard lock.withLock({ state == .starting }) else { throw PublishingSessionError.cancelled }
+            let thermal = thermalSampler()
             try lock.withLock {
                 guard state == .starting else { throw failure ?? PublishingSessionError.cancelled }
+                thermalObservation.observe(thermal)
                 mailbox.beginObservedAdmission()
                 state = .publishing
                 consumer = Task.detached { await self.consume() }
@@ -194,6 +213,14 @@ private final class PublishingCore: @unchecked Sendable {
             while true {
                 try await Task.sleep(for: healthCheckInterval)
                 try Task.checkCancellation()
+                // Read outside the lock and before awaited transport diagnostics.
+                // Missing/stalled polls cannot extend the sampled history.
+                let thermal = thermalSampler()
+                guard lock.withLock({ () -> Bool in
+                    guard state == .publishing else { return false }
+                    thermalObservation.observe(thermal)
+                    return true
+                }) else { return }
                 let healthy = await publisher.isPublishing
                 try Task.checkCancellation()
                 guard lock.withLock({ state == .publishing }) else { return }
@@ -229,6 +256,7 @@ private final class PublishingCore: @unchecked Sendable {
         if let error { failure = error; state = .failed }
         else { state = .stopping }
         transportStatistics.close()
+        thermalObservation.close()
         mailbox.cancel()
         let startup = self.startup, consumer = self.consumer, monitor = self.monitor
         let mutation = rateMutation, timer = rateTimer

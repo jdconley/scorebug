@@ -40,19 +40,19 @@ production reads only Foundation's scalar state and uptime outside the session l
 
 ## Tasks
 
-- [ ] Add `PublishingThermalObservation.swift` and tests in ScorebugMedia. Begin with
+- [x] Add `PublishingThermalObservation.swift` and tests in ScorebugMedia. Begin with
   API stubs returning unknown/no coverage, then run behavioral tests red. Implement
   bounded history, gap/duplicate/quarantine handling, immutable closure and bracketed
   queries. Test nonuniform fractional boundaries, exact boundary maximum, unknown,
   missing brackets, gap, eviction after >64 samples, closed/fresh, invalid clocks,
   duplicate conflicts and Foundation state mapping.
-- [ ] Integrate a `thermalObservation` field into PublishingSessionSnapshot and the
+- [x] Integrate a `thermalObservation` field into PublishingSessionSnapshot and the
   existing monitor, with an internal deterministic sampler seam. Tests must prove
   readiness-only sampling, real monitor collection, history frozen at stop, no late
   mutation from suspended health, and failure/stop while startup is suspended.
   Add a production-default sampler test that collects actual ProcessInfo readings
   through a running PublishingSession and verifies fresh/closed accessors.
-- [ ] Run full Media, Streaming and Film tests sequentially, then combined unsigned
+- [x] Run full Media, Streaming and Film tests sequentially, then combined unsigned
   iPhone/Watch Release. Obtain bounded independent review, address findings with
   regressions, record evidence and hashes, update telemetry/parent docs and commit.
 
@@ -69,3 +69,29 @@ qualification. Worker pressure, policy mapping/freshness and actual adaptive tri
 remain the next integration requirements.
 
 Reference: [Apple thermal states](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.enum).
+
+## Verified checkpoint
+
+Media passes 243 tests (177 XCTest + 66 Swift Testing), including eight new history
+cases and six session cases. Streaming passes 54 and Film model tests pass 138.
+Combined unsigned iPhone/Watch Release succeeds. Independent source review found no
+blocker and its suggested invalid-thermal-clock isolation regression passes. Actual
+Mac ProcessInfo readings were collected through the production sampler during tests.
+Initial red logs (including a subsequently replaced test force-unwrap) are retained.
+The dependent Streaming package was cleaned after its cached source list omitted the
+new Media file; no global caches were cleared.
+
+Native iPhone 14 / iOS 17.5 run `native-app-iDWYp8` also passes with a 30-second
+simultaneous hold, authenticated publication mapping and the direct local RTMP
+recorder. Native scoring, export, A/V, full decode, archive diagnostics and source
+interval checks pass. The clean archive retains 1840 frames and live retains all
+1429 worker frames through the final encoded frame (source 226...1654), at 30 fps.
+Seven correlated steady windows each contain 150 capture/encoder/decoder frames.
+The 60-frame acquisition interval stays explicit; no encoded terminal tail is missing.
+This verifies existing media behavior with the production monitor active. The native
+fixture does not export thermal samples or qualify physical thermal response.
+
+Evidence: local `artifacts/qa/thermal-*`, the native run directory and a final hash
+manifest. Remaining work: worker pressure, session/configuration/revision mapping,
+transport/thermal policy classification, automatic media trial/rollback and physical
+phone/Watch qualification. No quality settings change automatically in this slice.

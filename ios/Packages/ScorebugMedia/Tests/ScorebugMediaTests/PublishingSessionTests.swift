@@ -310,6 +310,107 @@ import XCTest
             monotonicAnchor: ProcessInfo.processInfo.systemUptime)
     }
 
+    func testThermalSamplingStartsAfterReadinessAndUsesExistingMonitor() async throws {
+        let gate = PublishingGate(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(startGate: gate),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        XCTAssertTrue(session.snapshot.thermalObservation.samples.isEmpty)
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        XCTAssertEqual(sampler.count, 0)
+        gate.release(); try await start.value
+        await eventually { session.snapshot.thermalObservation.samples.count >= 3 }
+        let live = session.snapshot.thermalObservation
+        XCTAssertEqual(live.samples.first?.sampledAt, 100)
+        XCTAssertEqual(live.interval(from: 100, to: 100.5)?.enclosingMaximumState, .serious)
+        await session.stop()
+        let closed = session.snapshot.thermalObservation
+        XCTAssertTrue(closed.isClosed)
+        XCTAssertNil(closed.freshSample(at: try XCTUnwrap(closed.samples.last).sampledAt))
+        XCTAssertNotNil(closed.interval(from: 100, to: 100.5))
+        let count = sampler.count
+        await session.stop()
+        XCTAssertEqual(sampler.count, count)
+        XCTAssertEqual(session.snapshot.thermalObservation, closed)
+        XCTAssertFalse(live.isClosed, "Earlier value snapshots stay immutable")
+    }
+
+    func testThermalStopFreezesHistoryBeforeSuspendedHealthReturns() async throws {
+        let publisher = SuspendedHealthPublisher(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2),
+            thermalSampler: { sampler.sample() })
+        try await session.start()
+        await eventually { publisher.healthGate.hasEntered }
+        XCTAssertEqual(sampler.count, 2, "Readiness plus the monitor read before awaiting health")
+        let stop = Task { await session.stop() }
+        await eventually { publisher.healthCompletionGate.hasEntered }
+        let closed = session.snapshot.thermalObservation
+        XCTAssertTrue(closed.isClosed)
+        XCTAssertEqual(closed.samples.count, 2)
+        publisher.healthCompletionGate.release()
+        await stop.value
+        XCTAssertEqual(session.snapshot.thermalObservation, closed)
+        XCTAssertEqual(sampler.count, 2)
+    }
+
+    func testThermalCancelledStartupNeverSamplesAndClosesHistory() async throws {
+        let gate = PublishingGate(), sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(startGate: gate),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        let start = Task { try await session.start() }
+        await gate.waitUntilEntered()
+        await session.stop()
+        do { try await start.value; XCTFail("Stopped startup cannot succeed") } catch {}
+        XCTAssertEqual(sampler.count, 0)
+        XCTAssertTrue(session.snapshot.thermalObservation.samples.isEmpty)
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+    }
+
+    func testThermalInvalidReadingQuarantinesOnlyDiagnosticsWhilePublicationContinues() async throws {
+        let publisher = PublisherFixture()
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2),
+            thermalSampler: { .init(state: .nominal, sampledAt: .nan) })
+        try await session.start()
+        XCTAssertTrue(session.snapshot.thermalObservation.isQuarantined)
+        XCTAssertNil(session.snapshot.thermalObservation.freshSample(at: 1))
+        XCTAssertEqual(session.snapshot.state, .publishing)
+        XCTAssertNil(session.snapshot.failure)
+        XCTAssertTrue(session.offer(try publishingAudio(1)))
+        await eventually { session.snapshot.sentSamples == 1 }
+        XCTAssertEqual(publisher.seconds, [1])
+        XCTAssertEqual(publisher.stops, 0)
+        await session.stop()
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+        XCTAssertTrue(session.snapshot.thermalObservation.isQuarantined)
+    }
+
+    func testThermalFailedReadinessNeverSamples() async throws {
+        let sampler = ThermalSamplerFixture()
+        let session = try PublishingSession(publisher: PublisherFixture(unhealthyAtStart: true),
+            healthCheckInterval: .milliseconds(2), thermalSampler: { sampler.sample() })
+        do { try await session.start(); XCTFail("Unhealthy startup cannot succeed") } catch {}
+        XCTAssertEqual(sampler.count, 0)
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+    }
+
+    func testThermalProductionSamplerCollectsRealSystemReadingsAndCloses() async throws {
+        let start = ProcessInfo.processInfo.systemUptime
+        let session = try PublishingSession(publisher: PublisherFixture(), healthCheckInterval: .milliseconds(20))
+        try await session.start()
+        await eventually { session.snapshot.thermalObservation.samples.count >= 2 }
+        let live = session.snapshot.thermalObservation
+        let now = ProcessInfo.processInfo.systemUptime
+        let first = try XCTUnwrap(live.samples.first), last = try XCTUnwrap(live.freshSample(at: now))
+        XCTAssertGreaterThanOrEqual(first.sampledAt, start)
+        XCTAssertLessThanOrEqual(last.sampledAt, now)
+        XCTAssertGreaterThan(last.sampledAt, first.sampledAt)
+        XCTAssertNotNil(live.interval(from: first.sampledAt, to: last.sampledAt))
+        print("actual-system-thermal-readings: \(live.samples.map { "\($0.sampledAt):\($0.state)" })")
+        await session.stop()
+        XCTAssertTrue(session.snapshot.thermalObservation.isClosed)
+        XCTAssertNil(session.snapshot.thermalObservation.freshSample(at: ProcessInfo.processInfo.systemUptime))
+    }
+
     private func eventually(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         let deadline = ContinuousClock.now + .seconds(2)
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }
@@ -435,4 +536,16 @@ private func publishingAudio(_ second: Int64, bytes: Int = 2) throws -> Captured
         sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
         sampleBufferOut: &sample), noErr)
     return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .audio)
+}
+
+private final class ThermalSamplerFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    var count: Int { lock.withLock { reads } }
+    func sample() -> PublishingThermalSample {
+        lock.withLock {
+            defer { reads += 1 }
+            return .init(state: reads == 1 ? .serious : .nominal, sampledAt: 100 + Double(reads) / 4)
+        }
+    }
 }

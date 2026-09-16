@@ -364,6 +364,13 @@ support exact-boundary sampled gauge queries with explicitly enclosing counters.
 Thermal/worker pressure, receiver freshness and revision mapping still need runtime
 integration before actual automatic trial/rollback qualification.
 
+The [thermal history slice](2026-09-15-publishing-thermal-history.md) now collects
+bounded OS thermal readings in the existing publication monitor. Historical queries
+require retained brackets; missing, gapped and unknown readings cannot establish
+nominal pressure. Shutdown freezes history and invalid diagnostics do not stop healthy
+publication. Worker pressure, policy mapping/classification and actual automatic
+trial/rollback qualification remain open.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

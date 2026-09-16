@@ -468,3 +468,29 @@ per-source-probe intervals. Independent reconstruction first qualifies original
 native collections and source/capture correspondence, then checks retention,
 bracketing, normalized gauge integration and exact enclosing counters. Source probes
 remain declared finite-fixture endpoints, not production worker reports.
+
+
+## Session-owned thermal samples
+
+`PublishingSessionSnapshot.thermalObservation` now retains at most 64 timestamped
+raw `ProcessInfo.thermalState` readings, collected at readiness and by the existing
+health monitor (default 250 ms). The read occurs outside the session lock and away
+from capture callbacks. A suspended publisher read delays future collections rather
+than extending nominal coverage. Invalid clocks quarantine only these diagnostics;
+healthy publication can continue. Stop closes history before joining workers, and
+late monitor completion cannot mutate it.
+
+The history exposes actual nominal/fair/serious/critical/unknown readings. Its
+historical interval query requires retained samples at/before and at/after requested
+capture boundaries, with no gaps larger than two seconds. It returns explicitly
+enclosing bounds and the maximum reported state; any unknown enclosed reading makes
+that aggregate unknown. Raw readings remain available, including any known elevated
+readings in such a mixed interval. Duplicate samples do not extend coverage, and
+conflicting/reversed timestamps quarantine history. Closed snapshots can answer
+historical queries but never claim a fresh current reading.
+
+This is sampled OS state, not continuous thermal coverage, temperature, or physical
+phone qualification. Future policy wiring must bind the owning session and apply
+explicit thresholds without turning missing or unknown evidence into nominal. See
+[Apple's state definitions](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.enum)
+and the [thermal history plan](superpowers/plans/2026-09-15-publishing-thermal-history.md).
