@@ -12,6 +12,8 @@ final class VideoCodec {
     private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
     private var recordedBitRateChange: VideoBitRateChange?
     private var lastSubmittedSourcePTS: CMTime?
+    private var replacement: VideoEncoderReplacement?
+    private var terminalCompletionCaptured = false
 
     private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
     init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
@@ -23,19 +25,51 @@ final class VideoCodec {
     }
 
     var lastBitRateChange: VideoBitRateChange? {
-        guard isRunning, failure.error == nil, let recordedBitRateChange,
+        guard isRunning, replacement == nil, failure.error == nil, let recordedBitRateChange,
               invalidation.isCurrent(recordedBitRateChange.configuration.encoderSessionID) else { return nil }
         return recordedBitRateChange
     }
 
     func requestSessionInvalidation() { invalidation.invalidate() }
 
+    func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
+        guard replacement == nil else { throw VideoEncoderReplacementError.busy }
+        guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
+            throw VideoEncoderReplacementError.notEncoding
+        }
+        let observed = invalidation.snapshot
+        guard !observed.pending else { throw VideoEncoderReplacementError.obsolete }
+        let operation = VideoEncoderReplacement(settings: settings, revision: observed.revision,
+            session: session, failure: failure)
+        replacement = operation
+        return operation
+    }
+
+    /// Stages creation on the next raw input, not a receipt for the new encoder.
+    /// The old output queue stays open and source timestamp ordering is retained.
+    func commitReplacement(_ operation: VideoEncoderReplacement) throws {
+        guard replacement === operation, operation.failure === failure,
+              invalidation.isCurrent(operation.revision) else { throw VideoEncoderReplacementError.obsolete }
+        guard isRunning, failure.error == nil else { throw VideoEncoderReplacementError.notEncoding }
+        guard let status = operation.drainResult else { throw VideoEncoderReplacementError.notDrained }
+        guard status == noErr else {
+            failure.fail(.codecFailed(status: status))
+            throw VideoEncoderReplacementError.drainFailed(status: status)
+        }
+        session = nil; sessionMode = nil
+        storedSettings = operation.settings
+        recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
+        requestSessionInvalidation()
+        replacement = nil
+    }
+
+
     func setVerifiedBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
         guard isRunning, failure.error == nil, sessionMode == .compression, let session else {
             throw VideoBitRateUpdateError.notEncoding
         }
         let observed = invalidation.snapshot
-        guard !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
+        guard replacement == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
         let updated: VideoCodecSettings
         do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
         catch let error as VideoBitRateUpdateError {
@@ -68,6 +102,9 @@ final class VideoCodec {
     var settings: VideoCodecSettings {
         get { storedSettings }
         set {
+            guard replacement == nil else {
+                failure.fail(.outputTerminated(boundary: "video replacement settings")); return
+            }
             let previous = storedSettings
             recordedBitRateChange = nil
             storedSettings = newValue
@@ -110,6 +147,9 @@ final class VideoCodec {
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning, failure.error == nil else {
             return
+        }
+        guard replacement == nil else {
+            failure.fail(.outputTerminated(boundary: "video replacement input")); return
         }
         do {
             inputFormat = sampleBuffer.formatDescription
@@ -159,7 +199,10 @@ final class VideoCodec {
     /// so callbacks can be consumed concurrently within the existing queue bound.
     /// Only terminal invalidation may overlap the captured native session.
     func makeCompletion() -> @Sendable () -> Void {
-        let completion = VideoCompletion(session: session, output: continuation, failure: failure)
+        terminalCompletionCaptured = true
+        if replacement != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
+        let completion = VideoCompletion(session: replacement == nil ? session : nil,
+            output: continuation, failure: failure)
         return { completion.run() }
     }
 
@@ -243,6 +286,7 @@ extension VideoCodec: Runner {
         )
         #endif
         startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
+        terminalCompletionCaptured = false
         isRunning = true
     }
 
@@ -251,6 +295,7 @@ extension VideoCodec: Runner {
             return
         }
         isRunning = false
+        replacement = nil
         session = nil
         sessionMode = nil
         recordedBitRateChange = nil; lastSubmittedSourcePTS = nil

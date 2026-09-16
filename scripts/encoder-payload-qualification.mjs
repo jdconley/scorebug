@@ -12,7 +12,8 @@ const percentile = (rows, fraction) =>
 /** Actual compressed sample payload, excluding muxer/transport/retransmission.
  * Evidence validity does not presuppose a requested bitrate is achievable. */
 export function qualifyEncoderPayload(report) {
-  if (report.formatVersion === 7) return qualifyEncoderResolutionTransition(report);
+  if (report.formatVersion === 7 || report.formatVersion === 8)
+    return qualifyEncoderResolutionTransition(report);
   assert.ok([1, 2, 3, 4, 5, 6].includes(report.formatVersion));
   const preparation = report.formatVersion === 3;
   const halfResolution = report.formatVersion === 6;

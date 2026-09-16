@@ -10,7 +10,12 @@ import tempfile
 root = Path(__file__).resolve().parent
 manifest = json.loads((root / "upstream-files.json").read_text())["files"]
 patch = (root / "scorebug.patch").read_bytes()
-added = ['HaishinKit/Sources/Util/PublishingQueue.swift', 'HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift', 'HaishinKit/Sources/Codec/VideoCodecInvalidation.swift', 'SRTHaishinKit/Sources/TS/TransportClock.swift', 'HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift']
+added = ['HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift', 'HaishinKit/Sources/Codec/VideoCodecInvalidation.swift', 'HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift', 'HaishinKit/Sources/Codec/VideoEncoderReplacement.swift', 'HaishinKit/Sources/Util/PublishingQueue.swift', 'SRTHaishinKit/Sources/SRT/CompressedVideoFrame.swift', 'SRTHaishinKit/Sources/TS/TransportClock.swift']
+actual_sources = {str(p.relative_to(root)) for name in ["HaishinKit/Sources", "SRTHaishinKit/Sources"]
+                  for p in (root / name).rglob("*") if p.is_file()}
+unlisted = actual_sources - set(manifest) - set(added)
+if unlisted:
+    raise SystemExit(f"Source files missing from provenance inventory: {sorted(unlisted)}")
 paths = list(manifest) + added
 
 with tempfile.TemporaryDirectory(prefix="scorebug-sdk-provenance-") as directory:

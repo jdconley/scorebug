@@ -125,3 +125,49 @@ test('rejects missing frames, mixed sessions, stale formats, undecodable phase s
     assert.throws(() => qualifyEncoderPayload(report));
   }
 });
+
+function drainedFixture() {
+  const report = fixture();
+  report.formatVersion = 8;
+  report.experiment = 'drained-resolution-transitions';
+  for (const [i, phase] of report.phases.entries()) {
+    phase.replacementDrainStartedAt = i ? phase.requestedAt : null;
+    phase.replacementDrainEndedAt = i ? phase.requestedAt + 0.0005 : null;
+    phase.replacementDrainStatus = i ? 0 : null;
+  }
+  return report;
+}
+test('qualifies explicit native drain boundaries separately from new-session startup', () => {
+  const result = qualifyEncoderPayload(drainedFixture());
+  assert.equal(result.frames, 1800);
+  assert.equal(result.phases[0].replacementDrainSeconds, null);
+  assert.ok(Math.abs(result.phases[1].replacementDrainSeconds - 0.0005) < 1e-10);
+});
+test('rejects missing, failed or mistimed native replacement drains', () => {
+  for (const mutate of [
+    (r) => (r.experiment = 'live-resolution-transitions'),
+    (r) => (r.phases[0].replacementDrainStatus = 0),
+    (r) => delete r.phases[1].replacementDrainStartedAt,
+    (r) => (r.phases[1].replacementDrainStatus = -77),
+    (r) => (r.phases[1].replacementDrainStartedAt = r.phases[1].requestedAt - 0.1),
+    (r) => (r.phases[1].replacementDrainEndedAt = r.phases[1].appendBeganAt + 0.1),
+    (r) => (r.phases[1].replacementDrainEndedAt = r.phases[1].replacementDrainStartedAt - 0.1),
+  ]) {
+    const report = drainedFixture();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});
+
+test('successful drain must include every prior-session callback, not just preserve delivery order', () => {
+  const report = drainedFixture();
+  const ended = report.phases[1].replacementDrainEndedAt;
+  report.frames[599].completedAt = ended + 0.00001;
+  report.frames[599].deliveredAt = ended + 0.00002;
+  assert.throws(() => qualifyEncoderPayload(report));
+});
+test('a completed old-session sample may remain queued after drain returns', () => {
+  const report = drainedFixture();
+  report.frames[599].deliveredAt = report.phases[1].replacementDrainEndedAt + 0.00002;
+  assert.equal(qualifyEncoderPayload(report).frames, 1800);
+});

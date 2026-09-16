@@ -8,6 +8,12 @@ import XCTest
 /// Existing settings replacement path; no network or production policy is changed.
 final class EncoderResolutionTransitionTests: XCTestCase {
     @MainActor func testPacedResolutionTransitions() async throws {
+        try await measure(explicitDrain: false)
+    }
+    @MainActor func testDrainedResolutionTransitions() async throws {
+        try await measure(explicitDrain: true)
+    }
+    @MainActor private func measure(explicitDrain: Bool) async throws {
         #if !targetEnvironment(simulator)
         throw XCTSkip("Resolution transition qualification requires the iOS simulator")
         #endif
@@ -39,10 +45,19 @@ final class EncoderResolutionTransitionTests: XCTestCase {
                 let width = phase == 1 ? 960 : 1920, height = phase == 1 ? 540 : 1080
                 let bitRate = phase == 1 ? 1_500_000 : 6_000_000
                 let requestedAt = ProcessInfo.processInfo.systemUptime
+                var drainStartedAt: Double?, drainEndedAt: Double?, drainStatus: Int32?
                 if inputFrame == 0 {
-                    codec.settings = VideoCodecSettings(videoSize: CGSize(width: width, height: height),
+                    let settings = VideoCodecSettings(videoSize: CGSize(width: width, height: height),
                         bitRate: bitRate, profileLevel: kVTProfileLevel_H264_High_AutoLevel as String,
                         maxKeyFrameIntervalDuration: 2, allowFrameReordering: false, expectedFrameRate: 30)
+                    if explicitDrain && frame > 0 {
+                        let operation = try codec.prepareReplacement(settings)
+                        drainStartedAt = ProcessInfo.processInfo.systemUptime
+                        await Task.detached { operation.drain() }.value
+                        drainEndedAt = ProcessInfo.processInfo.systemUptime
+                        drainStatus = operation.drainResult
+                        try codec.commitReplacement(operation)
+                    } else { codec.settings = settings }
                 }
                 let appendBeganAt = ProcessInfo.processInfo.systemUptime
                 codec.append(sample)
@@ -56,7 +71,10 @@ final class EncoderResolutionTransitionTests: XCTestCase {
                     let native = try NativeEncoderSnapshot.capture(session)
                     phases.append(["firstFrame": frame, "frameCount": 600, "width": width, "height": height,
                         "bitRate": bitRate, "requestedAt": requestedAt, "appendBeganAt": appendBeganAt,
-                        "appendEndedAt": appendEndedAt, "sessionReplaced": replaced, "native": native])
+                        "appendEndedAt": appendEndedAt, "sessionReplaced": replaced, "native": native,
+                        "replacementDrainStartedAt": drainStartedAt as Any? ?? NSNull(),
+                        "replacementDrainEndedAt": drainEndedAt as Any? ?? NSNull(),
+                        "replacementDrainStatus": drainStatus as Any? ?? NSNull()])
                     previousSession = session
                 }
                 if frame == 0 {
@@ -81,7 +99,8 @@ final class EncoderResolutionTransitionTests: XCTestCase {
             native["encoderSessionID"] = frames.first { $0["frame"] as? Int == first }?["encoderSessionID"] ?? NSNull()
             phases[i]["native"] = native
         }
-        report["formatVersion"] = 7; report["experiment"] = "live-resolution-transitions"
+        report["formatVersion"] = explicitDrain ? 8 : 7
+        report["experiment"] = explicitDrain ? "drained-resolution-transitions" : "live-resolution-transitions"
         report["platform"] = "iOS Simulator"; report["workload"] = "motion-blocks16"
         report["width"] = profile.width; report["height"] = profile.height
         report["framesPerSecond"] = 30; report["phaseFrames"] = 600; report["settlingFrames"] = 150
@@ -89,7 +108,7 @@ final class EncoderResolutionTransitionTests: XCTestCase {
         report["nativeFailure"] = failure.map { $0 as Any } ?? NSNull()
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
             uniformTypeIdentifier: "public.json")
-        attachment.name = "EncoderResolutionTransition"; attachment.lifetime = .keepAlways; add(attachment)
+        attachment.name = explicitDrain ? "EncoderDrainedTransition" : "EncoderResolutionTransition"; attachment.lifetime = .keepAlways; add(attachment)
         XCTAssertNil(failure)
         XCTAssertEqual(report["errors"] as? [String], [])
         XCTAssertEqual(frames.count, 1800)

@@ -8,6 +8,7 @@ import { createOwnedSimulator } from './owned-simulator.mjs';
 import { qualifyEncoderPayload } from './encoder-payload-qualification.mjs';
 
 assert.equal(process.platform, 'darwin');
+const drainedTransition = process.argv.slice(2).includes('--drained-transition');
 const transition = process.argv.slice(2).includes('--transition');
 const halfResolution = process.argv.slice(2).includes('--half-resolution');
 const lowLatency = process.argv.slice(2).includes('--low-latency');
@@ -15,41 +16,48 @@ const preparation = process.argv.slice(2).includes('--preparation');
 const resolution = process.argv.slice(2).includes('--resolution');
 assert.deepEqual(
   process.argv.slice(2),
-  transition
-    ? ['--transition']
-    : halfResolution
-      ? ['--half-resolution']
-      : lowLatency
-        ? ['--low-latency']
-        : resolution
-          ? ['--resolution']
-          : preparation
-            ? ['--preparation']
-            : [],
+  drainedTransition
+    ? ['--drained-transition']
+    : transition
+      ? ['--transition']
+      : halfResolution
+        ? ['--half-resolution']
+        : lowLatency
+          ? ['--low-latency']
+          : resolution
+            ? ['--resolution']
+            : preparation
+              ? ['--preparation']
+              : [],
 );
-const testClass = transition ? 'EncoderResolutionTransitionTests' : 'EncoderPayloadTests';
-const method = transition
-  ? 'testPacedResolutionTransitions'
-  : halfResolution
-    ? 'testFreshHalfResolutionProfiles'
-    : lowLatency
-      ? 'testFreshLowLatencyRateControl'
-      : resolution
-        ? 'testFreshResolutionProfiles'
-        : preparation
-          ? 'testFreshFrameRatePreparation'
-          : 'testControlledRatesAndFreshLowEncoder';
-const attachmentName = transition
-  ? 'EncoderResolutionTransition'
-  : halfResolution
-    ? 'EncoderHalfResolution'
-    : lowLatency
-      ? 'EncoderLowLatency'
-      : resolution
-        ? 'EncoderResolution'
-        : preparation
-          ? 'EncoderPreparation'
-          : 'EncoderPayload';
+const testClass =
+  transition || drainedTransition ? 'EncoderResolutionTransitionTests' : 'EncoderPayloadTests';
+const method = drainedTransition
+  ? 'testDrainedResolutionTransitions'
+  : transition
+    ? 'testPacedResolutionTransitions'
+    : halfResolution
+      ? 'testFreshHalfResolutionProfiles'
+      : lowLatency
+        ? 'testFreshLowLatencyRateControl'
+        : resolution
+          ? 'testFreshResolutionProfiles'
+          : preparation
+            ? 'testFreshFrameRatePreparation'
+            : 'testControlledRatesAndFreshLowEncoder';
+const attachmentName = drainedTransition
+  ? 'EncoderDrainedTransition'
+  : transition
+    ? 'EncoderResolutionTransition'
+    : halfResolution
+      ? 'EncoderHalfResolution'
+      : lowLatency
+        ? 'EncoderLowLatency'
+        : resolution
+          ? 'EncoderResolution'
+          : preparation
+            ? 'EncoderPreparation'
+            : 'EncoderPayload';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 assert.match(runtime, /^\d+\.\d+(?:\.\d+)?$/);
@@ -64,17 +72,19 @@ const artifact = await mkdtemp(
   join(
     root,
     'artifacts/qa/' +
-      (transition
-        ? 'encoder-resolution-transition-'
-        : halfResolution
-          ? 'encoder-half-resolution-'
-          : lowLatency
-            ? 'encoder-low-latency-'
-            : resolution
-              ? 'encoder-resolution-'
-              : preparation
-                ? 'encoder-preparation-'
-                : 'encoder-payload-'),
+      (drainedTransition
+        ? 'encoder-drained-transition-'
+        : transition
+          ? 'encoder-resolution-transition-'
+          : halfResolution
+            ? 'encoder-half-resolution-'
+            : lowLatency
+              ? 'encoder-low-latency-'
+              : resolution
+                ? 'encoder-resolution-'
+                : preparation
+                  ? 'encoder-preparation-'
+                  : 'encoder-payload-'),
   ),
 );
 console.log('Encoder payload diagnostic evidence: ' + artifact);
@@ -182,7 +192,19 @@ try {
   const report = JSON.parse(raw);
   assert.equal(
     report.formatVersion,
-    transition ? 7 : halfResolution ? 6 : lowLatency ? 5 : resolution ? 4 : preparation ? 3 : 2,
+    drainedTransition
+      ? 8
+      : transition
+        ? 7
+        : halfResolution
+          ? 6
+          : lowLatency
+            ? 5
+            : resolution
+              ? 4
+              : preparation
+                ? 3
+                : 2,
     'Current probe must supply native property snapshots',
   );
   const result = qualifyEncoderPayload(report);

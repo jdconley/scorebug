@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,159 @@
+@@ -8,72 +8,202 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -142,6 +142,8 @@
 +    private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
 +    private var recordedBitRateChange: VideoBitRateChange?
 +    private var lastSubmittedSourcePTS: CMTime?
++    private var replacement: VideoEncoderReplacement?
++    private var terminalCompletionCaptured = false
 +
 +    private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
 +    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
@@ -153,19 +155,51 @@
 +    }
 +
 +    var lastBitRateChange: VideoBitRateChange? {
-+        guard isRunning, failure.error == nil, let recordedBitRateChange,
++        guard isRunning, replacement == nil, failure.error == nil, let recordedBitRateChange,
 +              invalidation.isCurrent(recordedBitRateChange.configuration.encoderSessionID) else { return nil }
 +        return recordedBitRateChange
 +    }
 +
 +    func requestSessionInvalidation() { invalidation.invalidate() }
 +
++    func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
++        guard replacement == nil else { throw VideoEncoderReplacementError.busy }
++        guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
++            throw VideoEncoderReplacementError.notEncoding
++        }
++        let observed = invalidation.snapshot
++        guard !observed.pending else { throw VideoEncoderReplacementError.obsolete }
++        let operation = VideoEncoderReplacement(settings: settings, revision: observed.revision,
++            session: session, failure: failure)
++        replacement = operation
++        return operation
++    }
++
++    /// Stages creation on the next raw input, not a receipt for the new encoder.
++    /// The old output queue stays open and source timestamp ordering is retained.
++    func commitReplacement(_ operation: VideoEncoderReplacement) throws {
++        guard replacement === operation, operation.failure === failure,
++              invalidation.isCurrent(operation.revision) else { throw VideoEncoderReplacementError.obsolete }
++        guard isRunning, failure.error == nil else { throw VideoEncoderReplacementError.notEncoding }
++        guard let status = operation.drainResult else { throw VideoEncoderReplacementError.notDrained }
++        guard status == noErr else {
++            failure.fail(.codecFailed(status: status))
++            throw VideoEncoderReplacementError.drainFailed(status: status)
++        }
++        session = nil; sessionMode = nil
++        storedSettings = operation.settings
++        recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
++        requestSessionInvalidation()
++        replacement = nil
++    }
++
++
 +    func setVerifiedBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
 +        guard isRunning, failure.error == nil, sessionMode == .compression, let session else {
 +            throw VideoBitRateUpdateError.notEncoding
 +        }
 +        let observed = invalidation.snapshot
-+        guard !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
++        guard replacement == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
 +        let updated: VideoCodecSettings
 +        do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
 +        catch let error as VideoBitRateUpdateError {
@@ -198,6 +232,9 @@
 +    var settings: VideoCodecSettings {
 +        get { storedSettings }
 +        set {
++            guard replacement == nil else {
++                failure.fail(.outputTerminated(boundary: "video replacement settings")); return
++            }
 +            let previous = storedSettings
 +            recordedBitRateChange = nil
 +            storedSettings = newValue
@@ -249,6 +286,9 @@
 -        guard isRunning else {
 +        guard isRunning, failure.error == nil else {
              return
++        }
++        guard replacement == nil else {
++            failure.fail(.outputTerminated(boundary: "video replacement input")); return
          }
          do {
              inputFormat = sampleBuffer.formatDescription
@@ -307,12 +347,15 @@
 +    /// so callbacks can be consumed concurrently within the existing queue bound.
 +    /// Only terminal invalidation may overlap the captured native session.
 +    func makeCompletion() -> @Sendable () -> Void {
-+        let completion = VideoCompletion(session: session, output: continuation, failure: failure)
++        terminalCompletionCaptured = true
++        if replacement != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
++        let completion = VideoCompletion(session: replacement == nil ? session : nil,
++            output: continuation, failure: failure)
 +        return { completion.run() }
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -97,19 +184,24 @@
+@@ -97,19 +227,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -340,7 +383,7 @@
      }
 
      @objc
-@@ -122,7 +214,7 @@
+@@ -122,7 +257,7 @@
          }
          switch type {
          case .ended:
@@ -349,9 +392,19 @@
          default:
              break
          }
-@@ -160,10 +252,12 @@
+@@ -151,6 +286,7 @@
+         )
+         #endif
+         startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
++        terminalCompletionCaptured = false
+         isRunning = true
+     }
+
+@@ -159,11 +295,14 @@
+             return
          }
          isRunning = false
++        replacement = nil
          session = nil
 -        invalidateSession = true
 +        sessionMode = nil
@@ -364,7 +417,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +266,18 @@
+@@ -172,3 +311,18 @@
          #endif
      }
  }
@@ -1159,7 +1212,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,65 @@
+@@ -8,6 +8,66 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1184,6 +1237,7 @@
 +    private var failure = PublishingFailureLatch()
 +    private var generation: UInt64 = 0
 +    private var videoInputIsRaw = false
++    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
 +    /// Identity for an active publication, not proof that its encoder is ready.
 +    public var publishingGeneration: UInt64? {
 +        readyState == .publishing && finishingGeneration == nil && publishingError == nil && muxerError == nil
@@ -1225,7 +1279,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +81,7 @@
+@@ -22,7 +82,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1234,7 +1288,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,7 +91,13 @@
+@@ -32,8 +92,16 @@
      }
 
      /// Creates a new stream object.
@@ -1243,13 +1297,16 @@
 +    ///   notification for this stream, including final drain. Compressed passthrough
 +    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
 +    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
-+                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
++                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
++                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
 +        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
 +                                  encoderConfigurationObserver: encoderConfigurationObserver)
          self.connection = connection
++        self.compressedVideoObserver = compressedVideoObserver
          Task { await connection.addStream(self) }
      }
-@@ -45,7 +110,7 @@
+
+@@ -45,7 +113,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1258,7 +1315,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +122,22 @@
+@@ -57,8 +125,22 @@
              }
              return
          }
@@ -1282,7 +1339,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +147,39 @@
+@@ -68,26 +150,39 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1310,7 +1367,7 @@
 +            video: Task {
 +                for await buffer in videoOutput {
 +                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+                    appendCompressedVideo(buffer)
++                    appendCompressedVideo(buffer, wasEncoded: true)
 +                }
 +            },
 +            audio: Task {
@@ -1342,7 +1399,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +208,67 @@
+@@ -116,16 +211,67 @@
          readyState = .playing
      }
 
@@ -1415,7 +1472,7 @@
      }
 
      /// Sets the expected media.
-@@ -157,12 +300,14 @@
+@@ -157,12 +303,14 @@
      }
 
      public func append(_ sampleBuffer: CMSampleBuffer) {
@@ -1426,13 +1483,13 @@
 -                writer.videoFormat = sampleBuffer.formatDescription
 -                writer.append(sampleBuffer)
 +                videoInputIsRaw = false
-+                appendCompressedVideo(sampleBuffer)
++                appendCompressedVideo(sampleBuffer, wasEncoded: false)
              } else {
 +                videoInputIsRaw = true
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +317,29 @@
+@@ -172,16 +320,30 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -1450,8 +1507,9 @@
          }
 +    }
 +
-+    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer) {
++    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool) {
 +        guard readyState == .publishing, publishingError == nil else { return }
++        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded))
 +        writer.videoFormat = sampleBuffer.formatDescription
 +        writer.append(sampleBuffer)
 +    }
@@ -2381,4 +2439,69 @@
 +    public let configuration: VideoEncoderConfiguration
 +    public let acceptedAt: Double
 +    public let lastSubmittedSourcePTS: CMTime?
++}
+--- /dev/null
++++ b/HaishinKit/Sources/Codec/VideoEncoderReplacement.swift
+@@ -0,0 +1,31 @@
++import Foundation
++
++/// Internal lifecycle boundary; the stream owner supplies pause/deadline/join.
++enum VideoEncoderReplacementError: Error, Equatable {
++    case notEncoding, busy, notDrained, obsolete
++    case drainFailed(status: Int32)
++}
++
++/// Captures one native session without transferring mutable VideoCodec state.
++/// Native completion runs once, outside the state lock. The stream owner must
++/// execute it off its actor and join it even after terminal invalidation.
++final class VideoEncoderReplacement: @unchecked Sendable {
++    let settings: VideoCodecSettings
++    let revision: UUID
++    let failure: PublishingFailureLatch
++    private let session: any VTSessionConvertible
++    private let lock = NSLock()
++    private var started = false
++    private var result: Int32?
++    init(settings: VideoCodecSettings, revision: UUID, session: any VTSessionConvertible,
++         failure: PublishingFailureLatch) {
++        self.settings = settings; self.revision = revision; self.session = session; self.failure = failure
++    }
++    var drainResult: Int32? { lock.withLock { result } }
++    func drain() {
++        let begin = lock.withLock { if started { return false }; started = true; return true }
++        guard begin else { return }
++        let status = session.completeFrames()
++        lock.withLock { result = status }
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/SRT/CompressedVideoFrame.swift
+@@ -0,0 +1,28 @@
++import CoreMedia
++import Foundation
++
++extension SRTStream {
++    /// Bounded scalar view of the actual pre-mux compressed sample. The synchronous
++    /// observer must not retain media or perform I/O. This is not receiver evidence.
++    public struct CompressedVideoFrame: Sendable {
++        public let publishingGeneration: UInt64
++        public let sourcePTS: CMTime
++        public let width: Int32
++        public let height: Int32
++        public let codec: FourCharCode
++        public let valid: Bool
++        public let wasEncoded: Bool
++        init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool) {
++            publishingGeneration = generation; sourcePTS = sampleBuffer.presentationTimeStamp
++            self.wasEncoded = wasEncoded
++            let format = sampleBuffer.formatDescription
++            let isVideo = format.map { CMFormatDescriptionGetMediaType($0) == kCMMediaType_Video } ?? false
++            let dimensions = isVideo ? CMVideoFormatDescriptionGetDimensions(format!) : CMVideoDimensions(width: 0, height: 0)
++            width = dimensions.width; height = dimensions.height
++            codec = format.map { CMFormatDescriptionGetMediaSubType($0) } ?? 0
++            valid = isVideo && sampleBuffer.imageBuffer == nil && CMSampleBufferDataIsReady(sampleBuffer) &&
++                CMSampleBufferGetNumSamples(sampleBuffer) == 1 && CMSampleBufferGetTotalSampleSize(sampleBuffer) > 0 &&
++                sourcePTS.isNumeric && sourcePTS.timescale > 0 && width > 0 && height > 0
++        }
++    }
 +}

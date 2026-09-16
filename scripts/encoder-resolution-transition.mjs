@@ -7,8 +7,12 @@ const uuid = (v) =>
 
 /** Same codec, successive native sessions; no transport or decode claim. */
 export function qualifyEncoderResolutionTransition(report) {
-  assert.equal(report.formatVersion, 7);
-  assert.equal(report.experiment, 'live-resolution-transitions');
+  assert.ok([7, 8].includes(report.formatVersion));
+  const drained = report.formatVersion === 8;
+  assert.equal(
+    report.experiment,
+    drained ? 'drained-resolution-transitions' : 'live-resolution-transitions',
+  );
   assert.equal(report.platform, 'iOS Simulator');
   assert.equal(report.workload, 'motion-blocks16');
   assert.equal(report.width, 1920);
@@ -41,6 +45,25 @@ export function qualifyEncoderResolutionTransition(report) {
     sessions.add(p.native.encoderSessionID);
     assert.ok(finite(p.requestedAt) && finite(p.appendBeganAt) && finite(p.appendEndedAt));
     assert.ok(p.requestedAt <= p.appendBeganAt && p.appendBeganAt <= p.appendEndedAt);
+    if (drained) {
+      if (i) {
+        assert.ok(finite(p.replacementDrainStartedAt) && finite(p.replacementDrainEndedAt));
+        assert.equal(p.replacementDrainStatus, 0);
+        assert.ok(p.requestedAt <= p.replacementDrainStartedAt);
+        assert.ok(p.replacementDrainStartedAt <= p.replacementDrainEndedAt);
+        assert.ok(p.replacementDrainEndedAt <= p.appendBeganAt);
+        for (const frame of report.frames.slice(p.firstFrame - 600, p.firstFrame)) {
+          assert.ok(
+            frame.completedAt <= p.replacementDrainEndedAt,
+            'Successful drain must complete every callback from the old session',
+          );
+        }
+      } else {
+        assert.equal(p.replacementDrainStartedAt, null);
+        assert.equal(p.replacementDrainEndedAt, null);
+        assert.equal(p.replacementDrainStatus, null);
+      }
+    }
     const first = report.frames[p.firstFrame];
     assert.ok(p.appendBeganAt <= first.submittedAt && first.submittedAt <= p.appendEndedAt);
     assert.ok(p.native.collectedAt >= p.appendEndedAt);
@@ -71,6 +94,8 @@ export function qualifyEncoderResolutionTransition(report) {
       windows,
       meanMbps: windows.reduce((n, w) => n + w.mbps, 0) / 3,
       firstAppendSeconds: p.appendEndedAt - p.appendBeganAt,
+      replacementDrainSeconds:
+        drained && i ? p.replacementDrainEndedAt - p.replacementDrainStartedAt : null,
       transitionDeliveryGapSeconds: i
         ? first.deliveredAt - report.frames[p.firstFrame - 1].deliveredAt
         : null,

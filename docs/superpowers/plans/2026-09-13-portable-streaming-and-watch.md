@@ -773,3 +773,16 @@ pipeline or adaptive recovery qualification. Next prove outstanding-callback and
 stop/cancellation lifetime behavior, then integrate bounded profile changes through
 the worker while preserving the independent 1080p archive. Production selection,
 physical phone/Watch and other-host gates remain open.
+
+
+The [explicit encoder replacement lifetime](2026-09-16-encoder-replacement-lifetime.md)
+now prepares, drains off the owner and commits only the same healthy native session.
+Deterministic tests cover pending callbacks, competing mutations, finish in both
+orders, native errors and cancelled stop/restart. Both iOS 17.5 and 26.2 paced
+experiments preserve all 3600 frames with old callbacks completed before drain return.
+Drains take about 30–89 ms and subsequent first appends 0.95–1.79 ms; output gaps
+remain 348–417 ms. All 145 SDK / 55 streaming / 914 tooling tests and unsigned
+combined Apple Release pass. SDK patch provenance again round-trips all 162 original
+hashes. Next integrate stream-owned ingress pause/deadline/cancellation and actual
+profile receipts, then qualify downstream decode and independent recording before
+automatic adaptation. Production profile selection remains disabled.

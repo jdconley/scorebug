@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and five added publishing/bitrate/clock source primitives. Original upstream hashes
+files and seven added publishing/bitrate/clock/replacement source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -104,3 +104,16 @@ publishing generation into a scalar value. Raw-encoder output and compressed
 passthrough remain distinguishable. The observer runs synchronously, including
 final drain, and must perform no I/O or waits; it cannot alter media delivery.
 This is pre-worker format evidence, not receiver delivery or rate-control proof.
+
+
+The internal `VideoCodec` replacement primitive separates prepare, off-actor drain
+and commit. Its immutable once-only handle retains the old native session; commit
+requires the same codec revision and a successful completed drain before old-session
+invalidation. The output queue and source timestamp ordering survive the change.
+Pending replacement rejects concurrent settings/input/terminal-finish work, and a
+previously captured terminal completion excludes replacement. Stop clears ownership;
+stale or failed completions cannot commit into a restarted codec. The stream owner
+must supply an ingress pause policy, deadline and joined cancellation before this
+primitive can be exposed as a production profile change. No such integration is
+enabled yet. See [lifetime validation](../../docs/superpowers/plans/2026-09-16-encoder-replacement-lifetime.md).
+The provenance verifier also rejects source files omitted from its inventory.
