@@ -46,17 +46,17 @@ completions must never appear as healthy completed output.
 
 ## Tasks
 
-- [ ] Add shared scope to encoder history and an exact safe 90k conversion helper;
+- [x] Add shared scope to encoder history and an exact safe 90k conversion helper;
   add `decoded-frame-history.ts` with bounded validated decoder record snapshots.
   Red/green tests cover source duplicates/order, clocks, eviction, framing/closure,
   wide/nonintegral projections and preserved prior snapshots.
-- [ ] Add `worker-processing.ts` pure interval join. Red/green tests cover complete
+- [x] Add `worker-processing.ts` pure interval join. Red/green tests cover complete
   matching, FPS-cap omissions, pending completions, unknown/negative arrival timing,
   exact missing bounds, mismatched scopes, invalid histories and source mismatch.
-- [ ] Wire both histories into the existing opt-in pipeline; expose combined snapshots
+- [x] Wire both histories into the existing opt-in pipeline; expose combined snapshots
   and terminal decoder-history evidence. Ensure decoded-pipe errors cannot escape or
   relabel processing evidence as valid. Add real-child isolation/lifecycle tests.
-- [ ] Run full worker/tooling/typecheck checks and actual CPU/VideoToolbox production
+- [x] Run full worker/tooling/typecheck checks and actual CPU/VideoToolbox production
   pipeline probes. Replay saved native decoded/pre/post records independently.
   Add a reusable local host-qualification command for this same pipeline fixture.
   Review, hash evidence, update docs and commit verified changes.
@@ -71,3 +71,42 @@ initial current-load thresholds validated on paced media. Sustained decoded cade
 plus completed matched worker output and bounded processing delay can establish
 current worker health; it does not need to claim hypothetical CPU/GPU spare capacity.
 Then wire the native policy adapter and qualify actual automatic trial/rollback.
+
+## Verified checkpoint
+
+Worker tests pass (290), tooling tests pass (781), and worker typecheck and targeted
+format checks pass. The ES2022 typecheck initially rejected `findLastIndex`; the
+implementation now uses a bounded loop, with the failed check retained as evidence.
+Independent review approved source/lifecycle behavior and requested two additional
+bracket/completion regressions, which pass. Harness review found that output-derived
+expectations could conceal incorrect cap selection and unchecked duration arithmetic;
+both now have independent expectations and the final review approves the harness.
+
+The final production-pipeline fixtures pass:
+
+| Backend | Source fps | Decoded / output frames | Artifact |
+| --- | --- | --- | --- |
+| CPU | 25 | 75 / 75 | `worker-processing-ZzjQrd` |
+| CPU | 30 | 90 / 90 | `worker-processing-14undD` |
+| CPU | 60 | 180 / 90 | `worker-processing-RWTFgC` |
+| VideoToolbox | 30 | 90 / 90 | `worker-processing-aTOSKL` |
+| VideoToolbox | 60 | 180 / 90 | `worker-processing-C67mAk` |
+
+Each fixture checks exact independent input PTS, expected selection (even source
+indices for 60-to-30 fps), output barcodes, complete A/V decoding, audio presence,
+closed valid shared scopes, zero pending work and independent duration replay.
+The selected interval excludes its first anchor: 74 frames at 25 fps or 89 at 30 fps;
+the 60 fps source intervals contain 89 intentional omissions. Both durations are
+observed in these runs; regression tests preserve unknown timing when pipe delivery
+order is reversed. A separate replay of earlier raw native CPU/VideoToolbox pipe
+collections also matches all 90 source/submission/completion coordinates and timing.
+Those older VideoToolbox records do not qualify production latency thresholds.
+
+The broader native software-worker harness passes source identity/A/V, overlay change
+without restart, 60-to-30 and preserved 25 fps, worker SIGKILL, API lease outage,
+source-loss recovery (7245 ms), and match-end stop. Evidence is under `artifacts/qa`;
+`worker-processing-final-verification.json` records source and evidence hashes.
+
+These finite local checks do not qualify sustained load, spare capacity, actual
+physical phone/Watch operation, remote GPU hosts or automatic adaptation. No app/SDK
+source changed in this slice; their previous native build evidence remains separate.

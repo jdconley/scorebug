@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 /** Coordinates are exact rational seconds; no optional decoder identity is assumed. */
 export type EncoderTime = Readonly<{
@@ -8,6 +9,7 @@ export type EncoderTime = Readonly<{
 export type EncoderTimingFrame = EncoderTime &
   Readonly<{ ordinal: number; submittedAt: number; completedAt: number | null }>;
 export type EncoderTimingSnapshot = Readonly<{
+  scopeID: string;
   frames: readonly EncoderTimingFrame[];
   submittedFrames: number;
   completedFrames: number;
@@ -100,7 +102,10 @@ export class EncoderTimingTelemetry {
   private lastEventAt: number | null = null;
   private invalidReason: string | null = null;
   private ended = false;
-  constructor(private readonly now: () => number = () => performance.now()) {}
+  constructor(
+    private readonly now: () => number = () => performance.now(),
+    readonly scopeID: string = randomUUID(),
+  ) {}
   private fail(reason: string) {
     this.invalidReason ??= reason;
     this.line = '';
@@ -206,6 +211,7 @@ export class EncoderTimingTelemetry {
     const now = this.time();
     const oldest = this.pending.values().next().value as Frame | undefined;
     return {
+      scopeID: this.scopeID,
       frames: this.frames.map((frame) => ({ ...frame })),
       submittedFrames: this.submitted,
       completedFrames: this.completed,
@@ -237,4 +243,15 @@ export function observeEncoderTimingPipe(pipe: Readable, timing?: EncoderTimingT
       timing?.end();
     }
   });
+}
+
+/** Exact projection only; fractional or unsafe 90k coordinates remain unknown. */
+export function encoderTime90k(time: EncoderTime): number | null {
+  const value = coordinate(time);
+  if (!value) return null;
+  const ticks = value.numerator * 90000n;
+  if (ticks % value.denominator !== 0n) return null;
+  const result = ticks / value.denominator;
+  const limit = BigInt(Number.MAX_SAFE_INTEGER);
+  return result < -limit || result > limit ? null : Number(result);
 }

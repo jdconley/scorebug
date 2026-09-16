@@ -198,6 +198,9 @@ export class DecodedVideoTelemetry {
     this.ended = true;
     this.active = empty();
   }
+  invalidatePipe() {
+    if (!this.ended) this.fail('incomplete');
+  }
   snapshot(): DecodedVideoSnapshot {
     const now = this.time();
     if (now !== undefined) this.advance(now);
@@ -281,6 +284,10 @@ export class DecodedVideoLifetime {
     if (this.value.ended) return;
     this.parser.end();
     this.value = Object.freeze({ ...this.value, ended: true });
+  }
+  invalidatePipe() {
+    if (!this.value.ended)
+      this.value = { ...this.value, invalidReason: this.value.invalidReason ?? 'incomplete' };
   }
   snapshot(): DecodedVideoLifetimeSnapshot {
     return { ...this.value };

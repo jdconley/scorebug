@@ -374,8 +374,15 @@ trial/rollback qualification remain open.
 The [worker encoder timing slice](2026-09-15-worker-encoder-timing.md) adds optional
 bounded, timestamp-correlated submission/completion evidence through a separate
 FFmpeg pipe. CPU and VideoToolbox use the same rational correlation; optional hardware
-input-frame identities are not assumed. Overall worker pressure still requires
-decode/filter coverage, runtime capability checks and backend threshold qualification.
+input-frame identities are not assumed.
+
+The [worker processing correlation slice](2026-09-15-worker-processing-correlation.md)
+now joins decoder source coordinates to encoder submissions and completions with shared
+scope and bounded histories. It distinguishes deliberate cap omissions, pending work
+and unknown arrival timing. Reusable local qualification passes CPU 25/30/60 fps and
+VideoToolbox 30/60 fps with independent source probes, saved output barcodes and timing
+replay. Overall worker pressure still requires runtime capability checks, fresh reports
+and backend thresholds qualified on paced media; automatic adaptation remains unwired.
 
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS

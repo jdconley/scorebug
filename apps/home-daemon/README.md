@@ -64,6 +64,11 @@ pnpm test:worker videotoolbox
 # Ten-minute continuous capture, fresh-frame and A/V synchronization checks:
 pnpm test:worker software --soak-seconds=600
 pnpm test:worker videotoolbox --soak-seconds=600
+# Source-correlated processing evidence (requires FFmpeg encoder statistics):
+pnpm test:worker-processing software
+pnpm test:worker-processing software 60
+pnpm test:worker-processing videotoolbox
+pnpm test:worker-processing videotoolbox 60
 ```
 
 The media harness owns its API, two uniquely named MediaMTX containers, and synthetic
@@ -74,6 +79,17 @@ current-score restoration, and match end. Clips and images
 are retained under `artifacts/qa/native-worker-<encoder>`; owned runtime resources
 are removed. This is a short integration check, not the ten-minute qualification
 gate, a real phone recording test, or an external broadcast test.
+
+The separate `test:worker-processing <encoder> [25|30|60]` command runs a three-second
+local file fixture through the actual pipeline, without containers or network output.
+It compares decoder timestamps with an independent source probe, checks the exact
+expected frame selection and saved output barcodes, fully decodes A/V, and independently
+replays processing durations. Results and media are retained in a unique
+`artifacts/qa/worker-processing-*` directory. Set `FFMPEG_PATH`, `FFPROBE_PATH` and
+`FONT_PATH` for another host. Missing encoder-statistics options or unsupported hardware
+fail the check. Software 25/30/60 and VideoToolbox 30/60 pass on this Mac; the accepted
+`nvenc` option still needs qualification on NVIDIA hardware. This fixture establishes
+source correlation, not spare capacity, sustained performance or network delivery.
 
 ## Linux container
 

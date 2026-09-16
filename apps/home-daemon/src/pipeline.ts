@@ -1,3 +1,6 @@
+import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
+import { observeDecodedPipe } from './decoded-pipe.js';
+import type { WorkerProcessingSnapshot } from './worker-processing.js';
 import { DECODED_VIDEO_TRANSPORT_CLOCK } from '@scorebug/protocol';
 import {
   EncoderTimingTelemetry,
@@ -34,6 +37,7 @@ export type PipelineHandle = {
   /** Decoder ingress only; PTS ticks use 1/90000. Fresh pipeline means fresh scope. */
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
+  snapshotProcessing?: () => WorkerProcessingSnapshot | null;
 };
 
 function filterPath(value: string): string {
@@ -174,6 +178,7 @@ export type PipelineTerminal = Readonly<{
   encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
   outputProgress: PipelineProgress | null;
   encoderTiming?: EncoderTimingSnapshot;
+  decodedFrameHistory?: DecodedFrameHistorySnapshot;
 }>;
 
 export type PipelineOptions = {
@@ -271,6 +276,9 @@ export function startPipeline(
     ? new EncoderTimingTelemetry(options.monotonicNow)
     : undefined;
   const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
+  const decodedHistory = encoderTiming
+    ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID)
+    : undefined;
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
   let telemetryEOF = false;
   let outputProgress: PipelineProgress | null = null;
@@ -291,6 +299,7 @@ export function startPipeline(
         encoderExit: encoderExit ? { ...encoderExit } : null,
         outputProgress: outputProgress ? { ...outputProgress } : null,
         ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
+        ...(decodedHistory ? { decodedFrameHistory: decodedHistory.snapshot() } : {}),
       });
     } catch {
       // Diagnostics must never change shutdown, including a failing diagnostic logger.
@@ -302,6 +311,7 @@ export function startPipeline(
   const failedBeforeSpawn = () => {
     decodedVideo.end();
     encoderTiming?.end();
+    decodedHistory?.end();
     terminal();
     settle(null, null);
   };
@@ -338,15 +348,13 @@ export function startPipeline(
     // Guardian IPC remains fd3; its fd4 becomes FFmpeg's telemetry fd3.
     // Always drain, including after invalid evidence and without an observer.
     const telemetry = child.stdio[4] as Readable;
-    telemetry.on('data', (chunk: Buffer) => {
-      decodedVideo.push(chunk);
-      lifetime?.push(chunk);
-    });
-    telemetry.once('end', () => {
-      telemetryEOF = true;
-      decodedVideo.end();
-      lifetime?.end();
-    });
+    observeDecodedPipe(
+      telemetry,
+      [decodedVideo, ...(lifetime ? [lifetime] : []), ...(decodedHistory ? [decodedHistory] : [])],
+      () => {
+        telemetryEOF = true;
+      },
+    );
     // Drain diagnostics without retaining them: FFmpeg echoes credentialed URLs.
     if (options.onProgress || options.onTerminal) {
       child.stdout?.on(
@@ -385,6 +393,7 @@ export function startPipeline(
     child.once('close', () => {
       decodedVideo.end();
       encoderTiming?.end();
+      decodedHistory?.end();
       terminal();
       // Drain progress before resolving. Guardian death alone does not prove the
       // encoder exited: fail closed so the supervisor cannot overlap publishers.
@@ -408,6 +417,10 @@ export function startPipeline(
     },
     waitExit: () => exit,
     snapshotEncoderTiming: () => encoderTiming?.snapshot() ?? null,
+    snapshotProcessing: () =>
+      decodedHistory && encoderTiming
+        ? { decoded: decodedHistory.snapshot(), encoded: encoderTiming.snapshot() }
+        : null,
     snapshotDecodedVideo: () => ({
       ...decodedVideo.snapshot(),
       clock: DECODED_VIDEO_TRANSPORT_CLOCK,

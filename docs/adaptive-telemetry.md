@@ -516,7 +516,32 @@ They are not processor utilization, network capacity, viewer delivery or proof o
 nominal overall worker pressure. Real CPU and VideoToolbox probes show that normal
 pending depth differs by backend. Default pipeline arguments remain unchanged because
 older FFmpeg installations may lack these options. Production enablement requires
-runtime capability qualification plus the remaining decode/filter correlation,
-report freshness and policy classification work. See the
+runtime capability qualification, report freshness and policy classification work.
+The source correlation below adds observations after decode. See the
 [worker timing plan](superpowers/plans/2026-09-15-worker-encoder-timing.md) and
 [FFmpeg's statistics documentation](https://ffmpeg.org/ffmpeg.html).
+
+## Source-correlated worker processing
+
+The same opt-in now exposes `snapshotProcessing()`: a shared pipeline scope containing
+up to 512 decoder PTS/reader-time records and the existing 256 encoder records.
+`workerProcessingInterval(snapshot, start, end)` joins exact 90k source coordinates
+over `(start, end]`, requiring retained decoder anchors and encoder brackets. Every
+bracketing submission must exist in decoder history. Fractional, colliding, missing
+or mismatched coordinates remain unavailable. Decoder pipe errors and premature close
+invalidate evidence without changing publication ownership.
+
+The result separates decoded, submitted, completed, pending and omitted-before-encoder
+counts. Omissions can include deliberate frame-rate reduction; they are not automatically
+accidental loss. Reader-observed decoded-to-submission and decoded-to-completion
+durations are available only when every included timestamp yields a nonnegative
+duration. Cross-pipe delivery order can leave either duration unknown while source
+counts remain valid. These values exclude decode execution itself and do not establish
+viewer delivery, spare capacity, fresh live reports or nominal worker pressure.
+
+`pnpm test:worker-processing software 60` runs the actual pipeline, independently
+probes input timestamps, checks expected frame selection against saved video barcodes,
+fully decodes output A/V and replays the raw timing aggregates. CPU 25/30/60 fps and
+VideoToolbox 30/60 fps pass locally. These are three-second finite fixtures, not paced
+capacity or sustained-load qualification. NVENC remains unqualified. See the
+[processing plan](superpowers/plans/2026-09-15-worker-processing-correlation.md).

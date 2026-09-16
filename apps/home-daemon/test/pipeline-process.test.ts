@@ -601,3 +601,39 @@ it('returns no encoder timing evidence when disabled', async () => {
     await fixture.cleanup();
   }
 });
+
+it.each(['valid', 'malformed'])(
+  'retains scoped decoder/encoder histories through real child pipes: %s',
+  async (mode) => {
+    const decoded =
+      mode === 'valid'
+        ? 'frame:0 pts:0 pts_time:0\nscorebug.source=1\nframe:1 pts:3000 pts_time:0\nscorebug.source=1\n'
+        : 'BAD SECRET\n';
+    const encoded = 'pre 0 1/30 0\npre 1 1/30 1\npost 0 1/30 0\npost 1 1/30 1\n';
+    const fixture = await childFixture(
+      `require('node:fs').writeSync(3,${JSON.stringify(decoded)});require('node:fs').writeSync(4,${JSON.stringify(encoded)});`,
+    );
+    const terminal: unknown[] = [];
+    try {
+      const pipeline = startPipeline(fixture.spec, fixture.log, {
+        encoderTiming: true,
+        onTerminal: (value) => terminal.push(value),
+      });
+      expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
+      const processing = pipeline.snapshotProcessing?.();
+      expect(processing).toBeTruthy();
+      expect(processing?.decoded.scopeID).toBe(processing?.encoded.scopeID);
+      expect(processing?.decoded.ended).toBe(true);
+      expect(processing?.encoded.ended).toBe(true);
+      expect(processing?.encoded.invalidReason).toBeNull();
+      if (mode === 'valid')
+        expect(processing?.decoded).toMatchObject({ acceptedFrames: 2, invalidReason: null });
+      else expect(processing?.decoded.invalidReason).not.toBeNull();
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]).toMatchObject({ decodedFrameHistory: processing?.decoded });
+      expect(JSON.stringify(fixture.records)).not.toContain('SECRET');
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
