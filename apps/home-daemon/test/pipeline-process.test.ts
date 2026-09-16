@@ -26,6 +26,7 @@ it('executes the configured media binary instead of the one on PATH', async () =
     );
     expect(await pipeline.waitExit()).toEqual({ code: 0, signal: null });
     expect(protocol).toHaveProperty('DECODED_VIDEO_TRANSPORT_CLOCK', 'mpegts-pts-90k-v1');
+    expect(pipeline.snapshotProcessingWindow?.()).toBeNull();
     expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
       clock: 'mpegts-pts-90k-v1',
       ended: true,
@@ -621,6 +622,7 @@ it.each(['valid', 'malformed'])(
       });
       expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
       const processing = pipeline.snapshotProcessing?.();
+      expect(pipeline.snapshotProcessingWindow?.()).toBeNull();
       expect(processing).toBeTruthy();
       expect(processing?.decoded.scopeID).toBe(processing?.encoded.scopeID);
       expect(processing?.decoded.ended).toBe(true);

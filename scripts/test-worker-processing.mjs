@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
+import { probeEncoderStatistics } from '../apps/home-daemon/src/encoder-statistics-capability.ts';
 import { mkdir, mkdtemp, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +18,17 @@ import { createLogger } from '../apps/home-daemon/src/logger.ts';
 
 const encoder = process.argv[2] ?? 'software';
 const sourceFPS = Number(process.argv[3] ?? '30');
+const paced = process.argv[4] === '--paced';
+const durationSeconds = paced ? 24 : 3;
 assert(
   ['software', 'videotoolbox', 'nvenc'].includes(encoder),
   'Choose software, videotoolbox or nvenc',
 );
 assert(
-  ['25', '30', '60'].includes(process.argv[3] ?? '30') && process.argv.length <= 4,
-  'Source fps must be 25, 30 or 60',
+  ['25', '30', '60'].includes(process.argv[3] ?? '30') &&
+    process.argv.length <= 5 &&
+    (process.argv[4] === undefined || paced),
+  'Source fps must be 25, 30 or 60; optional final flag is --paced',
 );
 const root = fileURLToPath(new URL('..', import.meta.url));
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -36,7 +43,8 @@ await writeFile(
       ffmpeg,
       ffprobe,
       font,
-      durationSeconds: 3,
+      durationSeconds,
+      paced,
       profile: { width: 640, height: 360, fps: 30, bitrateKbps: 1000 },
     },
     null,
@@ -59,6 +67,9 @@ assert(
   'This FFmpeg build lacks encoder statistics; choose a supported FFMPEG_PATH',
 );
 await run(ffmpeg, ['-version'], 'ffmpeg-version');
+const capability = await probeEncoderStatistics(ffmpeg);
+await writeFile(join(artifact, 'capability.json'), JSON.stringify(capability, null, 2) + '\n');
+assert.deepEqual(capability, { available: true, reason: 'supported' });
 await access(font);
 const input = join(artifact, 'input.ts'),
   output = join(artifact, 'output.flv'),
@@ -73,11 +84,11 @@ await run(
     '-f',
     'lavfi',
     '-i',
-    `testsrc2=duration=3:size=640x360:rate=${sourceFPS}`,
+    `testsrc2=duration=${durationSeconds}:size=640x360:rate=${sourceFPS}`,
     '-f',
     'lavfi',
     '-i',
-    'sine=frequency=1000:sample_rate=44100:duration=3',
+    `sine=frequency=1000:sample_rate=44100:duration=${durationSeconds}`,
     '-vf',
     sourceFrameCodeFilter,
     '-c:v',
@@ -115,11 +126,14 @@ const probe = JSON.parse(
 );
 assert.equal(probe.streams[0].time_base, '1/90000');
 const sourcePTS = probe.frames.map((frame) => frame.pts);
-assert.equal(sourcePTS.length, sourceFPS * 3);
+assert.equal(sourcePTS.length, sourceFPS * durationSeconds);
 assert(
   sourcePTS.every((pts, i) => Number.isSafeInteger(pts) && (i === 0 || pts > sourcePTS[i - 1])),
 );
-let pipeline;
+let pipeline, server, source, sourceExit, sampleTimer;
+const samples = [];
+let sourceError = '';
+let sourceRequests = 0;
 async function deadline(promise, ms) {
   let timer;
   try {
@@ -134,10 +148,62 @@ async function deadline(promise, ms) {
   }
 }
 try {
+  let pullUrl = input;
+  if (paced) {
+    server = createServer((request, response) => {
+      if (request.method !== 'GET' || request.url !== '/source.ts' || sourceRequests++ > 0) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'video/mp2t' });
+      source = spawn(
+        ffmpeg,
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-re',
+          '-copyts',
+          '-i',
+          input,
+          '-map',
+          '0',
+          '-c',
+          'copy',
+          '-mpegts_copyts',
+          '1',
+          '-f',
+          'mpegts',
+          'pipe:1',
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
+      );
+      sourceExit = new Promise((resolve) => {
+        source.on('error', () => {
+          sourceError = 'source_spawn_failed';
+          response.destroy();
+        });
+        source.once('close', (code, signal) => resolve({ code, signal }));
+      });
+      source.stderr.on('data', (chunk) => {
+        sourceError = (sourceError + chunk.toString()).slice(-4096);
+      });
+      source.stdout.pipe(response);
+      response.on('close', () => {
+        if (!response.writableFinished && source.exitCode === null) source.kill('SIGKILL');
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    pullUrl = `http://127.0.0.1:${server.address().port}/source.ts`;
+  }
   pipeline = startPipeline(
     {
       gameId: 'local-processing-qualification',
-      pullUrl: input,
+      pullUrl,
       publishUrl: output,
       scoreFile,
       nvenc: false,
@@ -147,9 +213,34 @@ try {
       fontPath: font,
     },
     createLogger('error'),
-    { encoderTiming: true },
+    { encoderTiming: capability.available },
   );
-  const exit = await deadline(pipeline.waitExit(), 30_000);
+  if (paced) {
+    sampleTimer = setInterval(() => {
+      const beforeVideo = pipeline.snapshotDecodedVideo();
+      const window = pipeline.snapshotProcessingWindow();
+      samples.push({
+        observedAt: performance.now(),
+        beforeVideo,
+        window,
+        video: pipeline.snapshotDecodedVideo(),
+        snapshot: pipeline.snapshotProcessing(),
+      });
+    }, 100);
+  }
+  const exit = await deadline(pipeline.waitExit(), 40_000);
+  clearInterval(sampleTimer);
+  await writeFile(join(artifact, 'live-samples.json'), JSON.stringify(samples) + '\n');
+  if (paced) {
+    const sourceResult = await deadline(sourceExit, 5000);
+    await writeFile(
+      join(artifact, 'source-exit.json'),
+      JSON.stringify({ ...sourceResult, sourceError }) + '\n',
+    );
+    assert.equal(sourceResult.code, 0);
+    assert.equal(sourceError, '');
+    assert.equal(pipeline.snapshotProcessingWindow(), null, 'closed pipeline has no live window');
+  }
   const snapshot = pipeline.snapshotProcessing();
   await writeFile(
     join(artifact, 'processing.json'),
@@ -163,9 +254,9 @@ try {
   assert.equal(snapshot.decoded.scopeID, snapshot.encoded.scopeID);
   assert.deepEqual(
     snapshot.decoded.frames.map((frame) => frame.pts),
-    sourcePTS,
+    sourcePTS.slice(-512),
   );
-  const expectedCount = Math.min(sourceFPS, 30) * 3;
+  const expectedCount = Math.min(sourceFPS, 30) * durationSeconds;
   assert.equal(snapshot.encoded.submittedFrames, expectedCount);
   assert.equal(snapshot.encoded.completedFrames, expectedCount);
   assert.equal(snapshot.encoded.pendingFrames, 0);
@@ -178,7 +269,7 @@ try {
   );
   assert.deepEqual(
     encodedPTS.map((pts) => sourceIndex.get(pts)),
-    expectedCodes,
+    expectedCodes.slice(-256),
   );
   const raw = join(artifact, 'codes.gray');
   await run(ffmpeg, ['-v', 'error', '-xerror', '-i', output, '-f', 'null', '-'], 'full-decode');
@@ -204,38 +295,114 @@ try {
   );
   const codes = decodeFrameCodes(await readFile(raw));
   assert.deepEqual(codes, expectedCodes);
-  const interval = workerProcessingInterval(snapshot, encodedPTS[0], encodedPTS.at(-1));
-  assert(interval);
-  assert.equal(interval.submittedFrames, expectedCount - 1);
-  assert.equal(interval.completedFrames, expectedCount - 1);
-  assert.equal(interval.pendingFrames, 0);
-  assert.equal(interval.decodedFrames, expectedCodes.at(-1) - expectedCodes[0]);
-  assert.equal(
-    interval.omittedBeforeEncoderFrames,
-    expectedCodes.at(-1) - expectedCodes[0] - (expectedCount - 1),
-  );
-  // Replay raw observations without calling the production duration aggregator.
-  const expectedDurations = {};
-  for (const [field, timestamp] of [
-    ['filterDuration', 'submittedAt'],
-    ['processingDuration', 'completedAt'],
-  ]) {
-    let total = 0,
-      maximum = 0,
-      known = true;
-    for (let i = 1; i < expectedCodes.length; i++) {
-      const decodedAt = snapshot.decoded.frames[expectedCodes[i]].observedAt;
-      const encodedAt = snapshot.encoded.frames[i][timestamp];
-      const elapsed = encodedAt - decodedAt;
-      if (encodedAt === null || !Number.isFinite(elapsed) || elapsed < 0) known = false;
-      total += elapsed;
-      maximum = Math.max(maximum, elapsed);
+  const replay = (snapshot, startPTS, endPTS, interval) => {
+    const includedCodes = expectedCodes.filter(
+      (id) => sourcePTS[id] > startPTS && sourcePTS[id] <= endPTS,
+    );
+    const startIndex = sourceIndex.get(startPTS),
+      endIndex = sourceIndex.get(endPTS);
+    assert.notEqual(startIndex, undefined);
+    assert.notEqual(endIndex, undefined);
+    assert(interval);
+    assert.equal(interval.sourceStartExclusive, startPTS);
+    assert.equal(interval.sourceEndInclusive, endPTS);
+    assert.equal(interval.decodedFrames, endIndex - startIndex);
+    assert.equal(interval.submittedFrames, includedCodes.length);
+    assert.equal(interval.omittedBeforeEncoderFrames, endIndex - startIndex - includedCodes.length);
+    const rawEncoded = new Map(
+      snapshot.encoded.frames.map((frame) => [encoderTime90k(frame), frame]),
+    );
+    const rawDecoded = new Map(
+      snapshot.decoded.frames.map((frame) => [frame.pts, frame.observedAt]),
+    );
+    const frames = includedCodes.map((id) => {
+      const frame = rawEncoded.get(sourcePTS[id]);
+      assert(frame);
+      return frame;
+    });
+    const completed = frames.filter((frame) => frame.completedAt !== null).length;
+    assert.equal(interval.completedFrames, completed);
+    assert.equal(interval.pendingFrames, frames.length - completed);
+    const expectedDurations = {};
+    for (const [field, timestamp] of [
+      ['filterDuration', 'submittedAt'],
+      ['processingDuration', 'completedAt'],
+    ]) {
+      let total = 0,
+        maximum = 0,
+        known = frames.length > 0;
+      for (const frame of frames) {
+        const decodedAt = rawDecoded.get(encoderTime90k(frame));
+        const encodedAt = frame[timestamp];
+        const elapsed = encodedAt - decodedAt;
+        if (
+          decodedAt === undefined ||
+          encodedAt === null ||
+          !Number.isFinite(elapsed) ||
+          elapsed < 0
+        )
+          known = false;
+        total += elapsed;
+        maximum = Math.max(maximum, elapsed);
+      }
+      expectedDurations[field] = known
+        ? { meanMs: total / frames.length, maximumMs: maximum }
+        : null;
+      assert.deepEqual(interval[field], expectedDurations[field]);
     }
-    expectedDurations[field] = known
-      ? { meanMs: total / (expectedCount - 1), maximumMs: maximum }
-      : null;
-    assert.deepEqual(interval[field], expectedDurations[field]);
+    return expectedDurations;
+  };
+  const interval = workerProcessingInterval(snapshot, encodedPTS[0], encodedPTS.at(-1));
+  const expectedDurations = replay(snapshot, encodedPTS[0], encodedPTS.at(-1), interval);
+  const liveWindows = new Map();
+  const seenDecoderWindows = new Map();
+  for (const sample of samples) {
+    assert(
+      sample.snapshot.decoded.frames.length <= 512 && sample.snapshot.encoded.frames.length <= 256,
+    );
+    const before = sample.beforeVideo.completed,
+      after = sample.video.completed;
+    for (const decoded of [before, after]) {
+      if (decoded) seenDecoderWindows.set(decoded.sequence, decoded);
+    }
+    if (!sample.window) continue;
+    const window = sample.window;
+    assert(
+      [before?.sequence, after?.sequence].includes(window.sequence),
+      'processing window must still be current',
+    );
+    assert(!sample.video.ended && !sample.beforeVideo.ended);
+    assert.equal(sample.video.invalidReason, null);
+    assert.equal(sample.beforeVideo.invalidReason, null);
+    for (const history of [sample.snapshot.decoded, sample.snapshot.encoded]) {
+      assert(!history.ended);
+      assert.equal(history.invalidReason, null);
+    }
+    const previous = seenDecoderWindows.get(window.previousSequence);
+    const current = seenDecoderWindows.get(window.sequence);
+    assert(previous && current);
+    for (const decoded of [previous, current]) {
+      assert(decoded.valid && decoded.freshFrames > 0);
+      assert.equal(decoded.duplicateFrames, 0);
+      assert.equal(decoded.reorderedFrames, 0);
+    }
+    assert.equal(window.sequence, window.previousSequence + 1);
+    assert.equal(window.scopeID, sample.snapshot.decoded.scopeID);
+    assert.equal(window.scopeID, sample.snapshot.encoded.scopeID);
+    assert.equal(window.firstPTS, current.firstPTS);
+    assert.equal(window.interval.sourceStartExclusive, previous.lastPTS);
+    assert.equal(window.interval.sourceEndInclusive, current.lastPTS);
+    assert.equal(window.interval.decodedFrames, current.freshFrames);
+    // A completed frozen result may outlive raw history. Replay its first complete observation.
+    const prior = liveWindows.get(window.sequence);
+    if (prior) assert.deepEqual(window, prior);
+    else {
+      replay(sample.snapshot, previous.lastPTS, current.lastPTS, window.interval);
+      if (window.interval.pendingFrames === 0 && window.interval.submittedFrames > 0)
+        liveWindows.set(window.sequence, window);
+    }
   }
+  if (paced) assert(liveWindows.size >= 2, 'At least two complete live windows must qualify');
   const streams = JSON.parse(
     await run(
       ffprobe,
@@ -254,16 +421,38 @@ try {
     codes,
     interval,
     expectedDurations,
+    liveWindows: [...liveWindows.values()],
+    paced,
     scope:
       'Finite local fixture. Reader-observed processing timing, not spare capacity, network or sustained-load qualification.',
   };
   await writeFile(join(artifact, 'results.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(
-    `PASS ${encoder}: ${sourcePTS.length} decoded source frames; ${codes.length} complete encoded/output identities; ${interval.submittedFrames} matched interval frames; filter timing ${interval.filterDuration ? 'observed' : 'unknown'}, total timing ${interval.processingDuration ? 'observed' : 'unknown'}`,
+    `PASS ${encoder}${paced ? ' paced' : ''}: ${sourcePTS.length} decoded source frames; ${codes.length} complete encoded/output identities; ${interval.submittedFrames} matched interval frames; filter timing ${interval.filterDuration ? 'observed' : 'unknown'}, total timing ${interval.processingDuration ? 'observed' : 'unknown'}`,
   );
 } finally {
+  clearInterval(sampleTimer);
+  const joins = [];
+  if (server) {
+    server.closeAllConnections();
+    joins.push(new Promise((resolve) => server.close(resolve)));
+  }
+  if (source) {
+    if (source.pid !== undefined) {
+      try {
+        process.kill(-source.pid, 'SIGKILL');
+      } catch {
+        /* Owned group already exited. */
+      }
+    }
+    source.kill('SIGKILL');
+    joins.push(deadline(sourceExit, 5000));
+  }
   if (pipeline) {
     pipeline.stop();
-    await deadline(pipeline.waitExit(), 10_000);
+    joins.push(deadline(pipeline.waitExit(), 10_000));
   }
+  const results = await Promise.allSettled(joins);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
 }

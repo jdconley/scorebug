@@ -41,3 +41,9 @@ describe('media tool configuration', () => {
     expect(loadConfig({ ...base, NVENC_ENABLED: 'true' }).ENCODER).toBe('nvenc');
   });
 });
+
+it('defaults optional processing diagnostics to auto and permits explicitly disabling them', () => {
+  expect(loadConfig(base).WORKER_PROCESSING).toBe('auto');
+  expect(loadConfig({ ...base, WORKER_PROCESSING: 'off' }).WORKER_PROCESSING).toBe('off');
+  expect(() => loadConfig({ ...base, WORKER_PROCESSING: 'true' })).toThrow();
+});

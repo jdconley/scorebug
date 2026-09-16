@@ -51,7 +51,7 @@ macOS hardware encoding and explicitly disables silent software fallback.
 
 Profiles preserve aspect ratio with padding. A lower input frame rate stays lower;
 these are manual presets, not adaptive quality or guarantees of the 24fps goal.
-Audio is AAC at 128 Kbps. Capability qualification and adaptation remain planned.
+Audio is AAC at 128 Kbps. Automatic profile qualification and adaptation remain planned.
 If `ENCODER` is omitted, software is the default; legacy `NVENC_ENABLED=true` selects
 NVENC only when an explicit encoder was not provided.
 
@@ -69,6 +69,10 @@ pnpm test:worker-processing software
 pnpm test:worker-processing software 60
 pnpm test:worker-processing videotoolbox
 pnpm test:worker-processing videotoolbox 60
+# Paced 24-second source with at least two complete live processing windows:
+pnpm test:worker-processing software 30 --paced
+pnpm test:worker-processing videotoolbox 30 --paced
+pnpm test:worker-processing software 60 --paced
 ```
 
 The media harness owns its API, two uniquely named MediaMTX containers, and synthetic
@@ -90,6 +94,25 @@ replays processing durations. Results and media are retained in a unique
 fail the check. Software 25/30/60 and VideoToolbox 30/60 pass on this Mac; the accepted
 `nvenc` option still needs qualification on NVIDIA hardware. This fixture establishes
 source correlation, not spare capacity, sustained performance or network delivery.
+Add `--paced` after an explicit source rate for a 24-second source sent through an
+owned loopback HTTP endpoint. The test samples real pipeline windows, independently
+checks adjacent source bounds and processing arithmetic, and requires at least two
+complete current windows after acquisition. Five-second input analysis observed on
+this Mac is part of startup, not fabricated steady-state processing coverage.
+
+Worker startup defaults to `WORKER_PROCESSING=auto`. It checks the configured FFmpeg's
+four encoder-statistics options with a three-second, 4 MiB bounded help query and
+then enables optional timing only if available. `WORKER_PROCESSING=off` bypasses the
+probe. Missing/failed/unsupported probes leave ordinary publication enabled without
+these diagnostics. This is an option check, not a hardware/profile capacity test.
+POSIX process-group cleanup covers configured wrappers and cancellation during startup.
+Native Windows skips the optional probe until job-object ownership is implemented;
+WSL follows the Linux path. None of this constitutes Windows host qualification.
+
+`snapshotProcessingWindow()` is currently an internal pipeline observation. It can
+update pending work while the decoder window is current, freezes completed results,
+and clears them on invalid/ended/superseded evidence. Negotiated API/native reporting,
+current-load classification and automatic quality control remain the next steps.
 
 ## Linux container
 

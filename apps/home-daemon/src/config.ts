@@ -10,6 +10,7 @@ const schema = z.object({
     .url()
     .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol)),
   ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
+  WORKER_PROCESSING: z.enum(['auto', 'off']).default('auto'),
   VIDEO_PROFILE: z.enum(['720p30', '1080p30', '2160p30']).default('1080p30'),
   FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
   FFPROBE_PATH: z.string().min(1).default('ffprobe'),

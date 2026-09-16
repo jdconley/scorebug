@@ -1,6 +1,10 @@
 import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
 import { observeDecodedPipe } from './decoded-pipe.js';
 import type { WorkerProcessingSnapshot } from './worker-processing.js';
+import {
+  WorkerProcessingWindows,
+  type WorkerProcessingWindow,
+} from './worker-processing-windows.js';
 import { DECODED_VIDEO_TRANSPORT_CLOCK } from '@scorebug/protocol';
 import {
   EncoderTimingTelemetry,
@@ -38,6 +42,7 @@ export type PipelineHandle = {
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
   snapshotProcessing?: () => WorkerProcessingSnapshot | null;
+  snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
 };
 
 function filterPath(value: string): string {
@@ -279,6 +284,7 @@ export function startPipeline(
   const decodedHistory = encoderTiming
     ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID)
     : undefined;
+  const processingWindows = encoderTiming ? new WorkerProcessingWindows() : undefined;
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
   let telemetryEOF = false;
   let outputProgress: PipelineProgress | null = null;
@@ -420,6 +426,13 @@ export function startPipeline(
     snapshotProcessing: () =>
       decodedHistory && encoderTiming
         ? { decoded: decodedHistory.snapshot(), encoded: encoderTiming.snapshot() }
+        : null,
+    snapshotProcessingWindow: () =>
+      processingWindows && decodedHistory && encoderTiming
+        ? processingWindows.observe(decodedVideo.snapshot(), {
+            decoded: decodedHistory.snapshot(),
+            encoded: encoderTiming.snapshot(),
+          })
         : null,
     snapshotDecodedVideo: () => ({
       ...decodedVideo.snapshot(),

@@ -514,9 +514,10 @@ and history, potentially with incomplete submissions after an interrupted encode
 These observed durations include scheduling/pipe delays and omit decode/filter work.
 They are not processor utilization, network capacity, viewer delivery or proof of
 nominal overall worker pressure. Real CPU and VideoToolbox probes show that normal
-pending depth differs by backend. Default pipeline arguments remain unchanged because
-older FFmpeg installations may lack these options. Production enablement requires
-runtime capability qualification, report freshness and policy classification work.
+pending depth differs by backend. Standalone pipeline callers still opt in explicitly.
+Worker startup now checks option availability as described below; older FFmpeg builds
+keep publishing without these optional diagnostics. Fresh reports and policy
+classification still require further integration.
 The source correlation below adds observations after decode. See the
 [worker timing plan](superpowers/plans/2026-09-15-worker-encoder-timing.md) and
 [FFmpeg's statistics documentation](https://ffmpeg.org/ffmpeg.html).
@@ -545,3 +546,32 @@ fully decodes output A/V and replays the raw timing aggregates. CPU 25/30/60 fps
 VideoToolbox 30/60 fps pass locally. These are three-second finite fixtures, not paced
 capacity or sustained-load qualification. NVENC remains unqualified. See the
 [processing plan](superpowers/plans/2026-09-15-worker-processing-correlation.md).
+
+## Live worker processing windows and startup availability
+
+`WorkerProcessingWindows`, exposed by `snapshotProcessingWindow()`, joins adjacent
+completed decoder windows over `(previous.lastPTS, current.lastPTS]`. It checks source
+counts and the current first PTS against retained history. Acquisition, skipped or
+empty windows, missing brackets and zero selected submissions cannot become frozen
+healthy completion. Pending work can complete on another read of the same window.
+Once all selected submissions complete, a copied result stays stable across history
+eviction; a superseding decoder window discards it. Invalid histories, changed window
+contents, rewinds, scope changes and closure cannot retain valid current evidence.
+Report freshness and publication/configuration ownership remain separate requirements.
+
+Worker startup defaults to an owned three-second, 4 MiB FFmpeg help query for all four
+encoder-statistics options. Unsupported probes disable optional diagnostics while
+normal streaming continues; `WORKER_PROCESSING=off` skips the query. POSIX process-group
+cleanup includes wrapper descendants and shutdown joins the cancelled probe. Native
+Windows currently returns `unsupported_platform` without starting this optional probe;
+WSL follows POSIX behavior. Actual encoder/profile qualification is still required.
+
+The paced fixture (`pnpm test:worker-processing software 30 --paced`) now sends a
+24-second source over an owned loopback HTTP connection, samples real windows and
+independently reconstructs their counts and timing from retained raw collections.
+The oracle rejects stale frozen sequences and requires two completed live windows.
+Input analysis consumes about five seconds in the local fixture, so the original
+18-second attempt correctly failed that gate. No startup coverage was invented to
+make it pass. These observations remain internal to the pipeline pending negotiated
+API/native reporting; they are not yet inputs to automatic adaptation. See the
+[live processing plan](superpowers/plans/2026-09-15-live-worker-processing-windows.md).
