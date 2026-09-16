@@ -297,3 +297,10 @@ Timestamped native transport evidence now retains optional
 statistics collection. Missing remains unknown and zero is preserved. These
 pacing diagnostics do not enter quality decisions or establish available network
 capacity; delivered video identity/cadence and audio coverage remain the gates.
+
+
+## Native compressed-frame diagnostics
+
+DEBUG profile fixtures now retain at most 25000 scalar pre-mux records containing source PTS, native observation time, actual compressed sample byte count and CoreMedia sync metadata. Evidence versions 4 (fixed) and 5 (adaptive) require every raw record to reconcile with phase counts, endpoints and maximum gaps; malformed, missing, overflow or non-sync phase-start evidence fails. Fresh native runs require these versions and enforce an 8 MiB serialized input cap; older completed evidence remains readable through the legacy qualifier.
+
+Sync follows the actual NotSync attachment value (absent/false means sync); invalid samples have no sync evidence. No video payload is retained, no new timer is introduced, and this metadata changes no transport or quality decision. It is not an independent H.264 bitstream parse or receiver picture-integrity proof. Compressed-output bins use observer time, not a network-capacity estimate. See the [measured drain batches and receiver recovery](superpowers/plans/2026-09-16-compressed-frame-evidence.md) for current failures and the next pacing experiment.

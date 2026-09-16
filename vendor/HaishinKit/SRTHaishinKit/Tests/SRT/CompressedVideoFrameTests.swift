@@ -19,6 +19,24 @@ import Testing
         let passthrough = SRTStream.CompressedVideoFrame(sampleBuffer: try makeSample(width: 960), generation: 1, wasEncoded: false)
         #expect(passthrough.valid && !passthrough.wasEncoded)
     }
+    @Test func copiesActualBytesAndSyncAttachmentValueWithoutInventingInvalidEvidence() throws {
+        for (notSync, expected) in [(nil, true), (false, true), (true, false)] as [(Bool?, Bool)] {
+            let sample = try makeSample(width: 960, bytes: 123)
+            if let notSync {
+                let attachments = try #require(CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true))
+                let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+                CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
+                    Unmanaged.passUnretained(notSync ? kCFBooleanTrue : kCFBooleanFalse).toOpaque())
+            }
+            let frame = SRTStream.CompressedVideoFrame(sampleBuffer: sample, generation: 1, wasEncoded: true)
+            #expect(frame.byteCount == 123)
+            #expect(frame.isSync == expected)
+        }
+        let invalid = SRTStream.CompressedVideoFrame(sampleBuffer: try makeSample(width: 960, bytes: 0), generation: 1, wasEncoded: true)
+        #expect(invalid.byteCount == 0 && invalid.isSync == nil)
+        let passthrough = SRTStream.CompressedVideoFrame(sampleBuffer: try makeSample(width: 960, bytes: 27), generation: 1, wasEncoded: false)
+        #expect(passthrough.byteCount == 27 && passthrough.isSync == true && !passthrough.wasEncoded)
+    }
     private func makeSample(width: Int32, bytes: Int = 8) throws -> CMSampleBuffer {
         var format: CMVideoFormatDescription?
         #expect(CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_H264,

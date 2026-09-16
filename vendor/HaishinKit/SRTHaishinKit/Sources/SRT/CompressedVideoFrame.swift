@@ -12,6 +12,10 @@ extension SRTStream {
         public let codec: FourCharCode
         public let valid: Bool
         public let wasEncoded: Bool
+        public let byteCount: Int
+        /// CoreMedia sync metadata, not a bitstream parse or receiver-delivery proof.
+        /// Invalid samples have no sync evidence. An absent NotSync key means sync.
+        public let isSync: Bool?
         init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool) {
             publishingGeneration = generation; sourcePTS = sampleBuffer.presentationTimeStamp
             self.wasEncoded = wasEncoded
@@ -20,9 +24,21 @@ extension SRTStream {
             let dimensions = isVideo ? CMVideoFormatDescriptionGetDimensions(format!) : CMVideoDimensions(width: 0, height: 0)
             width = dimensions.width; height = dimensions.height
             codec = format.map { CMFormatDescriptionGetMediaSubType($0) } ?? 0
+            byteCount = CMSampleBufferGetTotalSampleSize(sampleBuffer)
             valid = isVideo && sampleBuffer.imageBuffer == nil && CMSampleBufferDataIsReady(sampleBuffer) &&
-                CMSampleBufferGetNumSamples(sampleBuffer) == 1 && CMSampleBufferGetTotalSampleSize(sampleBuffer) > 0 &&
+                CMSampleBufferGetNumSamples(sampleBuffer) == 1 && byteCount > 0 &&
                 sourcePTS.isNumeric && sourcePTS.timescale > 0 && width > 0 && height > 0
+            if valid {
+                let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[String: Any]]
+                let notSync = attachments?.first?[kCMSampleAttachmentKey_NotSync as String]
+                if let notSync {
+                    isSync = (notSync as? Bool).map { !$0 }
+                } else {
+                    isSync = true
+                }
+            } else {
+                isSync = nil
+            }
         }
     }
 }

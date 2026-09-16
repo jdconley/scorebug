@@ -99,8 +99,10 @@ does not assert instantaneous rate convergence. See
 
 
 `SRTStream` also accepts an optional immutable `compressedVideoObserver`. Before
-muxing, it copies actual compressed sample dimensions, codec, PTS, validity and
-publishing generation into a scalar value. Raw-encoder output and compressed
+muxing, it copies actual compressed sample dimensions, codec, PTS, validity, byte count,
+CoreMedia sync metadata and publishing generation into a scalar value. Sync reads
+the NotSync attachment value (absent/false means sync); invalid samples have no
+sync evidence. This does not parse the H.264 bitstream or prove receiver delivery. Raw-encoder output and compressed
 passthrough remain distinguishable. The observer runs synchronously, including
 final drain, and must perform no I/O or waits; it cannot alter media delivery.
 This is pre-worker format evidence, not receiver delivery or rate-control proof.

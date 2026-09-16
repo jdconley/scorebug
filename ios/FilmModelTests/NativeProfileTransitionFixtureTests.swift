@@ -8,11 +8,42 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
         let proof = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
             broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), adaptive: true)
         for n in 0..<17 { record(proof, n, n.isMultiple(of: 2) ? .hd1080 : .sd540) }
-        XCTAssertEqual(try snapshot(proof)["formatVersion"] as? Int, 3)
+        XCTAssertEqual(try snapshot(proof)["formatVersion"] as? Int, 5)
         XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, false)
         XCTAssertEqual((try snapshot(proof)["phases"] as? [Any])?.count, 17)
         record(proof, 17, .sd540)
         XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+    }
+    func testRetainsActualFrameBytesSyncAndTimeIncludingExplicitNonSync() throws {
+        let proof = evidence()
+        for n in 0..<3 {
+            proof.record(generation: 1, pts: CMTime(value: Int64(n), timescale: 30), width: 1920,
+                height: 1080, valid: true, byteCount: 100 + n, isSync: n == 0, observedAt: 4 + Double(n) / 30)
+        }
+        proof.close()
+        let result = try snapshot(proof)
+        XCTAssertEqual(result["formatVersion"] as? Int, 4)
+        let frames = try XCTUnwrap(result["compressedFrames"] as? [[String: Any]])
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(frames.map { $0["byteCount"] as? Int }, [100, 101, 102])
+        XCTAssertEqual(frames.map { $0["isSync"] as? Bool }, [true, false, false])
+        XCTAssertEqual(frames.first?["observedAt"] as? Double, 4)
+        XCTAssertEqual((frames.last?["sourcePTS"] as? [String: Any])?["value"] as? String, "2")
+    }
+    func testInvalidMetadataAndCapacityCannotProduceCompleteFrameEvidence() throws {
+        for (bytes, sync) in [(0, true), (-1, false), (10, nil)] as [(Int, Bool?)] {
+            let proof = evidence()
+            proof.record(generation: 1, pts: .zero, width: 1920, height: 1080,
+                valid: true, byteCount: bytes, isSync: sync, observedAt: 1)
+            XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+            XCTAssertEqual((try snapshot(proof)["compressedFrames"] as? [Any])?.count, 0)
+        }
+        let proof = evidence()
+        for n in 0..<25_001 { record(proof, n, .hd1080) }
+        let result = try snapshot(proof)
+        XCTAssertEqual(result["invalid"] as? Bool, true)
+        XCTAssertEqual((result["compressedFrames"] as? [Any])?.count, 25_000)
+        XCTAssertEqual(result["frames"] as? Int, 25_000)
     }
     func testAdaptiveFixtureFlagsRequireQualityUplinkAndExclusiveBoundedHold() throws {
         let environment = ["SCOREBUG_TEST_ADAPTIVE_PROFILES": "1", "SCOREBUG_TEST_NATIVE_QUALITY": "1",
@@ -34,7 +65,7 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
     private func record(_ evidence: NativeProfileTransitionEvidence, _ frame: Int,
                         _ profile: PublishingVideoProfile, generation: UInt64 = 1, valid: Bool = true) {
         evidence.record(generation: generation, pts: CMTime(value: Int64(frame), timescale: 30),
-            width: Int32(profile.width), height: Int32(profile.height), valid: valid)
+            width: Int32(profile.width), height: Int32(profile.height), valid: valid, byteCount: 10, isSync: true)
     }
     private func snapshot(_ evidence: NativeProfileTransitionEvidence) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: evidence.data()) as? [String: Any])
@@ -165,7 +196,7 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
         let result = try snapshot(proof)
         XCTAssertEqual(result["frames"] as? Int, 25_000)
         XCTAssertEqual(result["invalid"] as? Bool, true)
-        XCTAssertLessThan(try proof.data().count, 12_000)
+        XCTAssertLessThan(try proof.data().count, 8 * 1024 * 1024)
     }
 }
 

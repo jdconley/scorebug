@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { qualifyNativeCompressedFrames } from './native-compressed-frames.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 
 export function nativeAdaptiveProfiles({
@@ -63,9 +64,15 @@ export function qualifyNativeProfileTransitions(
   format,
   snapshot,
   liveIDs,
-  { adaptive = false } = {},
+  { adaptive = false, requireFrameEvidence = false } = {},
 ) {
-  assert.equal(format.formatVersion, adaptive ? 3 : 2);
+  const hasFrameEvidence = format.formatVersion === (adaptive ? 5 : 4);
+  assert.ok(
+    hasFrameEvidence || (!requireFrameEvidence && format.formatVersion === (adaptive ? 3 : 2)),
+  );
+  const compressedFrames = hasFrameEvidence
+    ? qualifyNativeCompressedFrames(format, snapshot)
+    : undefined;
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);
   assert.equal(snapshot.isClosed, true);
@@ -248,6 +255,7 @@ export function qualifyNativeProfileTransitions(
     if (i > 0) assert.ok(r.acknowledgedAt > format.receipts[i - 1].acknowledgedAt);
   });
   return {
+    ...(compressedFrames ? { compressedFrames } : {}),
     scope: format.scope,
     publishingGeneration: format.publishingGeneration,
     phases,

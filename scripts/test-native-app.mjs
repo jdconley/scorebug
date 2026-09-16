@@ -643,14 +643,14 @@ try {
       );
       const bytes = await readFile(path);
       assert.ok(
-        bytes.length <= (adaptiveProfiles ? 64000 : 12000),
+        bytes.length <= 8 * 1024 * 1024,
         'Oversized native transition evidence',
       );
       profileTransitionQualification = qualifyNativeProfileTransitions(
         JSON.parse(bytes.toString('utf8')),
         observationSnapshot,
         liveSegments.flat(),
-        { adaptive: adaptiveProfiles },
+        { adaptive: adaptiveProfiles, requireFrameEvidence: true },
       );
     }
     videoObservation = qualifyVideoObservation({

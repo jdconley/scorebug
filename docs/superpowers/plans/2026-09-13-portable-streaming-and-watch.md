@@ -1053,3 +1053,10 @@ Next retain actual compressed-frame byte size and keyframe/IDR evidence around
 geometry changes before another transport-setting experiment. Prior simulator
 unsupported-property findings remain applicable; physical encoder behavior is
 still unproven. Production adaptation and device/host/soak requirements stay open.
+
+
+The [compressed-frame checkpoint](2026-09-16-compressed-frame-evidence.md) adds bounded actual pre-mux byte counts and native sync metadata, with independent phase/source/time reconciliation. All 160 SDK, 61 streaming, 211 app-model and 1014 tooling tests pass, along with the combined unsigned Apple Release build, exact SDK provenance verification and review.
+
+With unchanged settings, `native-app-98ZoEn` preserves all 8176 archive frames and 136 audio markers, but live still fails: 12-fps worst cadence, 171 absent identities and −108.1 ms end coverage. All 7799 compressed records reconcile. Individual frames are at most 47 KB; larger bursts are groups of frames released at encoder drain, 301–395 ms ahead of normal source cadence. Two long loss ranges resume at measured native sync points. The short upward trial produces 7.82 Mbps of video alone on the 4 Mbps link.
+
+Next test opt-in pre-mux source-cadence pacing with bounded ownership and joined cancellation/finish, while preserving every frame and timestamp. A recorded-data replay reduces batches but is not live qualification. Upward trials must separately account for measured profile cost and available capacity. Production adaptation remains disabled; device/Watch/host/soak requirements stay open.

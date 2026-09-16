@@ -274,3 +274,39 @@ test('acknowledgment follows completion and compressed observation within the ow
     );
   }
 });
+
+test('new native runs cannot silently qualify legacy evidence without compressed frames', () => {
+  const { format, snapshot, liveIDs } = fixture();
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(format, snapshot, liveIDs, { requireFrameEvidence: true }),
+  );
+  format.formatVersion = 4;
+  assert.throws(() => qualifyNativeProfileTransitions(format, snapshot, liveIDs));
+});
+
+test('current full profile evidence requires and returns independently reconciled compressed frames', () => {
+  for (const adaptive of [false, true]) {
+    const f = fixture(3, adaptive);
+    f.format.formatVersion = adaptive ? 5 : 4;
+    f.format.compressedFrames = f.format.phases.flatMap((p, phase) =>
+      Array.from({ length: p.frames }, (_, n) => ({
+        sourcePTS: pts(phase * 900 + n),
+        observedAt: p.firstObservedAt + n / 30,
+        byteCount: n % 60 === 0 ? 4000 : 1000,
+        isSync: n % 60 === 0,
+      })),
+    );
+    const result = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+      adaptive,
+      requireFrameEvidence: true,
+    });
+    assert.equal(result.compressedFrames.frames, 2700);
+    f.format.compressedFrames[100].byteCount = 0;
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+        adaptive,
+        requireFrameEvidence: true,
+      }),
+    );
+  }
+});

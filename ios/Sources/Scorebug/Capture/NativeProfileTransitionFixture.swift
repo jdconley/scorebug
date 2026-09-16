@@ -21,6 +21,10 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
         var last: CMTime, frames: Int, lastCompletedAt: Double
         var maximumCompletionGap: Double, maximumEncodeLatency: Double
     }
+    private struct CompressedFrame {
+        let pts: CMTime, observedAt: Double, byteCount: Int, isSync: Bool
+    }
+    private var compressedFrames: [CompressedFrame] = []
     private var encoderSessions: [EncoderSession] = []
     private var encoderFrames = 0
     private var phases: [Phase] = []
@@ -31,19 +35,21 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     init(scope: VideoFrameObservationScope, adaptive: Bool = false) { self.scope = scope; self.adaptive = adaptive }
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
-               height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264)
+               height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264,
+               byteCount: frame.byteCount, isSync: frame.isSync)
     }
-    func record(generation: UInt64, pts: CMTime, width: Int32, height: Int32, valid: Bool, observedAt: Double = ProcessInfo.processInfo.systemUptime) {
+    func record(generation: UInt64, pts: CMTime, width: Int32, height: Int32, valid: Bool, byteCount: Int, isSync: Bool?, observedAt: Double = ProcessInfo.processInfo.systemUptime) {
         lock.withLock {
             guard !closed, frames < 25_000 else { invalid = true; return }
             frames += 1
-            guard valid, generation > 0, pts.isNumeric, pts.timescale > 0, pts.epoch == 0,
+            guard valid, byteCount > 0, let isSync, generation > 0, pts.isNumeric, pts.timescale > 0, pts.epoch == 0,
                   pts >= .zero, width > 0, height > 0, observedAt.isFinite, (0...1e12).contains(observedAt) else { invalid = true; return }
             if let prior = self.generation, prior != generation { invalid = true; return }
             self.generation = generation
             if let last = phases.last {
                 guard pts > last.last, observedAt >= last.lastObservedAt else { invalid = true; return }
                 if last.width == width && last.height == height {
+                    compressedFrames.append(.init(pts: pts, observedAt: observedAt, byteCount: byteCount, isSync: isSync))
                     phases[phases.count - 1].frames += 1
                     phases[phases.count - 1].maximumSourceGap = max(last.maximumSourceGap, CMTimeSubtract(pts, last.last).seconds)
                     phases[phases.count - 1].maximumObservationGap = max(last.maximumObservationGap, observedAt - last.lastObservedAt)
@@ -53,6 +59,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                 }
             }
             guard phases.count < phaseLimit else { invalid = true; return }
+            compressedFrames.append(.init(pts: pts, observedAt: observedAt, byteCount: byteCount, isSync: isSync))
             phases.append(.init(width: width, height: height, first: pts, last: pts, frames: 1, maximumSourceGap: 0, firstObservedAt: observedAt, lastObservedAt: observedAt, maximumObservationGap: 0))
         }
     }
@@ -92,11 +99,13 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     func close() { lock.withLock { closed = true } }
     func data() throws -> Data {
         let object: [String: Any] = lock.withLock {
-            ["formatVersion": adaptive ? 3 : 2, "isClosed": closed, "invalid": invalid, "frames": frames,
+            ["formatVersion": adaptive ? 5 : 4, "isClosed": closed, "invalid": invalid, "frames": frames,
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],
              "publishingGeneration": generation.map(String.init) as Any? ?? NSNull(),
+             "compressedFrames": compressedFrames.map { ["sourcePTS": Self.time($0.pts),
+                "observedAt": $0.observedAt, "byteCount": $0.byteCount, "isSync": $0.isSync] as [String: Any] },
              "phases": phases.map { ["width": $0.width, "height": $0.height, "frames": $0.frames,
                 "firstSourcePTS": Self.time($0.first), "lastSourcePTS": Self.time($0.last),
                 "maximumSourceGapSeconds": $0.maximumSourceGap, "firstObservedAt": $0.firstObservedAt,
