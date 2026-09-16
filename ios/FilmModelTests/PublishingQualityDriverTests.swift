@@ -5,6 +5,23 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testTransportEvidencePreservesBandwidthEstimateOnActualCollectionWithoutInventingCapacity() throws {
+        var history = PublishingTransportStatisticsTracker()
+        for (time, bandwidth) in [(10.0, 0.0), (10.25, 3.875), (10.5, 128.0)] {
+            history.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(time * 1000),
+                sentBytes: UInt64(time * 1000), retransmittedBytes: 0, droppedPackets: 0,
+                rttMilliseconds: 1, estimatedBandwidthMbps: bandwidth, senderBufferedBytes: 1,
+                senderBufferMilliseconds: 1, availableSenderBytes: 1000))
+        }
+        let evidence = PublishingQualityDriver.transportEvidence(history.snapshot)
+        let samples = try XCTUnwrap(evidence["samples"] as? [[String: Any]])
+        XCTAssertEqual(samples.count, 3)
+        XCTAssertEqual(samples.compactMap { $0["estimatedBandwidthMbps"] as? Double }, [0, 3.875, 128])
+        XCTAssertEqual(samples.compactMap { $0["sampledAt"] as? Double }, [10, 10.25, 10.5])
+        XCTAssertTrue(samples.allSatisfy { $0["usableVideoCapacity"] == nil })
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: evidence))
+    }
+
     func testTransportEvidenceKeepsNegotiatedDelayOnItsActualSampleAndPreservesUnknown() throws {
         var history = PublishingTransportStatisticsTracker()
         for (time, delay) in [(10.0, nil as Int32?), (10.25, 120), (10.5, 0)] {

@@ -1067,3 +1067,19 @@ The [source-cadence pacing checkpoint](2026-09-16-source-cadence-pacing.md) adds
 In `native-app-xJ7FLN`, all 7828 frames prove actual pacing, and the final ten frames of each phase span about 300 ms instead of 26–80 ms. All 8203 archive frames and 136 audio markers remain intact. Live still fails at 12.8-fps worst cadence, 167 absent identities, 37 repeated observations and −158.2 ms end coverage. The 7.85-Mbps upward trial still overloads the 4-Mbps link. Keep pacing opt-in and production adaptation disabled.
 
 Next establish fresh usable headroom against measured candidate-profile cost before upgrading. First qualify actual SRT bandwidth/ACK evidence against the known rate phases; use bounded probing if it cannot establish capacity. Neither a pacing ceiling nor requested bitrate is sufficient, and disabling all future upgrades would not satisfy the highest-sustainable-quality requirement. Device/Watch/host/soak qualification remains open.
+
+
+The [native bandwidth estimate checkpoint](2026-09-16-native-bandwidth-estimate.md)
+retains the existing actual SRT estimate in bounded diagnostic evidence without
+changing controller decisions. All 1239 relevant tests pass. In native run
+`native-app-NxygNl`, estimates during the interior 4 Mbps interval range from
+41.184 to 7408.020 Mbps; the failed upward trial's latest estimate is 6177.684 Mbps.
+The gauge is fresh but unsuitable for capacity admission in this local setup.
+
+All 8200 archive frames and 136 audio markers remain intact. Live delivery still
+fails at 15 fps with 176 absent identities, 66 repeated observations and −230.3 ms
+A/V end coverage. Keep production adaptation disabled. Next qualify a bounded
+additional-traffic probe while preserving the current video profile and archive,
+then admit upgrades only with receiver-verified headroom against actual candidate
+cost. Do not inject the fixture rate into decisions or disable future upgrades
+permanently. Phone/Watch, remote-host and soak qualification remain open.

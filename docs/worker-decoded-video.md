@@ -313,3 +313,15 @@ The adaptive DEBUG simulator fixture accepts exact `SCOREBUG_TEST_SOURCE_CADENCE
 This mode uses at most sixteen queued compressed samples plus one consumer-held sample, with the existing 2 MiB per-item limit and terminal overflow failure. Transport queue limits are unchanged. Raw frame evidence adds actual `dequeuedAt` and `sourceCadencePaced`; dequeue time is distinct from encoder completion and post-pacing observation. Enabled experiments require independent mode, chronological and source-eligibility checks across all phases. Existing completed raw-frame evidence without these fields remains readable.
 
 The [native measurement](superpowers/plans/2026-09-16-source-cadence-pacing.md) confirms drain-batch smoothing and an intact archive, but live still fails during constrained-link adaptation. The mode remains experimental and does not establish capacity or qualify production streaming.
+
+
+### Native packet-pair bandwidth estimate
+
+The [bandwidth estimate checkpoint](superpowers/plans/2026-09-16-native-bandwidth-estimate.md)
+adds timestamped `estimatedBandwidthMbps` to native quality diagnostics. It never
+populates usable capacity. Run `native-app-NxygNl` reports 41–7408 Mbps in the
+interior 4 Mbps test interval and 6178 Mbps immediately before the failed upgrade.
+This local estimate cannot qualify upward admission. Archive media passes again
+(8200 frames / 136 markers); live identity, cadence (15 fps) and A/V coverage fail.
+The next experiment is a bounded, receiver-observed capacity probe; production
+adaptation remains disabled.

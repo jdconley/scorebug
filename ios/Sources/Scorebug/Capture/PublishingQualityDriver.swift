@@ -210,6 +210,7 @@ import ScorebugMedia
                     "elapsedMilliseconds": String(s.elapsedMilliseconds), "sentBytes": String(s.sentBytes),
                     "retransmittedBytes": String(s.retransmittedBytes), "droppedPackets": s.droppedPackets,
                     "rttMilliseconds": s.rttMilliseconds, "senderBufferMilliseconds": s.senderBufferMilliseconds,
+                    "estimatedBandwidthMbps": s.estimatedBandwidthMbps,
                     "senderDeliveryDelayMilliseconds": optional(s.senderDeliveryDelayMilliseconds),
                     "senderMaximumBandwidthMbps": optional(s.senderMaximumBandwidthMbps),
                     "packetSendPeriodMicroseconds": optional(s.packetSendPeriodMicroseconds)] as [String: Any] }]
