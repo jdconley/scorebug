@@ -13,6 +13,7 @@ final class TSWriter {
     /// An asynchronous sequence for writing data.
     public var output: AsyncStream<Data> {
         outputQueue?.finish()
+        outputAccounting.finish()
         outputAccounting = TransportOutputAccounting()
         let queue = PublishingQueue<Data>(boundary: "transport muxer", limits: outputLimits, failure: failure)
         outputQueue = queue
@@ -254,6 +255,7 @@ final class TSWriter {
         pending.removeAll(keepingCapacity: false)
         pendingBytes = 0
         outputQueue?.finish()
+        outputAccounting.finish()
         self.failure.fail(.muxerFailed(reason: String(describing: failure)))
     }
 
@@ -264,6 +266,7 @@ final class TSWriter {
         // never arrived before stop. No valid common-origin stream was emitted.
         guard pending.isEmpty else { fail(.incompleteStartup); return }
         outputQueue?.finish()
+        outputAccounting.finish()
     }
 
     /// Clears the writer object for new transport stream.
@@ -287,6 +290,7 @@ final class TSWriter {
         rotatedClockTicks = 0
         expectedMedias.removeAll()
         outputQueue?.finish()
+        outputAccounting.finish()
         outputQueue = nil
         outputAccounting = TransportOutputAccounting()
         failure.finish()

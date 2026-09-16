@@ -6,6 +6,99 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTStreamPaddingTests {
+    @Test(arguments: [1_000_000, 2_000_000]) func probeReachesTargetWithoutDependingOnAnotherMediaFrameAndThenExpires(rate: Int) async throws {
+        let output = StreamPaddingBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try paddingVideo(0))
+        let end = ContinuousClock.now + .seconds(2)
+        while output.videoStarts < 1 && ContinuousClock.now < end { await Task.yield() }
+        try #require(output.videoStarts == 1)
+        let generation = try #require(await stream.publishingGeneration)
+        let started = try await stream.beginBandwidthProbe(bitRate: rate, publishingGeneration: generation)
+        try await Task.sleep(for: .milliseconds(240))
+        let observedAt = ProcessInfo.processInfo.systemUptime
+        let active = try #require(await stream.bandwidthProbeSnapshot)
+        let accountedBits = Double(active.acceptedPayloadBytes / 1316) * 1360 * 8
+        print("Probe finite accounted rate: \(accountedBits / (observedAt - started.startedAt)) bps")
+        print("Probe intervals: \(output.intervals)")
+        #expect(accountedBits / (observedAt - started.startedAt) >= Double(rate) * 0.8)
+        #expect(active.reason == nil)
+        try await Task.sleep(for: .milliseconds(120))
+        let expired = try #require(await stream.bandwidthProbeSnapshot)
+        #expect(expired.reason == .leaseExpired)
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await stream.bandwidthProbeSnapshot?.acceptedPayloadBytes == expired.acceptedPayloadBytes)
+        #expect(output.videoStarts == 1)
+        await stream.finish(); await connection.close()
+        #expect(await stream.publishingError == nil)
+    }
+    @Test func concurrentCloseJoinsWakeOwnerBeforePublicationCanRestart() async throws {
+        let gate = StreamProbeWakeGate(); defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in await gate.wait() })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        _ = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation)
+        var end = ContinuousClock.now + .seconds(1)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        let first = Task { await stream.close(); gate.didClose() }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.bandwidthProbeSnapshot?.reason != .closed && ContinuousClock.now < end { await Task.yield() }
+        try #require(await stream.bandwidthProbeSnapshot?.reason == .closed)
+        let second = Task { await stream.close(); gate.didClose() }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(gate.closes == 0)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration == nil)
+        gate.release(); await first.value; await second.value
+        #expect(gate.closes == 2)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration != nil)
+        await stream.close(); await connection.close()
+    }
+    @Test func finishStillJoinsOriginalDrainWhenCloseOverlaps() async throws {
+        let wake = StreamProbeWakeGate(), peer = PaddingMediaGate(), output = StreamPaddingBytes()
+        defer { wake.release(); peer.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { data in
+            peer.enter(); output.append(data); return Int32(data.count)
+        }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in await wake.wait() })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        var end = ContinuousClock.now + .seconds(1)
+        while output.videoStarts < 1 && ContinuousClock.now < end { await Task.yield() }
+        try #require(output.videoStarts == 1)
+        let generation = try #require(await stream.publishingGeneration)
+        _ = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation)
+        peer.arm(); await stream.append(try paddingVideo(1))
+        end = ContinuousClock.now + .seconds(1)
+        while (!wake.entered || !peer.entered) && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered && peer.entered)
+        let first = Task { await stream.finish() }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.publishingGeneration != nil && ContinuousClock.now < end { await Task.yield() }
+        try #require(await stream.publishingGeneration == nil)
+        let close = Task { await stream.close() }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.readyState != .idle && ContinuousClock.now < end { await Task.yield() }
+        try #require(await stream.readyState == .idle)
+        let second = Task { await stream.finish(); wake.didClose() }
+        try await Task.sleep(for: .milliseconds(10))
+        wake.release(); await close.value
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(wake.closes == 0, "Finish must join the original blocked transport drain")
+        peer.release(); await first.value; await second.value
+        #expect(wake.closes == 1)
+        await connection.close()
+    }
     @Test func defaultDisabledAndUnreadyPublicationCannotProbe() async throws {
         let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
         let disabled = SRTStream(connection: connection)
@@ -93,11 +186,12 @@ import Testing
         try #require(output.videoStarts == 1)
         let generation = try #require(await stream.publishingGeneration)
         _ = try await stream.beginBandwidthProbe(bitRate: 250_000, publishingGeneration: generation)
-        try await Task.sleep(for: .milliseconds(55))
         gate.arm(); await stream.append(try paddingVideo(1))
         end = ContinuousClock.now + .seconds(2)
         while !gate.entered && ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(1)) }
         try #require(gate.entered)
+        try await Task.sleep(for: .milliseconds(55))
+        #expect(output.nulls == 0)
         await stream.append(try paddingVideo(2)); await stream.append(try paddingVideo(3))
         var finishing: Task<Void, Never>?
         if finish {
@@ -139,7 +233,6 @@ import Testing
         while output.videoStarts < 1 && ContinuousClock.now < end { await Task.yield() }
         let generation = try #require(await stream.publishingGeneration)
         _ = try await stream.beginBandwidthProbe(bitRate: 250_000, publishingGeneration: generation)
-        try await Task.sleep(for: .milliseconds(55))
         gate.arm(); await stream.append(try paddingVideo(1))
         end = ContinuousClock.now + .seconds(2)
         while !gate.entered && ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(1)) }
@@ -176,8 +269,11 @@ private func probeStatistics(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ c
 }
 private final class StreamPaddingBytes: @unchecked Sendable {
     private let lock = NSLock(); private var packets: [TSPacket] = []
+    private var accepted: [Double] = []
+    var intervals: [Double] { lock.withLock { zip(accepted, accepted.dropFirst()).map { ($1 - $0) * 1000 } } }
     func append(_ data: Data) {
         lock.withLock {
+            if data == SRTBandwidthProbe.message { accepted.append(ProcessInfo.processInfo.systemUptime) }
             for at in stride(from: 0, to: data.count, by: 188) {
                 if at + 188 <= data.count, let p = TSPacket(data: data.subdata(in: at..<at + 188)) { packets.append(p) }
             }
@@ -232,4 +328,24 @@ private func paddingVideo(_ frame: Int) throws -> CMSampleBuffer {
         formatDescription: format, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
         sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample) == noErr)
     return try #require(sample)
+}
+
+private final class StreamProbeWakeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var closeCount = 0
+    var entered: Bool { lock.withLock { continuation != nil } }
+    var closes: Int { lock.withLock { closeCount } }
+    func didClose() { lock.withLock { closeCount += 1 } }
+    func wait() async {
+        await withCheckedContinuation { c in
+            lock.withLock {
+                if released { c.resume() } else { continuation = c }
+            }
+        }
+    }
+    func release() {
+        lock.withLock { released = true; continuation?.resume(); continuation = nil }
+    }
 }

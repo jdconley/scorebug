@@ -1202,3 +1202,22 @@ actually achieve the intended load while preserving media priority, then add
 attempt-bound receiver accounting and capacity admission against measured profile
 cost. Do not infer exact pressure threshold timing from the current reason-only
 snapshot. Production adaptation and phone/Watch/other-host/soak gates remain open.
+
+
+The [probe opportunity scheduler](2026-09-16-probe-opportunity-scheduling.md)
+removes the measured frame-rate bottleneck using one coalesced wake signal and
+one optional strict timer; the existing transport consumer still sends all media
+and drains queued media first. Shared teardown joins entered timer callbacks and
+preserves finish/replacement ownership. All 197 SDK and 70 adapter tests, simulator
+test build, combined iPhone/Watch Release build and upstream provenance pass.
+
+Actual renewal `native-app-LZBHFN` achieves 0.989926 Mbps accounted against its
+1 Mbps request while preserving all 3,727 archive frames / 62 audio markers and
+3,351 retained live frames / 55 markers; minimum reported live cadence is 29.6 fps.
+The next pressure attempt `native-app-2jcK34` fails archive queue capacity before
+probe admission or constrained traffic. It exposes a late synthetic producer
+catching up 32 frames in about 130 ms. Its initiating stall is unproven, and this
+is an unresolved recording failure, not a successful pressure trial. Next reproduce
+and address that archive/source burst, then repeat pressure qualification before
+receiver capacity or adaptive upgrades. Physical devices, native Watch networking,
+remote hosts and long soaks remain open.

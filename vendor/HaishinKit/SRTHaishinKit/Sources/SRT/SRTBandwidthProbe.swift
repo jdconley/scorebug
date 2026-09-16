@@ -78,6 +78,16 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         tokenAt = at
         return tokens >= 1360
     }
+    /// A wake is only an opportunity. The same token cap and permit are checked
+    /// again at native submission, so delayed timers never accumulate a burst.
+    func nextOpportunityDelay(now: () -> Double) -> Double? {
+        lock.withLock {
+            let at = now()
+            guard check(at) else { return nil }
+            _ = eligible(at)
+            return max(0, (1360 - tokens) * 8 / Double(bitRate))
+        }
+    }
     func isEligible(now: () -> Double) -> Bool { lock.withLock { eligible(now()) } }
     @discardableResult func renew(now: () -> Double) -> Bool {
         lock.withLock {

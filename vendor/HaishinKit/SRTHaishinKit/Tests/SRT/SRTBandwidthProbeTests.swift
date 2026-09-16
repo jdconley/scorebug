@@ -4,6 +4,57 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite struct SRTBandwidthProbeTests {
+    @Test func opportunityDelayTracksTokensWithoutBankingCatchUpTraffic() throws {
+        let probe = try makeProbe()
+        #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10 })) - 0.01088) < 0.000001)
+        #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10.005 })) - 0.00588) < 0.000001)
+        #expect(probe.nextOpportunityDelay(now: { 10.2 }) == 0)
+        #expect(try probe.offer(statistics: stats(10.2), now: { 10.2 }, send: { true }))
+        #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10.2 })) - 0.01088) < 0.000001)
+        #expect(probe.nextOpportunityDelay(now: { 10.3 }) == nil)
+        #expect(probe.snapshot(now: { 10.3 }).reason == .leaseExpired)
+    }
+    @Test func transportWakeCoalescesAndClosedGenerationCannotWakeOrAdmit() async {
+        let accounting = TransportOutputAccounting()
+        for _ in 0..<1000 { accounting.wake() }
+        #expect(accounting.enqueue { true })
+        accounting.finish()
+        var wakes = 0
+        for await _ in accounting.wakes { wakes += 1 }
+        #expect(wakes == 1)
+        #expect(accounting.pending == 1)
+        #expect(!accounting.enqueue { Issue.record("Closed output admitted"); return true })
+        #expect(accounting.dequeue())
+        #expect(accounting.pending == 0)
+        accounting.wake()
+    }
+    @Test func wakeOwnerCancelledBeforeTimerResumeStillJoinsWithoutWaking() async throws {
+        let at = ProcessInfo.processInfo.systemUptime
+        let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(at), at: at)
+        let owner = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await SRTProbeWakeSchedule.run(probe: probe, wake: { Issue.record("Cancelled owner woke transport") })
+        }
+        await owner.value
+    }
+    @Test func wakeOwnerCancellationJoinsEnteredHandler() async throws {
+        let at = ProcessInfo.processInfo.systemUptime
+        let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(at), at: at)
+        let gate = ProbeSubmissionGate(); defer { gate.release() }
+        let owner = Task { await SRTProbeWakeSchedule.run(probe: probe, wake: { gate.enter() }); gate.markJoined() }
+        let end = ContinuousClock.now + .seconds(1)
+        while !gate.entered && ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(1)) }
+        try #require(gate.entered)
+        owner.cancel()
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!gate.joined)
+        gate.release()
+        await owner.value
+        let entries = gate.entries
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(gate.entries == entries)
+        #expect(entries == 1)
+    }
     @Test func nullPacketShapeAndOneMessageTokenBound() throws {
         let data = SRTBandwidthProbe.message
         #expect(data.count == 1316)
@@ -132,7 +183,12 @@ import Testing
 private final class ProbeSubmissionGate: @unchecked Sendable {
     private let lock = NSLock(), signal = DispatchSemaphore(value: 0)
     private var didEnter = false
+    private var entryCount = 0
+    private var didJoin = false
+    var joined: Bool { lock.withLock { didJoin } }
+    func markJoined() { lock.withLock { didJoin = true } }
+    var entries: Int { lock.withLock { entryCount } }
     var entered: Bool { lock.withLock { didEnter } }
-    func enter() { lock.withLock { didEnter = true }; _ = signal.wait(timeout: .now() + 5) }
+    func enter() { lock.withLock { didEnter = true; entryCount += 1 }; _ = signal.wait(timeout: .now() + 5) }
     func release() { signal.signal() }
 }

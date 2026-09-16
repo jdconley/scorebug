@@ -1327,7 +1327,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,281 @@
+@@ -8,6 +8,288 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1357,6 +1357,8 @@
 +    private var sourceCadenceClock = SourceCadenceClock()
 +    private let allowsBandwidthProbes: Bool
 +    private var bandwidthProbe: SRTBandwidthProbe?
++    private let probeWakeRunner: @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void
++    private var probeWakeTask: Task<Void, Never>?
 +    private var probeStarting = false
 +    private var probeConfigurationRevision: UInt64 = 0
 +    private func invalidateProbeConfiguration() {
@@ -1385,6 +1387,10 @@
 +        let at = ProcessInfo.processInfo.systemUptime
 +        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at)
 +        bandwidthProbe = probe
++        let accounting = writer.outputAccounting
++        probeWakeTask = Task {
++            await probeWakeRunner(probe, accounting)
++        }
 +        return probe.snapshot(now: { at })
 +    }
 +    public func renewBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws -> SRTBandwidthProbeSnapshot {
@@ -1606,10 +1612,11 @@
 +    private var publishingTasks: PublishingTasks?
 +    private var finishingGeneration: UInt64?
 +    private var finishTask: Task<Void, Never>?
++    private var closeTask: Task<Void, Never>?
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +297,7 @@
+@@ -22,7 +304,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1618,7 +1625,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +307,32 @@
+@@ -32,8 +314,39 @@
      }
 
      /// Creates a new stream object.
@@ -1631,6 +1638,9 @@
 +                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
 +                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
++        probeWakeRunner = { probe, accounting in
++            await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
++        }
 +        self.pacesEncodedVideo = pacesEncodedVideo
 +        pacingSleep = { try await Task.sleep(for: .seconds($0)) }
 +        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
@@ -1644,15 +1654,19 @@
 +         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
 +         pacesEncodedVideo: Bool = false,
 +         allowsBandwidthProbes: Bool = false,
++         probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
++             await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
++         },
 +         pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
++        self.probeWakeRunner = probeWakeRunner
 +        self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
 +        self.outgoing = outgoing; self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +344,7 @@
+@@ -45,7 +358,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1661,11 +1675,11 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +356,27 @@
+@@ -57,8 +370,28 @@
              }
              return
          }
-+        guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
++        guard readyState == .idle, closeTask == nil, finishingGeneration == nil, videoReplacement == nil else { return }
 +        generation &+= 1
 +        sourceCadenceClock = SourceCadenceClock()
 +        bandwidthProbe = nil
@@ -1684,13 +1698,14 @@
 +        let audioOutput = outgoing.audioOutputStream
 +        let videoInput = outgoing.videoInputStream
 +        let transportOutput = writer.output
++        let transportAccounting = writer.outputAccounting
 +        outgoing.startRunning()
          readyState = .publishing
 -        outgoing.startRunning()
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +386,57 @@
+@@ -68,26 +401,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1747,13 +1762,20 @@
 +                }
 +            },
 +            transport: Task {
-+                for await data in transportOutput {
++                var iterator = transportOutput.makeAsyncIterator()
++                for await _ in transportAccounting.wakes {
 +                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+                    writer.didDequeueOutput()
-+                    await connection.send(data, generation: connectionSession)
-+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+                    if publishingGeneration == session, writer.pendingOutputCount == 0, let probe = bandwidthProbe {
-+                        await connection.sendPadding(probe, pendingMedia: writer.outputAccounting, generation: connectionSession)
++                    // Exactly one consumer owns all media and optional sends.
++                    // A wake may coalesce freely; data stays in the bounded queue.
++                    while transportAccounting.pending > 0 {
++                        guard let data = await iterator.next() else { return }
++                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                        writer.didDequeueOutput()
++                        await connection.send(data, generation: connectionSession)
++                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    }
++                    if publishingGeneration == session, let probe = bandwidthProbe {
++                        await connection.sendPadding(probe, pendingMedia: transportAccounting, generation: connectionSession)
 +                    }
 +                }
 +            },
@@ -1768,7 +1790,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +465,76 @@
+@@ -116,16 +487,90 @@
          readyState = .playing
      }
 
@@ -1779,12 +1801,14 @@
 +    /// abort, and publication cannot restart until this operation has joined.
 +    public func finish(timeout: Duration = .seconds(2)) async {
 +        bandwidthProbe?.cancel(.finished)
++        probeWakeTask?.cancel()
 +        if let state = videoReplacement {
 +            await abortVideoReplacement(id: state.id, error: .interrupted)
 +            _ = await state.task?.result
 +            return // A newer publication may start once the replacement owner joins.
 +        }
 +        if let finishTask { await finishTask.value; return }
++        if let closeTask { await closeTask.value; return }
 +        guard readyState == .publishing, let tasks = publishingTasks else { return }
 +        let session = generation
 +        finishingGeneration = session
@@ -1809,6 +1833,7 @@
 +            failure.fail(.outputTerminated(boundary: "SRT finish deadline"))
 +            await close()
 +        }
++        await probeWakeTask?.value
 +        await tasks.input.value
 +        if generation == session, publishingError == nil {
 +            let completion = outgoing.makeVideoCompletion()
@@ -1832,7 +1857,11 @@
 -        guard readyState != .idle else {
 -            return
 -        }
++        if let closeTask { await closeTask.value; return }
 +        bandwidthProbe?.cancel(.closed)
++        let wakeTask = probeWakeTask
++        wakeTask?.cancel()
++        probeWakeTask = nil
 +        videoReplacement?.interrupt(.interrupted)
 +        generation &+= 1
 +        sourceCadenceClock = SourceCadenceClock()
@@ -1846,11 +1875,18 @@
 -        outgoing.stopRunning()
 -        Task { await incoming.stopRunning() }
          readyState = .idle
-+        await incoming.stopRunning()
++        let closing = Task {
++            await wakeTask?.value
++            await incoming.stopRunning()
++            // Clear inside the shared owner so every caller sees reusable state.
++            closeTask = nil
++        }
++        closeTask = closing
++        await closing.value
      }
 
      /// Sets the expected media.
-@@ -146,23 +555,33 @@
+@@ -146,23 +591,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -1886,7 +1922,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +591,34 @@
+@@ -172,16 +627,34 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -2035,7 +2071,7 @@
 
  /// An object that represents writes MPEG-2 transport stream data.
  final class TSWriter {
-@@ -11,10 +12,22 @@
+@@ -11,10 +12,23 @@
      static let defaultSegmentDuration: Double = 2
      /// An asynchronous sequence for writing data.
      public var output: AsyncStream<Data> {
@@ -2044,6 +2080,7 @@
 -        }
 -    }
 +        outputQueue?.finish()
++        outputAccounting.finish()
 +        outputAccounting = TransportOutputAccounting()
 +        let queue = PublishingQueue<Data>(boundary: "transport muxer", limits: outputLimits, failure: failure)
 +        outputQueue = queue
@@ -2062,7 +2099,7 @@
      /// Specifies the exptected medias = [.video, .audio].
      var expectedMedias: Set<AVMediaType> = []
      /// Specifies the audio format.
-@@ -26,6 +39,7 @@
+@@ -26,6 +40,7 @@
              var data = ESSpecificData()
              data.streamType = audioFormat.formatDescription.streamType
              data.elementaryPID = Self.defaultAudioPID
@@ -2070,7 +2107,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              audioContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -40,6 +54,7 @@
+@@ -40,6 +55,7 @@
              var data = ESSpecificData()
              data.streamType = videoFormat.streamType
              data.elementaryPID = Self.defaultVideoPID
@@ -2078,7 +2115,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              videoContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -68,73 +83,187 @@
+@@ -68,73 +84,189 @@
          }
          return false
      }
@@ -2313,6 +2350,7 @@
 +        pending.removeAll(keepingCapacity: false)
 +        pendingBytes = 0
 +        outputQueue?.finish()
++        outputAccounting.finish()
 +        self.failure.fail(.muxerFailed(reason: String(describing: failure)))
 +    }
 +
@@ -2323,10 +2361,11 @@
 +        // never arrived before stop. No valid common-origin stream was emitted.
 +        guard pending.isEmpty else { fail(.incompleteStartup); return }
 +        outputQueue?.finish()
++        outputAccounting.finish()
      }
 
      /// Clears the writer object for new transport stream.
-@@ -147,17 +276,26 @@
+@@ -147,17 +279,27 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
@@ -2351,6 +2390,7 @@
 -        let packets: [TSPacket] = split(PID, PES: PES, timestamp: timeStamp)
 -        rotateFileHandle(timeStamp)
 +        outputQueue?.finish()
++        outputAccounting.finish()
 +        outputQueue = nil
 +        outputAccounting = TransportOutputAccounting()
 +        failure.finish()
@@ -2363,7 +2403,7 @@
 
          packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
 
-@@ -179,17 +317,22 @@
+@@ -179,17 +321,22 @@
          write(bytes)
      }
 
@@ -2391,7 +2431,7 @@
      }
 
      private func writeProgram() {
-@@ -208,18 +351,17 @@
+@@ -208,18 +355,17 @@
          guard !expectedMedias.isEmpty else {
              return
          }
@@ -2975,7 +3015,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,143 @@
 +import Foundation
 +
 +public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
@@ -3055,6 +3095,16 @@
 +        tokens = min(1360, tokens + (at - tokenAt) * Double(bitRate) / 8)
 +        tokenAt = at
 +        return tokens >= 1360
++    }
++    /// A wake is only an opportunity. The same token cap and permit are checked
++    /// again at native submission, so delayed timers never accumulate a burst.
++    func nextOpportunityDelay(now: () -> Double) -> Double? {
++        lock.withLock {
++            let at = now()
++            guard check(at) else { return nil }
++            _ = eligible(at)
++            return max(0, (1360 - tokens) * 8 / Double(bitRate))
++        }
 +    }
 +    func isEligible(now: () -> Double) -> Bool { lock.withLock { eligible(now()) } }
 +    @discardableResult func renew(now: () -> Double) -> Bool {
@@ -3138,7 +3188,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/TS/TransportOutputAccounting.swift
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,43 @@
 +import Foundation
 +
 +/// One muxer-output generation. Linearizes media admission with the optional
@@ -3146,11 +3196,27 @@
 +final class TransportOutputAccounting: @unchecked Sendable {
 +    private let lock = NSLock()
 +    private var count = 0
++    private var closed = false
++    let wakes: AsyncStream<Void>
++    private let continuation: AsyncStream<Void>.Continuation
++    init() {
++        (wakes, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
++    }
++    /// Signals work, never retains media or accumulates optional send credits.
++    func wake() { lock.withLock { if !closed { continuation.yield(()) } } }
++    func finish() {
++        lock.withLock {
++            guard !closed else { return }
++            closed = true
++            continuation.yield(())
++            continuation.finish()
++        }
++    }
 +    var pending: Int { lock.withLock { count } }
 +    func enqueue(_ yield: () -> Bool) -> Bool {
 +        lock.withLock {
-+            guard count < Int.max, yield() else { return false }
-+            count += 1; return true
++            guard !closed, count < Int.max, yield() else { return false }
++            count += 1; continuation.yield(()); return true
 +        }
 +    }
 +    func dequeue() -> Bool {
@@ -3163,6 +3229,49 @@
 +        try lock.withLock {
 +            guard count == 0 else { return nil }
 +            return try operation()
++        }
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/SRT/SRTProbeWakeSchedule.swift
+@@ -0,0 +1,40 @@
++import Foundation
++
++/// One optional probe's wake-only clock. The publication owns and joins run().
++/// A strict timer avoids the measured several-ms Task.sleep coalescing, but is
++/// still best-effort: token/lease checks at submission remain authoritative.
++final class SRTProbeWakeSchedule: @unchecked Sendable {
++    private let timer: DispatchSourceTimer
++
++    private init(probe: SRTBandwidthProbe, wake: @escaping @Sendable () -> Void) {
++        let queue = DispatchQueue(label: "com.scorebug.srt.probe-wake", qos: .userInitiated)
++        timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
++        timer.setEventHandler { [weak self] in
++            guard let self else { return }
++            guard let delay = probe.nextOpportunityDelay(now: { ProcessInfo.processInfo.systemUptime }) else {
++                timer.cancel(); return
++            }
++            if delay == 0 { wake() }
++            // At most 500 callbacks/s while media delays a ready probe. Each
++            // callback coalesces a signal; it never banks bytes or sends media.
++            timer.schedule(deadline: .now() + min(0.05, max(0.002, delay)), leeway: .nanoseconds(0))
++        }
++        timer.schedule(deadline: .now() + .milliseconds(2), leeway: .nanoseconds(0))
++    }
++
++    static func run(probe: SRTBandwidthProbe, wake: @escaping @Sendable () -> Void) async {
++        let schedule = SRTProbeWakeSchedule(probe: probe, wake: wake)
++        await withTaskCancellationHandler {
++            // AsyncStream iteration would end immediately on task cancellation,
++            // before an entered handler returned. This continuation instead joins
++            // the dispatch cancellation handler, including early cancellation
++            // before resume. The timer never awaits a socket or stream actor.
++            await withCheckedContinuation { (completion: CheckedContinuation<Void, Never>) in
++                schedule.timer.setCancelHandler { completion.resume() }
++                schedule.timer.resume()
++            }
++        } onCancel: {
++            schedule.timer.cancel()
 +        }
 +    }
 +}

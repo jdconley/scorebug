@@ -34,6 +34,8 @@ public actor SRTStream {
     private var sourceCadenceClock = SourceCadenceClock()
     private let allowsBandwidthProbes: Bool
     private var bandwidthProbe: SRTBandwidthProbe?
+    private let probeWakeRunner: @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void
+    private var probeWakeTask: Task<Void, Never>?
     private var probeStarting = false
     private var probeConfigurationRevision: UInt64 = 0
     private func invalidateProbeConfiguration() {
@@ -62,6 +64,10 @@ public actor SRTStream {
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at)
         bandwidthProbe = probe
+        let accounting = writer.outputAccounting
+        probeWakeTask = Task {
+            await probeWakeRunner(probe, accounting)
+        }
         return probe.snapshot(now: { at })
     }
     public func renewBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws -> SRTBandwidthProbeSnapshot {
@@ -283,6 +289,7 @@ public actor SRTStream {
     private var publishingTasks: PublishingTasks?
     private var finishingGeneration: UInt64?
     private var finishTask: Task<Void, Never>?
+    private var closeTask: Task<Void, Never>?
 
     /// The expected medias for transport stream.
     public var expectedMedias: Set<AVMediaType> {
@@ -315,6 +322,9 @@ public actor SRTStream {
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
         self.allowsBandwidthProbes = allowsBandwidthProbes
+        probeWakeRunner = { probe, accounting in
+            await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
+        }
         self.pacesEncodedVideo = pacesEncodedVideo
         pacingSleep = { try await Task.sleep(for: .seconds($0)) }
         outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
@@ -328,8 +338,12 @@ public actor SRTStream {
          compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
          allowsBandwidthProbes: Bool = false,
+         probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
+             await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
+         },
          pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
         self.allowsBandwidthProbes = allowsBandwidthProbes
+        self.probeWakeRunner = probeWakeRunner
         self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
         self.outgoing = outgoing; self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
@@ -356,7 +370,7 @@ public actor SRTStream {
             }
             return
         }
-        guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
+        guard readyState == .idle, closeTask == nil, finishingGeneration == nil, videoReplacement == nil else { return }
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
         bandwidthProbe = nil
@@ -375,6 +389,7 @@ public actor SRTStream {
         let audioOutput = outgoing.audioOutputStream
         let videoInput = outgoing.videoInputStream
         let transportOutput = writer.output
+        let transportAccounting = writer.outputAccounting
         outgoing.startRunning()
         readyState = .publishing
         if outgoing.videoInputFormat != nil {
@@ -419,13 +434,20 @@ public actor SRTStream {
                 }
             },
             transport: Task {
-                for await data in transportOutput {
+                var iterator = transportOutput.makeAsyncIterator()
+                for await _ in transportAccounting.wakes {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    writer.didDequeueOutput()
-                    await connection.send(data, generation: connectionSession)
-                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    if publishingGeneration == session, writer.pendingOutputCount == 0, let probe = bandwidthProbe {
-                        await connection.sendPadding(probe, pendingMedia: writer.outputAccounting, generation: connectionSession)
+                    // Exactly one consumer owns all media and optional sends.
+                    // A wake may coalesce freely; data stays in the bounded queue.
+                    while transportAccounting.pending > 0 {
+                        guard let data = await iterator.next() else { return }
+                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                        writer.didDequeueOutput()
+                        await connection.send(data, generation: connectionSession)
+                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    }
+                    if publishingGeneration == session, let probe = bandwidthProbe {
+                        await connection.sendPadding(probe, pendingMedia: transportAccounting, generation: connectionSession)
                     }
                 }
             },
@@ -472,12 +494,14 @@ public actor SRTStream {
     /// abort, and publication cannot restart until this operation has joined.
     public func finish(timeout: Duration = .seconds(2)) async {
         bandwidthProbe?.cancel(.finished)
+        probeWakeTask?.cancel()
         if let state = videoReplacement {
             await abortVideoReplacement(id: state.id, error: .interrupted)
             _ = await state.task?.result
             return // A newer publication may start once the replacement owner joins.
         }
         if let finishTask { await finishTask.value; return }
+        if let closeTask { await closeTask.value; return }
         guard readyState == .publishing, let tasks = publishingTasks else { return }
         let session = generation
         finishingGeneration = session
@@ -502,6 +526,7 @@ public actor SRTStream {
             failure.fail(.outputTerminated(boundary: "SRT finish deadline"))
             await close()
         }
+        await probeWakeTask?.value
         await tasks.input.value
         if generation == session, publishingError == nil {
             let completion = outgoing.makeVideoCompletion()
@@ -522,7 +547,11 @@ public actor SRTStream {
 
     /// Stops playing or publishing and makes available other uses.
     public func close() async {
+        if let closeTask { await closeTask.value; return }
         bandwidthProbe?.cancel(.closed)
+        let wakeTask = probeWakeTask
+        wakeTask?.cancel()
+        probeWakeTask = nil
         videoReplacement?.interrupt(.interrupted)
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
@@ -534,7 +563,14 @@ public actor SRTStream {
         writer.clear()
         reader.clear()
         readyState = .idle
-        await incoming.stopRunning()
+        let closing = Task {
+            await wakeTask?.value
+            await incoming.stopRunning()
+            // Clear inside the shared owner so every caller sees reusable state.
+            closeTask = nil
+        }
+        closeTask = closing
+        await closing.value
     }
 
     /// Sets the expected media.

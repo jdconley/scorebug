@@ -170,7 +170,7 @@ This experimental mode is not evidence of sustainable bitrate or receiver delive
 
 `SRTStream` accepts immutable `allowsBandwidthProbes: false` by default. When
 explicitly enabled, one generation/UUID-scoped attempt may submit seven-packet
-MPEG-TS null messages after media writes. Queue admission and the optional native
+MPEG-TS null messages between media writes. Queue admission and the optional native
 write share synchronized accounting, so media queued during an actor hop wins.
 The socket temporarily uses nonblocking sends and restores its original mode.
 Backpressure stops only the probe; native or option-restoration errors retain the
@@ -181,7 +181,15 @@ accounted target and no initial or catch-up burst. Fresh native statistics must
 show RTT and send buffer at most 50 ms with no new retransmission/drop counts.
 Missing statistics, pressure, finish, close or configuration changes revoke it.
 Configuration revision checks reject starts that overlap a settings change.
-There is no added queue, timer or consumer. Opportunities may underdeliver the
-requested rate; snapshots prove local acceptance only, never receiver delivery
-or usable capacity. App integration and live media qualification remain open.
+One coalesced wake signal drives the existing transport consumer, which drains
+queued media before offering one optional message. An admitted probe owns a strict
+dispatch timer that only signals this consumer; it cannot send or bank messages.
+Its deadline follows token availability with a 2 ms minimum and 50 ms maximum.
+Finish and close revoke the permit, cancel the owner and join the dispatch
+cancellation handler, including an already entered callback. Timer precision is
+best-effort; opportunities can still underdeliver. Snapshots prove local acceptance
+only, never receiver delivery or usable capacity. A finite renewed-probe simulator run reaches ~0.990 Mbps accounted against a
+1 Mbps target with intact archive/live gates. A pressure attempt fails archive
+capacity before probe admission; pressure and recording reliability remain open.
+See [opportunity scheduling](../../docs/superpowers/plans/2026-09-16-probe-opportunity-scheduling.md).
 See [native probe validation](../../docs/superpowers/plans/2026-09-16-native-padding-probe.md).
