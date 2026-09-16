@@ -72,8 +72,27 @@ private func coverageEvidence(_ coverage: VideoEncodingCoverage) -> [String: Any
     }
 }
 
+private func scopeEvidence(_ scope: VideoFrameObservationScope) -> [String: Any] {
+    ["recordingID": scope.recordingID, "matchID": scope.matchID,
+     "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
+     "appliedProfileRevision": String(scope.appliedProfileRevision)]
+}
+private func pressureIntervalEvidence(_ value: LiveIngressPressureInterval?) -> Any {
+    guard let value else { return NSNull() }
+    return ["start": value.start, "end": value.end, "itemSeconds": value.itemSeconds,
+        "byteSeconds": value.byteSeconds, "maxPressureSeconds": value.maxPressureSeconds,
+        "meanMaxPressure": value.meanMaxPressure]
+}
+private func pressureEvidence(_ snapshot: LiveIngressObservationSnapshot?) -> Any {
+    guard let snapshot else { return NSNull() }
+    let pressure = snapshot.pressure
+    return ["scope": scopeEvidence(snapshot.scope), "coveredThrough": pressure.coveredThrough,
+        "isClosed": pressure.isClosed, "isQuarantined": pressure.isQuarantined, "omittedStates": String(pressure.omittedStates),
+        "states": pressure.states.map { ["at": $0.at, "itemFraction": $0.itemFraction, "byteFraction": $0.byteFraction, "phase": $0.phase.rawValue] as [String: Any] }]
+}
+
 private func sourceEvidence(_ history: VideoSourceHistorySnapshot?, clock: PublishingTransportClock?,
-                            receipt: SDKProbe.BitRateChangeReceipt?, aggregate: VideoFrameObservationSnapshot?) -> Any {
+                            receipt: SDKProbe.BitRateChangeReceipt?, aggregate: VideoFrameObservationSnapshot?, ingress: LiveIngressObservationSnapshot?) -> Any {
     guard let history else { return NSNull() }
     var probes: [[String: Any]] = []
     if let clock, let boundary = receipt?.lastSubmittedSourcePTS,
@@ -94,12 +113,17 @@ private func sourceEvidence(_ history: VideoSourceHistorySnapshot?, clock: Publi
                     "sourceEndInclusive": timeEvidence(interval.sourceEndInclusive),
                     "capturedFrames": interval.capturedFrames, "encodedFrames": interval.encodedFrames,
                     "decodedFrames": interval.decodedFrames, "leadingMissingEncodedFrames": interval.leadingMissingEncodedFrames,
-                    "coverage": coverageEvidence(interval.encodingCoverage)])
+                    "coverage": coverageEvidence(interval.encodingCoverage),
+                    "captureBoundaryStartTime": interval.captureBoundaryStartTime,
+                    "captureBoundaryEndTime": interval.captureBoundaryEndTime,
+                    "ingressPressure": pressureIntervalEvidence(ingress.flatMap { interval.ingressPressure(in: $0) })])
             }
         }
     }
     let windows = aggregate.map { $0.completed + [$0.current] } ?? []
-    return ["aggregateEncodedCallbacks": String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount }),
+    return ["scope": scopeEvidence(history.scope),
+            "capture": history.capture.map { ["sourcePTS": timeEvidence($0.sourcePTS), "observedAt": $0.observedAt] as [String: Any] },
+            "aggregateEncodedCallbacks": String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount }),
             "aggregateCaptureCallbacks": String(windows.reduce(UInt64(0)) { $0 + $1.captureVideo.callbackCount }),
             "aggregateValid": aggregate.map { $0.isClosed && $0.invalidity.isEmpty && $0.omittedCompletedWindowCount == 0 && $0.rejectedClockOperationCount == 0 } ?? false,
             "isClosed": history.isClosed, "invalidity": history.invalidity.map { String(describing: $0) } as Any? ?? NSNull(),
@@ -249,7 +273,12 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
         let captureSource = FixtureCaptureSource(origin: origin)
         let recording = CaptureRecording(source: captureSource, session: archiveSession)
         try await recording.start()
-        let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: 12 * 1024 * 1024, overflowPolicy: .dropOldest)
+        let ingressConfiguration = observations.map { owner in
+            LiveIngressObservationConfiguration(scope: owner.snapshot.scope, monotonicAnchor: owner.snapshot.monotonicAnchor,
+                initialPhase: .startup)
+        }
+        let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: 12 * 1024 * 1024,
+            overflowPolicy: .dropOldest, ingressObservation: ingressConfiguration)
         let publisherTask = Task.detached {
             guard let url else {
                 liveQueue.cancel()
@@ -266,6 +295,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             var monitor: Task<Void, Never>?
             do {
                 try await publisher.start()
+                liveQueue.beginObservedAdmission()
                 try emit(["event": "publisher-started"])
                 // Telemetry has one independent task. A slow socket observation
                 // must not stall the consumer responsible for live sample ingress.
@@ -329,8 +359,9 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                           "transportClockAfterStop": clockEvidence(transportClockAfterStop),
                           "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop),
                           "encoderEvidence": encoderEvidence.snapshot(),
+                          "ingressPressure": pressureEvidence(liveQueue.snapshot.ingressObservation),
                           "encoderSourceHistory": sourceEvidence(observations?.sourceHistorySnapshot,
-                              clock: transportClockBeforeStop, receipt: acceptedReceipt, aggregate: finalObservations)])
+                              clock: transportClockBeforeStop, receipt: acceptedReceipt, aggregate: finalObservations, ingress: liveQueue.snapshot.ingressObservation)])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()

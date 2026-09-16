@@ -9,6 +9,31 @@ final class PublishingSourceIntervalTests: XCTestCase {
         .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2,
               publishingAttemptID: UUID(), appliedProfileRevision: 1)
     }
+    func testIngressPressureUsesExactOffGridSourceBoundaries() throws {
+        let h = try history(count: 181)
+        let interval = try XCTUnwrap(match(h, first: 16, last: 165, previous: 15, decoded: 150))
+        var queue = try LiveIngressObservationAccumulator(scope: h.snapshot.scope, monotonicAnchor: 0, maxItems: 4, maxBytes: 100)
+        queue.updateOccupancy(items: 4, bytes: 10, phase: .admitting, at: 0)
+        queue.updateOccupancy(items: 1, bytes: 100, at: 2)
+        let measured = try XCTUnwrap(interval.ingressPressure(in: queue.poll(at: 6)))
+        XCTAssertEqual(measured.start, 0.5); XCTAssertEqual(measured.end, 5.5)
+        XCTAssertEqual(measured.itemSeconds, 1.5 + 3.5 * 0.25, accuracy: 1e-9)
+        XCTAssertEqual(measured.byteSeconds, 1.5 * 0.1 + 3.5, accuracy: 1e-9)
+        XCTAssertEqual(measured.meanMaxPressure, 1)
+        // Closure preserves historical association, never current health.
+        XCTAssertEqual(interval.ingressPressure(in: queue.close(at: 6)), measured)
+    }
+    func testIngressPressureRejectsScopeCoverageAndPhaseMismatch() throws {
+        let h = try history(count: 181)
+        let interval = try XCTUnwrap(match(h, first: 16, last: 165, previous: 15, decoded: 150))
+        var wrong = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 0, maxItems: 4, maxBytes: 100)
+        wrong.updateOccupancy(items: 0, bytes: 0, phase: .admitting, at: 0)
+        XCTAssertNil(interval.ingressPressure(in: wrong.poll(at: 6)))
+        var queue = try LiveIngressObservationAccumulator(scope: h.snapshot.scope, monotonicAnchor: 0, maxItems: 4, maxBytes: 100)
+        queue.updateOccupancy(items: 0, bytes: 0, phase: .admitting, at: 1)
+        XCTAssertNil(interval.ingressPressure(in: queue.poll(at: 5)))
+        XCTAssertNil(interval.ingressPressure(in: queue.poll(at: 6)))
+    }
     private func history(capacity: Int = 512, base: CMTime = .zero, count: Int = 301,
                          omitCapture: Set<Int> = [], omitEncoded: Set<Int> = []) throws -> VideoSourceHistory {
         var result = try VideoSourceHistory(scope: scope, capacity: capacity)

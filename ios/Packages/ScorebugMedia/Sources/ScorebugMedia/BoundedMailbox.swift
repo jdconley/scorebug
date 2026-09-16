@@ -61,7 +61,7 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
     /// dequeues. Observations measure only this mailbox, not its in-flight element.
     public var snapshot: Snapshot {
         lock.withLock {
-            if let time = observationTimeLocked() { ingress?.poll(at: time) }
+            if let time = observationTimeLocked() { ingress?.advanceClock(at: time) }
             return Snapshot(statistics: statisticsLocked(), ingressObservation: ingress?.snapshot)
         }
     }
@@ -134,7 +134,7 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         var evicted: [Entry] = []
         let admission = lock.withLock {
             let time = observationTimeLocked()
-            if let time { ingress?.poll(at: time) }
+            if let time { ingress?.advanceClock(at: time) }
             defer { if let time { ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, at: time) } }
             guard state == .open else {
                 return reject(state == .cancelled ? .cancelled : .finished, observation: observation, at: time)
@@ -185,7 +185,7 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
             try await withCheckedThrowingContinuation { continuation in
                 let immediate: Result<Element?, any Error>? = lock.withLock {
                     let time = observationTimeLocked()
-                    if let time { ingress?.poll(at: time) }
+                    if let time { ingress?.advanceClock(at: time) }
                     defer {
                         if let time {
                             ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, at: time)
@@ -235,7 +235,7 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         var discarded: [Entry] = []
         let continuation = lock.withLock {
             let time = observationTimeLocked()
-            if let time { ingress?.poll(at: time) }
+            if let time { ingress?.advanceClock(at: time) }
             state = .cancelled
             discarded = queue
             if time != nil {
@@ -274,9 +274,11 @@ public final class BoundedMailbox<Element: Sendable>: @unchecked Sendable {
         ingress?.observe(disposition, sample: metadata ?? .init(kind: .unknown, sourcePTS: .invalid), at: time)
     }
 
-    /// The publishing owner calls this under its own readiness lock, before any
-    /// consumer or producer can observe a publishing state. No callbacks occur.
-    func beginObservedAdmission() {
+    /// Mark diagnostic admission after the owning publisher establishes readiness.
+    /// This does not gate queue acceptance or start transport. PublishingSession
+    /// calls under its readiness lock before exposing publishing state; standalone
+    /// owners must establish their own equivalent lifecycle. No callbacks occur.
+    public func beginObservedAdmission() {
         lock.withLock {
             guard state == .open, let time = observationTimeLocked() else { return }
             ingress?.updateOccupancy(items: queue.count, bytes: queuedBytes, phase: .admitting, at: time)

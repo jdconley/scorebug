@@ -21,6 +21,12 @@ public struct PublishingSourceInterval: Sendable {
     public let leadingMissingEncodedFrames: Int
     public let encodingCoverage: VideoEncodingCoverage
 
+    /// Historical queue pressure over the exact source capture boundaries.
+    public func ingressPressure(in snapshot: LiveIngressObservationSnapshot) -> LiveIngressPressureInterval? {
+        guard snapshot.scope == scope else { return nil }
+        return snapshot.pressure.interval(from: captureBoundaryStartTime, to: captureBoundaryEndTime)
+    }
+
     public static func match(history: VideoSourceHistorySnapshot, clock: PublishingTransportClock,
                              relayOriginPTS: Int64, previousDecodedPTS: Int64,
                              firstDecodedPTS: Int64, lastDecodedPTS: Int64,

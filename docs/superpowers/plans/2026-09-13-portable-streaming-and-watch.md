@@ -350,6 +350,13 @@ prevents late commits. Outer evidence rejection invalidates recovery and preserv
 trial rollback. The owner remains opt-in; source/pressure window alignment and actual
 automatic media trials are next before the capture model can enable it.
 
+The [source-aligned ingress pressure slice](2026-09-15-source-aligned-ingress-pressure.md)
+adds exact queue integration over receiver-correlated capture boundaries, backed by
+bounded scalar state history. Missing/evicted/phase-invalid coverage stays unknown;
+querying closed history remains historical. This supplies the queue component of
+future aligned policy windows. Transport/thermal/worker alignment and actual
+automatic media qualification remain required.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

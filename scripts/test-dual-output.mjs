@@ -12,6 +12,7 @@ import {
   qualifyEncoderConfiguration,
   qualifyEncoderSourceHistory,
 } from './encoder-configuration-evidence.mjs';
+import { qualifyIngressPressure } from './ingress-pressure-evidence.mjs';
 import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
 import { inspectFrameCodeSamples } from './impaired-media-diagnostics.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
@@ -618,6 +619,7 @@ try {
     let transportStatistics;
     let encoderConfiguration;
     let encoderSourceHistory;
+    let ingressPressure;
     let impairedLive;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
@@ -661,6 +663,10 @@ try {
           await readFile(join(artifact, `${scenario}-archive.codes`)),
         ),
       });
+      ingressPressure = qualifyIngressPressure({
+        pressure: sent.ingressPressure,
+        source: sent.encoderSourceHistory,
+      });
       if (normal) {
         liveResult = await analyze(live, `${scenario}-live`, false);
         bitrateChange = await measureBitrateChange(live);
@@ -699,6 +705,7 @@ try {
       transportStatistics,
       encoderConfiguration,
       encoderSourceHistory,
+      ingressPressure,
       networkImpairment,
       impairedLive,
       counters: finished,

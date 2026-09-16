@@ -73,6 +73,7 @@ public struct LiveIngressObservationWindow: Sendable {
     public fileprivate(set) var dispositions: LiveIngressDispositions = [:]
 }
 public struct LiveIngressObservationSnapshot: Sendable {
+    public let pressure: LiveIngressPressureSnapshot
     public let scope: VideoFrameObservationScope
     public let monotonicAnchor: Double
     public let windowDuration: Double
@@ -119,6 +120,7 @@ public struct LiveIngressObservationAccumulator: Sendable {
     private var omittedThrough: Double?
     private var invalidity: LiveIngressInvalidity = []
     private var closed = false
+    private var pressure: LiveIngressPressureHistory
 
     public init(scope: VideoFrameObservationScope, monotonicAnchor: Double, maxItems: Int, maxBytes: Int,
                 windowDuration: Double = 5, completedWindowLimit: Int = 8) throws {
@@ -132,6 +134,7 @@ public struct LiveIngressObservationAccumulator: Sendable {
               maxItems > 0, maxBytes > 0, counterLimit > 0 else {
             throw LiveIngressObservationError.invalidConfiguration
         }
+        pressure = LiveIngressPressureHistory(start: monotonicAnchor)
         self.scope = scope; anchor = monotonicAnchor; duration = windowDuration
         self.maxItems = maxItems; self.maxBytes = maxBytes; historyLimit = completedWindowLimit
         self.counterLimit = counterLimit; lastClock = monotonicAnchor
@@ -139,7 +142,7 @@ public struct LiveIngressObservationAccumulator: Sendable {
             scheduledMonotonicEnd: monotonicAnchor + windowDuration)
     }
     public var snapshot: LiveIngressObservationSnapshot {
-        LiveIngressObservationSnapshot(scope: scope, monotonicAnchor: anchor, windowDuration: duration,
+        LiveIngressObservationSnapshot(pressure: pressure.snapshot, scope: scope, monotonicAnchor: anchor, windowDuration: duration,
             maxItems: maxItems, maxBytes: maxBytes, phase: phase, currentItems: items, currentBytes: bytes,
             current: current, completed: completed, totalOccupancy: totals, totalDispositions: dispositions,
             omittedCompletedWindowCount: omitted, omittedThroughMonotonicTime: omittedThrough,
@@ -157,8 +160,12 @@ public struct LiveIngressObservationAccumulator: Sendable {
         self.items = items; self.bytes = bytes
         depthValid = (0...maxItems).contains(items) && (0...maxBytes).contains(bytes)
             && (items == 0) == (bytes == 0) && bytes >= items
-        if !depthValid { invalidity.insert(.invalidOccupancy) }
+        if !depthValid { invalidity.insert(.invalidOccupancy); pressure.quarantine() }
         if let phase { self.phase = phase }
+        if timed && depthValid {
+            pressure.record(itemFraction: Double(items) / Double(maxItems), byteFraction: Double(bytes) / Double(maxBytes),
+                phase: self.phase, at: time)
+        }
         if depthValid {
             totals.peak(items: items, bytes: bytes)
             if timed {
@@ -187,8 +194,12 @@ public struct LiveIngressObservationAccumulator: Sendable {
         } else { var count = unassigned; increment(&count); unassigned = count }
     }
 
-    @discardableResult public mutating func poll(at time: Double) -> LiveIngressObservationSnapshot {
+    /// Mailbox mutations only advance scalar state; materialize history on reads.
+    mutating func advanceClock(at time: Double) {
         if !closed { _ = advance(to: time) }
+    }
+    @discardableResult public mutating func poll(at time: Double) -> LiveIngressObservationSnapshot {
+        advanceClock(at: time)
         return snapshot
     }
 
@@ -200,6 +211,7 @@ public struct LiveIngressObservationAccumulator: Sendable {
     @discardableResult public mutating func close(at time: Double) -> LiveIngressObservationSnapshot {
         guard !closed else { return snapshot }
         _ = advance(to: time)
+        pressure.close()
         closed = true; phase = .closed; current.isClosed = true
         items = 0; bytes = 0
         return snapshot
@@ -238,10 +250,12 @@ public struct LiveIngressObservationAccumulator: Sendable {
     /// the exact unchanged normalized depth and phase for their whole duration.
     private mutating func advance(to time: Double) -> Bool {
         guard Self.legalClock(time), time >= lastClock else {
+            pressure.quarantine()
             invalidity.insert(.invalidMonotonicClock); clockKnown = false
             var count = rejectedClocks; increment(&count); rejectedClocks = count
             return false
         }
+        pressure.advance(to: time)
         var next = UInt64(((time - anchor) / duration).rounded(.down))
         if next > 0, time < boundary(next) { next -= 1 }
         if time >= boundary(next + 1) { next += 1 }

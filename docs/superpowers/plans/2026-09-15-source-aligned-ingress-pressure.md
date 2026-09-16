@@ -39,23 +39,23 @@ independently require active/fresh matching native configuration and acknowledgm
 
 ## Tasks
 
-- [ ] Add `LiveIngressPressureHistory.swift` API stubs and
+- [x] Add `LiveIngressPressureHistory.swift` API stubs and
   `LiveIngressPressureHistoryTests.swift` in ScorebugMedia. Test fractional boundaries,
   max-before-integration, same-time state replacement, phase crossings, invalid clocks
   and depths, sticky quarantine, bounded eviction, no-change polling, frozen close,
   historical snapshot isolation, and actual BoundedMailbox admission/dequeue pressure.
   Preserve behavioral red before implementation.
-- [ ] Implement ring and immutable query snapshot. Integrate init/update/poll/close
+- [x] Implement ring and immutable query snapshot. Integrate init/update/poll/close
   with LiveIngressObservationAccumulator. Record under its existing serialization;
   expose pressure history in LiveIngressObservationSnapshot. No global locks/tasks.
-- [ ] Add the scope-checked exact-boundary association to PublishingSourceInterval
+- [x] Add the scope-checked exact-boundary association to PublishingSourceInterval
   with Streaming regressions for wrong scope, partial coverage and off-grid endpoints.
-- [ ] Enable ingress observation in the existing dual-output fixture's bounded live
+- [x] Enable ingress observation in the existing dual-output fixture's bounded live
   queue. Export bounded scalar pressure history and per-source-probe integrated
   results after joined completion. Keep existing A/V/cadence/archive gates intact.
   Independently replay piecewise integration from saved raw state changes in Node;
   reject fabricated means/coverage/phase/clock records with focused oracle tests.
-- [ ] Run full Media/Streaming/tooling, default and impaired native suites, combined
+- [x] Run full Media/Streaming/tooling, default and impaired native suites, combined
   unsigned iPhone/Watch Release, and bounded source review. Document exact evidence,
   limitations and hashes; commit verified source.
 
@@ -69,3 +69,52 @@ New Swift source files require refreshing only owned dependent-package build sou
 Automatic quality control remains disabled. Transport/thermal/worker pressure
 alignment, policy revision/configuration binding and actual automatic trials remain
 necessary. This is exact queue evidence, not a claim of end-to-end alignment.
+
+
+## Review findings addressed
+
+Independent review found that the accumulator's existing `poll` API materialized a
+snapshot even when mailbox callers discarded its result. A void `advanceClock(at:)`
+now serves all mailbox clock-only paths, avoiding a 4,096-state copy under the lock
+on each A/V admission/dequeue. Actual reads still make bounded immutable snapshots.
+A direct-handoff test confirms waiting consumers do not invent queued pressure.
+
+The first native build exposed an internal-access mismatch for the standalone
+fixture's readiness marker. `beginObservedAdmission()` is now public and explicitly
+documented as diagnostic only; it does not gate queue acceptance or start transport.
+Standalone owners must establish readiness before calling it. The failed compile is
+preserved in `artifacts/qa/aligned-pressure-native-compile.log`. Review approves both
+fixes and the final production/fixture/oracle source; reviewer ran no commands.
+
+
+## Verified checkpoint and next alignment constraint
+
+Full Media tests pass 224 cases (158 XCTest + 66 Swift Testing), Streaming passes
+54, and tooling passes 769 (14 new independent pressure-oracle tests). The combined
+unsigned iPhone/Watch Release build passes with Xcode 26.2. Native default evidence
+is `artifacts/qa/dual-output-zFS9sf`; impairment evidence is
+`artifacts/qa/dual-output-1Y9Lmx`. All eight archives retain 420 frames, and all five
+successful publishers retain matching native/source histories of 420 frames.
+
+The five pressure histories retain 9, 9, 13, 13 and 11 actual transitions. Each
+independent replay verifies two exact source-aligned pressure intervals and keeps
+one startup-overlapping interval unknown. The finite fixture does not fill the ring;
+unit tests separately qualify 20,000 transitions with bounded eviction. Normal and
+recoverable live media retain 420 frames; overload fails strict decode with 389
+best-effort frames and invalid source identities, so fresh-frame/loss metrics remain
+unknown. Peak measured RSS is below 99 MiB, within the unchanged 512 MiB gate.
+Both suites replay from complete raw events and decoded barcode files.
+
+Actual post-write 150-frame capture intervals measure 4.998970, 5.000622, 4.999890,
+5.001985 and 5.000294 seconds. Three of these would be rejected by the pure policy's
+strict maximum five-second input duration despite healthy nominal 30 fps source
+cadence. Upcoming policy-window integration must represent measured elapsed time and
+establish an explicit timing tolerance/input-duration contract; it must not silently
+clamp endpoints or change the separate rolling-five-second output acceptance gate.
+This is observed evidence, not a qualified tolerance value or automatic-control pass.
+
+The manifest `artifacts/qa/aligned-pressure-final-verification.json` hashes final
+source, tests, logs and complete native media artifacts. Queue pressure alignment is
+now available; transport/thermal/worker alignment, receiver freshness and policy
+revision/configuration mapping remain open, followed by actual automatic trials,
+resolution transitions, adaptive soak, physical phone/Watch/radio and remote hosts.

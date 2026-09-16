@@ -400,3 +400,46 @@ policy recovery and preserves rollback intent. Its deterministic trial-to-rollba
 sequence passes, but the capture model does not invoke this owner yet. The next
 integration must build complete, configuration-matched source/pressure windows and
 qualify receiver freshness before actual automatic media trials.
+
+
+## Source-aligned ingress pressure
+
+The ingress accumulator retains up to 4,096 scalar queue-depth/phase transitions in
+an O(1) ring. Only state changes consume capacity; equal-time changes retain the final
+state. Clock-only mailbox operations advance coverage without copying snapshots.
+Actual diagnostic reads copy bounded history. No sample buffers or per-frame tasks
+are added. This history is present only when ingress observation is configured.
+
+A snapshot query integrates item occupancy, byte occupancy and their instantaneous
+maximum over exact [start,end) uptime boundaries. It requires complete retained
+coverage in the admitting phase. It never derives partial occupancy from five-second
+aggregate means. Eviction makes older coverage unavailable. Invalid depth or clock
+quarantines the history for the attempt; unrelated disposition PTS invalidity does
+not fabricate a queue-depth error. Close freezes history and prevents extrapolation.
+
+`PublishingSourceInterval.ingressPressure(in:)` checks immutable observation scope
+and uses its actual capture boundary uptimes. Closed history can answer historical
+queries; neither this association nor a complete mean proves present health,
+receiver freshness, transport pressure or configuration/revision eligibility. Future
+policy integration must check those independently.
+
+The native dual-output fixture enables this production mailbox observation and
+exports bounded scalar capture/queue history after completion. An independent Node
+oracle joins probe PTS to capture times and integrates every intersecting raw state.
+It requires the post-write interval to have complete admission coverage, while an
+interval overlapping startup remains unknown. Existing native configuration, decoded
+video, A/V, cadence, memory and clean archive checks remain separate gates.
+
+
+The source-aligned queue checkpoint passes 224 Media, 54 Streaming and 769 tooling
+tests, independent review and the combined unsigned iPhone/Watch Release build.
+Evidence is `artifacts/qa/dual-output-zFS9sf` and `artifacts/qa/dual-output-1Y9Lmx`;
+all eight archives remain complete. Each of five successful publishers has two
+independently replayed pressure intervals and one startup-overlapping unknown interval.
+These are declared finite-fixture source probes, not production receiver windows.
+
+Measured nominal five-second capture intervals sometimes exceed five seconds by a
+few milliseconds. The current policy rejects those durations. Alignment must account
+for measured elapsed time with a specified input-duration contract; clipping times
+to fit existing tests would invent evidence. The separate rolling-five-second output
+quality gate remains unchanged.
