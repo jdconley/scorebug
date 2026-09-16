@@ -2,7 +2,9 @@
 
 `ScorebugCore.QualityController` computes live-video recommendations from complete
 telemetry windows. It has no media/framework dependencies, tasks, network access,
-encoder mutation, or archive references. The native app still uses the qualified
+encoder mutation, or archive references. Its default recovery strategy remains
+`capacityQualified`; the optional `receiverValidatedTrials` strategy adds explicitly
+provisional same-profile bitrate exploration when capacity is unknown. The native app still uses the qualified
 fixed 1080p30 profile; this policy is not enabled in the capture/publishing path.
 
 ## Inputs and state
@@ -17,7 +19,7 @@ establish whether those profiles are supported by a particular device or worker.
 Each window identifies the attempt, sequence, applied revision, and a complete
 1–5-second monotonic interval. It separately carries capture/encoded/received fresh
 frames, receiver observation time, source-loss counts, mean live queue occupancy,
-usable video capacity, connectivity, and thermal/worker pressure. Capacity is video
+usable video capacity, connectivity, and thermal/worker/transport pressure. Capacity is video
 bits per second after reserving audio and transport costs. Send throughput is not
 an interchangeable capacity measurement.
 
@@ -55,6 +57,51 @@ These are initial control thresholds for later impairment qualification, not mea
 limits for arbitrary iPhones, networks, or streaming destinations. The rolling
 five-second reliability gate in the parent plan remains a separate media analysis.
 
+## Receiver-validated trial strategy
+
+Real impairment traces show that SRT bandwidth estimates can substantially exceed
+our known path ceilings. The revised [trial plan](superpowers/plans/2026-09-15-receiver-validated-quality-trials.md)
+therefore permits bounded experiments instead of turning passive estimates into
+usable capacity. This strategy is explicit and remains disabled in runtime media.
+
+Trial acquisition needs 30 contiguous seconds of matched fresh capture/encoder/receiver
+cadence at least 29.7 fps, source loss at most 1%, mean queue occupancy below 50%, connected
+state, and nominal thermal, worker and transport pressure. Missing transport pressure
+is explicit and prevents trials. Unknown capacity alone may permit a trial, while the
+decision continues to report missing capacity and unknown overall status. Known
+insufficient candidate capacity still prevents the trial. Explicitly elevated
+transport pressure can request a decrease under either strategy; unknown transport
+pressure preserves legacy capacity-qualified behavior.
+
+A recommendation is labeled `trial`, with a `trialRecommended` reason. It advances
+bitrate by floor(current/10), capped by remaining profile headroom before addition.
+This cannot exceed 10%, overflow a 32-bit Watch integer, or force a disproportionate
+one-bit step at tiny rates. It never changes resolution. Successful exact-setting
+acknowledgment starts probation; it does not confirm a sustainable higher rate.
+
+Probation requires 10 contiguous post-application seconds of the same strong receiver
+and pressure evidence, before a fixed 15-second deadline. A first complete window may
+start after application; subsequent gaps invalidate probation. Bad/unknown evidence,
+disconnection, invalid window input or invalid deadline-poll time makes rollback
+mandatory. Confirmation reports `trialConfirmed` but never claims spare capacity.
+A confirmed trial starts a fresh 30-second recovery period before another experiment.
+
+`checkTrialDeadline(at:)` must run from the existing bounded health loop even when
+receiver updates stop arriving. It returns rollback advice on timeout or an already
+invalidated trial, and reissues expired advice with a new two-second deadline.
+Old advice cannot be acknowledged after replacement. Rollback targets the pretrial
+settings; it does not prove those settings will remain adequate after a path change.
+Failures keep rollback required. Successful exact rollback increments the applied
+revision and prevents another trial for 60 seconds; normal decreases remain available.
+
+Unexpected trial/rollback settings are rejected. If hardware changed despite a
+rejected acknowledgment, the caller must retire or reconcile that publishing attempt.
+It must serialize live reconfiguration and impose bounded application/stop behavior.
+Trial state never changes archive settings. Disconnection/stall states stay explicit
+alongside rollback recommendations. Profile transitions, runtime telemetry alignment,
+actual first-affected-frame boundaries and impaired-media trial qualification remain
+required before enabling this strategy in the native app.
+
 ## Recommendation acknowledgment
 
 Every new accepted window supersedes earlier advice. A recommendation carries the
@@ -90,3 +137,11 @@ then apply live bitrate changes, validate resolution/keyframe transitions and
 stable destination canvas behavior, and run bidirectional UDP impairment and soak
 tests. The [implementation plan](superpowers/plans/2026-09-14-adaptive-quality-policy.md)
 keeps these separate from the completed pure decision logic.
+
+The trial-policy checkpoint passes all 269 Core tests, including 15 focused trial
+regressions, the arm64_32 watchOS 10 Core build, and the combined unsigned iPhone/Watch
+Release build. Independent review approved after fixing invalid deadline-clock
+rollback behavior. Behavioral red logs also cover integer rounding, required transport
+pressure and explicit outage/stall states. These are policy/build checks, not physical
+Watch or adaptive live-media qualification. Final evidence hashes are in
+`artifacts/qa/quality-trials-final-verification.json`.

@@ -103,7 +103,13 @@ Capacity estimation, thermal/worker pressure and automatic control remain open.
 5. Derive usable video capacity from a qualified transport estimator. Reserve audio,
    muxing, retransmission, and other overhead before applying the policy's video
    headroom. SRT's estimated bandwidth and successful send rate alone are not proof
-   that a proposed higher bitrate is sustainable. Unknown capacity prohibits increases.
+   that a proposed higher bitrate is sustainable. Unknown capacity prohibits confirmed
+   capacity-based increases. The revised [receiver-validated trial strategy](adaptive-quality-policy.md#receiver-validated-trial-strategy)
+   permits an explicitly provisional <=10% same-profile bitrate experiment only after
+   strong matched receiver and nominal transport/thermal/worker evidence, with a
+   fixed deadline, confirmation period and sticky rollback. It does not manufacture
+   capacity or change archive settings. Actual runtime boundaries/alignment and
+   impaired-media trials must be qualified before enabling that strategy.
 6. Aggregate live queue occupancy over the complete window and include queue budget
    and drops. A single empty-queue snapshot cannot stand in for a healthy interval.
    Carry thermal and worker pressure explicitly rather than interpreting every

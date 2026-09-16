@@ -21,6 +21,7 @@ public struct QualityController: Sendable {
         public let videoBitrate: Int
         public init(profileID: String, videoBitrate: Int) { self.profileID = profileID; self.videoBitrate = videoBitrate }
     }
+    public enum RecoveryStrategy: Sendable { case capacityQualified, receiverValidatedTrials }
     public enum Connectivity: Sendable { case connected, disconnected, unknown }
     public enum Pressure: Sendable { case nominal, elevated, unknown }
     public struct Receiver: Sendable {
@@ -53,24 +54,30 @@ public struct QualityController: Sendable {
         public let connectivity: Connectivity
         public let thermalPressure: Pressure
         public let workerPressure: Pressure
+        public let transportPressure: Pressure
         public init(attemptID: UUID, sequence: UInt64, appliedRevision: UInt64, start: Double, end: Double,
                     capturedFreshFrames: Int?, encodedFreshFrames: Int?, receiver: Receiver?, sourceLoss: SourceLoss?,
                     meanQueueOccupancy: Double?, usableVideoCapacity: Double?, connectivity: Connectivity,
-                    thermalPressure: Pressure, workerPressure: Pressure) {
+                    thermalPressure: Pressure, workerPressure: Pressure, transportPressure: Pressure = .unknown) {
             self.attemptID = attemptID; self.sequence = sequence; self.appliedRevision = appliedRevision
             self.start = start; self.end = end; self.capturedFreshFrames = capturedFreshFrames
             self.encodedFreshFrames = encodedFreshFrames; self.receiver = receiver; self.sourceLoss = sourceLoss
             self.meanQueueOccupancy = meanQueueOccupancy; self.usableVideoCapacity = usableVideoCapacity
             self.connectivity = connectivity; self.thermalPressure = thermalPressure; self.workerPressure = workerPressure
+            self.transportPressure = transportPressure
         }
     }
-    public enum State: Equatable, Sendable { case unknown, healthy, degraded, disconnected, stalled, insufficient }
+    public enum State: Equatable, Sendable { case unknown, healthy, degraded, disconnected, stalled, insufficient, probing }
     public enum Reason: Equatable, Sendable {
         case missingCapture, missingEncoded, missingReceiver, staleReceiver, missingSourceLoss, missingQueue, missingCapacity
         case unknownConnectivity, unknownPressure, freshFrameFloor, sourceLoss, queuePressure, capacityHeadroom
         case thermalPressure, workerPressure, disconnected, stalled, minimumProfileInsufficient, recoveryQualified, telemetryGap
+        case trialRecommended, trialConfirmed, trialRollback, trialTimedOut
+        case transportPressure, unknownTransportPressure
     }
     public struct Recommendation: Equatable, Sendable {
+        public enum Kind: Equatable, Sendable { case decrease, increase, trial, rollback }
+        public let kind: Kind
         public let attemptID: UUID
         public let windowSequence: UInt64
         public let appliedRevision: UInt64
@@ -98,8 +105,18 @@ public struct QualityController: Sendable {
     private var lastSequence: UInt64?
     private var recoveryStart: Double?
     private var pending: Recommendation?
+    private let recoveryStrategy: RecoveryStrategy
+    private struct Trial: Sendable {
+        let baseline: Settings
+        let deadline: Double
+        var healthyStart: Double?
+        var healthyEnd: Double?
+        var rollbackRequired = false
+    }
+    private var trial: Trial?
+    private var trialCooldownUntil = 0.0
 
-    public init(profiles: [Profile], attemptID: UUID, applied: Settings, at now: Double) throws {
+    public init(profiles: [Profile], attemptID: UUID, applied: Settings, at now: Double, recoveryStrategy: RecoveryStrategy = .capacityQualified) throws {
         guard now.isFinite, now >= 0 else { throw ValidationError.invalidTime }
         guard !profiles.isEmpty, Set(profiles.map(\.id)).count == profiles.count else { throw ValidationError.invalidProfiles }
         for (index, profile) in profiles.enumerated() {
@@ -120,6 +137,7 @@ public struct QualityController: Sendable {
         }
         guard Self.valid(applied, in: profiles) else { throw ValidationError.invalidSettings }
         self.profiles = profiles; self.attemptID = attemptID; self.applied = applied
+        self.recoveryStrategy = recoveryStrategy
         lastNow = now; appliedAt = now
     }
 
@@ -132,7 +150,7 @@ public struct QualityController: Sendable {
             try recordTime(now)
             try validate(window, at: now)
         }
-        catch { recoveryStart = nil; pending = nil; throw error }
+        catch { recoveryStart = nil; pending = nil; trial?.rollbackRequired = true; throw error }
         var reasons: [Reason] = []
         if let lastEnd, window.start != lastEnd {
             recoveryStart = nil
@@ -141,12 +159,16 @@ public struct QualityController: Sendable {
         lastNow = now; lastEnd = window.end; lastSequence = window.sequence
         // Every new window supersedes earlier advice, even if it cannot establish health.
         pending = nil
-        if window.connectivity == .disconnected {
+        if window.connectivity == .disconnected && trial == nil {
             recoveryStart = nil
             return .init(state: .disconnected, reasons: reasons + [.disconnected], recommendation: nil)
         }
-        var unknown = false
-        func missing(_ reason: Reason) { unknown = true; reasons.append(reason) }
+        var unknown = false, otherUnknown = false
+        func missing(_ reason: Reason) {
+            unknown = true
+            if reason != .missingCapacity { otherUnknown = true }
+            reasons.append(reason)
+        }
         if window.connectivity == .unknown { missing(.unknownConnectivity) }
         if window.capturedFreshFrames == nil { missing(.missingCapture) }
         if window.encodedFreshFrames == nil { missing(.missingEncoded) }
@@ -159,6 +181,9 @@ public struct QualityController: Sendable {
         if window.meanQueueOccupancy == nil { missing(.missingQueue) }
         if window.usableVideoCapacity == nil { missing(.missingCapacity) }
         if window.thermalPressure == .unknown || window.workerPressure == .unknown { missing(.unknownPressure) }
+        if recoveryStrategy == .receiverValidatedTrials && window.transportPressure == .unknown {
+            missing(.unknownTransportPressure)
+        }
         let duration = window.end - window.start
         let observedFPS = [window.capturedFreshFrames, window.encodedFreshFrames, received].compactMap { $0 }.map { Double($0) / duration }
         let stalled = observedFPS.contains(0)
@@ -170,8 +195,38 @@ public struct QualityController: Sendable {
         if let capacity = window.usableVideoCapacity, capacity < Double(applied.videoBitrate) * 1.25 { decrease(.capacityHeadroom) }
         if window.thermalPressure == .elevated { decrease(.thermalPressure) }
         if window.workerPressure == .elevated { decrease(.workerPressure) }
+        if window.transportPressure == .elevated { decrease(.transportPressure) }
         if stalled { reasons.append(.stalled) }
         let profileIndex = profiles.firstIndex { $0.id == applied.profileID }!
+        let strongObservations = !otherUnknown && window.connectivity == .connected && !unhealthy
+            && observedFPS.allSatisfy { $0 >= 29.7 }
+            && (window.meanQueueOccupancy.map { $0 < 0.5 } ?? false)
+        if var active = trial {
+            if now >= active.deadline {
+                active.rollbackRequired = true
+                reasons.append(.trialTimedOut)
+            }
+            if let end = active.healthyEnd, window.start != end { active.rollbackRequired = true }
+            if !strongObservations { active.rollbackRequired = true }
+            if active.rollbackRequired {
+                trial = active
+                recoveryStart = nil
+                pending = recommendation(active.baseline, for: window, kind: .rollback)
+                let state: State = window.connectivity == .disconnected ? .disconnected
+                    : stalled ? .stalled : unknown ? .unknown : .degraded
+                if window.connectivity == .disconnected { reasons.append(.disconnected) }
+                return .init(state: state, reasons: reasons + [.trialRollback], recommendation: pending)
+            }
+            active.healthyStart = active.healthyStart ?? window.start
+            active.healthyEnd = window.end
+            if window.end - active.healthyStart! >= 10 {
+                trial = nil; recoveryStart = nil
+                return .init(state: unknown ? .unknown : .healthy,
+                             reasons: reasons + [.trialConfirmed], recommendation: nil)
+            }
+            trial = active
+            return .init(state: .probing, reasons: reasons, recommendation: nil)
+        }
         if unhealthy {
             recoveryStart = nil
             let reduced = lowerSettings(profileIndex: profileIndex, capacity: window.usableVideoCapacity)
@@ -179,6 +234,25 @@ public struct QualityController: Sendable {
             else { reasons.append(.minimumProfileInsufficient) }
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded
             return .init(state: state, reasons: reasons, recommendation: pending)
+        }
+        if recoveryStrategy == .receiverValidatedTrials {
+            // Integer division rounds the <=10% step down. Bound the addition
+            // before doing it, including on arm64_32. No minimum +1 may exceed10%.
+            let profile = profiles[profileIndex]
+            let step = min(applied.videoBitrate / 10, profile.maximumBitrate - applied.videoBitrate)
+            let candidate: Settings? = step > 0
+                ? .init(profileID: applied.profileID, videoBitrate: applied.videoBitrate + step) : nil
+            let fitsKnownCapacity = candidate.map { settings in
+                window.usableVideoCapacity.map { $0 >= Double(settings.videoBitrate) * 1.25 } ?? true
+            } ?? false
+            if strongObservations && fitsKnownCapacity {
+                if recoveryStart == nil { recoveryStart = window.start }
+                if window.end - recoveryStart! >= 30, now >= trialCooldownUntil, let candidate {
+                    pending = recommendation(candidate, for: window, kind: .trial)
+                    reasons.append(.trialRecommended)
+                }
+            } else { recoveryStart = nil }
+            return .init(state: unknown ? .unknown : .healthy, reasons: reasons, recommendation: pending)
         }
         guard !unknown else {
             recoveryStart = nil
@@ -193,7 +267,7 @@ public struct QualityController: Sendable {
         if qualified {
             if recoveryStart == nil { recoveryStart = window.start }
             if window.end - recoveryStart! >= 30, let higher {
-                pending = recommendation(higher, for: window)
+                pending = recommendation(higher, for: window, kind: .increase)
                 reasons.append(.recoveryQualified)
             }
         } else { recoveryStart = nil }
@@ -214,6 +288,18 @@ public struct QualityController: Sendable {
         }
         if let actual {
             guard Self.valid(actual, in: profiles), appliedRevision < UInt64.max else { throw ValidationError.invalidSettings }
+            if recommendation.kind == .trial || recommendation.kind == .rollback {
+                guard actual == recommendation.settings else {
+                    recoveryStart = nil; pending = nil
+                    throw ValidationError.invalidSettings
+                }
+            }
+            if recommendation.kind == .trial {
+                trial = .init(baseline: applied, deadline: now + 15)
+            } else if recommendation.kind == .rollback {
+                trial = nil
+                trialCooldownUntil = now + 60
+            }
             applied = actual; appliedRevision += 1; appliedAt = now
         }
         lastNow = now; recoveryStart = nil; pending = nil
@@ -252,8 +338,25 @@ public struct QualityController: Sendable {
             guard capacity.isFinite, capacity >= 0 else { throw ValidationError.invalidWindow }
         }
     }
-    private func recommendation(_ settings: Settings, for window: Window) -> Recommendation {
-        .init(attemptID: attemptID, windowSequence: window.sequence, appliedRevision: appliedRevision,
+    /// Must be polled from the caller's bounded health loop even when receiver
+    /// evidence is absent. Rollback intent survives failed/expired applications.
+    public mutating func checkTrialDeadline(at now: Double) throws -> Recommendation? {
+        do { try recordTime(now) }
+        catch { trial?.rollbackRequired = true; throw error }
+        guard var active = trial else { return nil }
+        if now >= active.deadline { active.rollbackRequired = true }
+        trial = active
+        guard active.rollbackRequired else { return nil }
+        recoveryStart = nil
+        if let pending, pending.kind == .rollback, now <= pending.validUntil { return pending }
+        pending = .init(kind: .rollback, attemptID: attemptID, windowSequence: lastSequence ?? 0,
+                        appliedRevision: appliedRevision, validUntil: now + 2, settings: active.baseline)
+        return pending
+    }
+
+    private func recommendation(_ settings: Settings, for window: Window,
+                                kind: Recommendation.Kind = .decrease) -> Recommendation {
+        .init(kind: kind, attemptID: attemptID, windowSequence: window.sequence, appliedRevision: appliedRevision,
               validUntil: window.end + 2, settings: settings)
     }
     private func lowerSettings(profileIndex: Int, capacity: Double?) -> Settings? {

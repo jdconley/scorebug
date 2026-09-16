@@ -33,29 +33,33 @@ exists. Sender estimates and send throughput still cannot populate that field.
 
 - New initializer parameter `recoveryStrategy: RecoveryStrategy = .capacityQualified`.
 - Recommendation `kind`: decrease, increase, trial, rollback. A recommendation is
-  still not applied truth. Add probing state and trialStarted/trialConfirmed/
+  still not applied truth. Add probing state and trialRecommended/trialConfirmed/
   trialRollback/trialTimedOut reasons; missing capacity remains explicit.
 - Trial mode requires 30 contiguous seconds of fresh, matched capture/encoder/receiver
   cadence >=29.7fps, source loss <=1%, mean queue <50%, connected state, and nominal
-  thermal/worker pressure. Unknown capacity alone may permit a trial; other unknowns
+  thermal/worker/transport pressure. Unknown capacity alone may permit a trial; other unknowns
   cannot. Known inadequate capacity still blocks or decreases.
-- A trial increases bitrate by at most10% within the current qualified profile.
+- A trial increases bitrate by at most 10% within the current qualified profile.
   Resolution transitions remain separate qualification work. Never jump profiles in
-  this initial trial mode. Requests are capped before Int conversion for watchOS32.
+  this initial trial mode. The integer increment is floor(current / 10), capped by remaining profile headroom
+  before addition for watchOS32. Tiny rates cannot force a +1 above 10%.
 - A successful exact-setting trial acknowledgment starts probation, retains the prior
-  settings and sets a deadline15s later. A failed application does not start probation.
+  settings and sets a deadline 15s later. A failed application does not start probation.
   Unexpected/clamped trial or rollback settings are rejected; callers must retire or
   reconcile an externally changed encoder rather than trusting old policy state.
-- Confirmation requires10 contiguous post-application seconds meeting the stronger
+- Confirmation requires 10 contiguous post-application seconds meeting the stronger
   cadence/queue/loss/pressure conditions. First complete post-application evidence may
   start after the acknowledgment, but must fit before the fixed deadline. Later gaps,
   bad/unknown evidence, disconnection, invalid input or timeout require rollback.
   Capacity may remain unknown; successful probation proves observed operation only,
   not future headroom or sustainable capacity under changed conditions.
+- Trial windows additionally carry `transportPressure: Pressure = .unknown`; trial
+  mode requires nominal transport pressure. The legacy strategy preserves behavior
+  for unknown transport pressure, while explicitly elevated pressure requests decrease.
 - While probing, no other upward recommendation is possible. A required rollback is
   sticky and always targets the pretrial settings. A failed rollback acknowledgment
   retains that requirement. A successful exact rollback increments applied revision,
-  closes probation, and inhibits another trial for60s. Ongoing bad conditions can
+  closes probation, and inhibits another trial for 60s. Ongoing bad conditions can
   still request further decreases after rollback.
 - `checkTrialDeadline(at:) throws -> Recommendation?` advances the monotonic watermark
   and can issue/reissue rollback advice even when receiver windows stop arriving.
@@ -73,20 +77,20 @@ Files: `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`,
 new `ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/QualityTrialTests.swift`,
 existing policy tests and documentation.
 
-- [ ] Add fake-time tests and compile interface stubs. Verify failures before behavior.
-  Cover30s prerequisite, explicit unknown-capacity trial, no trial with any other
+- [x] Add fake-time tests and compile interface stubs. Verify failures before behavior.
+  Cover 30s prerequisite, explicit unknown-capacity trial, no trial with any other
   missing/stale/bad input, maximum10% step, no resolution jump, exact acknowledgment,
   10s confirmation, wrong revision/attempt, gaps, deadline, no-window rollback polling,
   failed rollback retry,60s cooldown, and invalid input sticky rollback.
-- [ ] Implement strategy selection and recommendation kind without changing existing
+- [x] Implement strategy selection and recommendation kind without changing existing
   capacity-qualified decisions. Implement the small probation state and deadline API;
   validate exact trial/rollback acknowledgments before mutating applied truth.
-- [ ] Run all Core tests. Independently review state-machine transitions, deadlines,
+- [x] Run all Core tests. Independently review state-machine transitions, deadlines,
   evidence freshness, rollback priority and integer limits. Add regressions for any
   reproduced review issue.
-- [ ] Compile shared Core for arm64_32 watchOS10 and run the combined unsigned
+- [x] Compile shared Core for arm64_32 watchOS 10 and run the combined unsigned
   iPhone/Watch Release build. Keep model compatibility and legacy policy tests green.
-- [ ] Update adaptive-policy/telemetry and parent milestone plan: unknown capacity
+- [x] Update adaptive-policy/telemetry and parent milestone plan: unknown capacity
   blocks confirmed capacity-based increases but can permit explicitly provisional
   receiver-validated trials. Record evidence/hashes and commit.
 
@@ -102,3 +106,23 @@ and joined reconfiguration/rollback lifecycle are qualified. Then exercise bitra
 trials in the real impaired native path, include transients in measurements, and
 qualify resolution/canvas transitions and sustained motion/thermal/radio behavior.
 The remaining portable streaming and native Watch requirements stay unchanged.
+
+## Verified checkpoint
+
+All269 Core tests pass, including 15 new trial tests and the existing capacity-qualified
+policy cases. The arm64_32 watchOS 10 Core compile and unsigned combined iPhone/Watch
+Release build pass. Tests began with a compiled behavioral stub (12 tests, 11 failures).
+Further executable red regressions preceded fixes for floor rounding, missing/bad
+transport pressure, invalid deadline-clock sticky rollback, and explicit disconnected/
+stalled state during rollback.
+
+Independent source review approved after the deadline-clock mismatch was fixed and
+covered before timeout. Trial recommendations use `trialRecommended` to avoid claiming
+an encoder changed before acknowledgment. Runtime publishing, archive, SDK and worker
+code are unchanged. Final source/evidence hashes are recorded in
+`artifacts/qa/quality-trials-final-verification.json`.
+
+Next: actual accepted-setting/first-affected-frame boundaries and policy-window
+alignment, then controlled native bitrate trials under step-down/outage/recovery
+impairment. This is not adaptive streaming acceptance or completion of the broader
+iPhone/Watch and portable host plan.
