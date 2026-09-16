@@ -137,8 +137,9 @@ struct PublishingClockObservation: Equatable, Sendable {
              let didStop: (@Sendable () -> Void)?
              if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }
              else { observer = nil; didStop = nil }
-             let publisher = SRTMediaPublisher(url: target, observations: observations, videoProfile: profile,
-                 compressedVideoObserver: observer, didStop: didStop, allowsBandwidthProbes: probeMode != nil)
+             let publisher = SRTMediaPublisher(url: target, observations: observations,
+                 encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame) } }, videoProfile: profile,
+                 compressedVideoObserver: observer, didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope, mode: probeMode)

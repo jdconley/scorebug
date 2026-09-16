@@ -9,6 +9,7 @@ import ScorebugMedia
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
+    public let videoCost: PublishingVideoCostOwner?
     private let videoProfile: PublishingVideoProfile
     public struct EncoderConfiguration: Equatable, Sendable {
         public let id: UUID
@@ -51,13 +52,16 @@ public actor SRTPublisher {
                 encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
-                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
+                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
+                videoCost: PublishingVideoCostOwner? = nil) {
+        let cost = videoCost ?? observations.map { PublishingVideoCostOwner(scope: $0.snapshot.scope) }
+        self.videoCost = cost
         self.stopPolicy = stopPolicy
         self.videoProfile = videoProfile
         // Immutable ownership prevents late native completions from reaching a
         // later publishing attempt. Observe synchronously without retaining media.
         let configurationObserver: VideoEncoderConfigurationObserver?
-        if observations != nil || encoderConfigurationObserver != nil {
+        if observations != nil || encoderConfigurationObserver != nil || cost != nil {
             configurationObserver = { frame in
                 let configuration = frame.configuration.flatMap {
                     VideoEncodingConfiguration(id: $0.id, encoderSessionID: $0.encoderSessionID, bitRate: $0.bitRate)
@@ -71,11 +75,15 @@ public actor SRTPublisher {
                                      submittedAt: frame.submittedAt, completedAt: frame.completedAt)
                 }
                 observations?.observe(.encodedVideo, sourcePTS: frame.sourcePTS, encoding: encoding)
+                cost?.observeEncoding(EncoderFrame(frame))
                 encoderConfigurationObserver?(EncoderFrame(frame))
             }
         } else { configurationObserver = nil }
         stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver,
-                           compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo,
+                           compressedVideoObserver: { frame in
+                               cost?.observeCompressed(frame)
+                               compressedVideoObserver?(frame)
+                           }, pacesEncodedVideo: pacesEncodedVideo,
                            allowsBandwidthProbes: allowsBandwidthProbes)
     }
     public func configure() async throws {
@@ -363,6 +371,7 @@ public actor SRTPublisher {
                 await stream.close()
                 await connection.close()
             }
+            videoCost?.close()
         }
         shutdown = pending
         await pending.value

@@ -1,3 +1,4 @@
+import { qualifyNativeVideoCost } from './native-video-cost.mjs';
 import { qualifyNativeReceiverIntervals } from './native-receiver-intervals.mjs';
 import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { nativeBandwidthProbe, qualifyNativeBandwidthProbe } from './native-bandwidth-probe.mjs';
@@ -602,7 +603,8 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let nativeFormatQualification,
+  let nativeVideoCostQualification,
+    nativeFormatQualification,
     profileTransitionQualification,
     bandwidthProbeQualification,
     receiverProbeQualification,
@@ -620,6 +622,18 @@ try {
       JSON.parse(formatBytes.toString('utf8')),
       observationSnapshot,
       liveProfile,
+    );
+    const costPath = join(artifact, 'native-video-cost.json');
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/native-video-cost.json'),
+      costPath,
+      { errorOnExist: true, force: false },
+    );
+    const costBytes = await readFile(costPath);
+    assert.ok(costBytes.length <= 2 * 1024 * 1024, 'Oversized native cost evidence');
+    nativeVideoCostQualification = qualifyNativeVideoCost(
+      JSON.parse(costBytes.toString('utf8')),
+      nativeFormatQualification,
     );
   }
   let videoObservation,
@@ -823,6 +837,7 @@ try {
         fixtureWorkload,
         liveProfile,
         nativeFormatQualification,
+        nativeVideoCostQualification,
         profileTransitions,
         adaptiveProfiles,
         profileTransitionQualification,

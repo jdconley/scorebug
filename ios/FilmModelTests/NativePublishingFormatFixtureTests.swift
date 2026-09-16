@@ -16,6 +16,17 @@ final class NativePublishingFormatFixtureTests: XCTestCase {
     private func snapshot(_ fixture: NativePublishingFormatFixture) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: fixture.data()) as? [String: Any])
     }
+    func testCostExportCannotClaimJoinedCloseBeforeOwnerCloses() throws {
+        let fixture = fixture()
+        var data = try JSONSerialization.jsonObject(with: fixture.costData()) as! [String: Any]
+        XCTAssertEqual(data["isClosed"] as? Bool, false)
+        fixture.videoCost.close()
+        data = try JSONSerialization.jsonObject(with: fixture.costData()) as! [String: Any]
+        XCTAssertEqual(data["isClosed"] as? Bool, true)
+        XCTAssertTrue(data["invalidReason"] is NSNull)
+        XCTAssertEqual((data["intervals"] as? [Any])?.count, 0)
+    }
+
     func testRetainsActualSizeAndRejectsCrossedFormatsGenerationsAndTimestamps() throws {
         for mode in 0..<5 {
             let proof = fixture(); record(proof, frame: 1)

@@ -11,6 +11,7 @@ public actor SRTMediaPublisher: MediaPublisher {
     }
     public typealias TransportMetrics = (rttMilliseconds: Double, droppedPackets: Int32, sentBytes: UInt64)
     private enum State { case prepared, starting, publishing, stopped }
+    public nonisolated let videoCost: PublishingVideoCostOwner?
     private let operations: Operations
     private var state = State.prepared
     private var startup: Task<Void, Error>?
@@ -28,11 +29,12 @@ public actor SRTMediaPublisher: MediaPublisher {
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)? = nil,
                 didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false,
-                allowsBandwidthProbes: Bool = false) {
+                allowsBandwidthProbes: Bool = false, videoCost: PublishingVideoCostOwner? = nil) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
             compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo,
-            allowsBandwidthProbes: allowsBandwidthProbes)
+            allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost)
+        self.videoCost = adapter.videoCost
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
@@ -68,7 +70,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var cancelProbe: @Sendable (UUID, UInt64) async -> Void = { _, _ in }
         var probeSnapshot: @Sendable () async -> PublishingBandwidthProbeSnapshot? = { nil }
     }
-    init(operations: Operations) { self.operations = operations }
+    init(operations: Operations) { self.operations = operations; videoCost = nil }
 
     public func start() async throws {
         guard state == .prepared else { throw PublisherError.invalidState }

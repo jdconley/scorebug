@@ -1305,3 +1305,30 @@ Next implement measured candidate cost and bounded repeated/staged probe ownersh
 before qualified quality-increase admission. Production probing and automatic
 upgrades remain disabled. Physical-device/Watch networking, remote hosts and long
 soaks remain unqualified.
+
+
+[Measured native video payload cost](2026-09-16-measured-video-cost.md) now joins
+actual encoder identity/timing and compressed sample bytes in a bounded owner per
+publishing attempt. It closes after native teardown and exposes only fresh,
+complete, coherent intervals. Current measured cost does not prove spare capacity
+or predict a different resolution's cost.
+
+All 78 streaming, 229 capture-model and 1,189 tooling tests pass, along with the
+simulator test build and combined unsigned iPhone/Watch Release build. Actual
+pressure run `native-app-M4cCvu` preserves 6,388 archive frames and 6,012 consecutive
+retained live frames, all expected audio markers and clean decodes, with 30 fps
+minimum reported receiver cadence. Eight measured windows account for 7,045,658
+H.264 payload bytes and peak at 3.527 Mbps despite the nominal 1.5 Mbps setting.
+All 3,676 probe messages arrive; media continues 141.075 seconds after withdrawal.
+Independent verification and 27 damaged-evidence rejections pass. Evidence is
+frozen in `artifacts/qa/video-cost-final-verification.json`.
+
+The user's September 16 clarification makes progressive sender adaptation explicit:
+start at the lowest qualified live profile without waiting for a bandwidth probe,
+then increase cautiously; sustained excessive frame loss resets live output to
+the lowest profile before another gradual recovery. Independent local recording
+remains mandatory. The next design must use researched congestion-control behavior
+and distinguish transport packet loss from actual missing/late video frames.
+Automatic upgrades remain disabled until candidate cost, repeated/staged ownership,
+and real transition media continuity are qualified. Physical-device/Watch networking,
+remote hosts and long soaks remain open.

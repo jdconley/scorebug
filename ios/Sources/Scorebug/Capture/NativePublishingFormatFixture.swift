@@ -10,6 +10,9 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     private let lock = NSLock()
     private let scope: VideoFrameObservationScope
     private let profile: PublishingVideoProfile
+    let videoCost: PublishingVideoCostOwner
+    private var compressedRows: [[String: Any]] = []
+    private var encodingRows: [[String: Any]] = []
     private var frames = 0
     private var invalid = false
     private var generation: UInt64?
@@ -19,8 +22,25 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     private var last: CMTime?
     init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile) {
         self.scope = scope; self.profile = profile
+        videoCost = PublishingVideoCostOwner(scope: scope)
+    }
+    func observeEncoding(_ frame: SRTPublisher.EncoderFrame) {
+        lock.withLock {
+            encodingRows.append(["sourcePTS": Self.time(frame.sourcePTS), "outputPTS": Self.time(frame.outputPTS),
+                "encoderSessionID": frame.encoderSessionID.uuidString,
+                "configurationID": frame.configuration.map { $0.id.uuidString } as Any? ?? NSNull(),
+                "configuredBitRate": frame.configuration.map { $0.bitRate } as Any? ?? NSNull(),
+                "submittedAt": frame.submittedAt, "completedAt": frame.completedAt])
+            if encodingRows.count > 1024 { encodingRows.removeFirst() }
+        }
     }
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
+        lock.withLock {
+            compressedRows.append(["sourcePTS": Self.time(frame.sourcePTS), "publishingGeneration": String(frame.publishingGeneration),
+                "width": frame.width, "height": frame.height, "bytes": frame.byteCount,
+                "dequeuedAt": frame.dequeuedAt, "valid": frame.valid, "wasEncoded": frame.wasEncoded, "codec": frame.codec])
+            if compressedRows.count > 1024 { compressedRows.removeFirst() }
+        }
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
                height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264)
     }
@@ -53,12 +73,34 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
         }
         return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
     }
+    func costData() throws -> Data {
+        let snapshot = videoCost.snapshot
+        let rows: [[String: Any]] = snapshot.intervals.map { v in
+            ["sequence": String(v.sequence), "publishingGeneration": String(v.publishingGeneration),
+             "encoderSessionID": v.encoderSessionID.uuidString,
+             "configurationID": v.configuration.map { $0.id.uuidString } as Any? ?? NSNull(),
+             "configuredBitRate": v.configuration.map { $0.bitRate } as Any? ?? NSNull(),
+             "width": v.width, "height": v.height, "sourceStartExclusive": Self.time(v.sourceStartExclusive),
+             "sourceEndInclusive": Self.time(v.sourceEndInclusive), "submissionStart": v.submissionStart,
+             "submissionEnd": v.submissionEnd, "observedAt": v.observedAt, "frames": v.frames,
+             "maximumFrameBytes": v.maximumFrameBytes, "payloadBytes": String(v.payloadBytes),
+             "maximumLatency": v.maximumLatency, "maximumSourceGap": v.maximumSourceGap,
+             "sourceDuration": v.sourceDuration, "submissionDuration": v.submissionDuration,
+             "payloadBitsPerSecond": v.payloadBitsPerSecond, "usable": v.usable]
+        }
+        let raw = lock.withLock { (compressedRows, encodingRows) }
+        let format = try JSONSerialization.jsonObject(with: data()) as! [String: Any]
+        return try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "isClosed": snapshot.isClosed,
+            "invalidReason": snapshot.invalidReason as Any? ?? NSNull(), "scope": format["scope"]!,
+            "profile": profile.rawValue, "intervals": rows, "compressed": raw.0, "encoded": raw.1], options: [.sortedKeys])
+    }
     func persist() {
         do {
             let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Scorebug/QA", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try data().write(to: directory.appendingPathComponent("native-publishing-format.json"), options: .atomic)
+            try costData().write(to: directory.appendingPathComponent("native-video-cost.json"), options: .atomic)
         } catch { /* Missing evidence fails qualification; diagnostics never fail recording. */ }
     }
     private static func time(_ value: CMTime) -> [String: Any] {

@@ -25,8 +25,8 @@ Closed/invalid owners expose no fresh cost. Historical summaries remain bounded.
 An optional external observer can read each actual interval; ordinary publishing
 creates the meter whenever it has application observation scope. The DEBUG native
 format fixture exports its bounded history at joined stop. Qualification compares
-all exported cost arithmetic and frame boundaries with independently demuxed live
-H.264 packets after startup acquisition, and checks normal archive/live/audio and
+all exported cost arithmetic and frame boundaries with separately retained raw pre-mux
+callback records, and checks normal archive/live/audio and
 cadence gates. Metadata is diagnostic and grants no quality-increase permission.
 
 Alternatives considered: configured bitrate is disproven by current measurements;
