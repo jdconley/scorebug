@@ -8,6 +8,7 @@ public struct QualityController: Sendable {
     /// This ingestion allowance never changes actual elapsed-time rate calculations.
     public static let maximumWindowDuration: Double = 5.25
     public static let minimumTrialCoverage: Double = 10
+    public static let maximumApplicationDuration: Double = 2
     /// One initial transition, required actual coverage, one complete-window
     /// overshoot, and the unchanged two-second evidence arrival allowance.
     public static let maximumTrialDuration = minimumTrialCoverage + 2 * maximumWindowDuration + 2
@@ -98,6 +99,14 @@ public struct QualityController: Sendable {
         public let validUntil: Double
         public let settings: Settings
     }
+    /// Single-use permission to finish native work admitted on fresh advice.
+    /// This never extends the lifetime of advice that has not been admitted.
+    public struct Application: Equatable, Sendable {
+        public let id: UUID
+        public let recommendation: Recommendation
+        public let admittedAt: Double
+        public let completionDeadline: Double
+    }
     public struct Decision: Equatable, Sendable {
         public let state: State
         public let reasons: [Reason]
@@ -118,6 +127,7 @@ public struct QualityController: Sendable {
     private var lastSequence: UInt64?
     private var recoveryStart: Double?
     private var pending: Recommendation?
+    private var application: Application?
     private let recoveryStrategy: RecoveryStrategy
     private struct Trial: Sendable {
         let baseline: Settings
@@ -158,7 +168,7 @@ public struct QualityController: Sendable {
     /// or advancing clocks/revisions. Actual settings remain historical; active
     /// trials require rollback and recovery must accumulate again from scratch.
     public mutating func invalidateTelemetry() {
-        recoveryStart = nil; pending = nil; trial?.rollbackRequired = true
+        recoveryStart = nil; pending = nil; application = nil; trial?.rollbackRequired = true
     }
 
     /// Windows must be complete, nonoverlapping, 1–5.25 seconds long and received
@@ -178,7 +188,7 @@ public struct QualityController: Sendable {
         }
         lastNow = now; lastEnd = window.end; lastSequence = window.sequence
         // Every new window supersedes earlier advice, even if it cannot establish health.
-        pending = nil
+        pending = nil; application = nil
         if window.connectivity == .disconnected && trial == nil {
             recoveryStart = nil
             return .init(state: .disconnected, reasons: reasons + [.disconnected], recommendation: nil)
@@ -302,15 +312,45 @@ public struct QualityController: Sendable {
         return .init(state: .healthy, reasons: reasons, recommendation: pending)
     }
 
+    /// Admit exactly the pending advice before its original freshness deadline.
+    /// An in-flight authorization cannot be renewed by admitting the same advice.
+    public mutating func beginApplication(_ recommendation: Recommendation, at now: Double) throws -> Application {
+        try recordTime(now)
+        guard application == nil, pending == recommendation,
+              recommendation.attemptID == attemptID, recommendation.appliedRevision == appliedRevision,
+              now <= recommendation.validUntil else { throw ValidationError.staleRecommendation }
+        let deadline = now + Self.maximumApplicationDuration
+        guard deadline.isFinite, deadline > now else { throw ValidationError.invalidTime }
+        let admitted = Application(id: UUID(), recommendation: recommendation, admittedAt: now, completionDeadline: deadline)
+        application = admitted
+        return admitted
+    }
+
+    /// Complete only the issued authorization. Revocation, completion or failure
+    /// makes it unusable; new telemetry and explicit invalidation revoke it too.
+    public mutating func acknowledge(_ admitted: Application, applied actual: Settings?, at now: Double) throws {
+        guard application == admitted else {
+            try recordTime(now)
+            throw ValidationError.staleRecommendation
+        }
+        defer { application = nil; pending = nil; recoveryStart = nil }
+        try acknowledge(admitted.recommendation, applied: actual, at: now, before: admitted.completionDeadline)
+    }
+
     /// Acknowledge only the latest recommendation. Pass nil for a failed change.
     /// Report actual supported settings, including platform clamping; recommendations
     /// never become truth merely because they were emitted. Successful application
     /// increments the revision, and subsequent windows must start after this time.
     public mutating func acknowledge(_ recommendation: Recommendation, applied actual: Settings?, at now: Double) throws {
         try recordTime(now)
+        guard application == nil else { throw ValidationError.staleRecommendation }
+        try acknowledge(recommendation, applied: actual, at: now, before: recommendation.validUntil)
+    }
+    private mutating func acknowledge(_ recommendation: Recommendation, applied actual: Settings?, at now: Double, before deadline: Double) throws {
+        try recordTime(now)
         guard recommendation.attemptID == attemptID, recommendation.appliedRevision == appliedRevision,
               pending == recommendation else { throw ValidationError.staleRecommendation }
-        guard now <= recommendation.validUntil else {
+        guard now <= deadline else {
             recoveryStart = nil; pending = nil
             throw ValidationError.staleRecommendation
         }
@@ -377,6 +417,7 @@ public struct QualityController: Sendable {
         guard active.rollbackRequired else { return nil }
         recoveryStart = nil
         if let pending, pending.kind == .rollback, now <= pending.validUntil { return pending }
+        application = nil
         pending = .init(kind: .rollback, attemptID: attemptID, windowSequence: lastSequence ?? 0,
                         appliedRevision: appliedRevision, validUntil: now + 2, settings: active.baseline)
         return pending

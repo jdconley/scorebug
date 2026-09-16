@@ -125,7 +125,7 @@ import ScorebugMedia
             await work?.value
             await record("stopped", allowClosed: true)
             if let export, let data = try? JSONSerialization.data(withJSONObject:
-                ["formatVersion": 1, "overflow": overflow, "events": events], options: [.sortedKeys]) {
+                ["formatVersion": 2, "overflow": overflow, "events": events], options: [.sortedKeys]) {
                 await export(data)
             }
         }
@@ -151,6 +151,13 @@ import ScorebugMedia
         row["profileID"] = state.applied?.profileID
         if let receipt = state.receipt { row["receipt"] = Self.receiptJSON(receipt) }
         if let receipt = state.profileReceipt { row["profileReceipt"] = Self.profileReceiptJSON(receipt) }
+        if let application = state.application {
+            row["application"] = ["id": application.id.uuidString, "admittedAt": application.admittedAt,
+                "completionDeadline": application.completionDeadline,
+                "attemptID": application.recommendation.attemptID.uuidString,
+                "fromRevision": String(application.recommendation.appliedRevision),
+                "windowSequence": String(application.recommendation.windowSequence)]
+        }
         if let source {
             row["source"] = ["workerEpoch": source.workerEpoch, "workerAttempt": source.workerAttempt,
                 "sequence": String(source.sequence), "previousSequence": String(source.previousSequence),

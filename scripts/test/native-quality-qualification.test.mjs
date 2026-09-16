@@ -988,3 +988,103 @@ test('one recorded local rejection makes later apparent confirmation invalid', (
   rejected.reason = 'local-ownership';
   assert.throws(() => qualifyNativeQuality(f));
 });
+
+function admittedEvidence(f) {
+  f.quality.formatVersion = 2;
+  let previous,
+    sequence,
+    ordinal = 0;
+  for (const row of f.quality.events) {
+    if (row.window) sequence = row.window.sequence;
+    if (row.kind === 'applied') {
+      const admittedAt = Math.max(
+        previous.at,
+        (row.profileReceipt?.acknowledgedAt ?? row.receipt.acceptedAt) - 0.05,
+      );
+      row.application = {
+        id: `77777777-7777-7777-7777-${String(++ordinal).padStart(12, '0')}`,
+        attemptID: f.snapshot.scope.publishingAttemptID,
+        fromRevision: row.action.fromRevision,
+        windowSequence: sequence,
+        admittedAt,
+        completionDeadline: admittedAt + 2,
+      };
+    }
+    previous = row;
+  }
+  return f;
+}
+test('fresh admission permits bounded native completion after advice expiry', () => {
+  const f = admittedEvidence(fixture()),
+    row = f.quality.events[7];
+  row.application.admittedAt = 32.772759;
+  row.application.completionDeadline = 34.772759;
+  row.receipt.acceptedAt = 33.2;
+  row.acknowledgedAt = row.at = 33.272759;
+  f.quality.events.at(-1).at = 34;
+  assert.equal(qualifyNativeQuality(f).trials, 1);
+});
+test('admission evidence supports actual profile rollback and confirmed recovery', () => {
+  assert.equal(qualifyNativeQuality(admittedEvidence(adaptiveRollbackFixture())).confirmed, 1);
+});
+for (const [name, mutate] of Object.entries({
+  absent: (rows) => delete rows[0].application,
+  foreign: (rows) => (rows[0].application.attemptID = '00000000-0000-0000-0000-000000000000'),
+  revision: (rows) => (rows[0].application.fromRevision = '9'),
+  window: (rows) => (rows[0].application.windowSequence = '999'),
+  renewal: (rows) => (rows[0].application.completionDeadline += 0.01),
+  reused: (rows) => (rows[1].application.id = rows[0].application.id),
+  lateAdmission: (rows) => {
+    rows[0].application.admittedAt = rows[0].action.validUntil + 0.001;
+    rows[0].application.completionDeadline = rows[0].application.admittedAt + 2;
+  },
+  afterNativeProfile: (rows) => {
+    rows[0].application.admittedAt = rows[0].profileReceipt.acknowledgedAt + 0.001;
+    rows[0].application.completionDeadline = rows[0].application.admittedAt + 2;
+  },
+  lateCompletion: (rows) => {
+    rows[0].receipt.acceptedAt = rows[0].application.completionDeadline + 0.001;
+    rows[0].acknowledgedAt = rows[0].at = rows[0].receipt.acceptedAt;
+  },
+})) {
+  test(`rejects version-two application ${name}`, () => {
+    const f = admittedEvidence(adaptiveRollbackFixture());
+    mutate(f.quality.events.filter((row) => row.kind === 'applied'));
+    assert.throws(() => qualifyNativeQuality(f));
+  });
+}
+test('version-one evidence cannot opt into new completion time by adding an admission', () => {
+  const f = admittedEvidence(fixture()),
+    row = f.quality.events[7];
+  f.quality.formatVersion = 1;
+  row.acknowledgedAt = row.at = 33.1;
+  f.quality.events.at(-1).at = 34;
+  assert.throws(() => qualifyNativeQuality(f));
+});
+
+test('timeout-only rollback must be admitted after probation expires', () => {
+  const f = admittedEvidence(adaptiveRollbackFixture({ deadlineOnly: true }));
+  assert.equal(qualifyNativeQuality(f).rollbacks, 1);
+  const row = f.quality.events.find((row) => row.action?.kind === 'rollback');
+  row.application.admittedAt = 59.999;
+  row.application.completionDeadline = 61.999;
+  row.action.validUntil = 61.999;
+  assert.throws(
+    () => qualifyNativeQuality(f),
+    /Timeout-only rollback started before probation expired/,
+  );
+});
+test('application evidence rejects an invented rollback advice lifetime', () => {
+  const f = admittedEvidence(adaptiveRollbackFixture({ deadlineOnly: true }));
+  f.quality.events.find((row) => row.action?.kind === 'rollback').action.validUntil += 100;
+  assert.throws(() => qualifyNativeQuality(f));
+});
+test('version-two completion is bounded at acknowledgment rather than delayed logging', () => {
+  const f = admittedEvidence(fixture()),
+    row = f.quality.events[7];
+  row.at = row.application.completionDeadline + 0.5;
+  f.quality.events.at(-1).at = row.at + 0.1;
+  assert.equal(qualifyNativeQuality(f).trials, 1);
+  f.quality.formatVersion = 1;
+  assert.throws(() => qualifyNativeQuality(f));
+});

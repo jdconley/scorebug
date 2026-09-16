@@ -12,6 +12,7 @@ actor PublishingQualitySession {
         let revision: UInt64?
         let receipt: PublishingBitRateChange?
         let profileReceipt: PublishingVideoProfileChange?
+        let application: QualityController.Application?
         let acknowledgedAt: Double?
         let lastWindow: QualityController.Window?
         let evaluatedAt: Double?
@@ -33,6 +34,7 @@ actor PublishingQualitySession {
     private var policy: QualityController?
     private var receipt: PublishingBitRateChange?
     private var profileReceipt: PublishingVideoProfileChange?
+    private var application: QualityController.Application?
     private var acknowledgedAt: Double?
     private var lastWindow: QualityController.Window?
     private var evaluatedAt: Double?
@@ -73,7 +75,7 @@ actor PublishingQualitySession {
         self.initial = initial; self.strategy = strategy; self.uptime = uptime; self.lastNow = now
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
-        receipt: receipt, profileReceipt: profileReceipt, acknowledgedAt: acknowledgedAt,
+        receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
         lastWindow: lastWindow, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
@@ -186,8 +188,8 @@ actor PublishingQualitySession {
                   descriptor.targetFPS == 30 else { throw Failure.unsupportedProfile }
             profile = native
         }
-        let deadline = min(advice.validUntil, start + 2)
-        guard deadline > start else { throw Failure.staleAdvice }
+        let admitted = try policy.beginApplication(advice, at: start)
+        let deadline = admitted.completionDeadline
         busy = true
         defer { busy = false }
         do {
@@ -213,8 +215,8 @@ actor PublishingQualitySession {
             }
             // The profile's default bitrate is configuration intent. A verified
             // write on that exact new encoder must precede the single policy ack.
-            try policy.acknowledge(advice, applied: advice.settings, at: now)
-            self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil
+            try policy.acknowledge(admitted, applied: advice.settings, at: now)
+            self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil; application = admitted
             if let format { profileReceipt = format }
         } catch { await stop(); throw error }
     }

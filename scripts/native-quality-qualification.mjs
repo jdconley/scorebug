@@ -15,7 +15,7 @@ export function qualifyNativeQuality({
   adaptiveProfiles = false,
   profileQualification,
 }) {
-  assert.equal(quality.formatVersion, 1);
+  assert([1, 2].includes(quality.formatVersion));
   assert.equal(quality.overflow, false);
   assert(Array.isArray(quality.events) && quality.events.length <= 512);
   const events = quality.events,
@@ -34,7 +34,8 @@ export function qualifyNativeQuality({
     assert(Array.isArray(profileQualification.receipts));
     assert.equal(profileQualification.phases?.length, profileQualification.receipts.length + 1);
   }
-  const configurationIDs = new Set();
+  const configurationIDs = new Set(),
+    applicationIDs = new Set();
   function receipt(value) {
     assert(uuid(value.configurationID) && uuid(value.encoderSessionID));
     assert(/^[1-9][0-9]*$/.test(value.generation));
@@ -69,6 +70,7 @@ export function qualifyNativeQuality({
     confirmed = 0;
   for (const row of events.slice(1)) {
     assert(finite(row.at) && row.at >= lastTime);
+    const previousEventAt = lastTime;
     lastTime = row.at;
     assert.notEqual(row.kind, 'failed', 'Quality loop retired publishing');
     if (adaptiveProfiles && row.kind !== 'applied') assert.equal(row.profileID, profile);
@@ -212,7 +214,38 @@ export function qualifyNativeQuality({
           row.receipt.acceptedAt <= row.acknowledgedAt &&
           row.acknowledgedAt <= row.at,
       );
-      assert(row.acknowledgedAt <= action.validUntil && row.at <= action.validUntil);
+      let admittedAt;
+      if (quality.formatVersion === 2) {
+        const application = row.application;
+        assert(application && uuid(application.id) && uuid(application.attemptID));
+        const id = application.id.toLowerCase();
+        assert(!applicationIDs.has(id), 'Application authorization was reused');
+        applicationIDs.add(id);
+        assert.equal(
+          application.attemptID.toLowerCase(),
+          snapshot.scope.publishingAttemptID.toLowerCase(),
+        );
+        assert.equal(application.fromRevision, action.fromRevision);
+        assert.equal(application.windowSequence, String(lastPolicy));
+        admittedAt = application.admittedAt;
+        assert(
+          finite(admittedAt) && admittedAt >= previousEventAt && admittedAt >= lastEvaluatedAt,
+        );
+        assert(
+          finite(action.validUntil) && admittedAt <= action.validUntil,
+          'Native work started on expired advice',
+        );
+        assert(
+          action.validUntil - 2 <= admittedAt,
+          'Advice issuance cannot follow native admission',
+        );
+        assert.equal(application.completionDeadline, admittedAt + 2);
+        assert(row.receipt.acceptedAt >= admittedAt, 'Native receipt predates admission');
+        assert(row.acknowledgedAt <= application.completionDeadline);
+      } else {
+        // Old artifacts never gain extra completion time from optional new fields.
+        assert(row.acknowledgedAt <= action.validUntil && row.at <= action.validUntil);
+      }
       if (adaptiveProfiles) {
         const format = profileQualification.receipts[profileChanges];
         assert(format, 'Profile action lacks independent native format');
@@ -224,7 +257,8 @@ export function qualifyNativeQuality({
         assert.equal(format.encoderSessionID, row.receipt.encoderSessionID);
         assert.equal(format.publishingGeneration, row.receipt.generation);
         assert(
-          format.acknowledgedAt >= lastEvaluatedAt &&
+          (admittedAt === undefined || format.acknowledgedAt >= admittedAt) &&
+            format.acknowledgedAt >= lastEvaluatedAt &&
             format.acknowledgedAt >= ack &&
             format.acknowledgedAt <= row.receipt.acceptedAt,
         );
@@ -280,6 +314,12 @@ export function qualifyNativeQuality({
       } else if (action.kind === 'rollback') {
         assert(trial);
         assert.equal(action.bitRate, trial.baseline);
+        if (admittedAt !== undefined) {
+          assert(
+            trial.rollbackRequired || admittedAt >= trial.deadline,
+            'Timeout-only rollback started before probation expired',
+          );
+        }
         if (adaptiveProfiles) {
           assert.equal(action.profileID, trial.baselineProfile);
           assert(

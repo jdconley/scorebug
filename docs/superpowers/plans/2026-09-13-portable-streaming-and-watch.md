@@ -878,3 +878,22 @@ recovery-traffic coverage incomplete. Next
 resolve fresh recommendation admission versus bounded native execution, retain
 reconnectable destination work, and rerun adaptive pressure before production
 activation. Long soaks, physical phone/Watch and other-host gates remain open.
+
+
+The [quality application admission fix](2026-09-16-quality-application-admission.md)
+reproduces the prior native change failure and separates fresh-advice admission
+from a single-use two-second completion budget. Core (292), app-model (201), tooling
+(949), unsigned combined iPhone/Watch Release and corrected read-only review pass.
+The unchanged pressure repeat (`native-app-9wQGR3`) now completes the native UI
+workflow: downshift, higher trial, rollback, later higher trial and controller
+confirmation, then normal stop. Actual upgrades take 448/467 ms despite only
+137/91 ms remaining on their original fresh advice; bounded completion receipts
+verify the fix. The archive preserves all 8136 consecutive 1080p/30 frames over
+271.2 seconds and all 135 A/V markers, with no archive drops.
+
+Live qualification still fails: 225 ms A/V coverage discrepancy, 296-frame count
+deficit after acquisition plus 43 non-increasing barcodes, and a worst five-second
+receiver window at 8 fps. These gates remain unchanged. Next improve timely local
+pressure response and verify actual media recovery; controller confirmation alone
+does not authorize production adaptation. Physical phone/Watch, longer soaks and
+other-host gates remain separate.

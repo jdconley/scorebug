@@ -19,7 +19,9 @@ import XCTest
         let owner = try PublishingQualitySession(operations: native.operations,
             profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],
             attemptID: attempt, initial: .init(profileID: "hd", videoBitrate: 6_000_000), uptime: { native.now })
-        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil, uptime: { native.now })
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil, uptime: { native.now },
+                                             export: { exported = $0 })
         try await owner.bootstrap()
         func advice(_ start: Double) async throws -> QualityController.Recommendation {
             native.setNow(start + 5)
@@ -40,6 +42,17 @@ import XCTest
         let snapshot = await owner.snapshot
         XCTAssertFalse(snapshot.isClosed); XCTAssertEqual(snapshot.revision, 1)
         await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual(json["formatVersion"] as? Int, 2)
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        let applied = try XCTUnwrap(events.first { $0["kind"] as? String == "applied" })
+        let application = try XCTUnwrap(applied["application"] as? [String: Any])
+        XCTAssertEqual(application["admittedAt"] as? Double, 110)
+        XCTAssertEqual(application["completionDeadline"] as? Double, 112)
+        XCTAssertEqual(application["attemptID"] as? String, attempt.uuidString)
+        XCTAssertEqual(application["fromRevision"] as? String, "0")
+        XCTAssertEqual(application["windowSequence"] as? String, "105")
+        XCTAssertEqual(application["id"] as? String, snapshot.application?.id.uuidString)
     }
     func testWaitsForEncoderAndCoalescesHealthTicksIntoOneBootstrap() async throws {
         let native = DriverNative(), (driver, diagnostics) = try make(native)

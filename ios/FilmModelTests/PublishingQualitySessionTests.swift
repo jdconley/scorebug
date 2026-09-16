@@ -369,6 +369,22 @@ final class PublishingQualityProfileTests: XCTestCase {
         XCTAssertEqual(native.deadlines, [102, 107, 107])
         await owner.stop()
     }
+    func testFreshProfileChangeGetsBoundedExecutionTimeAfterAdmission() async throws {
+        let native = ProfileQualityNative(), owner = try owner(native)
+        let advice = try await decrease(owner, native)
+        // The native run had 227 ms left on fresh source-window advice. The
+        // deterministic publisher needs 250 ms per profile/bitrate operation.
+        native.setNow(106.772759)
+        XCTAssertEqual(advice.validUntil, 107)
+        try await owner.apply(advice)
+        let state = await owner.snapshot
+        XCTAssertFalse(state.isClosed); XCTAssertEqual(state.revision, 1)
+        XCTAssertEqual(state.applied, advice.settings)
+        XCTAssertEqual(state.acknowledgedAt ?? 0, 107.272759, accuracy: 0.000001)
+        XCTAssertEqual(native.deadlines, [102, 108.772759, 108.772759])
+        XCTAssertEqual(native.stops, 0)
+        await owner.stop()
+    }
     func testIncorrectNativeProfileDescriptorRejectsBeforeDispatch() async throws {
         for (width, fps) in [(640, 30), (958, 30)] {
             let native = ProfileQualityNative(), owner = try owner(native, width: width, fps: fps)
