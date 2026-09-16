@@ -5,6 +5,39 @@ import ScorebugMedia
 import XCTest
 
 final class VideoObservationFixtureTests: XCTestCase {
+    func testPublishingProxyChangesOnlyPortAndPreservesEncodedQueryBytes() throws {
+        let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:8890?streamid=publish%3Amatch%2Fa&passphrase=a%2Bb%26c%3Dd&latency=120&mode=caller"))
+        let environment = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_NATIVE_QUALITY": "1",
+                           "SCOREBUG_TEST_UPLINK_PROXY_PORT": "54321"]
+        let routed = try VideoObservationFixture.publishingURL(original, environment: environment)
+        XCTAssertEqual(routed.absoluteString, original.absoluteString.replacingOccurrences(of: ":8890?", with: ":54321?"))
+        XCTAssertEqual(URLComponents(url: routed, resolvingAgainstBaseURL: false)?.percentEncodedQuery,
+                       URLComponents(url: original, resolvingAgainstBaseURL: false)?.percentEncodedQuery)
+        XCTAssertEqual(try VideoObservationFixture.publishingURL(original, environment: [:]), original)
+        XCTAssertEqual(try VideoObservationFixture.publishingURL(original, environment: ["SCOREBUG_TEST_UPLINK_PROXY_PORT": ""]), original)
+    }
+
+    func testPublishingProxyRejectsInvalidPortOptInsAndNonFixtureURLs() throws {
+        let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:8890?streamid=publish%3Afixture"))
+        let environment = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_NATIVE_QUALITY": "1",
+                           "SCOREBUG_TEST_UPLINK_PROXY_PORT": "54321"]
+        for raw in ["0", "65536", "-1", "+1", " 1234", "1234 ", "01", "1.0", "hello"] {
+            var invalid = environment; invalid["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = raw
+            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: invalid))
+        }
+        for flag in ["SCOREBUG_TEST_VIDEO_OBSERVATIONS", "SCOREBUG_TEST_NATIVE_QUALITY"] {
+            for value in [nil, "0", "true"] as [String?] {
+                var invalid = environment; invalid[flag] = value
+                XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: invalid))
+            }
+        }
+        for raw in ["srt://example.com:8890", "srt://localhost:8890", "http://127.0.0.1:8890",
+                    "srt://user:password@127.0.0.1:8890", "srt://127.0.0.1:8890#fragment",
+                    "srt://127.0.0.1"] {
+            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(try XCTUnwrap(URL(string: raw)), environment: environment))
+        }
+    }
+
     func testExportPreservesExactRationalTimeAndScopeWithoutSetupData() throws {
         let attempt = UUID()
         let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",

@@ -13,6 +13,28 @@ enum VideoObservationFixture {
         environment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] == "1"
     }
 
+    enum UplinkError: Error { case invalidFixtureRoute }
+
+    /// Pure fixture transformation; the runtime caller is DEBUG simulator only.
+    /// Preserve query encoding exactly, including stream identity and credentials.
+    static func publishingURL(_ original: URL, environment: [String: String]) throws -> URL {
+        guard let raw = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], !raw.isEmpty else { return original }
+        guard requested(environment: environment),
+              environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1",
+              let port = Int(raw), String(port) == raw, (1...65535).contains(port),
+              var components = URLComponents(url: original, resolvingAgainstBaseURL: false),
+              components.scheme == "srt", components.host == "127.0.0.1",
+              let originalPort = components.port, (1...65535).contains(originalPort),
+              components.user == nil, components.password == nil, components.fragment == nil
+        else { throw UplinkError.invalidFixtureRoute }
+        let query = components.percentEncodedQuery
+        components.port = port
+        guard components.percentEncodedQuery == query, let routed = components.url else {
+            throw UplinkError.invalidFixtureRoute
+        }
+        return routed
+    }
+
     static func completedWindowLimit(environment: [String: String]) -> Int {
         guard requested(environment: environment),
               let raw = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"],

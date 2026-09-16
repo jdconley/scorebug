@@ -681,3 +681,13 @@ motion confirmation run preserves 3607 local / 3209 acquired live frames at 30 f
 with zero qualified loss. Its healthy connection triggers no local reduction and
 confirms one 6.6 Mbps trial. Actual network impairment/downward adaptation/recovery
 is the next gate; physical phone/Watch and remote-host qualification remain open.
+
+
+The [publishing-only proxy route](2026-09-16-native-uplink-impairment.md) now passes
+an actual 90-second structured-motion simulator run: 3671 clean archive / 3236
+acquired live frames at 30 fps, zero qualified loss, native score overlay, complete
+A/V output and one confirmed 6.6 Mbps trial. The worker keeps its direct reader
+connection. All proxy counters conserve, with no drops/errors/foreign peers and
+joined closure. All 180 FilmModel / 872 tooling tests and unsigned Apple Release
+pass. This is a pass-through baseline; scheduled bandwidth pressure and recovery
+remain the next gate.

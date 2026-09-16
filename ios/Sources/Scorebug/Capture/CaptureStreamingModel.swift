@@ -99,7 +99,14 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
     init(storage: any CaptureSetupStorage, pendingStore: any PendingBroadcastStore,
          clientFactory: @escaping (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
-         publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { SRTMediaPublisher(url: $0, observations: $1) },
+         publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
+             #if DEBUG && targetEnvironment(simulator)
+             let target = try VideoObservationFixture.publishingURL(url, environment: ProcessInfo.processInfo.environment)
+             #else
+             let target = url
+             #endif
+             return SRTMediaPublisher(url: target, observations: observations)
+         },
          observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
              #if DEBUG && targetEnvironment(simulator)
              let limit = VideoObservationFixture.completedWindowLimit(environment: ProcessInfo.processInfo.environment)

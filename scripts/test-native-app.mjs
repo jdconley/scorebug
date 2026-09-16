@@ -13,6 +13,7 @@ import {
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
+import { qualifyNativeUplinkProxy } from './native-uplink-qualification.mjs';
 import { qualifyNativeQuality } from './native-quality-qualification.mjs';
 import { qualifyWorkerProcessingReports } from './worker-processing-qualification.mjs';
 import { qualifySourceIntervals } from './source-interval-qualification.mjs';
@@ -25,6 +26,7 @@ import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
   nativeQualityOptions,
+  nativeUplinkOptions,
   nativeFixtureWorkload,
   nativeStreamingTestBudget,
   qualifyNativeStreamingHold,
@@ -54,6 +56,15 @@ const { requireQuality, requireConfirmation } = nativeQualityOptions({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
+const uplinkProfile = nativeUplinkOptions({
+  environment: process.env,
+  streaming,
+  requireQuality,
+  requireConfirmation,
+  requireProcessing,
+  requirePublication,
+  fixtureWorkload,
+});
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
 const fixtureMotionFlag = process.env.SCOREBUG_TEST_MOTION_FIXTURE ?? '';
 const streamingBudget = nativeStreamingTestBudget(streamingOptions.holdSeconds);
@@ -75,6 +86,7 @@ await writeFile(
       requireConfirmation,
       streamingOptions,
       fixtureWorkload,
+      uplinkProfile,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
@@ -353,6 +365,7 @@ try {
   if (streaming)
     proxy = await nativeStreamingFixture({
       requirePublication,
+      uplinkProfile,
       artifact,
       root,
       run,
@@ -412,6 +425,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
+      `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
     'workflow',
     { timeout: streamingBudget.workflowTimeoutMs },
@@ -467,6 +481,11 @@ try {
   if (proxy)
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
+  const uplinkQualification = uplinkProfile
+    ? qualifyNativeUplinkProxy(
+        JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'), 'utf8')),
+      )
+    : undefined;
   if (streaming) {
     assert.equal(media.length, 1, 'Streaming fixture must export its single clean recording');
     for (const output of live) {
@@ -646,6 +665,7 @@ try {
         sourceIntervalQualification,
         workerProcessingQualification,
         nativeQualityQualification,
+        uplinkQualification,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

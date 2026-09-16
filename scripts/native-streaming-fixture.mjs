@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createUDPImpairmentProxy } from './udp-impairment.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -22,10 +23,15 @@ export async function nativeStreamingFixture({
   run,
   decodedWindowLimit = 64,
   requirePublication = false,
+  uplinkProfile = null,
 }) {
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
+  assert.ok(
+    uplinkProfile === null || uplinkProfile === 'passthrough',
+    'Unsupported uplink profile',
+  );
   const names = [];
-  let worker, done, workerEvidence, directRecorder;
+  let worker, done, workerEvidence, directRecorder, uplink;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
   let matchID;
   let statusTask, statusAbort, statusError;
@@ -60,11 +66,31 @@ export async function nativeStreamingFixture({
     worker = undefined;
     await workerEvidence.save();
   }
+  async function stopUplink() {
+    if (!uplink) return;
+    try {
+      await uplink.close();
+    } finally {
+      await writeFile(
+        join(artifact, 'uplink-proxy.json'),
+        JSON.stringify(uplink.snapshot(), null, 2),
+      );
+    }
+  }
   async function stop() {
     const errors = [];
-    await stopStatus();
+    try {
+      await stopStatus();
+    } catch (error) {
+      errors.push(error);
+    }
     try {
       await stopWorker();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await stopUplink();
     } catch (error) {
       errors.push(error);
     }
@@ -142,6 +168,7 @@ export async function nativeStreamingFixture({
       }
       assert.ok(ready, `${kind} readiness`);
     }
+    if (uplinkProfile) uplink = await createUDPImpairmentProxy({ receiverPort: ingestPort });
     if (useDirectRecorder)
       directRecorder = await startDirectRTMPRecorder({
         artifact,
@@ -149,6 +176,7 @@ export async function nativeStreamingFixture({
         port: sinkPort,
       });
     return {
+      publishingProxyPort: uplink?.port,
       get matchID() {
         return matchID;
       },
@@ -330,6 +358,7 @@ export async function nativeStreamingFixture({
           'Native stream must report at least two complete decoder windows at >=24 fresh FPS',
         );
         await stopWorker();
+        await stopUplink();
         assert.ok(
           (await readFile(join(artifact, 'worker/score.txt'), 'utf8')).includes('HOME 1-0 AWAY'),
           'Worker did not receive the native scoring update',
