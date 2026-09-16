@@ -1098,3 +1098,22 @@ obtain attempt-bound receiver byte evidence, and repeat all native archive,
 picture/cadence and A/V gates. Preserve the distinction between fast local
 pressure and the slower receiver-control feedback path. Production adaptation
 remains disabled; phone/Watch, remote hosts and soaks remain open.
+
+
+The [MPEG-TS padding checkpoint](2026-09-16-mpegts-padding-probe.md) now qualifies
+real finite H.264/AAC transport with disposable null padding on the same local
+SRT connection. In `mpegts-probe-TZgGv9`, baseline, expired lease and 4 Mbps
+constraint runs all preserve the full accepted byte stream and identical decoded
+video/audio content and timestamps: 360 pictures and 564 audio frames each.
+The native lease stops extra traffic while source replay continues; the
+constrained case withdraws at 58.657 ms RTT with a 47 ms send buffer. All 1085
+tooling tests and native C++ assertions pass, including cleanup/evidence review
+regressions. All owned processes and proxies close and join.
+
+This remains a finite installed-library media prototype. The constrained queue
+still reaches 214.722 ms residence, so eventual decode equality does not prove
+live frame cadence/freshness. Next integrate native same-connection padding and
+attempt-bound receiver accounting before GoSRT demux, with separate fast local
+pressure/lease ownership and slower bounded receiver confirmation. Keep existing
+picture, cadence, A/V, local archive and measured-profile-cost gates. Production
+adaptation and physical phone/Watch, other-host and soak qualification remain open.
