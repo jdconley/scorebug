@@ -831,3 +831,21 @@ indices and retain all 180 inputs and precisely 90 selected output identities.
 191 app-model / 334 worker / 919 tooling tests, type checking and the combined Apple
 Release build pass. Next qualify pressure/recovery and newer-runtime behavior before
 automatic resolution selection, followed by the remaining soak/device/host gates.
+
+The controlled transition experiment also passes on iOS 26.2 in `native-app-yITrxX`:
+3461 native frames across actual 1080→540→1080 sessions, all 3401 acquired live
+frames delivered, and 3821 clean 1080p archive frames normally finalized/exported.
+Both outputs sustain approximately 30 fps with zero qualified source loss and
+matched A/V markers. Compressed-output pauses remain 340/429 ms; this proves
+controlled transitions, not automatic congestion recovery or receiver wall-clock
+continuity.
+
+The [quality-owner profile binding](2026-09-16-quality-profile-binding.md) now
+supports a native resolution replacement followed by a verified bitrate write
+on the exact new encoder, under one deadline and one policy revision. Invalid
+receipts, expiry, stop or cancellation retire the live attempt without committing
+intermediate settings. All 198 app-model tests and the unsigned combined Apple
+Release build pass; review found no blocking issues. The app's automatic fixture
+still selects one profile. Next add measured multi-profile pressure/recovery
+qualification before production activation; the original rate4m recovery failure
+is not yet resolved by an end-to-end adaptive test.

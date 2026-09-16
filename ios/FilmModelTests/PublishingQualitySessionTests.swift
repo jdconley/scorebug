@@ -332,3 +332,212 @@ private final class QualityFinished: @unchecked Sendable {
     var count: Int { lock.withLock { value } }
     func increment() { lock.withLock { value += 1 } }
 }
+
+final class PublishingQualityProfileTests: XCTestCase {
+    private let attempt = UUID()
+    private func owner(_ native: ProfileQualityNative, width: Int = 960, fps: Int = 30,
+                       supportsProfile: Bool = true) throws -> PublishingQualitySession {
+        var operations = native.operations
+        if !supportsProfile { operations.setProfile = nil }
+        return try .init(operations: operations, profiles: [
+            .init(id: "540p30", width: width, height: 540, targetFPS: fps, minimumBitrate: 1_000_000, maximumBitrate: 2_000_000),
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
+        ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000), uptime: { native.now })
+    }
+    private func decrease(_ owner: PublishingQualitySession, _ native: ProfileQualityNative) async throws -> QualityController.Recommendation {
+        try await owner.bootstrap()
+        native.setNow(105)
+        let decision = try await owner.evaluate(.init(attemptID: attempt, sequence: 1, appliedRevision: 0,
+            start: 100, end: 105, capturedFreshFrames: 150, encodedFreshFrames: 150, receiver: nil,
+            sourceLoss: nil, meanQueueOccupancy: 0.9, usableVideoCapacity: nil,
+            connectivity: .unknown, thermalPressure: .nominal, workerPressure: .unknown))
+        let advice = try XCTUnwrap(decision.recommendation)
+        XCTAssertEqual(advice.settings, .init(profileID: "540p30", videoBitrate: 1_600_000))
+        return advice
+    }
+    func testProfileDecreaseCommitsOnlyAfterNewEncoderBitrateAndSharesDeadline() async throws {
+        let native = ProfileQualityNative(), owner = try owner(native)
+        let advice = try await decrease(owner, native)
+        try await owner.apply(advice)
+        let state = await owner.snapshot
+        XCTAssertEqual(state.revision, 1); XCTAssertEqual(state.applied, advice.settings)
+        XCTAssertEqual(state.profileReceipt?.profile, .sd540)
+        XCTAssertEqual(state.receipt?.configuration.encoderSessionID, state.profileReceipt?.encoderSessionID)
+        XCTAssertEqual(state.receipt?.configuration.bitRate, 1_600_000)
+        XCTAssertEqual(state.acknowledgedAt, 105.5)
+        XCTAssertEqual(native.calls, ["rate:2000000", "profile:540p30", "rate:1600000"])
+        XCTAssertEqual(native.deadlines, [102, 107, 107])
+        await owner.stop()
+    }
+    func testIncorrectNativeProfileDescriptorRejectsBeforeDispatch() async throws {
+        for (width, fps) in [(640, 30), (958, 30)] {
+            let native = ProfileQualityNative(), owner = try owner(native, width: width, fps: fps)
+            let advice = try await decrease(owner, native)
+            do { try await owner.apply(advice); XCTFail("Unsupported descriptor") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .unsupportedProfile) }
+            XCTAssertEqual(native.calls.count, 1); XCTAssertEqual(native.stops, 0)
+            await owner.stop()
+        }
+        XCTAssertThrowsError(try owner(ProfileQualityNative(), fps: 24)) {
+            XCTAssertEqual($0 as? QualityController.ValidationError, .invalidProfiles)
+        }
+    }
+    func testAbsentProfileOperationRejectsBeforeDispatch() async throws {
+        let native = ProfileQualityNative(), owner = try owner(native, supportsProfile: false)
+        let advice = try await decrease(owner, native)
+        do { try await owner.apply(advice); XCTFail("Missing native operation") }
+        catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .unsupportedProfile) }
+        XCTAssertEqual(native.calls.count, 1); XCTAssertEqual(native.stops, 0)
+        await owner.stop()
+    }
+    func testProductionAdapterCarriesProfileAndBitrateThroughPublishingSession() async throws {
+        let publisher = QualityProfilePublisher(), session = try PublishingSession(publisher: publisher)
+        try await session.start()
+        let owner = try PublishingQualitySession(session: session, profiles: [
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_000_000, maximumBitrate: 2_000_000),
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
+        ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000))
+        try await owner.bootstrap()
+        let baseline = await owner.snapshot, start = try XCTUnwrap(baseline.acknowledgedAt)
+        try await Task.sleep(for: .milliseconds(1050))
+        let advice = try await owner.evaluate(.init(attemptID: attempt, sequence: 1, appliedRevision: 0,
+            start: start, end: start + 1, capturedFreshFrames: 30, encodedFreshFrames: 30, receiver: nil,
+            sourceLoss: nil, meanQueueOccupancy: 0.9, usableVideoCapacity: nil, connectivity: .unknown,
+            thermalPressure: .nominal, workerPressure: .unknown)).recommendation
+        try await owner.apply(XCTUnwrap(advice))
+        let state = await owner.snapshot
+        XCTAssertEqual(state.revision, 1); XCTAssertEqual(state.profileReceipt?.profile, .sd540)
+        XCTAssertEqual(state.receipt?.configuration, session.snapshot.lastBitRateChange?.configuration)
+        XCTAssertEqual(state.profileReceipt?.encoderSessionID, session.snapshot.lastVideoProfileChange?.encoderSessionID)
+        await owner.stop()
+        XCTAssertEqual(session.snapshot.state, .stopped)
+    }
+    func testMalformedFormatReceiptsNeverDispatchFollowupBitrate() async throws {
+        for mode in [ProfileQualityNative.Mode.wrongProfile, .wrongProfileGeneration, .oldProfileTime,
+                     .futureProfileTime, .oldProfileSource, .reusedEncoder, .expiredProfile] {
+            let native = ProfileQualityNative(), owner = try owner(native)
+            let advice = try await decrease(owner, native); native.setMode(mode)
+            do { try await owner.apply(advice); XCTFail("Invalid profile: \(mode)") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt) }
+            let state = await owner.snapshot
+            XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
+            XCTAssertNil(state.profileReceipt); XCTAssertEqual(native.calls.count, 2); XCTAssertEqual(native.stops, 1)
+        }
+    }
+    func testBitrateMustBelongToNewFormatAndPostdateItsAcknowledgment() async throws {
+        for mode in [ProfileQualityNative.Mode.wrongBitrateEncoder, .oldBitrateSource, .missingBitrateSource,
+                     .oldBitrateTime, .wrongBitrateGeneration, .wrongRate, .expiredBitrate] {
+            let native = ProfileQualityNative(), owner = try owner(native)
+            let advice = try await decrease(owner, native); native.setMode(mode)
+            do { try await owner.apply(advice); XCTFail("Invalid bitrate: \(mode)") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt) }
+            let state = await owner.snapshot
+            XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0); XCTAssertNil(state.profileReceipt)
+            XCTAssertEqual(state.receipt?.configuration.encoderSessionID, native.oldEncoder)
+            XCTAssertEqual(native.calls.count, 3); XCTAssertEqual(native.stops, 1)
+        }
+    }
+    func testStopAndCancellationDuringEitherWriteCannotCommitIntermediateState() async throws {
+        for stage in ["profile", "bitrate"] {
+            for cancel in [false, true] {
+                let native = ProfileQualityNative(), owner = try owner(native)
+                let advice = try await decrease(owner, native)
+                let gate = QualityWriteGate(); native.install(gate, stage: stage)
+                defer { gate.release() }
+                let operation = Task { try await owner.apply(advice) }
+                let deadline = ContinuousClock.now + .seconds(2)
+                while !gate.entered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+                guard gate.entered else { gate.release(); _ = try? await operation.value; XCTFail("Write did not enter"); continue }
+                let suspended = await owner.snapshot
+                XCTAssertTrue(suspended.isBusy); XCTAssertEqual(suspended.revision, 0); XCTAssertNil(suspended.profileReceipt)
+                do { try await owner.apply(advice); XCTFail("Concurrent write") }
+                catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .busy) }
+                if cancel { operation.cancel(); gate.release() } else { await owner.stop() }
+                do { try await operation.value; XCTFail("Stopped write acknowledged") } catch {}
+                let state = await owner.snapshot
+                XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0); XCTAssertNil(state.profileReceipt)
+                XCTAssertEqual(native.calls.count, stage == "profile" ? 2 : 3)
+                XCTAssertEqual(native.stops, 1)
+            }
+        }
+    }
+}
+
+private actor QualityProfilePublisher: MediaPublisher {
+    private var running = false, encoder = UUID(), source: Int64 = 0
+    func start() { running = true }
+    func append(_ sample: CapturedMediaSample) {}
+    var isPublishing: Bool { running }
+    func stop() { running = false }
+    func setVideoBitRate(_ rate: Int) -> PublishingBitRateChange {
+        source += 1
+        return .init(publishingGeneration: 1, configuration: .init(id: UUID(), encoderSessionID: encoder, bitRate: rate)!,
+                     acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: .init(value: source, timescale: 30))!
+    }
+    func setVideoProfile(_ profile: PublishingVideoProfile) -> PublishingVideoProfileChange {
+        let previous = encoder, last = source
+        encoder = UUID(); source += 1
+        return .init(profile: profile, publishingGeneration: 1, previousEncoderSessionID: previous, encoderSessionID: encoder,
+                     lastOldSourcePTS: .init(value: last, timescale: 30), firstNewSourcePTS: .init(value: source, timescale: 30),
+                     width: profile.width, height: profile.height, rawVideoFramesDropped: 0,
+                     acknowledgedAt: ProcessInfo.processInfo.systemUptime)!
+    }
+}
+
+private final class ProfileQualityNative: @unchecked Sendable {
+    enum Mode {
+        case normal, wrongProfile, wrongProfileGeneration, oldProfileTime, futureProfileTime,
+             oldProfileSource, reusedEncoder, expiredProfile, wrongBitrateEncoder, oldBitrateSource,
+             missingBitrateSource, oldBitrateTime, wrongBitrateGeneration, wrongRate, expiredBitrate
+    }
+    private let lock = NSLock()
+    let oldEncoder = UUID(), newEncoder = UUID()
+    private var time = 100.0, mode = Mode.normal, stopped = 0
+    private var history: [String] = [], limits: [Double] = []
+    private var gate: QualityWriteGate?, stage: String?
+    var now: Double { lock.withLock { time } }
+    var calls: [String] { lock.withLock { history } }
+    var deadlines: [Double] { lock.withLock { limits } }
+    var stops: Int { lock.withLock { stopped } }
+    func setNow(_ value: Double) { lock.withLock { time = value } }
+    func setMode(_ value: Mode) { lock.withLock { mode = value } }
+    func install(_ value: QualityWriteGate, stage: String) { lock.withLock { gate = value; self.stage = stage } }
+    var operations: PublishingQualitySession.Operations {
+        .init(setBitRate: { await self.bitrate($0, deadline: $1) }, stop: { self.stop() },
+              setProfile: { await self.profile($0, deadline: $1) })
+    }
+    private func bitrate(_ rate: Int, deadline: Double) async -> PublishingBitRateChange {
+        let (bootstrap, mode, gate) = lock.withLock {
+            let bootstrap = history.isEmpty
+            history.append("rate:\(rate)"); limits.append(deadline)
+            return (bootstrap, self.mode, stage == "bitrate" ? self.gate : nil)
+        }
+        if let gate { await gate.wait() }
+        let at = lock.withLock { if !bootstrap { time += mode == .expiredBitrate ? 3 : 0.25 }; return time }
+        return .init(publishingGeneration: !bootstrap && mode == .wrongBitrateGeneration ? 8 : 7,
+            configuration: .init(id: UUID(), encoderSessionID: bootstrap || mode == .wrongBitrateEncoder ? oldEncoder : newEncoder,
+                                 bitRate: !bootstrap && mode == .wrongRate ? rate + 1 : rate)!,
+            acceptedAt: !bootstrap && mode == .oldBitrateTime ? 105 : at,
+            lastSubmittedSourcePTS: !bootstrap && mode == .missingBitrateSource ? nil :
+                CMTime(value: bootstrap ? 100 : mode == .oldBitrateSource ? 150 : 152, timescale: 30))!
+    }
+    private func profile(_ requested: PublishingVideoProfile, deadline: Double) async -> PublishingVideoProfileChange {
+        let (mode, gate) = lock.withLock {
+            history.append("profile:\(requested.rawValue)"); limits.append(deadline)
+            return (self.mode, stage == "profile" ? self.gate : nil)
+        }
+        if let gate { await gate.wait() }
+        let at = lock.withLock { time += mode == .expiredProfile ? 3 : 0.25; return time }
+        let profile: PublishingVideoProfile = mode == .wrongProfile ? .hd1080 : requested
+        return .init(profile: profile, publishingGeneration: mode == .wrongProfileGeneration ? 8 : 7,
+            previousEncoderSessionID: mode == .reusedEncoder ? UUID() : oldEncoder,
+            encoderSessionID: mode == .reusedEncoder ? oldEncoder : newEncoder,
+            lastOldSourcePTS: .init(value: mode == .oldProfileSource ? 99 : 150, timescale: 30),
+            firstNewSourcePTS: .init(value: 151, timescale: 30), width: profile.width, height: profile.height,
+            rawVideoFramesDropped: 0, acknowledgedAt: mode == .oldProfileTime ? 104 : mode == .futureProfileTime ? at + 1 : at)!
+    }
+    private func stop() {
+        let gate = lock.withLock { stopped += 1; return self.gate }
+        gate?.release()
+    }
+}

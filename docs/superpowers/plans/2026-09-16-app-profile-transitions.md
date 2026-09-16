@@ -179,3 +179,28 @@ Next qualify controlled reduction/recovery under uplink pressure and the newer i
 runtime before enabling automatic resolution selection. Longer soaks, actual camera
 thermal/storage pressure, physical phone/Watch and other-host qualification remain
 open. Existing native phone/watch scoring requirements are unchanged.
+
+## Newer-runtime qualification
+
+The same controlled experiment also passes on iPhone 14 / iOS 26.2 in
+`native-app-yITrxX`, run at source commit `3d0a478` with
+`SCOREBUG_IOS_RUNTIME=26.2` and the same explicit transition flags above. The three
+native phases contain 600/1214/1647 frames, with boundaries 751→752 and 1965→1966.
+Independent native session IDs match both receipts, with zero raw queue evictions.
+All 3401 acquired live frames 212–3612 arrive, including the final encoded frame;
+the initial 60 acquisition frames remain explicitly excluded. All three phases
+sustain 30 source fps with zero qualified source loss.
+
+The clean 1080p archive normally finalizes and exports all 3821 frames 0–3820 at
+approximately 30 fps. All 63 archive and 57 expected live A/V markers match; live
+offset is approximately 65.58 ms with negligible measured drift. The scoring overlay
+changes, and the existing worker/publication/source/ingress/archive/tail gates pass.
+Compressed-output arrival pauses are 340.0/428.8 ms; native completion pauses are
+340.0/433.5 ms. These still do not establish seamless receiver wall-clock playback,
+automatic adaptation, or recovery under congestion. All fixture owners and cleanup
+completed successfully before evidence hashing.
+
+The next implementation prerequisite is the
+[quality-owner profile binding](2026-09-16-quality-profile-binding.md), preserving
+one policy revision across native resolution replacement and verified bitrate.
+Its tests are separate evidence from this controlled simulator experiment.

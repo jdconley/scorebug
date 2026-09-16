@@ -11,6 +11,7 @@ actor PublishingQualitySession {
         let applied: QualityController.Settings?
         let revision: UInt64?
         let receipt: PublishingBitRateChange?
+        let profileReceipt: PublishingVideoProfileChange?
         let acknowledgedAt: Double?
         let lastWindow: QualityController.Window?
         let evaluatedAt: Double?
@@ -21,6 +22,7 @@ actor PublishingQualitySession {
         let setBitRate: @Sendable (Int, Double) async throws -> PublishingBitRateChange
         let stop: @Sendable () async -> Void
         var isPublishing: @Sendable () -> Bool = { true }
+        var setProfile: (@Sendable (PublishingVideoProfile, Double) async throws -> PublishingVideoProfileChange)? = nil
     }
     private let operations: Operations
     private let profiles: [QualityController.Profile]
@@ -30,6 +32,7 @@ actor PublishingQualitySession {
     private let uptime: @Sendable () -> Double
     private var policy: QualityController?
     private var receipt: PublishingBitRateChange?
+    private var profileReceipt: PublishingVideoProfileChange?
     private var acknowledgedAt: Double?
     private var lastWindow: QualityController.Window?
     private var evaluatedAt: Double?
@@ -55,7 +58,8 @@ actor PublishingQualitySession {
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
-            stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing }),
+            stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing },
+            setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy,
             uptime: { ProcessInfo.processInfo.systemUptime })
     }
@@ -69,7 +73,8 @@ actor PublishingQualitySession {
         self.initial = initial; self.strategy = strategy; self.uptime = uptime; self.lastNow = now
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
-        receipt: receipt, acknowledgedAt: acknowledgedAt, lastWindow: lastWindow, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
+        receipt: receipt, profileReceipt: profileReceipt, acknowledgedAt: acknowledgedAt,
+        lastWindow: lastWindow, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
@@ -170,19 +175,47 @@ actor PublishingQualitySession {
         catch { policy.invalidateTelemetry(); self.policy = policy; pending = nil; throw error }
         guard pending == advice, advice.attemptID == attemptID,
               advice.appliedRevision == policy.appliedRevision, start <= advice.validUntil else { throw Failure.staleAdvice }
-        guard advice.settings.profileID == policy.applied.profileID else { throw Failure.unsupportedProfile }
+        let profile: PublishingVideoProfile?
+        if advice.settings.profileID == policy.applied.profileID {
+            profile = nil
+        } else {
+            guard operations.setProfile != nil,
+                  let native = PublishingVideoProfile(rawValue: advice.settings.profileID),
+                  let descriptor = profiles.first(where: { $0.id == native.rawValue }),
+                  descriptor.width == native.width, descriptor.height == native.height,
+                  descriptor.targetFPS == 30 else { throw Failure.unsupportedProfile }
+            profile = native
+        }
         let deadline = min(advice.validUntil, start + 2)
         guard deadline > start else { throw Failure.staleAdvice }
         busy = true
         defer { busy = false }
         do {
+            var format: PublishingVideoProfileChange?
+            var rateStart = start
+            if let profile, let setProfile = operations.setProfile {
+                let result = try await setProfile(profile, deadline)
+                try afterWrite()
+                rateStart = try time()
+                try validate(result, profile: profile, start: start, deadline: deadline, now: rateStart)
+                guard rateStart < deadline else { throw Failure.invalidReceipt }
+                format = result
+            }
             let result = try await operations.setBitRate(advice.settings.videoBitrate, deadline)
             try afterWrite()
             let now = try time()
-            try validate(result, rate: advice.settings.videoBitrate, start: start, deadline: deadline, now: now)
-            // Commit both policy and native receipt without another actor suspension.
+            try validate(result, rate: advice.settings.videoBitrate, start: rateStart, deadline: deadline, now: now)
+            if let format {
+                guard result.configuration.encoderSessionID == format.encoderSessionID,
+                      result.publishingGeneration == format.publishingGeneration,
+                      let pts = result.lastSubmittedSourcePTS,
+                      CMTimeCompare(pts, format.firstNewSourcePTS) >= 0 else { throw Failure.invalidReceipt }
+            }
+            // The profile's default bitrate is configuration intent. A verified
+            // write on that exact new encoder must precede the single policy ack.
             try policy.acknowledge(advice, applied: advice.settings, at: now)
             self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil
+            if let format { profileReceipt = format }
         } catch { await stop(); throw error }
     }
     /// All callers join one shielded stop, even if their own task is cancelled.
@@ -227,6 +260,22 @@ actor PublishingQualitySession {
                     throw Failure.invalidReceipt
                 }
             }
+        }
+    }
+    private func validate(_ result: PublishingVideoProfileChange, profile: PublishingVideoProfile,
+                          start: Double, deadline: Double, now: Double) throws {
+        guard let receipt, now <= deadline, result.profile == profile,
+              result.acknowledgedAt >= start, result.acknowledgedAt <= now,
+              result.publishingGeneration == receipt.publishingGeneration,
+              result.encoderSessionID != receipt.configuration.encoderSessionID else { throw Failure.invalidReceipt }
+        if let previous = receipt.lastSubmittedSourcePTS {
+            guard CMTimeCompare(result.lastOldSourcePTS, previous) >= 0 else { throw Failure.invalidReceipt }
+        }
+        if let prior = profileReceipt {
+            guard result.encoderSessionID != prior.encoderSessionID,
+                  result.encoderSessionID != prior.previousEncoderSessionID,
+                  result.acknowledgedAt >= prior.acknowledgedAt,
+                  CMTimeCompare(result.lastOldSourcePTS, prior.firstNewSourcePTS) >= 0 else { throw Failure.invalidReceipt }
         }
     }
 }
