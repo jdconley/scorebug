@@ -357,12 +357,19 @@ querying closed history remains historical. This supplies the queue component of
 future aligned policy windows. Transport/thermal/worker alignment and actual
 automatic media qualification remain required.
 
+The [measured-duration and transport alignment slice](2026-09-15-aligned-transport-and-window-duration.md)
+permits measured policy inputs up to 5.25 seconds without clipping endpoints or
+changing frame-rate/recovery thresholds. Retained native transport samples now
+support exact-boundary sampled gauge queries with explicitly enclosing counters.
+Thermal/worker pressure, receiver freshness and revision mapping still need runtime
+integration before actual automatic trial/rollback qualification.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live
 media yet; missing runtime telemetry, profile transitions, impairment, and soak
 qualification remain open. The rolling five-second output gate is separate from
-the controller's deterministic 1–5-second input windows.
+the controller's measured 1–5.25-second input windows.
 
 The [worker decoder measurements](../../worker-decoded-video.md) now pass software,
 VideoToolbox, and CPU-container timestamp qualifications. Optional bounded windows

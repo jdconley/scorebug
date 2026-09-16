@@ -34,6 +34,8 @@ public struct PublishingTransportStatistics: Equatable, Sendable {
 }
 
 public struct PublishingTransportStatisticsSnapshot: Equatable, Sendable {
+    /// At most 64 actual validated collections; closed snapshots stay historical.
+    public let samples: [PublishingTransportStatistics]
     public let latest: PublishingTransportStatistics?
     public let window: PublishingTransportWindow?
     public func freshWindow(at uptime: Double, maximumAge: Double = 2) -> PublishingTransportWindow? {
@@ -56,7 +58,7 @@ public struct PublishingTransportStatisticsTracker: Sendable {
     private var quarantined = false
     private var closed = false
     public init() {}
-    public var snapshot: PublishingTransportStatisticsSnapshot { .init(latest: latest, window: history.window, isQuarantined: quarantined, isClosed: closed) }
+    public var snapshot: PublishingTransportStatisticsSnapshot { .init(samples: history.samples, latest: latest, window: history.window, isQuarantined: quarantined, isClosed: closed) }
     public mutating func observe(_ sample: PublishingTransportStatistics?) {
         guard !closed, !quarantined, let sample else { return }
         if let latest {

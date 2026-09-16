@@ -91,8 +91,30 @@ private func pressureEvidence(_ snapshot: LiveIngressObservationSnapshot?) -> An
         "states": pressure.states.map { ["at": $0.at, "itemFraction": $0.itemFraction, "byteFraction": $0.byteFraction, "phase": $0.phase.rawValue] as [String: Any] }]
 }
 
+private func transportIntervalEvidence(_ value: PublishingTransportInterval?) -> Any {
+    guard let value else { return NSNull() }
+    return ["publishingGeneration": String(value.publishingGeneration), "start": value.start, "end": value.end,
+        "enclosingStart": value.enclosingStart, "enclosingEnd": value.enclosingEnd, "sampleCount": value.sampleCount,
+        "enclosingSentBytes": String(value.enclosingSentBytes), "enclosingRetransmittedBytes": String(value.enclosingRetransmittedBytes),
+        "enclosingDroppedPackets": String(value.enclosingDroppedPackets), "meanBufferedBytes": value.meanBufferedBytes,
+        "meanBufferMilliseconds": value.meanBufferMilliseconds, "meanRTTMilliseconds": value.meanRTTMilliseconds,
+        "enclosingMaximumBufferedBytes": String(value.enclosingMaximumBufferedBytes),
+        "enclosingMaximumBufferMilliseconds": String(value.enclosingMaximumBufferMilliseconds),
+        "enclosingMaximumRTTMilliseconds": value.enclosingMaximumRTTMilliseconds]
+}
+private final class TransportEvidence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tracker = PublishingTransportStatisticsTracker()
+    func observe(_ sample: PublishingTransportStatistics?) -> PublishingTransportStatisticsSnapshot {
+        lock.withLock { tracker.observe(sample); return tracker.snapshot }
+    }
+    func close() -> PublishingTransportStatisticsSnapshot {
+        lock.withLock { tracker.close(); return tracker.snapshot }
+    }
+}
+
 private func sourceEvidence(_ history: VideoSourceHistorySnapshot?, clock: PublishingTransportClock?,
-                            receipt: SDKProbe.BitRateChangeReceipt?, aggregate: VideoFrameObservationSnapshot?, ingress: LiveIngressObservationSnapshot?) -> Any {
+                            receipt: SDKProbe.BitRateChangeReceipt?, aggregate: VideoFrameObservationSnapshot?, ingress: LiveIngressObservationSnapshot?, transport: PublishingTransportStatisticsSnapshot?) -> Any {
     guard let history else { return NSNull() }
     var probes: [[String: Any]] = []
     if let clock, let boundary = receipt?.lastSubmittedSourcePTS,
@@ -116,7 +138,9 @@ private func sourceEvidence(_ history: VideoSourceHistorySnapshot?, clock: Publi
                     "coverage": coverageEvidence(interval.encodingCoverage),
                     "captureBoundaryStartTime": interval.captureBoundaryStartTime,
                     "captureBoundaryEndTime": interval.captureBoundaryEndTime,
-                    "ingressPressure": pressureIntervalEvidence(ingress.flatMap { interval.ingressPressure(in: $0) })])
+                    "ingressPressure": pressureIntervalEvidence(ingress.flatMap { interval.ingressPressure(in: $0) }),
+                    "transportInterval": transportIntervalEvidence(transport?.interval(from: interval.captureBoundaryStartTime,
+                        to: interval.captureBoundaryEndTime))])
             }
         }
     }
@@ -292,6 +316,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             var changed = false
             var acceptedReceipt: SDKProbe.BitRateChangeReceipt?
             let health = PublisherHealth()
+            let transportEvidence = TransportEvidence()
             var monitor: Task<Void, Never>?
             do {
                 try await publisher.start()
@@ -300,19 +325,17 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 // Telemetry has one independent task. A slow socket observation
                 // must not stall the consumer responsible for live sample ingress.
                 monitor = Task {
-                    var statisticsTracker = PublishingTransportStatisticsTracker()
-                    defer { statisticsTracker.close() }
                     do {
                         while !Task.isCancelled {
                             let publishing = await publisher.isPublishing
                             let transport = await publisher.metrics()
                             let statistics = await publisher.transportStatistics()
-                            statisticsTracker.observe(statistics)
+                            let statisticsSnapshot = transportEvidence.observe(statistics)
                             let observedAt = ProcessInfo.processInfo.systemUptime
                             try emit(["event": "publisher-observation", "publishing": publishing,
                                       "transportStatistics": statisticsEvidence(statistics),
                                       "statisticsObservedAt": observedAt,
-                                      "transportWindow": windowEvidence(statisticsTracker.snapshot.freshWindow(at: observedAt)),
+                                      "transportWindow": windowEvidence(statisticsSnapshot.freshWindow(at: observedAt)),
                                       "sentBytes": transport.map { $0.2 as Any } ?? NSNull(),
                                       "packetDrops": transport.map { $0.1 as Any } ?? NSNull()])
                             if !publishing { health.fail(); liveQueue.cancel(); return }
@@ -348,6 +371,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 await publisher.stop()
                 await monitor?.value
                 let finalObservations = observations?.close()
+                let finalTransport = transportEvidence.close()
                 let transportClockAfterStop = await publisher.transportClock()
                 let statisticsAfterStop = await publisher.transportStatistics()
                 try emit(["event": "publisher-finished", "videoSubmitted": publishedVideo,
@@ -359,9 +383,11 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                           "transportClockAfterStop": clockEvidence(transportClockAfterStop),
                           "transportStatisticsAfterStop": statisticsEvidence(statisticsAfterStop),
                           "encoderEvidence": encoderEvidence.snapshot(),
+                          "transportHistory": ["isClosed": finalTransport.isClosed, "isQuarantined": finalTransport.isQuarantined,
+                              "samples": finalTransport.samples.map { statisticsEvidence($0) }],
                           "ingressPressure": pressureEvidence(liveQueue.snapshot.ingressObservation),
                           "encoderSourceHistory": sourceEvidence(observations?.sourceHistorySnapshot,
-                              clock: transportClockBeforeStop, receipt: acceptedReceipt, aggregate: finalObservations, ingress: liveQueue.snapshot.ingressObservation)])
+                              clock: transportClockBeforeStop, receipt: acceptedReceipt, aggregate: finalObservations, ingress: liveQueue.snapshot.ingressObservation, transport: finalTransport)])
             } catch {
                 liveQueue.cancel()
                 monitor?.cancel()

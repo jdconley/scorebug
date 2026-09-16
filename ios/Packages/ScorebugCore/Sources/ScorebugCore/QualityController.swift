@@ -4,6 +4,9 @@ import Foundation
 /// measured telemetry; this type never configures capture, encoding, or archives.
 /// Thresholds are initial qualification values, not a reliability guarantee.
 public struct QualityController: Sendable {
+    /// Measured source spans may exceed nominal five-second decoder windows.
+    /// This ingestion allowance never changes actual elapsed-time rate calculations.
+    public static let maximumWindowDuration: Double = 5.25
     public struct Profile: Equatable, Sendable {
         public let id: String
         public let width: Int
@@ -148,7 +151,7 @@ public struct QualityController: Sendable {
         recoveryStart = nil; pending = nil; trial?.rollbackRequired = true
     }
 
-    /// Windows must be complete, nonoverlapping, 1–5 seconds long and received
+    /// Windows must be complete, nonoverlapping, 1–5.25 seconds long and received
     /// within 2 seconds of their end. Consecutive windows share exact boundaries.
     /// Invalid input clears recovery and pending recommendations; callers must
     /// treat rejected telemetry as unknown rather than retaining a healthy claim.
@@ -325,7 +328,7 @@ public struct QualityController: Sendable {
         guard window.attemptID == attemptID else { throw ValidationError.wrongAttempt }
         guard window.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
         guard window.start.isFinite, window.end.isFinite, window.start >= appliedAt,
-              (1...5).contains(window.end - window.start), window.end <= now else { throw ValidationError.invalidWindow }
+              (1...Self.maximumWindowDuration).contains(window.end - window.start), window.end <= now else { throw ValidationError.invalidWindow }
         guard now - window.end <= 2 else { throw ValidationError.staleWindow }
         if let lastEnd, window.start < lastEnd { throw ValidationError.outOfOrder }
         if let lastSequence, window.sequence <= lastSequence { throw ValidationError.outOfOrder }

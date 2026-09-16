@@ -17,7 +17,7 @@ and minimum/maximum bitrate cannot decrease along the ladder. The policy does no
 establish whether those profiles are supported by a particular device or worker.
 
 Each window identifies the attempt, sequence, applied revision, and a complete
-1–5-second monotonic interval. It separately carries capture/encoded/received fresh
+1–5.25-second monotonic interval. It separately carries capture/encoded/received fresh
 frames, receiver observation time, source-loss counts, mean live queue occupancy,
 usable video capacity, connectivity, and thermal/worker/transport pressure. Capacity is video
 bits per second after reserving audio and transport costs. Send throughput is not
@@ -190,3 +190,19 @@ Tests use deterministic application receipts and include one real PublishingSess
 integration with a controlled publisher. They do not qualify actual automatic media
 trials, native startup timing or aligned telemetry. Source/queue/transport/pressure
 alignment and receiver freshness must be connected before enabling the runtime path.
+
+
+## Measured input duration allowance
+
+`maximumWindowDuration` is 5.25 seconds. Real 150-frame source spans have measured
+5.000622 and 5.001985 seconds, so strict five-second rejection discarded otherwise
+usable inputs. The 250 ms ingestion allowance is bounded by the existing native
+fixture producer-lag budget; it is not a claim about all phone timing or a relaxation
+of the separate rolling-five-second output gate. Endpoints are never clipped.
+
+Every frame-rate and recovery/confirmation calculation still uses measured elapsed
+time. At 5.25 seconds, 150 frames measure only 28.57 fps and cannot satisfy the 29.7
+fps recovery threshold; 125 frames measure below 24 fps and trigger reduction. Input
+freshness, ordering, revision checks, source loss, 30-second recovery, 10-second
+confirmation and trial deadlines are unchanged. Jittered consecutive windows are
+tested through both recommendation and confirmation using their actual timestamps.

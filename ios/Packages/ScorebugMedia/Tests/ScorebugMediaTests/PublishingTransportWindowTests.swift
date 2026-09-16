@@ -10,6 +10,69 @@ final class PublishingTransportWindowTests: XCTestCase {
               rttMilliseconds: rtt ?? Double(gauge), estimatedBandwidthMbps: 999,
               senderBufferedBytes: gauge, senderBufferMilliseconds: gauge, availableSenderBytes: 1000)!
     }
+    func testRetainedQueryCanExceedRollingFiveSecondWindow() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        for i in 0...10 { tracker.observe(sample(Double(i), gauge: Int32(i * 10))) }
+        XCTAssertEqual(tracker.snapshot.window?.start, 5)
+        let value = try XCTUnwrap(tracker.snapshot.interval(from: 1.25, to: 9.25))
+        XCTAssertEqual(value.enclosingStart, 1); XCTAssertEqual(value.enclosingEnd, 10)
+        XCTAssertEqual(value.sampleCount, 10)
+        XCTAssertEqual(value.meanBufferedBytes, 47.5, accuracy: 1e-10)
+    }
+    func testFractionalIntervalKeepsExactEnclosingCountersAndSampledMeans() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        let base = UInt64.max - 10000
+        tracker.observe(sample(10, sent: base, retrans: base - 1000, drops: 4, gauge: 100))
+        tracker.observe(sample(11, sent: base + 1000, retrans: base - 900, drops: 5, gauge: 400))
+        tracker.observe(sample(13, sent: base + 4000, retrans: base - 600, drops: 8, gauge: 900))
+        let value = try XCTUnwrap(tracker.snapshot.interval(from: 10.5, to: 12.5))
+        XCTAssertEqual(value.start, 10.5); XCTAssertEqual(value.end, 12.5)
+        XCTAssertEqual(value.enclosingStart, 10); XCTAssertEqual(value.enclosingEnd, 13)
+        XCTAssertEqual(value.sampleCount, 3); XCTAssertEqual(value.enclosingSentBytes, 4000)
+        XCTAssertEqual(value.enclosingRetransmittedBytes, 400); XCTAssertEqual(value.enclosingDroppedPackets, 4)
+        XCTAssertEqual(value.meanBufferedBytes, 325, accuracy: 1e-10)
+        XCTAssertEqual(value.meanBufferMilliseconds, 325, accuracy: 1e-10)
+        XCTAssertEqual(value.meanRTTMilliseconds, 325, accuracy: 1e-10)
+        XCTAssertEqual(value.enclosingMaximumBufferedBytes, 900)
+        let exact = try XCTUnwrap(tracker.snapshot.interval(from: 11, to: 13))
+        XCTAssertEqual(exact.enclosingStart, 11); XCTAssertEqual(exact.enclosingEnd, 13)
+        XCTAssertEqual(exact.meanBufferedBytes, 400); XCTAssertEqual(exact.enclosingSentBytes, 3000)
+    }
+    func testIntervalRequiresBracketsAndRejectsEvictedGapOrQuarantinedEvidence() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        tracker.observe(sample(10)); tracker.observe(sample(11))
+        for (start, end) in [(9.0, 10.5), (10, 11.1), (10, 10), (11, 10), (.nan, 11), (10, .infinity)] {
+            XCTAssertNil(tracker.snapshot.interval(from: start, to: end))
+        }
+        tracker.observe(sample(13.1)); tracker.observe(sample(14.1))
+        XCTAssertNil(tracker.snapshot.interval(from: 10, to: 14))
+        XCTAssertNotNil(tracker.snapshot.interval(from: 13.2, to: 14))
+        tracker.observe(sample(15, generation: 2))
+        XCTAssertNil(tracker.snapshot.interval(from: 13.2, to: 14))
+        var evicted = PublishingTransportStatisticsTracker()
+        for i in 0...100 { evicted.observe(sample(Double(i) / 10)) }
+        XCTAssertNil(evicted.snapshot.interval(from: 0, to: 10))
+        XCTAssertNotNil(evicted.snapshot.interval(from: 9, to: 10))
+    }
+    func testIntervalSnapshotsAreHistoricalAndDuplicateReadsDoNotExtendCoverage() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        tracker.observe(sample(10, gauge: 100)); let last = sample(11, gauge: 200); tracker.observe(last)
+        let before = tracker.snapshot
+        tracker.observe(last); tracker.observe(nil); tracker.close()
+        XCTAssertEqual(tracker.snapshot.interval(from: 10.2, to: 10.8), before.interval(from: 10.2, to: 10.8))
+        XCTAssertNotNil(tracker.snapshot.interval(from: 10, to: 11))
+        XCTAssertNil(tracker.snapshot.freshSample(at: 11))
+        XCTAssertNil(tracker.snapshot.interval(from: 10, to: 11.001))
+        tracker.observe(sample(12)); XCTAssertNil(before.interval(from: 10, to: 12))
+    }
+    func testIntervalHandlesSingleBracketAndFiniteExtremeRTTWithoutOverflow() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        tracker.observe(sample(10, rtt: .greatestFiniteMagnitude)); tracker.observe(sample(12, rtt: 0))
+        let value = try XCTUnwrap(tracker.snapshot.interval(from: 10.25, to: 11.75))
+        XCTAssertEqual(value.sampleCount, 2)
+        XCTAssertEqual(value.meanRTTMilliseconds, .greatestFiniteMagnitude)
+        XCTAssertTrue(value.meanRTTMilliseconds.isFinite)
+    }
     func testNonuniformTimeWeightsUsePrecedingSampleAndExactCounterDeltas() throws {
         var tracker = PublishingTransportStatisticsTracker()
         let base = UInt64.max - 10000

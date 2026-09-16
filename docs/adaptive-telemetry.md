@@ -443,3 +443,28 @@ few milliseconds. The current policy rejects those durations. Alignment must acc
 for measured elapsed time with a specified input-duration contract; clipping times
 to fit existing tests would invent evidence. The separate rolling-five-second output
 quality gate remains unchanged.
+
+
+## Source-aligned sampled transport gauges
+
+`PublishingTransportStatisticsSnapshot.samples` exposes at most 64 retained validated
+native collections. `interval(from:to:)` requires collections bracketing both requested
+uptime boundaries and integrates preceding sampled buffer/RTT gauges over the exact
+interval. It never extrapolates past a collection. Ring eviction and gaps over two
+seconds remove older coverage; quarantine rejects queries. Closed snapshots remain
+queryable as history while their fresh accessors still reject closed state.
+
+The result separately reports `enclosingStart` and `enclosingEnd`. Wide sent,
+retransmitted and drop deltas, and gauge maxima, belong to that enclosing collection
+range. They are not interpolated into invented exact-interval counters. Gauge means
+represent the preceding-sample assumption and cannot detect unsampled instantaneous
+pressure. These values establish neither bandwidth capacity nor a nominal/elevated
+policy classification. The future app adapter must independently bind attempt,
+configuration/revision, acknowledgment and freshness.
+
+The native monitor now retains its validated tracker in a synchronized scalar owner,
+closes it after the monitor joins, and exports actual retained samples and typed
+per-source-probe intervals. Independent reconstruction first qualifies original
+native collections and source/capture correspondence, then checks retention,
+bracketing, normalized gauge integration and exact enclosing counters. Source probes
+remain declared finite-fixture endpoints, not production worker reports.

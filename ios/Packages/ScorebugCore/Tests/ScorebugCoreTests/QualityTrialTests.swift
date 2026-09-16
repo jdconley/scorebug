@@ -16,10 +16,10 @@ final class QualityTrialTests: XCTestCase {
                         connected: QualityController.Connectivity = .connected,
                         thermal: QualityController.Pressure = .nominal,
                         worker: QualityController.Pressure = .nominal,
-                        transport: QualityController.Pressure = .nominal) -> QualityController.Window {
+                        transport: QualityController.Pressure = .nominal, duration: Double = 5) -> QualityController.Window {
         .init(attemptID: attempt, sequence: UInt64(start + 1), appliedRevision: revision,
-              start: start, end: start + 5, capturedFreshFrames: 150, encodedFreshFrames: 150,
-              receiver: received.map { .init(freshFrames: $0, observedAt: start + 5) },
+              start: start, end: start + duration, capturedFreshFrames: 150, encodedFreshFrames: 150,
+              receiver: received.map { .init(freshFrames: $0, observedAt: start + duration) },
               sourceLoss: .init(expectedFrames: 150, lostFrames: 0), meanQueueOccupancy: queue,
               usableVideoCapacity: capacity, connectivity: connected, thermalPressure: thermal, workerPressure: worker, transportPressure: transport)
     }
@@ -36,6 +36,46 @@ final class QualityTrialTests: XCTestCase {
         let advice = try ready(&policy)
         try policy.acknowledge(advice, applied: advice.settings, at: 30)
         return policy
+    }
+    func testMeasuredDurationAllowanceDoesNotClampActualFrameRates() throws {
+        for duration in [5.000622458290309, 5.00198454153724, 5.25] {
+            var policy = try controller()
+            let result = try policy.evaluate(window(0, duration: duration), at: duration)
+            XCTAssertFalse(result.reasons.contains(.freshFrameFloor))
+        }
+        var bad = try controller()
+        XCTAssertThrowsError(try bad.evaluate(window(0, duration: 5.250001), at: 5.250001))
+        var floor = try controller()
+        let result = try floor.evaluate(window(0, received: 125, duration: 5.25), at: 5.25)
+        XCTAssertTrue(result.reasons.contains(.freshFrameFloor), "125/5.25 is below 24 even though 125/5 is not")
+        XCTAssertEqual(result.recommendation?.kind, .decrease)
+    }
+    func testInputAllowanceCannotMakeWeakCadenceQualifyRecovery() throws {
+        var policy = try controller()
+        for i in 0..<12 {
+            let start = Double(i) * 5.25
+            XCTAssertNil(try policy.evaluate(window(start, duration: 5.25), at: start + 5.25).recommendation,
+                "150/5.25 must stay below the 29.7 fps recovery gate")
+        }
+    }
+    func testJitteredWindowsUseActualElapsedRecoveryAndTrialConfirmation() throws {
+        var policy = try controller(), start = 0.0
+        let durations = [5.000622458290309, 5.00198454153724, 4.99989033350721, 5.0002941666170955, 4.998970333486795, 5.001]
+        var recommendation: QualityController.Recommendation?
+        for (i, duration) in durations.enumerated() {
+            let decision = try policy.evaluate(window(start, duration: duration), at: start + duration)
+            if i < 5 { XCTAssertNil(decision.recommendation) }
+            recommendation = decision.recommendation
+            start += duration
+        }
+        let trial = try XCTUnwrap(recommendation)
+        XCTAssertEqual(trial.kind, .trial)
+        try policy.acknowledge(trial, applied: trial.settings, at: start)
+        let first = try policy.evaluate(window(start, revision: 1, duration: 5.001), at: start + 5.001)
+        XCTAssertFalse(first.reasons.contains(.trialConfirmed))
+        start += 5.001
+        let second = try policy.evaluate(window(start, revision: 1, duration: 5.001), at: start + 5.001)
+        XCTAssertTrue(second.reasons.contains(.trialConfirmed))
     }
     func testExternalInvalidationRevokesAdviceAndRestartsRecovery() throws {
         var policy = try controller()

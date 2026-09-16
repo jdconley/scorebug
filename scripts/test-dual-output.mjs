@@ -12,6 +12,7 @@ import {
   qualifyEncoderConfiguration,
   qualifyEncoderSourceHistory,
 } from './encoder-configuration-evidence.mjs';
+import { qualifyTransportIntervals } from './transport-interval-evidence.mjs';
 import { qualifyIngressPressure } from './ingress-pressure-evidence.mjs';
 import { qualifyTransportStatistics } from './transport-statistics-evidence.mjs';
 import { inspectFrameCodeSamples } from './impaired-media-diagnostics.mjs';
@@ -620,6 +621,7 @@ try {
     let encoderConfiguration;
     let encoderSourceHistory;
     let ingressPressure;
+    let transportIntervals;
     let impairedLive;
     if (scenario === 'record-only') {
       assert.equal(finished.livePeakBytes, 0);
@@ -667,6 +669,11 @@ try {
         pressure: sent.ingressPressure,
         source: sent.encoderSourceHistory,
       });
+      transportIntervals = qualifyTransportIntervals({
+        history: sent.transportHistory,
+        source: sent.encoderSourceHistory,
+        validatedSamples: transportStatistics.samples,
+      });
       if (normal) {
         liveResult = await analyze(live, `${scenario}-live`, false);
         bitrateChange = await measureBitrateChange(live);
@@ -706,6 +713,7 @@ try {
       encoderConfiguration,
       encoderSourceHistory,
       ingressPressure,
+      transportIntervals,
       networkImpairment,
       impairedLive,
       counters: finished,
