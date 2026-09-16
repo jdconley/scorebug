@@ -73,7 +73,7 @@ const report = async () => {
     if (!reportingFailed) log.warn('worker_reporting_unavailable');
     reportingFailed = true;
   }
-  if (!stopping) reportTimer = setTimeout(() => void report(), 1000);
+  if (!stopping) reportTimer = setTimeout(() => void report(), config.WORKER_REPORT_INTERVAL_MS);
 };
 const poll = async () => {
   try {

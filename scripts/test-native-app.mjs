@@ -13,6 +13,7 @@ import {
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
+import { qualifyNativeQuality } from './native-quality-qualification.mjs';
 import { qualifyWorkerProcessingReports } from './worker-processing-qualification.mjs';
 import { qualifySourceIntervals } from './source-interval-qualification.mjs';
 import { qualifyPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
@@ -45,6 +46,16 @@ assert.ok(
 );
 const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
+assert.ok(
+  qualityFlag === undefined ||
+    (qualityFlag === '1' &&
+      requireProcessing &&
+      streamingOptions.holdSeconds >= 90 &&
+      process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1'),
+  'Native quality requires exact opt-in 1, processing/publication evidence, direct recorder and at least90s hold',
+);
+const requireQuality = qualityFlag === '1';
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
 const fixtureMotionFlag = process.env.SCOREBUG_TEST_MOTION_FIXTURE ?? '';
@@ -63,6 +74,7 @@ await writeFile(
       streaming,
       requirePublication,
       requireProcessing,
+      requireQuality,
       streamingOptions,
       fixtureWorkload,
       streamingBudget,
@@ -401,6 +413,7 @@ try {
       `SCOREBUG_TEST_API_URL=${api.baseURL}`,
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
+      `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
     ],
     'workflow',
     { timeout: streamingBudget.workflowTimeoutMs },
@@ -425,7 +438,12 @@ try {
   const source = join(container, 'Library/Application Support/Scorebug/Recordings');
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });
-  let observationSnapshot, archiveDiagnosticsSnapshot;
+  let observationSnapshot, archiveDiagnosticsSnapshot, qualitySnapshot;
+  if (requireQuality) {
+    const file = join(artifact, 'quality-control.json');
+    await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
+    qualitySnapshot = JSON.parse(await readFile(file, 'utf8'));
+  }
   if (streaming) {
     const observationPath = join(artifact, 'video-observation.json');
     await cp(
@@ -488,6 +506,7 @@ try {
     workerPublicationEvidence,
     sourceIntervalQualification,
     workerProcessingQualification,
+    nativeQualityQualification,
     publishingClockObservation,
     ingressObservation,
     workerReportAge,
@@ -560,6 +579,12 @@ try {
           await readFile(join(artifact, 'worker-processing-status.json'), 'utf8'),
         ),
       });
+    if (requireQuality)
+      nativeQualityQualification = qualifyNativeQuality({
+        quality: qualitySnapshot,
+        snapshot: observationSnapshot,
+        sourceIntervalQualification,
+      });
     ingressObservation = qualifyIngressObservation({
       snapshot: observationSnapshot,
       archive: media[0],
@@ -621,6 +646,7 @@ try {
         workerPublicationEvidence,
         sourceIntervalQualification,
         workerProcessingQualification,
+        nativeQualityQualification,
         ingressObservation,
         workerReportAge,
         archiveDiagnostics,

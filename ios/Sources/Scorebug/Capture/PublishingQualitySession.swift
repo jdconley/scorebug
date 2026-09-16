@@ -12,6 +12,8 @@ actor PublishingQualitySession {
         let revision: UInt64?
         let receipt: PublishingBitRateChange?
         let acknowledgedAt: Double?
+        let lastWindow: QualityController.Window?
+        let evaluatedAt: Double?
         let isClosed: Bool
         let isBusy: Bool
     }
@@ -29,6 +31,8 @@ actor PublishingQualitySession {
     private var policy: QualityController?
     private var receipt: PublishingBitRateChange?
     private var acknowledgedAt: Double?
+    private var lastWindow: QualityController.Window?
+    private var evaluatedAt: Double?
     private var pending: QualityController.Recommendation?
     private var busy = false
     private var closed = false
@@ -65,7 +69,7 @@ actor PublishingQualitySession {
         self.initial = initial; self.strategy = strategy; self.uptime = uptime; self.lastNow = now
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
-        receipt: receipt, acknowledgedAt: acknowledgedAt, isClosed: closed, isBusy: busy) }
+        receipt: receipt, acknowledgedAt: acknowledgedAt, lastWindow: lastWindow, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
@@ -90,9 +94,10 @@ actor PublishingQualitySession {
         guard var policy else { throw Failure.notReady }
         defer { self.policy = policy }
         do {
-            let decision = try policy.evaluate(window, at: time())
+            let now = try time()
+            let decision = try policy.evaluate(window, at: now)
             pending = decision.recommendation
-            lastPolicySequence = window.sequence
+            lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
     }
@@ -121,7 +126,7 @@ actor PublishingQualitySession {
             let decision = try policy.evaluate(window, at: now)
             lastSource = (sourceScope, source.sequence)
             pending = decision.recommendation
-            lastPolicySequence = window.sequence
+            lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
     }

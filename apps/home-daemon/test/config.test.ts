@@ -47,3 +47,12 @@ it('defaults optional processing diagnostics to auto and permits explicitly disa
   expect(loadConfig({ ...base, WORKER_PROCESSING: 'off' }).WORKER_PROCESSING).toBe('off');
   expect(() => loadConfig({ ...base, WORKER_PROCESSING: 'true' })).toThrow();
 });
+
+it('bounds explicit report cadence and preserves the default', () => {
+  expect(loadConfig(base).WORKER_REPORT_INTERVAL_MS).toBe(1000);
+  expect(loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: '100' }).WORKER_REPORT_INTERVAL_MS).toBe(
+    100,
+  );
+  for (const value of ['0', '99', '5001', '250.5', '', 'NaN'])
+    expect(() => loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: value })).toThrow();
+});

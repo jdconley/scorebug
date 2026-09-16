@@ -75,6 +75,10 @@ enum VideoObservationFixture {
                     "decodedFrames": interval.decodedFrames, "captureNotEncodedFrames": interval.captureNotEncodedFrames,
                     "encodedNotDecodedFrames": interval.encodedNotDecodedFrames,
                     "leadingMissingEncodedFrames": interval.leadingMissingEncodedFrames]
+                if case .verified(let configuration) = interval.encodingCoverage {
+                    row["encodingConfiguration"] = ["id": configuration.id.uuidString,
+                        "encoderSessionID": configuration.encoderSessionID.uuidString, "bitRate": configuration.bitRate]
+                }
                 if let processing = observation.processing {
                     row["processing"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(processing))
                 }

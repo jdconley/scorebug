@@ -244,7 +244,23 @@ within the original freshness budget before evaluation.
 Seventeen adapter/owner regressions pass within the 158-test FilmModel suite. Real
 bounded source histories and trackers form the inputs, including a 30-second trial
 qualification followed by accepted worker-change rollback. These are deterministic
-logic tests, not actual native adaptive-media qualification. The capture model still
-does not construct the owner. Runtime bootstrap/coalescing/deadline polling and real
-bitrate trial/rollback under impairment remain required. See the
+logic tests, not actual native adaptive-media qualification. The capture model now constructs the owner only for the explicit DEBUG simulator
+quality fixture described below. Production activation and real bitrate trial/rollback
+under impairment remain required. See the
 [binding plan](superpowers/plans/2026-09-16-quality-telemetry-binding.md).
+
+
+## Opt-in native control qualification
+
+The [native quality loop](superpowers/plans/2026-09-16-native-quality-loop.md) now
+coalesces worker status and health ticks, waits for a real encoder before bootstrap,
+and joins shutdown without stopping local recording. Expired advice before dispatch
+is skipped. Actual simulator evidence (`native-app-r29PCh`) verifies 6 → 6.6 → 6 Mbps
+native receipts with complete saved-video continuity. The independent verifier
+replays raw queue, thermal, transport and worker processing observations instead of
+trusting nominal labels, and enforces probation invalidation and rollback cooldown.
+
+The trial timed out rather than confirming: two post-change windows covered slightly
+less than ten seconds before the 15-second deadline. Confirmation timing is the next
+open gate. Neither this barcode workload nor its test-only pressure/cadence limits
+qualifies production capacity, physical devices or remote workers.

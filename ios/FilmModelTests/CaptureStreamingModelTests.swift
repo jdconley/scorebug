@@ -5,6 +5,30 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testQualityDriverJoinsPublishingStopWhileRecordingContextSurvives() async throws {
+        let server = CaptureTestServer()
+        var driver: PublishingQualityDriver?
+        var exported: Data?
+        let model = makeModel(server: server, qualityFactory: { session, attempt in
+            let owner = try PublishingQualitySession(session: session,
+                profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],
+                attemptID: attempt, initial: .init(profileID: "hd", videoBitrate: 6_000_000))
+            let created = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil, export: { exported = $0 })
+            driver = created; return created
+        })
+        XCTAssertEqual(model.controlPollInterval, .seconds(2))
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        XCTAssertEqual(model.controlPollInterval, .milliseconds(100))
+        XCTAssertNotNil(driver); XCTAssertEqual(driver?.isClosed, false)
+        model.pollLocalHealth()
+        await model.stopStreaming()
+        XCTAssertEqual(driver?.isClosed, true); XCTAssertNotNil(exported)
+        XCTAssertEqual(model.controlPollInterval, .seconds(2))
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual((json["events"] as? [[String: Any]])?.last?["kind"] as? String, "stopped")
+    }
+
     func testNativeSourceIntervalFollowsPublishingAndClearsOnCaptureReplacement() async throws {
         let (model, server, owner) = try await sourceIntervalModel()
         let result = try XCTUnwrap(model.workerSourceInterval)
@@ -1539,10 +1563,11 @@ import XCTest
                            storage: CaptureMemoryStorage? = nil,
                            publisher: CaptureTestPublisher = CaptureTestPublisher(),
                            publisherFactory: ((URL, VideoFrameObservationOwner?) throws -> any MediaPublisher)? = nil,
-                           observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) }) -> CaptureStreamingModel {
+                           observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) },
+                           qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = { _, _ in nil }) -> CaptureStreamingModel {
         CaptureStreamingModel(storage: storage ?? CaptureMemoryStorage(saved), pendingStore: CaptureMemoryPending(),
                               clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
-                              publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory)
+                              publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory, qualityFactory: qualityFactory)
     }
 }
 

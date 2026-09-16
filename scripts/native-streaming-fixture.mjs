@@ -272,6 +272,8 @@ export async function nativeStreamingFixture({
                 directRecorder?.url ??
                 `rtmp://127.0.0.1:${sinkPort}/live/fixture?user=qa-worker&pass=qa-output-not-production`,
               ENCODER: 'videotoolbox',
+              WORKER_REPORT_INTERVAL_MS:
+                process.env.SCOREBUG_TEST_NATIVE_QUALITY === '1' ? '100' : '1000',
               VIDEO_PROFILE: '1080p30',
               SCORE_DIR: join(artifact, 'worker'),
               FFMPEG_PATH: ffmpeg,

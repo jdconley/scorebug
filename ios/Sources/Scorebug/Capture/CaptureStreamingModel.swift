@@ -73,6 +73,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var current: CurrentCapture?
     private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?)?
     private var coordinator: BroadcastCommandCoordinator?
+    var controlPollInterval: Duration { qualityDriver == nil ? .seconds(2) : .milliseconds(100) }
+    private var qualityDriver: PublishingQualityDriver?
     private var action: Task<Void, Never>?
     private var actionID: UUID?
     private var stoppingTask: Task<Void, Never>?
@@ -89,6 +91,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private let clientFactory: (ScoringEndpoint) -> MatchHTTPClient
     private let publisherFactory: (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher
     private let observationFactory: (VideoFrameObservationScope) throws -> VideoFrameObservationOwner
+    private let qualityFactory: @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver?
 
     convenience init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Scorebug", isDirectory: true)
@@ -104,10 +107,12 @@ struct PublishingClockObservation: Equatable, Sendable {
              #else
              return try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 2048)
              #endif
+         }, qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = {
+             try PublishingQualityDriver.fixture(session: $0, attemptID: $1)
          }) {
         self.storage = storage; self.pendingStore = pendingStore
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
-        self.observationFactory = observationFactory
+        self.observationFactory = observationFactory; self.qualityFactory = qualityFactory
     }
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
@@ -290,6 +295,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()
                 try check(context, attempt)
+                qualityDriver = try qualityFactory(session, attempt)
                 localState = .publishing
                 shouldStopOwnedBroadcast = false
                 message = "Sending camera media. Worker output is reported separately."
@@ -431,6 +437,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                     helperAgeUpperBound: actualAge))
             } else { workerReportAgeProofHistory.clear() }
             #endif
+            // A newly completed worker report need not wait for the next health
+            // tick. The driver coalesces both callers into the same owned task.
+            if let publishing, let qualityDriver {
+                qualityDriver.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
+                    source: workerSourceInterval, diagnostics: .init(snapshot: publishing.session.snapshot))
+            }
             workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
             controlFailed = true
@@ -457,6 +469,8 @@ struct PublishingClockObservation: Equatable, Sendable {
         ingressObservation = snapshot.ingressObservation
         publishingClockObservation = clockObservation(snapshot.transportClock,
             scope: videoObservation?.scope, isClosed: false)
+        qualityDriver?.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
+            source: workerSourceInterval, diagnostics: .init(snapshot: snapshot))
         if snapshot.failure != nil || snapshot.state == .stopped {
             detachPublisher(); shouldStopOwnedBroadcast = true
             localState = .failed
@@ -518,6 +532,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private func detachPublisher() {
         if let publishing {
             publishing.context.tap.detach(publishing.session)
+            let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
             // Production fixture I/O defaults only on explicitly enabled simulators.
             // Tests may inject an in-memory writer to exercise this same joined boundary.
@@ -540,6 +555,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             teardownID = id
             publisherStopping = true
             publisherTeardown = Task { [self] in
+                await quality?.stop()
                 await session.stop()
                 // Drain completion owns closure, even when an old task can no longer
                 // publish diagnostics. Normal stop changes epoch before this returns.

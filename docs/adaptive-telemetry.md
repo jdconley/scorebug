@@ -591,5 +591,7 @@ now maps matched source intervals and current verified receipts to policy revisi
 with aligned ingress/thermal/transport histories and explicit caller-qualified
 pressure limits. It retains unknown evidence and nil capacity. The actor binds this
 conversion atomically and prevents worker restarts from extending prior recovery.
-Capture runtime activation and actual adaptive media/impairment qualification remain
-open; deterministic binding tests do not establish physical or remote-host thresholds.
+The DEBUG simulator-only [native loop](superpowers/plans/2026-09-16-native-quality-loop.md)
+now has actual trial/rollback and saved-media evidence, including independent raw
+pressure replay. Confirmation timing, motion/impairment, production activation and
+physical/remote-host thresholds remain open.

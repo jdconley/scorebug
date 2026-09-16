@@ -55,7 +55,7 @@ struct ContentView: View {
         await streaming.restore()
         while !Task.isCancelled {
             await streaming.pollControl()
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            do { try await Task.sleep(for: streaming.controlPollInterval) } catch { return }
         }
     }
     @MainActor private func monitorStreamingHealth() async {

@@ -23,6 +23,11 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue(["1", "blocks16"].contains(motionFlag), "Malformed native motion fixture flag")
             app.launchEnvironment["SCOREBUG_TEST_MOTION_FIXTURE"] = motionFlag
         }
+        let qualityFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? ""
+        if !qualityFlag.isEmpty {
+            XCTAssertEqual(qualityFlag, "1"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            app.launchEnvironment["SCOREBUG_TEST_NATIVE_QUALITY"] = qualityFlag
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

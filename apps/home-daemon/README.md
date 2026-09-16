@@ -137,3 +137,9 @@ toolkit, `ENCODER=nvenc`, and `--gpus all`. An encoder listing alone does not pr
 that encoding works; qualify the actual media pipeline on that host before use.
 
 See [sustained media qualification](../../docs/media-soak.md) for measurement rules and limits.
+
+`WORKER_REPORT_INTERVAL_MS` controls the delay between completed status reports
+(default 1000, integer range 100–5000). The native quality-control simulator fixture
+uses 100 ms so reporting plus phone polling can fit within the existing two-second
+source freshness budget. This increases control-plane request load; it does not
+change decoder window duration or make old measurements fresh.

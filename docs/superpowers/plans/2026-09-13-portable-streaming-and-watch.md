@@ -650,3 +650,15 @@ stalls are eliminated. Full evidence and retained failed runs are in the
 The reviewed [motion workload plan](2026-09-14-native-motion-load-validation.md) is
 next because current actual encoded payload rates are far below configured rates.
 Physical phone/Watch, adaptive quality and other hosts remain unqualified.
+
+
+### Native adaptive control checkpoint
+
+The [opt-in native quality loop](2026-09-16-native-quality-loop.md) now passes an
+actual iPhone 14/iOS 17.5 simulator trial and rollback with clean local recording,
+native scoring, complete A/V output and independent pressure/source validation.
+A 100 ms local fixture status cadence fits the unchanged freshness budget; normal
+worker/phone polling defaults are preserved. The 15-second trial deadline was too
+short to confirm ten full seconds of post-change source coverage, so confirmation
+timing is the next gate before motion and impairment qualification. This does not
+enable adaptive production behavior or finish physical phone/Watch/remote-host work.
