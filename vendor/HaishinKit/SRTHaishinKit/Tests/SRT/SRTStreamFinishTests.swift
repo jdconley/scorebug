@@ -5,6 +5,101 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTStreamFinishTests {
+    @Test func pacingQueueKeepsAnExplicitCountAndByteBoundAndCannotChangeWhileRunning() {
+        let codec = VideoCodec(), outgoing: OutgoingStream
+        outgoing = OutgoingStream(videoCodec: codec)
+        #expect(codec.outputLimits.count == 8)
+        #expect(outgoing.enablePacedVideoOutput())
+        #expect(codec.outputLimits.count == 16)
+        #expect(codec.outputLimits.bytesPerItem == 2 * 1024 * 1024)
+        outgoing.startRunning()
+        #expect(!outgoing.enablePacedVideoOutput())
+        outgoing.stopRunning()
+    }
+    @Test func pacedFinishPreservesEveryTailFrameAtSourceCadence() async throws {
+        let bytes = FinishBytes(), observed = PacedFrames()
+        let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
+        let stream = SRTStream(connection: connection, compressedVideoObserver: observed.record, pacesEncodedVideo: true)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setVideoInputBufferCounts(32)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try finishVideo(0))
+        let ready = ContinuousClock.now + .seconds(2)
+        while observed.rows.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        try #require(observed.rows.count == 1)
+        for frame in 1...12 { await stream.append(try finishVideo(frame)) }
+        await stream.finish()
+        let rows = observed.rows
+        #expect(rows.count == 13)
+        let expectedPTS: [Int64] = (0...12).map { 9000 + Int64($0) * 3000 }
+        #expect(bytes.videoPTS == expectedPTS)
+        #expect(await stream.publishingError == nil)
+        for row in rows {
+            #expect(row.at >= row.frame.dequeuedAt)
+            #expect(row.frame.sourceCadencePaced)
+            #expect(row.at - rows[0].at >= row.frame.sourcePTS.seconds - 0.005)
+        }
+        #expect(rows.contains { $0.at - $0.frame.dequeuedAt > 0.01 })
+        await connection.close()
+    }
+    @Test func closeCancelsWaitingPacerAndNewPublicationHasFreshAnchor() async throws {
+        let gate = PacingWaitGate(), observed = PacedFrames()
+        let codec = VideoCodec()
+        let outgoing = OutgoingStream(videoCodec: codec)
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: outgoing, compressedVideoObserver: observed.record,
+            pacesEncodedVideo: true, pacingSleep: gate.wait)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try finishVideo(0))
+        let ready = ContinuousClock.now + .seconds(2)
+        while observed.rows.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        try #require(observed.rows.count == 1)
+        await stream.append(try finishVideo(15))
+        let finishing = Task { await stream.finish() }
+        let waiting = ContinuousClock.now + .seconds(2)
+        while !gate.entered && ContinuousClock.now < waiting { await Task.yield() }
+        try #require(gate.entered)
+        await stream.close(); await finishing.value
+        #expect(observed.rows.count == 1)
+        #expect(gate.cancelled)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try finishVideo(100))
+        await stream.finish()
+        #expect(observed.rows.count == 2)
+        #expect(observed.rows.last?.frame.sourcePTS == CMTime(value: 100, timescale: 30))
+        #expect(observed.rows.first?.frame.publishingGeneration != observed.rows.last?.frame.publishingGeneration)
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+    @Test(arguments: ["deadline", "overflow"])
+    func pacedConsumerWaitCannotEvadeFinishDeadlineOrQueueBound(mode: String) async throws {
+        let gate = PacingWaitGate(), observed = PacedFrames()
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), compressedVideoObserver: observed.record,
+            pacesEncodedVideo: true, pacingSleep: gate.wait)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setVideoInputBufferCounts(32)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try finishVideo(0))
+        let ready = ContinuousClock.now + .seconds(2)
+        while observed.rows.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        try #require(observed.rows.count == 1)
+        for frame in 1...(mode == "overflow" ? 24 : 1) { await stream.append(try finishVideo(frame)) }
+        await stream.finish(timeout: mode == "deadline" ? .milliseconds(80) : .seconds(2))
+        #expect(gate.entered && gate.cancelled)
+        #expect(observed.rows.count == 1)
+        let error = await stream.publishingError
+        #expect(error == (mode == "deadline" ? .outputTerminated(boundary: "SRT finish deadline") : .queueCapacityExceeded(boundary: "video codec")))
+        #expect(await stream.readyState == .idle)
+        await connection.close()
+    }
     @Test func verifiedBitRateRequiresCurrentRawEncoderAndPreservesFinalFrames() async throws {
         let bytes = FinishBytes()
         let formats = FinishFormats()
@@ -341,4 +436,25 @@ private final class FinishFormats: @unchecked Sendable {
     private var values: [SRTStream.CompressedVideoFrame] = []
     func record(_ value: SRTStream.CompressedVideoFrame) { lock.withLock { values.append(value) } }
     var frames: [SRTStream.CompressedVideoFrame] { lock.withLock { values } }
+}
+
+private final class PacedFrames: @unchecked Sendable {
+    struct Row { let frame: SRTStream.CompressedVideoFrame; let at: Double }
+    private let lock = NSLock()
+    private var values: [Row] = []
+    func record(_ frame: SRTStream.CompressedVideoFrame) {
+        lock.withLock { values.append(.init(frame: frame, at: ProcessInfo.processInfo.systemUptime)) }
+    }
+    var rows: [Row] { lock.withLock { values } }
+}
+private final class PacingWaitGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didEnter = false, didCancel = false
+    var entered: Bool { lock.withLock { didEnter } }
+    var cancelled: Bool { lock.withLock { didCancel } }
+    func wait(_ delay: Double) async throws {
+        lock.withLock { didEnter = true }
+        do { try await Task.sleep(for: .seconds(5)) }
+        catch { lock.withLock { didCancel = true }; throw error }
+    }
 }

@@ -596,10 +596,26 @@
 
      /// The asynchronous sequence for audio output.
      package var audioOutputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)> {
-@@ -38,6 +40,22 @@
+@@ -23,6 +25,14 @@
+     /// The audio input format.
+     package private(set) var audioInputFormat: CMFormatDescription?
+
++    /// Explicit pacing experiment: retain at most sixteen compressed frames,
++    /// still at most 2 MiB each. Overflow remains a terminal publishing failure.
++    package func enablePacedVideoOutput() -> Bool {
++        guard !isRunning else { return false }
++        videoCodec.outputLimits = .init(count: 16, bytesPerItem: 2 * 1024 * 1024)
++        return true
++    }
++
+     /// The asynchronous sequence for video output.
+     package var videoOutputStream: AsyncStream<CMSampleBuffer> {
+         return videoCodec.outputStream
+@@ -37,6 +47,22 @@
+             videoCodec.settings = newValue
          }
      }
-
++
 +    package func setVerifiedVideoBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
 +        guard isRunning, !inputFinished else { throw VideoBitRateUpdateError.notEncoding }
 +        return try videoCodec.setVerifiedBitRate(bitRate)
@@ -615,11 +631,10 @@
 +    package var lastVideoSubmission: (sessionID: UUID, sourcePTS: CMTime)? { videoCodec.lastSubmission }
 +
 +    package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }
-+
+
      /// Specifies the video buffering count.
      package var videoInputBufferCounts = -1
-
-@@ -58,26 +76,37 @@
+@@ -58,26 +84,37 @@
      package private(set) var videoInputFormat: CMFormatDescription?
 
      private var audioCodec = AudioCodec()
@@ -660,7 +675,7 @@
          default:
              break
          }
-@@ -85,9 +114,20 @@
+@@ -85,9 +122,20 @@
 
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -681,7 +696,7 @@
 
      /// Appends a video buffer.
      package func append(video sampleBuffer: CMSampleBuffer) {
-@@ -101,12 +141,15 @@
+@@ -101,12 +149,15 @@
          guard !isRunning else {
              return
          }
@@ -1265,7 +1280,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,232 @@
+@@ -8,6 +8,235 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1290,6 +1305,9 @@
 +    private var failure = PublishingFailureLatch()
 +    private var generation: UInt64 = 0
 +    private var videoInputIsRaw = false
++    private let pacesEncodedVideo: Bool
++    private let pacingSleep: @Sendable (Double) async throws -> Void
++    private var sourceCadenceClock = SourceCadenceClock()
 +    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
 +    /// Identity for an active publication, not proof that its encoder is ready.
 +    public var publishingGeneration: UInt64? {
@@ -1498,7 +1516,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +248,7 @@
+@@ -22,7 +251,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1507,7 +1525,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +258,23 @@
+@@ -32,8 +261,29 @@
      }
 
      /// Creates a new stream object.
@@ -1517,7 +1535,10 @@
 +    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
 +    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
 +                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
-+                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
++                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
++                pacesEncodedVideo: Bool = false) {
++        self.pacesEncodedVideo = pacesEncodedVideo
++        pacingSleep = { try await Task.sleep(for: .seconds($0)) }
 +        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
 +                                  encoderConfigurationObserver: encoderConfigurationObserver)
          self.connection = connection
@@ -1526,13 +1547,16 @@
 +    }
 +
 +    init(connection: SRTConnection, outgoing: sending OutgoingStream,
-+         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
++         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
++         pacesEncodedVideo: Bool = false,
++         pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
++        self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
 +        self.outgoing = outgoing; self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +286,7 @@
+@@ -45,7 +295,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1541,12 +1565,13 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +298,22 @@
+@@ -57,8 +307,26 @@
              }
              return
          }
 +        guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
 +        generation &+= 1
++        sourceCadenceClock = SourceCadenceClock()
 +        videoInputIsRaw = false
 +        let session = generation
 +        failure = PublishingFailureLatch()
@@ -1555,6 +1580,9 @@
 +        // Raw video may skip stale frames before compression; compressed queues fail.
 +        if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }
 +        // Install continuations before publishing becomes observable or accepting input.
++        if pacesEncodedVideo, !outgoing.enablePacedVideoOutput() {
++            failure.fail(.outputTerminated(boundary: "SRT pacing setup")); return
++        }
 +        let videoOutput = outgoing.videoOutputStream
 +        let audioOutput = outgoing.audioOutputStream
 +        let videoInput = outgoing.videoInputStream
@@ -1565,7 +1593,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +323,39 @@
+@@ -68,26 +336,52 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1593,7 +1621,20 @@
 +            video: Task {
 +                for await buffer in videoOutput {
 +                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+                    appendCompressedVideo(buffer, wasEncoded: true)
++                    let dequeuedAt = ProcessInfo.processInfo.systemUptime
++                    if pacesEncodedVideo {
++                        do {
++                            let delay = try sourceCadenceClock.delay(sourcePTS: buffer.presentationTimeStamp, now: dequeuedAt)
++                            if delay > 0 { try await pacingSleep(delay) }
++                        } catch {
++                            if generation == session, !Task.isCancelled {
++                                failure.fail(.outputTerminated(boundary: "SRT source cadence pacing"))
++                            }
++                            return
++                        }
++                    }
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
++                    appendCompressedVideo(buffer, wasEncoded: true, dequeuedAt: dequeuedAt)
 +                }
 +            },
 +            audio: Task {
@@ -1625,7 +1666,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +384,73 @@
+@@ -116,16 +410,74 @@
          readyState = .playing
      }
 
@@ -1690,6 +1731,7 @@
 -        }
 +        videoReplacement?.interrupt(.interrupted)
 +        generation &+= 1
++        sourceCadenceClock = SourceCadenceClock()
 +        videoInputIsRaw = false
 +        for task in publishingTasks?.all ?? [] { task.cancel() }
 +        publishingTasks = nil
@@ -1704,7 +1746,7 @@
      }
 
      /// Sets the expected media.
-@@ -150,6 +475,7 @@
+@@ -150,6 +502,7 @@
      }
 
      public func setVideoSettings(_ videoSettings: VideoCodecSettings) throws {
@@ -1712,7 +1754,7 @@
          guard Self.supportedVideoCodecs.contains(videoSettings.format) else {
              throw Error.unsupportedCodec
          }
-@@ -157,12 +483,19 @@
+@@ -157,12 +510,19 @@
      }
 
      public func append(_ sampleBuffer: CMSampleBuffer) {
@@ -1734,7 +1776,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +505,32 @@
+@@ -172,16 +532,34 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -1752,11 +1794,13 @@
          }
 +    }
 +
-+    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool) {
++    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool,
++                                       dequeuedAt: Double = ProcessInfo.processInfo.systemUptime) {
 +        guard readyState == .publishing, publishingError == nil else { return }
 +        observeVideoReplacement(sampleBuffer, wasEncoded: wasEncoded)
 +        guard publishingError == nil else { return }
-+        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded))
++        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded, dequeuedAt: dequeuedAt,
++                                      sourceCadencePaced: wasEncoded && pacesEncodedVideo))
 +        writer.videoFormat = sampleBuffer.formatDescription
 +        writer.append(sampleBuffer)
 +    }
@@ -2723,7 +2767,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/CompressedVideoFrame.swift
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,50 @@
 +import CoreMedia
 +import Foundation
 +
@@ -2738,11 +2782,17 @@
 +        public let codec: FourCharCode
 +        public let valid: Bool
 +        public let wasEncoded: Bool
++        /// Consumer dequeue uptime, before optional pacing. Not encoder completion.
++        public let sourceCadencePaced: Bool
++        public let dequeuedAt: Double
 +        public let byteCount: Int
 +        /// CoreMedia sync metadata, not a bitstream parse or receiver-delivery proof.
 +        /// Invalid samples have no sync evidence. An absent NotSync key means sync.
 +        public let isSync: Bool?
-+        init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool) {
++        init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool,
++             dequeuedAt: Double = ProcessInfo.processInfo.systemUptime, sourceCadencePaced: Bool = false) {
++            self.sourceCadencePaced = sourceCadencePaced
++            self.dequeuedAt = dequeuedAt
 +            publishingGeneration = generation; sourcePTS = sampleBuffer.presentationTimeStamp
 +            self.wasEncoded = wasEncoded
 +            let format = sampleBuffer.formatDescription
@@ -2766,5 +2816,39 @@
 +                isSync = nil
 +            }
 +        }
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/SRT/SourceCadenceClock.swift
+@@ -0,0 +1,31 @@
++import CoreMedia
++
++/// Scalar scheduling only: no media retention, timers, or fixed added latency.
++struct SourceCadenceClock {
++    enum Failure: Swift.Error { case invalidSource, invalidClock, excessiveLead }
++    private var firstPTS: CMTime?
++    private var firstUptime: Double = 0
++    private var lastPTS: CMTime?
++    private var lastUptime: Double = 0
++
++    mutating func delay(sourcePTS: CMTime, now: Double) throws -> Double {
++        guard sourcePTS.isNumeric, sourcePTS.timescale > 0 else { throw Failure.invalidSource }
++        guard now.isFinite, (0...1e12).contains(now) else { throw Failure.invalidClock }
++        guard let firstPTS else {
++            self.firstPTS = sourcePTS; firstUptime = now; lastPTS = sourcePTS; lastUptime = now
++            return 0
++        }
++        guard sourcePTS.epoch == firstPTS.epoch, let lastPTS, sourcePTS > lastPTS else { throw Failure.invalidSource }
++        guard now >= lastUptime else { throw Failure.invalidClock }
++        // Subtract in CoreMedia before converting; large absolute PTS must not
++        // erase individual frame deltas through floating-point cancellation.
++        let delta = CMTimeSubtract(sourcePTS, firstPTS)
++        guard delta.isNumeric, delta.seconds.isFinite, delta.seconds >= 0 else { throw Failure.invalidSource }
++        let due = firstUptime + delta.seconds
++        guard due.isFinite else { throw Failure.invalidClock }
++        let delay = max(0, due - now)
++        guard delay <= 1 else { throw Failure.excessiveLead }
++        self.lastPTS = sourcePTS; lastUptime = now
++        return delay
 +    }
 +}

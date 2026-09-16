@@ -106,10 +106,11 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
              if try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  let target = try VideoObservationFixture.publishingURL(url, environment: environment)
-                 return NativeProfileTransitionPublisher(url: target, observations: observations, adaptive: true)
+                 return NativeProfileTransitionPublisher(url: target, observations: observations, adaptive: true, pacesEncodedVideo: cadencePacing)
              }
              if try NativeProfileTransitionEvidence.requested(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }

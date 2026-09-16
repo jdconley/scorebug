@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 
 // Diagnostic pre-mux evidence only. It cannot qualify delivery or network capacity.
-export function qualifyNativeCompressedFrames(format, snapshot) {
+export function qualifyNativeCompressedFrames(
+  format,
+  snapshot,
+  { requirePacingEvidence = false } = {},
+) {
   assert.ok(format.formatVersion === 4 || format.formatVersion === 5);
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);
@@ -24,6 +28,15 @@ export function qualifyNativeCompressedFrames(format, snapshot) {
   assert.ok(
     Array.isArray(format.phases) && format.phases.length >= 1 && format.phases.length <= 17,
   );
+  const hasPacingEvidence = format.compressedFrames.some(
+    (r) => r.dequeuedAt !== undefined || r.sourceCadencePaced !== undefined,
+  );
+  assert.ok(!requirePacingEvidence || hasPacingEvidence, 'Missing actual pacing observations');
+  const first = format.compressedFrames[0];
+  const paced = first.sourceCadencePaced;
+  if (requirePacingEvidence) assert.equal(paced, true);
+  let maximumWaitSeconds = 0,
+    maximumSourceLeadSeconds = 0;
   const rows = format.compressedFrames.map((frame, n, all) => {
     const frameID = fixtureFrameID(frame.sourcePTS);
     assert.ok(Number.isSafeInteger(frame.byteCount) && frame.byteCount > 0);
@@ -33,6 +46,28 @@ export function qualifyNativeCompressedFrames(format, snapshot) {
         frame.observedAt >= snapshot.monotonicAnchor &&
         frame.observedAt <= snapshot.captureDetachedAt + 2,
     );
+    if (hasPacingEvidence) {
+      assert.equal(typeof frame.sourceCadencePaced, 'boolean');
+      assert.equal(frame.sourceCadencePaced, paced, 'Pacing mode changed within publication');
+      assert.ok(
+        Number.isFinite(frame.dequeuedAt) &&
+          frame.dequeuedAt >= snapshot.monotonicAnchor &&
+          frame.dequeuedAt <= frame.observedAt,
+      );
+      if (n > 0)
+        assert.ok(frame.dequeuedAt >= all[n - 1].observedAt, 'Consumer dequeued out of order');
+      const due = first.dequeuedAt + (frameID - fixtureFrameID(first.sourcePTS)) / 30;
+      const lead = due - frame.dequeuedAt;
+      if (paced) {
+        assert.ok(lead <= 1 + 1e-6, 'Source lead exceeds one-second pacing bound');
+        assert.ok(
+          frame.observedAt + 1e-6 >= due,
+          'Frame emitted ahead of source-cadence eligibility',
+        );
+      }
+      maximumWaitSeconds = Math.max(maximumWaitSeconds, frame.observedAt - frame.dequeuedAt);
+      maximumSourceLeadSeconds = Math.max(maximumSourceLeadSeconds, lead);
+    }
     if (n > 0) {
       assert.ok(
         frameID > fixtureFrameID(all[n - 1].sourcePTS),
@@ -119,6 +154,16 @@ export function qualifyNativeCompressedFrames(format, snapshot) {
     'Every compressed record must belong to exactly one native phase',
   );
   return {
+    ...(hasPacingEvidence
+      ? {
+          pacing: {
+            frames: rows.length,
+            sourceCadencePaced: paced,
+            maximumWaitSeconds,
+            maximumSourceLeadSeconds,
+          },
+        }
+      : {}),
     frames: rows.length,
     totalBytes,
     phases,

@@ -25,6 +25,14 @@ package final class OutgoingStream {
     /// The audio input format.
     package private(set) var audioInputFormat: CMFormatDescription?
 
+    /// Explicit pacing experiment: retain at most sixteen compressed frames,
+    /// still at most 2 MiB each. Overflow remains a terminal publishing failure.
+    package func enablePacedVideoOutput() -> Bool {
+        guard !isRunning else { return false }
+        videoCodec.outputLimits = .init(count: 16, bytesPerItem: 2 * 1024 * 1024)
+        return true
+    }
+
     /// The asynchronous sequence for video output.
     package var videoOutputStream: AsyncStream<CMSampleBuffer> {
         return videoCodec.outputStream

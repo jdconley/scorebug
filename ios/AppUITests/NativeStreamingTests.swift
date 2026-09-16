@@ -55,6 +55,11 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 240)
             app.launchEnvironment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] = adaptive
         }
+        let pacing = ProcessInfo.processInfo.environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] ?? ""
+        if !pacing.isEmpty {
+            XCTAssertEqual(pacing, "1"); XCTAssertEqual(adaptive, "1")
+            app.launchEnvironment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = pacing
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

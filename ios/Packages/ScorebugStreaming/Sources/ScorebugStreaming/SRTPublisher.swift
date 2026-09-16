@@ -46,7 +46,8 @@ public actor SRTPublisher {
     public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
                 encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
-                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
+                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+                pacesEncodedVideo: Bool = false) {
         self.stopPolicy = stopPolicy
         self.videoProfile = videoProfile
         // Immutable ownership prevents late native completions from reaching a
@@ -70,7 +71,7 @@ public actor SRTPublisher {
             }
         } else { configurationObserver = nil }
         stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver,
-                           compressedVideoObserver: compressedVideoObserver)
+                           compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo)
     }
     public func configure() async throws {
         try Task.checkCancellation()

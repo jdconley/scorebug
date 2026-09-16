@@ -219,3 +219,30 @@ test('relative pacing fixture option is explicit and exact', () => {
       /pacing/i,
     );
 });
+
+test('source-cadence pacing requires exact opt-in and the validated adaptive fixture', () => {
+  assert.equal(
+    options.nativeSourceCadencePacing({ environment: {}, adaptiveProfiles: false }),
+    false,
+  );
+  assert.equal(
+    options.nativeSourceCadencePacing({
+      environment: { SCOREBUG_TEST_SOURCE_CADENCE_PACING: '1' },
+      adaptiveProfiles: true,
+    }),
+    true,
+  );
+  for (const value of ['', 'true', '0', ' 1'])
+    assert.throws(() =>
+      options.nativeSourceCadencePacing({
+        environment: { SCOREBUG_TEST_SOURCE_CADENCE_PACING: value },
+        adaptiveProfiles: true,
+      }),
+    );
+  assert.throws(() =>
+    options.nativeSourceCadencePacing({
+      environment: { SCOREBUG_TEST_SOURCE_CADENCE_PACING: '1' },
+      adaptiveProfiles: false,
+    }),
+  );
+});

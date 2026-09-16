@@ -22,7 +22,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
         var maximumCompletionGap: Double, maximumEncodeLatency: Double
     }
     private struct CompressedFrame {
-        let pts: CMTime, observedAt: Double, byteCount: Int, isSync: Bool
+        let pts: CMTime, observedAt: Double, dequeuedAt: Double, byteCount: Int, isSync: Bool, sourceCadencePaced: Bool
     }
     private var compressedFrames: [CompressedFrame] = []
     private var encoderSessions: [EncoderSession] = []
@@ -36,20 +36,20 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
                height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264,
-               byteCount: frame.byteCount, isSync: frame.isSync)
+               byteCount: frame.byteCount, isSync: frame.isSync, dequeuedAt: frame.dequeuedAt, sourceCadencePaced: frame.sourceCadencePaced)
     }
-    func record(generation: UInt64, pts: CMTime, width: Int32, height: Int32, valid: Bool, byteCount: Int, isSync: Bool?, observedAt: Double = ProcessInfo.processInfo.systemUptime) {
+    func record(generation: UInt64, pts: CMTime, width: Int32, height: Int32, valid: Bool, byteCount: Int, isSync: Bool?, observedAt: Double = ProcessInfo.processInfo.systemUptime, dequeuedAt: Double, sourceCadencePaced: Bool = false) {
         lock.withLock {
             guard !closed, frames < 25_000 else { invalid = true; return }
             frames += 1
             guard valid, byteCount > 0, let isSync, generation > 0, pts.isNumeric, pts.timescale > 0, pts.epoch == 0,
-                  pts >= .zero, width > 0, height > 0, observedAt.isFinite, (0...1e12).contains(observedAt) else { invalid = true; return }
+                  pts >= .zero, width > 0, height > 0, dequeuedAt.isFinite, dequeuedAt >= 0, dequeuedAt <= observedAt, observedAt.isFinite, (0...1e12).contains(observedAt) else { invalid = true; return }
             if let prior = self.generation, prior != generation { invalid = true; return }
             self.generation = generation
             if let last = phases.last {
-                guard pts > last.last, observedAt >= last.lastObservedAt else { invalid = true; return }
+                guard pts > last.last, dequeuedAt >= last.lastObservedAt else { invalid = true; return }
                 if last.width == width && last.height == height {
-                    compressedFrames.append(.init(pts: pts, observedAt: observedAt, byteCount: byteCount, isSync: isSync))
+                    compressedFrames.append(.init(pts: pts, observedAt: observedAt, dequeuedAt: dequeuedAt, byteCount: byteCount, isSync: isSync, sourceCadencePaced: sourceCadencePaced))
                     phases[phases.count - 1].frames += 1
                     phases[phases.count - 1].maximumSourceGap = max(last.maximumSourceGap, CMTimeSubtract(pts, last.last).seconds)
                     phases[phases.count - 1].maximumObservationGap = max(last.maximumObservationGap, observedAt - last.lastObservedAt)
@@ -59,7 +59,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                 }
             }
             guard phases.count < phaseLimit else { invalid = true; return }
-            compressedFrames.append(.init(pts: pts, observedAt: observedAt, byteCount: byteCount, isSync: isSync))
+            compressedFrames.append(.init(pts: pts, observedAt: observedAt, dequeuedAt: dequeuedAt, byteCount: byteCount, isSync: isSync, sourceCadencePaced: sourceCadencePaced))
             phases.append(.init(width: width, height: height, first: pts, last: pts, frames: 1, maximumSourceGap: 0, firstObservedAt: observedAt, lastObservedAt: observedAt, maximumObservationGap: 0))
         }
     }
@@ -105,7 +105,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],
              "publishingGeneration": generation.map(String.init) as Any? ?? NSNull(),
              "compressedFrames": compressedFrames.map { ["sourcePTS": Self.time($0.pts),
-                "observedAt": $0.observedAt, "byteCount": $0.byteCount, "isSync": $0.isSync] as [String: Any] },
+                "observedAt": $0.observedAt, "dequeuedAt": $0.dequeuedAt, "sourceCadencePaced": $0.sourceCadencePaced, "byteCount": $0.byteCount, "isSync": $0.isSync] as [String: Any] },
              "phases": phases.map { ["width": $0.width, "height": $0.height, "frames": $0.frames,
                 "firstSourcePTS": Self.time($0.first), "lastSourcePTS": Self.time($0.last),
                 "maximumSourceGapSeconds": $0.maximumSourceGap, "firstObservedAt": $0.firstObservedAt,
@@ -141,6 +141,11 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
               String(hold) == raw, (90...600).contains(hold) else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
         return true
     }
+    static func cadencePacingRequested(environment: [String: String]) throws -> Bool {
+        guard let flag = environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"], !flag.isEmpty else { return false }
+        guard flag == "1", try adaptiveRequested(environment: environment) else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+        return true
+    }
     static func adaptiveRequested(environment: [String: String]) throws -> Bool {
         guard let flag = environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"], !flag.isEmpty else { return false }
         guard flag == "1", VideoObservationFixture.requested(environment: environment),
@@ -169,13 +174,13 @@ final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
     let evidence: NativeProfileTransitionEvidence
     let adaptive: Bool
     private let publisher: any MediaPublisher
-    init(url: URL, observations: VideoFrameObservationOwner, adaptive: Bool = false) {
+    init(url: URL, observations: VideoFrameObservationOwner, adaptive: Bool = false, pacesEncodedVideo: Bool = false) {
         self.adaptive = adaptive
         let evidence = NativeProfileTransitionEvidence(scope: observations.snapshot.scope, adaptive: adaptive)
         self.evidence = evidence
         publisher = SRTMediaPublisher(url: url, observations: observations,
             encoderConfigurationObserver: { evidence.observeEncoder($0) },
-            compressedVideoObserver: { evidence.observe($0) })
+            compressedVideoObserver: { evidence.observe($0) }, pacesEncodedVideo: pacesEncodedVideo)
     }
     func start() async throws { try await publisher.start() }
     func append(_ sample: CapturedMediaSample) async throws { try await publisher.append(sample) }

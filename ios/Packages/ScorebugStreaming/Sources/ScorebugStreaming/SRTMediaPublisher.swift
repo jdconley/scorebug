@@ -24,10 +24,10 @@ public actor SRTMediaPublisher: MediaPublisher {
                 encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)? = nil,
-                didStop: (@Sendable () -> Void)? = nil) {
+                didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
-            compressedVideoObserver: compressedVideoObserver)
+            compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo)
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in

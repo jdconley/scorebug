@@ -64,14 +64,18 @@ export function qualifyNativeProfileTransitions(
   format,
   snapshot,
   liveIDs,
-  { adaptive = false, requireFrameEvidence = false } = {},
+  { adaptive = false, requireFrameEvidence = false, requirePacingEvidence = false } = {},
 ) {
+  assert.ok(
+    !requirePacingEvidence || requireFrameEvidence,
+    'Pacing requires current raw frame evidence',
+  );
   const hasFrameEvidence = format.formatVersion === (adaptive ? 5 : 4);
   assert.ok(
     hasFrameEvidence || (!requireFrameEvidence && format.formatVersion === (adaptive ? 3 : 2)),
   );
   const compressedFrames = hasFrameEvidence
-    ? qualifyNativeCompressedFrames(format, snapshot)
+    ? qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence })
     : undefined;
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);

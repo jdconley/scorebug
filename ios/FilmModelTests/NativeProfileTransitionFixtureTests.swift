@@ -18,7 +18,7 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
         let proof = evidence()
         for n in 0..<3 {
             proof.record(generation: 1, pts: CMTime(value: Int64(n), timescale: 30), width: 1920,
-                height: 1080, valid: true, byteCount: 100 + n, isSync: n == 0, observedAt: 4 + Double(n) / 30)
+                height: 1080, valid: true, byteCount: 100 + n, isSync: n == 0, observedAt: 4 + Double(n) / 30, dequeuedAt: 4 + Double(n) / 30 - 0.001)
         }
         proof.close()
         let result = try snapshot(proof)
@@ -28,13 +28,14 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
         XCTAssertEqual(frames.map { $0["byteCount"] as? Int }, [100, 101, 102])
         XCTAssertEqual(frames.map { $0["isSync"] as? Bool }, [true, false, false])
         XCTAssertEqual(frames.first?["observedAt"] as? Double, 4)
+        XCTAssertEqual(frames.first?["dequeuedAt"] as? Double, 3.999)
         XCTAssertEqual((frames.last?["sourcePTS"] as? [String: Any])?["value"] as? String, "2")
     }
     func testInvalidMetadataAndCapacityCannotProduceCompleteFrameEvidence() throws {
         for (bytes, sync) in [(0, true), (-1, false), (10, nil)] as [(Int, Bool?)] {
             let proof = evidence()
             proof.record(generation: 1, pts: .zero, width: 1920, height: 1080,
-                valid: true, byteCount: bytes, isSync: sync, observedAt: 1)
+                valid: true, byteCount: bytes, isSync: sync, observedAt: 1, dequeuedAt: 1)
             XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
             XCTAssertEqual((try snapshot(proof)["compressedFrames"] as? [Any])?.count, 0)
         }
@@ -58,14 +59,36 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
             XCTAssertThrowsError(try NativeProfileTransitionEvidence.adaptiveRequested(environment: bad))
         }
     }
+    func testSourceCadenceFlagRequiresAdaptiveFixtureAndRejectsInvalidDequeueTimes() throws {
+        var environment = ["SCOREBUG_TEST_SOURCE_CADENCE_PACING": "1", "SCOREBUG_TEST_ADAPTIVE_PROFILES": "1",
+            "SCOREBUG_TEST_NATIVE_QUALITY": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "240",
+            "SCOREBUG_TEST_UPLINK_PROXY_PORT": "50000"]
+        XCTAssertTrue(try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment))
+        XCTAssertFalse(try NativeProfileTransitionEvidence.cadencePacingRequested(environment: [:]))
+        for value in ["true", "0", " 1"] {
+            environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = value
+            XCTAssertThrowsError(try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment))
+        }
+        environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = "1"
+        environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] = nil
+        XCTAssertThrowsError(try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment))
+        for dequeue in [-1.0, .nan, .infinity, 2.0] {
+            let proof = evidence()
+            proof.record(generation: 1, pts: .zero, width: 1920, height: 1080, valid: true,
+                byteCount: 1, isSync: true, observedAt: 1, dequeuedAt: dequeue)
+            XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+        }
+    }
     private func evidence() -> NativeProfileTransitionEvidence {
         .init(scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1))
     }
     private func record(_ evidence: NativeProfileTransitionEvidence, _ frame: Int,
                         _ profile: PublishingVideoProfile, generation: UInt64 = 1, valid: Bool = true) {
+        let now = ProcessInfo.processInfo.systemUptime
         evidence.record(generation: generation, pts: CMTime(value: Int64(frame), timescale: 30),
-            width: Int32(profile.width), height: Int32(profile.height), valid: valid, byteCount: 10, isSync: true)
+            width: Int32(profile.width), height: Int32(profile.height), valid: valid, byteCount: 10, isSync: true, observedAt: now, dequeuedAt: now)
     }
     private func snapshot(_ evidence: NativeProfileTransitionEvidence) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: evidence.data()) as? [String: Any])

@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and seven added publishing/bitrate/clock/replacement source primitives. Original upstream hashes
+files and eight added publishing/bitrate/clock/replacement source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -149,3 +149,21 @@ no additional timer/task is introduced. Native collection failures invalidate
 freshness, and connection close, replacement or cancellation rejects a late result.
 Statistics remain observations, not usable video capacity or receiver delivery.
 See [fresh statistics validation](../../docs/superpowers/plans/2026-09-16-fresh-transport-statistics.md).
+
+
+An optional immutable `pacesEncodedVideo` setting schedules native encoded video
+through the existing owned consumer. `SourceCadenceClock` anchors the first dequeue
+uptime to its exact source PTS and keeps that mapping through encoder replacement;
+late frames receive no further delay. Nonmonotonic/invalid clocks or source lead
+above one second fail publication. The consumer rechecks cancellation, generation
+and failure after suspension. Audio and transport consumers remain independent;
+finish joins pacing under the existing deadline and close cancels pending waits.
+Compressed passthrough does not claim encoded-video pacing.
+
+Opt-in pacing selects a 16-frame compressed encoder output queue, retaining the
+2 MiB per-frame limit and terminal overflow failure. The ordinary default remains
+eight frames and unpaced output; transport queues are unchanged. A dequeued sample
+held by the consumer is additional to the bounded queue. The scalar observer copies
+`dequeuedAt` before the pacing wait and `sourceCadencePaced` from the executed path;
+these are distinct from encoder completion and post-pacing observation times.
+This experimental mode is not evidence of sustainable bitrate or receiver delivery.

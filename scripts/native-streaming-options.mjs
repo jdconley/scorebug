@@ -153,3 +153,14 @@ export function fixturePublishPacing(environment) {
   assert.ok(mode === undefined || mode === 'relative', 'Unsupported fixture publish pacing');
   return mode;
 }
+
+/** Only the already-validated adaptive experiment may pace native encoded video. */
+export function nativeSourceCadencePacing({ environment, adaptiveProfiles }) {
+  const raw = environment.SCOREBUG_TEST_SOURCE_CADENCE_PACING;
+  if (raw === undefined) return false;
+  assert.ok(
+    raw === '1' && adaptiveProfiles === true,
+    'Source-cadence pacing requires exact opt-in 1 and the adaptive native fixture',
+  );
+  return true;
+}

@@ -29,6 +29,9 @@ public actor SRTStream {
     private var failure = PublishingFailureLatch()
     private var generation: UInt64 = 0
     private var videoInputIsRaw = false
+    private let pacesEncodedVideo: Bool
+    private let pacingSleep: @Sendable (Double) async throws -> Void
+    private var sourceCadenceClock = SourceCadenceClock()
     private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
     /// Identity for an active publication, not proof that its encoder is ready.
     public var publishingGeneration: UInt64? {
@@ -263,7 +266,10 @@ public actor SRTStream {
     ///   does not notify. The callback must remain bounded and perform no I/O or waits.
     public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
-                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
+                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+                pacesEncodedVideo: Bool = false) {
+        self.pacesEncodedVideo = pacesEncodedVideo
+        pacingSleep = { try await Task.sleep(for: .seconds($0)) }
         outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
                                   encoderConfigurationObserver: encoderConfigurationObserver)
         self.connection = connection
@@ -272,7 +278,10 @@ public actor SRTStream {
     }
 
     init(connection: SRTConnection, outgoing: sending OutgoingStream,
-         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
+         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+         pacesEncodedVideo: Bool = false,
+         pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
+        self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
         self.outgoing = outgoing; self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
         Task { await connection.addStream(self) }
@@ -300,6 +309,7 @@ public actor SRTStream {
         }
         guard readyState == .idle, finishingGeneration == nil, videoReplacement == nil else { return }
         generation &+= 1
+        sourceCadenceClock = SourceCadenceClock()
         videoInputIsRaw = false
         let session = generation
         failure = PublishingFailureLatch()
@@ -308,6 +318,9 @@ public actor SRTStream {
         // Raw video may skip stale frames before compression; compressed queues fail.
         if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }
         // Install continuations before publishing becomes observable or accepting input.
+        if pacesEncodedVideo, !outgoing.enablePacedVideoOutput() {
+            failure.fail(.outputTerminated(boundary: "SRT pacing setup")); return
+        }
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
         let videoInput = outgoing.videoInputStream
@@ -327,7 +340,20 @@ public actor SRTStream {
             video: Task {
                 for await buffer in videoOutput {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    appendCompressedVideo(buffer, wasEncoded: true)
+                    let dequeuedAt = ProcessInfo.processInfo.systemUptime
+                    if pacesEncodedVideo {
+                        do {
+                            let delay = try sourceCadenceClock.delay(sourcePTS: buffer.presentationTimeStamp, now: dequeuedAt)
+                            if delay > 0 { try await pacingSleep(delay) }
+                        } catch {
+                            if generation == session, !Task.isCancelled {
+                                failure.fail(.outputTerminated(boundary: "SRT source cadence pacing"))
+                            }
+                            return
+                        }
+                    }
+                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
+                    appendCompressedVideo(buffer, wasEncoded: true, dequeuedAt: dequeuedAt)
                 }
             },
             audio: Task {
@@ -442,6 +468,7 @@ public actor SRTStream {
     public func close() async {
         videoReplacement?.interrupt(.interrupted)
         generation &+= 1
+        sourceCadenceClock = SourceCadenceClock()
         videoInputIsRaw = false
         for task in publishingTasks?.all ?? [] { task.cancel() }
         publishingTasks = nil
@@ -517,11 +544,13 @@ extension SRTStream: _Stream {
         }
     }
 
-    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool) {
+    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool,
+                                       dequeuedAt: Double = ProcessInfo.processInfo.systemUptime) {
         guard readyState == .publishing, publishingError == nil else { return }
         observeVideoReplacement(sampleBuffer, wasEncoded: wasEncoded)
         guard publishingError == nil else { return }
-        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded))
+        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded, dequeuedAt: dequeuedAt,
+                                      sourceCadencePaced: wasEncoded && pacesEncodedVideo))
         writer.videoFormat = sampleBuffer.formatDescription
         writer.append(sampleBuffer)
     }

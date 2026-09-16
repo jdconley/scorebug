@@ -12,11 +12,17 @@ extension SRTStream {
         public let codec: FourCharCode
         public let valid: Bool
         public let wasEncoded: Bool
+        /// Consumer dequeue uptime, before optional pacing. Not encoder completion.
+        public let sourceCadencePaced: Bool
+        public let dequeuedAt: Double
         public let byteCount: Int
         /// CoreMedia sync metadata, not a bitstream parse or receiver-delivery proof.
         /// Invalid samples have no sync evidence. An absent NotSync key means sync.
         public let isSync: Bool?
-        init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool) {
+        init(sampleBuffer: CMSampleBuffer, generation: UInt64, wasEncoded: Bool,
+             dequeuedAt: Double = ProcessInfo.processInfo.systemUptime, sourceCadencePaced: Bool = false) {
+            self.sourceCadencePaced = sourceCadencePaced
+            self.dequeuedAt = dequeuedAt
             publishingGeneration = generation; sourcePTS = sampleBuffer.presentationTimeStamp
             self.wasEncoded = wasEncoded
             let format = sampleBuffer.formatDescription

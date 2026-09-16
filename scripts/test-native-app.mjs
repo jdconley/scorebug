@@ -38,6 +38,7 @@ import {
   fixtureDecoderThreading,
   fixturePublishPeerLatency,
   fixturePublishPacing,
+  nativeSourceCadencePacing,
   nativeQualityOptions,
   nativeUplinkOptions,
   nativeFixtureWorkload,
@@ -99,6 +100,7 @@ const adaptiveProfiles = nativeAdaptiveProfiles({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const sourceCadencePacing = nativeSourceCadencePacing({ environment: process.env, adaptiveProfiles });
 const uplinkProfile = nativeUplinkOptions({
   liveProfile,
   environment: process.env,
@@ -127,6 +129,7 @@ await writeFile(
       decoderThreading,
       publishPeerLatencyMs: publishPeerLatencyMs ?? null,
       publishPacing: publishPacing ?? null,
+      sourceCadencePacing,
       streaming,
       requirePublication,
       requireProcessing,
@@ -488,6 +491,7 @@ try {
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitions ? '1' : ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
+      `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
@@ -650,7 +654,7 @@ try {
         JSON.parse(bytes.toString('utf8')),
         observationSnapshot,
         liveSegments.flat(),
-        { adaptive: adaptiveProfiles, requireFrameEvidence: true },
+        { adaptive: adaptiveProfiles, requireFrameEvidence: true, requirePacingEvidence: sourceCadencePacing },
       );
     }
     videoObservation = qualifyVideoObservation({

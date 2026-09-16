@@ -161,3 +161,81 @@ test('source gaps are retained honestly and half-open output bins do not infer c
   }
   assert.equal(qualifyNativeCompressedFrames(format, snapshot).phases[1].syncFrames[0].frameID, 5);
 });
+
+test('paced evidence retains dequeue times and independently enforces source-cadence eligibility', () => {
+  const { format, snapshot } = fixture();
+  assert.throws(() =>
+    qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence: true }),
+  );
+  for (const r of format.compressedFrames) {
+    r.dequeuedAt = r.observedAt - 0.001;
+    r.sourceCadencePaced = true;
+  }
+  const result = qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence: true });
+  assert.equal(result.pacing.frames, 12);
+  assert.ok(result.pacing.maximumWaitSeconds > 0);
+  format.compressedFrames[2].dequeuedAt = format.compressedFrames[2].observedAt + 0.1;
+  assert.throws(() => qualifyNativeCompressedFrames(format, snapshot));
+});
+
+test('pacing qualification rejects early output, excessive lead, mixed modes and invalid dequeue chronology', () => {
+  for (const [mutate, reason] of [
+    [
+      (f) => {
+        f.compressedFrames[1].observedAt = 100.02;
+        f.compressedFrames[1].dequeuedAt = 100.01;
+      },
+      /ahead of source-cadence/,
+    ],
+    [
+      (f) => {
+        f.compressedFrames[1].sourcePTS = pts(40);
+      },
+      /one-second/,
+    ],
+    [
+      (f) => {
+        f.compressedFrames[1].sourceCadencePaced = false;
+      },
+      /mode changed/,
+    ],
+    [
+      (f) => {
+        delete f.compressedFrames[1].dequeuedAt;
+      },
+      /assert/,
+    ],
+    [
+      (f) => {
+        f.compressedFrames[1].dequeuedAt = 99.99;
+      },
+      /out of order/,
+    ],
+    [
+      (f) => {
+        f.compressedFrames[1].dequeuedAt = NaN;
+      },
+      /assert/,
+    ],
+  ]) {
+    const { format, snapshot } = fixture();
+    for (const r of format.compressedFrames) {
+      r.dequeuedAt = r.observedAt - 0.001;
+      r.sourceCadencePaced = true;
+    }
+    mutate(format);
+    assert.throws(
+      () => qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence: true }),
+      reason,
+    );
+  }
+  const { format, snapshot } = fixture();
+  for (const r of format.compressedFrames) {
+    r.dequeuedAt = r.observedAt;
+    r.sourceCadencePaced = false;
+  }
+  assert.equal(qualifyNativeCompressedFrames(format, snapshot).pacing.sourceCadencePaced, false);
+  assert.throws(() =>
+    qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence: true }),
+  );
+});

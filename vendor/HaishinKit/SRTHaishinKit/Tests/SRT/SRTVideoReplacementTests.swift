@@ -5,10 +5,10 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTVideoReplacementTests {
-    @Test func receiptRequiresActualNewOutputAndFinishPreservesBothFormats() async throws {
+    @Test(arguments: [false, true]) func receiptRequiresActualNewOutputAndFinishPreservesBothFormats(paces: Bool) async throws {
         let observed = ReplacementFrames()
         let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
-        let stream = SRTStream(connection: connection, compressedVideoObserver: observed.record)
+        let stream = SRTStream(connection: connection, compressedVideoObserver: observed.record, pacesEncodedVideo: paces)
         await connection.addStream(stream)
         try await connection.connect(URL(string: "srt://127.0.0.1:1"))
         try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
@@ -27,7 +27,8 @@ import Testing
         #expect(await stream.videoSettings.videoSize.width == 32)
         // Commit by itself cannot produce a receipt: no new frame exists yet.
         #expect(observed.frames.count == 1)
-        for frame in 1...4 {
+        let firstNewFrame = paces ? 15 : 1
+        for frame in firstNewFrame..<(firstNewFrame + 4) {
             await stream.append(try replacementVideo(frame))
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -35,13 +36,21 @@ import Testing
         #expect(receipt.publishingGeneration == generation)
         #expect(receipt.encoderSessionID != receipt.previousEncoderSessionID)
         #expect(receipt.lastOldSourcePTS == .zero)
-        #expect(receipt.firstNewSourcePTS == CMTime(value: 1, timescale: 30))
+        #expect(receipt.firstNewSourcePTS == CMTime(value: Int64(firstNewFrame), timescale: 30))
         #expect(receipt.width == 32 && receipt.height == 32)
         #expect(receipt.rawVideoFramesDropped == 0)
         await stream.finish()
         #expect(await stream.publishingError == nil)
         #expect(observed.frames.map(\.width) == [64, 32, 32, 32, 32])
-        #expect(observed.frames.map(\.sourcePTS) == (0...4).map { CMTime(value: Int64($0), timescale: 30) })
+        let expectedPTS = ([0] + Array(firstNewFrame..<(firstNewFrame + 4))).map { CMTime(value: Int64($0), timescale: 30) }
+        #expect(observed.frames.map(\.sourcePTS) == expectedPTS)
+        if paces {
+            let anchor = try #require(observed.frames.first).dequeuedAt
+            for (frame, at) in zip(observed.frames, observed.observedTimes) {
+                #expect(at + 0.001 >= anchor + frame.sourcePTS.seconds,
+                    "Replacement must retain the original source-cadence anchor")
+            }
+        }
         await connection.close()
     }
     private func gatedStream(_ gate: ReplacementGate, observed: ReplacementFrames, transport: ReplacementTransport = ReplacementTransport(), audio: Bool = false, deferTransport: Bool = false, defect: String? = nil) async throws -> (SRTConnection, SRTStream, UInt64) {
@@ -352,8 +361,12 @@ import Testing
 private final class ReplacementFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [SRTStream.CompressedVideoFrame] = []
+    private var times: [Double] = []
     var frames: [SRTStream.CompressedVideoFrame] { lock.withLock { values } }
-    func record(_ frame: SRTStream.CompressedVideoFrame) { lock.withLock { values.append(frame) } }
+    var observedTimes: [Double] { lock.withLock { times } }
+    func record(_ frame: SRTStream.CompressedVideoFrame) {
+        lock.withLock { values.append(frame); times.append(ProcessInfo.processInfo.systemUptime) }
+    }
 }
 private func replacementVideo(_ frame: Int) throws -> CMSampleBuffer {
     var pixel: CVPixelBuffer?
