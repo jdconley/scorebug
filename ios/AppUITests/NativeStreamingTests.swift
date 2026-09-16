@@ -28,11 +28,17 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(qualityFlag, "1"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
             app.launchEnvironment["SCOREBUG_TEST_NATIVE_QUALITY"] = qualityFlag
         }
+        let liveProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? ""
+        if !liveProfile.isEmpty {
+            XCTAssertEqual(liveProfile, "540p30"); XCTAssertTrue(qualityFlag.isEmpty)
+            XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            app.launchEnvironment["SCOREBUG_TEST_LIVE_PROFILE"] = liveProfile
+        }
         let uplinkPort = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? ""
         if !uplinkPort.isEmpty {
             let parsed = try XCTUnwrap(Int(uplinkPort))
             XCTAssertEqual(String(parsed), uplinkPort); XCTAssertTrue((1...65535).contains(parsed))
-            XCTAssertEqual(qualityFlag, "1"); XCTAssertEqual(motionFlag, "blocks16")
+            XCTAssertTrue(qualityFlag == "1" || liveProfile == "540p30"); XCTAssertEqual(motionFlag, "blocks16")
             app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = uplinkPort
         }
         app.launch()

@@ -7,8 +7,9 @@ import Testing
 @Suite(.serialized) struct SRTStreamFinishTests {
     @Test func verifiedBitRateRequiresCurrentRawEncoderAndPreservesFinalFrames() async throws {
         let bytes = FinishBytes()
+        let formats = FinishFormats()
         let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
-        let stream = SRTStream(connection: connection)
+        let stream = SRTStream(connection: connection, compressedVideoObserver: formats.record)
         await connection.addStream(stream)
         #expect(await stream.publishingGeneration == nil)
         await #expect(throws: VideoBitRateUpdateError.notEncoding) {
@@ -31,6 +32,9 @@ import Testing
         for frame in 1...4 { await stream.append(try finishVideo(frame)) }
         await stream.finish()
         #expect(bytes.videoPTS == [9000, 12000, 15000, 18000, 21000])
+        #expect(formats.frames.count == 5)
+        #expect(formats.frames.allSatisfy { $0.valid && $0.wasEncoded && $0.width == 64 && $0.height == 64 && $0.publishingGeneration == generation })
+        #expect(formats.frames.map(\.sourcePTS) == (0...4).map { CMTime(value: Int64($0), timescale: 30) })
         #expect(await stream.publishingError == nil)
         #expect(await stream.publishingGeneration == nil)
         await stream.setExpectedMedias([.video]); await stream.publish()
@@ -330,4 +334,11 @@ private final class FinishBlockedPeer: @unchecked Sendable {
         return Int32(data.count)
     }
     func release() { gate.signal() }
+}
+
+private final class FinishFormats: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [SRTStream.CompressedVideoFrame] = []
+    func record(_ value: SRTStream.CompressedVideoFrame) { lock.withLock { values.append(value) } }
+    var frames: [SRTStream.CompressedVideoFrame] { lock.withLock { values } }
 }

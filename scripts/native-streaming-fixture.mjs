@@ -25,7 +25,9 @@ export async function nativeStreamingFixture({
   decodedWindowLimit = 64,
   requirePublication = false,
   uplinkProfile = null,
+  liveProfile = '1080p30',
 }) {
+  assert.ok(['1080p30', '540p30'].includes(liveProfile));
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
     uplinkProfile === null || ['passthrough', 'rate4m'].includes(uplinkProfile),
@@ -332,7 +334,7 @@ export async function nativeStreamingFixture({
               ENCODER: 'videotoolbox',
               WORKER_REPORT_INTERVAL_MS:
                 process.env.SCOREBUG_TEST_NATIVE_QUALITY === '1' ? '100' : '1000',
-              VIDEO_PROFILE: '1080p30',
+              VIDEO_PROFILE: liveProfile,
               SCORE_DIR: join(artifact, 'worker'),
               FFMPEG_PATH: ffmpeg,
               FFPROBE_PATH: ffprobe,

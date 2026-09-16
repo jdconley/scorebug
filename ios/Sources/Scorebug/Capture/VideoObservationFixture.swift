@@ -3,6 +3,7 @@ import CoreMedia
 import Foundation
 import ScorebugCore
 import ScorebugMedia
+import ScorebugStreaming
 
 /// Explicit local qualification fixture. Only scalar, bounded observation state
 /// crosses this boundary; setup, credentials and media are never serialized.
@@ -15,12 +16,24 @@ enum VideoObservationFixture {
 
     enum UplinkError: Error { case invalidFixtureRoute }
 
+    static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
+        guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else { return .hd1080 }
+        guard raw == "540p30", requested(environment: environment),
+              environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
+              (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,
+              let rawHold = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"],
+              let hold = Int(rawHold), String(hold) == rawHold, (90...600).contains(hold)
+        else { throw UplinkError.invalidFixtureRoute }
+        return .sd540
+    }
+
     /// Pure fixture transformation; the runtime caller is DEBUG simulator only.
     /// Preserve query encoding exactly, including stream identity and credentials.
     static func publishingURL(_ original: URL, environment: [String: String]) throws -> URL {
         guard let raw = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], !raw.isEmpty else { return original }
+        let reduced = try liveProfile(environment: environment) == .sd540
         guard requested(environment: environment),
-              environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1",
+              (environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1" || reduced),
               let port = Int(raw), String(port) == raw, (1...65535).contains(port),
               var components = URLComponents(url: original, resolvingAgainstBaseURL: false),
               components.scheme == "srt", components.host == "127.0.0.1",

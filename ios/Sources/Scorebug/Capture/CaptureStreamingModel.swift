@@ -101,11 +101,19 @@ struct PublishingClockObservation: Equatable, Sendable {
          clientFactory: @escaping (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
-             let target = try VideoObservationFixture.publishingURL(url, environment: ProcessInfo.processInfo.environment)
+             let environment = ProcessInfo.processInfo.environment
+             let profile = try VideoObservationFixture.liveProfile(environment: environment)
+             let target = try VideoObservationFixture.publishingURL(url, environment: environment)
+             let proof = profile == .sd540 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
+             let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
+             let didStop: (@Sendable () -> Void)?
+             if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }
+             else { observer = nil; didStop = nil }
+             return SRTMediaPublisher(url: target, observations: observations, videoProfile: profile,
+                 compressedVideoObserver: observer, didStop: didStop)
              #else
-             let target = url
+             return SRTMediaPublisher(url: url, observations: observations)
              #endif
-             return SRTMediaPublisher(url: target, observations: observations)
          },
          observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
              #if DEBUG && targetEnvironment(simulator)
@@ -283,7 +291,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try check(context, attempt)
                 // Measurement starts after the earlier control-plane requests, but
                 // includes encoder/transport startup. Revision 1 identifies the existing
-                // fixed 1080p30 configuration; it does not assert that startup applied it.
+                // initial publishing configuration; it does not assert that startup applied it.
                 let scope = VideoFrameObservationScope(recordingID: context.id, matchID: credential.gameId,
                     broadcastGeneration: broadcast.generation, publishingAttemptID: attempt, appliedProfileRevision: 1)
                 // Unavailable diagnostics must not fail publishing, archive or storage.

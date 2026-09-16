@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, videoProfiles } from '../src/config.js';
 
 const base = {
   CONTROL_PLANE_URL: 'http://localhost:18787',
@@ -55,4 +55,10 @@ it('bounds explicit report cadence and preserves the default', () => {
   );
   for (const value of ['0', '99', '5001', '250.5', '', 'NaN'])
     expect(() => loadConfig({ ...base, WORKER_REPORT_INTERVAL_MS: value })).toThrow();
+});
+
+it('supports an explicit reduced live output independently of the default profile', () => {
+  expect(loadConfig({ ...base, VIDEO_PROFILE: '540p30' }).VIDEO_PROFILE).toBe('540p30');
+  expect(videoProfiles['540p30']).toEqual({ width: 960, height: 540, fps: 30, bitrateKbps: 1500 });
+  expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
 });

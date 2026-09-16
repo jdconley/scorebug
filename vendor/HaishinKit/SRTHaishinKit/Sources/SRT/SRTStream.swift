@@ -29,6 +29,7 @@ public actor SRTStream {
     private var failure = PublishingFailureLatch()
     private var generation: UInt64 = 0
     private var videoInputIsRaw = false
+    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
     /// Identity for an active publication, not proof that its encoder is ready.
     public var publishingGeneration: UInt64? {
         readyState == .publishing && finishingGeneration == nil && publishingError == nil && muxerError == nil
@@ -95,10 +96,12 @@ public actor SRTStream {
     ///   notification for this stream, including final drain. Compressed passthrough
     ///   does not notify. The callback must remain bounded and perform no I/O or waits.
     public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
-                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
+                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
+                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
         outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
                                   encoderConfigurationObserver: encoderConfigurationObserver)
         self.connection = connection
+        self.compressedVideoObserver = compressedVideoObserver
         Task { await connection.addStream(self) }
     }
 
@@ -151,7 +154,7 @@ public actor SRTStream {
             video: Task {
                 for await buffer in videoOutput {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    appendCompressedVideo(buffer)
+                    appendCompressedVideo(buffer, wasEncoded: true)
                 }
             },
             audio: Task {
@@ -305,7 +308,7 @@ extension SRTStream: _Stream {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
                 videoInputIsRaw = false
-                appendCompressedVideo(sampleBuffer)
+                appendCompressedVideo(sampleBuffer, wasEncoded: false)
             } else {
                 videoInputIsRaw = true
                 outgoing.append(sampleBuffer)
@@ -329,8 +332,9 @@ extension SRTStream: _Stream {
         }
     }
 
-    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer) {
+    private func appendCompressedVideo(_ sampleBuffer: CMSampleBuffer, wasEncoded: Bool) {
         guard readyState == .publishing, publishingError == nil else { return }
+        compressedVideoObserver?(.init(sampleBuffer: sampleBuffer, generation: generation, wasEncoded: wasEncoded))
         writer.videoFormat = sampleBuffer.formatDescription
         writer.append(sampleBuffer)
     }

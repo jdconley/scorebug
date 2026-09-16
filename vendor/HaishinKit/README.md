@@ -96,3 +96,11 @@ Initial/legacy unchecked settings are explicitly unverified. Delayed completions
 retain their historical identity across later writes, recreation and stop. This
 does not assert instantaneous rate convergence. See
 [the frame-boundary contract](../../docs/encoder-configuration-boundaries.md).
+
+
+`SRTStream` also accepts an optional immutable `compressedVideoObserver`. Before
+muxing, it copies actual compressed sample dimensions, codec, PTS, validity and
+publishing generation into a scalar value. Raw-encoder output and compressed
+passthrough remain distinguishable. The observer runs synchronously, including
+final drain, and must perform no I/O or waits; it cannot alter media delivery.
+This is pre-worker format evidence, not receiver delivery or rate-control proof.

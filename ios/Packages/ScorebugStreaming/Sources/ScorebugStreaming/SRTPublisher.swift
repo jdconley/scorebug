@@ -8,6 +8,8 @@ import ScorebugMedia
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
+    public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
+    private let videoProfile: PublishingVideoProfile
     public struct EncoderConfiguration: Equatable, Sendable {
         public let id: UUID
         public let encoderSessionID: UUID
@@ -38,8 +40,11 @@ public actor SRTPublisher {
     private var stopping = false
     public private(set) var lastStopOutcome: SRTStopPolicy.Outcome?
     public init(stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
-                encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil) {
+                encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil,
+                videoProfile: PublishingVideoProfile = .hd1080,
+                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil) {
         self.stopPolicy = stopPolicy
+        self.videoProfile = videoProfile
         // Immutable ownership prevents late native completions from reaching a
         // later publishing attempt. Observe synchronously without retaining media.
         let configurationObserver: VideoEncoderConfigurationObserver?
@@ -60,14 +65,11 @@ public actor SRTPublisher {
                 encoderConfigurationObserver?(EncoderFrame(frame))
             }
         } else { configurationObserver = nil }
-        stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver)
+        stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver,
+                           compressedVideoObserver: compressedVideoObserver)
     }
     public func configure() async throws {
-        try await stream.setVideoSettings(VideoCodecSettings(
-            videoSize: CGSize(width: 1920, height: 1080), bitRate: 6_000_000,
-            profileLevel: kVTProfileLevel_H264_High_AutoLevel as String,
-            maxKeyFrameIntervalDuration: 2, allowFrameReordering: false,
-            expectedFrameRate: 30))
+        try await stream.setVideoSettings(videoProfile.settings)
         try await stream.setAudioSettings(AudioCodecSettings(bitRate: 128_000))
         await stream.setExpectedMedias([.video, .audio])
         await stream.setVideoInputBufferCounts(4)

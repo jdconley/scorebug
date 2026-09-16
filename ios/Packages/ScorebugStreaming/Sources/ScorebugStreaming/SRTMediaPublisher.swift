@@ -20,9 +20,13 @@ public actor SRTMediaPublisher: MediaPublisher {
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
     public init(url: URL, stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
-                encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil) {
+                encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil,
+                videoProfile: PublishingVideoProfile = .hd1080,
+                compressedVideoObserver: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)? = nil,
+                didStop: (@Sendable () -> Void)? = nil) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
-            encoderConfigurationObserver: encoderConfigurationObserver)
+            encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
+            compressedVideoObserver: compressedVideoObserver)
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
@@ -32,7 +36,7 @@ public actor SRTMediaPublisher: MediaPublisher {
                     guard let (pcm, when) = copyPCM(sample.sampleBuffer) else { throw PublisherError.invalidSample }
                     await adapter.audio(pcm, when: when)
                 }
-            }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop() },
+            }, isPublishing: { await adapter.isPublishing() }, stop: { await adapter.stop(); didStop?() },
             setBitRate: { try await adapter.setBitRateWithReceipt($0) }, metrics: { await adapter.metrics() },
             transportClock: { await adapter.transportClock() }, transportStatistics: { await adapter.transportStatistics() })
     }

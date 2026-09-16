@@ -1,3 +1,5 @@
+import { nativeLiveProfile, nativeMediaGeometry } from './native-live-profile.mjs';
+import { qualifyNativeFormat } from './native-format-qualification.mjs';
 import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -59,7 +61,15 @@ const { requireQuality, requireConfirmation } = nativeQualityOptions({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
+const liveProfile = nativeLiveProfile({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const uplinkProfile = nativeUplinkOptions({
+  liveProfile,
   environment: process.env,
   streaming,
   requireQuality,
@@ -91,6 +101,7 @@ await writeFile(
       streamingOptions,
       fixtureWorkload,
       uplinkProfile,
+      liveProfile,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     },
@@ -194,8 +205,9 @@ async function analyze(path, index, live = false) {
   );
   const video = probe.streams.find((item) => item.codec_type === 'video');
   const audio = probe.streams.find((item) => item.codec_type === 'audio');
-  assert.equal(video?.width, 1920);
-  assert.equal(video?.height, 1080);
+  const geometry = nativeMediaGeometry(liveProfile, live);
+  assert.equal(video?.width, geometry.width);
+  assert.equal(video?.height, geometry.height);
   assert.equal(Number(audio?.sample_rate), live ? 44_100 : 48_000);
   assert.equal(audio?.channels, 1);
   const frames = probe.frames.filter((item) => item.media_type === 'video');
@@ -224,7 +236,7 @@ async function analyze(path, index, live = false) {
       '-map',
       '0:v:0',
       '-vf',
-      'crop=iw:2:0:20,scale=16:1:flags=neighbor,format=gray',
+      `crop=iw:2:0:${geometry.barcodeY},scale=16:1:flags=neighbor,format=gray`,
       '-fps_mode',
       'passthrough',
       '-f',
@@ -263,7 +275,7 @@ async function analyze(path, index, live = false) {
       ),
     );
     videoPayload = measureVideoPayloadRate(packetProbe);
-    if (fixtureWorkload === 'motion-blocks16') {
+    if (fixtureWorkload === 'motion-blocks16' && (!live || liveProfile === '1080p30')) {
       workloadQualification = qualifyStructuredMotionPayload(
         videoPayload,
         live ? 'live' : 'archive',
@@ -324,7 +336,7 @@ async function analyze(path, index, live = false) {
           '-frames:v',
           '1',
           '-vf',
-          'crop=750:120:0:930,format=gray',
+          `format=gray,crop=${geometry.overlay.width}:${geometry.overlay.height}:0:${geometry.overlay.y}`,
           '-f',
           'rawvideo',
           output,
@@ -333,7 +345,7 @@ async function analyze(path, index, live = false) {
       );
       crops.push(await readFile(output));
     }
-    assert.equal(crops[0].length, 750 * 120);
+    assert.equal(crops[0].length, geometry.overlay.width * geometry.overlay.height);
     assert.equal(crops[0].length, crops[1].length);
     overlayChangedPixels = 0;
     for (let i = 0; i < crops[0].length; i++)
@@ -342,6 +354,8 @@ async function analyze(path, index, live = false) {
   }
   return {
     file: path,
+    width: geometry.width,
+    height: geometry.height,
     sync,
     freshFps,
     sourceLoss,
@@ -370,6 +384,7 @@ try {
     proxy = await nativeStreamingFixture({
       requirePublication,
       uplinkProfile,
+      liveProfile,
       artifact,
       root,
       run,
@@ -429,6 +444,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
+      `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
     'workflow',
@@ -522,6 +538,22 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
+  let nativeFormatQualification;
+  if (liveProfile === '540p30') {
+    const formatPath = join(artifact, 'native-publishing-format.json');
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/native-publishing-format.json'),
+      formatPath,
+      { errorOnExist: true, force: false },
+    );
+    const formatBytes = await readFile(formatPath);
+    assert.ok(formatBytes.length <= 4096, 'Oversized native format evidence');
+    nativeFormatQualification = qualifyNativeFormat(
+      JSON.parse(formatBytes.toString('utf8')),
+      observationSnapshot,
+      liveProfile,
+    );
+  }
   let videoObservation,
     publishingAttemptEvidence,
     workerPublicationEvidence,
@@ -658,6 +690,8 @@ try {
         deviceType,
         streamingOptions,
         fixtureWorkload,
+        liveProfile,
+        nativeFormatQualification,
         streamingBudget,
         media,
         live,
@@ -680,7 +714,7 @@ try {
     ),
   );
   console.log(
-    `${uplinkProfile === 'rate4m' ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${uplinkProfile === 'rate4m' || liveProfile === '540p30' ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

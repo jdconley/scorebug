@@ -742,3 +742,22 @@ All 904 tooling tests and prior raw evidence replay pass. Next qualify this redu
 live profile through the complete pipeline while local recording remains 1080p,
 then implement and test bounded dynamic profile changes. Production adaptation,
 actual bandwidth recovery and physical phone/Watch/remote-host gates remain open.
+
+
+The [fixed reduced-profile integration](2026-09-16-native-reduced-profile.md) now
+passes both pass-through and scheduled 4 Mbps simulator diagnostics. Actual native
+compressed-sample evidence confirms 960×540 before worker scaling. During the
+limited run all 5990 acquired live frames survive through the final encoded frame,
+while the independent 1080p archive retains all 6365 frames and normally finalizes;
+both remain approximately 30 fps with zero qualified source loss. The 60-second
+phone-side limit averages 3.880 Mbps wire traffic with zero proxy drops. This
+establishes fixed-profile tolerance for this fixture, not automatic adaptation or
+a broad network capacity guarantee. The next gate is bounded dynamic profile
+replacement and recovery while preserving archive independence. Production
+activation, physical phone/Watch and other-host qualification remain open.
+
+The default 1080p regression also passes with 3635 local / 3209 live frames and two
+confirmed native bitrate trials, and the unsigned combined iPhone/Watch Release
+build succeeds. This checkpoint has 55 streaming, 135 vendor, 183 app-model, 334
+serialized worker and 908 tooling tests passing, plus worker typechecking. Retained
+parallel worker timing failures are documented in the reduced-profile plan.
