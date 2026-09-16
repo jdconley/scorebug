@@ -27,7 +27,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
                          missingEncoded: Set<Int> = [], decodedCount: Int64 = 150,
                          thermalState: PublishingThermalState = .nominal,
                          retransmitted: UInt64 = 0, drops: Int32 = 0, buffer: Int32 = 0,
-                         rtt: Double = 10, frameOffset: Int = 0, workerEpoch: String? = nil,
+                         rtt: Double = 10, delay: Int32? = nil, frameOffset: Int = 0, workerEpoch: String? = nil,
                          windowSequence: Int64 = 2, encodingConfiguration: VideoEncodingConfiguration? = nil,
                          receivedAt: ContinuousClock.Instant? = nil) throws -> Fixture {
         let config = encodingConfiguration ?? self.config
@@ -82,7 +82,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             transport.observe(.init(publishingGeneration: 7, sampledAt: t, elapsedMilliseconds: Int64(i * 1000),
                 sentBytes: UInt64(i * 10000), retransmittedBytes: UInt64(i) * retransmitted,
                 droppedPackets: Int32(i) * drops, rttMilliseconds: rtt, estimatedBandwidthMbps: 999,
-                senderBufferedBytes: buffer * 100, senderBufferMilliseconds: buffer, availableSenderBytes: 10000))
+                senderBufferedBytes: buffer * 100, senderBufferMilliseconds: buffer, availableSenderBytes: 10000, senderDeliveryDelayMilliseconds: delay))
             thermal.observe(.init(state: thermalState, sampledAt: t))
         }
         return .init(source: source, applied: .init(attemptID: attempt, revision: 0,
@@ -100,23 +100,70 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         try Adapter.localPressureWindow(applied: f.applied, diagnostics: f.diagnostics,
             transportLimits: limits ?? transportLimits, sequence: 7, after: after, at: f.now)
     }
+    private var recoveryLimits: Adapter.TransportLimits {
+        .init(maximumBufferMs: 500, maximumRTTMs: 500,
+              maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true)!
+    }
+    func testQuarterSecondPressureDoesNotWaitForOneSecondAfterAck() throws {
+        var f = try fixture(buffer: 501)
+        f.applied.acknowledgedAt = 110
+        let w = try XCTUnwrap(local(f, after: 110.75))
+        XCTAssertEqual(w.start, 110.75); XCTAssertEqual(w.end, 111)
+        XCTAssertNil(try local(f, after: 110.750001))
+        f.applied.acknowledgedAt = 110.000001
+        XCTAssertNil(try local(f), "Enclosing collection still predates acknowledgment")
+    }
+    func testRecoveryBudgetDetectsRTTBeforeFixed500msThreshold() throws {
+        let f = try fixture(rtt: 31, delay: 120)
+        XCTAssertNil(try local(f))
+        XCTAssertEqual(try local(f, limits: recoveryLimits)?.transportPressure, .elevated)
+        XCTAssertEqual(try window(f, transport: recoveryLimits).transportPressure, .elevated)
+        XCTAssertEqual(try window(fixture(rtt: 30, delay: 120), transport: recoveryLimits).transportPressure, .nominal)
+    }
+    func testMissingRecoveryBudgetCannotEstablishHealthyTransportButRetainsKnownPressure() throws {
+        for delay: Int32? in [nil, 0] {
+            XCTAssertEqual(try window(fixture(delay: delay), transport: recoveryLimits).transportPressure, .unknown)
+            XCTAssertNil(try local(fixture(delay: delay), limits: recoveryLimits))
+            XCTAssertEqual(try local(fixture(buffer: 501, delay: delay), limits: recoveryLimits)?.transportPressure, .elevated)
+        }
+    }
+
+    func testRecoveryBudgetUsesEachSamplesOwnDelayAndStillHonorsCallerCeiling() throws {
+        var f = try fixture()
+        for mixedUnknown in [false, true] {
+            var transport = PublishingTransportStatisticsTracker()
+            for i in 0...11 {
+                let high = i % 2 == 0
+                transport.observe(.init(publishingGeneration: 7, sampledAt: 100 + Double(i),
+                    elapsedMilliseconds: Int64(i * 1000), sentBytes: UInt64(i * 10000),
+                    retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: high ? 500 : 30,
+                    estimatedBandwidthMbps: 999, senderBufferedBytes: 0, senderBufferMilliseconds: 0,
+                    availableSenderBytes: 10000,
+                    senderDeliveryDelayMilliseconds: mixedUnknown && i == 7 ? nil : high ? 2000 : 120))
+            }
+            f.diagnostics.transport = transport.snapshot
+            XCTAssertEqual(try window(f, transport: recoveryLimits).transportPressure, mixedUnknown ? .unknown : .nominal)
+        }
+        XCTAssertEqual(try window(fixture(rtt: 501, delay: 10000), transport: recoveryLimits).transportPressure, .elevated)
+    }
+
     func testRecentPressureCanReduceBeforeFiveSecondsAfterProfileAcknowledgment() throws {
         var f = try fixture(buffer: 501)
         f.applied.acknowledgedAt = 109
         let w = try XCTUnwrap(local(f, after: 109))
-        XCTAssertEqual(w.start, 110); XCTAssertEqual(w.end, 111)
+        XCTAssertEqual(w.start, 110.75); XCTAssertEqual(w.end, 111)
         XCTAssertEqual(w.transportPressure, .elevated)
         XCTAssertNil(w.receiver); XCTAssertNil(w.capturedFreshFrames); XCTAssertNil(w.usableVideoCapacity)
     }
     func testRecentPressureDoesNotWaitFiveSecondsAfterLastReceiverWindow() throws {
         let f = try fixture(buffer: 501)
         let w = try XCTUnwrap(local(f, after: 109))
-        XCTAssertEqual(w.start, 110); XCTAssertEqual(w.end, 111)
-        XCTAssertNil(try local(f, after: 110.000001))
+        XCTAssertEqual(w.start, 110.75); XCTAssertEqual(w.end, 111)
+        XCTAssertNil(try local(f, after: 110.750001))
     }
     func testLocalPressurePreservesUnknownDeliveryAndOnlyPermitsDecrease() throws {
         let f = try fixture(buffer: 501), w = try XCTUnwrap(local(f))
-        XCTAssertEqual(w.start, 110); XCTAssertEqual(w.end, 111)
+        XCTAssertEqual(w.start, 110.75); XCTAssertEqual(w.end, 111)
         XCTAssertEqual(w.sequence, 7); XCTAssertEqual(w.appliedRevision, 0)
         XCTAssertEqual(w.attemptID, attempt); XCTAssertEqual(w.transportPressure, .elevated)
         XCTAssertNil(w.capturedFreshFrames); XCTAssertNil(w.encodedFreshFrames)
@@ -125,7 +172,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         var policy = try QualityController(profiles: [.init(id: "hd", width: 1920, height: 1080,
             minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)], attemptID: attempt,
             applied: f.applied.settings, at: f.applied.acknowledgedAt, recoveryStrategy: .receiverValidatedTrials)
-        let decision = try policy.evaluate(w, at: f.now)
+        let decision = try policy.evaluateLocalPressure(w, at: f.now)
         XCTAssertEqual(decision.state, .unknown)
         XCTAssertEqual(decision.recommendation?.kind, .decrease)
         XCTAssertEqual(decision.recommendation?.settings.videoBitrate, 1_600_000)
@@ -175,7 +222,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         }
         f.diagnostics.thermal = thermal.snapshot; f.diagnostics.transport = transport.snapshot
         let w = try XCTUnwrap(local(f))
-        XCTAssertEqual(w.start, 110); XCTAssertEqual(w.end, 111)
+        XCTAssertEqual(w.start, 110.75); XCTAssertEqual(w.end, 111)
         XCTAssertEqual(w.transportPressure, .elevated); XCTAssertEqual(w.thermalPressure, .unknown)
     }
     func testLocalPressureDuringTrialRequiresBaselineRollback() throws {
@@ -198,8 +245,8 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         var f = try fixture(buffer: 501, frameOffset: 24 * 30, encodingConfiguration: config)
         f.applied.acknowledgedAt = 130; f.applied.revision = 1
         let w = try XCTUnwrap(local(f, after: 130))
-        XCTAssertEqual(w.start, 134); XCTAssertEqual(w.end, 135)
-        let decision = try policy.evaluate(w, at: f.now)
+        XCTAssertEqual(w.start, 134.75); XCTAssertEqual(w.end, 135)
+        let decision = try policy.evaluateLocalPressure(w, at: f.now)
         XCTAssertEqual(decision.recommendation?.kind, .rollback)
         XCTAssertEqual(decision.recommendation?.settings.videoBitrate, 2_000_000)
     }
@@ -230,7 +277,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             XCTAssertThrowsError(try local(base, after: end))
         }
         XCTAssertNotNil(try local(base, after: 110))
-        XCTAssertNil(try local(base, after: 110.000001))
+        XCTAssertNil(try local(base, after: 110.750001))
         var f = base; f.applied.acknowledgedAt = 110
         XCTAssertNotNil(try local(f))
         f.applied.acknowledgedAt = 110.000001
@@ -246,7 +293,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         for i in 0...11 { thermal.observe(.init(state: .serious, sampledAt: 99.9 + Double(i))) }
         f.diagnostics.thermal = thermal.snapshot
         let w = try XCTUnwrap(local(f))
-        XCTAssertEqual(w.end, 110.9); XCTAssertEqual(w.start, 109.9)
+        XCTAssertEqual(w.end, 110.9); XCTAssertEqual(w.start, 110.65)
         f.applied.acknowledgedAt = 109.9
         XCTAssertNotNil(try local(f))
         // The current rate starts after the left enclosing sample at 109.
@@ -263,7 +310,7 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         f.applied.acknowledgedAt = 109.9
         XCTAssertEqual(try local(f)?.end, 110.9)
         XCTAssertEqual(try local(f)?.thermalPressure, .elevated)
-        XCTAssertEqual(try local(f)?.transportPressure, .unknown)
+        XCTAssertEqual(try local(f)?.transportPressure, .nominal)
         f.diagnostics.thermal = PublishingThermalTracker().snapshot
         XCTAssertNil(try local(f)) // The only transport pressure was before acknowledgment.
         f = try fixture(buffer: 501)

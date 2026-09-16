@@ -171,14 +171,31 @@ public struct QualityController: Sendable {
         recoveryStart = nil; pending = nil; application = nil; trial?.rollbackRequired = true
     }
 
+    /// Short local observations can only decrease or roll back. They must not
+    /// carry delivery/capacity claims or contribute to qualified recovery.
+    public mutating func evaluateLocalPressure(_ window: Window, at now: Double) throws -> Decision {
+        try evaluate(window, at: now, localPressure: true)
+    }
+
     /// Windows must be complete, nonoverlapping, 1–5.25 seconds long and received
     /// within 2 seconds of their end. Consecutive windows share exact boundaries.
     /// Invalid input clears recovery and pending recommendations; callers must
     /// treat rejected telemetry as unknown rather than retaining a healthy claim.
     public mutating func evaluate(_ window: Window, at now: Double) throws -> Decision {
+        try evaluate(window, at: now, localPressure: false)
+    }
+    private mutating func evaluate(_ window: Window, at now: Double, localPressure: Bool) throws -> Decision {
         do {
             try recordTime(now)
-            try validate(window, at: now)
+            if localPressure {
+                guard window.capturedFreshFrames == nil, window.encodedFreshFrames == nil,
+                      window.receiver == nil, window.sourceLoss == nil, window.usableVideoCapacity == nil,
+                      window.connectivity == .unknown, window.workerPressure == .unknown,
+                      window.thermalPressure == .elevated || window.transportPressure == .elevated
+                        || (window.meanQueueOccupancy.map { $0 >= 0.75 } ?? false)
+                else { throw ValidationError.invalidWindow }
+            }
+            try validate(window, at: now, minimumDuration: localPressure ? 0.25 : 1)
         }
         catch { invalidateTelemetry(); throw error }
         var reasons: [Reason] = []
@@ -382,11 +399,11 @@ public struct QualityController: Sendable {
         guard now.isFinite, now >= lastNow else { throw ValidationError.invalidTime }
         lastNow = now
     }
-    private func validate(_ window: Window, at now: Double) throws {
+    private func validate(_ window: Window, at now: Double, minimumDuration: Double) throws {
         guard window.attemptID == attemptID else { throw ValidationError.wrongAttempt }
         guard window.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
         guard window.start.isFinite, window.end.isFinite, window.start >= appliedAt,
-              (1...Self.maximumWindowDuration).contains(window.end - window.start), window.end <= now else { throw ValidationError.invalidWindow }
+              (minimumDuration...Self.maximumWindowDuration).contains(window.end - window.start), window.end <= now else { throw ValidationError.invalidWindow }
         guard now - window.end <= 2 else { throw ValidationError.staleWindow }
         if let lastEnd, window.start < lastEnd { throw ValidationError.outOfOrder }
         if let lastSequence, window.sequence <= lastSequence { throw ValidationError.outOfOrder }

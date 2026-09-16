@@ -61,7 +61,7 @@ import XCTest
         XCTAssertFalse(snapshot.isClosed); XCTAssertEqual(snapshot.revision, 1)
         await driver.stop()
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
-        XCTAssertEqual(json["formatVersion"] as? Int, 3)
+        XCTAssertEqual(json["formatVersion"] as? Int, 4)
         let events = try XCTUnwrap(json["events"] as? [[String: Any]])
         let applied = try XCTUnwrap(events.first { $0["kind"] as? String == "applied" })
         let application = try XCTUnwrap(applied["application"] as? [String: Any])

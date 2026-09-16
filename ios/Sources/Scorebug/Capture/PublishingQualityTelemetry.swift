@@ -49,11 +49,13 @@ enum PublishingQualityTelemetry {
         let maximumBufferMs: Double
         let maximumRTTMs: Double
         let maximumRetransmittedFraction: Double
-        init?(maximumBufferMs: Double, maximumRTTMs: Double, maximumRetransmittedFraction: Double) {
+        let usesSenderRecoveryBudget: Bool
+        init?(maximumBufferMs: Double, maximumRTTMs: Double, maximumRetransmittedFraction: Double, usesSenderRecoveryBudget: Bool = false) {
             guard maximumBufferMs.isFinite, maximumBufferMs > 0, maximumRTTMs.isFinite, maximumRTTMs > 0,
                   maximumRetransmittedFraction.isFinite, (0..<1).contains(maximumRetransmittedFraction) else { return nil }
             self.maximumBufferMs = maximumBufferMs; self.maximumRTTMs = maximumRTTMs
             self.maximumRetransmittedFraction = maximumRetransmittedFraction
+            self.usesSenderRecoveryBudget = usesSenderRecoveryBudget
         }
     }
     static func window(source: WorkerSourceIntervalObservation, applied: Applied, diagnostics: Diagnostics,
@@ -113,8 +115,8 @@ enum PublishingQualityTelemetry {
               previousEnd.map({ $0.isFinite && (0...now).contains($0) }) ?? true else { throw Failure.time }
         let boundary = max(applied.acknowledgedAt, previousEnd ?? applied.acknowledgedAt)
         // Fast local evidence can reduce or roll back, never establish receiver
-        // health. Do not wait five seconds after a change while congestion grows.
-        let duration = 1.0
+        // health. Keep the receiver path at its longer duration while congestion grows.
+        let duration = 0.25
         func thermal(_ end: Double) -> QualityController.Pressure {
             thermalPressure(diagnostics.thermal, from: end - duration, to: end, at: now,
                 minimumSampleStart: applied.acknowledgedAt)
@@ -169,7 +171,18 @@ enum PublishingQualityTelemetry {
             || Double(sample.enclosingMaximumBufferMilliseconds) > limits.maximumBufferMs
             || sample.enclosingMaximumRTTMilliseconds > limits.maximumRTTMs
             || (sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
-        return excessive ? .elevated : sample.enclosingSentBytes > 0 ? .nominal : .unknown
+        if excessive { return .elevated }
+        if limits.usesSenderRecoveryBudget {
+            // Compare each RTT to the delay collected with that same sample.
+            // The enclosing points, including boundary gauges, remain unchanged.
+            let points = history.samples.filter { $0.sampledAt >= sample.enclosingStart && $0.sampledAt <= sample.enclosingEnd }
+            if points.contains(where: { point in
+                guard let delay = point.senderDeliveryDelayMilliseconds, delay > 0 else { return false }
+                return point.rttMilliseconds > min(limits.maximumRTTMs, Double(delay) / 4)
+            }) { return .elevated }
+            guard points.allSatisfy({ ($0.senderDeliveryDelayMilliseconds ?? 0) > 0 }) else { return .unknown }
+        }
+        return sample.enclosingSentBytes > 0 ? .nominal : .unknown
     }
     private static func sameReceipt(_ a: PublishingBitRateChange, _ b: PublishingBitRateChange) -> Bool {
         a.publishingGeneration == b.publishingGeneration && a.configuration == b.configuration

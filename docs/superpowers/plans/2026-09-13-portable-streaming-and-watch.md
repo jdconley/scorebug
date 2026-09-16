@@ -950,3 +950,21 @@ preserve longer source/receiver health checks and upward probation. Earlier nati
 rate-control limitations remain relevant; do not replace the profile-transition
 stress test with a trivially passing bitrate request or relax media qualification.
 Production adaptation, long soaks, physical devices and other hosts remain open.
+
+
+The [faster downward pressure checkpoint](2026-09-16-fast-downward-pressure.md)
+adds an explicitly downward-only quarter-second core/app path and simulator RTT
+pressure bound to each sample's positive measured delivery delay. Version-four
+raw replay preserves all older contracts. 294 core, 208 app-model and 979 tooling
+tests, unsigned combined Apple Release and read-only review pass.
+
+In unchanged run `native-app-QEo8uZ`, the first decrease completes about 0.95 seconds
+earlier and trial rollback improves from 1.70 to 0.90 seconds. All 8116 archive
+frames and 135 A/V markers survive with no archive drops. The worst five-second
+receiver window improves from 14.2 to 25 fps; live A/V coverage passes. Full live
+qualification still fails on source-identity/presentation cadence: 36-frame count
+deficit, but 67 unique positions absent and 31 repeated observations, including 11
+non-increasing barcodes. The remaining anomalies cluster at the two downward
+geometry changes. Next investigate damaged access-unit/IDR recovery and transport
+recovery time together with the bounded receiver freshness budget. Keep production
+adaptation disabled and all device/host/soak requirements open.

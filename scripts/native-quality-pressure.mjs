@@ -34,7 +34,12 @@ function enclosed(history, window, now, validate, minimumStart) {
   return samples.slice(left, right + 1);
 }
 /** Replay only explicit simulator limits; OS samples and worker timings are observations, not capacity. */
-function classifyNativePressure(row, snapshot, source, { local = false } = {}) {
+function classifyNativePressure(
+  row,
+  snapshot,
+  source,
+  { local = false, recoveryBudget = false } = {},
+) {
   const e = row.evidence,
     w = row.window;
   assert(e, 'Missing evaluated raw diagnostic evidence');
@@ -95,10 +100,19 @@ function classifyNativePressure(row, snapshot, source, { local = false } = {}) {
       retransmitted = counter(last.retransmittedBytes) - counter(first.retransmittedBytes);
     transport =
       last.droppedPackets > first.droppedPackets ||
-      transportSamples.some((s) => s.senderBufferMilliseconds > 500 || s.rttMilliseconds > 500) ||
+      transportSamples.some(
+        (s) =>
+          s.senderBufferMilliseconds > 500 ||
+          s.rttMilliseconds > 500 ||
+          (recoveryBudget &&
+            s.senderDeliveryDelayMilliseconds > 0 &&
+            s.rttMilliseconds > s.senderDeliveryDelayMilliseconds / 4),
+      ) ||
       (sent > 0n && Number(retransmitted) / Number(sent) > 0.01)
         ? 'elevated'
-        : sent > 0n
+        : sent > 0n &&
+            (!recoveryBudget ||
+              transportSamples.every((s) => s.senderDeliveryDelayMilliseconds > 0))
           ? 'nominal'
           : 'unknown';
   }
@@ -213,12 +227,20 @@ function assertPressure(window, values) {
     );
   return values;
 }
-export function replayNativePressure(row, snapshot, source) {
-  return assertPressure(row.window, classifyNativePressure(row, snapshot, source));
+export function replayNativePressure(row, snapshot, source, { recoveryBudget = false } = {}) {
+  return assertPressure(
+    row.window,
+    classifyNativePressure(row, snapshot, source, { recoveryBudget }),
+  );
 }
 /** Reconstruct bounded local endpoint selection; absence never proves delivery. */
-export function replayNativeLocalPressure(row, snapshot, { after, duration = 5 } = {}) {
-  assert([1, 5].includes(duration));
+export function replayNativeLocalPressure(
+  row,
+  snapshot,
+  { after, duration = 5, recoveryBudget = false } = {},
+) {
+  assert([0.25, 1, 5].includes(duration));
+  assert.equal(duration === 0.25, recoveryBudget);
   const w = row.window,
     e = row.evidence;
   assert.equal(row.source, undefined);
@@ -249,7 +271,10 @@ export function replayNativeLocalPressure(row, snapshot, { after, duration = 5 }
     )
       continue;
     const candidate = { ...row, window: { ...w, start: end - duration, end } };
-    const values = classifyNativePressure(candidate, snapshot, undefined, { local: true });
+    const values = classifyNativePressure(candidate, snapshot, undefined, {
+      local: true,
+      recoveryBudget,
+    });
     if (values[metric] !== null && values[metric] !== 'unknown') candidates.set(end, values);
   }
   const selected = [...candidates]

@@ -15,7 +15,7 @@ export function qualifyNativeQuality({
   adaptiveProfiles = false,
   profileQualification,
 }) {
-  assert([1, 2, 3].includes(quality.formatVersion));
+  assert([1, 2, 3, 4].includes(quality.formatVersion));
   assert.equal(quality.overflow, false);
   assert(Array.isArray(quality.events) && quality.events.length <= 512);
   const events = quality.events,
@@ -117,7 +117,7 @@ export function qualifyNativeQuality({
       assert(w.start >= ack && w.end <= row.evaluatedAt && row.evaluatedAt - w.end <= 2);
       assert(lastWindowEnd === undefined || w.start >= lastWindowEnd, 'Policy windows overlap');
       const duration = w.end - w.start;
-      assert(duration >= 1 && duration <= 5.25);
+      assert(duration >= (local && quality.formatVersion === 4 ? 0.25 : 1) && duration <= 5.25);
       if (!local)
         assert(
           finite(w.observedAt) &&
@@ -136,10 +136,13 @@ export function qualifyNativeQuality({
         assert.equal(row.acknowledgedAt, ack);
         replayNativeLocalPressure(row, snapshot, {
           after: lastWindowEnd,
-          duration: quality.formatVersion === 3 ? 1 : 5,
+          duration: quality.formatVersion === 4 ? 0.25 : quality.formatVersion === 3 ? 1 : 5,
+          recoveryBudget: quality.formatVersion === 4,
         });
       } else {
-        replayNativePressure(row, snapshot, source);
+        replayNativePressure(row, snapshot, source, {
+          recoveryBudget: quality.formatVersion === 4,
+        });
         assert.equal(s.workerID, source.workerId);
         assert.equal(s.readerID, source.publication.readerId);
         assert.equal(s.processingScopeID, row.evidence.processing?.scopeID ?? null);

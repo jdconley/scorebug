@@ -27,6 +27,36 @@ final class QualityControllerTests: XCTestCase {
               connectivity: connectivity, thermalPressure: thermal, workerPressure: worker)
     }
 
+    func testQuarterSecondPressureRequiresExplicitDownwardOnlyEntryPoint() throws {
+        let pressure = window(duration: 0.25, capture: nil, encoded: nil, received: nil,
+            capacity: nil, queue: 0.75, loss: nil, connectivity: .unknown,
+            thermal: .unknown, worker: .unknown)
+        var normal = try controller()
+        XCTAssertThrowsError(try normal.evaluate(pressure, at: 0.25))
+        var local = try controller()
+        let decision = try local.evaluateLocalPressure(pressure, at: 0.25)
+        XCTAssertEqual(decision.recommendation?.kind, .decrease)
+        XCTAssertEqual(decision.recommendation?.settings.videoBitrate, 1_600_000)
+        XCTAssertTrue(decision.reasons.contains(.missingReceiver))
+        XCTAssertThrowsError(try local.evaluateLocalPressure(pressure, at: 0.25))
+    }
+
+    func testLocalEntryRejectsHealthyMixedAndTooShortEvidence() throws {
+        let cases = [
+            window(duration: 0.25),
+            window(duration: 0.25, capture: nil, encoded: nil, received: nil,
+                capacity: nil, queue: 0.1, loss: nil, connectivity: .unknown, worker: .unknown),
+            window(duration: 0.25, capture: 1, encoded: nil, received: nil,
+                capacity: nil, queue: 0.75, loss: nil, connectivity: .unknown, worker: .unknown),
+            window(duration: 0.249, capture: nil, encoded: nil, received: nil,
+                capacity: nil, queue: 0.75, loss: nil, connectivity: .unknown, worker: .unknown),
+        ]
+        for sample in cases {
+            var policy = try controller()
+            XCTAssertThrowsError(try policy.evaluateLocalPressure(sample, at: 0.25))
+        }
+    }
+
     func testRejectsInvalidLaddersAndInitialSettings() throws {
         let malformed: [[QualityController.Profile]] = [[], [ladder[0], ladder[0]], Array(ladder.reversed()),
             [.init(id: " ", width: 640, height: 360, minimumBitrate: 1, maximumBitrate: 2)],

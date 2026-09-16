@@ -125,7 +125,7 @@ import ScorebugMedia
             await work?.value
             await record("stopped", allowClosed: true)
             if let export, let data = try? JSONSerialization.data(withJSONObject:
-                ["formatVersion": 3, "overflow": overflow, "events": events], options: [.sortedKeys]) {
+                ["formatVersion": 4, "overflow": overflow, "events": events], options: [.sortedKeys]) {
                 await export(data)
             }
         }
@@ -252,7 +252,7 @@ import ScorebugMedia
             strategy: adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
-            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
             export: { data in
                 await Task.detached {
                     let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

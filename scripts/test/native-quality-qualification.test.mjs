@@ -1155,3 +1155,73 @@ for (const delay of [-1, 0.5, '120', true, 2147483648])
     row.evidence.transport.samples[0].senderDeliveryDelayMilliseconds = delay;
     assert.throws(() => qualifyNativeQuality(f));
   });
+
+function recoveryBudgetFixture(duringTrial = false) {
+  const f = admittedEvidence(localFixture({ duringTrial, duration: 0.25 }));
+  f.quality.formatVersion = 4;
+  const row = f.quality.events.find((e) => e.kind === 'localPressure');
+  for (const name of ['thermal', 'transport']) {
+    const samples = row.evidence[name].samples;
+    samples.push({ ...samples[0], sampledAt: row.window.end });
+  }
+  const last = row.evidence.transport.samples.at(-1);
+  last.elapsedMilliseconds = String(Math.round(row.window.end * 1000));
+  last.sentBytes = String(Math.round(row.window.end * 100000));
+  for (const r of f.quality.events)
+    for (const sample of r.evidence?.transport?.samples ?? [])
+      sample.senderDeliveryDelayMilliseconds = 120;
+  for (const sample of row.evidence.transport.samples) {
+    sample.senderBufferMilliseconds = 0;
+    sample.rttMilliseconds = 31;
+  }
+  return f;
+}
+test('version-four quarter-second measured recovery pressure reduces and rolls back', () => {
+  assert.equal(qualifyNativeQuality(recoveryBudgetFixture()).localEvaluated, 1);
+  assert.equal(qualifyNativeQuality(recoveryBudgetFixture(true)).rollbacks, 1);
+});
+for (const version of [1, 2, 3])
+  test(`version-${version} cannot borrow quarter-second recovery policy`, () => {
+    const f = recoveryBudgetFixture(true);
+    f.quality.formatVersion = version;
+    assert.throws(() => qualifyNativeQuality(f));
+  });
+for (const delay of [null, 0, 124])
+  test(`version-four cannot invent pressure from RTT 31 with delay ${delay}`, () => {
+    const f = recoveryBudgetFixture(true);
+    const r = f.quality.events.find((e) => e.kind === 'localPressure');
+    for (const s of r.evidence.transport.samples) s.senderDeliveryDelayMilliseconds = delay;
+    assert.throws(() => qualifyNativeQuality(f));
+  });
+test('version-four source health requires known positive recovery budgets', () => {
+  const f = recoveryBudgetFixture();
+  const r = f.quality.events.find((e) => e.kind === 'evaluated');
+  r.evidence.transport.samples[0].senderDeliveryDelayMilliseconds = null;
+  assert.throws(() => qualifyNativeQuality(f));
+});
+
+test('version-four compares each RTT with its own simultaneous delay', () => {
+  const f = recoveryBudgetFixture();
+  for (const r of f.quality.events.filter((r) => r.kind === 'evaluated'))
+    r.evidence.transport.samples.forEach((s, i) => {
+      s.rttMilliseconds = i % 2 ? 30 : 500;
+      s.senderDeliveryDelayMilliseconds = i % 2 ? 120 : 2000;
+    });
+  assert.equal(qualifyNativeQuality(f).localEvaluated, 1);
+});
+test('version-four unknown delay retains independent drop pressure', () => {
+  const f = recoveryBudgetFixture(true);
+  const r = f.quality.events.find((r) => r.kind === 'localPressure');
+  for (const s of r.evidence.transport.samples) s.senderDeliveryDelayMilliseconds = null;
+  r.evidence.transport.samples.at(-1).droppedPackets = 1;
+  assert.equal(qualifyNativeQuality(f).rollbacks, 1);
+});
+test('version-four retains caller RTT ceiling despite a long measured delay', () => {
+  const f = recoveryBudgetFixture(true);
+  const r = f.quality.events.find((r) => r.kind === 'localPressure');
+  for (const s of r.evidence.transport.samples) {
+    s.senderDeliveryDelayMilliseconds = 10000;
+    s.rttMilliseconds = 501;
+  }
+  assert.equal(qualifyNativeQuality(f).rollbacks, 1);
+});

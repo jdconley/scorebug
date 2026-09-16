@@ -152,7 +152,7 @@ actor PublishingQualitySession {
                     settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
                 diagnostics: diagnostics, transportLimits: transportLimits, sequence: lastPolicySequence + 1,
                 after: lastWindow?.end, at: now) else { return nil }
-            let decision = try policy.evaluate(window, at: now)
+            let decision = try policy.evaluateLocalPressure(window, at: now)
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
