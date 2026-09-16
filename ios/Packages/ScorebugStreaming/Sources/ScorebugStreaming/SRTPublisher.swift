@@ -209,7 +209,7 @@ public actor SRTPublisher {
         guard !stopping, !Task.isCancelled, let generation = activeGeneration else { return nil }
         let healthy = await isPublishing()
         guard healthy, !stopping, !Task.isCancelled, activeGeneration == generation else { return nil }
-        let stats = await connection.performanceData
+        let stats = await connection.samplePerformanceData()
         guard !stopping, !Task.isCancelled, activeGeneration == generation else { return nil }
         let stillHealthy = await isPublishing()
         guard stillHealthy, !stopping, !Task.isCancelled, activeGeneration == generation,
@@ -274,7 +274,7 @@ public actor SRTPublisher {
             return .init(healthy: false, unacknowledgedPackets: 0, peerLatencyMilliseconds: 0)
         }
         do {
-            // Fresh socket options; performanceData is only refreshed once a second.
+            // Fresh socket options directly measure the drain boundary.
             guard let packets = try await connection.getSocketOption(.snddata),
                   let latency = try await connection.getSocketOption(.peerlatency) else { return nil }
             // Socket reads suspend this actor. A close may have replaced the

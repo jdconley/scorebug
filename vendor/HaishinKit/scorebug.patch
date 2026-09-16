@@ -699,10 +699,21 @@
          }
 --- a/SRTHaishinKit/Sources/SRT/SRTConnection.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTConnection.swift
-@@ -30,6 +30,13 @@
+@@ -30,6 +30,24 @@
          }
      }
 
++    /// Collects current native statistics without resetting interval counters.
++    /// A close, replacement or cancellation during collection discards the result.
++    public func samplePerformanceData() async -> SRTPerformanceData? {
++        guard connected, !closing, !Task.isCancelled, let activeSocket = socket else { return nil }
++        let session = generation
++        let sample = await activeSocket.samplePerformanceData()
++        guard generation == session, socket === activeSocket, connected, !closing,
++              !Task.isCancelled else { return nil }
++        return sample
++    }
++
 +    /// First terminal publishing failure; reset on a new connect attempt.
 +    @Published public private(set) var publishingError: PublishingError?
 +    private var generation: UInt64 = 0
@@ -713,7 +724,7 @@
      private var socket: SRTSocket?
      private var streams: [SRTStream] = []
      private var listener: SRTSocket?
-@@ -37,13 +44,15 @@
+@@ -37,13 +55,15 @@
 
      /// Creates an object.
      public init() {
@@ -731,7 +742,7 @@
      }
 
      /// Gets a SRTSocketOption.
-@@ -79,91 +88,123 @@
+@@ -79,91 +99,123 @@
          guard let url = SRTSocketURL(uri) else {
              throw Error.unsupportedUri(uri)
          }
@@ -956,7 +967,7 @@
 
  final actor SRTSocket {
      static let payloadSize: Int = 1316
-@@ -75,56 +81,91 @@
+@@ -75,56 +81,95 @@
      }
 
      var performanceData: SRTPerformanceData {
@@ -984,6 +995,7 @@
 +    private let maxPayloadBytes: Int
 +    private let sender: (@Sendable (Data) -> Int32)?
 +    private let statusProvider: (@Sendable () -> Status)?
++    private let statisticsReader: @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32
 +    private var generation: UInt64 = 0
 +    private let failure = PublishingFailureLatch()
 +    var publishingError: PublishingError? { failure.error }
@@ -996,11 +1008,13 @@
 
 -    init() {
 +    init(maxPayloadBytes: Int = 2 * 1024 * 1024 + 64 * 1024,
-+         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil) {
++         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil,
++         statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32 = { srt_bstats($0, &$1, $2) }) {
 +        precondition(maxPayloadBytes > 0)
 +        self.maxPayloadBytes = maxPayloadBytes
 +        self.sender = sender
 +        self.statusProvider = statusProvider
++        self.statisticsReader = statisticsReader
 +        _ = SRTRuntime.started
          socket = srt_create_socket()
      }
@@ -1009,6 +1023,7 @@
 +        self.maxPayloadBytes = 2 * 1024 * 1024 + 64 * 1024
 +        self.sender = nil
 +        self.statusProvider = nil
++        self.statisticsReader = { srt_bstats($0, &$1, $2) }
          self.socket = socket
          guard configure(options, restriction: .post) else {
              throw makeSocketError()
@@ -1056,7 +1071,7 @@
          let status: Int32 = try {
              switch url.mode {
              case .caller:
-@@ -163,6 +204,7 @@
+@@ -163,6 +208,7 @@
              guard configure(url.options, restriction: .post) else {
                  throw makeSocketError()
              }
@@ -1064,7 +1079,7 @@
              if incomingBuffer.count < windowSizeC {
                  incomingBuffer = .init(count: Int(windowSizeC))
              }
-@@ -188,12 +230,46 @@
+@@ -188,12 +234,46 @@
          }
      }
 
@@ -1117,7 +1132,7 @@
          }
      }
 
-@@ -213,11 +289,24 @@
+@@ -213,11 +293,33 @@
          return true
      }
 
@@ -1136,17 +1151,26 @@
 +        return result
 +    }
 +
++    func samplePerformanceData() -> SRTPerformanceData? {
++        guard isRunning, connected, !Task.isCancelled else { return nil }
++        let currentSocket = socket
++        // Demand observations do not reset the bandwidth monitor's interval data.
++        guard collectPerformanceData(using: { statisticsReader(currentSocket, &$0, 0) }) == 0,
++              !Task.isCancelled else { return nil }
++        return performanceData
++    }
++
      private func bstats() -> Int32 {
 -        guard socket != SRT_INVALID_SOCK else {
 -            return SRT_ERROR
 -        }
 -        return srt_bstats(socket, &perf, 1)
 +        let currentSocket = socket
-+        return collectPerformanceData { srt_bstats(currentSocket, &$0, 1) }
++        return collectPerformanceData { statisticsReader(currentSocket, &$0, 1) }
      }
 
      private func makeSocketError() -> Error {
-@@ -234,6 +323,7 @@
+@@ -234,6 +336,7 @@
 
      @inline(__always)
      private func sendmsg(_ data: Data) -> Int32 {
@@ -1154,7 +1178,7 @@
          return data.withUnsafeBytes { pointer in
              guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
                  return SRT_ERROR
-@@ -256,38 +346,37 @@
+@@ -256,38 +359,37 @@
  extension SRTSocket: AsyncRunner {
      // MARK: AsyncRunner
      func startRunning() async {

@@ -98,6 +98,7 @@ final actor SRTSocket {
     private let maxPayloadBytes: Int
     private let sender: (@Sendable (Data) -> Int32)?
     private let statusProvider: (@Sendable () -> Status)?
+    private let statisticsReader: @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32
     private var generation: UInt64 = 0
     private let failure = PublishingFailureLatch()
     var publishingError: PublishingError? { failure.error }
@@ -109,11 +110,13 @@ final actor SRTSocket {
     private lazy var incomingBuffer: Data = .init(count: Int(windowSizeC))
 
     init(maxPayloadBytes: Int = 2 * 1024 * 1024 + 64 * 1024,
-         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil) {
+         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil,
+         statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32 = { srt_bstats($0, &$1, $2) }) {
         precondition(maxPayloadBytes > 0)
         self.maxPayloadBytes = maxPayloadBytes
         self.sender = sender
         self.statusProvider = statusProvider
+        self.statisticsReader = statisticsReader
         _ = SRTRuntime.started
         socket = srt_create_socket()
     }
@@ -122,6 +125,7 @@ final actor SRTSocket {
         self.maxPayloadBytes = 2 * 1024 * 1024 + 64 * 1024
         self.sender = nil
         self.statusProvider = nil
+        self.statisticsReader = { srt_bstats($0, &$1, $2) }
         self.socket = socket
         guard configure(options, restriction: .post) else {
             throw makeSocketError()
@@ -304,9 +308,18 @@ final actor SRTSocket {
         return result
     }
 
+    func samplePerformanceData() -> SRTPerformanceData? {
+        guard isRunning, connected, !Task.isCancelled else { return nil }
+        let currentSocket = socket
+        // Demand observations do not reset the bandwidth monitor's interval data.
+        guard collectPerformanceData(using: { statisticsReader(currentSocket, &$0, 0) }) == 0,
+              !Task.isCancelled else { return nil }
+        return performanceData
+    }
+
     private func bstats() -> Int32 {
         let currentSocket = socket
-        return collectPerformanceData { srt_bstats(currentSocket, &$0, 1) }
+        return collectPerformanceData { statisticsReader(currentSocket, &$0, 1) }
     }
 
     private func makeSocketError() -> Error {

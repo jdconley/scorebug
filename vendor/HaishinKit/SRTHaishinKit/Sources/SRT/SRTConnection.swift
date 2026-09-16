@@ -30,6 +30,17 @@ public actor SRTConnection: NetworkConnection {
         }
     }
 
+    /// Collects current native statistics without resetting interval counters.
+    /// A close, replacement or cancellation during collection discards the result.
+    public func samplePerformanceData() async -> SRTPerformanceData? {
+        guard connected, !closing, !Task.isCancelled, let activeSocket = socket else { return nil }
+        let session = generation
+        let sample = await activeSocket.samplePerformanceData()
+        guard generation == session, socket === activeSocket, connected, !closing,
+              !Task.isCancelled else { return nil }
+        return sample
+    }
+
     /// First terminal publishing failure; reset on a new connect attempt.
     @Published public private(set) var publishingError: PublishingError?
     private var generation: UInt64 = 0

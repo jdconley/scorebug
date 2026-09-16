@@ -913,3 +913,20 @@ The shorter decision window is verified, but is insufficient to protect delivery
 Next isolate earlier congestion detection using actual statistics sampling and
 transport thresholds, then backlog/keyframe recovery as indicated by evidence.
 Production adaptation, longer soaks, physical devices and remote hosts remain open.
+
+
+The [fresh transport statistics checkpoint](2026-09-16-fresh-transport-statistics.md)
+adds explicit native demand reads to the existing health loop while retaining the
+SDK monitor's one-second cadence and counter semantics. All 159 SDK / 61 streaming
+tests, unsigned combined Apple Release, read-only review and exact upstream patch
+verification pass. Native run `native-app-KyNaNh` confirms 255 ms median actual
+collection intervals and a 1.70-second trial rollback. The independent archive
+preserves all 8168 consecutive 1080p/30 frames and all 136 A/V markers without drops.
+
+Live A/V coverage now passes, but strict frame identity still fails (142-frame count
+deficit plus 55 non-increasing barcodes), and the worst receiver window is 15.2 fps.
+Faster sampling is verified, not sufficient recovery. Next measure the negotiated
+SRT delivery delay and compare it with observed buildup and pressure thresholds;
+the source default is 120 ms but the runtime value was not retained. Keep any
+threshold and latency experiments separate. Production activation, device/host
+qualification and long soaks remain open.

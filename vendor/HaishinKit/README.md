@@ -85,7 +85,7 @@ The snapshot is an immutable mapping, not a receipt, loss or profile-transition 
 SRT performance data now includes optional `sampledAt` system uptime from the start
 of a successful native statistics call. Repeated cached reads preserve this time;
 failed calls and socket stop clear availability. Native errors cannot commit partially
-updated counters. Existing collection frequency and transport behavior are unchanged.
+updated counters. The default monitor retains its one-second collection cadence.
 The app retains exact transport counters separately from video capacity or receipt.
 
 `setVerifiedVideoBitRateWithReceipt` additionally returns an immutable configuration
@@ -136,3 +136,14 @@ Immediate socket-send cancellation remains terminal and can require a fresh
 connection. The app's independent archive and native scoring are unaffected by this
 SDK API addition; dynamic app/worker/archive qualification is still required.
 See [stream replacement validation](../../docs/superpowers/plans/2026-09-16-stream-profile-replacement.md).
+
+
+`SRTConnection.samplePerformanceData()` explicitly collects current statistics on
+the socket actor without clearing libSRT interval counters (`clear=0`). Cached
+`performanceData` remains a cache read. The existing one-second bandwidth monitor
+still clears its own interval (`clear=1`) and computes byte rates at its original
+cadence. The app requests demand samples from its existing 250 ms health loop;
+no additional timer/task is introduced. Native collection failures invalidate
+freshness, and connection close, replacement or cancellation rejects a late result.
+Statistics remain observations, not usable video capacity or receiver delivery.
+See [fresh statistics validation](../../docs/superpowers/plans/2026-09-16-fresh-transport-statistics.md).

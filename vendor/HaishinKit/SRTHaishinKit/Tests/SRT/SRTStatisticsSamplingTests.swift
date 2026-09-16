@@ -4,6 +4,88 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite struct SRTStatisticsSamplingTests {
+    @Test func demandSamplesCollectWithoutClearingMonitorCountersAndCachedReadsStayCached() async throws {
+        let reader = StatisticsReader()
+        let socket = SRTSocket(sender: { Int32($0.count) }, statisticsReader: { reader.read($0, &$1, $2) })
+        await socket.startRunning()
+        let before = ProcessInfo.processInfo.systemUptime
+        let first = try #require(await socket.samplePerformanceData())
+        let firstTime = try #require(first.sampledAt)
+        #expect(firstTime >= before)
+        #expect(first.byteSentTotal == 100)
+        #expect(await socket.performanceData.sampledAt == firstTime)
+        #expect(reader.flags == [0])
+        let second = try #require(await socket.samplePerformanceData())
+        #expect(second.sampledAt! >= firstTime)
+        #expect(second.byteSentTotal == 200)
+        #expect(reader.flags == [0, 0])
+        _ = await socket.makeNetworkTransportReport()
+        #expect(reader.flags == [0, 0, 1])
+        await socket.stopRunning()
+        #expect(await socket.samplePerformanceData() == nil)
+        #expect(reader.flags == [0, 0, 1])
+    }
+
+    @Test func failedDemandSampleCannotExposePreviouslyFreshOrPartialNativeData() async throws {
+        let reader = StatisticsReader()
+        let socket = SRTSocket(sender: { Int32($0.count) }, statisticsReader: { reader.read($0, &$1, $2) })
+        await socket.startRunning()
+        let first = try #require(await socket.samplePerformanceData())
+        #expect(first.sampledAt != nil)
+        reader.fail()
+        #expect(await socket.samplePerformanceData() == nil)
+        #expect(await socket.performanceData.sampledAt == nil)
+        #expect(await socket.performanceData.byteSentTotal == 100)
+        await socket.stopRunning()
+    }
+
+    @Test func connectionDemandReadUsesNativeCollectionAndRejectsClosedOrCancelledWork() async throws {
+        let reader = StatisticsReader()
+        let socket = SRTSocket(sender: { Int32($0.count) }, statisticsReader: { reader.read($0, &$1, $2) })
+        let connection = SRTConnection(socket: socket)
+        #expect(await connection.samplePerformanceData() == nil)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        let first = try #require(await connection.samplePerformanceData())
+        #expect(first.sampledAt != nil)
+        #expect(reader.flags.contains(0))
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await connection.samplePerformanceData()
+        }
+        #expect(await cancelled.value == nil)
+        await connection.close()
+        #expect(await connection.samplePerformanceData() == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func closeOrCancellationDiscardsNativeReadAlreadyInFlight(cancel: Bool) async throws {
+        let gate = StatisticsReadGate()
+        defer { gate.release() }
+        let reader = StatisticsReader(gate: gate)
+        let socket = SRTSocket(sender: { Int32($0.count) }, statisticsReader: { reader.read($0, &$1, $2) })
+        let connection = SRTConnection(socket: socket)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        let pending = Task.detached { await connection.samplePerformanceData() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !gate.entered && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        #expect(gate.entered)
+        if cancel {
+            pending.cancel()
+            gate.release()
+            #expect(await pending.value == nil)
+            await connection.close()
+        } else {
+            let closing = Task { await connection.close() }
+            while await connection.connected && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+            #expect(await connection.connected == false)
+            gate.release()
+            #expect(await pending.value == nil)
+            await closing.value
+            #expect(await connection.samplePerformanceData() == nil)
+        }
+        #expect(!gate.timedOut)
+    }
+
     @Test func clockIsSampledBeforeNativeCallAndClosedSocketCannotCollect() async {
         let socket = SRTSocket()
         let order = StatisticsSamplingOrder()
@@ -50,4 +132,42 @@ private final class StatisticsSamplingOrder: @unchecked Sendable {
     private var values: [String] = []
     func record(_ value: String) { lock.withLock { values.append(value) } }
     var events: [String] { lock.withLock { values } }
+}
+
+private final class StatisticsReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var clears: [Int32] = []
+    private var failure = false
+    private let gate: StatisticsReadGate?
+    init(gate: StatisticsReadGate? = nil) { self.gate = gate }
+    var flags: [Int32] { lock.withLock { clears } }
+    func fail() { lock.withLock { failure = true } }
+    func read(_ socket: SRTSOCKET, _ value: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+        if clear == 0 { gate?.block() }
+        return lock.withLock {
+            clears.append(clear)
+            value.byteSentTotal = failure ? 1 : UInt64(clears.count * 100)
+            value.msTimeStamp = Int64(clears.count * 250)
+            return failure ? SRT_ERROR : 0
+        }
+    }
+}
+
+private final class StatisticsReadGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var didEnter = false
+    private var released = false
+    private var expired = false
+    var entered: Bool { condition.withLock { didEnter } }
+    var timedOut: Bool { condition.withLock { expired } }
+    func block() {
+        condition.lock()
+        defer { condition.unlock() }
+        didEnter = true
+        let deadline = Date().addingTimeInterval(5)
+        while !released {
+            if !condition.wait(until: deadline) { expired = true; break }
+        }
+    }
+    func release() { condition.withLock { released = true; condition.broadcast() } }
 }
