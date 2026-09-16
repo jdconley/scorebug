@@ -6,6 +6,13 @@ complete fresh-frame/capacity window for safe upward adaptation.
 The [local observation implementation slice](superpowers/plans/2026-09-14-local-video-observations.md)
 now connects capture and actual encoder-completion measurements while retaining fixed live settings.
 
+Current checkpoint: production worker status now has
+[authenticated publication and actual reader/source association](worker-publication-association.md).
+The [matched-source interval primitives](matched-source-intervals.md) provide bounded
+native timestamp history and exact same-interval counting, including leading losses
+between decoder windows. They are not yet integrated into runtime observations;
+scope/freshness sequencing, capacity and profile-boundary qualification remain open.
+
 | Existing observation                                                                  | What it measures                                                                                                                            | Missing evidence                                                                                                        |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `PublishingSessionSnapshot.sentSamples`                                               | Successful publisher append returns, including audio and video                                                                              | Video encoding completion, unique frames, transport receipt, playback                                                   |

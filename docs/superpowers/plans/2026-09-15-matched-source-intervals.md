@@ -51,7 +51,7 @@ These are historical PTS observations, not image uniqueness or viewer receipt.
 Files: new Media `VideoSourceHistory.swift` and tests; new Streaming
 `PublishingSourceInterval.swift` and tests. No runtime collection enabled yet.
 
-- [ ] Write executable failing tests for ring eviction and frozen snapshots,
+- [x] Write executable failing tests for ring eviction and frozen snapshots,
   duplicate/reorder/epoch/clock quarantine, independent stages, close and bounds.
   Use the intended API:
   ```swift
@@ -60,9 +60,9 @@ Files: new Media `VideoSourceHistory.swift` and tests; new Streaming
   history.observe(.encodedVideo, sourcePTS: CMTime(value: 1, timescale: 30), at: 1)
   XCTAssertEqual(history.snapshot.capture.count, 1)
   ```
-- [ ] Implement the preallocated ledger and run focused/full Media tests:
+- [x] Implement the preallocated ledger and run focused/full Media tests:
   `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer swift test --package-path ios/Packages/ScorebugMedia`.
-- [ ] Write failing matcher tests for healthy 150-frame intervals, leading/interior
+- [x] Write failing matcher tests for healthy 150-frame intervals, leading/interior
   losses, capture-to-encoder drops, signed decoder PTS, wire wrap, rational origins,
   quantization collisions, eviction, wrong origin and impossible frame counts.
   ```swift
@@ -73,8 +73,17 @@ Files: new Media `VideoSourceHistory.swift` and tests; new Streaming
   XCTAssertEqual(result?.encodedNotDecodedFrames, 5)
   XCTAssertEqual(result?.leadingMissingEncodedFrames, 5)
   ```
-- [ ] Implement exact matching with existing SDK projection, run focused/full
+- [x] Implement exact matching with existing SDK projection, run focused/full
   Streaming tests and combined unsigned iPhone/Watch Release build; review and commit.
+
+Task 1 evidence: the executable history stub failed 32 assertions in seven tests;
+the matcher stub failed ten assertions across eleven tests. Final qualification
+passes 174 Media tests and 39 Streaming tests, including fourteen focused matcher
+tests, and the combined unsigned iPhone/Watch Release build. Independent review
+approves the implementation. Added numerical regressions cover ambiguous retained
+history, SDK projection failure after origin, overflowing decoder endpoint distance,
+Int64.min source origins and uneven rational quantization. No app collection or
+automatic policy integration is claimed by this foundation commit.
 
 ## Task 2: Native scoped consecutive-report integration
 
