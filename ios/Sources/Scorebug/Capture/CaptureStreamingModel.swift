@@ -106,6 +106,7 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
              let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
              if try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
@@ -123,8 +124,13 @@ struct PublishingClockObservation: Equatable, Sendable {
              let didStop: (@Sendable () -> Void)?
              if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }
              else { observer = nil; didStop = nil }
-             return SRTMediaPublisher(url: target, observations: observations, videoProfile: profile,
-                 compressedVideoObserver: observer, didStop: didStop)
+             let publisher = SRTMediaPublisher(url: target, observations: observations, videoProfile: profile,
+                 compressedVideoObserver: observer, didStop: didStop, allowsBandwidthProbes: probeMode != nil)
+             if let probeMode {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope, mode: probeMode)
+             }
+             return publisher
              #else
              return SRTMediaPublisher(url: url, observations: observations)
              #endif

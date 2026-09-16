@@ -60,6 +60,12 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(pacing, "1"); XCTAssertEqual(adaptive, "1")
             app.launchEnvironment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = pacing
         }
+        let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
+        if !probe.isEmpty {
+            XCTAssertTrue(["renew", "expire"].contains(probe)); XCTAssertEqual(liveProfile, "540p30")
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
+            app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

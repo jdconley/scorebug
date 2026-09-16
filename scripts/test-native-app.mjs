@@ -1,3 +1,4 @@
+import { nativeBandwidthProbe, qualifyNativeBandwidthProbe } from './native-bandwidth-probe.mjs';
 import {
   nativeProfileTransitions,
   nativeAdaptiveProfiles,
@@ -100,6 +101,8 @@ const adaptiveProfiles = nativeAdaptiveProfiles({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const bandwidthProbe = nativeBandwidthProbe({ environment: process.env, streaming, requireProcessing,
+  requirePublication, holdSeconds: streamingOptions.holdSeconds, liveProfile });
 const sourceCadencePacing = nativeSourceCadencePacing({ environment: process.env, adaptiveProfiles });
 const uplinkProfile = nativeUplinkOptions({
   liveProfile,
@@ -492,6 +495,7 @@ try {
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitions ? '1' : ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
+      `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${liveProfile === '540p30' ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     ],
@@ -586,7 +590,7 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let nativeFormatQualification, profileTransitionQualification;
+  let nativeFormatQualification, profileTransitionQualification, bandwidthProbeQualification;
   if (liveProfile === '540p30') {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
@@ -672,6 +676,17 @@ try {
       snapshot: observationSnapshot,
       expectedScope: videoObservation.scope,
     });
+    if (bandwidthProbe) {
+      const path = join(artifact, 'native-bandwidth-probe.json');
+      await cp(join(container, 'Library/Application Support/Scorebug/QA/native-bandwidth-probe.json'), path,
+        { errorOnExist: true, force: false });
+      const bytes = await readFile(path);
+      assert.ok(bytes.length <= 512 * 1024, 'Oversized native probe evidence');
+      bandwidthProbeQualification = qualifyNativeBandwidthProbe(JSON.parse(bytes.toString('utf8')), {
+        mode: bandwidthProbe, scope: videoObservation.scope,
+        publishingGeneration: publishingClockObservation.publishingGeneration,
+      });
+    }
     publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
       JSON.parse(await readFile(join(artifact, 'publishing-attempt-status.json'), 'utf8')),
       videoObservation.scope,
@@ -764,6 +779,7 @@ try {
         profileTransitions,
         adaptiveProfiles,
         profileTransitionQualification,
+        bandwidthProbeQualification,
         streamingBudget,
         media,
         live,

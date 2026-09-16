@@ -1150,3 +1150,35 @@ configuration. It does not qualify camera media or live cadence. Next wire the
 DEBUG fixture's bounded renewal/export ownership, then authenticated pre-demux
 receiver accounting and existing native simultaneous archive/live gates.
 Production adaptation and device/Watch/portable-host/soak qualification remain open.
+
+
+The [native probe fixture checkpoint](2026-09-16-native-probe-fixture.md) wires
+explicit DEBUG simulator `renew`/`expire` modes through the fixed540p publishing
+factory and the existing full native harness. One owned task starts a bounded
+1 Mbps attempt, renews or observes it, then revokes; stop joins the task before
+exporting terminal evidence. The harness checks exact attempt/clock scope, bounded
+packet counters, lease causality and terminal state, without claiming receiver
+capacity. Review regressions reject future renewals and expired-lease revival.
+
+All 1400 app-model/streaming/tooling tests, the ARM64 DEBUG simulator test build
+and unsigned combined iPhone/Watch Release build pass. The first actual expired-lease run is recorded below; next execute sustained
+renewal and retain all media gates, then add authenticated pre-demux receiver
+accounting before capacity admission. The
+fixed profile is an isolation experiment; highest-sustainable live quality,
+production adaptation, phone/Watch, portable hosts and soaks remain open.
+
+
+Actual expired-lease run `native-app-f8Su6q` passes on iOS 17.5. Nine native probe
+messages (11,844 bytes) stop before the 300 ms deadline; publishing continues
+another 90.282 seconds. The independent archive preserves all 3,658 consecutive
+1080p30 frames and 60 audio markers. Fixed540p live output preserves all 3,282
+identities after its separately accounted 35-frame startup acquisition, with
+29.8 fps minimum reported receiver cadence and +24.392 ms A/V end coverage.
+Both full decode logs are clean. All owners terminate and the proxy closes with
+no drops/errors/pending data; independent artifact verification passes.
+
+This is a passing finite fixed-profile expiry scenario, not adaptive quality or
+receiver capacity. The one-message-per-media-opportunity probe underdelivers its
+requested rate. Next qualify sustained renewal and pressure, then obtain real
+receiver headroom against measured candidate cost. Highest-sustainable quality
+and device/Watch/host/soak gates remain open.
