@@ -494,3 +494,29 @@ phone qualification. Future policy wiring must bind the owning session and apply
 explicit thresholds without turning missing or unknown evidence into nominal. See
 [Apple's state definitions](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.enum)
 and the [thermal history plan](superpowers/plans/2026-09-15-publishing-thermal-history.md).
+
+
+## Optional worker encoder timing
+
+`startPipeline(..., {encoderTiming: true})` adds a separate FFmpeg pre/post encoder
+statistics pipe. `snapshotEncoderTiming()` exposes at most 256 timestamp-correlated
+submissions, their reader-observed completion times, current pending count/age and
+historical interval queries. Correlation uses exact rational PTS, independent of
+FFmpeg's optional input-frame identity (unavailable in the real VideoToolbox probe).
+Reordered packets are allowed when they match unique submitted timestamps; malformed,
+missing, contradictory, oversized or clock-invalid evidence becomes unavailable.
+
+A separate pipe drain isolates this observer from existing decoder evidence. Pipe
+errors and premature closure quarantine only timing diagnostics. Completed frames can
+be evicted; an outstanding oldest frame is never silently evicted. EOF freezes ages
+and history, potentially with incomplete submissions after an interrupted encode.
+
+These observed durations include scheduling/pipe delays and omit decode/filter work.
+They are not processor utilization, network capacity, viewer delivery or proof of
+nominal overall worker pressure. Real CPU and VideoToolbox probes show that normal
+pending depth differs by backend. Default pipeline arguments remain unchanged because
+older FFmpeg installations may lack these options. Production enablement requires
+runtime capability qualification plus the remaining decode/filter correlation,
+report freshness and policy classification work. See the
+[worker timing plan](superpowers/plans/2026-09-15-worker-encoder-timing.md) and
+[FFmpeg's statistics documentation](https://ffmpeg.org/ffmpeg.html).

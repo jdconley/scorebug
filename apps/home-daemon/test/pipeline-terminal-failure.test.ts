@@ -45,7 +45,7 @@ it('waits for close after a guardian pre-spawn error and contains throwing termi
     pid: undefined,
     connected: false,
     stdout: new PassThrough(),
-    stdio: [null, null, null, null, new PassThrough()],
+    stdio: [null, null, null, null, new PassThrough(), new PassThrough()],
   });
   fork.mockReturnValueOnce(child);
   const terminal = vi.fn(() => {

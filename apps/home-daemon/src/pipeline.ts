@@ -1,4 +1,9 @@
 import { DECODED_VIDEO_TRANSPORT_CLOCK } from '@scorebug/protocol';
+import {
+  EncoderTimingTelemetry,
+  observeEncoderTimingPipe,
+  type EncoderTimingSnapshot,
+} from './encoder-timing.js';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import type { Logger } from './logger.js';
@@ -28,6 +33,7 @@ export type PipelineHandle = {
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   /** Decoder ingress only; PTS ticks use 1/90000. Fresh pipeline means fresh scope. */
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
+  snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
 };
 
 function filterPath(value: string): string {
@@ -39,7 +45,10 @@ function filterPath(value: string): string {
  * Build the ffmpeg argv for a single game. `drawtext` reads `scoreFile` on
  * every frame thanks to `reload=1`; the daemon updates that file atomically.
  */
-export function buildFfmpegArgs(spec: PipelineSpec): string[] {
+export function buildFfmpegArgs(
+  spec: PipelineSpec,
+  options: { encoderTiming?: boolean } = {},
+): string[] {
   const profile = spec.profile;
   if (
     profile &&
@@ -129,6 +138,18 @@ export function buildFfmpegArgs(spec: PipelineSpec): string[] {
     '-vf',
     telemetry + filter,
     ...video,
+    ...(options.encoderTiming
+      ? [
+          '-stats_enc_pre:v:0',
+          'pipe:4',
+          '-stats_enc_pre_fmt:v:0',
+          'pre {n} {tb} {pts}',
+          '-stats_enc_post:v:0',
+          'pipe:4',
+          '-stats_enc_post_fmt:v:0',
+          'post {n} {tb} {pts}',
+        ]
+      : []),
     '-c:a',
     'aac',
     '-b:a',
@@ -152,9 +173,12 @@ export type PipelineTerminal = Readonly<{
   /** Null means the guardian never reported the encoder status. */
   encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
   outputProgress: PipelineProgress | null;
+  encoderTiming?: EncoderTimingSnapshot;
 }>;
 
 export type PipelineOptions = {
+  /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
+  encoderTiming?: boolean;
   /** Optional test diagnostics, emitted once after all guardian pipes close. */
   onTerminal?: (terminal: PipelineTerminal) => void;
   /** Monotonic milliseconds; telemetry never compares source PTS to this clock. */
@@ -242,7 +266,10 @@ export function startPipeline(
   if (!Number.isInteger(stopTimeoutMs) || stopTimeoutMs < 0 || stopTimeoutMs > 60_000) {
     throw new RangeError('stopTimeoutMs must be an integer from 0 to 60000');
   }
-  const args = buildFfmpegArgs(spec);
+  const args = buildFfmpegArgs(spec, options);
+  const encoderTiming = options.encoderTiming
+    ? new EncoderTimingTelemetry(options.monotonicNow)
+    : undefined;
   const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
   let telemetryEOF = false;
@@ -263,6 +290,7 @@ export function startPipeline(
         telemetryEOF,
         encoderExit: encoderExit ? { ...encoderExit } : null,
         outputProgress: outputProgress ? { ...outputProgress } : null,
+        ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
       });
     } catch {
       // Diagnostics must never change shutdown, including a failing diagnostic logger.
@@ -273,6 +301,7 @@ export function startPipeline(
   };
   const failedBeforeSpawn = () => {
     decodedVideo.end();
+    encoderTiming?.end();
     terminal();
     settle(null, null);
   };
@@ -300,8 +329,12 @@ export function startPipeline(
   try {
     child = fork(new URL('./pipeline-guardian.mjs', import.meta.url), [], {
       execArgv: [],
-      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore', 'ipc', 'pipe', 'pipe'],
     });
+    // Guardian IPC remains fd3; fd4 becomes FFmpeg decoded telemetry fd3,
+    // and fd5 becomes the independent encoder timing fd4. Always drain both.
+    const timingPipe = child.stdio.at(5) as Readable;
+    observeEncoderTimingPipe(timingPipe, encoderTiming);
     // Guardian IPC remains fd3; its fd4 becomes FFmpeg's telemetry fd3.
     // Always drain, including after invalid evidence and without an observer.
     const telemetry = child.stdio[4] as Readable;
@@ -351,6 +384,7 @@ export function startPipeline(
     });
     child.once('close', () => {
       decodedVideo.end();
+      encoderTiming?.end();
       terminal();
       // Drain progress before resolving. Guardian death alone does not prove the
       // encoder exited: fail closed so the supervisor cannot overlap publishers.
@@ -373,6 +407,7 @@ export function startPipeline(
       send({ type: 'stop' });
     },
     waitExit: () => exit,
+    snapshotEncoderTiming: () => encoderTiming?.snapshot() ?? null,
     snapshotDecodedVideo: () => ({
       ...decodedVideo.snapshot(),
       clock: DECODED_VIDEO_TRANSPORT_CLOCK,

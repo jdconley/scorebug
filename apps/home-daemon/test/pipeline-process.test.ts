@@ -526,3 +526,78 @@ it('reports unknown encoder status after guardian loss and pipe closure while wa
     await fixture.cleanup();
   }
 });
+
+it.each(['complete', 'malformed', 'truncated'])(
+  'drains isolated encoder timing through the guardian: %s',
+  async (mode) => {
+    const timing =
+      mode === 'complete'
+        ? 'pre 0 1/30 0\npost 0 1/30 0\npre 1 1/30 1\npost 1 1/30 1\n'
+        : mode === 'malformed'
+          ? 'SECRET invalid\n'
+          : 'pre 0 1/30 0';
+    const fixture = await childFixture(
+      `require('node:fs').writeSync(3,'frame:0 pts:0 pts_time:0\\nscorebug.source=1\\n');require('node:fs').writeSync(4,${JSON.stringify(timing)});`,
+    );
+    const terminal: unknown[] = [];
+    try {
+      const pipeline = startPipeline(fixture.spec, fixture.log, {
+        encoderTiming: true,
+        onTerminal: (value) => terminal.push(value),
+      });
+      expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
+      const snapshot = pipeline.snapshotEncoderTiming?.();
+      expect(snapshot?.ended).toBe(true);
+      expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({ ended: true, invalidReason: null });
+      if (mode === 'complete')
+        expect(snapshot).toMatchObject({
+          submittedFrames: 2,
+          completedFrames: 2,
+          pendingFrames: 0,
+          invalidReason: null,
+        });
+      else expect(snapshot?.invalidReason).toBe(mode === 'malformed' ? 'framing' : 'incomplete');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]).toMatchObject({
+        encoderTiming: snapshot,
+        decodedVideo: { acceptedFrames: 1, invalidReason: null },
+      });
+      expect(JSON.stringify(fixture.records)).not.toContain('SECRET');
+      expect(pipeline.snapshotEncoderTiming?.()).toEqual(snapshot);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+it('joins encoder timing EOF on stop and keeps pending frames historical', async () => {
+  const fixture = await childFixture(
+    "require('node:fs').writeSync(4,'pre 0 1/30 0\\n');setInterval(()=>{},1000);",
+  );
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, { encoderTiming: true });
+    await fixture.ready();
+    await expect.poll(() => pipeline.snapshotEncoderTiming?.()?.pendingFrames).toBe(1);
+    pipeline.stop();
+    await boundedExit(pipeline);
+    const snapshot = pipeline.snapshotEncoderTiming?.();
+    expect(snapshot).toMatchObject({
+      pendingFrames: 1,
+      completedFrames: 0,
+      ended: true,
+      invalidReason: null,
+    });
+    expect(pipeline.snapshotEncoderTiming?.()).toEqual(snapshot);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+it('returns no encoder timing evidence when disabled', async () => {
+  const fixture = await childFixture('');
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log);
+    await boundedExit(pipeline);
+    expect(pipeline.snapshotEncoderTiming?.()).toBeNull();
+  } finally {
+    await fixture.cleanup();
+  }
+});

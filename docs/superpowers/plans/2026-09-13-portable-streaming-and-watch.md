@@ -371,6 +371,12 @@ nominal pressure. Shutdown freezes history and invalid diagnostics do not stop h
 publication. Worker pressure, policy mapping/classification and actual automatic
 trial/rollback qualification remain open.
 
+The [worker encoder timing slice](2026-09-15-worker-encoder-timing.md) adds optional
+bounded, timestamp-correlated submission/completion evidence through a separate
+FFmpeg pipe. CPU and VideoToolbox use the same rational correlation; optional hardware
+input-frame identities are not assumed. Overall worker pressure still requires
+decode/filter coverage, runtime capability checks and backend threshold qualification.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

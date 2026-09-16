@@ -129,3 +129,15 @@ it('observes fixed-timebase decoder ingress before cap and strips an exact fixed
     "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]select=",
   );
 });
+
+it('adds encoder timing statistics only when explicitly enabled', () => {
+  const normal = buildFfmpegArgs({ ...baseSpec, nvenc: false });
+  expect(normal).not.toContain('-stats_enc_pre:v:0');
+  expect(normal).not.toContain('-stats_enc_post:v:0');
+  const measured = buildFfmpegArgs({ ...baseSpec, nvenc: false }, { encoderTiming: true });
+  expect(measured[measured.indexOf('-stats_enc_pre:v:0') + 1]).toBe('pipe:4');
+  expect(measured[measured.indexOf('-stats_enc_post:v:0') + 1]).toBe('pipe:4');
+  expect(measured[measured.indexOf('-stats_enc_pre_fmt:v:0') + 1]).toBe('pre {n} {tb} {pts}');
+  expect(measured[measured.indexOf('-stats_enc_post_fmt:v:0') + 1]).toBe('post {n} {tb} {pts}');
+  expect(measured.slice(-3)).toEqual(normal.slice(-3));
+});

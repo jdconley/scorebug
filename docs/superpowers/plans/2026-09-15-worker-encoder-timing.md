@@ -46,17 +46,17 @@ it, joins EOF via child close, and never logs raw credential-bearing diagnostics
 
 ## Tasks
 
-- [ ] Create `apps/home-daemon/src/encoder-timing.ts` and corresponding tests. Write
+- [x] Create `apps/home-daemon/src/encoder-timing.ts` and corresponding tests. Write
   stub APIs, then red tests for exact wide/negative/rational PTS; reordered post output;
   unknown/missing matches; ordinal faults; malformed/chunked/oversized/truncated data;
   invalid clocks; 256-entry eviction/exhaustion; immutable closed snapshots; complete
   vs pending historical intervals. Implement validated bounded tracking.
-- [ ] Add `encoderTiming` opt-in to PipelineOptions/buildFfmpegArgs and nullable
+- [x] Add `encoderTiming` opt-in to PipelineOptions/buildFfmpegArgs and nullable
   snapshotEncoderTiming on PipelineHandle. Add optional terminal evidence, a separate
   pipe through pipeline-guardian.mjs, and isolated drain/end handling. Add argument
   and real-child lifecycle tests for valid/malformed/truncated timing, independent
   decoded telemetry, closure and default-off behavior before implementation.
-- [ ] Run complete worker tests/typecheck, scripts tooling tests and normal worker
+- [x] Run complete worker tests/typecheck, scripts tooling tests and normal worker
   native fixtures. Replay real CPU/VideoToolbox paired probe records through the
   tracker, preserving native argument lists and unqualified limitations. Obtain
   source review, record evidence/hashes, update docs and commit.
@@ -69,3 +69,44 @@ Reference: [FFmpeg encoding statistics](https://ffmpeg.org/ffmpeg.html).
 Before production enablement, feature-detect or update the worker's older FFmpeg
 runtime and qualify decode/filter-to-encoder coverage plus timing thresholds on each
 backend. Encoder-only observations cannot establish nominal overall worker pressure.
+
+## Review and intermediate evidence
+
+Independent review found a missing timing-pipe error listener. Behavioral tests
+reproduced three error/early-close failures; the corrected permanent listener now
+quarantines only timing evidence and drains through closure. Follow-up review approves
+that fix and a pending-frame retention regression. The first full worker run also
+identified an older fake child with only five descriptors; its fixture now models the
+six-descriptor guardian contract and retains its original failure/shutdown assertions.
+Initial behavioral, typecheck, probe-launch and full-suite failures are retained.
+
+Real `startPipeline` CPU and VideoToolbox probes each submit and complete all 90 video
+frames with zero outstanding frames or invalid timing/decoder evidence at EOF. Both
+return a complete 89-frame interval after the exclusive first anchor. The local file
+input is processed in a burst, so its observed durations are not live-load ceilings.
+VideoToolbox reaches 13 observed pending frames, CPU one; neither value alone defines
+an overload threshold. Optional input-frame identities are not consumed.
+
+## Final verification
+
+All 261 home-daemon tests, 781 tooling tests and worker typecheck pass. Targeted
+format checks and independent source review pass. The real software worker fixture
+passes full local media, source timestamps/frame identity and cadence, score overlay
+updates, worker SIGKILL recovery, API outage/lease recovery, source-loss recovery
+(7241 ms in this run) and match-end shutdown. This default-mode fixture establishes
+that the additional descriptor does not regress the existing pipeline; its timing
+observer is not enabled.
+
+The separate real CPU/VideoToolbox `startPipeline` probes enable timing observation;
+each saved output passes complete A/V decode with zero FFmpeg decode errors.
+Replaying the original paired raw native collections through the production tracker
+matches an independent 90k-tick/arrival-time reconstruction: all 90 frames correlate,
+all 89 frames after the exclusive anchor have complete timing, and pending counts
+agree. This is local fixture evidence, not qualification of NVENC, older FFmpeg,
+remote hosts, sustained load or overall worker-pressure policy.
+
+Logs, native clips, probe source/raw records/output media and review are retained in
+`artifacts/qa/worker-timing-*`, `worker-pressure-probe/` and `native-worker-software/`.
+The final verification manifest hashes exact source and local evidence. Reusable
+host qualification, worker runtime capability detection and decode/filter-to-encoder
+correlation are still needed before this data can support automatic policy inputs.
