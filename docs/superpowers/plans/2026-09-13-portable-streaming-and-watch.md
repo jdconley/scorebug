@@ -710,3 +710,12 @@ produces 5.576 Mbps both after a live reduction and in a fresh encoder started a
 reduction is already present before transport. Native encoder/rate-control versus
 content constraints remain to be distinguished. Network recovery, production
 adaptation, physical phone/Watch and other-host qualification remain open.
+
+Further [native encoder comparisons](2026-09-16-encoder-native-properties.md)
+reproduce the payload behavior on iOS 17.5 and 26.2 simulators. Moving the expected
+frame-rate write before preparation has no effect. A fresh 720p encoder actually
+produces more payload for the same structured source than 1080p (7.614 versus
+5.576 Mbps), so neither change is promoted as a fix. All four diagnostic runs
+qualify 7208 frames, and 897 tooling tests pass. Native property evidence is now
+bounded and tied to encoder-session ownership. Physical encoder behavior, reliable
+live recovery and archive finalization during failed live tests remain next gates.

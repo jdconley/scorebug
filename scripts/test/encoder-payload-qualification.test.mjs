@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { qualifyEncoderPayload } from '../encoder-payload-qualification.mjs';
+import { nativeEncoderProperties } from '../encoder-native-properties.mjs';
 const uuid = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 function fixture() {
   const run = (name, rates, session) => {
@@ -67,6 +68,131 @@ test('retains a content floor or ineffective changes as diagnostics, not false t
   const result = qualifyEncoderPayload(f);
   assert.equal(result.dynamicLowToInitialHigh, 1);
   assert.equal(result.freshLowToRequested, 4);
+});
+function withNativeSnapshots() {
+  const report = fixture();
+  report.formatVersion = 2;
+  for (const run of report.runs) {
+    const snapshot = (rate, at) => {
+      const properties = Object.fromEntries(
+        nativeEncoderProperties.map((key) => [
+          key,
+          {
+            supported: false,
+            status: -12900,
+            value: null,
+            type: null,
+            readWriteStatus: null,
+          },
+        ]),
+      );
+      for (const [key, value] of Object.entries({
+        EncoderID: 'observed.encoder',
+        AverageBitRate: rate,
+        DataRateLimits: [(rate / 8) * 1.5, 1],
+      })) {
+        properties[key] = { supported: true, status: 0, value, type: null, readWriteStatus: null };
+      }
+      return {
+        supportedQueryStatus: 0,
+        properties,
+        encoderSessionID: run.receipts[0].encoderSessionID,
+        collectedAt: at,
+        completedAt: at + 0.001,
+      };
+    };
+    run.native = {
+      bootstrap: snapshot(run.receipts[0].bitRate, 99),
+      final: snapshot(run.receipts.at(-1).bitRate, 200),
+    };
+  }
+  return report;
+}
+test('version 2 binds bounded native snapshots to session ownership and measurement boundaries', () => {
+  assert.equal(qualifyEncoderPayload(withNativeSnapshots()).frames, 2402);
+  for (const mutate of [
+    (r) => delete r.runs[0].native,
+    (r) => delete r.runs[0].native.final,
+    (r) => (r.runs[0].native.final.encoderSessionID = uuid(999)),
+    (r) => (r.runs[0].native.bootstrap.completedAt = 101),
+    (r) => (r.runs[0].native.final.collectedAt = 110),
+    (r) => (r.runs[0].native.final.properties.EncoderID.value = 'different.encoder'),
+    (r) => (r.runs[1].native.bootstrap.properties.AverageBitRate.value = 6000000),
+  ]) {
+    const report = withNativeSnapshots();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});
+function preparationFixture() {
+  const report = withNativeSnapshots();
+  report.formatVersion = 3;
+  report.experiment = 'frame-rate-before-prepare';
+  const template = report.runs[1];
+  report.runs = [structuredClone(template), structuredClone(template)];
+  for (const [i, run] of report.runs.entries()) {
+    run.name = i === 0 ? 'freshLate' : 'freshEarly';
+    run.preparation = i === 0 ? 'production' : 'expectedFrameRateBeforePrepare';
+    const session = uuid(100 + i),
+      configuration = uuid(200 + i);
+    for (const snapshot of Object.values(run.native)) snapshot.encoderSessionID = session;
+    run.receipts[0].encoderSessionID = session;
+    run.receipts[0].configurationID = configuration;
+    for (const frame of run.frames) {
+      frame.encoderSessionID = session;
+      if (frame.frame) frame.configurationID = configuration;
+    }
+  }
+  return report;
+}
+test('version 3 qualifies only the fixed fresh preparation-order comparison', () => {
+  const report = preparationFixture();
+  const result = qualifyEncoderPayload(report);
+  assert.equal(result.frames, 1202);
+  assert.equal(result.earlyToLate, 1);
+  for (const mutate of [
+    (r) => (r.experiment = 'different'),
+    (r) => r.runs.reverse(),
+    (r) => (r.runs[1].preparation = 'production'),
+    (r) => (r.runs[0].receipts[0].bitRate = 6000000),
+    (r) => r.runs[1].frames.pop(),
+    (r) => delete r.runs[1].native,
+  ]) {
+    const report = preparationFixture();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});
+function resolutionFixture() {
+  const report = preparationFixture();
+  report.formatVersion = 4;
+  report.experiment = 'fresh-resolution-profiles';
+  for (const [i, run] of report.runs.entries()) {
+    delete run.preparation;
+    run.name = i === 0 ? 'fresh1080p' : 'fresh720p';
+    run.encodedWidth = i === 0 ? 1920 : 1280;
+    run.encodedHeight = i === 0 ? 1080 : 720;
+    for (const frame of run.frames) {
+      frame.encodedWidth = run.encodedWidth;
+      frame.encodedHeight = run.encodedHeight;
+    }
+  }
+  return report;
+}
+test('version 4 validates actual dimensions for every encoded resolution-comparison frame', () => {
+  assert.equal(qualifyEncoderPayload(resolutionFixture()).reducedToFull, 1);
+  for (const mutate of [
+    (r) => (r.experiment = 'different'),
+    (r) => (r.width = 1280),
+    (r) => r.runs.reverse(),
+    (r) => (r.runs[1].encodedWidth = 1920),
+    (r) => (r.runs[1].frames[350].encodedWidth = 1920),
+    (r) => delete r.runs[0].frames[0].encodedHeight,
+  ]) {
+    const report = resolutionFixture();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
 });
 test('rejects mixed identities, dropped frames, invalid bytes and receipt timing', () => {
   for (const mutate of [

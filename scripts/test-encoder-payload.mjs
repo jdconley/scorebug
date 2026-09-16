@@ -8,6 +8,22 @@ import { createOwnedSimulator } from './owned-simulator.mjs';
 import { qualifyEncoderPayload } from './encoder-payload-qualification.mjs';
 
 assert.equal(process.platform, 'darwin');
+const preparation = process.argv.slice(2).includes('--preparation');
+const resolution = process.argv.slice(2).includes('--resolution');
+assert.deepEqual(
+  process.argv.slice(2),
+  resolution ? ['--resolution'] : preparation ? ['--preparation'] : [],
+);
+const method = resolution
+  ? 'testFreshResolutionProfiles'
+  : preparation
+    ? 'testFreshFrameRatePreparation'
+    : 'testControlledRatesAndFreshLowEncoder';
+const attachmentName = resolution
+  ? 'EncoderResolution'
+  : preparation
+    ? 'EncoderPreparation'
+    : 'EncoderPayload';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 assert.match(runtime, /^\d+\.\d+(?:\.\d+)?$/);
@@ -18,7 +34,17 @@ const interrupt = () => {
 };
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, interrupt);
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
-const artifact = await mkdtemp(join(root, 'artifacts/qa/encoder-payload-'));
+const artifact = await mkdtemp(
+  join(
+    root,
+    'artifacts/qa/' +
+      (resolution
+        ? 'encoder-resolution-'
+        : preparation
+          ? 'encoder-preparation-'
+          : 'encoder-payload-'),
+  ),
+);
 console.log('Encoder payload diagnostic evidence: ' + artifact);
 await writeFile(
   join(artifact, 'configuration.json'),
@@ -27,6 +53,7 @@ await writeFile(
       runtime,
       device: 'iPhone-14',
       scheme: 'ScorebugEncoderQualificationTests',
+      method,
       scope: 'isolated native encoder; no network',
     },
     null,
@@ -72,6 +99,7 @@ try {
         join(root, 'ios/Scorebug.xcodeproj'),
         '-scheme',
         'ScorebugEncoderQualificationTests',
+        '-only-testing:ScorebugEncoderQualificationTests/EncoderPayloadTests/' + method,
         '-destination',
         'platform=iOS Simulator,id=' + simulator,
         '-destination-timeout',
@@ -108,11 +136,9 @@ try {
   );
   const manifest = JSON.parse(await readFile(join(artifact, 'attachments/manifest.json'), 'utf8'));
   const rows = manifest
-    .filter(
-      (r) => r.testIdentifier === 'EncoderPayloadTests/testControlledRatesAndFreshLowEncoder()',
-    )
+    .filter((r) => r.testIdentifier === 'EncoderPayloadTests/' + method + '()')
     .flatMap((r) => r.attachments)
-    .filter((a) => a.suggestedHumanReadableName.startsWith('EncoderPayload'));
+    .filter((a) => a.suggestedHumanReadableName.startsWith(attachmentName));
   assert.equal(rows.length, 1, 'Missing or duplicate encoder payload attachment');
   assert.equal(rows[0].deviceId, simulator);
   const name = rows[0].exportedFileName;
@@ -121,7 +147,13 @@ try {
   assert.ok((await stat(path)).size <= 4 * 1024 * 1024, 'Oversized scalar report');
   const raw = await readFile(path, 'utf8');
   await writeFile(join(artifact, 'encoder-payload.json'), raw);
-  const result = qualifyEncoderPayload(JSON.parse(raw));
+  const report = JSON.parse(raw);
+  assert.equal(
+    report.formatVersion,
+    resolution ? 4 : preparation ? 3 : 2,
+    'Current probe must supply native property snapshots',
+  );
+  const result = qualifyEncoderPayload(report);
   await writeFile(join(artifact, 'results.json'), JSON.stringify(result, null, 2));
   if (workflowError) throw workflowError;
   console.log(
@@ -130,6 +162,8 @@ try {
         frames: result.frames,
         phaseMbps: result.phases.map((p) => p.meanMbps),
         dynamicLowToFreshLow: result.dynamicLowToFreshLow,
+        earlyToLate: result.earlyToLate,
+        reducedToFull: result.reducedToFull,
         scope: result.scope,
       }),
   );
