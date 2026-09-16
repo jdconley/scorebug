@@ -291,3 +291,34 @@ it('reports absent source as not ready and never treats malformed or failed API 
   }));
   await expect(failed.client.status(grant().path)).rejects.toThrow('relay_http_401');
 });
+
+it('sets native publish peer latency only, preserving read URL and capability identity', () => {
+  const baseline = grant();
+  const changed = deriveIngestGrant(
+    'installation-secret-not-production',
+    'match',
+    selection,
+    1,
+    '127.0.0.1',
+    18890,
+    400,
+  );
+  expect(new URL(baseline.publishUrl).searchParams.has('peerlatency')).toBe(false);
+  expect(new URL(changed.publishUrl).searchParams.get('peerlatency')).toBe('400');
+  const publish = new URL(changed.publishUrl);
+  publish.searchParams.delete('peerlatency');
+  expect(publish.toString()).toBe(baseline.publishUrl);
+  expect({ ...changed, publishUrl: baseline.publishUrl }).toEqual(baseline);
+  for (const value of [0, 119, 2001, 400.5, NaN, Infinity, '400', null])
+    expect(() =>
+      deriveIngestGrant(
+        'installation-secret-not-production',
+        'match',
+        selection,
+        1,
+        '127.0.0.1',
+        18890,
+        value as number,
+      ),
+    ).toThrow('invalid_ingest_identity');
+});

@@ -36,6 +36,7 @@ import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
   fixtureDecoderThreading,
+  fixturePublishPeerLatency,
   nativeQualityOptions,
   nativeUplinkOptions,
   nativeFixtureWorkload,
@@ -48,6 +49,11 @@ import { measureVideoPayloadRate, qualifyStructuredMotionPayload } from './video
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const decoderThreading = fixtureDecoderThreading(process.env);
+const publishPeerLatencyMs = fixturePublishPeerLatency(process.env);
+assert.ok(
+  streaming || publishPeerLatencyMs === undefined,
+  'Publish latency experiment requires streaming',
+);
 assert.ok(streaming || decoderThreading === 'automatic', 'Decoder experiment requires streaming');
 const publicationFlag = process.env.SCOREBUG_TEST_RELAY_PUBLICATION;
 assert.ok(
@@ -116,6 +122,7 @@ await writeFile(
       runtime,
       deviceType,
       decoderThreading,
+      publishPeerLatencyMs: publishPeerLatencyMs ?? null,
       streaming,
       requirePublication,
       requireProcessing,
@@ -414,6 +421,7 @@ try {
       uplinkProfile,
       liveProfile,
       decoderThreading,
+      publishPeerLatencyMs,
       artifact,
       root,
       run,

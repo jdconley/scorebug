@@ -48,6 +48,7 @@ export function deriveIngestGrant(
   generation: number,
   host: string,
   port: number,
+  publishPeerLatencyMs?: number,
 ): IngestGrant {
   if (
     installationSecret.length < 16 ||
@@ -63,7 +64,11 @@ export function deriveIngestGrant(
     !(isIP(host) || /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host)) ||
     !Number.isInteger(port) ||
     port < 1 ||
-    port > 65535
+    port > 65535 ||
+    (publishPeerLatencyMs !== undefined &&
+      (!Number.isInteger(publishPeerLatencyMs) ||
+        publishPeerLatencyMs < 120 ||
+        publishPeerLatencyMs > 2000))
   )
     throw new Error('invalid_ingest_identity');
   const hmac = (domain: string, identity = '') =>
@@ -86,6 +91,9 @@ export function deriveIngestGrant(
     result.searchParams.set('streamid', `${action}:${path}`);
     result.searchParams.set('passphrase', passphrase);
     result.searchParams.set('pkt_size', '1316');
+    // The native SDK consumes socket-option milliseconds, unlike FFmpeg URL microseconds.
+    if (action === 'publish' && publishPeerLatencyMs !== undefined)
+      result.searchParams.set('peerlatency', String(publishPeerLatencyMs));
     return result.toString();
   };
   return {

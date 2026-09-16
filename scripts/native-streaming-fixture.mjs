@@ -27,7 +27,15 @@ export async function nativeStreamingFixture({
   uplinkProfile = null,
   liveProfile = '1080p30',
   decoderThreading = 'automatic',
+  publishPeerLatencyMs,
 }) {
+  assert.ok(
+    publishPeerLatencyMs === undefined ||
+      (Number.isInteger(publishPeerLatencyMs) &&
+        publishPeerLatencyMs >= 120 &&
+        publishPeerLatencyMs <= 2000),
+    'Unsupported fixture publish peer latency',
+  );
   assert.ok(['1080p30', '540p30'].includes(liveProfile));
   assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
@@ -220,6 +228,8 @@ export async function nativeStreamingFixture({
         RELAY_API_PASSWORD: 'qa-admin-not-production',
         INGEST_HOST: '127.0.0.1',
         INGEST_PORT: String(ingestPort),
+        SRT_PUBLISH_PEER_LATENCY_MS:
+          publishPeerLatencyMs === undefined ? undefined : String(publishPeerLatencyMs),
       },
       async startWorker(baseURL) {
         const team = (shortName) => ({ name: shortName, shortName, color: '#123456' });

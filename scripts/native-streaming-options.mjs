@@ -132,3 +132,17 @@ export function fixtureDecoderThreading(environment) {
   );
   return mode ?? 'automatic';
 }
+
+/** Native SDK milliseconds, not FFmpeg URL microseconds; absent preserves defaults. */
+export function fixturePublishPeerLatency(environment) {
+  const raw = environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS;
+  if (raw === undefined) return undefined;
+  assert.ok(
+    typeof raw === 'string' &&
+      /^[1-9][0-9]*$/.test(raw) &&
+      Number(raw) >= 120 &&
+      Number(raw) <= 2000,
+    'Unsupported fixture publish peer latency',
+  );
+  return Number(raw);
+}

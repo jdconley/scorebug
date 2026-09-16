@@ -6,8 +6,8 @@ import type { IngestGrant } from '../src/ingest.js';
 
 const stores: MatchStore[] = [];
 afterEach(() => stores.splice(0).forEach((store) => store.close()));
-async function fixture(enabled = true) {
-  const config = testConfig();
+async function fixture(enabled = true, publishPeerLatencyMs?: number) {
+  const config = testConfig({ SRT_PUBLISH_PEER_LATENCY_MS: publishPeerLatencyMs });
   const paths = new Map<string, IngestGrant>();
   let failure = false;
   const relay = {
@@ -277,3 +277,18 @@ it.each(['publish', 'worker'] as const)(
     expect(await response.json()).toEqual({ error: 'broadcast_changed' });
   },
 );
+
+it('propagates configured native recovery delay through the authenticated publish route', async () => {
+  const f = await fixture(true, 400);
+  const response = await f.request('/v1/matches/match/media/publish', f.capture.token, {
+    recordingId: 'archive',
+    generation: 1,
+  });
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(new URL(result.publishUrl).searchParams.get('peerlatency')).toBe('400');
+  const grant = [...f.paths.values()][0];
+  expect(new URL(grant.readUrl).searchParams.has('peerlatency')).toBe(false);
+  expect(new URL(grant.readUrl).searchParams.has('latency')).toBe(false);
+  expect(result.readUrl).toBeUndefined();
+});

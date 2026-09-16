@@ -251,3 +251,21 @@ it. This setting does not itself qualify receiver health or repair damaged media
 The owned native and worker-processing fixtures use the validated
 `SCOREBUG_TEST_DECODER_THREADING` override and save the selected mode in their
 configuration evidence.
+
+
+## Publishing recovery delay
+
+The API accepts optional `SRT_PUBLISH_PEER_LATENCY_MS` (integer 120–2000).
+Unset preserves existing negotiation defaults. When set, only the native publisher
+URL receives `peerlatency` in milliseconds, matching the native SDK socket-option
+parser. The worker read URL and relay listener configuration are unchanged. This
+native URL convention must not be copied directly into an FFmpeg publisher URL,
+where protocol latency options use microseconds.
+
+The local native fixture accepts exact bounded decimal
+`SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS`; its configuration records the requested
+value or null for default negotiation. Each timestamped native transport sample's
+actual sender delivery delay is authoritative. Additional recovery buffering adds
+latency and can exhaust the source-evidence freshness budget; qualify the complete
+media path before choosing a value. It does not itself repair missing media or
+qualify adaptation.

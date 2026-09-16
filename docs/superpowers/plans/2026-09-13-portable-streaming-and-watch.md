@@ -1002,3 +1002,20 @@ zero decoder messages do not qualify delivery. Next use the measured freshness
 headroom for a separate publish-leg SRT recovery-delay experiment, keeping read-leg
 settings and every media/freshness gate unchanged. Production adaptation, physical
 devices, long soaks and other hosts remain unqualified.
+
+
+The [publishing recovery-delay checkpoint](2026-09-16-publish-recovery-delay.md)
+adds an optional bounded native publishing peer delay; unset defaults, read-leg
+settings and capability identity remain unchanged. All 388 API and 982 tooling
+tests, the API build and read-only review pass. In native run `native-app-wkcOi6`,
+actual native/relay gauges confirm 400 ms publishing recovery and 120 ms read-leg
+delay. All 8152 archive frames and 135 A/V timing markers remain intact.
+
+Median receiver evidence age rises to 1.616 seconds under the unchanged two-second
+cap. Live end coverage passes and worst receiver cadence is 22 fps, but picture
+integrity worsens (142 absent identities, 81 repeated observations) and full live
+qualification fails. Thus 400 ms is not promoted to a default or called reliable.
+Next inspect encoded-frame bursts and packet/drop/IDR recovery around the downward
+geometry changes; compare native receipts and source identities before increasing
+buffering again. Production adaptation, physical devices, long soaks and remote
+hosts remain unqualified.

@@ -51,6 +51,9 @@ export function createApp(
             installationSecret: config.PHONE_TOKEN,
             host: config.INGEST_HOST,
             port: config.INGEST_PORT,
+            ...(config.SRT_PUBLISH_PEER_LATENCY_MS === undefined
+              ? {}
+              : { publishPeerLatencyMs: config.SRT_PUBLISH_PEER_LATENCY_MS }),
           },
           () => {
             const match = matches.active();

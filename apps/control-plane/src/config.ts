@@ -9,6 +9,8 @@ const schema = z
     HOST: z.string().default('0.0.0.0'),
     INGEST_HOST: z.string().default('ingest.scorebug.live'),
     INGEST_PORT: z.coerce.number().int().positive().default(8890),
+    /** Native publisher peer receive delay; omitted preserves SRT negotiation defaults. */
+    SRT_PUBLISH_PEER_LATENCY_MS: z.coerce.number().int().min(120).max(2000).optional(),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
     /** Comma-separated origins for CORS. `*` allows any. Default `*` for personal-scale use. */
     CORS_ORIGINS: z.string().default('*'),

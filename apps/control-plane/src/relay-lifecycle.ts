@@ -36,7 +36,12 @@ export type WorkerIngestAssignment = {
 export type RelayAdapter = Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> &
   Partial<Pick<IngestRelay, 'publication'>>;
 type Target = { desired: RelayDesired; grant: IngestGrant };
-type RelayConfig = { installationSecret: string; host: string; port: number };
+type RelayConfig = {
+  installationSecret: string;
+  host: string;
+  port: number;
+  publishPeerLatencyMs?: number;
+};
 
 export class RelayLifecycleError extends Error {
   constructor(public readonly code: string) {
@@ -94,6 +99,7 @@ export class RelayLifecycle {
         desired.generation,
         this.config.host,
         this.config.port,
+        this.config.publishPeerLatencyMs,
       ),
     };
   }

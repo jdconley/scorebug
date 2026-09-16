@@ -179,3 +179,30 @@ test('decoder threading fixture mode is explicit and rejects unsupported values 
   for (const mode of ['', 'frame', 'Slice', '1', 1, null])
     assert.throws(() => options.fixtureDecoderThreading({ SCOREBUG_TEST_DECODER_THREADING: mode }));
 });
+
+test('publishing recovery experiment is exact, bounded and optional', () => {
+  assert.equal(options.fixturePublishPeerLatency({}), undefined);
+  for (const value of ['120', '400', '2000'])
+    assert.equal(
+      options.fixturePublishPeerLatency({ SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: value }),
+      Number(value),
+    );
+  for (const value of [
+    '',
+    '0400',
+    ' 400',
+    '400 ',
+    '4e2',
+    '+400',
+    '400.0',
+    '119',
+    '2001',
+    'NaN',
+    400,
+    null,
+  ])
+    assert.throws(
+      () => options.fixturePublishPeerLatency({ SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: value }),
+      /publish.*latency/i,
+    );
+});
