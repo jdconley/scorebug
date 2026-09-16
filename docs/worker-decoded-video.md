@@ -281,3 +281,19 @@ are reported separately. These are send attempts on the proxy clock, not continu
 occupancy sampling or native frame/packet causality. The independent qualifier
 rejects impossible chronological balances and missing/inconsistent byte evidence.
 Queue limits, rate schedule and packet delivery behavior are unchanged.
+
+
+## Native sender pacing experiment
+
+`SRT_PUBLISH_PACING=relative` is an optional API setting that adds `maxbw=0` only
+to native publishing grants. Unset preserves existing behavior. The worker read
+URL is unchanged. Relative mode leaves native input-rate estimation and recovery
+allowance at their defaults; it is not itself proof of a sustainable live profile.
+The owned native fixture accepts `SCOREBUG_TEST_PUBLISH_PACING=relative` and records
+that choice, while clearing ambient settings for ordinary fixtures.
+
+Timestamped native transport evidence now retains optional
+`senderMaximumBandwidthMbps` and `packetSendPeriodMicroseconds` from the actual SRT
+statistics collection. Missing remains unknown and zero is preserved. These
+pacing diagnostics do not enter quality decisions or establish available network
+capacity; delivered video identity/cadence and audio coverage remain the gates.

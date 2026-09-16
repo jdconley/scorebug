@@ -37,6 +37,7 @@ import {
   nativeStreamingOptions,
   fixtureDecoderThreading,
   fixturePublishPeerLatency,
+  fixturePublishPacing,
   nativeQualityOptions,
   nativeUplinkOptions,
   nativeFixtureWorkload,
@@ -50,6 +51,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
 const decoderThreading = fixtureDecoderThreading(process.env);
 const publishPeerLatencyMs = fixturePublishPeerLatency(process.env);
+const publishPacing = fixturePublishPacing(process.env);
+assert.ok(streaming || publishPacing === undefined, 'Publish pacing experiment requires streaming');
 assert.ok(
   streaming || publishPeerLatencyMs === undefined,
   'Publish latency experiment requires streaming',
@@ -123,6 +126,7 @@ await writeFile(
       deviceType,
       decoderThreading,
       publishPeerLatencyMs: publishPeerLatencyMs ?? null,
+      publishPacing: publishPacing ?? null,
       streaming,
       requirePublication,
       requireProcessing,
@@ -422,6 +426,7 @@ try {
       liveProfile,
       decoderThreading,
       publishPeerLatencyMs,
+      publishPacing,
       artifact,
       root,
       run,

@@ -1036,3 +1036,20 @@ All 8165 archive frames and 135 audio markers remain intact. Live still fails at
 original/retransmitted/control packet pressure, then test bounded sender pacing.
 Do not enlarge queues, freshness limits, or declare the 400-ms setting reliable.
 Production adaptation and device/host/soak qualification remain open.
+
+
+The [relative sender-pacing checkpoint](2026-09-16-relative-sender-pacing.md)
+adds opt-in publish-only `maxbw=0` plus actual native pacing diagnostics; defaults
+and quality rules remain unchanged. All 391 API, 254 media, 61 streaming, 209
+app-model and 1009 tooling tests pass, as do the API/combined Apple Release builds
+and review. Native run `native-app-d4raOd` measures effective pacing at 4.78–12.24
+Mbps and reduces peak 100-ms traffic from 374 KB to 138 KB and overflows from 1190
+to 898, while queue residence remains about 526 ms.
+
+The archive preserves all 8195 frames and 136 audio markers. Live still fails:
+14.6-fps worst receiver cadence, 174 absent source identities and 32 repeated
+observations, despite passing end coverage. Relative pacing is not promoted.
+Next retain actual compressed-frame byte size and keyframe/IDR evidence around
+geometry changes before another transport-setting experiment. Prior simulator
+unsupported-property findings remain applicable; physical encoder behavior is
+still unproven. Production adaptation and device/host/soak requirements stay open.

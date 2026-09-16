@@ -41,6 +41,7 @@ type RelayConfig = {
   host: string;
   port: number;
   publishPeerLatencyMs?: number;
+  publishPacing?: 'relative';
 };
 
 export class RelayLifecycleError extends Error {
@@ -100,6 +101,7 @@ export class RelayLifecycle {
         this.config.host,
         this.config.port,
         this.config.publishPeerLatencyMs,
+        this.config.publishPacing,
       ),
     };
   }

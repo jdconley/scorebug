@@ -146,3 +146,10 @@ export function fixturePublishPeerLatency(environment) {
   );
   return Number(raw);
 }
+
+/** Explicit native relative-input pacing; absent preserves library defaults. */
+export function fixturePublishPacing(environment) {
+  const mode = environment.SCOREBUG_TEST_PUBLISH_PACING;
+  assert.ok(mode === undefined || mode === 'relative', 'Unsupported fixture publish pacing');
+  return mode;
+}

@@ -1225,3 +1225,20 @@ test('version-four retains caller RTT ceiling despite a long measured delay', ()
   }
   assert.equal(qualifyNativeQuality(f).rollbacks, 1);
 });
+
+for (const key of ['senderMaximumBandwidthMbps', 'packetSendPeriodMicroseconds']) {
+  for (const value of [null, 0, 7.5, 1403.7])
+    test(`pacing diagnostic ${key} preserves ${value} without changing pressure`, () => {
+      const f = rapidLocalFixture();
+      for (const r of f.quality.events)
+        for (const s of r.evidence?.transport?.samples ?? []) s[key] = value;
+      assert.equal(qualifyNativeQuality(f).localEvaluated, 1);
+    });
+  for (const value of [-1, '7.5', true, NaN, Infinity])
+    test(`pacing diagnostic ${key} rejects ${String(value)}`, () => {
+      const f = rapidLocalFixture();
+      f.quality.events.find((e) => e.kind === 'localPressure').evidence.transport.samples[0][key] =
+        value;
+      assert.throws(() => qualifyNativeQuality(f));
+    });
+}

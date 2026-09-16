@@ -322,3 +322,37 @@ it('sets native publish peer latency only, preserving read URL and capability id
       ),
     ).toThrow('invalid_ingest_identity');
 });
+
+it('relative pacing changes only the native publish URL', () => {
+  const baseline = grant();
+  const changed = deriveIngestGrant(
+    'installation-secret-not-production',
+    'match',
+    selection,
+    1,
+    '127.0.0.1',
+    18890,
+    undefined,
+    'relative',
+  );
+  const url = new URL(changed.publishUrl);
+  expect(url.searchParams.get('maxbw')).toBe('0');
+  expect(url.searchParams.has('inputbw')).toBe(false);
+  expect(url.searchParams.has('oheadbw')).toBe(false);
+  url.searchParams.delete('maxbw');
+  expect(url.toString()).toBe(baseline.publishUrl);
+  expect({ ...changed, publishUrl: baseline.publishUrl }).toEqual(baseline);
+  for (const pacing of ['', 0, null, 'default'])
+    expect(() =>
+      deriveIngestGrant(
+        'installation-secret-not-production',
+        'match',
+        selection,
+        1,
+        '127.0.0.1',
+        18890,
+        undefined,
+        pacing as 'relative',
+      ),
+    ).toThrow('invalid_ingest_identity');
+});

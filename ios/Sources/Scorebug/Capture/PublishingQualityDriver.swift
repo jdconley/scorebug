@@ -210,7 +210,9 @@ import ScorebugMedia
                     "elapsedMilliseconds": String(s.elapsedMilliseconds), "sentBytes": String(s.sentBytes),
                     "retransmittedBytes": String(s.retransmittedBytes), "droppedPackets": s.droppedPackets,
                     "rttMilliseconds": s.rttMilliseconds, "senderBufferMilliseconds": s.senderBufferMilliseconds,
-                    "senderDeliveryDelayMilliseconds": optional(s.senderDeliveryDelayMilliseconds)] as [String: Any] }]
+                    "senderDeliveryDelayMilliseconds": optional(s.senderDeliveryDelayMilliseconds),
+                    "senderMaximumBandwidthMbps": optional(s.senderMaximumBandwidthMbps),
+                    "packetSendPeriodMicroseconds": optional(s.packetSendPeriodMicroseconds)] as [String: Any] }]
     }
     private static func evidence(_ d: PublishingQualityTelemetry.Diagnostics, source: WorkerSourceIntervalObservation?, window: QualityController.Window) -> [String: Any] {
         var result: [String: Any] = [

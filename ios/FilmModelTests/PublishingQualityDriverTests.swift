@@ -23,6 +23,25 @@ import XCTest
         XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: evidence))
     }
 
+    func testTransportEvidenceExportsActualPacingAndPreservesUnknown() throws {
+        var history = PublishingTransportStatisticsTracker()
+        for (time, maximum, period) in [(10.0, nil as Double?, nil as Double?), (10.25, 7.5, 1403.7)] {
+            history.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(time * 1000),
+                sentBytes: UInt64(time * 1000), retransmittedBytes: 0, droppedPackets: 0,
+                rttMilliseconds: 1, estimatedBandwidthMbps: 100, senderBufferedBytes: 1,
+                senderBufferMilliseconds: 1, availableSenderBytes: 1000,
+                senderMaximumBandwidthMbps: maximum, packetSendPeriodMicroseconds: period))
+        }
+        let evidence = PublishingQualityDriver.transportEvidence(history.snapshot)
+        let samples = try XCTUnwrap(evidence["samples"] as? [[String: Any]])
+        XCTAssertTrue(samples[0]["senderMaximumBandwidthMbps"] is NSNull)
+        XCTAssertTrue(samples[0]["packetSendPeriodMicroseconds"] is NSNull)
+        XCTAssertEqual(samples[1]["senderMaximumBandwidthMbps"] as? Double, 7.5)
+        XCTAssertEqual(samples[1]["packetSendPeriodMicroseconds"] as? Double, 1403.7)
+        XCTAssertEqual(samples[1]["sampledAt"] as? Double, 10.25)
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: evidence))
+    }
+
     private func make(_ native: DriverNative) throws -> (PublishingQualityDriver, PublishingQualityTelemetry.Diagnostics) {
         let owner = try PublishingQualitySession(operations: native.operations,
             profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],

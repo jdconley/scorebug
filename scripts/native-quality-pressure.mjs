@@ -76,6 +76,8 @@ function classifyNativePressure(
       );
       // Optional observation only: preserve unknown/legacy evidence and zero.
       // This gauge never establishes capacity or receiver delivery.
+      for (const key of ['senderMaximumBandwidthMbps', 'packetSendPeriodMicroseconds'])
+        if (s[key] != null) assert(finite(s[key]), 'Invalid native pacing diagnostic');
       if (s.senderDeliveryDelayMilliseconds != null)
         assert(
           integer(s.senderDeliveryDelayMilliseconds) &&

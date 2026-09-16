@@ -6,8 +6,11 @@ import type { IngestGrant } from '../src/ingest.js';
 
 const stores: MatchStore[] = [];
 afterEach(() => stores.splice(0).forEach((store) => store.close()));
-async function fixture(enabled = true, publishPeerLatencyMs?: number) {
-  const config = testConfig({ SRT_PUBLISH_PEER_LATENCY_MS: publishPeerLatencyMs });
+async function fixture(enabled = true, publishPeerLatencyMs?: number, publishPacing?: 'relative') {
+  const config = testConfig({
+    SRT_PUBLISH_PEER_LATENCY_MS: publishPeerLatencyMs,
+    SRT_PUBLISH_PACING: publishPacing,
+  });
   const paths = new Map<string, IngestGrant>();
   let failure = false;
   const relay = {
@@ -291,4 +294,18 @@ it('propagates configured native recovery delay through the authenticated publis
   expect(new URL(grant.readUrl).searchParams.has('peerlatency')).toBe(false);
   expect(new URL(grant.readUrl).searchParams.has('latency')).toBe(false);
   expect(result.readUrl).toBeUndefined();
+});
+
+it('authenticated native grant combines explicit pacing and recovery without modifying read transport', async () => {
+  const f = await fixture(true, 400, 'relative');
+  const response = await f.request('/v1/matches/match/media/publish', f.capture.token, {
+    recordingId: 'archive',
+    generation: 1,
+  });
+  expect(response.status).toBe(200);
+  const value = await response.json();
+  const url = new URL(value.publishUrl);
+  expect(url.searchParams.get('maxbw')).toBe('0');
+  expect(url.searchParams.get('peerlatency')).toBe('400');
+  expect(new URL([...f.paths.values()][0].readUrl).searchParams.has('maxbw')).toBe(false);
 });

@@ -206,3 +206,16 @@ test('publishing recovery experiment is exact, bounded and optional', () => {
       /publish.*latency/i,
     );
 });
+
+test('relative pacing fixture option is explicit and exact', () => {
+  assert.equal(options.fixturePublishPacing({}), undefined);
+  assert.equal(
+    options.fixturePublishPacing({ SCOREBUG_TEST_PUBLISH_PACING: 'relative' }),
+    'relative',
+  );
+  for (const value of ['', 0, null, '0', 'default', 'Relative', ' relative'])
+    assert.throws(
+      () => options.fixturePublishPacing({ SCOREBUG_TEST_PUBLISH_PACING: value }),
+      /pacing/i,
+    );
+});

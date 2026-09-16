@@ -5,12 +5,27 @@ final class PublishingTransportStatisticsTests: XCTestCase {
     private func sample(generation: UInt64 = 1, time: Double = 10, elapsed: Int64 = 1000,
                         sent: UInt64 = 10000, retrans: UInt64 = 100, drops: Int32 = 0,
                         rtt: Double = 10, bandwidth: Double = 100, buffered: Int32 = 50,
-                        bufferMS: Int32 = 1, available: Int32 = 1000, delay: Int32? = nil) -> PublishingTransportStatistics? {
+                        bufferMS: Int32 = 1, available: Int32 = 1000, delay: Int32? = nil, maximum: Double? = nil, period: Double? = nil) -> PublishingTransportStatistics? {
         .init(publishingGeneration: generation, sampledAt: time, elapsedMilliseconds: elapsed,
               sentBytes: sent, retransmittedBytes: retrans, droppedPackets: drops,
               rttMilliseconds: rtt, estimatedBandwidthMbps: bandwidth, senderBufferedBytes: buffered,
-              senderBufferMilliseconds: bufferMS, availableSenderBytes: available, senderDeliveryDelayMilliseconds: delay)
+              senderBufferMilliseconds: bufferMS, availableSenderBytes: available, senderDeliveryDelayMilliseconds: delay, senderMaximumBandwidthMbps: maximum, packetSendPeriodMicroseconds: period)
     }
+    func testActualPacingDiagnosticsPreserveUnknownZeroAndValidatedValues() throws {
+        XCTAssertNil(try XCTUnwrap(sample()).senderMaximumBandwidthMbps)
+        XCTAssertNil(try XCTUnwrap(sample()).packetSendPeriodMicroseconds)
+        let measured = try XCTUnwrap(sample(maximum: 7.5, period: 1403.7))
+        XCTAssertEqual(measured.senderMaximumBandwidthMbps, 7.5)
+        XCTAssertEqual(measured.packetSendPeriodMicroseconds, 1403.7)
+        XCTAssertNotNil(sample(maximum: 0, period: 0))
+        for bad in [-1.0, .nan, .infinity] {
+            XCTAssertNil(sample(maximum: bad)); XCTAssertNil(sample(period: bad))
+        }
+        var tracker = PublishingTransportStatisticsTracker(); tracker.observe(measured)
+        tracker.observe(measured); tracker.observe(nil)
+        XCTAssertEqual(tracker.snapshot.samples, [measured]); XCTAssertNil(tracker.snapshot.freshSample(at: 12.01))
+    }
+
     func testNegotiatedDelayPreservesUnknownZeroAndActualValueWithoutInventingFreshness() throws {
         XCTAssertNil(try XCTUnwrap(sample()).senderDeliveryDelayMilliseconds)
         XCTAssertEqual(try XCTUnwrap(sample(delay: 0)).senderDeliveryDelayMilliseconds, 0)

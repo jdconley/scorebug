@@ -28,6 +28,7 @@ export async function nativeStreamingFixture({
   liveProfile = '1080p30',
   decoderThreading = 'automatic',
   publishPeerLatencyMs,
+  publishPacing,
 }) {
   assert.ok(
     publishPeerLatencyMs === undefined ||
@@ -35,6 +36,10 @@ export async function nativeStreamingFixture({
         publishPeerLatencyMs >= 120 &&
         publishPeerLatencyMs <= 2000),
     'Unsupported fixture publish peer latency',
+  );
+  assert.ok(
+    publishPacing === undefined || publishPacing === 'relative',
+    'Unsupported fixture publish pacing',
   );
   assert.ok(['1080p30', '540p30'].includes(liveProfile));
   assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
@@ -230,6 +235,7 @@ export async function nativeStreamingFixture({
         RELAY_API_PASSWORD: 'qa-admin-not-production',
         INGEST_HOST: '127.0.0.1',
         INGEST_PORT: String(ingestPort),
+        SRT_PUBLISH_PACING: publishPacing,
         SRT_PUBLISH_PEER_LATENCY_MS:
           publishPeerLatencyMs === undefined ? undefined : String(publishPeerLatencyMs),
       },
