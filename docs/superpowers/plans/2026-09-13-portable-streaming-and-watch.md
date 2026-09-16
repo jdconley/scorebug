@@ -701,3 +701,12 @@ committed prefix after an interrupted UI test, not a normally finalized capture.
 All 883 tooling tests pass for the bounded scheduler and phase verifier. The next
 gate measures achieved encoder payload under controlled rate changes; the retained
 transport counters alone cannot identify the cause of insufficient rate reduction.
+
+The [isolated encoder diagnostic](2026-09-16-encoder-payload-probe.md#qualified-isolated-result)
+now measures all 2402 compressed samples with exact configuration/source ownership
+and qualified 30 fps pacing. On iPhone 14/iOS 17.5 Simulator, requesting 1.5 Mbps
+produces 5.576 Mbps both after a live reduction and in a fresh encoder started at
+1.5 Mbps. The problem therefore is not solely a dynamic update, and insufficient
+reduction is already present before transport. Native encoder/rate-control versus
+content constraints remain to be distinguished. Network recovery, production
+adaptation, physical phone/Watch and other-host qualification remain open.

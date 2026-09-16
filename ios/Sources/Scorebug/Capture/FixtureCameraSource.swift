@@ -85,7 +85,7 @@ final class FixtureCameraSource: CaptureSource, @unchecked Sendable {
         }
     }
     private enum FixtureError: Error { case state, format, buffer }
-    private static func video(frame: Int, profile: ArchiveProfile, origin: CMTime, motion: FixtureMotionPattern?) throws -> CMSampleBuffer {
+    static func video(frame: Int, profile: ArchiveProfile, origin: CMTime, motion: FixtureMotionPattern?) throws -> CMSampleBuffer {
         var pixel: CVPixelBuffer?
         guard CVPixelBufferCreate(kCFAllocatorDefault, profile.width, profile.height,
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
