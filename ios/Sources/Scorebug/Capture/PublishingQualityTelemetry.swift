@@ -86,31 +86,87 @@ enum PublishingQualityTelemetry {
            ingress.pressure.coveredThrough <= now, now - ingress.pressure.coveredThrough <= 2 {
             queue = interval.ingressPressure(in: ingress)?.meanMaxPressure
         }
-        let thermal: QualityController.Pressure
-        if diagnostics.thermal.freshSample(at: now) != nil,
-           let sample = diagnostics.thermal.interval(from: start, to: end) {
-            switch sample.enclosingMaximumState {
-            case .nominal: thermal = .nominal
-            case .serious, .critical: thermal = .elevated
-            case .fair, .unknown: thermal = .unknown
-            }
-        } else { thermal = .unknown }
-        let transport: QualityController.Pressure
-        if let limits = transportLimits, diagnostics.transport.freshSample(at: now) != nil,
-           let sample = diagnostics.transport.interval(from: start, to: end),
-           sample.publishingGeneration == receipt.publishingGeneration {
-            let excessive = sample.enclosingDroppedPackets > 0
-                || Double(sample.enclosingMaximumBufferMilliseconds) > limits.maximumBufferMs
-                || sample.enclosingMaximumRTTMilliseconds > limits.maximumRTTMs
-                || (sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
-            transport = excessive ? .elevated : sample.enclosingSentBytes > 0 ? .nominal : .unknown
-        } else { transport = .unknown }
+        let thermal = thermalPressure(diagnostics.thermal, from: start, to: end, at: now)
+        let transport = transportPressure(diagnostics.transport, generation: receipt.publishingGeneration,
+            limits: transportLimits, from: start, to: end, at: now)
         return .init(attemptID: applied.attemptID, sequence: sequence ?? UInt64(source.sequence), appliedRevision: applied.revision,
             start: start, end: end, capturedFreshFrames: interval.capturedFrames, encodedFreshFrames: interval.encodedFrames,
             receiver: .init(freshFrames: interval.decodedFrames, observedAt: observedAt),
             sourceLoss: .init(expectedFrames: interval.capturedFrames, lostFrames: interval.capturedFrames - interval.decodedFrames),
             meanQueueOccupancy: queue, usableVideoCapacity: nil, connectivity: .connected,
             thermalPressure: thermal, workerPressure: workerPressure(source, limits: workerLimits), transportPressure: transport)
+    }
+    /// Independent local pressure may justify a reduction, never receiver health.
+    /// Initially unused by the runtime driver pending scheduling/trace qualification.
+    static func localPressureWindow(applied: Applied, diagnostics: Diagnostics,
+                                    transportLimits: TransportLimits?, sequence: UInt64,
+                                    after previousEnd: Double?, at now: Double) throws -> QualityController.Window? {
+        let receipt = applied.receipt
+        guard diagnostics.isPublishing,
+              let current = diagnostics.receipt, sameReceipt(current, receipt),
+              diagnostics.clock?.publishingGeneration == receipt.publishingGeneration,
+              let ingress = diagnostics.ingress, !ingress.isClosed,
+              ingress.scope.publishingAttemptID == applied.attemptID else { throw Failure.ownership }
+        guard receipt.configuration.bitRate == applied.settings.videoBitrate else { throw Failure.configuration }
+        guard now.isFinite, (0...1e12).contains(now), applied.acknowledgedAt.isFinite,
+              applied.acknowledgedAt >= receipt.acceptedAt, applied.acknowledgedAt <= now, sequence > 0,
+              previousEnd.map({ $0.isFinite && (0...now).contains($0) }) ?? true else { throw Failure.time }
+        let boundary = max(applied.acknowledgedAt, previousEnd ?? applied.acknowledgedAt)
+        func thermal(_ end: Double) -> QualityController.Pressure {
+            thermalPressure(diagnostics.thermal, from: end - 5, to: end, at: now,
+                minimumSampleStart: applied.acknowledgedAt)
+        }
+        func transport(_ end: Double) -> QualityController.Pressure {
+            transportPressure(diagnostics.transport, generation: receipt.publishingGeneration,
+                limits: transportLimits, from: end - 5, to: end, at: now,
+                minimumSampleStart: applied.acknowledgedAt)
+        }
+        func queue(_ end: Double) -> Double? {
+            let p = ingress.pressure
+            guard !p.isClosed, p.coveredThrough <= now, now - p.coveredThrough <= 2 else { return nil }
+            return p.interval(from: end - 5, to: end)?.meanMaxPressure
+        }
+        // Only independently covered metrics select an endpoint. An unavailable
+        // metric cannot move another metric's evidence into an uncovered interval.
+        var ends: [Double] = []
+        if let sample = diagnostics.thermal.freshSample(at: now), sample.sampledAt - 5 >= boundary,
+           thermal(sample.sampledAt) != .unknown { ends.append(sample.sampledAt) }
+        if let sample = diagnostics.transport.freshSample(at: now), sample.sampledAt - 5 >= boundary,
+           transport(sample.sampledAt) != .unknown { ends.append(sample.sampledAt) }
+        let queueEnd = ingress.pressure.coveredThrough
+        if queueEnd - 5 >= boundary, queue(queueEnd) != nil { ends.append(queueEnd) }
+        for end in Set(ends).sorted(by: >) {
+            guard end <= now, now - end <= 2, end - 5 >= boundary else { continue }
+            let localThermal = thermal(end), localTransport = transport(end), localQueue = queue(end)
+            guard localThermal == .elevated || localTransport == .elevated || (localQueue.map { $0 >= 0.75 } ?? false) else { continue }
+            return .init(attemptID: applied.attemptID, sequence: sequence, appliedRevision: applied.revision,
+                start: end - 5, end: end, capturedFreshFrames: nil, encodedFreshFrames: nil,
+                receiver: nil, sourceLoss: nil, meanQueueOccupancy: localQueue, usableVideoCapacity: nil,
+                connectivity: .unknown, thermalPressure: localThermal, workerPressure: .unknown, transportPressure: localTransport)
+        }
+        return nil
+    }
+    private static func thermalPressure(_ history: PublishingThermalSnapshot, from start: Double, to end: Double,
+                                        at now: Double, minimumSampleStart: Double? = nil) -> QualityController.Pressure {
+        guard history.freshSample(at: now) != nil, let sample = history.interval(from: start, to: end),
+              minimumSampleStart.map({ sample.enclosingStart >= $0 }) ?? true else { return .unknown }
+        switch sample.enclosingMaximumState {
+        case .nominal: return .nominal
+        case .serious, .critical: return .elevated
+        case .fair, .unknown: return .unknown
+        }
+    }
+    private static func transportPressure(_ history: PublishingTransportStatisticsSnapshot, generation: UInt64,
+                                          limits: TransportLimits?, from start: Double, to end: Double,
+                                          at now: Double, minimumSampleStart: Double? = nil) -> QualityController.Pressure {
+        guard let limits, history.freshSample(at: now) != nil,
+              let sample = history.interval(from: start, to: end), sample.publishingGeneration == generation,
+              minimumSampleStart.map({ sample.enclosingStart >= $0 }) ?? true else { return .unknown }
+        let excessive = sample.enclosingDroppedPackets > 0
+            || Double(sample.enclosingMaximumBufferMilliseconds) > limits.maximumBufferMs
+            || sample.enclosingMaximumRTTMilliseconds > limits.maximumRTTMs
+            || (sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
+        return excessive ? .elevated : sample.enclosingSentBytes > 0 ? .nominal : .unknown
     }
     private static func sameReceipt(_ a: PublishingBitRateChange, _ b: PublishingBitRateChange) -> Bool {
         a.publishingGeneration == b.publishingGeneration && a.configuration == b.configuration

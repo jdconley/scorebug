@@ -272,3 +272,16 @@ repeat `native-app-UN3C23` also confirms one trial, preserves all 3696 archive a
 3266 acquired live frames, and passes the frozen workload bands at roughly 12 Mbps
 local / 7.3–7.6 Mbps live. All saved media gates pass. Test-only pressure/cadence limits
 still do not qualify production capacity, physical devices or remote workers.
+
+
+## Local pressure without receiver evidence
+
+The [local-pressure fallback plan](superpowers/plans/2026-09-16-local-pressure-fallback.md)
+adds a separately tested, currently inactive app adapter for congestion when matched
+receiver evidence is unavailable. It permits only known local pressure to reach
+Core; receiver delivery, source loss and capacity remain unknown. Each candidate
+uses a complete fresh five-second interval after acknowledgment and prior evaluated
+coverage, with exact queue integration and enclosing thermal/transport samples.
+Nine new regressions pass in the 171-test FilmModel suite. Actor/driver scheduling,
+independent raw-evidence replay and actual impaired native qualification remain
+required before the fallback can operate.

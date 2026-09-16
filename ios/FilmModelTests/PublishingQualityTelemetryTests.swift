@@ -95,6 +95,191 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             workerLimits: worker ?? workerLimits, transportLimits: transport ?? transportLimits,
             at: f.now, instant: instant ?? now)
     }
+    private func local(_ f: Fixture, after: Double? = nil, limits: Adapter.TransportLimits? = nil) throws -> QualityController.Window? {
+        try Adapter.localPressureWindow(applied: f.applied, diagnostics: f.diagnostics,
+            transportLimits: limits ?? transportLimits, sequence: 7, after: after, at: f.now)
+    }
+    func testLocalPressurePreservesUnknownDeliveryAndOnlyPermitsDecrease() throws {
+        let f = try fixture(buffer: 501), w = try XCTUnwrap(local(f))
+        XCTAssertEqual(w.start, 106); XCTAssertEqual(w.end, 111)
+        XCTAssertEqual(w.sequence, 7); XCTAssertEqual(w.appliedRevision, 0)
+        XCTAssertEqual(w.attemptID, attempt); XCTAssertEqual(w.transportPressure, .elevated)
+        XCTAssertNil(w.capturedFreshFrames); XCTAssertNil(w.encodedFreshFrames)
+        XCTAssertNil(w.receiver); XCTAssertNil(w.sourceLoss); XCTAssertNil(w.usableVideoCapacity)
+        XCTAssertEqual(w.workerPressure, .unknown); XCTAssertEqual(w.connectivity, .unknown)
+        var policy = try QualityController(profiles: [.init(id: "hd", width: 1920, height: 1080,
+            minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)], attemptID: attempt,
+            applied: f.applied.settings, at: f.applied.acknowledgedAt, recoveryStrategy: .receiverValidatedTrials)
+        let decision = try policy.evaluate(w, at: f.now)
+        XCTAssertEqual(decision.state, .unknown)
+        XCTAssertEqual(decision.recommendation?.kind, .decrease)
+        XCTAssertEqual(decision.recommendation?.settings.videoBitrate, 1_600_000)
+        XCTAssertTrue(decision.reasons.contains(.missingReceiver))
+    }
+    func testLocalNominalAndMissingPressureNeverEstablishHealth() throws {
+        var f = try fixture()
+        XCTAssertNil(try local(f))
+        f.diagnostics.thermal = PublishingThermalTracker().snapshot
+        f.diagnostics.transport = PublishingTransportStatisticsTracker().snapshot
+        XCTAssertNil(try local(f))
+        f = try fixture(buffer: 501)
+        XCTAssertNil(try Adapter.localPressureWindow(applied: f.applied, diagnostics: f.diagnostics,
+            transportLimits: nil, sequence: 7, after: nil, at: f.now))
+        for state in [PublishingThermalState.fair, .unknown] {
+            XCTAssertNil(try local(fixture(thermalState: state)))
+        }
+    }
+    func testLocalPressureUsesEachKnownCauseAndExactThresholds() throws {
+        XCTAssertNil(try local(fixture(retransmitted: 100, buffer: 500, rtt: 500)))
+        for f in [try fixture(buffer: 501), try fixture(rtt: 501),
+                  try fixture(retransmitted: 101), try fixture(drops: 1)] {
+            XCTAssertEqual(try local(f)?.transportPressure, .elevated)
+        }
+        for state in [PublishingThermalState.serious, .critical] {
+            var f = try fixture(thermalState: state)
+            f.diagnostics.transport = PublishingTransportStatisticsTracker().snapshot
+            XCTAssertEqual(try local(f)?.thermalPressure, .elevated)
+        }
+        for items in [2, 3] {
+            var f = try fixture()
+            var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+            ingress.updateOccupancy(items: items, bytes: items, phase: .admitting, at: 100)
+            f.diagnostics.ingress = ingress.poll(at: 111)
+            let w = try local(f)
+            if items == 3 { XCTAssertEqual(w?.meanQueueOccupancy, 0.75) }
+            else { XCTAssertNil(w) }
+        }
+    }
+    func testLocalLaggingNominalHistoryCannotSuppressIndependentTransportPressure() throws {
+        var f = try fixture(), thermal = PublishingThermalTracker(), transport = PublishingTransportStatisticsTracker()
+        for i in 0...5 {
+            thermal.observe(.init(state: .nominal, sampledAt: 105.5 + Double(i)))
+            transport.observe(.init(publishingGeneration: 7, sampledAt: 106 + Double(i), elapsedMilliseconds: Int64(i * 1000),
+                sentBytes: UInt64(i * 1000), retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 10,
+                estimatedBandwidthMbps: 999, senderBufferedBytes: 1000, senderBufferMilliseconds: 501, availableSenderBytes: 0))
+        }
+        f.diagnostics.thermal = thermal.snapshot; f.diagnostics.transport = transport.snapshot
+        let w = try XCTUnwrap(local(f))
+        XCTAssertEqual(w.start, 106); XCTAssertEqual(w.end, 111)
+        XCTAssertEqual(w.transportPressure, .elevated); XCTAssertEqual(w.thermalPressure, .unknown)
+    }
+    func testLocalPressureDuringTrialRequiresBaselineRollback() throws {
+        var policy = try QualityController(profiles: [.init(id: "hd", width: 1920, height: 1080,
+            minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)], attemptID: attempt,
+            applied: .init(profileID: "hd", videoBitrate: 2_000_000), at: 100, recoveryStrategy: .receiverValidatedTrials)
+        var recommendation: QualityController.Recommendation?
+        for i in 0..<6 {
+            let start = 100 + Double(i) * 5
+            recommendation = try policy.evaluate(.init(attemptID: attempt, sequence: UInt64(i + 1), appliedRevision: 0,
+                start: start, end: start + 5, capturedFreshFrames: 150, encodedFreshFrames: 150,
+                receiver: .init(freshFrames: 150, observedAt: start + 5), sourceLoss: .init(expectedFrames: 150, lostFrames: 0),
+                meanQueueOccupancy: 0, usableVideoCapacity: nil, connectivity: .connected,
+                thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal), at: start + 5).recommendation
+        }
+        let trial = try XCTUnwrap(recommendation)
+        XCTAssertEqual(trial.kind, .trial)
+        try policy.acknowledge(trial, applied: trial.settings, at: 130)
+        let config = VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: trial.settings.videoBitrate)!
+        var f = try fixture(buffer: 501, frameOffset: 24 * 30, encodingConfiguration: config)
+        f.applied.acknowledgedAt = 130; f.applied.revision = 1
+        let w = try XCTUnwrap(local(f, after: 130))
+        XCTAssertEqual(w.start, 130); XCTAssertEqual(w.end, 135)
+        let decision = try policy.evaluate(w, at: f.now)
+        XCTAssertEqual(decision.recommendation?.kind, .rollback)
+        XCTAssertEqual(decision.recommendation?.settings.videoBitrate, 2_000_000)
+    }
+    func testLocalPressureRejectsWrongOwnerAndSettings() throws {
+        let base = try fixture(buffer: 501)
+        var cases: [Fixture] = []
+        var f = base; f.applied.attemptID = UUID(); cases.append(f)
+        f = base; f.diagnostics.isPublishing = false; cases.append(f)
+        f = base; f.diagnostics.clock = nil; cases.append(f)
+        f = base; f.diagnostics.clock = .init(sourceOrigin: .zero, publishingGeneration: 8); cases.append(f)
+        f = base; f.diagnostics.receipt = nil; cases.append(f)
+        f = base; f.diagnostics.ingress = nil; cases.append(f)
+        f = base; f.applied.settings = .init(profileID: "hd", videoBitrate: 3_000_000); cases.append(f)
+        f = base; f.diagnostics.receipt = .init(publishingGeneration: 7, configuration: config, acceptedAt: 100.01, lastSubmittedSourcePTS: .zero)!; cases.append(f)
+        var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+        f = base; f.diagnostics.ingress = ingress.close(at: 111); cases.append(f)
+        for value in cases { XCTAssertThrowsError(try local(value)) }
+    }
+    func testLocalPressureRejectsInvalidTimesAndDoesNotShortenOrOverlap() throws {
+        let base = try fixture(buffer: 501)
+        for time in [Double.nan, Double.infinity, -1, 1e12 + 1, 100] {
+            var f = base; f.now = time; XCTAssertThrowsError(try local(f))
+        }
+        for ack in [Double.nan, Double.infinity, 99.9, 112] {
+            var f = base; f.applied.acknowledgedAt = ack; XCTAssertThrowsError(try local(f))
+        }
+        for end in [Double.nan, Double.infinity, -1, 112] {
+            XCTAssertThrowsError(try local(base, after: end))
+        }
+        XCTAssertNotNil(try local(base, after: 106))
+        XCTAssertNil(try local(base, after: 106.000001))
+        var f = base; f.applied.acknowledgedAt = 106
+        XCTAssertNotNil(try local(f))
+        f.applied.acknowledgedAt = 106.000001
+        XCTAssertNil(try local(f))
+        f = base; f.now = 113
+        XCTAssertNotNil(try local(f))
+        f.now = 113.000001
+        XCTAssertNil(try local(f))
+    }
+    func testLocalEndpointUsesActualFreshCollectionsAndExcludesPreAckBrackets() throws {
+        var f = try fixture(thermalState: .serious)
+        var thermal = PublishingThermalTracker()
+        for i in 0...11 { thermal.observe(.init(state: .serious, sampledAt: 99.9 + Double(i))) }
+        f.diagnostics.thermal = thermal.snapshot
+        let w = try XCTUnwrap(local(f))
+        XCTAssertEqual(w.end, 110.9); XCTAssertEqual(w.start, 105.9)
+        f.applied.acknowledgedAt = 105.9
+        XCTAssertNotNil(try local(f))
+        // The current rate starts after the left enclosing sample at 105.
+        // Transport pressure must not borrow that pre-ack sample.
+        f = try fixture()
+        var transport = PublishingTransportStatisticsTracker()
+        for i in 0...11 {
+            transport.observe(.init(publishingGeneration: 7, sampledAt: 100 + Double(i), elapsedMilliseconds: Int64(i * 1000),
+                sentBytes: UInt64(i * 1000), retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 10,
+                estimatedBandwidthMbps: 999, senderBufferedBytes: 1000,
+                senderBufferMilliseconds: i == 5 ? 501 : 0, availableSenderBytes: 0))
+        }
+        f.diagnostics.transport = transport.snapshot; f.diagnostics.thermal = thermal.snapshot
+        f.applied.acknowledgedAt = 105.9
+        XCTAssertEqual(try local(f)?.end, 110.9)
+        XCTAssertEqual(try local(f)?.thermalPressure, .elevated)
+        XCTAssertEqual(try local(f)?.transportPressure, .unknown)
+        f.diagnostics.thermal = PublishingThermalTracker().snapshot
+        XCTAssertNil(try local(f)) // The only transport pressure was before acknowledgment.
+        f = try fixture(buffer: 501)
+        f.diagnostics.thermal = thermal.snapshot; f.applied.acknowledgedAt = 105.9
+        XCTAssertEqual(try local(f)?.end, 111) // Prefer the newer independently unhealthy endpoint.
+        XCTAssertEqual(try local(f)?.transportPressure, .elevated)
+        XCTAssertEqual(try local(f)?.thermalPressure, .unknown)
+    }
+    func testLocalGappedClosedAndQuarantinedHistoriesCannotTriggerDecrease() throws {
+        var f = try fixture()
+        for times in [[105.0, 111.0], [110.0, 109.0], [106.0, 107, 108, 109, 110, 111]] {
+            var thermal = PublishingThermalTracker()
+            for t in times { thermal.observe(.init(state: .critical, sampledAt: t)) }
+            if times.count > 2 { thermal.close() }
+            f.diagnostics.thermal = thermal.snapshot
+            XCTAssertNil(try local(f))
+        }
+        var transport = PublishingTransportStatisticsTracker()
+        for i in [0, 1, 2, 3, 4, 5] {
+            transport.observe(.init(publishingGeneration: 8, sampledAt: 106 + Double(i), elapsedMilliseconds: Int64(i * 1000),
+                sentBytes: UInt64(i * 1000), retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 999,
+                estimatedBandwidthMbps: 999, senderBufferedBytes: 0, senderBufferMilliseconds: 999, availableSenderBytes: 0))
+        }
+        f.diagnostics.transport = transport.snapshot
+        XCTAssertNil(try local(f))
+        var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+        ingress.updateOccupancy(items: 4, bytes: 100, phase: .admitting, at: 100)
+        ingress.updateOccupancy(items: 4, bytes: 100, phase: .draining, at: 109)
+        f.diagnostics.ingress = ingress.poll(at: 111)
+        XCTAssertNil(try local(f))
+    }
     func testBuildsWindowFromMatchedHistoryAndVerifiedReceiptRatherThanFixedScopeRevision() throws {
         let f = try fixture(), w = try window(f)
         XCTAssertEqual(w.appliedRevision, 0); XCTAssertEqual(f.source.interval.scope.appliedProfileRevision, 1)

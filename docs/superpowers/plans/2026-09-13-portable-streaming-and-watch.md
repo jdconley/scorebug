@@ -667,8 +667,15 @@ enable adaptive production behavior or finish physical phone/Watch/remote-host w
 
 The [confirmation timing correction](2026-09-16-native-trial-confirmation.md) now
 passes confirmation-required barcode and structured-motion native runs. The motion
-run preserves 3696 archive / 3266 acquired live frames at 30fps, with roughly 12 Mbps
-local and7.3–7.6Mbps live payload. One6.6Mbps trial is confirmed; a subsequent7.26Mbps
+run preserves 3696 archive / 3266 acquired live frames at 30 fps, with roughly 12 Mbps
+local and 7.3–7.6 Mbps live payload. One 6.6 Mbps trial is confirmed; a subsequent 7.26 Mbps
 trial is unconfirmed at stop. Network impairment is next, including the driver's
 need for an independently qualified local-pressure decrease path when matched
 receiver windows expire. Longer adaptive soaks and resolution/device/host gates remain.
+
+
+The [local-pressure fallback](2026-09-16-local-pressure-fallback.md) now has a pure
+app adapter tested against Core for downward-only action without receiver evidence.
+Nine new cases pass with all 171 FilmModel tests. It remains disconnected from the
+runtime driver; owner/driver/oracle integration and actual native impairment are
+the next stages. No new physical-device or remote-host qualification is claimed.
