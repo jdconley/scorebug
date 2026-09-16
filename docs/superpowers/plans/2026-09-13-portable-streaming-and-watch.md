@@ -731,3 +731,14 @@ failure. Streaming still fails recovery and retains its nonzero test result;
 actual encoder behavior remains the next correction target. The attached phone
 now reports iOS 26.7; selected Xcode 26.2 cannot mount its developer disk image,
 so installed signing identities alone do not enable physical phone/Watch tests.
+
+The [low-latency and half-resolution comparison](2026-09-16-encoder-low-latency.md)
+finds a candidate fallback: fresh 960×540 reduces actual compressed payload from
+5.576 to 3.521 Mbps for the same structured source, with all 1202 output frames and
+approximately 30 fps pacing. This does not yet prove adequate headroom on a 4 Mbps
+wire link or decoded visual quality. The low-latency encoder request is unavailable
+in the tested iOS 17.5 simulator (`-12908`); both failed attempts are retained.
+All 904 tooling tests and prior raw evidence replay pass. Next qualify this reduced
+live profile through the complete pipeline while local recording remains 1080p,
+then implement and test bounded dynamic profile changes. Production adaptation,
+actual bandwidth recovery and physical phone/Watch/remote-host gates remain open.

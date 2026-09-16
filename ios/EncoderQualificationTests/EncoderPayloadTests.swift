@@ -8,6 +8,62 @@ import XCTest
 /// Same encoder and DEBUG frame generator as the native publishing fixture.
 /// The only retained output is scalar metadata; no media enters a socket.
 final class EncoderPayloadTests: XCTestCase {
+    @MainActor func testFreshLowLatencyRateControl() async throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("Encoder payload qualification requires the iOS simulator")
+        #endif
+        let profile = ArchiveProfile()
+        let motion = try FixtureMotionPattern(profile: profile, pattern: .blocks16)
+        var normal = await measure(name: "freshDefault", rates: [1_500_000], profile: profile, motion: motion)
+        var lowLatency = await measure(name: "freshLowLatency", rates: [1_500_000], profile: profile, motion: motion,
+                                       lowLatencyRateControl: true)
+        normal["lowLatencyRateControlRequested"] = false
+        lowLatency["lowLatencyRateControlRequested"] = true
+        normal["encodedWidth"] = 1920; normal["encodedHeight"] = 1080
+        lowLatency["encodedWidth"] = 1920; lowLatency["encodedHeight"] = 1080
+        let report: [String: Any] = [
+            "formatVersion": 5, "experiment": "fresh-low-latency-rate-control",
+            "platform": "iOS Simulator", "workload": "motion-blocks16",
+            "width": profile.width, "height": profile.height, "framesPerSecond": 30,
+            "phaseFrames": 600, "settlingFrames": 150, "runs": [normal, lowLatency]
+        ]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
+                                       uniformTypeIdentifier: "public.json")
+        attachment.name = "EncoderLowLatency"; attachment.lifetime = .keepAlways
+        add(attachment)
+        for run in [normal, lowLatency] {
+            XCTAssertTrue(run["nativeFailure"] is NSNull, String(describing: run["nativeFailure"]))
+            XCTAssertEqual(run["errors"] as? [String], [])
+        }
+    }
+
+    @MainActor func testFreshHalfResolutionProfiles() async throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("Encoder payload qualification requires the iOS simulator")
+        #endif
+        let profile = ArchiveProfile()
+        let motion = try FixtureMotionPattern(profile: profile, pattern: .blocks16)
+        var full = await measure(name: "fresh1080p", rates: [1_500_000], profile: profile, motion: motion)
+        var reduced = await measure(name: "fresh540p", rates: [1_500_000], profile: profile, motion: motion,
+                                    outputSize: CGSize(width: 960, height: 540))
+        full["encodedWidth"] = 1920; full["encodedHeight"] = 1080
+        reduced["encodedWidth"] = 960; reduced["encodedHeight"] = 540
+        let report: [String: Any] = [
+            "formatVersion": 6, "experiment": "fresh-half-resolution-profiles",
+            "platform": "iOS Simulator", "workload": "motion-blocks16",
+            "width": profile.width, "height": profile.height, "framesPerSecond": 30,
+            "phaseFrames": 600, "settlingFrames": 150, "runs": [full, reduced]
+        ]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
+                                       uniformTypeIdentifier: "public.json")
+        attachment.name = "EncoderHalfResolution"; attachment.lifetime = .keepAlways
+        add(attachment)
+        for run in [full, reduced] {
+            XCTAssertTrue(run["nativeFailure"] is NSNull, String(describing: run["nativeFailure"]))
+            XCTAssertEqual(run["errors"] as? [String], [])
+        }
+    }
+
     @MainActor func testFreshResolutionProfiles() async throws {
         #if !targetEnvironment(simulator)
         throw XCTSkip("Encoder payload qualification requires the iOS simulator")
@@ -109,7 +165,8 @@ final class EncoderPayloadTests: XCTestCase {
 
     @MainActor private func measure(name: String, rates: [Int], profile: ArchiveProfile,
                                     motion: FixtureMotionPattern, prepareFrameRateEarly: Bool = false,
-                                    outputSize: CGSize = CGSize(width: 1920, height: 1080)) async -> [String: Any] {
+                                    outputSize: CGSize = CGSize(width: 1920, height: 1080),
+                                    lowLatencyRateControl: Bool = false) async -> [String: Any] {
         let expected = rates.count * 600 + 1
         let recorder = PayloadRecorder(limit: expected)
         let codec = VideoCodec(encoderConfigurationObserver: recorder.observe,
@@ -117,7 +174,8 @@ final class EncoderPayloadTests: XCTestCase {
         // Fresh-low is configured before bootstrap, not lowered from 6 Mbps.
         codec.settings = VideoCodecSettings(videoSize: outputSize,
             bitRate: rates[0], profileLevel: kVTProfileLevel_H264_High_AutoLevel as String,
-            maxKeyFrameIntervalDuration: 2, allowFrameReordering: false, expectedFrameRate: 30)
+            maxKeyFrameIntervalDuration: 2, allowFrameReordering: false,
+            isLowLatencyRateControlEnabled: lowLatencyRateControl, expectedFrameRate: 30)
         let output = codec.outputStream
         let consumer = Task.detached {
             for await sample in output { recorder.deliver(sample) }
@@ -187,7 +245,7 @@ final class EncoderPayloadTests: XCTestCase {
                 snapshot["encoderSessionID"] = configuration.encoderSessionID.uuidString
                 native[key] = snapshot
             }
-        } catch { failure = String(describing: error) }
+        } catch { if failure == nil { failure = String(describing: error) } }
         codec.stopRunning()
         await consumer.value
         var report = recorder.report()

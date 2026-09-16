@@ -226,3 +226,75 @@ test('rejects mixed identities, dropped frames, invalid bytes and receipt timing
     assert.throws(() => qualifyEncoderPayload(f));
   }
 });
+
+function lowLatencyFixture() {
+  const report = resolutionFixture();
+  report.formatVersion = 5;
+  report.experiment = 'fresh-low-latency-rate-control';
+  for (const [i, run] of report.runs.entries()) {
+    run.name = i === 0 ? 'freshDefault' : 'freshLowLatency';
+    run.lowLatencyRateControlRequested = i === 1;
+    run.encodedWidth = 1920;
+    run.encodedHeight = 1080;
+    for (const frame of run.frames) {
+      frame.encodedWidth = 1920;
+      frame.encodedHeight = 1080;
+    }
+  }
+  return report;
+}
+test('version 5 qualifies the fixed low-latency request comparison without assuming effectiveness', () => {
+  assert.equal(qualifyEncoderPayload(lowLatencyFixture()).lowLatencyToDefault, 1);
+  for (const mutate of [
+    (r) => (r.experiment = 'different'),
+    (r) => r.runs.reverse(),
+    (r) => delete r.runs[1].lowLatencyRateControlRequested,
+    (r) => (r.runs[1].lowLatencyRateControlRequested = false),
+    (r) => (r.runs[1].lowLatencyRateControlRequested = 'true'),
+    (r) => (r.runs[0].encodedWidth = 1280),
+    (r) => (r.runs[1].frames[10].encodedWidth = 1280),
+    (r) => delete r.runs[1].frames[10].encodedHeight,
+    (r) => (r.runs[1].nativeFailure = 'unsupported'),
+    (r) => r.runs[1].frames.pop(),
+  ]) {
+    const report = lowLatencyFixture();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});
+test('reports a native creation failure before absent success-only snapshots', () => {
+  const report = lowLatencyFixture();
+  report.runs[1].nativeFailure = 'codecFailed(status: -12908)';
+  report.runs[1].native = {};
+  report.runs[1].frames = [];
+  assert.throws(() => qualifyEncoderPayload(report), /codecFailed\(status: -12908\)/);
+});
+function halfResolutionFixture() {
+  const report = resolutionFixture();
+  report.formatVersion = 6;
+  report.experiment = 'fresh-half-resolution-profiles';
+  const run = report.runs[1];
+  run.name = 'fresh540p';
+  run.encodedWidth = 960;
+  run.encodedHeight = 540;
+  for (const frame of run.frames) {
+    frame.encodedWidth = 960;
+    frame.encodedHeight = 540;
+  }
+  return report;
+}
+test('version 6 pins the half-resolution pair and every actual output dimension', () => {
+  assert.equal(qualifyEncoderPayload(halfResolutionFixture()).reducedToFull, 1);
+  for (const mutate of [
+    (r) => (r.experiment = 'fresh-resolution-profiles'),
+    (r) => (r.runs[1].name = 'fresh720p'),
+    (r) => (r.runs[1].encodedWidth = 1280),
+    (r) => (r.runs[1].frames[45].encodedHeight = 720),
+    (r) => r.runs.reverse(),
+    (r) => r.runs[1].frames.pop(),
+  ]) {
+    const report = halfResolutionFixture();
+    mutate(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});

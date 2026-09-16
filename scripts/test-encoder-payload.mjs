@@ -8,22 +8,40 @@ import { createOwnedSimulator } from './owned-simulator.mjs';
 import { qualifyEncoderPayload } from './encoder-payload-qualification.mjs';
 
 assert.equal(process.platform, 'darwin');
+const halfResolution = process.argv.slice(2).includes('--half-resolution');
+const lowLatency = process.argv.slice(2).includes('--low-latency');
 const preparation = process.argv.slice(2).includes('--preparation');
 const resolution = process.argv.slice(2).includes('--resolution');
 assert.deepEqual(
   process.argv.slice(2),
-  resolution ? ['--resolution'] : preparation ? ['--preparation'] : [],
+  halfResolution
+    ? ['--half-resolution']
+    : lowLatency
+      ? ['--low-latency']
+      : resolution
+        ? ['--resolution']
+        : preparation
+          ? ['--preparation']
+          : [],
 );
-const method = resolution
-  ? 'testFreshResolutionProfiles'
-  : preparation
-    ? 'testFreshFrameRatePreparation'
-    : 'testControlledRatesAndFreshLowEncoder';
-const attachmentName = resolution
-  ? 'EncoderResolution'
-  : preparation
-    ? 'EncoderPreparation'
-    : 'EncoderPayload';
+const method = halfResolution
+  ? 'testFreshHalfResolutionProfiles'
+  : lowLatency
+    ? 'testFreshLowLatencyRateControl'
+    : resolution
+      ? 'testFreshResolutionProfiles'
+      : preparation
+        ? 'testFreshFrameRatePreparation'
+        : 'testControlledRatesAndFreshLowEncoder';
+const attachmentName = halfResolution
+  ? 'EncoderHalfResolution'
+  : lowLatency
+    ? 'EncoderLowLatency'
+    : resolution
+      ? 'EncoderResolution'
+      : preparation
+        ? 'EncoderPreparation'
+        : 'EncoderPayload';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 assert.match(runtime, /^\d+\.\d+(?:\.\d+)?$/);
@@ -38,11 +56,15 @@ const artifact = await mkdtemp(
   join(
     root,
     'artifacts/qa/' +
-      (resolution
-        ? 'encoder-resolution-'
-        : preparation
-          ? 'encoder-preparation-'
-          : 'encoder-payload-'),
+      (halfResolution
+        ? 'encoder-half-resolution-'
+        : lowLatency
+          ? 'encoder-low-latency-'
+          : resolution
+            ? 'encoder-resolution-'
+            : preparation
+              ? 'encoder-preparation-'
+              : 'encoder-payload-'),
   ),
 );
 console.log('Encoder payload diagnostic evidence: ' + artifact);
@@ -150,7 +172,7 @@ try {
   const report = JSON.parse(raw);
   assert.equal(
     report.formatVersion,
-    resolution ? 4 : preparation ? 3 : 2,
+    halfResolution ? 6 : lowLatency ? 5 : resolution ? 4 : preparation ? 3 : 2,
     'Current probe must supply native property snapshots',
   );
   const result = qualifyEncoderPayload(report);
@@ -164,6 +186,7 @@ try {
         dynamicLowToFreshLow: result.dynamicLowToFreshLow,
         earlyToLate: result.earlyToLate,
         reducedToFull: result.reducedToFull,
+        lowLatencyToDefault: result.lowLatencyToDefault,
         scope: result.scope,
       }),
   );

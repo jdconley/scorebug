@@ -11,11 +11,18 @@ const percentile = (rows, fraction) =>
 /** Actual compressed sample payload, excluding muxer/transport/retransmission.
  * Evidence validity does not presuppose a requested bitrate is achievable. */
 export function qualifyEncoderPayload(report) {
-  assert.ok([1, 2, 3, 4].includes(report.formatVersion));
+  assert.ok([1, 2, 3, 4, 5, 6].includes(report.formatVersion));
   const preparation = report.formatVersion === 3;
-  const resolution = report.formatVersion === 4;
+  const halfResolution = report.formatVersion === 6;
+  const resolution = report.formatVersion === 4 || halfResolution;
+  const lowLatency = report.formatVersion === 5;
+  if (lowLatency) assert.equal(report.experiment, 'fresh-low-latency-rate-control');
   if (preparation) assert.equal(report.experiment, 'frame-rate-before-prepare');
-  if (resolution) assert.equal(report.experiment, 'fresh-resolution-profiles');
+  if (resolution)
+    assert.equal(
+      report.experiment,
+      halfResolution ? 'fresh-half-resolution-profiles' : 'fresh-resolution-profiles',
+    );
   assert.equal(report.platform, 'iOS Simulator');
   assert.equal(report.workload, 'motion-blocks16');
   assert.equal(report.width, 1920);
@@ -31,26 +38,46 @@ export function qualifyEncoderPayload(report) {
   for (const [index, run] of report.runs.entries()) {
     assert.equal(
       run.name,
-      resolution
+      lowLatency
         ? index === 0
-          ? 'fresh1080p'
-          : 'fresh720p'
-        : preparation
+          ? 'freshDefault'
+          : 'freshLowLatency'
+        : resolution
           ? index === 0
-            ? 'freshLate'
-            : 'freshEarly'
-          : index === 0
-            ? 'dynamic'
-            : 'freshLow',
+            ? 'fresh1080p'
+            : halfResolution
+              ? 'fresh540p'
+              : 'fresh720p'
+          : preparation
+            ? index === 0
+              ? 'freshLate'
+              : 'freshEarly'
+            : index === 0
+              ? 'dynamic'
+              : 'freshLow',
     );
     if (preparation)
       assert.equal(run.preparation, index === 0 ? 'production' : 'expectedFrameRateBeforePrepare');
-    if (resolution) {
-      assert.equal(run.encodedWidth, index === 0 ? 1920 : 1280);
-      assert.equal(run.encodedHeight, index === 0 ? 1080 : 720);
+    if (lowLatency) assert.equal(run.lowLatencyRateControlRequested, index === 1);
+    if (resolution || lowLatency) {
+      assert.equal(
+        run.encodedWidth,
+        resolution && index === 1 ? (halfResolution ? 960 : 1280) : 1920,
+      );
+      assert.equal(
+        run.encodedHeight,
+        resolution && index === 1 ? (halfResolution ? 540 : 720) : 1080,
+      );
     }
     const rates =
-      !preparation && !resolution && index === 0 ? [6000000, 1500000, 6000000] : [1500000];
+      !preparation && !resolution && !lowLatency && index === 0
+        ? [6000000, 1500000, 6000000]
+        : [1500000];
+    assert.equal(
+      run.nativeFailure,
+      null,
+      'Native encoder failed: ' + String(run.nativeFailure).slice(0, 256),
+    );
     if (report.formatVersion >= 2) {
       assert.deepEqual(Object.keys(run.native).sort(), ['bootstrap', 'final']);
       qualifyNativeEncoderSnapshot(run.native.bootstrap, rates[0]);
@@ -61,7 +88,6 @@ export function qualifyEncoderPayload(report) {
       );
     }
     assert.deepEqual(run.errors, []);
-    assert.equal(run.nativeFailure, null);
     assert.equal(
       run.bootstrapNativeBitRate,
       rates[0],
@@ -99,7 +125,7 @@ export function qualifyEncoderPayload(report) {
       assert.equal(fixtureFrameID(f.sourcePTS), i);
       assert.equal(fixtureFrameID(f.outputPTS), i);
       assert.equal(f.encoderSessionID, session);
-      if (resolution) {
+      if (resolution || lowLatency) {
         assert.equal(f.encodedWidth, run.encodedWidth);
         assert.equal(f.encodedHeight, run.encodedHeight);
       }
@@ -161,6 +187,13 @@ export function qualifyEncoderPayload(report) {
   }
   const scope =
     'Compressed H.264 sample payload under paced simulator input; not network capacity, recovery or physical-device qualification.';
+  if (lowLatency)
+    return {
+      frames: totalFrames,
+      phases,
+      lowLatencyToDefault: phases[1].meanMbps / phases[0].meanMbps,
+      scope,
+    };
   if (resolution)
     return {
       frames: totalFrames,

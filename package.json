@@ -43,7 +43,9 @@
     "test:relay-origin": "pnpm --filter @scorebug/home-daemon exec tsx ../../scripts/test-relay-clock.mjs --mapping-image=scorebug/ingest:clock-v2",
     "test:encoder-payload": "node scripts/test-encoder-payload.mjs",
     "test:encoder-preparation": "node scripts/test-encoder-payload.mjs --preparation",
-    "test:encoder-resolution": "node scripts/test-encoder-payload.mjs --resolution"
+    "test:encoder-resolution": "node scripts/test-encoder-payload.mjs --resolution",
+    "test:encoder-low-latency": "node scripts/test-encoder-payload.mjs --low-latency",
+    "test:encoder-half-resolution": "node scripts/test-encoder-payload.mjs --half-resolution"
   },
   "devDependencies": {
     "prettier": "^3.3.3",
