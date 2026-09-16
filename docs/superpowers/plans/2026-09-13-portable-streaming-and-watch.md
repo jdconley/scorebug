@@ -691,3 +691,13 @@ connection. All proxy counters conserve, with no drops/errors/foreign peers and
 joined closure. All 180 FilmModel / 872 tooling tests and unsigned Apple Release
 pass. This is a pass-through baseline; scheduled bandwidth pressure and recovery
 remain the next gate.
+
+
+The first [scheduled 4 Mbps diagnostic](2026-09-16-native-uplink-impairment.md#first-limited-rate-result-live-recovery-fails)
+fails live recovery: bitrate settings decrease, but output stalls and publishing
+ends before bandwidth returns. The retained archive recovers 6600 consecutive
+frames (220 seconds), with full decode, coverage and sync checks. This is a clean
+committed prefix after an interrupted UI test, not a normally finalized capture.
+All 883 tooling tests pass for the bounded scheduler and phase verifier. The next
+gate measures achieved encoder payload under controlled rate changes; the retained
+transport counters alone cannot identify the cause of insufficient rate reduction.

@@ -83,6 +83,7 @@ test('qualifies actual bidirectional passthrough and rejects corrupt or incomple
     reverseWireBytes: 35,
   });
   const mutations = [
+    (s) => (s.forwardRateSchedule = {}),
     (s) => (s.formatVersion = 2),
     (s) => (s.foreignPeerPackets = 1),
     (s) => s.errors.push('EIO'),

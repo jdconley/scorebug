@@ -13,7 +13,10 @@ import {
 import { qualifyIngressObservation } from './ingress-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
-import { qualifyNativeUplinkProxy } from './native-uplink-qualification.mjs';
+import {
+  qualifyNativeUplinkProxy,
+  qualifyNativeUplinkSchedule,
+} from './native-uplink-qualification.mjs';
 import { qualifyNativeQuality } from './native-quality-qualification.mjs';
 import { qualifyWorkerProcessingReports } from './worker-processing-qualification.mjs';
 import { qualifySourceIntervals } from './source-interval-qualification.mjs';
@@ -64,6 +67,7 @@ const uplinkProfile = nativeUplinkOptions({
   requireProcessing,
   requirePublication,
   fixtureWorkload,
+  holdSeconds: streamingOptions.holdSeconds,
 });
 // Keep the exact validated mode through the Xcode/UITest/app boundary.
 const fixtureMotionFlag = process.env.SCOREBUG_TEST_MOTION_FIXTURE ?? '';
@@ -482,7 +486,7 @@ try {
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
   const uplinkQualification = uplinkProfile
-    ? qualifyNativeUplinkProxy(
+    ? (uplinkProfile === 'rate4m' ? qualifyNativeUplinkSchedule : qualifyNativeUplinkProxy)(
         JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'), 'utf8')),
       )
     : undefined;
@@ -676,7 +680,7 @@ try {
     ),
   );
   console.log(
-    `PASS: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${uplinkProfile === 'rate4m' ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

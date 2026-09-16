@@ -164,3 +164,96 @@ for (const direction of ['forward', 'reverse'])
     conserved(snapshot.forward.queue);
     conserved(snapshot.reverse.queue);
   });
+
+test('owned schedule starts on the publisher and repumps preserved FIFO on recovery', async (t) => {
+  const receiver = await socket(t),
+    client = await socket(t),
+    messages = [];
+  receiver.on('message', (data) => messages.push(data[0]));
+  const schedule = [
+    { atMilliseconds: 0, rateBitsPerSecond: null },
+    { atMilliseconds: 30, rateBitsPerSecond: 1024 },
+    { atMilliseconds: 500, rateBitsPerSecond: null },
+  ];
+  const proxy = await createUDPImpairmentProxy({
+    receiverPort: receiver.address().port,
+    forward: { burstBytes: 256, maxDatagramBytes: 128 },
+    forwardRateSchedule: schedule,
+  });
+  t.after(() => proxy.close());
+  schedule[1].rateBitsPerSecond = 1e12; // Caller cannot mutate the owned schedule.
+  assert.equal(proxy.snapshot().forwardRateSchedule.startedAt, null);
+  await delay(40);
+  assert.equal(proxy.snapshot().forwardRateSchedule.phases.length, 0);
+  client.send(Buffer.from([0]), proxy.port, '127.0.0.1');
+  await until(() => proxy.snapshot().forwardRateSchedule.phases.length === 2);
+  for (let i = 1; i <= 5; i++) client.send(Buffer.alloc(100, i), proxy.port, '127.0.0.1');
+  await until(() => proxy.snapshot().forward.queue.received.packets === 6);
+  assert.ok(proxy.snapshot().forward.queue.queue.packets >= 3);
+  await until(() => messages.length === 6);
+  assert.deepEqual(messages, [0, 1, 2, 3, 4, 5]);
+  await proxy.close();
+  const s = proxy.snapshot(),
+    phases = s.forwardRateSchedule.phases;
+  assert.equal(s.closed, true);
+  assert.equal(phases.length, 3);
+  assert.equal(phases[0].forward.queue.received.packets, 0);
+  assert.equal(phases[1].rateBitsPerSecond, 1024);
+  assert.ok(phases[1].appliedAt >= s.forwardRateSchedule.startedAt + 30);
+  assert.ok(phases[2].appliedAt >= s.forwardRateSchedule.startedAt + 500);
+  assert.equal(phases[2].forward.queue.configuration.rateBitsPerSecond, null);
+  assert.ok(phases[2].forward.queue.queue.packets > 0, 'Boundary snapshot precedes recovery drain');
+  assert.ok(
+    phases[2].forward.queue.forwarded.wireBytes - phases[1].forward.queue.forwarded.wireBytes <=
+      256 + ((phases[2].appliedAt - phases[1].appliedAt) * 1024) / 8000 + 1,
+  );
+  conserved(s.forward.queue);
+  assert.equal(s.forward.queue.closeDiscard.packets, 0);
+  assert.equal(s.forward.pendingPackets, 0);
+});
+test('no-peer and interrupted schedules close without future phase mutations', async (t) => {
+  const receiver = await socket(t),
+    client = await socket(t);
+  const configuration = {
+    receiverPort: receiver.address().port,
+    forwardRateSchedule: [
+      { atMilliseconds: 0, rateBitsPerSecond: null },
+      { atMilliseconds: 60, rateBitsPerSecond: 1024 },
+    ],
+  };
+  const idle = await createUDPImpairmentProxy(configuration);
+  await idle.close();
+  assert.equal(idle.snapshot().forwardRateSchedule.startedAt, null);
+  assert.deepEqual(idle.snapshot().forwardRateSchedule.phases, []);
+  const active = await createUDPImpairmentProxy(configuration);
+  t.after(() => active.close());
+  client.send(Buffer.from('start'), active.port, '127.0.0.1');
+  await until(() => active.snapshot().forwardRateSchedule.phases.length === 1);
+  await active.close();
+  const snapshot = active.snapshot();
+  await delay(80);
+  assert.deepEqual(active.snapshot(), snapshot);
+});
+test('schedule validation rejects timer overflow and malformed phases before allocating sockets', async () => {
+  const start = { atMilliseconds: 0, rateBitsPerSecond: null };
+  for (const forwardRateSchedule of [
+    [],
+    [start],
+    [start, { atMilliseconds: 1, rateBitsPerSecond: 0 }],
+    [start, { atMilliseconds: 600001, rateBitsPerSecond: 1 }],
+    [start, { atMilliseconds: Infinity, rateBitsPerSecond: 1 }],
+    [start, { atMilliseconds: 1.5, rateBitsPerSecond: 1 }],
+    [start, { atMilliseconds: 0, rateBitsPerSecond: 1 }],
+    [start, { atMilliseconds: 1, rateBitsPerSecond: 1, extra: true }],
+    [
+      { atMilliseconds: 1, rateBitsPerSecond: null },
+      { atMilliseconds: 2, rateBitsPerSecond: 1 },
+    ],
+    [
+      { atMilliseconds: 0, rateBitsPerSecond: 1 },
+      { atMilliseconds: 2, rateBitsPerSecond: null },
+    ],
+    Array.from({ length: 9 }, (_, atMilliseconds) => ({ atMilliseconds, rateBitsPerSecond: null })),
+  ])
+    await assert.rejects(createUDPImpairmentProxy({ receiverPort: 9, forwardRateSchedule }));
+});

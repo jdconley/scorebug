@@ -89,6 +89,7 @@ export function nativeUplinkOptions({
   requireProcessing,
   requirePublication,
   fixtureWorkload,
+  holdSeconds,
 }) {
   assert.equal(
     environment.SCOREBUG_TEST_UPLINK_PROXY_PORT,
@@ -97,7 +98,12 @@ export function nativeUplinkOptions({
   );
   const profile = environment.SCOREBUG_TEST_UPLINK_PROFILE;
   if (profile === undefined) return null;
-  assert.equal(profile, 'passthrough', 'Unsupported native uplink profile');
+  assert.ok(['passthrough', 'rate4m'].includes(profile), 'Unsupported native uplink profile');
+  if (profile === 'rate4m')
+    assert.ok(
+      Number.isSafeInteger(holdSeconds) && holdSeconds >= 180 && holdSeconds <= 600,
+      'Scheduled uplink requires 180 through 600 seconds hold',
+    );
   assert.ok(
     streaming &&
       requireQuality &&

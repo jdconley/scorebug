@@ -12,6 +12,39 @@ const defaults = Object.freeze({
   maxQueueBytes: 262144,
 });
 const counters = () => ({ packets: 0, wireBytes: 0 });
+function validateRate(rate) {
+  assert.ok(rate === null || (Number.isFinite(rate) && rate >= 1 && rate <= 1e12), 'Invalid rate');
+}
+function validateSchedule(schedule, initialRate) {
+  if (schedule === null) return null;
+  assert.ok(
+    Array.isArray(schedule) && schedule.length >= 2 && schedule.length <= 8,
+    'Invalid forward rate schedule',
+  );
+  let previous = -1;
+  for (const phase of schedule) {
+    assert.ok(
+      phase &&
+        typeof phase === 'object' &&
+        Object.keys(phase).length === 2 &&
+        'atMilliseconds' in phase &&
+        'rateBitsPerSecond' in phase,
+      'Invalid rate phase',
+    );
+    assert.ok(
+      Number.isSafeInteger(phase.atMilliseconds) &&
+        phase.atMilliseconds >= 0 &&
+        phase.atMilliseconds <= 600000 &&
+        phase.atMilliseconds > previous,
+      'Invalid phase offset',
+    );
+    validateRate(phase.rateBitsPerSecond);
+    previous = phase.atMilliseconds;
+  }
+  assert.equal(schedule[0].atMilliseconds, 0, 'Schedule must begin at zero');
+  assert.equal(schedule[0].rateBitsPerSecond, initialRate, 'Initial phase must match queue rate');
+  return structuredClone(schedule);
+}
 
 /** Opaque IPv4 UDP fixture queue. Rate includes 28-byte IPv4/UDP headers;
  * payload already includes SRT headers. Actual elapsed time replenishes a bounded
@@ -39,13 +72,7 @@ export class DatagramImpairmentQueue {
     for (const key of Object.keys(configuration))
       assert.ok(key in defaults, `Unknown impairment option ${key}`);
     const c = { ...defaults, ...configuration };
-    assert.ok(
-      c.rateBitsPerSecond === null ||
-        (Number.isFinite(c.rateBitsPerSecond) &&
-          c.rateBitsPerSecond >= 1 &&
-          c.rateBitsPerSecond <= 1e12),
-      'Invalid rate',
-    );
+    validateRate(c.rateBitsPerSecond);
     assert.ok(
       Number.isFinite(c.delayMilliseconds) &&
         c.delayMilliseconds >= 0 &&
@@ -79,6 +106,13 @@ export class DatagramImpairmentQueue {
         this.#tokens + ((now - this.#lastTime) * c.rateBitsPerSecond) / 8000,
       );
     this.#lastTime = now;
+  }
+  setRate(rateBitsPerSecond, now) {
+    assert.ok(!this.#closed, 'Cannot change a closed queue');
+    validateRate(rateBitsPerSecond);
+    // Advance at the old rate, preserving the token balance and FIFO deadlines.
+    this.#advance(now);
+    this.#configuration = Object.freeze({ ...this.#configuration, rateBitsPerSecond });
   }
   #account(kind, bytes) {
     this.#counts[kind].packets++;
@@ -180,8 +214,12 @@ export class DatagramImpairmentQueue {
 export async function createUDPImpairmentProxy(configuration) {
   assert.ok(configuration && typeof configuration === 'object');
   for (const key of Object.keys(configuration))
-    assert.ok(['receiverPort', 'forward', 'reverse'].includes(key), 'Unknown proxy option');
-  const { receiverPort, forward = {}, reverse = {} } = configuration;
+    assert.ok(
+      ['receiverPort', 'forward', 'reverse', 'forwardRateSchedule'].includes(key),
+      'Unknown proxy option',
+    );
+  const { receiverPort, forward = {}, reverse = {}, forwardRateSchedule = null } = configuration;
+  const schedule = validateSchedule(forwardRateSchedule, forward.rateBitsPerSecond ?? null);
   assert.ok(
     Number.isInteger(receiverPort) && receiverPort > 0 && receiverPort <= 65535,
     'Invalid loopback receiver port',
@@ -205,6 +243,39 @@ export async function createUDPImpairmentProxy(configuration) {
     closePromise,
     resolvePending;
   const errors = [];
+  let scheduleStartedAt = null,
+    scheduleStoppedAt = null,
+    scheduleTimer = null,
+    phaseIndex = 0;
+  const phases = [];
+  function applyDuePhases() {
+    if (closing || !schedule || scheduleStartedAt === null) return;
+    clearTimeout(scheduleTimer);
+    scheduleTimer = null;
+    const now = performance.now();
+    while (
+      phaseIndex < schedule.length &&
+      now >= scheduleStartedAt + schedule[phaseIndex].atMilliseconds
+    ) {
+      const phase = schedule[phaseIndex++];
+      outgoing.queue.setRate(phase.rateBitsPerSecond, now);
+      phases.push({
+        ...phase,
+        appliedAt: now,
+        forward: directionSnapshot(outgoing),
+        reverse: directionSnapshot(incoming),
+      });
+    }
+    pump(outgoing, sendForward);
+    if (!closing && phaseIndex < schedule.length)
+      scheduleTimer = setTimeout(
+        applyDuePhases,
+        Math.max(
+          1,
+          Math.ceil(scheduleStartedAt + schedule[phaseIndex].atMilliseconds - performance.now()),
+        ),
+      );
+  }
   function closeSocket(socket) {
     return new Promise((resolve) => {
       try {
@@ -219,6 +290,9 @@ export async function createUDPImpairmentProxy(configuration) {
   function close() {
     if (closePromise) return closePromise;
     closing = true;
+    scheduleStoppedAt = performance.now();
+    clearTimeout(scheduleTimer);
+    scheduleTimer = null;
     for (const direction of [outgoing, incoming]) {
       clearTimeout(direction.timer);
       direction.timer = null;
@@ -284,7 +358,13 @@ export async function createUDPImpairmentProxy(configuration) {
       foreignPeerPackets++;
       return;
     }
-    peer ??= { address: rinfo.address, port: rinfo.port };
+    if (!peer) {
+      peer = { address: rinfo.address, port: rinfo.port };
+      if (schedule) {
+        scheduleStartedAt = performance.now();
+        applyDuePhases();
+      }
+    }
     outgoing.queue.enqueue(data, performance.now());
     pump(outgoing, sendForward);
   });
@@ -315,6 +395,16 @@ export async function createUDPImpairmentProxy(configuration) {
         closed,
         foreignPeerPackets,
         errors: [...errors],
+        ...(schedule
+          ? {
+              forwardRateSchedule: {
+                requested: structuredClone(schedule),
+                startedAt: scheduleStartedAt,
+                stoppedAt: scheduleStoppedAt,
+                phases: structuredClone(phases),
+              },
+            }
+          : {}),
         forward: directionSnapshot(outgoing),
         reverse: directionSnapshot(incoming),
       }),

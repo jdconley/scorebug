@@ -27,7 +27,7 @@ export async function nativeStreamingFixture({
 }) {
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
-    uplinkProfile === null || uplinkProfile === 'passthrough',
+    uplinkProfile === null || ['passthrough', 'rate4m'].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
   const names = [];
@@ -168,7 +168,19 @@ export async function nativeStreamingFixture({
       }
       assert.ok(ready, `${kind} readiness`);
     }
-    if (uplinkProfile) uplink = await createUDPImpairmentProxy({ receiverPort: ingestPort });
+    if (uplinkProfile)
+      uplink = await createUDPImpairmentProxy({
+        receiverPort: ingestPort,
+        ...(uplinkProfile === 'rate4m'
+          ? {
+              forwardRateSchedule: [
+                { atMilliseconds: 0, rateBitsPerSecond: null },
+                { atMilliseconds: 60000, rateBitsPerSecond: 4000000 },
+                { atMilliseconds: 120000, rateBitsPerSecond: null },
+              ],
+            }
+          : {}),
+      });
     if (useDirectRecorder)
       directRecorder = await startDirectRTMPRecorder({
         artifact,

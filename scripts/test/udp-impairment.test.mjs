@@ -147,3 +147,64 @@ test('rejects rates that overflow the supported timer range', () => {
   for (const rateBitsPerSecond of [Number.MIN_VALUE, 0.5])
     assert.throws(() => new DatagramImpairmentQueue({ ...config, rateBitsPerSecond }));
 });
+
+test('rate changes settle old-rate credits and preserve FIFO, delay and accounting', () => {
+  const q = new DatagramImpairmentQueue({ ...config, delayMilliseconds: 0 });
+  for (let i = 0; i < 5; i++) q.enqueue(Buffer.alloc(100, i), 0);
+  assert.equal(q.takeReady(0)[0], 0);
+  assert.equal(q.takeReady(0)[0], 1);
+  q.setRate(2048, 500); // 64 bytes earned at old rate, not 128 at new rate.
+  assert.equal(q.takeReady(500), null);
+  assert.equal(q.nextDelay(500), 250);
+  assert.equal(q.takeReady(750)[0], 2);
+  assert.equal(q.nextDelay(750), 500);
+  q.setRate(1024, 1000); // Another 64 bytes, old rate.
+  assert.equal(q.takeReady(1499), null);
+  assert.equal(q.takeReady(1500)[0], 3);
+  assert.equal(q.nextDelay(1500), 1000);
+  conserved(q.snapshot());
+});
+test('unlimited transitions cannot reset tokens or queued delay deadlines', () => {
+  const q = new DatagramImpairmentQueue(config);
+  for (let i = 0; i < 5; i++) q.enqueue(Buffer.alloc(100, i), 0);
+  q.takeReady(100);
+  q.takeReady(100);
+  q.setRate(null, 100);
+  assert.equal(q.takeReady(100)[0], 2);
+  q.setRate(1024, 100000);
+  assert.equal(q.takeReady(100000), null, 'Unlimited time cannot create credits');
+  assert.equal(q.takeReady(101000)[0], 3);
+  q.setRate(null, 101000);
+  assert.equal(q.takeReady(101000)[0], 4);
+  q.enqueue(Buffer.alloc(100, 5), 101000);
+  q.setRate(1024, 101000);
+  assert.equal(q.takeReady(101099), null);
+  assert.equal(q.takeReady(102000)[0], 5);
+  conserved(q.snapshot());
+});
+test('invalid or closed rate updates are atomic', () => {
+  const q = new DatagramImpairmentQueue(config);
+  q.enqueue(Buffer.alloc(1), 10);
+  const before = q.snapshot();
+  for (const rate of [undefined, 0, -1, NaN, Infinity, 1e13, 0.5, '1024'])
+    assert.throws(() => q.setRate(rate, 1000));
+  for (const time of [9, NaN, Infinity, -1]) assert.throws(() => q.setRate(2048, time));
+  assert.deepEqual(q.snapshot(), before);
+  assert.equal(q.takeReady(110).length, 1);
+  q.close();
+  const closed = q.snapshot();
+  assert.throws(() => q.setRate(null, 110));
+  assert.deepEqual(q.snapshot(), closed);
+});
+test('same-rate updates cannot grant repeated burst credit', () => {
+  const q = new DatagramImpairmentQueue({ ...config, delayMilliseconds: 0 });
+  for (let i = 0; i < 5; i++) q.enqueue(Buffer.alloc(100), 0);
+  q.takeReady(0);
+  q.takeReady(0);
+  for (let i = 0; i < 5; i++) {
+    q.setRate(1024, 0);
+    assert.equal(q.takeReady(0), null);
+  }
+  assert.equal(q.takeReady(1000).length, 100);
+  conserved(q.snapshot());
+});
