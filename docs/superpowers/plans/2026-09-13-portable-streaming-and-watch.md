@@ -719,3 +719,15 @@ produces more payload for the same structured source than 1080p (7.614 versus
 qualify 7208 frames, and 897 tooling tests pass. Native property evidence is now
 bounded and tied to encoder-session ownership. Physical encoder behavior, reliable
 live recovery and archive finalization during failed live tests remain next gates.
+
+
+The [failed-live finalization checkpoint](2026-09-16-native-failure-finalization.md)
+now preserves a normally stopped/exported archive during the scheduled 4 Mbps
+failure: 8020 consecutive frames (267.333 seconds) at 30 fps, complete A/V decode
+and sync, every accepted sample persisted and zero queue rejection/drop. The
+healthy baseline also passes with 3608 local / 3208 acquired live frames. All 901
+tooling tests pass. Bounded worker/publication histories now survive workflow
+failure. Streaming still fails recovery and retains its nonzero test result;
+actual encoder behavior remains the next correction target. The attached phone
+now reports iOS 26.7; selected Xcode 26.2 cannot mount its developer disk image,
+so installed signing identities alone do not enable physical phone/Watch tests.

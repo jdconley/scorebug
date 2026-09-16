@@ -15,6 +15,7 @@ import { immutableWindow, remoteWindowIdentity } from './worker-report-age-quali
 import { recordWorkerProcessingEvidence } from './worker-processing-qualification.mjs';
 import { recordWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
 import { recordPublishingAttemptEvidence } from './publishing-attempt-evidence.mjs';
+import { saveNativeStatusEvidence } from './native-status-evidence.mjs';
 
 /** Owned, loopback-only proxy fixtures. No ambient worker or relay is used. */
 export async function nativeStreamingFixture({
@@ -42,6 +43,18 @@ export async function nativeStreamingFixture({
   async function stopStatus() {
     statusAbort?.abort();
     await statusTask;
+  }
+  async function saveStatus() {
+    await saveNativeStatusEvidence({
+      artifact,
+      decodedWindowLimit,
+      requirePublication,
+      collectorError: statusError,
+      publications,
+      workerPublications,
+      workerProcessing,
+      decodedWindows,
+    });
   }
   async function port(udp = false) {
     const socket = udp ? createSocket('udp4') : createServer();
@@ -81,6 +94,11 @@ export async function nativeStreamingFixture({
     const errors = [];
     try {
       await stopStatus();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await saveStatus();
     } catch (error) {
       errors.push(error);
     }
@@ -335,25 +353,8 @@ export async function nativeStreamingFixture({
       },
       async collect() {
         await stopStatus();
-        await writeFile(
-          join(artifact, 'publishing-attempt-status.json'),
-          JSON.stringify([...publications.values()], null, 2),
-        );
-        if (requirePublication)
-          await writeFile(
-            join(artifact, 'worker-publication-status.json'),
-            JSON.stringify([...workerPublications.values()], null, 2),
-          );
-        await writeFile(
-          join(artifact, 'worker-processing-status.json'),
-          JSON.stringify([...workerProcessing.values()], null, 2),
-        );
-        if (statusError) throw statusError;
+        await saveStatus();
         const evidence = [...decodedWindows.values()];
-        await writeFile(
-          join(artifact, 'decoded-video-status.json'),
-          JSON.stringify(evidence, null, 2),
-        );
         assert.ok(
           evidence.every((sample) => sample.invalidReason === null && sample.completed.valid),
           'Native stream produced invalid decoder telemetry',
@@ -396,7 +397,11 @@ export async function nativeStreamingFixture({
       stop,
     };
   } catch (error) {
-    await stop();
+    try {
+      await stop();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Native fixture setup and cleanup failed');
+    }
     throw error;
   }
 }

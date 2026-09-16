@@ -66,10 +66,28 @@ final class NativeStreamingTests: XCTestCase {
         XCTAssertTrue(elapsed.isFinite && elapsed >= 0)
         duration(app, atLeast: elapsed + Double(holdSeconds), timeout: Double(holdSeconds) + 23, minimumElapsed: Double(holdSeconds))
         app.swipeUp()
-        value(app.staticTexts["streaming.localStatus"], equals: "publishing")
-        value(app.staticTexts["streaming.workerStatus"], equals: "producing_output")
-        tap(app.buttons["streaming.stop"])
-        value(app.staticTexts["streaming.localStatus"], equals: "idle")
+        // Preserve the original live checks, but finish the local recording
+        // before reporting a live failure that would abort this UI test.
+        let publishingAtEnd = matches(app.staticTexts["streaming.localStatus"], equals: "publishing")
+        let producingAtEnd = matches(app.staticTexts["streaming.workerStatus"], equals: "producing_output")
+        let localAtEnd = app.staticTexts["streaming.localStatus"].value as? String ?? "missing"
+        let workerAtEnd = app.staticTexts["streaming.workerStatus"].value as? String ?? "missing"
+        // Preserve these checks even if a later archive stop/export fails.
+        let liveChecks: [String: Any] = [
+            "phase": "beforeFinalization", "publishingAtEnd": publishingAtEnd, "producingAtEnd": producingAtEnd,
+            "localAtEnd": String(localAtEnd.prefix(128)), "workerAtEnd": String(workerAtEnd.prefix(128))
+        ]
+        let liveEvidence = XCTAttachment(data: try JSONSerialization.data(withJSONObject: liveChecks, options: [.sortedKeys]),
+                                         uniformTypeIdentifier: "public.json")
+        liveEvidence.name = "NativeStreamingLiveChecks"; liveEvidence.lifetime = .keepAlways; add(liveEvidence)
+        let stop = app.buttons["streaming.stop"]
+        let stopAvailable = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: stop)], timeout: 20) == .completed
+        var reachedIdle = false
+        if stopAvailable {
+            stop.tap()
+            reachedIdle = matches(app.staticTexts["streaming.localStatus"], equals: "idle")
+        }
         app.swipeDown()
         let stoppedAt = try XCTUnwrap(Double(try XCTUnwrap(app.staticTexts["film.duration"].value as? String)))
         XCTAssertTrue(stoppedAt.isFinite && stoppedAt >= 0)
@@ -82,6 +100,17 @@ final class NativeStreamingTests: XCTestCase {
         tap(export)
         XCTAssertTrue(app.staticTexts["recordings.exportReady"].waitForExistence(timeout: 45), app.debugDescription)
         attach(app, "Recording exported after native streaming")
+        let finalization: [String: Any] = [
+            "publishingAtEnd": publishingAtEnd, "producingAtEnd": producingAtEnd,
+            "localAtEnd": String(localAtEnd.prefix(128)), "workerAtEnd": String(workerAtEnd.prefix(128)),
+            "stopAvailable": stopAvailable, "reachedIdle": reachedIdle,
+            "recordingStopped": true, "exportReady": true
+        ]
+        let evidence = XCTAttachment(data: try JSONSerialization.data(withJSONObject: finalization, options: [.sortedKeys]),
+                                     uniformTypeIdentifier: "public.json")
+        evidence.name = "NativeStreamingFinalization"; evidence.lifetime = .keepAlways; add(evidence)
+        XCTAssertTrue(publishingAtEnd && producingAtEnd && stopAvailable && reachedIdle,
+                      "Live qualification failed; local recording was stopped and exported. Local: \(localAtEnd), worker: \(workerAtEnd)")
     }
     @MainActor private func tap(_ element: XCUIElement) {
         let ready = NSPredicate(format: "exists == true AND enabled == true AND hittable == true")
@@ -94,7 +123,10 @@ final class NativeStreamingTests: XCTestCase {
         element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text)
     }
     @MainActor private func value(_ element: XCUIElement, equals text: String, timeout: Double = 20) {
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: element)], timeout: timeout), .completed)
+        XCTAssertTrue(matches(element, equals: text, timeout: timeout))
+    }
+    @MainActor private func matches(_ element: XCUIElement, equals text: String, timeout: Double = 20) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: element)], timeout: timeout) == .completed
     }
     @MainActor private func duration(_ app: XCUIApplication, atLeast seconds: Double, timeout: Double = 35, minimumElapsed: Double = 0) {
         let started = ContinuousClock.now
