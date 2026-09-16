@@ -1,3 +1,4 @@
+import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
 import type { WorkerProcessingReport } from '@scorebug/protocol';
 import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
 import { observeDecodedPipe } from './decoded-pipe.js';
@@ -188,6 +189,7 @@ export type PipelineProgress = Readonly<{ frame: number; outTimeUs: number }>;
 export type PipelineTerminal = Readonly<{
   decodedVideo: DecodedVideoLifetimeSnapshot;
   telemetryEOF: boolean;
+  diagnostics?: EncoderDiagnosticSnapshot;
   /** Null means the guardian never reported the encoder status. */
   encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
   outputProgress: PipelineProgress | null;
@@ -296,6 +298,7 @@ export function startPipeline(
   const processingWindows = encoderTiming ? new WorkerProcessingWindows() : undefined;
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
   let telemetryEOF = false;
+  let diagnostics: EncoderDiagnosticSnapshot | undefined;
   let outputProgress: PipelineProgress | null = null;
   let terminalEmitted = false;
   let child: ChildProcess | undefined;
@@ -311,6 +314,7 @@ export function startPipeline(
       options.onTerminal?.({
         decodedVideo: lifetime.snapshot(),
         telemetryEOF,
+        ...(diagnostics ? { diagnostics } : {}),
         encoderExit: encoderExit ? { ...encoderExit } : null,
         outputProgress: outputProgress ? { ...outputProgress } : null,
         ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
@@ -391,9 +395,11 @@ export function startPipeline(
         event: string;
         code: number | null;
         signal: NodeJS.Signals | null;
+        diagnostics?: EncoderDiagnosticSnapshot;
       };
       if (event.event === 'exit') {
         encoderExit = { code: event.code, signal: event.signal };
+        diagnostics = event.diagnostics;
       } else if (event.event === 'sigterm' || event.event === 'sigkill') {
         log.info(`ffmpeg_${event.event}`, { gameId: spec.gameId });
       } else if (event.event === 'process_error' || event.event === 'spawn_failed') {
@@ -416,7 +422,13 @@ export function startPipeline(
       else if (guardianSpawnFailed) settle(null, null);
       else if (!settled) log.error('ffmpeg_guardian_lost', { gameId: spec.gameId });
     });
-    send({ type: 'start', binary: spec.ffmpegPath ?? 'ffmpeg', args, stopTimeoutMs });
+    send({
+      type: 'start',
+      binary: spec.ffmpegPath ?? 'ffmpeg',
+      args,
+      stopTimeoutMs,
+      diagnostics: Boolean(options.onTerminal),
+    });
   } catch {
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });
     if (!child?.pid) failedBeforeSpawn();

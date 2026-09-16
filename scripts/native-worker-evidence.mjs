@@ -74,6 +74,44 @@ function scope(value) {
     pipelineOrdinal: value.pipelineOrdinal,
   };
 }
+function diagnostics(value) {
+  const keys = [
+    'inputReadError',
+    'outputOpenError',
+    'connectionRefused',
+    'connectionTimeout',
+    'ioError',
+    'invalidData',
+    'corruptPacket',
+    'decodeError',
+    'endOfFile',
+  ];
+  requireValue(
+    object(value) && object(value.counts) && keys.every((key) => count(value.counts[key])),
+  );
+  requireValue(
+    count(value.unmatchedLines) &&
+      count(value.oversizedLines) &&
+      typeof value.incompleteLine === 'boolean' &&
+      typeof value.ended === 'boolean',
+  );
+  const flags = {};
+  // Earlier diagnostic fixtures lack these fields; absence remains explicit.
+  for (const key of ['pipeError', 'drainTimedOut']) {
+    if (value[key] !== undefined) {
+      requireValue(typeof value[key] === 'boolean');
+      flags[key] = value[key];
+    }
+  }
+  return {
+    ...flags,
+    counts: Object.fromEntries(keys.map((key) => [key, value.counts[key]])),
+    unmatchedLines: value.unmatchedLines,
+    oversizedLines: value.oversizedLines,
+    incompleteLine: value.incompleteLine,
+    ended: value.ended,
+  };
+}
 function terminal(value) {
   const d = value.decodedVideo;
   requireValue(
@@ -125,6 +163,7 @@ function terminal(value) {
     telemetryEOF: value.telemetryEOF,
     encoderExit: value.encoderExit === null ? null : exit(value.encoderExit),
     outputProgress,
+    ...(value.diagnostics === undefined ? {} : { diagnostics: diagnostics(value.diagnostics) }),
   };
 }
 function event(value) {

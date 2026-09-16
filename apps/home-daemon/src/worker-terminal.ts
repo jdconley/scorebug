@@ -27,12 +27,13 @@ export function createWorkerTerminalDiagnostics(log: Logger, flag: string | unde
       };
       return {
         log: scoped,
-        onTerminal: ({ decodedVideo, telemetryEOF, encoderExit, outputProgress }) =>
+        onTerminal: ({ decodedVideo, telemetryEOF, encoderExit, outputProgress, diagnostics }) =>
           scoped.info('worker_pipeline_terminal', {
             decodedVideo,
             telemetryEOF,
             encoderExit,
             outputProgress,
+            ...(diagnostics ? { diagnostics } : {}),
           }),
       };
     },

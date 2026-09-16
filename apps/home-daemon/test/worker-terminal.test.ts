@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import * as diagnostics from '../src/worker-terminal.js';
+import { EncoderDiagnostics } from '../src/encoder-diagnostics.mjs';
 import type { Logger } from '../src/logger.js';
 
 const fixture = () => {
@@ -25,10 +26,14 @@ it.each([undefined, '', '0', 'true', '01', '1 ', ' 1'])(
 it('assigns worker-local ordinals across retries and scopes pipeline events and terminal', () => {
   const { log, records } = fixture();
   const factory = diagnostics.createWorkerTerminalDiagnostics(log, '1');
+  const parser = new EncoderDiagnostics();
+  parser.push(Buffer.from('Error during demuxing: Input/output error\n'));
+  parser.end();
   for (const generation of [5, 5, 6]) {
     const scope = factory.scope({ gameId: 'game', generation });
     scope.log.info('ffmpeg_spawning', { gameId: 'wrong', nvenc: false });
     scope.onTerminal?.({
+      diagnostics: parser.snapshot(),
       telemetryEOF: true,
       encoderExit: null,
       outputProgress: null,
@@ -56,6 +61,7 @@ it('assigns worker-local ordinals across retries and scopes pipeline events and 
       pipelineOrdinal: i + 1,
     });
     expect(records[2 * i + 1]).toMatchObject({
+      diagnostics: parser.snapshot(),
       msg: 'worker_pipeline_terminal',
       gameId: 'game',
       generation: i === 2 ? 6 : 5,

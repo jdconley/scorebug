@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { buildFfmpegArgs, startPipeline } from '../src/pipeline.js';
+import { EncoderDiagnostics } from '../src/encoder-diagnostics.mjs';
 import * as protocol from '@scorebug/protocol';
 import { createLogger, type Logger } from '../src/logger.js';
 
@@ -451,8 +452,11 @@ it('emits one terminal after late pipe data and before actual exit resolves, ret
       onTerminal: (value) => terminal.push(value),
     });
     expect(await boundedExit(pipeline)).toEqual({ code: 23, signal: null });
+    const emptyDiagnostics = new EncoderDiagnostics();
+    emptyDiagnostics.end();
     expect(terminal).toEqual([
       {
+        diagnostics: emptyDiagnostics.snapshot(),
         telemetryEOF: true,
         encoderExit: { code: 23, signal: null },
         outputProgress: { frame: 7, outTimeUs: 900 },
@@ -639,3 +643,61 @@ it.each(['valid', 'malformed'])(
     }
   },
 );
+
+it('joins sanitized terminal stderr before reporting actual encoder exit', async () => {
+  const fixture = await childFixture(`
+    require('node:fs').writeSync(2, 'Error during demuxing: Input/output error\\n');
+    process.on('beforeExit', () => require('node:fs').writeSync(2, 'Error opening output rtmp://SECRET\\n'));
+    process.exitCode = 17;
+  `);
+  const terminals: unknown[] = [];
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      onTerminal: (value) => terminals.push(value),
+    });
+    expect(await boundedExit(pipeline)).toEqual({ code: 17, signal: null });
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({
+      encoderExit: { code: 17, signal: null },
+      diagnostics: { ended: true, counts: { inputReadError: 1, ioError: 1, outputOpenError: 1 } },
+    });
+    expect(JSON.stringify([terminals, fixture.records])).not.toMatch(
+      /SECRET|PULL_PASSWORD|QUERY_SECRET|STREAM_KEY/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it('bounds stderr drain after the encoder exits even if a descendant holds the pipe', async () => {
+  const fixture = await childFixture(`
+    const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
+    require('node:fs').writeFileSync(__filename + '.descendant', String(child.pid));
+    child.unref();
+    process.exitCode = 19;
+  `);
+  const terminals: unknown[] = [];
+  const pipeline = startPipeline(fixture.spec, fixture.log, {
+    onTerminal: (value) => terminals.push(value),
+  });
+  try {
+    await fixture.ready();
+    // Stop after leader exit must not leave completion dependent on inherited stderr.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    pipeline.stop();
+    expect(await boundedExit(pipeline)).toEqual({ code: 19, signal: null });
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({
+      diagnostics: { ended: true, drainTimedOut: true, pipeError: false },
+    });
+  } finally {
+    const pid = Number(await readFile(fixture.spec.ffmpegPath + '.descendant', 'utf8'));
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
+    await pipeline.waitExit();
+    await fixture.cleanup();
+  }
+});

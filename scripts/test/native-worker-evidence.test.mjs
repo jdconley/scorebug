@@ -182,3 +182,44 @@ test('collector loads before the native runner builds workspace packages', async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('retains only bounded diagnostic categories and rejects malformed counters', () => {
+  const diagnostics = {
+    counts: {
+      inputReadError: 1,
+      outputOpenError: 0,
+      connectionRefused: 0,
+      connectionTimeout: 0,
+      ioError: 1,
+      invalidData: 0,
+      corruptPacket: 0,
+      decodeError: 0,
+      endOfFile: 0,
+      url: 'SECRET',
+    },
+    unmatchedLines: 2,
+    oversizedLines: 0,
+    incompleteLine: false,
+    ended: true,
+    pipeError: false,
+    drainTimedOut: true,
+    raw: 'SECRET',
+  };
+  const collector = new NativeWorkerEvidence();
+  push(collector, { ...terminal, diagnostics });
+  for (const bad of [-1, 1.2, Number.MAX_SAFE_INTEGER + 1, 'SECRET']) {
+    push(collector, {
+      ...terminal,
+      diagnostics: { ...diagnostics, counts: { ...diagnostics.counts, ioError: bad } },
+    });
+  }
+  collector.end();
+  const value = collector.snapshot();
+  assert.equal(value.events.length, 1);
+  assert.equal(value.invalidLines, 4);
+  assert.equal(value.events[0].diagnostics.counts.ioError, 1);
+  assert.equal(value.events[0].diagnostics.ended, true);
+  assert.equal(value.events[0].diagnostics.pipeError, false);
+  assert.equal(value.events[0].diagnostics.drainTimedOut, true);
+  assert.ok(!JSON.stringify(value).includes('SECRET'));
+});

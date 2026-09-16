@@ -847,3 +847,12 @@ The local archive passed complete verification: 8712 consecutive 1080p/30 frames
 290.4 seconds, all 145 A/V markers, no archive drops. Core (284), model (200), tooling
 (933) and unsigned iPhone/Watch Release checks pass. Next diagnose receiver input
 termination and retry recording; production adaptation remains disabled.
+
+The [receiver diagnostic follow-up](2026-09-16-receiver-failure-diagnostics.md)
+reproduced the failure in `native-app-NeLIkj`: after packet-decoding warnings, the
+SRT reader terminates on H.264 DTS extraction (`too many reordered frames (29)`),
+and the worker reports an input I/O error. Later retries fail to open the closed
+one-shot recording listener. Fixed-category diagnostics now distinguish those
+failures without raw logs; shutdown review fixes and 339 worker/934 tooling tests
+plus worker build pass. Next reproduce and repair reader resynchronization and
+reconnectable fixture recording before rerunning adaptive recovery qualification.
