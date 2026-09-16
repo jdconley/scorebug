@@ -1,3 +1,4 @@
+import type { WorkerReceiverProbe } from './receiver-probe.js';
 import type { WorkerProcessingReport } from './worker-processing.js';
 /** Sanitized process observations and decoder-ingress cadence; never viewer delivery. */
 export const WORKER_STATES = [
@@ -119,6 +120,8 @@ export type WorkerMediaStatus = {
   workerEpoch?: string;
   /** Actual attached source and coordinates; not delivery or capacity evidence. */
   publication?: WorkerPublication;
+  /** Receiver measurement for that exact publication, independent of identity. */
+  receiverProbe?: WorkerReceiverProbe;
   state: 'not_requested' | 'unknown' | 'stale' | WorkerState;
   observation: WorkerObservation | null;
   /** Proven upper age including report transit and server residence, rounded up in ms.

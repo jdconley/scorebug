@@ -83,7 +83,7 @@ public struct MatchHTTPClient: MatchScoringClient {
     }
 
     public func workerStatus(credential: MatchCredential) async throws -> WorkerMediaStatusResponse {
-        try await send(path: [credential.gameId, "media", "status"], token: credential.token)
+        try await send(path: [credential.gameId, "media", "status"], token: credential.token, requiresFreshResponse: true)
     }
 
     public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
@@ -144,7 +144,7 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     private func send<Response: Decodable>(path: [String], method: String = "GET", token: String,
                                           body: Data? = nil, additionalStatuses: Set<Int> = [],
-                                          pairingRecoveryKey: String? = nil) async throws -> Response {
+                                          pairingRecoveryKey: String? = nil, requiresFreshResponse: Bool = false) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1").appendingPathComponent("matches")
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
         // from being redirected by a slash, percent escape, or dot segment.
@@ -157,6 +157,10 @@ public struct MatchHTTPClient: MatchScoringClient {
             url.appendPathComponent(component)
         }
         var request = URLRequest(url: url, timeoutInterval: 20)
+        if requiresFreshResponse {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+        }
         request.httpMethod = method
         request.httpBody = body
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

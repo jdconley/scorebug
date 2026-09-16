@@ -30,9 +30,13 @@ afterEach(async () => {
   for (const close of closes.splice(0)) await close();
 });
 async function fixture(body: unknown, status = 200, raw?: string) {
-  const requests: { url: string; auth?: string }[] = [];
+  const requests: { url: string; auth?: string; cache?: string }[] = [];
   const server = createServer((req, res) => {
-    requests.push({ url: req.url!, auth: req.headers.authorization });
+    requests.push({
+      url: req.url!,
+      auth: req.headers.authorization,
+      cache: req.headers['cache-control'] as string,
+    });
     res.writeHead(status, { 'content-type': 'application/json', location: '/redirect' });
     res.end(raw ?? JSON.stringify(body));
   });
@@ -68,6 +72,7 @@ it('follows actual reader source with bounded private HTTP lookup and sanitized 
     {
       url: '/v3/srtconns/list?itemsPerPage=100&page=0',
       auth: 'Basic ' + Buffer.from('admin:private-password').toString('base64'),
+      cache: 'no-cache, no-store',
     },
   ]);
 });
@@ -156,3 +161,115 @@ it.each([null, [], 'invalid', {}, { id: readerId, state: 'other', path, query: '
     await expect(f.client.publication(path, readId)).rejects.toThrow();
   },
 );
+
+const probe = {
+  convention: 'mpegts-null-probe-v1',
+  id: '60000000-0000-4000-8000-00000000000d',
+  publishingGeneration: '18446744073709551615',
+  bitRate: 1000000,
+  deliveredMessages: '2',
+  deliveredPayloadBytes: '2632',
+  nextSequence: '2',
+  pendingPackets: 3,
+  observedAtNanoseconds: '1000000000',
+  firstDeliveredAtNanoseconds: '100000000',
+  lastDeliveredAtNanoseconds: '900000000',
+};
+it('sanitizes probe evidence from the selected publisher without changing identity', async () => {
+  const list: any[] = items();
+  list[0].scorebugBandwidthProbe = { ...probe, id: readId };
+  list[1].scorebugBandwidthProbe = { ...probe, privateField: 'must-not-leak' };
+  const f = await fixture(page(list));
+  expect(await f.client.publication(path, readId)).toEqual({
+    readerId,
+    publisherId,
+    publisherQuery,
+    clock,
+    receiverProbe: probe,
+  });
+});
+it.each([
+  { convention: 'other' },
+  { id: '00000000-0000-0000-0000-000000000000' },
+  { id: probe.id.toUpperCase() },
+  { id: probe.id + '\n' },
+  { publishingGeneration: '0' },
+  { publishingGeneration: '18446744073709551616' },
+  { publishingGeneration: '01' },
+  { publishingGeneration: '1\n' },
+  { bitRate: 0 },
+  { bitRate: 2000001 },
+  { bitRate: 1.5 },
+  { deliveredPayloadBytes: '2631' },
+  { nextSequence: '3' },
+  { deliveredMessages: '12749', deliveredPayloadBytes: '16777684', nextSequence: '12749' },
+  {
+    deliveredMessages: '12748',
+    deliveredPayloadBytes: '16776368',
+    nextSequence: '12748',
+    pendingPackets: 1,
+  },
+  {
+    deliveredMessages: '12748',
+    deliveredPayloadBytes: '16776368',
+    nextSequence: '12748',
+    pendingPackets: 6,
+  },
+  { pendingPackets: -1 },
+  { pendingPackets: 7 },
+  { pendingPackets: 1.5 },
+  { observedAtNanoseconds: '86400000000001' },
+  { observedAtNanoseconds: '1e9' },
+  { firstDeliveredAtNanoseconds: '900000001' },
+  { firstDeliveredAtNanoseconds: undefined },
+  { lastDeliveredAtNanoseconds: '1000000001' },
+  { lastDeliveredAtNanoseconds: undefined },
+  { invalidReason: 'unknown' },
+  { invalidReason: null },
+  { deliveredMessages: '0', deliveredPayloadBytes: '0', nextSequence: '0' },
+  { deliveredMessages: '1', deliveredPayloadBytes: '1316', nextSequence: '1' },
+])('omits malformed optional probe while retaining publication: %j', async (fault) => {
+  const list: any[] = items();
+  list[1].scorebugBandwidthProbe = { ...probe, ...fault };
+  const f = await fixture(page(list));
+  expect(await f.client.publication(path, readId)).toEqual({
+    readerId,
+    publisherId,
+    publisherQuery,
+    clock,
+  });
+});
+it('retains valid empty, one-message and invalidated snapshots for diagnostics', async () => {
+  for (const snapshot of [
+    {
+      ...probe,
+      deliveredMessages: '0',
+      deliveredPayloadBytes: '0',
+      nextSequence: '0',
+      firstDeliveredAtNanoseconds: undefined,
+      lastDeliveredAtNanoseconds: undefined,
+    },
+    {
+      ...probe,
+      deliveredMessages: '1',
+      deliveredPayloadBytes: '1316',
+      nextSequence: '1',
+      lastDeliveredAtNanoseconds: probe.firstDeliveredAtNanoseconds,
+    },
+    { ...probe, invalidReason: 'sequence' },
+    {
+      ...probe,
+      deliveredMessages: '12748',
+      deliveredPayloadBytes: '16776368',
+      nextSequence: '12748',
+      pendingPackets: 0,
+    },
+  ]) {
+    const list: any[] = items();
+    list[1].scorebugBandwidthProbe = snapshot;
+    const f = await fixture(page(list));
+    expect((await f.client.publication(path, readId)) as any).toMatchObject({
+      receiverProbe: JSON.parse(JSON.stringify(snapshot)),
+    });
+  }
+});

@@ -1,4 +1,8 @@
-import type { BroadcastSelection, WorkerPublication } from '@scorebug/protocol';
+import type {
+  BroadcastSelection,
+  WorkerPublication,
+  ReceiverProbeSnapshot,
+} from '@scorebug/protocol';
 import { publishAttemptQuery, verifyPublishAttemptQuery } from './publishing-attempt.js';
 import {
   deriveIngestGrant,
@@ -205,7 +209,9 @@ export class RelayLifecycle {
     gameId: string;
     generation: number;
     pipelineReadId: string;
-  }): Promise<WorkerPublication | undefined> {
+  }): Promise<
+    { publication: WorkerPublication; receiverProbe?: ReceiverProbeSnapshot } | undefined
+  > {
     scope = { ...scope };
     const target = this.current();
     if (
@@ -226,10 +232,13 @@ export class RelayLifecycle {
     );
     if (!publishingAttemptId) return undefined;
     return {
-      readerId: found.readerId,
-      publisherId: found.publisherId,
-      publishingAttemptId,
-      clock: { ...found.clock },
+      publication: {
+        readerId: found.readerId,
+        publisherId: found.publisherId,
+        publishingAttemptId,
+        clock: { ...found.clock },
+      },
+      ...(found.receiverProbe ? { receiverProbe: { ...found.receiverProbe } } : {}),
     };
   }
 

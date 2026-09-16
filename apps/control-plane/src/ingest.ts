@@ -1,7 +1,8 @@
 import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import type { BroadcastSelection } from '@scorebug/protocol';
+import { parseReceiverProbe } from './receiver-probe.js';
+import type { BroadcastSelection, ReceiverProbeSnapshot } from '@scorebug/protocol';
 
 const pathPattern = /^scorebug-[a-f0-9]{16}-[a-f0-9]{32}$/;
 const identifier = /^[A-Za-z0-9_-]{1,128}$/;
@@ -21,6 +22,7 @@ export type IngestGrant = {
   readUrl: string;
 };
 export type RelayPublication = {
+  receiverProbe?: ReceiverProbeSnapshot;
   readerId: string;
   publisherId: string;
   publisherQuery: string;
@@ -208,7 +210,11 @@ export class IngestRelay {
     try {
       const response = await fetch(new URL(path, this.base), {
         method,
-        headers: { authorization: this.authorization, 'content-type': 'application/json' },
+        headers: {
+          authorization: this.authorization,
+          'content-type': 'application/json',
+          'cache-control': 'no-cache, no-store',
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(this.timeoutMs),
         redirect: 'error',
@@ -303,7 +309,9 @@ export class IngestRelay {
       })
       .safeParse(publishers[0]);
     if (!publisher.success) return undefined;
+    const receiverProbe = parseReceiverProbe(publishers[0]?.scorebugBandwidthProbe);
     return {
+      ...(receiverProbe ? { receiverProbe } : {}),
       readerId: reader.data.id,
       publisherId: publisher.data.id,
       publisherQuery: publisher.data.query,

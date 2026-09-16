@@ -1260,3 +1260,24 @@ candidate-cost admission, including bounded repeated probes/stages. Current proo
 is a finite fixed-profile scenario and retains one attempt per connection; it does
 not authorize automatic upgrades. Phone/Watch, remote hosts and long soaks remain
 unqualified.
+
+
+[Authenticated receiver probe status](2026-09-16-receiver-probe-status.md) now
+carries separately sanitized measurements through the production API, after
+signed publisher verification and a post-I/O scope check. Shared iPhone/Watch
+code requires the locally owned probe identity, retains immutable publication
+and worker scope, and adds API transit, client request time and local residence
+to conservative snapshot and last-delivery age. Cache bypass prevents an ordinary
+cached status from receiving a fresh local budget. Malformed optional measurements
+leave ordinary status usable.
+
+All 437 control-plane, 307 shared-core and 222 capture-model tests pass, along
+with typechecking, simulator build-for-testing and combined iPhone/Watch Release
+compilation. The byte-limit partial-message boundary and explicit-null metadata
+were reproduced and corrected before the final checks. Evidence is recorded in
+`artifacts/qa/receiver-status-verification.json`.
+
+Next wire the production probe owner, causal receiver intervals and measured
+candidate cost, including bounded repeat/stage behavior. No automatic upgrades
+are enabled by this status contract. Physical-device, Watch networking, remote
+host and long-soak qualification remains open.

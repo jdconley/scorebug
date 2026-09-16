@@ -92,18 +92,21 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var decodedVideoAgeUpperBoundMs: Double?
     /// Untrusted optional wire metadata. Use validatedPublication before consuming it.
     public var publication: WorkerPublication?
+    /// Optional measurement for the enclosing publication. Never use as publication identity.
+    public var receiverProbe: WorkerReceiverProbe?
 
     public init(gameId: String, generation: Int, workerId: String?, state: WorkerMediaState,
                 observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil,
-                workerEpoch: String? = nil, publication: WorkerPublication? = nil) {
+                workerEpoch: String? = nil, publication: WorkerPublication? = nil, receiverProbe: WorkerReceiverProbe? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId; self.state = state
         self.observation = observation; self.observedAt = observedAt; self.expiresAt = expiresAt
         self.decodedVideoAgeUpperBoundMs = decodedVideoAgeUpperBoundMs
         self.workerEpoch = workerEpoch
         self.publication = publication
+        self.receiverProbe = receiverProbe
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs, publication }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs, publication, receiverProbe }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -118,6 +121,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         decodedVideoAgeUpperBoundMs = try container.decodeIfPresent(Double.self, forKey: .decodedVideoAgeUpperBoundMs)
         // Additive metadata must never invalidate an otherwise usable status.
         publication = try? container.decodeIfPresent(WorkerPublication.self, forKey: .publication)
+        receiverProbe = try? container.decodeIfPresent(WorkerReceiverProbe.self, forKey: .receiverProbe)
     }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -131,6 +135,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         try container.encode(expiresAt, forKey: .expiresAt)
         try container.encodeIfPresent(decodedVideoAgeUpperBoundMs, forKey: .decodedVideoAgeUpperBoundMs)
         try container.encodeIfPresent(publication, forKey: .publication)
+        try container.encodeIfPresent(receiverProbe, forKey: .receiverProbe)
     }
 }
 

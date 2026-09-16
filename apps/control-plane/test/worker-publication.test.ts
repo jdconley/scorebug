@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createApp } from '../src/app.js';
+import { publicationStatus } from '../src/worker-publication.js';
 import { WorkerObservations } from '../src/worker-observations.js';
 import { deriveIngestGrant } from '../src/ingest.js';
 import { publishAttemptQuery } from '../src/publishing-attempt.js';
@@ -125,6 +126,8 @@ function fixture() {
       operation: { type: 'stop' },
     });
   return {
+    app,
+    scorer,
     config,
     start,
     selection,
@@ -379,3 +382,123 @@ it.each(['current', 'starting', 'zeroOrigin', 'maximumOrigin'])(
     });
   },
 );
+
+const receiverGolden = JSON.parse(
+  readFileSync(
+    new URL('../../../packages/protocol/fixtures/receiver-probe-status-v1.json', import.meta.url),
+    'utf8',
+  ),
+);
+const receiverProbe = receiverGolden.status.receiverProbe.snapshot;
+it('publishes authenticated receiver measurements beside stable publication identity', async () => {
+  const f = fixture();
+  f.resolve(async () => ({
+    readerId,
+    publisherId,
+    clock,
+    receiverProbe,
+    publisherQuery: publishAttemptQuery(f.config.PHONE_TOKEN, f.grant.path, publishingAttemptId),
+  }));
+  await f.report();
+  const result = await f.status();
+  expect(result.status.publication).toEqual(publication);
+  expect(result.status.receiverProbe.snapshot).toEqual(receiverProbe);
+  expect(Number.isSafeInteger(result.status.receiverProbe.ageUpperBoundMs)).toBe(true);
+  expect(result.status.receiverProbe.ageUpperBoundMs).toBeGreaterThanOrEqual(0);
+  expect(result.status.receiverProbe.ageUpperBoundMs).toBeLessThan(2000);
+});
+it.each(['stop', 'worker', 'attempt', 'expiry', 'signature'])(
+  'discards receiver evidence after %s during lookup',
+  async (mode) => {
+    const f = fixture();
+    await f.report();
+    f.resolve(async () => {
+      if (mode === 'stop') f.stop();
+      if (mode === 'worker') f.observations.register({ workerId: 'mac', runId: 'replacement' });
+      if (mode === 'attempt')
+        await f.report({
+          ...f.body,
+          sequence: 2,
+          pipelineReadId: nextId,
+          observation: { ...f.body.observation, attempt: 2 },
+        });
+      if (mode === 'expiry') f.time(5000);
+      return {
+        readerId,
+        publisherId,
+        clock,
+        receiverProbe,
+        publisherQuery:
+          mode === 'signature'
+            ? 'bad'
+            : publishAttemptQuery(f.config.PHONE_TOKEN, f.grant.path, publishingAttemptId),
+      };
+    });
+    const result = await f.status();
+    expect(result.status.receiverProbe).toBeUndefined();
+    expect(result.status.publication).toBeUndefined();
+  },
+);
+it('rejects worker attempts to supply receiver measurements or server age', async () => {
+  const f = fixture();
+  for (const extra of [
+    { receiverProbe },
+    { receiverProbe: { snapshot: receiverProbe, ageUpperBoundMs: 0 } },
+  ]) {
+    expect((await f.report({ ...f.body, ...extra })).status).toBe(400);
+    expect(
+      (await f.report({ ...f.body, observation: { ...f.body.observation, ...extra } })).status,
+    ).toBe(400);
+  }
+});
+
+it.each([
+  [100, 150.001, 51],
+  [100, 100, 0],
+  [100, 99, undefined],
+  [NaN, 100, undefined],
+  [100, Infinity, undefined],
+  [0, Number.MAX_SAFE_INTEGER + 1, undefined],
+])('bounds private lookup age from %s to %s', async (start, end, expected) => {
+  const f = fixture();
+  await f.report();
+  const times = [start, end];
+  const relay = { publication: async () => ({ publication, receiverProbe }) };
+  const result = await publicationStatus(
+    'match',
+    f.observations,
+    relay as any,
+    () => times.shift()!,
+  );
+  expect(result.status.publication).toEqual(publication);
+  if (expected === undefined) expect((result.status as any).receiverProbe).toBeUndefined();
+  else
+    expect((result.status as any).receiverProbe).toEqual({
+      snapshot: receiverProbe,
+      ageUpperBoundMs: expected,
+    });
+});
+
+it('prevents caches from extending authenticated status freshness', async () => {
+  const f = fixture();
+  await f.report();
+  const response = await f.app.request('/v1/matches/match/media/status', {
+    headers: { authorization: `Bearer ${f.scorer.token}` },
+  });
+  expect(response.headers.get('cache-control')).toBe('no-store');
+});
+
+it('keeps native and API receiver status golden bytes identical', () => {
+  const native = readFileSync(
+    new URL(
+      '../../../ios/Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  const protocol = readFileSync(
+    new URL('../../../packages/protocol/fixtures/receiver-probe-status-v1.json', import.meta.url),
+    'utf8',
+  );
+  expect(native).toBe(protocol);
+});
