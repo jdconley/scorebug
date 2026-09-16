@@ -1182,3 +1182,23 @@ receiver capacity. The one-message-per-media-opportunity probe underdelivers its
 requested rate. Next qualify sustained renewal and pressure, then obtain real
 receiver headroom against measured candidate cost. Highest-sustainable quality
 and device/Watch/host/soak gates remain open.
+
+
+The [native renewal/pressure qualification](2026-09-16-native-probe-renewal.md)
+now passes on unchanged runtime `857d4ab`. Passthrough run `native-app-BKvdTc`
+renews 484 times and accepts 1,502 probe messages over 50.063 seconds. The archive
+preserves 3,691 frames; retained live output preserves 3,284 consecutive identities
+and all reported receiver windows meet 30 fps. Scheduled 4 Mbps run
+`native-app-siyvpV` reports native pressure withdrawal after 1,245 messages,
+then continues media for another 138.218 seconds. Its archive preserves all
+6,331 frames and 105 audio markers; live output preserves 5,955 consecutive
+identities at 30 fps minimum reported receiver cadence. Neither proxy drops
+packets; both full decode logs are clean and all owners terminate/join.
+
+Both runs deliver only ~0.316 Mbps additional native payload against the requested
+1 Mbps. This establishes the one-message-per-media-opportunity bottleneck, not
+usable 1 Mbps headroom. Next implement a bounded optional-send schedule that can
+actually achieve the intended load while preserving media priority, then add
+attempt-bound receiver accounting and capacity admission against measured profile
+cost. Do not infer exact pressure threshold timing from the current reason-only
+snapshot. Production adaptation and phone/Watch/other-host/soak gates remain open.

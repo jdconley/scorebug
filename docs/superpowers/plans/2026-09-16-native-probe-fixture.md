@@ -4,7 +4,7 @@
 
 **Goal:** Run the default-disabled probe through the actual DEBUG simulator publishing path alongside independent archive/live media, with bounded renewal and joined terminal evidence.
 
-**Architecture:** A DEBUG-only `NativeBandwidthProbePublisher` wraps the real SRT adapter without changing the media protocol. It owns one cancellable task, starts one 1 Mbps probe after 20 seconds and a valid native transport clock, and observes for at most 50 seconds/600 iterations. Mode `renew` renews every 100 ms; mode `expire` only observes the native lease expire. Stop closes the publisher, joins the fixture task and atomically exports bounded scalar evidence. The first experiment fixes live video at 540p, excluding profile/quality changes so their traffic does not confound this primitive test. Production factories remain disabled.
+**Architecture:** A DEBUG-only `NativeBandwidthProbePublisher` wraps the real SRT adapter without changing the media protocol. It owns one cancellable task, starts one 1 Mbps probe after 20 seconds and a valid native transport clock, and evaluates a 50-second observation schedule on polling boundaries, capped at 600 iterations. Mode `renew` renews every 100 ms; mode `expire` only observes the native lease expire. Stop closes the publisher, joins the fixture task and atomically exports bounded scalar evidence. The first experiment fixes live video at 540p, excluding profile/quality changes so their traffic does not confound this primitive test. Production factories remain disabled.
 
 **Tech stack:** Swift 6/XCTest, existing Xcode project generation, Node test runner and native local streaming harness.
 
@@ -98,3 +98,11 @@ Next run `renew`, then pressure/feedback-loss cases and authenticated receiver
 accounting before testing higher-quality admission. The previously failing
 adaptive runs remain unresolved; physical devices, Watch routes, other hosts
 and long soaks remain unqualified.
+
+
+The subsequent [renewal and pressure qualification](2026-09-16-native-probe-renewal.md)
+passes both actual iOS 17.5 media scenarios. Renewal remains healthy for roughly
+50 seconds; the constrained run reports pressure withdrawal while archive/live
+media continue. Both measure only ~0.316 Mbps extra payload against a requested
+1 Mbps, confirming the scheduler opportunity limit. That measured underdelivery
+must be resolved before capacity admission; requested rate is never headroom.
