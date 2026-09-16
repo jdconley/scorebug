@@ -395,6 +395,14 @@ source intervals, retaining decoder-age provenance through pending completion. T
 qualification and actual automatic trial/rollback remain next. Automatic adaptation is
 still unwired.
 
+The [quality telemetry binding](2026-09-16-quality-telemetry-binding.md) now forms
+policy windows from exactly matched source intervals, verified configuration receipts
+and aligned queue/thermal/transport evidence. Explicit caller-qualified pressure
+limits preserve unknown evidence; capacity remains unknown. Actor-bound evaluation
+separates policy ordinals from restarted worker decoder sequences, resets recovery on
+scope changes and makes active trial rollback mandatory. Native bootstrap, report
+coalescing, deadline polling and real adaptive-media impairment tests are next.
+
 The pure [quality controller](../../adaptive-quality-policy.md) passes 20 focused
 tests and the complete 88-test Core suite. Shared Core compiles for arm64_32 watchOS
 10, and independent spec/quality reviews approve the source. It is not wired to live

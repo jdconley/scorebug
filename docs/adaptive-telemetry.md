@@ -585,3 +585,11 @@ This supplies source-correlated measurements; backend/load thresholds, configura
 revision mapping and automatic quality trials remain separate unqualified work.
 See [worker status](worker-status.md#optional-source-processing-reports) and the
 [implementation evidence](superpowers/plans/2026-09-15-worker-processing-reports.md).
+
+The [quality telemetry binding](adaptive-quality-policy.md#bound-telemetry-evaluation)
+now maps matched source intervals and current verified receipts to policy revisions,
+with aligned ingress/thermal/transport histories and explicit caller-qualified
+pressure limits. It retains unknown evidence and nil capacity. The actor binds this
+conversion atomically and prevents worker restarts from extending prior recovery.
+Capture runtime activation and actual adaptive media/impairment qualification remain
+open; deterministic binding tests do not establish physical or remote-host thresholds.

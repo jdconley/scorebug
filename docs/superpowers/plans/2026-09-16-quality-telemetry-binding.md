@@ -30,8 +30,10 @@ Require current publishing state and receipt identity, valid source duration 1â€
 source end no more than two seconds old, and decoder age upper bound no more than two
 seconds under its original report lease. Derive receiver observation time from the
 conservative age bound, never from new HTTP receipt time. The local source end and
-remote decoder completion are different events: require the normalized completion
-bound not precede source end; otherwise evidence is unavailable. Carry native capture,
+remote decoder completion are different events. Their causal ordering establishes
+completion at or after capture of the matched endpoint. Use the greater of source
+end and the age-derived earliest completion as the conservative observation time;
+the independent two-second age and source-end gates still apply. Carry native capture,
 encoded and worker decoded counts separately; source loss includes capture-to-encoder
 and encoder-to-worker losses. Worker output omissions are pressure evidence, not
 silently added to these ingress source-loss counts.
@@ -56,33 +58,63 @@ remain unknown. Sampled thermal nominal maps nominal; fair maps unknown; serious
 critical map elevated. These choices do not prove spare capacity or absence of events
 between samples.
 
-Owner snapshots expose immutable attempt ID and acknowledgment uptime. Invalid outer
+Owner snapshots expose acknowledgment uptime; the actor binds its immutable attempt ID internally. Invalid outer
 telemetry clears pending recovery/advice and makes a trial rollback-required, without
-mutating applied settings. Repeated windows remain the caller's responsibility to
-coalesce before evaluation; the policy rejects duplicate/out-of-order sequences.
+mutating applied settings. The owner assigns increasing policy ordinals independently of worker decoder sequence.
+Duplicate or regressed sequences within one worker scope reject and invalidate advice.
+Changed worker epoch/attempt/publication/processing scope resets recovery and makes
+an active trial require rollback, even when source intervals remain contiguous.
 Pending processing can be resampled before evaluation and before the two-second
 source deadline. No runtime task, archive mutation or new polling loop in this slice.
 
 ## Steps
 
-- [ ] Add `PublishingQualityTelemetry.swift` with a compiled unavailable stub and
-  `PublishingQualityTelemetryTests.swift`. Build real source histories, matched worker
-  responses, thermal/transport trackers and ingress accumulators in tests. Prove a
-  valid source window fails to form before implementation.
-- [ ] Implement exact ownership, freshness, configuration and acknowledgment boundary
-  validation; map measured counts/loss/queue with nil capacity. Test old/mixed/missing
-  configurations, crossed generation/attempt, stale/future clocks and source spans.
-- [ ] Implement explicit worker/transport qualification values and conservative thermal
-  mapping. Test missing/closed/gapped/quarantined histories, backend mismatch, pending,
-  zero/omitted/contradictory counts, duration limits, transport drops/retransmissions,
-  and strict threshold boundaries. No nominal fallback for missing observations.
-- [ ] Expose acknowledgment uptime/attempt in the owner snapshot and bind adapter
-  evaluation inside the actor. Regression-test rejected external telemetry invalidating
-  advice and active trial rollback without dispatching a native mutation.
-- [ ] Run full FilmModel/Core suites, watchOS10 Core and combined unsigned Release,
-  independent source review, format/diff checks, evidence hashes; document and commit.
+- [x] Add `PublishingQualityTelemetry.swift` with a compiled unavailable stub and
+      `PublishingQualityTelemetryTests.swift`. Build real source histories, matched worker
+      responses, thermal/transport trackers and ingress accumulators in tests. Prove a
+      valid source window fails to form before implementation.
+- [x] Implement exact ownership, freshness, configuration and acknowledgment boundary
+      validation; map measured counts/loss/queue with nil capacity. Test old/mixed/missing
+      configurations, crossed generation/attempt, stale/future clocks and source spans.
+- [x] Implement explicit worker/transport qualification values and conservative thermal
+      mapping. Test missing/closed/gapped/quarantined histories, backend mismatch, pending,
+      zero/omitted/contradictory counts, duration limits, transport drops/retransmissions,
+      and strict threshold boundaries. No nominal fallback for missing observations.
+- [x] Retain acknowledgment uptime in the owner snapshot and bind attempt internally and bind adapter
+      evaluation inside the actor. Regression-test rejected external telemetry invalidating
+      advice and active trial rollback without dispatching a native mutation.
+- [x] Run full FilmModel/Core suites, watchOS10 Core and combined unsigned Release,
+      independent source review, format/diff checks, evidence hashes; document and commit.
 
 Commands: `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer xcodebuild
 -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests -destination
 'platform=macOS' test`; `swift test --package-path ios/Packages/ScorebugCore`;
 watch Core build and unsigned combined Release follow the processing report plan.
+
+## Verification checkpoint
+
+Seventeen new adapter/owner tests pass within the complete 158-test FilmModel suite.
+All 279 Core tests, arm64_32 watchOS 10 Core compilation and combined unsigned
+phone/Watch Release pass using Xcode 26.2. Independent source review approves the
+adapter and atomic owner binding.
+
+Behavioral red evidence includes the unavailable adapter stub, missing owner binding
+and acknowledgment uptime, restart sequence reuse (`outOfOrder`), and delayed clock
+sampling that incorrectly admitted expired decoder evidence. The latter now samples
+uptime before ContinuousClock; a 2.1-second delayed uptime read is counted against the
+original decoder age. The source review's initially suspected trailing-newline regex
+issue did not reproduce with Foundation's String.range API; canonical byte length is
+nevertheless explicit and the regression rejects the malformed value.
+
+The tests construct actual source histories, native configuration coverage, matched
+worker reports, ingress accumulators and transport/thermal trackers. Six consecutive
+qualified windows produce a trial; a subsequent valid new-worker window requires
+rollback. Duplicate input cannot issue fresh policy evidence or retain prior advice.
+Threshold boundary, missing timing, closed/gapped/quarantined and wrong-generation
+history cases remain conservative. No real capture runtime activation occurs here,
+so this checkpoint does not claim automatic native adaptation or qualified production
+pressure limits. Follow with an opt-in native integration/impairment fixture before
+enabling normal capture use.
+
+Source and verification evidence hashes are retained in
+`artifacts/qa/quality-binding-final-verification.json`.

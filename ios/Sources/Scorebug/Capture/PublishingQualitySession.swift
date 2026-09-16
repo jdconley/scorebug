@@ -11,6 +11,7 @@ actor PublishingQualitySession {
         let applied: QualityController.Settings?
         let revision: UInt64?
         let receipt: PublishingBitRateChange?
+        let acknowledgedAt: Double?
         let isClosed: Bool
         let isBusy: Bool
     }
@@ -27,11 +28,25 @@ actor PublishingQualitySession {
     private let uptime: @Sendable () -> Double
     private var policy: QualityController?
     private var receipt: PublishingBitRateChange?
+    private var acknowledgedAt: Double?
     private var pending: QualityController.Recommendation?
     private var busy = false
     private var closed = false
     private var shutdown: Task<Void, Never>?
     private var lastNow: Double
+    private var lastPolicySequence: UInt64 = 0
+    private struct SourceScope: Equatable {
+        let workerId: String
+        let epoch: String
+        let attempt: Int
+        let publication: WorkerPublication
+        let processingScope: String?
+        init(_ source: WorkerSourceIntervalObservation) {
+            workerId = source.workerId; epoch = source.workerEpoch; attempt = source.workerAttempt
+            publication = source.publication; processingScope = source.processing?.scopeID
+        }
+    }
+    private var lastSource: (scope: SourceScope, sequence: Int64)?
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials) throws {
@@ -50,7 +65,7 @@ actor PublishingQualitySession {
         self.initial = initial; self.strategy = strategy; self.uptime = uptime; self.lastNow = now
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
-        receipt: receipt, isClosed: closed, isBusy: busy) }
+        receipt: receipt, acknowledgedAt: acknowledgedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
@@ -67,7 +82,7 @@ actor PublishingQualitySession {
             try validate(result, rate: initial.videoBitrate, start: start, deadline: deadline, now: now)
             policy = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial,
                 at: now, recoveryStrategy: strategy)
-            receipt = result
+            receipt = result; acknowledgedAt = now
         } catch { await stop(); throw error }
     }
     func evaluate(_ window: QualityController.Window) throws -> QualityController.Decision {
@@ -77,6 +92,36 @@ actor PublishingQualitySession {
         do {
             let decision = try policy.evaluate(window, at: time())
             pending = decision.recommendation
+            lastPolicySequence = window.sequence
+            return decision
+        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+    }
+    func evaluate(source: WorkerSourceIntervalObservation, diagnostics: PublishingQualityTelemetry.Diagnostics,
+                  workerLimits: PublishingQualityTelemetry.WorkerLimits?, transportLimits: PublishingQualityTelemetry.TransportLimits?,
+                  instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision {
+        try admit()
+        guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        defer { self.policy = policy }
+        do {
+            let now = try time()
+            // Sample age after uptime so elapsed work cannot make a remote
+            // completion's conservative lower bound appear newer than it is.
+            let sampledInstant = instant ?? .now
+            guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
+            let sourceScope = SourceScope(source)
+            if let lastSource, lastSource.scope == sourceScope, source.sequence <= lastSource.sequence {
+                throw QualityController.ValidationError.outOfOrder
+            }
+            let window = try PublishingQualityTelemetry.window(source: source,
+                applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
+                    settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+                diagnostics: diagnostics, workerLimits: workerLimits, transportLimits: transportLimits,
+                sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
+            if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry() }
+            let decision = try policy.evaluate(window, at: now)
+            lastSource = (sourceScope, source.sequence)
+            pending = decision.recommendation
+            lastPolicySequence = window.sequence
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
     }
@@ -111,7 +156,7 @@ actor PublishingQualitySession {
             try validate(result, rate: advice.settings.videoBitrate, start: start, deadline: deadline, now: now)
             // Commit both policy and native receipt without another actor suspension.
             try policy.acknowledge(advice, applied: advice.settings, at: now)
-            self.policy = policy; receipt = result; pending = nil
+            self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil
         } catch { await stop(); throw error }
     }
     /// All callers join one shielded stop, even if their own task is cancelled.

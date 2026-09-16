@@ -1,0 +1,143 @@
+import CoreMedia
+import Foundation
+import ScorebugCore
+import ScorebugMedia
+
+/// App-layer conversion of bounded, matched observations. Limits must be qualified
+/// by the caller; no default turns an unfamiliar worker/network into nominal load.
+enum PublishingQualityTelemetry {
+    enum Failure: Error, Equatable { case ownership, configuration, time, freshness }
+    struct Applied: Sendable {
+        var attemptID: UUID
+        var revision: UInt64
+        var settings: QualityController.Settings
+        var receipt: PublishingBitRateChange
+        var acknowledgedAt: Double
+    }
+    struct Diagnostics: Sendable {
+        var isPublishing: Bool
+        var clock: PublishingTransportClock?
+        var receipt: PublishingBitRateChange?
+        var ingress: LiveIngressObservationSnapshot?
+        var transport: PublishingTransportStatisticsSnapshot
+        var thermal: PublishingThermalSnapshot
+        init(snapshot: PublishingSessionSnapshot) {
+            isPublishing = snapshot.state == .publishing && snapshot.failure == nil
+            clock = snapshot.transportClock; receipt = snapshot.lastBitRateChange
+            ingress = snapshot.ingressObservation; transport = snapshot.transportStatistics
+            thermal = snapshot.thermalObservation
+        }
+        init(isPublishing: Bool, clock: PublishingTransportClock?, receipt: PublishingBitRateChange?,
+             ingress: LiveIngressObservationSnapshot?, transport: PublishingTransportStatisticsSnapshot,
+             thermal: PublishingThermalSnapshot) {
+            self.isPublishing = isPublishing; self.clock = clock; self.receipt = receipt
+            self.ingress = ingress; self.transport = transport; self.thermal = thermal
+        }
+    }
+    struct WorkerLimits: Sendable {
+        let encoder: String
+        let maximumFilterMs: Double
+        let maximumProcessingMs: Double
+        init?(encoder: String, maximumFilterMs: Double, maximumProcessingMs: Double) {
+            guard ["software", "videotoolbox", "nvenc"].contains(encoder),
+                  maximumFilterMs.isFinite, maximumFilterMs > 0,
+                  maximumProcessingMs.isFinite, maximumProcessingMs > 0 else { return nil }
+            self.encoder = encoder; self.maximumFilterMs = maximumFilterMs; self.maximumProcessingMs = maximumProcessingMs
+        }
+    }
+    struct TransportLimits: Sendable {
+        let maximumBufferMs: Double
+        let maximumRTTMs: Double
+        let maximumRetransmittedFraction: Double
+        init?(maximumBufferMs: Double, maximumRTTMs: Double, maximumRetransmittedFraction: Double) {
+            guard maximumBufferMs.isFinite, maximumBufferMs > 0, maximumRTTMs.isFinite, maximumRTTMs > 0,
+                  maximumRetransmittedFraction.isFinite, (0..<1).contains(maximumRetransmittedFraction) else { return nil }
+            self.maximumBufferMs = maximumBufferMs; self.maximumRTTMs = maximumRTTMs
+            self.maximumRetransmittedFraction = maximumRetransmittedFraction
+        }
+    }
+    static func window(source: WorkerSourceIntervalObservation, applied: Applied, diagnostics: Diagnostics,
+                       workerLimits: WorkerLimits?, transportLimits: TransportLimits?,
+                       sequence: UInt64? = nil, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.Window {
+        let interval = source.interval, receipt = applied.receipt
+        guard diagnostics.isPublishing, interval.scope.publishingAttemptID == applied.attemptID,
+              diagnostics.clock == source.nativeClock,
+              interval.publishingGeneration == receipt.publishingGeneration,
+              source.nativeClock.publishingGeneration == receipt.publishingGeneration,
+              source.publication.publishingAttemptId == applied.attemptID.uuidString.lowercased(),
+              source.freshness.gameId == interval.scope.matchID,
+              source.freshness.generation == interval.scope.broadcastGeneration,
+              source.freshness.workerId == source.workerId, source.freshness.attempt == source.workerAttempt,
+              let current = diagnostics.receipt, sameReceipt(current, receipt) else { throw Failure.ownership }
+        guard case .verified(let configuration) = interval.encodingCoverage,
+              configuration == receipt.configuration, configuration.bitRate == applied.settings.videoBitrate,
+              receipt.lastSubmittedSourcePTS.map({ CMTimeCompare(interval.sourceStartExclusive, $0) >= 0 }) ?? true
+        else { throw Failure.configuration }
+        let start = interval.captureBoundaryStartTime, end = interval.captureBoundaryEndTime
+        guard now.isFinite, (0...1e12).contains(now), applied.acknowledgedAt.isFinite,
+              applied.acknowledgedAt >= receipt.acceptedAt, start >= applied.acknowledgedAt,
+              start.isFinite, end.isFinite, (1...QualityController.maximumWindowDuration).contains(end - start),
+              end <= now, now - end <= 2, source.sequence > 0 else { throw Failure.time }
+        guard let age = source.freshness.ageUpperBound(at: instant), age >= .zero, age <= .seconds(2) else { throw Failure.freshness }
+        let ageSeconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18
+        let observedAt = max(end, now - ageSeconds)
+        var queue: Double?
+        if let ingress = diagnostics.ingress, !ingress.isClosed, !ingress.pressure.isClosed,
+           ingress.pressure.coveredThrough <= now, now - ingress.pressure.coveredThrough <= 2 {
+            queue = interval.ingressPressure(in: ingress)?.meanMaxPressure
+        }
+        let thermal: QualityController.Pressure
+        if diagnostics.thermal.freshSample(at: now) != nil,
+           let sample = diagnostics.thermal.interval(from: start, to: end) {
+            switch sample.enclosingMaximumState {
+            case .nominal: thermal = .nominal
+            case .serious, .critical: thermal = .elevated
+            case .fair, .unknown: thermal = .unknown
+            }
+        } else { thermal = .unknown }
+        let transport: QualityController.Pressure
+        if let limits = transportLimits, diagnostics.transport.freshSample(at: now) != nil,
+           let sample = diagnostics.transport.interval(from: start, to: end),
+           sample.publishingGeneration == receipt.publishingGeneration {
+            let excessive = sample.enclosingDroppedPackets > 0
+                || Double(sample.enclosingMaximumBufferMilliseconds) > limits.maximumBufferMs
+                || sample.enclosingMaximumRTTMilliseconds > limits.maximumRTTMs
+                || (sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
+            transport = excessive ? .elevated : sample.enclosingSentBytes > 0 ? .nominal : .unknown
+        } else { transport = .unknown }
+        return .init(attemptID: applied.attemptID, sequence: sequence ?? UInt64(source.sequence), appliedRevision: applied.revision,
+            start: start, end: end, capturedFreshFrames: interval.capturedFrames, encodedFreshFrames: interval.encodedFrames,
+            receiver: .init(freshFrames: interval.decodedFrames, observedAt: observedAt),
+            sourceLoss: .init(expectedFrames: interval.capturedFrames, lostFrames: interval.capturedFrames - interval.decodedFrames),
+            meanQueueOccupancy: queue, usableVideoCapacity: nil, connectivity: .connected,
+            thermalPressure: thermal, workerPressure: workerPressure(source, limits: workerLimits), transportPressure: transport)
+    }
+    private static func sameReceipt(_ a: PublishingBitRateChange, _ b: PublishingBitRateChange) -> Bool {
+        a.publishingGeneration == b.publishingGeneration && a.configuration == b.configuration
+            && a.acceptedAt == b.acceptedAt && a.lastSubmittedSourcePTS == b.lastSubmittedSourcePTS
+    }
+    private static func workerPressure(_ source: WorkerSourceIntervalObservation, limits: WorkerLimits?) -> QualityController.Pressure {
+        guard let limits, let report = source.processing, report.encoder == limits.encoder, report.scopeID.utf8.count == 36,
+              report.scopeID.range(of: "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", options: .regularExpression) != nil,
+              report.sequence == source.sequence, report.previousSequence == source.previousSequence,
+              report.firstPTS == source.firstDecodedPTS else { return .unknown }
+        let i = report.interval, maximum: Int64 = 9_007_199_254_740_991
+        guard i.sourceStartExclusive == source.previousDecodedPTS, i.sourceEndInclusive == source.lastDecodedPTS,
+              i.decodedFrames == Int64(source.interval.decodedFrames),
+              [i.decodedFrames, i.submittedFrames, i.completedFrames, i.pendingFrames, i.omittedBeforeEncoderFrames].allSatisfy({ (0...maximum).contains($0) }),
+              i.completedFrames <= i.submittedFrames, i.submittedFrames <= i.decodedFrames,
+              i.pendingFrames == i.submittedFrames - i.completedFrames,
+              i.omittedBeforeEncoderFrames == i.decodedFrames - i.submittedFrames,
+              i.pendingFrames == 0 || i.processingDuration == nil,
+              i.submittedFrames > 0 || (i.filterDuration == nil && i.processingDuration == nil) else { return .unknown }
+        for duration in [i.filterDuration, i.processingDuration].compactMap({ $0 }) {
+            guard duration.meanMs.isFinite, duration.maximumMs.isFinite, duration.meanMs >= 0,
+                  duration.meanMs <= duration.maximumMs, duration.maximumMs <= Double(maximum) else { return .unknown }
+        }
+        if i.omittedBeforeEncoderFrames > 0 { return .elevated }
+        if let filter = i.filterDuration, filter.maximumMs > limits.maximumFilterMs { return .elevated }
+        if let processing = i.processingDuration, processing.maximumMs > limits.maximumProcessingMs { return .elevated }
+        guard i.submittedFrames > 0, i.pendingFrames == 0, i.filterDuration != nil, i.processingDuration != nil else { return .unknown }
+        return .nominal
+    }
+}

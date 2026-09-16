@@ -160,7 +160,6 @@ because their reports arrived later. Initial unchecked settings remain unverifie
 verified startup/application acknowledgment and pressure-window alignment are still
 needed before runtime control is enabled.
 
-
 ## Verified application owner
 
 The opt-in app-layer `PublishingQualitySession` now binds policy state to
@@ -191,7 +190,6 @@ integration with a controlled publisher. They do not qualify actual automatic me
 trials, native startup timing or aligned telemetry. Source/queue/transport/pressure
 alignment and receiver freshness must be connected before enabling the runtime path.
 
-
 ## Measured input duration allowance
 
 `maximumWindowDuration` is 5.25 seconds. Real 150-frame source spans have measured
@@ -206,3 +204,47 @@ fps recovery threshold; 125 frames measure below 24 fps and trigger reduction. I
 freshness, ordering, revision checks, source loss, 30-second recovery, 10-second
 confirmation and trial deadlines are unchanged. Jittered consecutive windows are
 tested through both recommendation and confirmation using their actual timestamps.
+
+## Bound telemetry evaluation
+
+The app-layer `PublishingQualityTelemetry` adapter now forms policy windows from a
+matched native/worker source interval, current PublishingSession diagnostics and the
+quality owner's verified receipt. Uniform encoder coverage must match the receipt's
+configuration and native generation; interval start must follow actual policy
+acknowledgment. The fixed observation scope's profile revision is not relabeled as a
+policy revision. Mixed, old or missing configurations stay unavailable.
+
+The exact capture endpoints determine duration, frame cadence and queue integration.
+Capture-to-worker source loss includes native encoder and ingress losses; worker
+output omissions remain separate pressure evidence. Both source-end age and the
+original conservative decoder age must be at most two seconds. Receiver observation
+time uses the age-derived earliest completion, tightened only by the causal fact
+that the matched frame was captured before being decoded. Uptime is sampled before
+the continuous clock so time spent obtaining a clock reading cannot freshen evidence.
+
+Current, bracketed thermal and same-generation transport histories contribute pressure.
+Thermal nominal maps nominal, fair stays unknown, and serious/critical map elevated.
+Worker/backend timing limits and transport buffer/RTT/retransmission limits must be
+explicitly supplied by a caller that has qualified them. There are no production
+defaults. Missing/unknown timing, wrong backend, pending completion, empty transmission
+intervals, stale/closed/gapped/quarantined diagnostics cannot establish nominal load.
+Known omissions, excessive valid measurements or packet drops can establish elevated
+pressure. No send rate or estimated bandwidth becomes usable video capacity.
+
+`PublishingQualitySession.evaluate(source:diagnostics:...)` binds these observations
+inside the actor without suspension. It uses the actual applied receipt/revision and
+acknowledgment uptime, then evaluates the policy. Invalid outer telemetry revokes
+advice and makes trial rollback sticky. Policy ordinals are independent of decoder
+sequences: restarted workers can repeat decoder sequence numbers, but a change in
+worker epoch/attempt/publication/processing scope resets recovery and requires rollback
+during a trial. Duplicate same-scope intervals reject rather than minting new evidence.
+The caller must coalesce repeated reports and may wait for processing completion
+within the original freshness budget before evaluation.
+
+Seventeen adapter/owner regressions pass within the 158-test FilmModel suite. Real
+bounded source histories and trackers form the inputs, including a 30-second trial
+qualification followed by accepted worker-change rollback. These are deterministic
+logic tests, not actual native adaptive-media qualification. The capture model still
+does not construct the owner. Runtime bootstrap/coalescing/deadline polling and real
+bitrate trial/rollback under impairment remain required. See the
+[binding plan](superpowers/plans/2026-09-16-quality-telemetry-binding.md).
