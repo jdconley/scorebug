@@ -1,3 +1,4 @@
+import { qualifyEncoderResolutionTransition } from './encoder-resolution-transition.mjs';
 import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 import { qualifyNativeEncoderSnapshot } from './encoder-native-properties.mjs';
@@ -11,6 +12,7 @@ const percentile = (rows, fraction) =>
 /** Actual compressed sample payload, excluding muxer/transport/retransmission.
  * Evidence validity does not presuppose a requested bitrate is achievable. */
 export function qualifyEncoderPayload(report) {
+  if (report.formatVersion === 7) return qualifyEncoderResolutionTransition(report);
   assert.ok([1, 2, 3, 4, 5, 6].includes(report.formatVersion));
   const preparation = report.formatVersion === 3;
   const halfResolution = report.formatVersion === 6;

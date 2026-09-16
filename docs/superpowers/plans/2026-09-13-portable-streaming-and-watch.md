@@ -761,3 +761,15 @@ confirmed native bitrate trials, and the unsigned combined iPhone/Watch Release
 build succeeds. This checkpoint has 55 streaming, 135 vendor, 183 app-model, 334
 serialized worker and 908 tooling tests passing, plus worker typechecking. Retained
 parallel worker timing failures are documented in the reduced-profile plan.
+
+
+The [native resolution transition experiment](2026-09-16-native-resolution-transitions.md)
+now preserves all 3600 frames across iOS 17.5 and 26.2 runs of 1080p→540p→1080p.
+Actual dimensions, ordered source identity, distinct encoder sessions and sync/IDR
+starts qualify, with settled payload 6.020→3.521→6.020 Mbps. Transitions also expose
+349–419 ms compressed-output delivery gaps and 41–107 ms first-append blocking.
+All 910 tooling tests pass. This is isolated encoder metadata evidence, not decoded
+pipeline or adaptive recovery qualification. Next prove outstanding-callback and
+stop/cancellation lifetime behavior, then integrate bounded profile changes through
+the worker while preserving the independent 1080p archive. Production selection,
+physical phone/Watch and other-host gates remain open.

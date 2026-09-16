@@ -45,7 +45,8 @@
     "test:encoder-preparation": "node scripts/test-encoder-payload.mjs --preparation",
     "test:encoder-resolution": "node scripts/test-encoder-payload.mjs --resolution",
     "test:encoder-low-latency": "node scripts/test-encoder-payload.mjs --low-latency",
-    "test:encoder-half-resolution": "node scripts/test-encoder-payload.mjs --half-resolution"
+    "test:encoder-half-resolution": "node scripts/test-encoder-payload.mjs --half-resolution",
+    "test:encoder-transition": "node scripts/test-encoder-payload.mjs --transition"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

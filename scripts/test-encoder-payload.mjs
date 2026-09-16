@@ -8,40 +8,48 @@ import { createOwnedSimulator } from './owned-simulator.mjs';
 import { qualifyEncoderPayload } from './encoder-payload-qualification.mjs';
 
 assert.equal(process.platform, 'darwin');
+const transition = process.argv.slice(2).includes('--transition');
 const halfResolution = process.argv.slice(2).includes('--half-resolution');
 const lowLatency = process.argv.slice(2).includes('--low-latency');
 const preparation = process.argv.slice(2).includes('--preparation');
 const resolution = process.argv.slice(2).includes('--resolution');
 assert.deepEqual(
   process.argv.slice(2),
-  halfResolution
-    ? ['--half-resolution']
-    : lowLatency
-      ? ['--low-latency']
-      : resolution
-        ? ['--resolution']
-        : preparation
-          ? ['--preparation']
-          : [],
+  transition
+    ? ['--transition']
+    : halfResolution
+      ? ['--half-resolution']
+      : lowLatency
+        ? ['--low-latency']
+        : resolution
+          ? ['--resolution']
+          : preparation
+            ? ['--preparation']
+            : [],
 );
-const method = halfResolution
-  ? 'testFreshHalfResolutionProfiles'
-  : lowLatency
-    ? 'testFreshLowLatencyRateControl'
-    : resolution
-      ? 'testFreshResolutionProfiles'
-      : preparation
-        ? 'testFreshFrameRatePreparation'
-        : 'testControlledRatesAndFreshLowEncoder';
-const attachmentName = halfResolution
-  ? 'EncoderHalfResolution'
-  : lowLatency
-    ? 'EncoderLowLatency'
-    : resolution
-      ? 'EncoderResolution'
-      : preparation
-        ? 'EncoderPreparation'
-        : 'EncoderPayload';
+const testClass = transition ? 'EncoderResolutionTransitionTests' : 'EncoderPayloadTests';
+const method = transition
+  ? 'testPacedResolutionTransitions'
+  : halfResolution
+    ? 'testFreshHalfResolutionProfiles'
+    : lowLatency
+      ? 'testFreshLowLatencyRateControl'
+      : resolution
+        ? 'testFreshResolutionProfiles'
+        : preparation
+          ? 'testFreshFrameRatePreparation'
+          : 'testControlledRatesAndFreshLowEncoder';
+const attachmentName = transition
+  ? 'EncoderResolutionTransition'
+  : halfResolution
+    ? 'EncoderHalfResolution'
+    : lowLatency
+      ? 'EncoderLowLatency'
+      : resolution
+        ? 'EncoderResolution'
+        : preparation
+          ? 'EncoderPreparation'
+          : 'EncoderPayload';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 assert.match(runtime, /^\d+\.\d+(?:\.\d+)?$/);
@@ -56,15 +64,17 @@ const artifact = await mkdtemp(
   join(
     root,
     'artifacts/qa/' +
-      (halfResolution
-        ? 'encoder-half-resolution-'
-        : lowLatency
-          ? 'encoder-low-latency-'
-          : resolution
-            ? 'encoder-resolution-'
-            : preparation
-              ? 'encoder-preparation-'
-              : 'encoder-payload-'),
+      (transition
+        ? 'encoder-resolution-transition-'
+        : halfResolution
+          ? 'encoder-half-resolution-'
+          : lowLatency
+            ? 'encoder-low-latency-'
+            : resolution
+              ? 'encoder-resolution-'
+              : preparation
+                ? 'encoder-preparation-'
+                : 'encoder-payload-'),
   ),
 );
 console.log('Encoder payload diagnostic evidence: ' + artifact);
@@ -121,7 +131,7 @@ try {
         join(root, 'ios/Scorebug.xcodeproj'),
         '-scheme',
         'ScorebugEncoderQualificationTests',
-        '-only-testing:ScorebugEncoderQualificationTests/EncoderPayloadTests/' + method,
+        '-only-testing:ScorebugEncoderQualificationTests/' + testClass + '/' + method,
         '-destination',
         'platform=iOS Simulator,id=' + simulator,
         '-destination-timeout',
@@ -158,7 +168,7 @@ try {
   );
   const manifest = JSON.parse(await readFile(join(artifact, 'attachments/manifest.json'), 'utf8'));
   const rows = manifest
-    .filter((r) => r.testIdentifier === 'EncoderPayloadTests/' + method + '()')
+    .filter((r) => r.testIdentifier === testClass + '/' + method + '()')
     .flatMap((r) => r.attachments)
     .filter((a) => a.suggestedHumanReadableName.startsWith(attachmentName));
   assert.equal(rows.length, 1, 'Missing or duplicate encoder payload attachment');
@@ -172,7 +182,7 @@ try {
   const report = JSON.parse(raw);
   assert.equal(
     report.formatVersion,
-    halfResolution ? 6 : lowLatency ? 5 : resolution ? 4 : preparation ? 3 : 2,
+    transition ? 7 : halfResolution ? 6 : lowLatency ? 5 : resolution ? 4 : preparation ? 3 : 2,
     'Current probe must supply native property snapshots',
   );
   const result = qualifyEncoderPayload(report);
