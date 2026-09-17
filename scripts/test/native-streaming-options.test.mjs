@@ -45,6 +45,45 @@ test('deadline experiment retains default and requires exact controlled-fixture 
     );
 });
 
+test('deadline decisions are isolated behind exact validated experiment flags', () => {
+  assert.equal(options.fixtureDeadlineResets({ environment: {}, decoderStall: false }), false);
+  const valid = {
+    SCOREBUG_TEST_DEADLINE_RESETS: '1',
+    SCOREBUG_TEST_DECODER_STALL: '1',
+    SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
+    SCOREBUG_TEST_CADENCE_REPORTS: '1',
+  };
+  for (const stall of ['1', 'reset540']) {
+    assert.equal(
+      options.fixtureDeadlineResets({
+        environment: { ...valid, SCOREBUG_TEST_DECODER_STALL: stall },
+        decoderStall: true,
+      }),
+      true,
+    );
+  }
+  for (const [key, values] of Object.entries({
+    SCOREBUG_TEST_DEADLINE_RESETS: ['', '0', 'true', '01', 1, null],
+    SCOREBUG_TEST_DECODER_STALL: [undefined, '', '0', 'true'],
+    SCOREBUG_TEST_DELIVERY_DEADLINE_MS: [undefined, '1000', '1500.0', 1500],
+    SCOREBUG_TEST_CADENCE_REPORTS: [undefined, '', '0', 'true'],
+  }))
+    for (const value of values) {
+      assert.throws(
+        () =>
+          options.fixtureDeadlineResets({
+            environment: { ...valid, [key]: value },
+            decoderStall: true,
+          }),
+        /deadline/i,
+      );
+    }
+  assert.throws(
+    () => options.fixtureDeadlineResets({ environment: valid, decoderStall: false }),
+    /deadline/i,
+  );
+});
+
 test('short native run retains its existing hold and history', () => {
   assert.deepEqual(options.nativeStreamingOptions({ streaming: true, environment: {} }), {
     holdSeconds: 12,

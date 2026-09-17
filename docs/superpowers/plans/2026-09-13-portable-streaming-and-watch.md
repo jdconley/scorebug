@@ -1780,3 +1780,20 @@ The Core and native admission checkpoint is independently reviewed and tested.
 Driver activation, decision export and a new actual reset experiment are the next
 steps; the injected native-operation test does not qualify physical encoder behavior
 or automatic recovery. Evidence: `artifacts/qa/deadline-reset-final-verification.json`.
+
+
+The same deadline-reset plan now has a verified driver checkpoint. Explicit
+simulator run `native-app-DcUNqI` disables the earlier stall watchdog and legacy
+recovery credit, then admits a zero-on-time-FPS one-second deadline failure during
+an owned 2.051-second decoder pause. It holds minimum quality without recreating
+the encoder. The independent verifier binds the decision to raw reports, source
+frames and current authority, including intervening retirement and status expiry.
+It reconciles 134 classified and 16 unknown windows; unknown evidence stays unknown.
+
+The independent 1080p archive finishes with 3,716 frames, zero source loss and 61/61
+audio markers. Live 240p output also fully decodes with 54/54 markers. All 385 Core,
+286 native model and 1,378 tooling tests pass, plus simulator and unsigned combined
+iPhone/Watch Release builds. Reviews are approved; frozen evidence is recorded in
+`artifacts/qa/deadline-driver-final-verification.json`. Next qualify higher-profile
+deadline-triggered writes and controlled recovery/headroom. Minimum-hold behavior
+does not prove those gates; production adaptation remains disabled.

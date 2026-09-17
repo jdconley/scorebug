@@ -84,6 +84,12 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(cadenceReports, "1")
             app.launchEnvironment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = deliveryDeadline
         }
+        let deadlineResets = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DEADLINE_RESETS"] ?? ""
+        if !deadlineResets.isEmpty {
+            XCTAssertEqual(deadlineResets, "1"); XCTAssertTrue(["1", "reset540"].contains(decoderStall))
+            XCTAssertEqual(deliveryDeadline, "1500"); XCTAssertEqual(cadenceReports, "1")
+            app.launchEnvironment["SCOREBUG_TEST_DEADLINE_RESETS"] = deadlineResets
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

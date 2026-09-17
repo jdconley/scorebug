@@ -17,10 +17,153 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertNil(try classify(missing: [], late: [], latency: 0.55, ageMs: 100, deadline: 0.5).failureSignal(sequence: 3))
     }
     private func deliveryOwner(_ native: DeadlineNative, behavior: QualityController.Behavior = .progressive) throws -> PublishingQualitySession {
-        try .init(operations: .init(setBitRate: { rate, _ in native.write(rate) }, stop: {}, videoStartup: { native.startup }),
+        try .init(operations: .init(setBitRate: { rate, _ in try native.write(rate) }, stop: { native.stop() },
+            isPublishing: { native.isPublishing() }, videoStartup: { native.startup }),
             profiles: [.init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 700_000)],
             attemptID: session, initial: .init(profileID: "240p30", videoBitrate: bitRate),
             behavior: behavior, uptime: { native.now })
+    }
+    @MainActor func testDriverDeadlineClassificationAppliesMinimumAndExportsExactEvidence() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap()
+        var input: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: Set(30..<60), late: [], revision: 0, profileID: "240p30",
+            submittedBoundary: .zero, withAuthority: true, captureInput: { input = $0 }, deliveryInstant: .now)
+        let current = try XCTUnwrap(input)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, deliveryAudit: try .init(latencyBudget: 1.5, maximumSampleAge: 0.25),
+            enableDeliveryFailures: true, export: { exported = $0 })
+        driver.deliveryInputProvider = { current }
+        native.setNow(0.5)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        native.setNow(4.75)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        XCTAssertEqual(native.calls, 2)
+        let state = await owner.snapshot
+        XCTAssertEqual(state.applied?.videoBitrate, 350_000)
+        XCTAssertNil(state.lastWindow)
+        XCTAssertEqual(state.lastDeliveryFailure?.onTimeFrames, 30)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        XCTAssertEqual(native.calls, 2, "Repeated evidence must not dispatch another reset")
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertEqual(json["deadlineFailuresEnabled"] as? Bool, true)
+        XCTAssertEqual(json["decoderStallEnabled"] as? Bool, false)
+        let row = try XCTUnwrap(events.first { $0["kind"] as? String == "deliveryFailure" })
+        let evidence = try XCTUnwrap(row["deliveryFailure"] as? [String: Any])
+        XCTAssertEqual(evidence["classifiedAt"] as? Double, 4.75)
+        XCTAssertEqual(evidence["deliveryReceiptID"] as? String, current.delivery.receiptID.uuidString.lowercased())
+        XCTAssertEqual(evidence["scopeID"] as? String, current.delivery.snapshot.scopeID)
+        XCTAssertEqual(evidence["sequence"] as? String, "1")
+        XCTAssertEqual(evidence["revision"] as? String, "0")
+        XCTAssertEqual(evidence["start"] as? Double, 1)
+        XCTAssertEqual(evidence["end"] as? Double, 3)
+        XCTAssertEqual(evidence["missingFrames"] as? Int, 30)
+        XCTAssertNotNil(evidence["context"])
+        XCTAssertNil(row["window"])
+        XCTAssertEqual((row["action"] as? [String: Any])?["bitRate"] as? Int, 350_000)
+    }
+    @MainActor func testDriverDeadlineDefaultRetiredAndStaleEvidenceCannotWrite() async throws {
+        for fault in ["disabled", "retired", "stale"] {
+            bitRate = 700_000
+            let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+            try await owner.bootstrap()
+            var input: PublishingDeliveryMonitor.Input?
+            _ = try classify(missing: Set(30..<60), late: [], revision: 0, profileID: "240p30",
+                submittedBoundary: .zero, withAuthority: true, captureInput: { input = $0 },
+                deliveryInstant: .now - .seconds(fault == "stale" ? 1 : 0))
+            let current = try XCTUnwrap(input)
+            let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1.5, maximumSampleAge: 0.25)
+            let driver: PublishingQualityDriver
+            if fault == "disabled" {
+                driver = .init(owner: owner, workerLimits: nil, transportLimits: nil, uptime: { native.now }, deliveryAudit: audit)
+            } else {
+                driver = .init(owner: owner, workerLimits: nil, transportLimits: nil, uptime: { native.now },
+                    deliveryAudit: audit, enableDeliveryFailures: true)
+            }
+            driver.deliveryInputProvider = { current }
+            native.setNow(0.5)
+            await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+            if fault == "retired" { current.authority?.revoke() }
+            native.setNow(4.75)
+            await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+            XCTAssertEqual(native.calls, 1, fault)
+            let state = await owner.snapshot
+            XCTAssertNil(state.lastDeliveryFailure, fault)
+            await driver.stop()
+        }
+    }
+    @MainActor func testDriverSurvivesOwnerAdmissionRejectionAfterSuccessfulClassification() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap()
+        var input: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: Set(60..<90), late: [], revision: 0, profileID: "240p30",
+            submittedBoundary: .zero, withAuthority: true, captureInput: { input = $0 }, deliveryInstant: .now)
+        let current = try XCTUnwrap(input)
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1.5, maximumSampleAge: 0.25)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, deliveryAudit: audit, enableDeliveryFailures: true, export: { exported = $0 })
+        driver.deliveryInputProvider = { current }
+        native.setNow(1.5)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        native.rejectNextAdmission()
+        native.setNow(4.75)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        XCTAssertFalse(driver.isClosed)
+        XCTAssertEqual(native.calls, 1)
+        XCTAssertEqual(native.stops, 0)
+        let state = await owner.snapshot
+        XCTAssertFalse(state.isClosed)
+        XCTAssertNil(state.lastDeliveryFailure)
+        let auditJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        let rows = try XCTUnwrap(auditJSON["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual((rows[0]["result"] as? [String: Any])?["missingFrames"] as? Int, 30,
+            "The driver must catch actor admission failure after classification succeeds")
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertTrue(events.contains { $0["kind"] as? String == "rejected" && ($0["reason"] as? String)?.hasPrefix("delivery-") == true })
+        XCTAssertFalse(events.contains { $0["kind"] as? String == "failed" || $0["kind"] as? String == "deliveryFailure" })
+    }
+    @MainActor func testDriverClosesPublishingOwnerWhenDeadlineResetWriteFails() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap()
+        var input: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: Set(60..<90), late: [], revision: 0, profileID: "240p30",
+            submittedBoundary: .zero, withAuthority: true, captureInput: { input = $0 }, deliveryInstant: .now)
+        let current = try XCTUnwrap(input)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, deliveryAudit: try .init(latencyBudget: 1.5, maximumSampleAge: 0.25),
+            enableDeliveryFailures: true, export: { exported = $0 })
+        driver.deliveryInputProvider = { current }
+        native.setNow(1.5)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        native.failNextWrite()
+        native.setNow(4.75)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        XCTAssertTrue(driver.isClosed)
+        XCTAssertEqual(native.calls, 2)
+        XCTAssertEqual(native.stops, 1)
+        let state = await owner.snapshot
+        XCTAssertTrue(state.isClosed)
+        XCTAssertEqual(state.revision, 0, "A failed native write cannot acknowledge the minimum")
+        XCTAssertEqual(state.lastDeliveryFailure?.missingFrames, 30)
+        XCTAssertNil(driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics))
+        await driver.stop()
+        XCTAssertEqual(native.stops, 1)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertTrue(events.contains { $0["kind"] as? String == "deliveryFailure" })
+        XCTAssertTrue(events.contains { $0["kind"] as? String == "failed" && $0["reason"] as? String == "native-change-failed" })
+        XCTAssertFalse(events.contains { $0["kind"] as? String == "applied" })
     }
     func testNativeOwnerConsumesFailureOnceAndAppliesMinimum() async throws {
         bitRate = 700_000
@@ -225,7 +368,10 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
                           revision: UInt64 = 7, profileID: String = "minimum", submittedBoundary: CMTime? = nil,
                           withAuthority: Bool = false,
                           expiresAt: String = "2040-01-01T00:00:05Z",
-                          audit: PublishingDeliveryMonitor.Audit? = nil) throws -> PublishingDeliveryObservation {
+                          audit: PublishingDeliveryMonitor.Audit? = nil,
+                          captureInput: ((PublishingDeliveryMonitor.Input) -> Void)? = nil,
+                          deliveryInstant: ContinuousClock.Instant? = nil) throws -> PublishingDeliveryObservation {
+        let instant = deliveryInstant ?? self.instant
         let h = try history(missing: missing)
         let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1)!
         let receipt = PublishingBitRateChange(publishingGeneration: 1, configuration: configuration,
@@ -276,10 +422,11 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         case 5: diagnostics.ingress = nil
         default: break
         }
-        if let audit {
-            let input = PublishingDeliveryMonitor.Input(history: h,
+        let input = PublishingDeliveryMonitor.Input(history: h,
                 clock: .init(scope: scope, transportClock: clock, isClosed: false),
                 diagnostics: diagnostics, delivery: delivery, authority: authority)
+        captureInput?(input)
+        if let audit {
             audit.record(input: input, applied: applied, at: 0.5, instant: instant)
             audit.record(input: input, applied: applied, at: 4.5, instant: instant)
             audit.record(input: input, applied: applied, at: 4.5, instant: instant)
@@ -360,16 +507,27 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
 private final class DeadlineNative: @unchecked Sendable {
     private let lock = NSLock()
     private let initial: VideoEncodingConfiguration
-    private var time = 0.0, count = 0
+    private var time = 0.0, count = 0, stopCount = 0
+    private var rejectAdmission = false, rejectWrite = false
+    private enum WriteFailure: Error { case injected }
     init(configuration: VideoEncodingConfiguration) { initial = configuration }
     var now: Double { lock.withLock { time } }
     var calls: Int { lock.withLock { count } }
+    var stops: Int { lock.withLock { stopCount } }
+    func stop() { lock.withLock { stopCount += 1 } }
+    func rejectNextAdmission() { lock.withLock { rejectAdmission = true } }
+    func failNextWrite() { lock.withLock { rejectWrite = true } }
+    func isPublishing() -> Bool { lock.withLock {
+        defer { rejectAdmission = false }
+        return !rejectAdmission
+    } }
     var startup: PublishingVideoStartup? { .init(profile: .low240, width: 426, height: 240,
         publishingGeneration: 1, encoderSessionID: initial.encoderSessionID, firstSourcePTS: .zero,
         submittedAt: 0, completedAt: 0, observedAt: 0) }
     func setNow(_ value: Double) { lock.withLock { time = value } }
-    func write(_ rate: Int) -> PublishingBitRateChange { lock.withLock {
+    func write(_ rate: Int) throws -> PublishingBitRateChange { try lock.withLock {
         count += 1
+        if rejectWrite { rejectWrite = false; throw WriteFailure.injected }
         let config = rate == initial.bitRate ? initial : VideoEncodingConfiguration(id: UUID(), encoderSessionID: initial.encoderSessionID, bitRate: rate)!
         return PublishingBitRateChange(publishingGeneration: 1, configuration: config, acceptedAt: time, lastSubmittedSourcePTS: .zero)!
     } }

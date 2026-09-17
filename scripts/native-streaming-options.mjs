@@ -152,6 +152,21 @@ export function fixtureDeliveryDeadline({ environment, decoderStall }) {
   return Number(raw) / 1000;
 }
 
+/** Downward-only experiment; all other quality paths retain their normal defaults. */
+export function fixtureDeadlineResets({ environment, decoderStall }) {
+  const raw = environment.SCOREBUG_TEST_DEADLINE_RESETS;
+  if (raw === undefined) return false;
+  assert.ok(
+    raw === '1' &&
+      decoderStall === true &&
+      ['1', 'reset540'].includes(environment.SCOREBUG_TEST_DECODER_STALL) &&
+      environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS === '1500' &&
+      environment.SCOREBUG_TEST_CADENCE_REPORTS === '1',
+    'Deadline resets require exact opt-in 1 and the controlled 1500 ms cadence fixture',
+  );
+  return true;
+}
+
 /** Native SDK milliseconds, not FFmpeg URL microseconds; absent preserves defaults. */
 export function fixturePublishPeerLatency(environment) {
   const raw = environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS;

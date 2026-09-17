@@ -21,6 +21,26 @@ final class PublishingDeliveryMonitorTests: XCTestCase {
             XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment), raw)
         }
     }
+    func testDeadlineResetActivationRequiresExactIsolatedFixture() throws {
+        XCTAssertFalse(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: [:]))
+        let base = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_CADENCE_REPORTS": "1",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_DECODER_STALL": "1", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500",
+            "SCOREBUG_TEST_DEADLINE_RESETS": "1"]
+        XCTAssertTrue(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: base))
+        for key in base.keys where key != "SCOREBUG_TEST_DEADLINE_RESETS" {
+            var incomplete = base; incomplete.removeValue(forKey: key)
+            XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: incomplete), key)
+        }
+        for raw in ["", "0", "true", "01", " 1", "1 "] {
+            var invalid = base; invalid["SCOREBUG_TEST_DEADLINE_RESETS"] = raw
+            XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: invalid), raw)
+        }
+        var short = base; short["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = "1000"
+        XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: short))
+        var reset = base; reset["SCOREBUG_TEST_DECODER_STALL"] = "reset540"
+        XCTAssertTrue(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: reset))
+    }
     func testSchedulesIndependentNonoverlappingWindowsAfterDeadline() throws {
         var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: 1, maximumSampleAge: 0.25)
         XCTAssertEqual(schedule.poll(at: 10.1, identity: "a"), [])

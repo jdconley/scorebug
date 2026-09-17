@@ -15,6 +15,7 @@ struct PublishingDeliveryObservation: Sendable {
     let delivery: WorkerDecoderDeliveryFreshness
     let appliedRevision: UInt64
     let result: DeliveryDeadlineResult
+    let classifiedAt: Double
     let observedAtLowerBound: Double
     let authority: PublishingDeliveryAuthority?
 
@@ -73,6 +74,6 @@ struct PublishingDeliveryObservation: Sendable {
             windowStart: windowStart, windowEnd: windowEnd, evaluatedAt: now,
             sampleAgeUpperBound: seconds, maximumSampleAge: maximumSampleAge, latencyBudget: latencyBudget)
         return .init(source: source, delivery: delivery, appliedRevision: applied.revision, result: result,
-            observedAtLowerBound: now - seconds, authority: authority)
+            classifiedAt: now, observedAtLowerBound: now - seconds, authority: authority)
     }
 }

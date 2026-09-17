@@ -17,6 +17,16 @@ enum PublishingDeliveryMonitor {
         }
         return raw == "1500" ? 1.5 : 1
     }
+    /// Downward-only qualification mode; every prerequisite is explicit.
+    static func fixtureResetsRequested(environment: [String: String]) throws -> Bool {
+        guard let raw = environment["SCOREBUG_TEST_DEADLINE_RESETS"] else { return false }
+        guard raw == "1", environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == "1500",
+              ["1", "reset540"].contains(environment["SCOREBUG_TEST_DECODER_STALL"] ?? ""),
+              WorkerCadenceReportAudit.requested(environment: environment) else {
+            throw Schedule.Failure.invalidBudget
+        }
+        return true
+    }
     #endif
     struct Window: Equatable, Sendable {
         let start: Double
@@ -67,7 +77,7 @@ enum PublishingDeliveryMonitor {
     }
 
     /// Explicit qualification export. Scalar metadata only, bounded to 256 rows.
-    /// Caller serializes access; production adaptation does not consume this audit.
+    /// Caller serializes access. Only the explicit deadline-reset fixture consumes results.
     final class Audit {
         private struct Key: Equatable {
             let scope: VideoFrameObservationScope
@@ -81,6 +91,7 @@ enum PublishingDeliveryMonitor {
             let acceptedAt: Double
             let submittedPTS: CMTime?
             let acknowledgedAt: Double
+            let authorityID: ObjectIdentifier?
         }
         private var schedule: Schedule
         private var key: Key?
@@ -91,21 +102,23 @@ enum PublishingDeliveryMonitor {
         init(latencyBudget: Double, maximumSampleAge: Double) throws {
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
         }
-        func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
-                    instant: ContinuousClock.Instant) {
-            guard !closed, !overflow else { return }
-            guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil); return }
+        @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
+                    instant: ContinuousClock.Instant) -> [PublishingDeliveryObservation] {
+            guard !closed, !overflow else { return [] }
+            guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil); return [] }
+            var observations: [PublishingDeliveryObservation] = []
             let next = Key(scope: input.history.scope, clock: input.clock.transportClock,
                 context: input.delivery.context, deliveryScope: input.delivery.snapshot.scopeID,
                 attempt: applied.attemptID, revision: applied.revision, configuration: applied.receipt.configuration,
                 generation: applied.receipt.publishingGeneration, acceptedAt: applied.receipt.acceptedAt,
-                submittedPTS: applied.receipt.lastSubmittedSourcePTS, acknowledgedAt: applied.acknowledgedAt)
+                submittedPTS: applied.receipt.lastSubmittedSourcePTS, acknowledgedAt: applied.acknowledgedAt,
+                authorityID: input.authority.map(ObjectIdentifier.init))
             if key != next {
-                guard phase < 256 else { overflow = true; return }
+                guard phase < 256 else { overflow = true; return [] }
                 key = next; phase += 1
             }
             for window in schedule.poll(at: now, identity: String(phase)) {
-                guard rows.count < 256 else { overflow = true; return }
+                guard rows.count < 256 else { overflow = true; return observations }
                 var row: [String: Any] = ["phase": phase, "start": window.start, "end": window.end, "evaluatedAt": now,
                     "appliedRevision": String(applied.revision), "acknowledgedAt": applied.acknowledgedAt,
                     "profileID": applied.settings.profileID, "videoBitrate": applied.settings.videoBitrate,
@@ -126,6 +139,9 @@ enum PublishingDeliveryMonitor {
                         applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
                         windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
                         maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget, authority: input.authority)
+                    observations.append(observation)
+                    row["classifiedAt"] = observation.classifiedAt
+                    row["observedAtLowerBound"] = observation.observedAtLowerBound
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
                     row["history"] = Self.history(input.history, start: window.start, anchor: observation.source.anchorSourcePTS)
                     let result = observation.result
@@ -141,6 +157,7 @@ enum PublishingDeliveryMonitor {
                 }
                 rows.append(row)
             }
+            return observations
         }
         func close() { closed = true }
         func data() throws -> Data {

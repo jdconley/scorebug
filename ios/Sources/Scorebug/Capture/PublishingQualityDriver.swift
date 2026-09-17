@@ -6,6 +6,7 @@ import ScorebugMedia
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
     var deliveryInputProvider: (() -> PublishingDeliveryMonitor.Input?)?
+    private let enableDeliveryFailures: Bool
     private let deliveryAudit: PublishingDeliveryMonitor.Audit?
     private let deliveryExport: ((Data) async -> Void)?
     private let owner: PublishingQualitySession
@@ -26,7 +27,8 @@ import ScorebugMedia
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, export: ((Data) async -> Void)? = nil) {
+        self.enableDeliveryFailures = enableDeliveryFailures
         self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
@@ -69,15 +71,38 @@ import ScorebugMedia
             // Read current caller-owned evidence only after the actor await.
             // No asynchronous work occurs between this read and classification.
             let currentDelivery = deliveryInputProvider?()
+            var deliveryObservations: [PublishingDeliveryObservation] = []
             if let settings = state.applied, let revision = state.revision, let receipt = state.receipt,
                let acknowledgedAt = state.acknowledgedAt, !state.isBusy, !state.isClosed {
                 let now = uptime(), instant = ContinuousClock.now
-                deliveryAudit?.record(input: currentDelivery,
+                deliveryObservations = deliveryAudit?.record(input: currentDelivery,
                     applied: .init(attemptID: state.attemptID, revision: revision, settings: settings,
-                        receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant)
+                        receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant) ?? []
             }
-            var canEvaluateSource = true
-            if let cadence, await owner.usesDecoderStallPolicy {
+            if enableDeliveryFailures {
+                for observation in deliveryObservations {
+                    guard let authority = observation.authority else { continue }
+                    let decision: QualityController.Decision?
+                    do {
+                        decision = try await owner.evaluateDeliveryFailure(observation, authority: authority)
+                    } catch {
+                        await record("rejected", reason: "delivery-" + Self.reason(error))
+                        continue
+                    }
+                    try Task.checkCancellation()
+                    guard !isClosed else { return }
+                    if let decision {
+                        await record("deliveryFailure", decision: decision, delivery: observation,
+                            advice: decision.recommendation)
+                        if let advice = decision.recommendation { try await apply(advice) }
+                        return
+                    }
+                }
+            }
+            // This fixture qualifies downward deadline actions only. Unknown,
+            // uncertain and overlapping windows cannot grant recovery credit.
+            var canEvaluateSource = !enableDeliveryFailures
+            if !enableDeliveryFailures, let cadence, await owner.usesDecoderStallPolicy {
                 let decision: QualityController.Decision?
                 do {
                     decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: diagnostics)
@@ -184,7 +209,8 @@ import ScorebugMedia
             deliveryAudit?.close()
             if let deliveryExport, let data = try? deliveryAudit?.data() { await deliveryExport(data) }
             if let export, let data = try? JSONSerialization.data(withJSONObject:
-                ["formatVersion": 4, "overflow": overflow, "events": events], options: [.sortedKeys]) {
+                ["formatVersion": 4, "overflow": overflow, "deadlineFailuresEnabled": enableDeliveryFailures,
+                 "decoderStallEnabled": !enableDeliveryFailures, "events": events], options: [.sortedKeys]) {
                 await export(data)
             }
         }
@@ -198,7 +224,7 @@ import ScorebugMedia
         return "unavailable"
     }
     private func record(_ kind: String, source: WorkerSourceIntervalObservation? = nil,
-                        decision: QualityController.Decision? = nil, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
+                        decision: QualityController.Decision? = nil, delivery: PublishingDeliveryObservation? = nil, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false) async {
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
@@ -232,6 +258,22 @@ import ScorebugMedia
                 "sequence": String(signal.sequence), "revision": String(signal.appliedRevision),
                 "observedAtLowerBound": signal.observedAtLowerBound]
         }
+        if let delivery, let signal = state.lastDeliveryFailure {
+            let context = delivery.delivery.context
+            let publication = (try? JSONEncoder().encode(context.publication))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) }
+            row["deliveryFailure"] = ["classifiedAt": delivery.classifiedAt,
+                "deliveryReceiptID": delivery.delivery.receiptID.uuidString.lowercased(),
+                "scopeID": delivery.delivery.snapshot.scopeID,
+                "context": ["gameId": context.gameId, "generation": context.generation,
+                    "workerId": context.workerId, "workerEpoch": context.workerEpoch, "attempt": context.attempt,
+                    "publication": Self.optional(publication)],
+                "publishingAttemptID": signal.attemptID.uuidString.lowercased(),
+                "sequence": String(signal.sequence), "revision": String(signal.appliedRevision),
+                "start": signal.start, "end": signal.end, "expectedFrames": signal.expectedFrames,
+                "onTimeFrames": signal.onTimeFrames, "lateFrames": signal.lateFrames,
+                "missingFrames": signal.missingFrames, "observedAtLowerBound": signal.observedAtLowerBound]
+        }
         if let diagnostics, let window = state.lastWindow {
             row["evidence"] = Self.evidence(diagnostics, source: source, window: window)
         }
@@ -239,7 +281,7 @@ import ScorebugMedia
             row["evaluatedAt"] = state.evaluatedAt
             row["state"] = String(describing: decision.state)
             row["reasons"] = decision.reasons.map { String(describing: $0) }
-            if cadence == nil, let w = state.lastWindow {
+            if cadence == nil, delivery == nil, let w = state.lastWindow {
                 row["window"] = ["sequence": String(w.sequence), "revision": String(w.appliedRevision),
                     "start": w.start, "end": w.end, "captured": Self.optional(w.capturedFreshFrames),
                     "encoded": Self.optional(w.encodedFreshFrames), "received": Self.optional(w.receiver?.freshFrames),
@@ -311,6 +353,7 @@ import ScorebugMedia
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
         let deliveryLatencyBudget = try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment)
+        let enableDeliveryFailures = try PublishingDeliveryMonitor.fixtureResetsRequested(environment: environment)
         let resetStall = environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540"
         let minimumStall = (environment["SCOREBUG_TEST_DECODER_STALL"] == "1" || resetStall)
             && WorkerCadenceReportAudit.requested(environment: environment)
@@ -336,6 +379,7 @@ import ScorebugMedia
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
             deliveryAudit: minimumStall ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25) : nil,
             deliveryExport: minimumStall ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
+            enableDeliveryFailures: enableDeliveryFailures,
             export: { data in
                 await Task.detached {
                     let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

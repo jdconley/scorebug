@@ -158,6 +158,20 @@ final class PublishingDecoderStallTests: XCTestCase {
             XCTAssertEqual(n.calls, 1); await o.stop()
         }
     }
+    @MainActor func testDeadlineFixtureIgnoresCompetingFreshDecoderStall() async throws {
+        let n = StallNative(), o = try owner(n)
+        let driver = PublishingQualityDriver(owner: o, workerLimits: nil, transportLimits: nil,
+            uptime: { n.now }, enableDeliveryFailures: true)
+        try await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics(n))?.value
+        n.setNow(102)
+        try await driver.tick(encoderReady: true, source: nil, cadence: cadence(receivedAt: .now), diagnostics: diagnostics(n))?.value
+        let state = await o.snapshot
+        XCTAssertEqual(n.calls, 1)
+        XCTAssertEqual(state.applied?.videoBitrate, 600000)
+        XCTAssertNil(state.lastDecoderStall)
+        XCTAssertNil(state.lastDeliveryFailure)
+        await driver.stop()
+    }
     @MainActor func testDriverRecordsSeparateStallAndAppliesMinimum() async throws {
         let n = StallNative(), o = try owner(n); var exported: Data?
         let driver = PublishingQualityDriver(owner: o, workerLimits: nil, transportLimits: nil, uptime: { n.now }, export: { exported = $0 })
