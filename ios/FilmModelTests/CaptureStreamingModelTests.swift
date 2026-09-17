@@ -717,6 +717,47 @@ import XCTest
         XCTAssertFalse(model.needsStorageRetry)
     }
 
+    func testCadenceDoesNotRequireSourceHistoryAndClearsOnMismatchExpiryAndStop() async throws {
+        let server = CaptureTestServer()
+        var owner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, observationFactory: { scope in
+            let value = try VideoFrameObservationOwner(scope: scope)
+            owner = value; return value
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let observed = try XCTUnwrap(owner)
+        XCTAssertNil(observed.sourceHistorySnapshot)
+        var response = workerAgeResponse()
+        response.status.workerEpoch = "22222222-2222-2222-2222-222222222222"
+        response.status.publication = .init(readerId: "33333333-3333-3333-3333-333333333333",
+            publisherId: "44444444-4444-4444-4444-444444444444",
+            publishingAttemptId: observed.snapshot.scope.publishingAttemptID.uuidString.lowercased(),
+            clock: .init(convention: "mpegts-ingress-origin-90k-v1", originPTS: "10919"))
+        response.status.observation?.decodedVideo?.clock = "mpegts-pts-90k-v1"
+        response.status.decoderCadenceAgeUpperBoundMs = 50
+        response.status.observation?.decoderCadence = try JSONDecoder().decode(DecoderCadenceSnapshot.self, from: Data("""
+            {"formatVersion":1,"scopeID":"11111111-1111-4111-8111-111111111111","oneSecond":null,"twoSeconds":null,
+            "progress":{"lastFreshPTS":180000,"ageMs":1000,"stalled":true},"invalidReason":null,"ended":false}
+            """.utf8))
+        for fault in ["publication", "scope", "legacy", "expiry"] {
+            await server.setStatusOverride(response); await model.pollControl()
+            XCTAssertNotNil(model.workerDecoderCadenceFreshness)
+            if fault == "expiry" { model.pollLocalHealth(at: .now + .seconds(6)) }
+            else {
+                var changed = response
+                if fault == "publication" { changed.status.publication?.publishingAttemptId = UUID().uuidString.lowercased() }
+                if fault == "scope" { changed.status.generation = 2 }
+                if fault == "legacy" { changed.status.observation?.decoderCadence = nil }
+                await server.setStatusOverride(changed); await model.pollControl()
+            }
+            XCTAssertNil(model.workerDecoderCadenceFreshness, fault)
+            XCTAssertEqual(model.localState, .publishing)
+        }
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerDecoderCadenceFreshness)
+        await model.stopStreaming(); XCTAssertNil(model.workerDecoderCadenceFreshness)
+    }
+
     func testWorkerDecodedVideoAgeStoredAndExpiresWithoutAnotherRequest() async throws {
         let server = CaptureTestServer()
         let model = makeModel(server: server)

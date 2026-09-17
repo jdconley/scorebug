@@ -58,6 +58,34 @@ enum PublishingQualityTelemetry {
             self.usesSenderRecoveryBudget = usesSenderRecoveryBudget
         }
     }
+    static func decoderStall(cadence: WorkerDecoderCadenceFreshness, applied: Applied, diagnostics: Diagnostics,
+                             sequence: UInt64, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.DecoderStall? {
+        let receipt = applied.receipt
+        guard diagnostics.isPublishing,
+              let current = diagnostics.receipt, sameReceipt(current, receipt),
+              diagnostics.clock?.publishingGeneration == receipt.publishingGeneration,
+              let ingress = diagnostics.ingress, !ingress.isClosed,
+              ingress.scope.publishingAttemptID == applied.attemptID,
+              ingress.scope.matchID == cadence.gameId,
+              ingress.scope.broadcastGeneration == cadence.generation,
+              cadence.publication.publishingAttemptId == applied.attemptID.uuidString.lowercased()
+        else { throw Failure.ownership }
+        guard receipt.configuration.bitRate == applied.settings.videoBitrate else { throw Failure.configuration }
+        guard now.isFinite, (0...1e12).contains(now), applied.acknowledgedAt.isFinite,
+              applied.acknowledgedAt >= receipt.acceptedAt, applied.acknowledgedAt <= now, sequence > 0
+        else { throw Failure.time }
+        guard let age = cadence.sampleAgeUpperBound(at: instant), age >= .zero,
+              age <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)
+        else { throw Failure.freshness }
+        guard cadence.snapshot.progress?.stalled == true else { return nil }
+        let seconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18
+        let lowerBound = now - seconds
+        // The complete one-second no-progress interval must follow the current
+        // native acknowledgment, even at the oldest possible sample time.
+        guard lowerBound >= applied.acknowledgedAt + ProgressiveStreamingPolicy.minimumDecoderStallDuration else { return nil }
+        return .init(attemptID: applied.attemptID, appliedRevision: applied.revision,
+                     sequence: sequence, observedAtLowerBound: lowerBound)
+    }
     static func window(source: WorkerSourceIntervalObservation, applied: Applied, diagnostics: Diagnostics,
                        workerLimits: WorkerLimits?, transportLimits: TransportLimits?,
                        sequence: UInt64? = nil, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.Window {

@@ -1553,3 +1553,22 @@ source-timed short delivery/watchdog integration, report reaction timing, fresh
 candidate cost/headroom and real automatic transitions remain before progressive
 production activation. Normal live publishing currently stays at the minimum until
 that automatic recovery path is qualified.
+
+
+[Fresh decoder-stall minimum reset](2026-09-17-decoder-stall-reset.md) now binds
+explicit worker no-progress observations to the current native publishing receipt
+and gives them priority in the progressive quality driver. Fresh, post-acknowledgment
+one-second stalls latch the existing minimum reset. Replayed/stale/wrong-scope
+reports cannot invent a stall; duplicate progress does not repeat encoder writes.
+Recovery excludes windows that start before the received stall. The capture helper
+works without optional source-frame instrumentation and follows publishing lifecycle
+cleanup. These inputs remain separate from source-frame loss and healthy FPS.
+
+All 348 Core and 246 native model tests pass, plus ARM64 simulator and unsigned
+combined iPhone/Watch Release builds. Evidence is frozen in
+`artifacts/qa/decoder-stall-final-verification.json`. No new live transition or
+physical device result is claimed. The default 1,000 ms worker reporting interval
+cannot meet the 250 ms conservative watchdog freshness budget. Next qualify actual
+fast-report response time, then short source/lateness measurements and candidate
+headroom before enabling progressive production adaptation. Existing local recording
+and fixed minimum startup continue independently.

@@ -17,6 +17,7 @@ import ScorebugMedia
     private var consumed: String?
     private var noted: String?
     private var localRejection: String?
+    private var cadenceRejection: String?
     private var startupWaitStartedAt: Double?
     private(set) var isClosed = false
     private(set) var bootstrapCount = 0
@@ -24,16 +25,16 @@ import ScorebugMedia
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }, export: ((Data) async -> Void)? = nil) {
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
-    @discardableResult func tick(encoderReady: Bool, source: WorkerSourceIntervalObservation?, diagnostics: PublishingQualityTelemetry.Diagnostics) -> Task<Void, Never>? {
+    @discardableResult func tick(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics) -> Task<Void, Never>? {
         guard !isClosed else { return nil }
         if let task { return task }
         task = Task { [self] in
             defer { task = nil }
-            await cycle(encoderReady: encoderReady, source: source, diagnostics: diagnostics)
+            await cycle(encoderReady: encoderReady, source: source, cadence: cadence, diagnostics: diagnostics)
         }
         return task
     }
-    private func cycle(encoderReady: Bool, source: WorkerSourceIntervalObservation?, diagnostics: PublishingQualityTelemetry.Diagnostics) async {
+    private func cycle(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness?, diagnostics: PublishingQualityTelemetry.Diagnostics) async {
         do {
             let state = await owner.snapshot
             try Task.checkCancellation()
@@ -60,11 +61,38 @@ import ScorebugMedia
                 await record("bootstrap")
                 return
             }
+            var canEvaluateSource = true
+            if let cadence, await owner.usesDecoderStallPolicy {
+                let decision: QualityController.Decision?
+                do {
+                    decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: diagnostics)
+                    cadenceRejection = nil
+                } catch {
+                    decision = nil; canEvaluateSource = false
+                    let reason = Self.reason(error), key = "\(state.revision ?? 0)/\(reason)"
+                    if cadenceRejection != key {
+                        cadenceRejection = key
+                        await record("rejected", reason: "cadence-" + reason)
+                    }
+                }
+                try Task.checkCancellation()
+                guard !isClosed else { return }
+                if let decision {
+                    await record("decoderStall", decision: decision, cadence: cadence)
+                    if let advice = decision.recommendation { try await apply(advice) }
+                    return
+                }
+                // A repeated fresh stall cannot give an old source window healthy
+                // recovery credit. It also need not dispatch the same reset twice.
+                if cadence.observedStall(maximumSampleAge: .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)) == true {
+                    canEvaluateSource = false
+                }
+            }
             if let rollback = try await owner.checkTrialDeadline() {
                 try await apply(rollback)
                 return
             }
-            if let source, try await evaluateSource(source, state: state, diagnostics: diagnostics) { return }
+            if canEvaluateSource, let source, try await evaluateSource(source, state: state, diagnostics: diagnostics) { return }
             let decision: QualityController.Decision?
             do {
                 decision = try await owner.evaluateLocalPressure(diagnostics: diagnostics, transportLimits: transportLimits)
@@ -153,7 +181,7 @@ import ScorebugMedia
         return "unavailable"
     }
     private func record(_ kind: String, source: WorkerSourceIntervalObservation? = nil,
-                        decision: QualityController.Decision? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
+                        decision: QualityController.Decision? = nil, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false) async {
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
@@ -179,6 +207,14 @@ import ScorebugMedia
                 "attemptID": source.interval.scope.publishingAttemptID.uuidString,
                 "workerID": source.workerId, "readerID": source.publication.readerId, "processingScopeID": Self.optional(source.processing?.scopeID)]
         }
+        if let cadence, let signal = state.lastDecoderStall {
+            row["decoderStall"] = ["scopeID": cadence.snapshot.scopeID, "workerEpoch": cadence.workerEpoch,
+                "workerID": cadence.workerId, "workerAttempt": cadence.attempt,
+                "readerID": cadence.publication.readerId, "publishingAttemptID": cadence.publication.publishingAttemptId,
+                "lastFreshPTS": String(cadence.snapshot.progress!.lastFreshPTS),
+                "sequence": String(signal.sequence), "revision": String(signal.appliedRevision),
+                "observedAtLowerBound": signal.observedAtLowerBound]
+        }
         if let diagnostics, let window = state.lastWindow {
             row["evidence"] = Self.evidence(diagnostics, source: source, window: window)
         }
@@ -186,7 +222,7 @@ import ScorebugMedia
             row["evaluatedAt"] = state.evaluatedAt
             row["state"] = String(describing: decision.state)
             row["reasons"] = decision.reasons.map { String(describing: $0) }
-            if let w = state.lastWindow {
+            if cadence == nil, let w = state.lastWindow {
                 row["window"] = ["sequence": String(w.sequence), "revision": String(w.appliedRevision),
                     "start": w.start, "end": w.end, "captured": Self.optional(w.capturedFreshFrames),
                     "encoded": Self.optional(w.encodedFreshFrames), "received": Self.optional(w.receiver?.freshFrames),

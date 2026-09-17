@@ -28,6 +28,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var commandState: BroadcastCoordinatorState?
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
+    private(set) var workerDecoderCadenceFreshness: WorkerDecoderCadenceFreshness?
     @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness?
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
@@ -471,12 +472,16 @@ struct PublishingClockObservation: Equatable, Sendable {
             workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
             if let publishing, localState == .publishing,
                publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
-               current?.tap === publishing.context.tap, response.status.validatedPublication != nil,
-               let history = publishing.observations?.sourceHistorySnapshot {
-                workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
-                    clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
-                    receivedAt: received, requestDuration: requestDuration)
+               current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
+                workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
+                    expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
+                if let history = publishing.observations?.sourceHistorySnapshot {
+                    workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
+                        clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
+                        receivedAt: received, requestDuration: requestDuration)
+                } else { workerSourceTracker.clear(); workerSourceInterval = nil }
             } else {
+                workerDecoderCadenceFreshness = nil
                 workerSourceTracker.clear()
                 workerSourceInterval = nil
             }
@@ -510,7 +515,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             // tick. The driver coalesces both callers into the same owned task.
             if let publishing, let qualityDriver {
                 qualityDriver.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
-                    source: workerSourceInterval, diagnostics: .init(snapshot: publishing.session.snapshot))
+                    source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: publishing.session.snapshot))
             }
             workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
@@ -535,7 +540,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         workerSourceTracker.expire(at: instant)
         workerSourceInterval = workerSourceTracker.latest
         if workerFreshness?.isFresh(at: instant) == false {
-            workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil
+            workerState = .stale; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
             #if DEBUG
             workerReportAgeProofHistory.clear()
             #endif
@@ -548,7 +553,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         publishingClockObservation = clockObservation(snapshot.transportClock,
             scope: videoObservation?.scope, isClosed: false)
         qualityDriver?.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
-            source: workerSourceInterval, diagnostics: .init(snapshot: snapshot))
+            source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: snapshot))
         if snapshot.failure != nil || snapshot.state == .stopped {
             detachPublisher(); shouldStopOwnedBroadcast = true
             localState = .failed
@@ -711,7 +716,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
     }
     private func clearWorker() {
-        workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil
+        workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
         workerSourceTracker.clear(); workerSourceInterval = nil
         if publishing == nil { receiverProbeTracker.reset() }
         else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }

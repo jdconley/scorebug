@@ -15,6 +15,7 @@ actor PublishingQualitySession {
         let application: QualityController.Application?
         let acknowledgedAt: Double?
         let lastWindow: QualityController.Window?
+        let lastDecoderStall: QualityController.DecoderStall?
         let evaluatedAt: Double?
         let isClosed: Bool
         let isBusy: Bool
@@ -39,6 +40,7 @@ actor PublishingQualitySession {
     private var application: QualityController.Application?
     private var acknowledgedAt: Double?
     private var lastWindow: QualityController.Window?
+    private var lastDecoderStall: QualityController.DecoderStall?
     private var evaluatedAt: Double?
     private var pending: QualityController.Recommendation?
     private var busy = false
@@ -58,6 +60,24 @@ actor PublishingQualitySession {
         }
     }
     private var lastSource: (scope: SourceScope, sequence: Int64)?
+    private struct DecoderScope: Equatable {
+        let gameID: String
+        let generation: Int
+        let workerID: String
+        let epoch: String
+        let attempt: Int
+        let publication: WorkerPublication
+        let scopeID: String
+        init(_ value: WorkerDecoderCadenceFreshness) {
+            gameID = value.gameId; generation = value.generation; workerID = value.workerId
+            epoch = value.workerEpoch; attempt = value.attempt; publication = value.publication
+            scopeID = value.snapshot.scopeID
+        }
+    }
+    private var decoderScope: DecoderScope?
+    private var decoderProgress: Int64?
+    private var consumedStallPTS: Int64?
+    var usesDecoderStallPolicy: Bool { behavior == .progressive }
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
@@ -81,7 +101,7 @@ actor PublishingQualitySession {
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
-        lastWindow: lastWindow, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
+        lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
@@ -175,6 +195,33 @@ actor PublishingQualitySession {
             let decision = try policy.evaluateLocalPressure(window, at: now)
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
+            return decision
+        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+    }
+    func evaluateDecoderStall(cadence: WorkerDecoderCadenceFreshness, diagnostics: PublishingQualityTelemetry.Diagnostics,
+                              instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
+        try admit()
+        guard behavior == .progressive else { return nil }
+        guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        defer { self.policy = policy }
+        do {
+            let now = try time(), sampledInstant = instant ?? .now
+            guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
+            let signal = try PublishingQualityTelemetry.decoderStall(cadence: cadence,
+                applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
+                    settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+                diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
+            let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
+            if let decoderScope, decoderScope != scope {
+                policy.invalidateTelemetry(); pending = nil
+                decoderProgress = nil; consumedStallPTS = nil
+            }
+            if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
+            decoderScope = scope; decoderProgress = progress
+            guard let signal, consumedStallPTS != progress else { return nil }
+            let decision = try policy.evaluateDecoderStall(signal, at: now)
+            consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal
+            pending = decision.recommendation; evaluatedAt = now
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
     }

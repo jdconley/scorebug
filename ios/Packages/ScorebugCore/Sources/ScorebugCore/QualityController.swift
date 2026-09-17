@@ -84,6 +84,19 @@ public struct QualityController: Sendable {
             self.transportPressure = transportPressure
         }
     }
+    /// Downward-only worker observation, not an inferred source-frame window.
+    /// The caller must bind an explicit one-second no-progress report to the
+    /// current publication and normalize its conservative sample-time lower bound.
+    public struct DecoderStall: Sendable {
+        public let attemptID: UUID
+        public let appliedRevision: UInt64
+        public let sequence: UInt64
+        public let observedAtLowerBound: Double
+        public init(attemptID: UUID, appliedRevision: UInt64, sequence: UInt64, observedAtLowerBound: Double) {
+            self.attemptID = attemptID; self.appliedRevision = appliedRevision
+            self.sequence = sequence; self.observedAtLowerBound = observedAtLowerBound
+        }
+    }
     public enum State: Equatable, Sendable { case unknown, healthy, degraded, disconnected, stalled, insufficient, probing }
     public enum Reason: Equatable, Sendable {
         case missingCapture, missingEncoded, missingReceiver, staleReceiver, missingSourceLoss, missingQueue, missingCapacity
@@ -129,6 +142,7 @@ public struct QualityController: Sendable {
     private var lastEnd: Double?
     private var lastSequence: UInt64?
     private var recoveryStart: Double?
+    private var healthyNotBefore = 0.0
     private var pending: Recommendation?
     private var application: Application?
     private let behavior: Behavior
@@ -191,6 +205,37 @@ public struct QualityController: Sendable {
     }
     private var upwardApplicationInFlight: Bool {
         application.map { $0.recommendation.kind == .trial || $0.recommendation.kind == .increase } ?? false
+    }
+
+    public mutating func evaluateDecoderStall(_ signal: DecoderStall, at now: Double) throws -> Decision {
+        do {
+            try recordTime(now)
+            guard behavior == .progressive else { throw ValidationError.invalidWindow }
+            guard signal.attemptID == attemptID else { throw ValidationError.wrongAttempt }
+            guard signal.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
+            guard signal.sequence > 0, lastSequence.map({ signal.sequence > $0 }) ?? true
+            else { throw ValidationError.outOfOrder }
+            guard signal.observedAtLowerBound.isFinite, (0...1e12).contains(signal.observedAtLowerBound),
+                  signal.observedAtLowerBound <= now,
+                  signal.observedAtLowerBound >= appliedAt + ProgressiveStreamingPolicy.minimumDecoderStallDuration
+            else { throw ValidationError.invalidWindow }
+            guard now - signal.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge
+            else { throw ValidationError.staleWindow }
+        } catch { invalidateTelemetry(); throw error }
+        lastSequence = signal.sequence
+        healthyNotBefore = now
+        // This is a negative progress observation, not a source frame window.
+        // Preserve lastEnd and never add healthy coverage from an arrival count.
+        latchMinimumReset(forceApplication: upwardApplicationInFlight)
+        if minimumResetRequired {
+            pending = .init(kind: .reset, attemptID: attemptID, windowSequence: signal.sequence,
+                appliedRevision: appliedRevision,
+                validUntil: signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
+                settings: minimumSettings)
+        }
+        return .init(state: .stalled,
+            reasons: minimumResetRequired ? [.stalled] : [.stalled, .minimumProfileInsufficient],
+            recommendation: pending)
     }
 
     /// Short local observations can only decrease or roll back. They must not
@@ -277,7 +322,7 @@ public struct QualityController: Sendable {
         let healthyLoss = window.sourceLoss.map {
             Double($0.lostFrames) / Double($0.expectedFrames) <= ProgressiveStreamingPolicy.maximumHealthyLossFraction
         } ?? false
-        let strongObservations = !otherUnknown && window.connectivity == .connected && !unhealthy && healthyLoss
+        let strongObservations = window.start >= healthyNotBefore && !otherUnknown && window.connectivity == .connected && !unhealthy && healthyLoss
             && observedFPS.allSatisfy { $0 >= ProgressiveStreamingPolicy.healthyFrameRate }
             && (window.meanQueueOccupancy.map { $0 < 0.5 } ?? false)
         if behavior == .progressive && (reasons.contains(.freshFrameFloor) || reasons.contains(.sourceLoss)) {
