@@ -307,4 +307,128 @@ final class WorkerReceiverProbeTrackerTests: XCTestCase {
             XCTAssertEqual(tracker.isQuarantined, !valid)
         }
     }
+    func testIntervalExposesReconciledConservativeImmutableClockBounds() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try observe(&tracker, seconds: 0.5, messages: 45)
+        let interval = try XCTUnwrap(observe(&tracker, seconds: 2, messages: 180) {
+            $0.status.receiverProbe?.snapshot.observedAtNanoseconds = "1990000000"
+            $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "1980000000"
+        })
+        // Exact integer receipt times keep this assertion independent of Double
+        // conversion rounding. The request envelopes intersect at [-10ms, 0].
+        XCTAssertEqual(interval.receiverClockOffsetBounds, (anchor - .milliseconds(10))...anchor)
+        XCTAssertEqual(interval.startBounds, (anchor + .milliseconds(490))...(anchor + .milliseconds(500)))
+        XCTAssertEqual(interval.endBounds, (anchor + .milliseconds(1980))...(anchor + .milliseconds(1990)))
+        try observe(&tracker, seconds: 3, messages: 270) {
+            $0.status.receiverProbe?.snapshot.observedAtNanoseconds = "2985000000"
+            $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "2975000000"
+        }
+        XCTAssertEqual(interval.receiverClockOffsetBounds, (anchor - .milliseconds(10))...anchor,
+                       "Previously issued interval bounds remain immutable conservative values")
+    }
+    func testLatestPairContainsOnlyTwoNewestDistinctContiguousIntervals() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try observe(&tracker, seconds: 1, messages: 90)
+        XCTAssertNil(tracker.latestPair)
+        let first = try XCTUnwrap(observe(&tracker, seconds: 2, messages: 180))
+        XCTAssertNil(tracker.latestPair)
+        let second = try XCTUnwrap(observe(&tracker, seconds: 3, messages: 270))
+        let pair = try XCTUnwrap(tracker.latestPair)
+        XCTAssertEqual(pair.older.start, first.start)
+        XCTAssertEqual(pair.older.end.snapshot, second.start)
+        XCTAssertEqual(pair.newer.end.snapshot, second.end.snapshot)
+        try observe(&tracker, seconds: 3.25, messages: 290)
+        XCTAssertEqual(tracker.latestPair?.older.start, pair.older.start)
+        XCTAssertEqual(tracker.latestPair?.newer.end.snapshot, pair.newer.end.snapshot)
+        try observe(&tracker, seconds: 4, messages: 360)
+        XCTAssertEqual(tracker.latestPair?.older.start, second.start)
+        XCTAssertEqual(tracker.latestPair?.newer.start, second.end.snapshot)
+        XCTAssertEqual(tracker.latestPair?.newer.end.snapshot.observedAtNanoseconds, "4000000000")
+    }
+    func testMissingInactiveAndExpiryBreakPairCoverageWithoutErasingHistory() throws {
+        for interruption in 0..<3 {
+            var tracker = WorkerReceiverProbeTracker()
+            try observe(&tracker, seconds: 1, messages: 90)
+            try observe(&tracker, seconds: 2, messages: 180)
+            try observe(&tracker, seconds: 3, messages: 270)
+            XCTAssertNotNil(tracker.latestPair)
+            if interruption == 0 {
+                tracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: anchor + .seconds(3.1))
+            } else if interruption == 1 {
+                try observe(&tracker, seconds: 3.1, messages: 279, active: false)
+            } else {
+                tracker.expire(at: anchor + .seconds(4.5))
+            }
+            XCTAssertNil(tracker.latestPair)
+            try observe(&tracker, seconds: 5, messages: 450)
+            if interruption == 2 { XCTAssertNotNil(tracker.latestPair) }
+            else { XCTAssertNil(tracker.latestPair) }
+            try observe(&tracker, seconds: 6, messages: 540)
+            if interruption != 2 { XCTAssertNil(tracker.latestPair) }
+            try observe(&tracker, seconds: 7, messages: 630)
+            XCTAssertNotNil(tracker.latestPair)
+            tracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: anchor + .seconds(7.1))
+            try observe(&tracker, seconds: 8, messages: 600)
+            XCTAssertTrue(tracker.isQuarantined)
+            XCTAssertNil(tracker.latestPair)
+        }
+    }
+    func testStageProbePublicationAndRateCannotSplicePair() throws {
+        for replacement in 0..<4 {
+            var tracker = WorkerReceiverProbeTracker()
+            try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90)
+            try stage(&tracker, 1, seconds: 2, messages: 180, totalMessages: 180)
+            try stage(&tracker, 1, seconds: 3, messages: 270, totalMessages: 270)
+            XCTAssertNotNil(tracker.latestPair)
+            if replacement == 0 {
+                try stage(&tracker, 2, seconds: 4, messages: 90, totalMessages: 360, first: 3)
+            } else {
+                try stage(&tracker, 1, seconds: 4, messages: 360, totalMessages: 360) {
+                    if replacement == 1 { $0.status.receiverProbe?.snapshot.id = "60000000-0000-4000-8000-000000000002" }
+                    if replacement == 2 { $0.status.publication?.publisherId = "50000000-0000-4000-8000-000000000005" }
+                    if replacement == 3 { $0.status.receiverProbe?.snapshot.bitRate = 500_000 }
+                }
+            }
+            XCTAssertNil(tracker.latestPair)
+            XCTAssertEqual(tracker.isQuarantined, replacement == 1 || replacement == 3)
+        }
+    }
+    func testZeroProgressAndOverlongIntervalsBreakPair() throws {
+        for overlong in [false, true] {
+            var tracker = WorkerReceiverProbeTracker()
+            try observe(&tracker, seconds: 1, messages: 90)
+            try observe(&tracker, seconds: 2, messages: 180)
+            try observe(&tracker, seconds: 3, messages: 270)
+            XCTAssertNotNil(tracker.latestPair)
+            if overlong {
+                try observe(&tracker, seconds: 8.1, messages: 729)
+            } else {
+                try observe(&tracker, seconds: 4, messages: 270) {
+                    $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "2990000000"
+                }
+            }
+            XCTAssertNil(tracker.latestPair)
+            XCTAssertFalse(tracker.isQuarantined)
+        }
+    }
+
+    func testTwoSecondIntervalsRecoverPairFromBoundedHistoryAfterExpiryPolls() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try observe(&tracker, seconds: 1, messages: 90)
+        let older = try XCTUnwrap(observe(&tracker, seconds: 3, messages: 270))
+        tracker.expire(at: anchor + .seconds(4.5))
+        XCTAssertNil(tracker.latest)
+        XCTAssertNil(tracker.latestPair)
+        let newer = try XCTUnwrap(observe(&tracker, seconds: 5, messages: 450))
+        let pair = try XCTUnwrap(tracker.latestPair)
+        XCTAssertEqual(pair.older.start, older.start)
+        XCTAssertEqual(pair.older.end.snapshot, newer.start)
+        XCTAssertEqual(pair.newer.end.snapshot, newer.end.snapshot)
+        XCTAssertFalse(tracker.isQuarantined)
+        tracker.expire(at: anchor + .seconds(6.5))
+        XCTAssertNil(tracker.latestPair)
+        try observe(&tracker, seconds: 7, messages: 630)
+        XCTAssertEqual(tracker.latestPair?.older.start, newer.start)
+    }
+
 }

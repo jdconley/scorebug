@@ -2022,7 +2022,6 @@ accounting, and test it alongside recording, live publishing and repeated fresh
 headroom probes. Production automatic upgrades remain disabled until that combined
 admission is qualified. Physical-device networking and remote workers remain open.
 
-
 ### 2026-09-17: fresh candidate audio/video transport cost qualified
 
 [Fresh candidate A/V windows](2026-09-17-candidate-av-window.md) now pair actual
@@ -2054,7 +2053,6 @@ Next combine these fresh costs with repeated fresh headroom observations from th
 same publication, then qualify upward transitions and recovery. Production
 automatic upgrades remain disabled. Long sessions, physical phone/Watch networking
 and deployment on other proxy systems remain open.
-
 
 ### 2026-09-17: concurrent candidate cost and receiver load qualified locally
 
@@ -2094,3 +2092,35 @@ Next add a candidate-specific runtime admission type, correlate fresh online med
 health, and exercise upward trials, rollback and recovery. Production automatic
 upgrades remain disabled. Long sessions, phone/Watch networking and remote proxy
 deployment remain open.
+
+### 2026-09-17: measured candidate admission and owned application contract
+
+[Runtime candidate admission](2026-09-17-runtime-candidate-admission.md) now has a
+measured-only Core strategy and a separate event that consumes fresh candidate
+load without recounting healthy source windows. Healthy media alone cannot
+increase quality. Actual whole-stream candidate cost, conservative receiver clock
+bounds, two consecutive delivered-padding intervals and the 25% margin determine
+whether Core may recommend the exact next recipe.
+
+The typed native cost converter verifies encoder identity/recipe, bounded source
+and host times, frame throughput and latency, complete AAC continuity and mux
+accounting. The app adapter binds that result to the acknowledged native receipt,
+current probe lease and revocable candidate/receiver ownership. Session admission
+also requires the same authenticated worker publication as the qualified source
+health. Authority is checked again immediately before native application; admitted
+work then owns its separate two-second completion deadline and ten-second trial
+confirmation. Expected probe retirement during an admitted change does not revoke
+that application.
+
+Review regressions cover zero-duration overlap, invalid clock watermark poisoning,
+historical receiver intervals surviving ordinary two-second polling gaps, cached
+candidate revocation, same-tick source/candidate admission and preservation of
+pending downward advice. Verification passes 426 Core, 143 Streaming, 350 native
+model and 306 independent replay tests. Build and evidence checks are recorded in
+`artifacts/qa/runtime-candidate-admission-final-verification.json` after completion.
+
+This contract checkpoint keeps production increases disabled. The model provider
+and explicit live simulator route still need wiring and independent trial,
+withdrawal and rollback qualification. Existing fixed-profile headroom evidence
+remains unchanged. Phone/Watch networking, long sessions and other proxy hosts
+remain open; the goal is still active.

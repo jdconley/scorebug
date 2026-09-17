@@ -5,6 +5,11 @@ import Foundation
 public struct WorkerReceiverProbeInterval: Sendable {
     public let start: ReceiverProbeSnapshot
     public let end: WorkerReceiverProbeFreshness
+    /// Receiver clock zero mapped into the local monotonic clock by intersecting
+    /// every accepted request envelope. Values are frozen when this interval forms.
+    public let receiverClockOffsetBounds: ClosedRange<ContinuousClock.Instant>
+    public let startBounds: ClosedRange<ContinuousClock.Instant>
+    public let endBounds: ClosedRange<ContinuousClock.Instant>
     public let duration: Duration
     public let deliveredMessages: UInt64
     public let deliveredPayloadBytesLowerBound: UInt64
@@ -15,11 +20,21 @@ public struct WorkerReceiverProbeInterval: Sendable {
     }
 }
 
+/// The two newest distinct, contiguous intervals from one publication/probe/stage.
+/// The older interval is historical coverage; freshness belongs to the newer end.
+public struct WorkerReceiverProbeIntervalPair: Sendable {
+    public let older: WorkerReceiverProbeInterval
+    public let newer: WorkerReceiverProbeInterval
+}
+
 /// Bounded causal accounting. Missing evidence breaks coverage but cannot wash
 /// contradictions or counter high-water marks. Reset only when the local owner ends.
 public struct WorkerReceiverProbeTracker: Sendable {
     public static let maximumAge: Duration = .milliseconds(1500)
     public private(set) var latest: WorkerReceiverProbeInterval?
+    /// Subsecond observations returning the same latest interval do not duplicate
+    /// it or refresh this pair. Missing evidence and expired coverage clear it.
+    public private(set) var latestPair: WorkerReceiverProbeIntervalPair?
     public private(set) var isQuarantined = false
     private struct Scope: Equatable, Sendable {
         let expected: WorkerReceiverProbeExpectation
@@ -41,6 +56,9 @@ public struct WorkerReceiverProbeTracker: Sendable {
     private var previous: WorkerReceiverProbeFreshness?
     private var previousAccepted: UInt64?
     private var baseline: WorkerReceiverProbeFreshness?
+    // One historical interval may outlive public freshness while awaiting its
+    // contiguous successor. Coverage breaks still discard this bounded history.
+    private var previousProduced: WorkerReceiverProbeInterval?
     private var offset: ClosedRange<ContinuousClock.Instant>?
     private var evaluatedAt: ContinuousClock.Instant?
     public init() {}
@@ -132,26 +150,36 @@ public struct WorkerReceiverProbeTracker: Sendable {
         previous = evidence; previousAccepted = acceptedPayloadBytes
         guard let baseline else { self.baseline = evidence; return latest }
         let elapsed = observed - UInt64(baseline.snapshot.observedAtNanoseconds)!
-        if elapsed > 5_000_000_000 { self.baseline = evidence; latest = nil; return nil }
+        if elapsed > 5_000_000_000 { self.baseline = evidence; latest = nil; latestPair = nil; previousProduced = nil; return nil }
         guard elapsed >= 1_000_000_000 else { return latest }
         self.baseline = evidence
         let count = messages - UInt64(baseline.snapshot.deliveredMessages)!
         let alreadySeen = UInt64(baseline.snapshot.pendingPackets) * 188
-        guard count * 1316 > alreadySeen else { latest = nil; return nil }
-        latest = WorkerReceiverProbeInterval(start: baseline.snapshot, end: evidence,
+        guard count * 1316 > alreadySeen else { latest = nil; latestPair = nil; previousProduced = nil; return nil }
+        let reconciledOffset = offset!
+        let startElapsed = Duration.nanoseconds(Int64(baseline.snapshot.observedAtNanoseconds)!)
+        let interval = WorkerReceiverProbeInterval(start: baseline.snapshot, end: evidence,
+            receiverClockOffsetBounds: reconciledOffset,
+            startBounds: (reconciledOffset.lowerBound + startElapsed)...(reconciledOffset.upperBound + startElapsed),
+            endBounds: (reconciledOffset.lowerBound + receiverElapsed)...(reconciledOffset.upperBound + receiverElapsed),
             duration: .nanoseconds(Int64(elapsed)), deliveredMessages: count,
             deliveredPayloadBytesLowerBound: count * 1316 - alreadySeen)
-        return latest
+        if let previousProduced, previousProduced.end.snapshot == interval.start, Scope(previousProduced.end) == Scope(evidence) {
+            latestPair = .init(older: previousProduced, newer: interval)
+        } else { latestPair = nil }
+        previousProduced = interval
+        latest = interval
+        return interval
     }
 
     public mutating func expire(at instant: ContinuousClock.Instant = .now) {
-        if let latest, !Self.fresh(latest.end, at: instant) { self.latest = nil }
+        if let latest, !Self.fresh(latest.end, at: instant) { self.latest = nil; latestPair = nil }
         if let baseline, instant < baseline.receivedAt || instant - baseline.receivedAt > .seconds(5) {
-            self.baseline = nil
+            self.baseline = nil; latestPair = nil; previousProduced = nil
         }
     }
     public mutating func reset() { self = Self() }
-    private mutating func suspend() { baseline = nil; latest = nil }
+    private mutating func suspend() { baseline = nil; latest = nil; latestPair = nil; previousProduced = nil }
     private mutating func quarantine() { isQuarantined = true; suspend() }
     private static func fresh(_ evidence: WorkerReceiverProbeFreshness, at instant: ContinuousClock.Instant) -> Bool {
         guard let age = evidence.snapshotAgeUpperBound(at: instant), age <= maximumAge else { return false }

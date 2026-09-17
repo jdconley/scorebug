@@ -7,6 +7,9 @@ public struct QualityController: Sendable {
     /// Measured source spans may exceed nominal five-second decoder windows.
     /// This ingestion allowance never changes actual elapsed-time rate calculations.
     public static let maximumWindowDuration: Double = 5.25
+    /// Candidate measurement includes bounded source admission, final output,
+    /// and drain/join time; it is not a regular source health window.
+    public static let maximumCandidateMeasurementDuration: Double = 7
     public static let minimumTrialCoverage: Double = 10
     public static let maximumApplicationDuration: Double = 2
     /// One initial transition, required actual coverage, one complete-window
@@ -38,6 +41,34 @@ public struct QualityController: Sendable {
         /// a next-profile probe may exceed a 10% rate step; probation and rollback
         /// still apply, and callers must support owned native profile replacement.
         case receiverValidatedProfileTrials
+        /// Only independently measured, exact-next candidate admissions can
+        /// authorize recovery. Ordinary health windows accumulate credit only.
+        case measuredCandidateTrials
+    }
+    /// Actual candidate transport cost and delivered probe padding, qualified
+    /// independently by the caller and bound to one publication and exact target.
+    public struct CandidateAdmission: Sendable {
+        public let id: UUID
+        public let attemptID: UUID
+        public let appliedRevision: UInt64
+        public let baseline: Settings
+        public let settings: Settings
+        public let measuredStart: Double
+        public let measuredEnd: Double
+        public let evaluatedAt: Double
+        public let validUntil: Double
+        public let candidateTransportBitsPerSecond: Double
+        public let deliveredPaddingBitsPerSecond: Double
+        public init(id: UUID, attemptID: UUID, appliedRevision: UInt64, baseline: Settings, settings: Settings,
+                    measuredStart: Double, measuredEnd: Double, evaluatedAt: Double, validUntil: Double,
+                    candidateTransportBitsPerSecond: Double, deliveredPaddingBitsPerSecond: Double) {
+            self.id = id; self.attemptID = attemptID; self.appliedRevision = appliedRevision
+            self.baseline = baseline; self.settings = settings
+            self.measuredStart = measuredStart; self.measuredEnd = measuredEnd
+            self.evaluatedAt = evaluatedAt; self.validUntil = validUntil
+            self.candidateTransportBitsPerSecond = candidateTransportBitsPerSecond
+            self.deliveredPaddingBitsPerSecond = deliveredPaddingBitsPerSecond
+        }
     }
     public enum Connectivity: Sendable { case connected, disconnected, unknown }
     public enum Pressure: Sendable { case nominal, elevated, unknown }
@@ -136,6 +167,13 @@ public struct QualityController: Sendable {
         /// Advice expires with its telemetry, even if no newer window arrives.
         public let validUntil: Double
         public let settings: Settings
+        public let candidateID: UUID?
+        public init(kind: Kind, attemptID: UUID, windowSequence: UInt64, appliedRevision: UInt64,
+                    validUntil: Double, settings: Settings, candidateID: UUID? = nil) {
+            self.kind = kind; self.attemptID = attemptID; self.windowSequence = windowSequence
+            self.appliedRevision = appliedRevision; self.validUntil = validUntil
+            self.settings = settings; self.candidateID = candidateID
+        }
     }
     /// Single-use permission to finish native work admitted on fresh advice.
     /// This never extends the lifetime of advice that has not been admitted.
@@ -152,7 +190,7 @@ public struct QualityController: Sendable {
     }
     public enum ValidationError: Error, Equatable {
         case invalidProfiles, invalidSettings, invalidTime, wrongAttempt, wrongAppliedRevision
-        case invalidWindow, staleWindow, outOfOrder, staleRecommendation
+        case invalidWindow, staleWindow, outOfOrder, staleRecommendation, invalidRecoveryStrategy
     }
 
     public let profiles: [Profile]
@@ -165,6 +203,11 @@ public struct QualityController: Sendable {
     private var lastSequence: UInt64?
     private var deliveryFailureEnds: [Int: (revision: UInt64, end: Double)] = [:]
     private var recoveryStart: Double?
+    private var latestStrongHealth: Window?
+    // Constant-memory replay protection survives telemetry invalidation and
+    // application changes. New candidates must advance and never overlap.
+    private var candidateMeasurementEnd: Double?
+    private var lastCandidateID: UUID?
     private var healthyNotBefore = 0.0
     private var pending: Recommendation?
     private var application: Application?
@@ -192,6 +235,9 @@ public struct QualityController: Sendable {
     private var trialCooldownUntil = 0.0
 
     public init(profiles: [Profile], attemptID: UUID, applied: Settings, at now: Double, recoveryStrategy: RecoveryStrategy = .capacityQualified, behavior: Behavior = .legacy) throws {
+        guard recoveryStrategy != .measuredCandidateTrials || behavior == .progressive else {
+            throw ValidationError.invalidRecoveryStrategy
+        }
         guard now.isFinite, now >= 0 else { throw ValidationError.invalidTime }
         guard !profiles.isEmpty, Set(profiles.map(\.id)).count == profiles.count else { throw ValidationError.invalidProfiles }
         for (index, profile) in profiles.enumerated() {
@@ -220,6 +266,7 @@ public struct QualityController: Sendable {
     /// or advancing clocks/revisions. Actual settings remain historical; active
     /// trials require rollback and recovery must accumulate again from scratch.
     public mutating func invalidateTelemetry() {
+        latestStrongHealth = nil
         if behavior == .progressive && (trial != nil || upwardApplicationInFlight) {
             latchMinimumReset(forceApplication: upwardApplicationInFlight)
         } else {
@@ -228,6 +275,68 @@ public struct QualityController: Sendable {
     }
     private var upwardApplicationInFlight: Bool {
         application.map { $0.recommendation.kind == .trial || $0.recommendation.kind == .increase } ?? false
+    }
+
+    /// Consume independently qualified candidate evidence without re-consuming a
+    /// health sequence or crediting its duration. A candidate is one-shot even
+    /// when health, padding, or recovery duration cannot authorize a trial.
+    public mutating func evaluateCandidate(_ admission: CandidateAdmission, at now: Double) throws -> Decision {
+        do {
+            guard now.isFinite, (0...1e12).contains(now) else { throw ValidationError.invalidTime }
+            try recordTime(now)
+            guard recoveryStrategy == .measuredCandidateTrials, behavior == .progressive else {
+                throw ValidationError.invalidRecoveryStrategy
+            }
+            guard admission.attemptID == attemptID else { throw ValidationError.wrongAttempt }
+            guard admission.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
+            let index = profiles.firstIndex { $0.id == applied.profileID }!
+            guard admission.baseline == applied, admission.settings == higherSettings(profileIndex: index) else {
+                throw ValidationError.invalidSettings
+            }
+            guard [admission.measuredStart, admission.measuredEnd, admission.evaluatedAt, admission.validUntil]
+                .allSatisfy({ $0.isFinite && (0...1e12).contains($0) }),
+                  admission.measuredStart >= appliedAt,
+                  admission.measuredEnd > admission.measuredStart,
+                  admission.measuredEnd - admission.measuredStart <= Self.maximumCandidateMeasurementDuration,
+                  admission.measuredEnd <= admission.evaluatedAt, admission.evaluatedAt <= now,
+                  admission.validUntil > admission.evaluatedAt,
+                  admission.validUntil <= min(admission.measuredEnd + 2, admission.evaluatedAt + 1.5),
+                  admission.candidateTransportBitsPerSecond.isFinite, admission.candidateTransportBitsPerSecond > 0,
+                  admission.deliveredPaddingBitsPerSecond.isFinite, admission.deliveredPaddingBitsPerSecond >= 0
+            else { throw ValidationError.invalidWindow }
+            guard now - admission.measuredEnd <= 2, now <= admission.validUntil else {
+                throw ValidationError.staleWindow
+            }
+            guard admission.id != lastCandidateID else { throw ValidationError.outOfOrder }
+            if let priorEnd = candidateMeasurementEnd {
+                guard admission.measuredEnd > priorEnd, admission.measuredStart >= priorEnd else {
+                    throw ValidationError.outOfOrder
+                }
+            }
+        } catch { invalidateTelemetry(); throw error }
+        candidateMeasurementEnd = admission.measuredEnd
+        lastCandidateID = admission.id
+        // Preserve owned native work until its own deadline. Candidates cannot
+        // renew it, displace downward advice, or change active probation.
+        guard application == nil, trial == nil, !minimumResetRequired else {
+            return .init(state: trial == nil ? .unknown : .probing, reasons: [], recommendation: nil)
+        }
+        if pending?.candidateID != nil { pending = nil }
+        guard let health = latestStrongHealth, let receiver = health.receiver,
+              now - health.end <= 2, now - receiver.observedAt <= 2,
+              health.end > admission.measuredStart, health.start < admission.measuredEnd,
+              let recoveryStart, health.end - recoveryStart >= requiredHealthyDuration,
+              now >= trialCooldownUntil else {
+            return .init(state: .unknown, reasons: [], recommendation: nil)
+        }
+        guard admission.deliveredPaddingBitsPerSecond >= admission.candidateTransportBitsPerSecond * 1.25 else {
+            return .init(state: .healthy, reasons: [.capacityHeadroom], recommendation: nil)
+        }
+        pending = .init(kind: .trial, attemptID: attemptID, windowSequence: health.sequence,
+                        appliedRevision: appliedRevision,
+                        validUntil: min(admission.validUntil, health.end + 2, receiver.observedAt + 2),
+                        settings: admission.settings, candidateID: admission.id)
+        return .init(state: .healthy, reasons: [.trialRecommended], recommendation: pending)
     }
 
     public mutating func evaluateDecoderStall(_ signal: DecoderStall, at now: Double) throws -> Decision {
@@ -321,6 +430,7 @@ public struct QualityController: Sendable {
         try evaluate(window, at: now, localPressure: false)
     }
     private mutating func evaluate(_ window: Window, at now: Double, localPressure: Bool) throws -> Decision {
+        latestStrongHealth = nil
         do {
             try recordTime(now)
             if localPressure {
@@ -446,6 +556,13 @@ public struct QualityController: Sendable {
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded
             return .init(state: state, reasons: reasons, recommendation: pending)
         }
+        if recoveryStrategy == .measuredCandidateTrials {
+            if strongObservations {
+                if recoveryStart == nil { recoveryStart = window.start }
+                latestStrongHealth = window
+            } else { recoveryStart = nil }
+            return .init(state: otherUnknown ? .unknown : .healthy, reasons: reasons, recommendation: nil)
+        }
         if recoveryStrategy != .capacityQualified {
             // Integer division rounds the <=10% step down. Bound the addition
             // before doing it, including on arm64_32. No minimum +1 may exceed10%.
@@ -499,6 +616,7 @@ public struct QualityController: Sendable {
         guard deadline.isFinite, deadline > now else { throw ValidationError.invalidTime }
         let admitted = Application(id: UUID(), recommendation: recommendation, admittedAt: now, completionDeadline: deadline)
         application = admitted
+        latestStrongHealth = nil
         if behavior == .progressive && (recommendation.kind == .trial || recommendation.kind == .increase) {
             failureEpisodeActive = false
         }
@@ -528,6 +646,7 @@ public struct QualityController: Sendable {
         try acknowledge(recommendation, applied: actual, at: now, before: recommendation.validUntil)
     }
     private mutating func acknowledge(_ recommendation: Recommendation, applied actual: Settings?, at now: Double, before deadline: Double) throws {
+        latestStrongHealth = nil
         let owned = pending == recommendation && recommendation.attemptID == attemptID
             && recommendation.appliedRevision == appliedRevision
         let upward = recommendation.kind == .trial || recommendation.kind == .increase
@@ -572,6 +691,7 @@ public struct QualityController: Sendable {
     }
 
     private mutating func latchMinimumReset(forceApplication: Bool = false) {
+        latestStrongHealth = nil
         if !failureEpisodeActive {
             consecutiveFailures = min(consecutiveFailures + 1, ProgressiveStreamingPolicy.recoveryDurations.count)
             failureEpisodeActive = true

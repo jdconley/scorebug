@@ -2,6 +2,8 @@ import Foundation
 import AVFoundation
 import ScorebugMedia
 @testable import ScorebugStreaming
+@testable import HaishinKit
+@testable import SRTHaishinKit
 import XCTest
 
 final class NativeCandidateFixtureTests: XCTestCase {
@@ -127,6 +129,138 @@ final class NativeCandidateFixtureTests: XCTestCase {
 }
 
 extension NativeCandidateFixtureTests {
+    func testReturnedTypedSnapshotAuthorityRevokesAfterPressureOwnerChangeAndStop() async throws {
+        for fault in 0..<4 {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.produceTypedCost = true; fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.finish(); await wrapper.waitForMeasurement()
+            let joined = await wrapper.candidateSnapshot()
+            let snapshot = try XCTUnwrap(joined)
+            XCTAssertTrue(snapshot.permitsCurrentCandidate(snapshot.cost.id))
+            XCTAssertFalse(snapshot.permitsCurrentCandidate(UUID()))
+            switch fault {
+            case 0:
+                fake.setFault(0)
+                _ = await wrapper.candidateSnapshot()
+            case 1: _ = try? await wrapper.setVideoBitRate(123)
+            case 2: _ = try? await wrapper.setVideoProfile(.low360)
+            default: await wrapper.stop()
+            }
+            XCTAssertFalse(snapshot.permitsCurrentCandidate(snapshot.cost.id), "fault \(fault)")
+            await wrapper.stop()
+            XCTAssertFalse(snapshot.permitsCurrentCandidate(snapshot.cost.id))
+        }
+    }
+    func testTypedSnapshotRequiresJoinAndPreservesPinnedAndFreshProbeEvidence() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+        fake.produceTypedCost = true; fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        let beforeJoin = await wrapper.candidateSnapshot()
+        XCTAssertNil(beforeJoin)
+        fake.finish(); await wrapper.waitForMeasurement()
+        let joined = await wrapper.candidateSnapshot()
+        let initial = try XCTUnwrap(joined)
+        XCTAssertEqual(initial.cost.scope, fake.scope)
+        XCTAssertEqual(initial.cost.transportBytes, 376000)
+        XCTAssertEqual(initial.binding.id, initial.probe.id)
+        XCTAssertEqual(initial.binding.acceptedPayloadBytes, 1316)
+        XCTAssertLessThanOrEqual(initial.boundAt, initial.cost.startedAt)
+        XCTAssertGreaterThanOrEqual(initial.completedAt, initial.cost.endedAt)
+        fake.advanceProbeReceipt()
+        let refreshed = await wrapper.candidateSnapshot()
+        let current = try XCTUnwrap(refreshed)
+        XCTAssertEqual(current.cost.id, initial.cost.id)
+        XCTAssertEqual(current.binding.acceptedPayloadBytes, 1316)
+        XCTAssertEqual(current.probe.acceptedPayloadBytes, 2632)
+        XCTAssertEqual(current.completedAt, initial.completedAt)
+        await wrapper.stop()
+        let stopped = await wrapper.candidateSnapshot()
+        XCTAssertNil(stopped)
+        let binding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+        let final = try XCTUnwrap(binding["final"] as? [String: Any])
+        XCTAssertLessThanOrEqual(try XCTUnwrap(final["observedAt"] as? Double), initial.completedAt)
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testTypedSnapshotRejectsMissingCostPressureChangeAndRetiredCurrentProbe() async throws {
+        for fault in 0..<10 {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.produceTypedCost = fault != 0; fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.finish(); await wrapper.waitForMeasurement()
+            if fault == 1 { fake.setFault(0) }
+            else if fault >= 2 { fake.mutateProbe(fault - 2) }
+            let snapshot = await wrapper.candidateSnapshot()
+            XCTAssertNil(snapshot, "fault \(fault)")
+            await wrapper.stop()
+        }
+    }
+    func testTypedSnapshotRejectsWrongScopeGenerationStaleAndFutureCost() async throws {
+        for fault in 0..<4 {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.produceTypedCost = true; fake.typedCostFault = fault; fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.finish(); await wrapper.waitForMeasurement()
+            XCTAssertNotNil(fake.producedCost, "fault \(fault) must still produce internally valid cost")
+            let snapshot = await wrapper.candidateSnapshot()
+            XCTAssertNil(snapshot, "fault \(fault)")
+            await wrapper.stop()
+        }
+    }
+    func testTypedSnapshotRechecksRevocationAfterSuspendedProbeRead() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+        fake.produceTypedCost = true; fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement()
+        fake.blockNextProbeRead()
+        let read = Task { await wrapper.candidateSnapshot() }
+        await wait { fake.probeReadIsBlocked }
+        _ = try? await wrapper.setVideoBitRate(123)
+        fake.releaseProbeRead()
+        let snapshot = await read.value
+        XCTAssertNil(snapshot)
+        await wrapper.stop()
+    }
+    func testOneMatchingBootstrapWriteBeforeCandidateStartPreservesMeasurement() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+        fake.allowBitRateWrite = true; fake.setProbe(stage: 2)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start()
+        await wait { fake.probeReads > 0 }
+        _ = try await wrapper.setVideoBitRate(PublishingVideoProfile.low240.bitRate)
+        XCTAssertFalse(fake.reasons.contains(.ownerChanged))
+        fake.setProbe(stage: 3)
+        await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testSecondBootstrapWriteAndWriteCrossingCandidateStartRevoke() async throws {
+        for crossingStart in [false, true] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+            fake.allowBitRateWrite = true; fake.setProbe(stage: 2)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.probeReads > 0 }
+            if crossingStart {
+                fake.blockBitRateWrite = true
+                let write = Task { try await wrapper.setVideoBitRate(PublishingVideoProfile.low240.bitRate) }
+                await wait { fake.events.contains("bitRate") }
+                fake.setProbe(stage: 3)
+                await wait { fake.waiting }
+                fake.releaseBitRateWrite()
+                _ = try? await write.value
+            } else {
+                _ = try await wrapper.setVideoBitRate(PublishingVideoProfile.low240.bitRate)
+                _ = try await wrapper.setVideoBitRate(PublishingVideoProfile.low240.bitRate)
+            }
+            XCTAssertTrue(fake.reasons.contains(.ownerChanged))
+            await wrapper.stop()
+        }
+    }
     func testPrimaryAppendPrecedesOptionalVideoAndStopJoinsOnce() async throws {
         let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake)
         await wrapper.setDiagnostics { fake.pressure }
@@ -476,8 +610,7 @@ extension NativeCandidateFixtureTests {
         }
     }
     private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10)) -> NativeCandidatePublisher {
-        .init(publisher: fake, scope: .init(recordingID: "record", matchID: "match", broadcastGeneration: 1,
-            publishingAttemptID: UUID(), appliedProfileRevision: 1), liveProfile: .low240,
+        .init(publisher: fake, scope: fake.scope, liveProfile: .low240,
             operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom)
     }
     private func wait(_ predicate: @escaping () -> Bool) async {
@@ -489,6 +622,8 @@ extension NativeCandidateFixtureTests {
 import CoreMedia
 import CoreVideo
 private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObserving, @unchecked Sendable {
+    let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
+        publishingAttemptID: UUID(), appliedProfileRevision: 1)
     let videoStartup = PublishingVideoStartup(profile: .low240, width: PublishingVideoProfile.low240.width,
         height: PublishingVideoProfile.low240.height, publishingGeneration: 7, encoderSessionID: UUID(),
         firstSourcePTS: .zero, submittedAt: 1, completedAt: 1, observedAt: 1)
@@ -498,6 +633,16 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
     private var storedEvents: [String] = [], storedReasons: [PublishingCandidateMeasurement.Reason] = []
     private var storedWaiting = false, storedStops = 0, storedExports = 0, storedData: Data?
     private var fault: Int?, storedFail = false, storedBlockAppend = false
+    private var storedProduceTypedCost = false, storedTypedCostFault: Int?, candidateStartedAt: Double?
+    private var storedProducedCost: PublishingCandidateCost?
+    var produceTypedCost: Bool { get { lock.withLock { storedProduceTypedCost } } set { lock.withLock { storedProduceTypedCost = newValue } } }
+    var typedCostFault: Int? { get { lock.withLock { storedTypedCostFault } } set { lock.withLock { storedTypedCostFault = newValue } } }
+    var producedCost: PublishingCandidateCost? { lock.withLock { storedProducedCost } }
+    private var storedAllowBitRateWrite = false, storedBlockBitRateWrite = false
+    private let bitRateGate = AsyncStream<Void>.makeStream()
+    var allowBitRateWrite: Bool { get { lock.withLock { storedAllowBitRateWrite } } set { lock.withLock { storedAllowBitRateWrite = newValue } } }
+    var blockBitRateWrite: Bool { get { lock.withLock { storedBlockBitRateWrite } } set { lock.withLock { storedBlockBitRateWrite = newValue } } }
+    func releaseBitRateWrite() { bitRateGate.continuation.finish() }
     private let appendGate = AsyncStream<Void>.makeStream()
     private let startGate = AsyncStream<Void>.makeStream()
     private var storedBlockStart = false, storedBlockCandidateStart = false
@@ -587,13 +732,26 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
     }
     var operations: NativeCandidatePublisher.Operations {
         .init(start: {
-            self.lock.withLock { self.storedEvents.append("candidateStart") }
+            self.lock.withLock { self.storedEvents.append("candidateStart"); self.candidateStartedAt = ProcessInfo.processInfo.systemUptime }
             if self.blockCandidateStart { for await _ in self.candidateStartGate.stream {} }
         },
             offer: { _ in self.lock.withLock { self.storedEvents.append("candidate") }; return true },
             cancel: { reason in self.lock.withLock { self.storedReasons.append(reason) } },
             result: { self.lock.withLock { self.storedWaiting = true }; for await _ in self.stream {}; return Data("{}".utf8) },
-            export: { data in self.lock.withLock { self.storedExports += 1; self.storedData = data } })
+            export: { data in self.lock.withLock { self.storedExports += 1; self.storedData = data } },
+            typedResult: {
+                self.lock.withLock {
+                    guard self.storedProduceTypedCost, let start = self.candidateStartedAt else { return nil }
+                    let fault = self.storedTypedCostFault
+                    let offset = fault == 2 ? -3.0 : fault == 3 ? 3.0 : 0
+                    let scope = fault == 0 ? VideoFrameObservationScope(recordingID: "other", matchID: "match", broadcastGeneration: 1,
+                        publishingAttemptID: self.scope.publishingAttemptID, appliedProfileRevision: 1) : self.scope
+                    let cost = candidateCost(scope: scope, start: start + offset,
+                        end: ProcessInfo.processInfo.systemUptime + offset, generation: fault == 1 ? 8 : 7)
+                    self.storedProducedCost = cost
+                    return cost
+                }
+            })
     }
     func finish() { continuation.finish() }
     func start() async throws {
@@ -606,8 +764,62 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
         if failAppend { throw PublishingSessionError.appendFailed }
     }
     var isPublishing: Bool { get async { true } }
-    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); releaseProbeRead(); finish() }
+    func setVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
+        lock.withLock { storedEvents.append("bitRate") }
+        if blockBitRateWrite { for await _ in bitRateGate.stream {} }
+        guard allowBitRateWrite, let startup = videoStartup,
+              let configuration = VideoEncodingConfiguration(id: UUID(), encoderSessionID: startup.encoderSessionID, bitRate: value),
+              let receipt = PublishingBitRateChange(publishingGeneration: startup.publishingGeneration, configuration: configuration,
+                acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: nil)
+        else { throw PublishingSessionError.bitRateUpdateFailed }
+        return receipt
+    }
+    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); releaseProbeRead(); releaseBitRateWrite(); finish() }
 }
+/// Complete typed native evidence with accelerated wall-clock submission. The
+/// source still covers four seconds, and the validator uses the shorter duration.
+private func candidateCost(scope: VideoFrameObservationScope, start: Double, end: Double,
+                           generation: UInt64 = 7) -> PublishingCandidateCost? {
+    let id = UUID(), session = UUID()
+    let frames: [VideoCandidateEncoder.Frame] = (0...120).map { index in
+        let pts = CMTime(value: Int64(index), timescale: 30)
+        let at = start + Double(index) / 1_000_000
+        return .init(sourcePTS: pts, outputPTS: pts, encoderSessionID: session,
+            admittedAt: at, rawByteCount: 16384, submittedAt: at, completedAt: at, dequeuedAt: at,
+            byteCount: 1000, width: 640, height: 360, isSync: index == 0)
+    }
+    let audio: [PublishingCandidateTransport.AudioReceipt] = (0..<188).map { index in
+        .init(sourcePTS: CMTime(value: Int64(index * 1024), timescale: 48000), publishingGeneration: generation,
+            wasEncoded: true, valid: true, observedAt: start, consumedAt: start, byteCount: 100,
+            sampleRate: 48000, channelCount: 2, framesPerPacket: 1024, audioObjectType: 2)
+    }
+    let following = PublishingCandidateTransport.AudioReceipt(sourcePTS: CMTime(value: 188 * 1024, timescale: 48000),
+        publishingGeneration: generation, wasEncoded: true, valid: true, observedAt: start, consumedAt: end,
+        byteCount: 100, sampleRate: 48000, channelCount: 2, framesPerPacket: 1024, audioObjectType: 2)
+    let inputs: [CandidateTransportMeasurement.Input] = frames.map {
+        .init(media: .video, sourcePTS: $0.sourcePTS, decodePTS: $0.sourcePTS,
+            byteCount: $0.byteCount, isSync: $0.isSync, parameterSetBytes: $0.isSync ? 24 : 0)
+    } + audio.map { .init(media: .audio, sourcePTS: $0.sourcePTS, decodePTS: .invalid,
+        byteCount: $0.byteCount, isSync: true, parameterSetBytes: 0) }
+    let mux = CandidateTransportMeasurement.Result(inputs: inputs, outcome: .completed, failure: nil,
+        videoInputCount: 121, audioInputCount: 188, videoInputBytes: 121000, audioInputBytes: 18800,
+        firstVideoPTS: .zero, lastVideoPTS: CMTime(value: 4, timescale: 1),
+        firstAudioPTS: audio.first!.sourcePTS, lastAudioPTS: audio.last!.sourcePTS,
+        transportBytes: 376000, transportMessageCount: 400)
+    let transport = PublishingCandidateTransport.Result(scope: scope, profile: .low360, id: id,
+        outcome: .completed, failure: nil, publishingGeneration: generation, startedAt: start,
+        closedAt: end, endedAt: end, rawInputCount: 121, firstRawPTS: .zero,
+        lastRawPTS: CMTime(value: 4, timescale: 1), audio: audio, followingAudio: following,
+        maximumPendingCount: 2, maximumPendingBytes: 200, mux: mux)
+    let native = VideoCandidateEncoder.Result(id: id, settings: PublishingVideoProfile.low360.settings,
+        outcome: .completed, failure: nil, nativeFailure: nil, encoderSessionID: session,
+        acceptedInputCount: 121, outputCount: 121, frames: frames)
+    let encoding = PublishingCandidateEncoder.Result(scope: scope, profile: .low360, encoding: native, transport: transport)
+    return PublishingCandidateCost(.init(id: id, scope: scope, profile: .low360, reason: .completed,
+        startedAt: start, endedAt: end, acceptedInputCount: 121,
+        firstInputPTS: .zero, lastInputPTS: CMTime(value: 4, timescale: 1), encoding: encoding))
+}
+
 private func candidateVideo(at pts: CMTime = .zero) throws -> CapturedMediaSample {
     var pixel: CVPixelBuffer?, format: CMVideoFormatDescription?, sample: CMSampleBuffer?
     XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixel), kCVReturnSuccess)

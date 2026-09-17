@@ -1,0 +1,124 @@
+import CoreMedia
+import Foundation
+import ScorebugCore
+import ScorebugMedia
+import XCTest
+
+final class PublishingCandidateAdmissionTests: XCTestCase {
+    private let anchor = ContinuousClock.now
+    enum Fault: CaseIterable {
+        case staleCost, futureCost, wrongAttempt, wrongMatch, wrongGeneration, wrongRate, wrongProbe
+        case wrongStage, wrongReceipt, wrongRevision, invalidClock, reversedClock, lateBinding, earlyCompletion
+        case revokedAuthority, revokedProbe, expiredLease, oldReceiver, noOverlap, beforeCompletion, exactCompletion
+    }
+    struct Fixture {
+        var measurement: PublishingCandidateAdmission.Measurement
+        var applied: PublishingQualityTelemetry.Applied
+        var binding: PublishingProbeObservation
+        var boundAt: Double
+        var completedAt: Double
+        var probe: PublishingProbeObservation
+        var pair: WorkerReceiverProbeIntervalPair
+        var authority: PublishingCandidateAuthority
+        var clock: PublishingCandidateAdmission.Clock
+        var currentReceipt: PublishingBitRateChange
+        func admit(candidateIsCurrent: @escaping @Sendable () -> Bool = { true }) -> PublishingCandidateAdmission? {
+            let receipt = currentReceipt
+            return .laboratoryIPv4(measurement: measurement, applied: applied, binding: binding, boundAt: boundAt,
+                completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
+                currentReceipt: { receipt }, candidateIsCurrent: candidateIsCurrent)
+        }
+    }
+    private func fixture(_ fault: Fault? = nil) throws -> Fixture {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
+        let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
+        let attempt = try XCTUnwrap(UUID(uuidString: template.status.publication!.publishingAttemptId))
+        let probeID = try XCTUnwrap(UUID(uuidString: template.status.receiverProbe!.snapshot.id))
+        var tracker = WorkerReceiverProbeTracker()
+        let endpoint = fault == .oldReceiver ? 113.0 : fault == .beforeCompletion ? 114.0 : 115.0
+        for (time, messages) in [(endpoint - 2, 100), (endpoint - 1, 1150), (endpoint, 2250)] {
+            var response = template
+            var p = response.status.receiverProbe!.snapshot
+            p.publishingGeneration = "7"; p.convention = "mpegts-null-probe-v2"; p.stage = 3; p.bitRate = 12_000_000
+            p.deliveredMessages = String(messages); p.deliveredPayloadBytes = String(messages * 1316)
+            p.totalDeliveredPayloadBytes = p.deliveredPayloadBytes; p.nextSequence = p.deliveredMessages
+            p.pendingPackets = 0; p.observedAtNanoseconds = String(Int64(time * 1e9))
+            p.firstDeliveredAtNanoseconds = String(Int64((endpoint - 4.5) * 1e9)); p.lastDeliveredAtNanoseconds = String(Int64((time - 0.01) * 1e9))
+            response.status.receiverProbe = .init(snapshot: p, ageUpperBoundMs: 10)
+            let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response,
+                expected: .init(gameId: "match", generation: 2, workerId: "mac", publishingAttemptId: attempt.uuidString.lowercased(),
+                    probeId: probeID.uuidString.lowercased(), publishingGeneration: 7, bitRate: 12_000_000, stage: 3),
+                receivedAt: anchor + .seconds(time), requestDuration: .milliseconds(10)))
+            tracker.observe(evidence, acceptedPayloadBytes: UInt64(messages * 1316), senderActive: true, at: anchor + .seconds(time))
+        }
+        let pair = try XCTUnwrap(tracker.latestPair)
+        let authority = PublishingCandidateAuthority(pair.newer.end)
+        if fault == .revokedAuthority { authority.revoke() }
+        let config = try XCTUnwrap(VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: 350_000))
+        let receipt = try XCTUnwrap(PublishingBitRateChange(publishingGeneration: 7, configuration: config, acceptedAt: 100, lastSubmittedSourcePTS: .zero))
+        let other = try XCTUnwrap(PublishingBitRateChange(publishingGeneration: 7,
+            configuration: VideoEncodingConfiguration(id: UUID(), encoderSessionID: config.encoderSessionID, bitRate: 350_000)!, acceptedAt: 100.1, lastSubmittedSourcePTS: .zero))
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0,
+            settings: .init(profileID: "240p30", videoBitrate: 350_000), receipt: receipt, acknowledgedAt: 100)
+        let exactCompletion = 115.1 + PublishingCandidateAdmission.Clock.seconds((anchor + .seconds(115.1)).duration(to: pair.newer.endBounds.lowerBound))
+        let measurement = PublishingCandidateAdmission.Measurement(id: UUID(),
+            scope: .init(recordingID: "recording", matchID: fault == .wrongMatch ? "other" : "match", broadcastGeneration: 2,
+                publishingAttemptID: fault == .wrongAttempt ? UUID() : attempt, appliedProfileRevision: 1),
+            profile: .low360, publishingGeneration: fault == .wrongGeneration ? 8 : 7,
+            startedAt: 110, endedAt: fault == .staleCost ? 112 : fault == .futureCost ? 116 : fault == .exactCompletion ? exactCompletion : 114.06,
+            firstInputAt: 110, lastInputAt: fault == .noOverlap ? 112.5 : 114,
+            sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400)
+        let binding = PublishingProbeObservation(id: probeID, publishingGeneration: 7, bitRate: 12_000_000,
+            startedAt: 109, leaseDeadline: 109.9, acceptedPayloadBytes: 131600, lastAcceptedAt: 109.59,
+            reason: nil, stage: 3, permitsCurrentOwner: { _, _, _ in true })
+        let probe = PublishingProbeObservation(id: fault == .wrongProbe ? UUID() : probeID, publishingGeneration: 7,
+            bitRate: fault == .wrongRate ? 2_000_000 : 12_000_000, startedAt: 109,
+            leaseDeadline: fault == .expiredLease ? 115 : 115.3, acceptedPayloadBytes: 6_000 * 1316,
+            lastAcceptedAt: 115.09, reason: nil, stage: fault == .wrongStage ? 2 : 3,
+            permitsCurrentOwner: { _, _, _ in fault != .revokedProbe })
+        var f = Fixture(measurement: measurement, applied: applied, binding: binding,
+            boundAt: fault == .lateBinding ? 111 : 109.6,
+            completedAt: fault == .earlyCompletion ? 113 : fault == .exactCompletion ? exactCompletion + 0.01 : 114.07,
+            probe: probe, pair: pair, authority: authority,
+            clock: .init(before: fault == .invalidClock ? .nan : fault == .reversedClock ? 116 : 115.1,
+                instant: anchor + .seconds(115.1), after: 115.1), currentReceipt: fault == .wrongReceipt ? other : receipt)
+        // A changed policy revision has no effect until rechecking an existing admission.
+        if fault == .wrongRevision { f.applied.revision = 1 }
+        return f
+    }
+    func testCurrentPairProducesActualAccountedCostAndShortLease() throws {
+        let f = try fixture(), admission = try XCTUnwrap(f.admit())
+        XCTAssertEqual(admission.value.candidateTransportBitsPerSecond, 787200, accuracy: 1e-6)
+        XCTAssertEqual(admission.value.deliveredPaddingBitsPerSecond, 11_054_400, accuracy: 1e-6)
+        XCTAssertEqual(admission.value.validUntil, 115.3, accuracy: 1e-6)
+        XCTAssertTrue(admission.permits(applied: f.applied, at: 115.1, instant: anchor + .seconds(115.1)))
+    }
+    func testInvalidIdentityCoverageAndFreshnessNeverAuthorizes() throws {
+        for fault in Fault.allCases where fault != .wrongRevision {
+            XCTAssertNil(try fixture(fault).admit(), "\(fault)")
+        }
+    }
+    func testRevocationLeaseExpiryAndChangedRevisionRejectPreviouslyAdmittedEvidence() throws {
+        let f = try fixture(), admission = try XCTUnwrap(f.admit())
+        var changed = f.applied; changed.revision += 1
+        XCTAssertFalse(admission.permits(applied: changed, at: 115.1, instant: anchor + .seconds(115.1)))
+        XCTAssertFalse(admission.permits(applied: f.applied, at: 115.31, instant: anchor + .seconds(115.31)))
+        f.authority.revoke()
+        XCTAssertFalse(admission.permits(applied: f.applied, at: 115.1, instant: anchor + .seconds(115.1)))
+    }
+    func testCandidateRevocationInvalidatesBothNewAndPreviouslyAdmittedEvidence() throws {
+        let f = try fixture(), token = CandidateAdmissionTestToken()
+        let admission = try XCTUnwrap(f.admit(candidateIsCurrent: { token.isCurrent }))
+        token.revoke()
+        XCTAssertNil(f.admit(candidateIsCurrent: { token.isCurrent }))
+        XCTAssertFalse(admission.permits(applied: f.applied, at: 115.1, instant: anchor + .seconds(115.1)))
+    }
+}
+
+private final class CandidateAdmissionTestToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    var isCurrent: Bool { lock.withLock { active } }
+    func revoke() { lock.withLock { active = false } }
+}

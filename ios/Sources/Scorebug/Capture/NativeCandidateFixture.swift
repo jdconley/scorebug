@@ -133,6 +133,39 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         let cancel: @Sendable (PublishingCandidateMeasurement.Reason) -> Void
         let result: @Sendable () async -> Data
         let export: @Sendable (Data) async -> Void
+        let typedResult: @Sendable () async -> PublishingCandidateCost?
+        init(start: @escaping @Sendable () async throws -> Void,
+             offer: @escaping @Sendable (CapturedMediaSample) -> Bool,
+             cancel: @escaping @Sendable (PublishingCandidateMeasurement.Reason) -> Void,
+             result: @escaping @Sendable () async -> Data,
+             export: @escaping @Sendable (Data) async -> Void,
+             typedResult: @escaping @Sendable () async -> PublishingCandidateCost? = { nil }) {
+            self.start = start; self.offer = offer; self.cancel = cancel
+            self.result = result; self.export = export; self.typedResult = typedResult
+        }
+    }
+    struct CandidateSnapshot: Sendable {
+        let cost: PublishingCandidateCost
+        let binding: PublishingProbeObservation
+        let probe: PublishingProbeObservation
+        let boundAt: Double
+        let completedAt: Double
+        let permitsCurrentCandidate: @Sendable (UUID) -> Bool
+    }
+    /// Cached snapshots hold only this bounded token, never the actor or native
+    /// result. Revocation is synchronous and cannot be undone by a late join.
+    private final class CandidateAuthority: @unchecked Sendable {
+        private let lock = NSLock()
+        private var id: UUID?
+        private var revoked = false
+        func activate(_ candidateID: UUID) {
+            lock.withLock {
+                guard !revoked, id == nil else { return }
+                id = candidateID
+            }
+        }
+        func permits(_ candidateID: UUID) -> Bool { lock.withLock { !revoked && id == candidateID } }
+        func revoke() { lock.withLock { revoked = true; id = nil } }
     }
     struct Timing: Sendable {
         var delay: Duration = .seconds(20)
@@ -164,11 +197,14 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     }
     private var diagnostics: (@Sendable () -> Pressure?)?
     private var starting = false, started = false, stopped = false, sampling = false
+    private var candidateOperationsStarted = false, bootstrapWriteUsed = false, bootstrapWriteInFlight = false
     private var invalidReason: String?
     private var publisherStartedAt: Double?
     private var baseline: Pressure?, finalPressure: Pressure?
     private var polls = 0, maximumThermal = -1
     private var measurement: Data?
+    private var candidateCost: PublishingCandidateCost?
+    private let candidateAuthority = CandidateAuthority()
     private var work: Task<Void, Never>?, shutdown: Task<Void, Never>?
     private var primaryStartup: Task<Void, Error>?
 
@@ -184,7 +220,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             }
             try await owner.start()
         }, offer: { owner.offer($0) }, cancel: { owner.cancel(reason: $0) },
-            result: { NativeCandidateFixture.data(await owner.result()) }, export: { await Self.persist($0) })
+            result: { NativeCandidateFixture.data(await owner.result()) }, export: { await Self.persist($0) },
+            typedResult: { PublishingCandidateCost(await owner.result()) })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
          operations: Operations, timing: Timing, candidateHeadroom: Bool = false) {
@@ -225,13 +262,39 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     func transportStatistics() async -> PublishingTransportStatistics? { await publisher.transportStatistics() }
     func probeObservation() async -> PublishingProbeObservation? { await (publisher as? any PublishingProbeObserving)?.probeObservation() }
     func setVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
-        revoke(.ownerChanged); return try await publisher.setVideoBitRate(value)
+        // One verified bootstrap write may precede candidate ownership. Reserve
+        // it before awaiting native work so concurrent calls cannot share it.
+        guard candidateHeadroom, started, !stopped, invalidReason == nil,
+              !candidateOperationsStarted, !bootstrapWriteUsed, value == liveProfile.bitRate,
+              let startup = publisher.videoStartup, startup.profile == liveProfile else {
+            revoke(.ownerChanged)
+            return try await publisher.setVideoBitRate(value)
+        }
+        bootstrapWriteUsed = true; bootstrapWriteInFlight = true
+        defer { bootstrapWriteInFlight = false }
+        let requestedAt = ProcessInfo.processInfo.systemUptime
+        do {
+            let receipt = try await publisher.setVideoBitRate(value)
+            guard !stopped, invalidReason == nil, !candidateOperationsStarted,
+                  publisher.videoStartup == startup,
+                  receipt.publishingGeneration == startup.publishingGeneration,
+                  receipt.configuration.encoderSessionID == startup.encoderSessionID,
+                  receipt.configuration.bitRate == value,
+                  receipt.acceptedAt >= requestedAt, receipt.acceptedAt <= ProcessInfo.processInfo.systemUptime
+            else { revoke(.ownerChanged); return receipt }
+            return receipt
+        } catch {
+            revoke(.ownerChanged)
+            throw error
+        }
     }
     func setVideoProfile(_ value: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
         revoke(.ownerChanged); return try await publisher.setVideoProfile(value)
     }
     private func revoke(_ reason: PublishingCandidateMeasurement.Reason) {
+        candidateAuthority.revoke()
         sampling = false
+        candidateCost = nil
         // A normal stop after the joined measurement is not an ownership change.
         if reason != .publisherStopped || measurement == nil { invalidReason = invalidReason ?? reason.rawValue }
         operations.cancel(reason)
@@ -251,11 +314,31 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         await task.value
     }
     func waitForMeasurement() async { await work?.value }
-    private func checkPressure() -> Bool {
+    /// Runtime evidence stays typed and bounded. Native ownership and pressure
+    /// are read again after join without rewriting the closed diagnostic sample.
+    func candidateSnapshot() async -> CandidateSnapshot? {
+        guard candidateHeadroom, measurement != nil, !stopped, invalidReason == nil,
+              !bootstrapWriteInFlight, let cost = candidateCost,
+              candidateAuthority.permits(cost.id),
+              let binding = pinnedProbe, let boundAt = probeBoundAt, let completedAt = probeCompletedAt,
+              cost.scope == scope, cost.publishingGeneration == binding.publishingGeneration,
+              cost.startedAt >= boundAt, cost.endedAt <= completedAt,
+              publisher.videoStartup?.profile == liveProfile,
+              publisher.videoStartup?.publishingGeneration == cost.publishingGeneration,
+              await refreshProbe(recordDiagnostic: false), checkPressure(recordDiagnostic: false),
+              !stopped, invalidReason == nil, candidateCost?.id == cost.id, !bootstrapWriteInFlight,
+              let probe = currentProbe else { return nil }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard completedAt <= now, now - cost.endedAt <= 2 else { return nil }
+        let authority = candidateAuthority
+        return .init(cost: cost, binding: binding, probe: probe, boundAt: boundAt, completedAt: completedAt,
+            permitsCurrentCandidate: { authority.permits($0) })
+    }
+    private func checkPressure(recordDiagnostic: Bool = true) -> Bool {
         guard let value = diagnostics?(), value.valid, let baseline,
               value.observedAt >= baseline.observedAt, value.dropped == baseline.dropped,
               value.rejected == baseline.rejected else { revoke(.pressure); return false }
-        finalPressure = value; maximumThermal = max(maximumThermal, value.thermal)
+        if recordDiagnostic { finalPressure = value; maximumThermal = max(maximumThermal, value.thermal) }
         return true
     }
     private func checkProbeAuthority() -> Bool {
@@ -288,7 +371,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         revoke(.deadline)
         throw CancellationError()
     }
-    private func refreshProbe(requiresSampling: Bool = false) async -> Bool {
+    private func refreshProbe(requiresSampling: Bool = false, recordDiagnostic: Bool = true) async -> Bool {
         guard candidateHeadroom else { return true }
         for _ in 0..<3 {
             let revision = acceptedProbeRevision
@@ -302,7 +385,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             // give cached evidence a new observation time. Retries stay bounded.
             if acceptedProbeRevision != revision { continue }
             let now = ProcessInfo.processInfo.systemUptime
-            if let value { finalProbe = .init(value: value, observedAt: now) }
+            if recordDiagnostic, let value { finalProbe = .init(value: value, observedAt: now) }
             guard let pinnedProbe, let value,
                   value.id == pinnedProbe.id, value.publishingGeneration == pinnedProbe.publishingGeneration,
                   value.stage == pinnedProbe.stage, value.bitRate == pinnedProbe.bitRate,
@@ -336,6 +419,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             try await waitForFinalProbe()
             guard !stopped, invalidReason == nil, let value = diagnostics?(), value.valid else { revoke(.pressure); throw CancellationError() }
             baseline = value; finalPressure = value; maximumThermal = value.thermal
+            candidateOperationsStarted = true
             try await operations.start()
             try Task.checkCancellation()
             guard !stopped, invalidReason == nil, await refreshProbe(), checkPressure() else { throw CancellationError() }
@@ -344,12 +428,20 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             let result = await operations.result()
             sampling = false
             monitor.cancel(); await monitor.value
+            let cost = await operations.typedResult()
             if !stopped {
                 _ = await refreshProbe()
                 _ = checkPressure()
                 if candidateHeadroom { probeCompletedAt = ProcessInfo.processInfo.systemUptime }
             }
             measurement = result
+            if !stopped, invalidReason == nil, let cost,
+               cost.scope == scope, cost.publishingGeneration == pinnedProbe?.publishingGeneration,
+               let boundAt = probeBoundAt, let completedAt = probeCompletedAt,
+               boundAt <= cost.startedAt, cost.endedAt <= completedAt {
+                candidateCost = cost
+                candidateAuthority.activate(cost.id)
+            }
         } catch {
             revoke(Task.isCancelled || stopped ? .publisherStopped : .startupFailed)
             measurement = await operations.result()

@@ -36,6 +36,7 @@ actor PublishingQualitySession {
     private let behavior: QualityController.Behavior
     private let strategy: QualityController.RecoveryStrategy
     private let uptime: @Sendable () -> Double
+    private let sampleInstant: @Sendable () -> ContinuousClock.Instant
     private var policy: QualityController?
     private var receipt: PublishingBitRateChange?
     private var profileReceipt: PublishingVideoProfileChange?
@@ -48,19 +49,28 @@ actor PublishingQualitySession {
     private var deliveryRevision: UInt64?
     private var deliveryEnds: [Int: Double] = [:]
     private var evaluatedAt: Double?
-    private var pending: QualityController.Recommendation?
+    private var pendingCandidate: PublishingCandidateAdmission?
+    private var candidateHealthSource: SourceScope?
+    private var pending: QualityController.Recommendation? {
+        didSet {
+            if pending?.candidateID != pendingCandidate?.value.id { pendingCandidate = nil }
+        }
+    }
     private var busy = false
     private var closed = false
     private var shutdown: Task<Void, Never>?
     private var lastNow: Double
     private var lastPolicySequence: UInt64 = 0
     private struct SourceScope: Equatable {
+        let gameID: String
+        let generation: Int
         let workerId: String
         let epoch: String
         let attempt: Int
         let publication: WorkerPublication
         let processingScope: String?
         init(_ source: WorkerSourceIntervalObservation) {
+            gameID = source.interval.scope.matchID; generation = source.interval.scope.broadcastGeneration
             workerId = source.workerId; epoch = source.workerEpoch; attempt = source.workerAttempt
             publication = source.publication; processingScope = source.processing?.scopeID
         }
@@ -99,12 +109,14 @@ actor PublishingQualitySession {
     init(operations: Operations, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
          behavior: QualityController.Behavior = .legacy,
-         uptime: @escaping @Sendable () -> Double) throws {
+         uptime: @escaping @Sendable () -> Double,
+         instant: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) throws {
         let now = uptime()
         _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy, behavior: behavior)
         guard now <= 1e12 else { throw QualityController.ValidationError.invalidTime }
         self.operations = operations; self.profiles = profiles; self.attemptID = attemptID
         self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
+        self.sampleInstant = instant
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
@@ -144,8 +156,47 @@ actor PublishingQualitySession {
             receipt = result; acknowledgedAt = now
         } catch { await stop(); throw error }
     }
+    /// Recheck caller-owned authority after actor scheduling. This event consumes
+    /// no source sequence and cannot manufacture health from candidate duration.
+    func evaluateCandidate(_ admission: PublishingCandidateAdmission,
+                           instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision {
+        try admit()
+        guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        defer { self.policy = policy }
+        do {
+            let now = try time()
+            let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
+                settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)
+            let receiver = admission.receiver
+            guard let source = candidateHealthSource,
+                  source.gameID == receiver.expected.gameId, source.generation == receiver.expected.generation,
+                  source.workerId == receiver.expected.workerId, source.epoch == receiver.workerEpoch,
+                  source.attempt == receiver.workerAttempt, source.publication == receiver.publication,
+                  admission.permits(applied: applied, at: now, instant: instant ?? sampleInstant()) else {
+                throw Failure.staleAdvice
+            }
+            let decision = try policy.evaluateCandidate(admission.value, at: now)
+            pendingCandidate = decision.recommendation?.candidateID == admission.value.id ? admission : nil
+            // A candidate no-op revokes earlier candidate advice, but Core keeps
+            // a known downward/reset recommendation until applied or superseded.
+            if let advice = decision.recommendation { pending = advice }
+            else if pending?.candidateID != nil { pending = nil }
+            evaluatedAt = now
+            return decision
+        } catch {
+            // Gate revocation is not a contradictory source observation. It must
+            // not displace an already owned downward action. Malformed Core
+            // candidate inputs retain Core's normal invalidation behavior.
+            let preserveDownward = (error as? Failure) == .staleAdvice && pending.map {
+                $0.kind == .decrease || $0.kind == .reset || $0.kind == .rollback
+            } == true
+            if !preserveDownward { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
+            throw error
+        }
+    }
     func evaluate(_ window: QualityController.Window) throws -> QualityController.Decision {
         try admit()
+        candidateHealthSource = nil
         guard var policy else { throw Failure.notReady }
         defer { self.policy = policy }
         do {
@@ -154,7 +205,7 @@ actor PublishingQualitySession {
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     func evaluate(source: WorkerSourceIntervalObservation, diagnostics: PublishingQualityTelemetry.Diagnostics,
                   workerLimits: PublishingQualityTelemetry.WorkerLimits?, transportLimits: PublishingQualityTelemetry.TransportLimits?,
@@ -177,13 +228,14 @@ actor PublishingQualitySession {
                     settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
                 diagnostics: diagnostics, workerLimits: workerLimits, transportLimits: transportLimits,
                 sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
-            if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry() }
+            if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry(); candidateHealthSource = nil }
             let decision = try policy.evaluate(window, at: now)
+            candidateHealthSource = sourceScope
             lastSource = (sourceScope, source.sequence)
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     /// Uses the same ordinal/watermark as matched receiver windows. A valid nil
     /// probe consumes no evidence and preserves the current pending decision.
@@ -201,10 +253,11 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, transportLimits: transportLimits, sequence: lastPolicySequence + 1,
                 after: lastWindow?.end, at: now) else { return nil }
             let decision = try policy.evaluateLocalPressure(window, at: now)
+            candidateHealthSource = nil
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     func evaluateDecoderStall(cadence: WorkerDecoderCadenceFreshness, diagnostics: PublishingQualityTelemetry.Diagnostics,
                               instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
@@ -226,17 +279,18 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
             let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
             if let decoderScope, decoderScope != scope {
-                policy.invalidateTelemetry(); pending = nil
+                policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil
                 decoderProgress = nil; consumedStallPTS = nil
             }
             if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
             decoderScope = scope; decoderProgress = progress; consumedCadenceReceipt = cadence.receiptID
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
+            candidateHealthSource = nil
             consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     /// Classification occurred synchronously at the current-input boundary.
     /// Retirement is checked again here after actor scheduling, before the
@@ -273,20 +327,21 @@ actor PublishingQualitySession {
                   now - observation.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
                   now - source.windowEnd <= 2 else { throw PublishingQualityTelemetry.Failure.freshness }
             if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
-                if deliveryAuthority != nil { policy.invalidateTelemetry(); pending = nil }
+                if deliveryAuthority != nil { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
                 deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
             }
             deliveryEnds[lane] = source.windowEnd
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             guard let signal = observation.failureSignal(sequence: lastPolicySequence + 1) else {
-                if observation.result.uncertainFrames > 0 { policy.invalidateTelemetry(); pending = nil }
+                if observation.result.uncertainFrames > 0 { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
                 return nil
             }
             let decision = try policy.evaluateDeliveryFailure(signal, at: now)
+            candidateHealthSource = nil
             lastPolicySequence = signal.sequence; lastDeliveryFailure = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     func checkTrialDeadline() throws -> QualityController.Recommendation? {
         try admit()
@@ -295,16 +350,16 @@ actor PublishingQualitySession {
         do {
             let advice = try policy.checkTrialDeadline(at: time())
             // No due rollback does not revoke an existing trial/increase/decrease.
-            if let advice { pending = advice }
+            if let advice { candidateHealthSource = nil; pending = advice }
             return advice
-        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     func apply(_ advice: QualityController.Recommendation) async throws {
         try admit()
         guard var policy else { throw Failure.notReady }
         let start: Double
         do { start = try time() }
-        catch { policy.invalidateTelemetry(); self.policy = policy; pending = nil; throw error }
+        catch { policy.invalidateTelemetry(); self.policy = policy; candidateHealthSource = nil; pending = nil; throw error }
         guard pending == advice, advice.attemptID == attemptID,
               advice.appliedRevision == policy.appliedRevision, start <= advice.validUntil else { throw Failure.staleAdvice }
         let profile: PublishingVideoProfile?
@@ -318,7 +373,20 @@ actor PublishingQualitySession {
                   descriptor.targetFPS == 30 else { throw Failure.unsupportedProfile }
             profile = native
         }
+        if let candidateID = advice.candidateID {
+            guard let witness = pendingCandidate, witness.value.id == candidateID,
+                  let receipt, let acknowledgedAt,
+                  witness.permits(applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
+                      settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+                      at: start, instant: sampleInstant()) else {
+                policy.invalidateTelemetry(); self.policy = policy; candidateHealthSource = nil; pending = nil
+                throw Failure.staleAdvice
+            }
+        }
         let admitted = try policy.beginApplication(advice, at: start)
+        // Once admitted, the owned native application has its independent two-
+        // second deadline. Native changes normally retire the probe authority.
+        pendingCandidate = nil; candidateHealthSource = nil
         let deadline = admitted.completionDeadline
         busy = true
         defer { busy = false }
@@ -352,7 +420,7 @@ actor PublishingQualitySession {
     }
     /// All callers join one shielded stop, even if their own task is cancelled.
     func stop() async {
-        closed = true; pending = nil
+        closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
         let task: Task<Void, Never>
         if let shutdown { task = shutdown }
         else {

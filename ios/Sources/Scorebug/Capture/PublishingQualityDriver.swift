@@ -5,6 +5,7 @@ import ScorebugMedia
 
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
+    var candidateInputProvider: ((PublishingQualitySession.Snapshot) async -> PublishingCandidateAdmission?)?
     var deliveryInputProvider: (() -> PublishingDeliveryMonitor.Input?)?
     private let enableDeliveryFailures: Bool
     private let deliveryAudit: PublishingDeliveryMonitor.Audit?
@@ -19,6 +20,7 @@ import ScorebugMedia
     private var events: [[String: Any]] = []
     private var overflow = false
     private var consumed: String?
+    private var consumedCandidateID: UUID?
     private var noted: String?
     private var localRejection: String?
     private var cadenceRejection: String?
@@ -146,15 +148,45 @@ import ScorebugMedia
                 return
             }
             try Task.checkCancellation()
-            guard !isClosed, let decision else { return }
-            await record("localPressure", decision: decision, diagnostics: diagnostics)
-            if let advice = decision.recommendation { try await apply(advice) }
+            guard !isClosed else { return }
+            if let decision {
+                await record("localPressure", decision: decision, diagnostics: diagnostics)
+                if let advice = decision.recommendation { try await apply(advice) }
+                return
+            }
+            try await evaluateCandidateInput()
         } catch {
             guard !isClosed, !Task.isCancelled else { return }
             isClosed = true
             await owner.stop()
             await record("failed", reason: "native-change-failed", allowClosed: true)
         }
+    }
+    /// Read the latest provider after all downward/deadline checks and a fresh
+    /// actor snapshot. It also runs when no candidate exists, allowing the model
+    /// to refresh its independently owned probe without inventing policy evidence.
+    private func evaluateCandidateInput() async throws {
+        guard candidateInputProvider != nil else { return }
+        let state = await owner.snapshot
+        try Task.checkCancellation()
+        guard !isClosed, !state.isClosed, !state.isBusy, let provider = candidateInputProvider else { return }
+        let candidate = await provider(state)
+        try Task.checkCancellation()
+        guard !isClosed, let candidate, candidate.value.id != consumedCandidateID else { return }
+        consumedCandidateID = candidate.value.id
+        let decision: QualityController.Decision
+        do { decision = try await owner.evaluateCandidate(candidate) }
+        catch {
+            guard !isClosed, !Task.isCancelled else { return }
+            await record("rejected", candidate: candidate, reason: "candidate-" + Self.reason(error))
+            return
+        }
+        try Task.checkCancellation()
+        guard !isClosed else { return }
+        // The probe lease may be only 300ms. No audit actor await may precede
+        // the session's final synchronous authority check and application admission.
+        if let advice = decision.recommendation { try await apply(advice) }
+        await record("candidate", decision: decision, candidate: candidate, advice: decision.recommendation)
     }
     private func evaluateSource(_ source: WorkerSourceIntervalObservation, state: PublishingQualitySession.Snapshot,
                                 diagnostics: PublishingQualityTelemetry.Diagnostics) async throws -> Bool {
@@ -183,8 +215,14 @@ import ScorebugMedia
         guard !isClosed else { return true }
         localRejection = nil
         await record("evaluated", source: source, decision: decision, diagnostics: diagnostics)
-        if let advice = decision.recommendation { try await apply(advice, source: source) }
-        return true
+        if let advice = decision.recommendation {
+            try await apply(advice, source: source)
+            return true
+        }
+        // Measured admission can use this newly completed health window in the
+        // same tick, after the remaining downward checks. Legacy routing keeps
+        // its original one-source-event-per-cycle behavior.
+        return candidateInputProvider == nil
     }
     func apply(_ advice: QualityController.Recommendation, source: WorkerSourceIntervalObservation? = nil) async throws {
         do {
@@ -197,7 +235,7 @@ import ScorebugMedia
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { isClosed = true; deliveryInputProvider = nil; task?.cancel() }
+    func cancel() { isClosed = true; deliveryInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -221,10 +259,12 @@ import ScorebugMedia
     private static func reason(_ error: Error) -> String {
         if let error = error as? PublishingQualityTelemetry.Failure { return String(describing: error) }
         if let error = error as? QualityController.ValidationError { return String(describing: error) }
+        if let error = error as? PublishingQualitySession.Failure { return String(describing: error) }
         return "unavailable"
     }
     private func record(_ kind: String, source: WorkerSourceIntervalObservation? = nil,
                         decision: QualityController.Decision? = nil, delivery: PublishingDeliveryObservation? = nil, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
+                        candidate: PublishingCandidateAdmission? = nil,
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false) async {
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
@@ -241,7 +281,8 @@ import ScorebugMedia
                 "completionDeadline": application.completionDeadline,
                 "attemptID": application.recommendation.attemptID.uuidString,
                 "fromRevision": String(application.recommendation.appliedRevision),
-                "windowSequence": String(application.recommendation.windowSequence)]
+                "windowSequence": String(application.recommendation.windowSequence),
+                "candidateID": Self.optional(application.recommendation.candidateID?.uuidString)]
         }
         if let source {
             row["source"] = ["workerEpoch": source.workerEpoch, "workerAttempt": source.workerAttempt,
@@ -277,11 +318,21 @@ import ScorebugMedia
         if let diagnostics, let window = state.lastWindow {
             row["evidence"] = Self.evidence(diagnostics, source: source, window: window)
         }
+        if let candidate {
+            let value = candidate.value
+            row["candidate"] = ["id": value.id.uuidString, "attemptID": value.attemptID.uuidString,
+                "appliedRevision": String(value.appliedRevision), "baselineProfileID": value.baseline.profileID,
+                "baselineVideoBitrate": value.baseline.videoBitrate, "profileID": value.settings.profileID,
+                "videoBitrate": value.settings.videoBitrate, "measuredStart": value.measuredStart,
+                "measuredEnd": value.measuredEnd, "evaluatedAt": value.evaluatedAt, "validUntil": value.validUntil,
+                "candidateTransportBitsPerSecond": value.candidateTransportBitsPerSecond,
+                "deliveredPaddingBitsPerSecond": value.deliveredPaddingBitsPerSecond]
+        }
         if let decision {
             row["evaluatedAt"] = state.evaluatedAt
             row["state"] = String(describing: decision.state)
             row["reasons"] = decision.reasons.map { String(describing: $0) }
-            if cadence == nil, delivery == nil, let w = state.lastWindow {
+            if cadence == nil, delivery == nil, candidate == nil, let w = state.lastWindow {
                 row["window"] = ["sequence": String(w.sequence), "revision": String(w.appliedRevision),
                     "start": w.start, "end": w.end, "captured": Self.optional(w.capturedFreshFrames),
                     "encoded": Self.optional(w.encodedFreshFrames), "received": Self.optional(w.receiver?.freshFrames),
@@ -294,7 +345,8 @@ import ScorebugMedia
         }
         if let advice { row["action"] = ["kind": String(describing: advice.kind), "bitRate": advice.settings.videoBitrate,
             "profileID": advice.settings.profileID,
-            "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil] }
+            "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil,
+            "candidateID": Self.optional(advice.candidateID?.uuidString)] }
         events.append(row)
     }
     private static func profileReceiptJSON(_ receipt: PublishingVideoProfileChange) -> [String: Any] {

@@ -2,6 +2,7 @@ import CoreMedia
 import Foundation
 import ScorebugCore
 import ScorebugMedia
+import ScorebugStreaming
 import XCTest
 
 final class PublishingQualitySessionTests: XCTestCase {
@@ -642,5 +643,307 @@ private final class ProfileQualityNative: @unchecked Sendable {
     private func stop() {
         let gate = lock.withLock { stopped += 1; return self.gate }
         gate?.release()
+    }
+}
+
+final class PublishingMeasuredCandidateSessionTests: XCTestCase {
+    func testCandidateNoOpAndStaleAuthorityPreservePendingDownwardAdvice() async throws {
+        for revoked in [false, true] {
+            let f = try await CandidateQualityFixture.make(initialProfile: .low360, unhealthySource: true)
+            let downward = try XCTUnwrap(f.sourceAdvice)
+            XCTAssertEqual(downward.kind, .decrease)
+            if revoked {
+                f.admission.authority.revoke()
+                do { _ = try await f.owner.evaluateCandidate(f.admission); XCTFail("Revoked gate accepted") }
+                catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+            } else {
+                let candidate = try await f.owner.evaluateCandidate(f.admission)
+                XCTAssertNil(candidate.recommendation)
+            }
+            try await f.owner.apply(downward)
+            let state = await f.owner.snapshot
+            XCTAssertEqual(state.applied?.profileID, "240p30")
+            XCTAssertEqual(state.revision, 1)
+            XCTAssertEqual(f.native.stops, 0)
+            await f.owner.stop()
+        }
+    }
+    func testAbsentOrDifferentHealthPublicationCannotAuthorizeCandidate() async throws {
+        for sourceHealth in [false, true] {
+            let f = try await CandidateQualityFixture.make(sourceHealth: sourceHealth, foreignPublication: sourceHealth)
+            do { _ = try await f.owner.evaluateCandidate(f.admission); XCTFail("Unrelated health admitted") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+            XCTAssertEqual(f.native.calls.count, 1)
+            XCTAssertEqual(f.native.stops, 0)
+            await f.owner.stop()
+        }
+    }
+    func testCandidateOnlyEventAdmitsExactProfileAndDoesNotReconsumeHealth() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let before = await f.owner.snapshot
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let advice = try XCTUnwrap(decision.recommendation)
+        XCTAssertEqual(advice.candidateID, f.admission.value.id)
+        XCTAssertEqual(advice.settings.profileID, "360p30")
+        let evaluated = await f.owner.snapshot
+        XCTAssertEqual(evaluated.lastWindow?.sequence, before.lastWindow?.sequence)
+        XCTAssertEqual(evaluated.revision, 0)
+        try await f.owner.apply(advice)
+        let applied = await f.owner.snapshot
+        XCTAssertEqual(applied.revision, 1)
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        XCTAssertEqual(f.native.stops, 0)
+        await f.owner.stop()
+    }
+    func testRevokedOrExpiredCandidateNeverWritesOrStopsPublishing() async throws {
+        for expire in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            let decision = try await f.owner.evaluateCandidate(f.admission)
+            let advice = try XCTUnwrap(decision.recommendation)
+            if expire { f.native.setNow(115.31) } else { f.admission.authority.revoke() }
+            do { try await f.owner.apply(advice); XCTFail("Stale candidate dispatched") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+            XCTAssertEqual(f.native.calls, ["rate:350000"])
+            XCTAssertEqual(f.native.stops, 0)
+            let state = await f.owner.snapshot
+            XCTAssertFalse(state.isClosed)
+            await f.owner.stop()
+        }
+    }
+    func testNativeReceiptChangeAndScheduledAuthorityRevocationRejectBeforeAdmission() async throws {
+        for receiptChanged in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            if receiptChanged { f.native.replaceReceipt() } else { f.admission.authority.revoke() }
+            do { _ = try await f.owner.evaluateCandidate(f.admission); XCTFail("Revoked input admitted") }
+            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+            XCTAssertEqual(f.native.calls.count, 1)
+            XCTAssertEqual(f.native.stops, 0)
+            await f.owner.stop()
+        }
+    }
+    func testNewHealthSupersedesCandidateWitness() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let advice = try XCTUnwrap(decision.recommendation)
+        f.native.setNow(116)
+        _ = try await f.owner.evaluate(f.window(start: 115, duration: 1, sequence: 2))
+        do { try await f.owner.apply(advice); XCTFail("Superseded candidate dispatched") }
+        catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+        XCTAssertEqual(f.native.calls.count, 1)
+        XCTAssertEqual(f.native.stops, 0)
+        await f.owner.stop()
+    }
+    func testOwnedApplicationOutlivesCandidateAuthorityAndConfirmsTrial() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let advice = try XCTUnwrap(decision.recommendation)
+        f.native.setProfileAction { f.admission.authority.revoke(); f.native.setNow(115.6) }
+        try await f.owner.apply(advice)
+        f.native.setNow(120.6)
+        let probing = try await f.owner.evaluate(f.window(start: 115.6, duration: 5, sequence: 2, revision: 1))
+        XCTAssertEqual(probing.state, .probing)
+        f.native.setNow(125.6)
+        let confirmed = try await f.owner.evaluate(f.window(start: 120.6, duration: 5, sequence: 3, revision: 1))
+        XCTAssertTrue(confirmed.reasons.contains(.trialConfirmed))
+        XCTAssertEqual(f.native.stops, 0)
+        await f.owner.stop()
+    }
+}
+
+/// Shared real-admission fixture for session and driver boundary tests.
+struct CandidateQualityFixture: Sendable {
+    let native: CandidateQualityNative
+    let owner: PublishingQualitySession
+    let admission: PublishingCandidateAdmission
+    let source: WorkerSourceIntervalObservation?
+    let sourceDiagnostics: PublishingQualityTelemetry.Diagnostics?
+    let sourceAdvice: QualityController.Recommendation?
+    var attempt: UUID { admission.value.attemptID }
+    func window(start: Double, duration: Double, sequence: UInt64, revision: UInt64 = 0) -> QualityController.Window {
+        Self.window(attempt: attempt, start: start, duration: duration, sequence: sequence, revision: revision)
+    }
+    static func window(attempt: UUID, start: Double, duration: Double, sequence: UInt64, revision: UInt64 = 0) -> QualityController.Window {
+        let frames = Int((duration * 30).rounded())
+        return .init(attemptID: attempt, sequence: sequence, appliedRevision: revision, start: start, end: start + duration,
+            capturedFreshFrames: frames, encodedFreshFrames: frames, receiver: .init(freshFrames: frames, observedAt: start + duration),
+            sourceLoss: .init(expectedFrames: frames, lostFrames: 0), meanQueueOccupancy: 0.1,
+            usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal)
+    }
+    func diagnostics() throws -> PublishingQualityTelemetry.Diagnostics {
+        var ingress = try LiveIngressObservationAccumulator(scope: admissionMeasurementScope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+        ingress.updateOccupancy(items: 0, bytes: 0, phase: .admitting, at: 100)
+        return .init(isPublishing: true, clock: .init(sourceOrigin: .zero, publishingGeneration: 7),
+            receipt: native.receipt, ingress: ingress.poll(at: native.now),
+            transport: PublishingTransportStatisticsTracker().snapshot, thermal: PublishingThermalTracker().snapshot)
+    }
+    private var admissionMeasurementScope: VideoFrameObservationScope {
+        .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1)
+    }
+    private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
+                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match", broadcastGeneration: 2,
+            publishingAttemptID: applied.attemptID, appliedProfileRevision: 1)
+        var history = try VideoSourceHistory(scope: scope, capacity: 1024)
+        for index in 0...150 {
+            let time = 110 + Double(index) / 30, pts = CMTime(value: Int64(300 + index), timescale: 30)
+            history.observe(.captureVideo, sourcePTS: pts, at: time)
+            let encoding = VideoEncodingObservation(encoderSessionID: applied.receipt.configuration.encoderSessionID,
+                configuration: applied.receipt.configuration, submittedAt: time, completedAt: time + 0.01)!
+            history.observe(.encodedVideo, sourcePTS: pts, at: time + 0.01, encoding: encoding)
+        }
+        let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 7)!
+        let previous: Int64 = 819000, first: Int64 = 822000, last: Int64 = 1269000
+        let interval = try XCTUnwrap(PublishingSourceInterval.match(history: history.snapshot, clock: clock,
+            relayOriginPTS: 90000, previousDecodedPTS: previous, firstDecodedPTS: first, lastDecodedPTS: last, decodedFrames: 150))
+        var response = template
+        response.status.decodedVideoAgeUpperBoundMs = 10
+        response.status.observation?.decodedVideo = .init(completed: .init(sequence: 2, durationMs: 5000, ageMs: 0,
+            firstPTS: first, lastPTS: last, freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true),
+            invalidReason: nil, ended: false, clock: "mpegts-pts-90k-v1")
+        let freshness = try XCTUnwrap(WorkerDecodedVideoFreshness(response: response, receivedAt: native.instant,
+            requestDuration: .milliseconds(10)))
+        let processing = WorkerProcessingReport(scopeID: "55555555-5555-4555-8555-555555555555", encoder: "videotoolbox",
+            previousSequence: 1, sequence: 2, firstPTS: first,
+            interval: .init(sourceStartExclusive: previous, sourceEndInclusive: last, decodedFrames: 150,
+                submittedFrames: 150, completedFrames: 150, pendingFrames: 0, omittedBeforeEncoderFrames: 0,
+                filterDuration: .init(meanMs: 1, maximumMs: 4), processingDuration: .init(meanMs: 20, maximumMs: 30)))
+        let source = WorkerSourceIntervalObservation(interval: interval, nativeClock: clock, workerId: "mac",
+            workerEpoch: template.status.workerEpoch!, workerAttempt: 1, publication: template.status.publication!,
+            previousSequence: 1, sequence: 2, previousDecodedPTS: previous, firstDecodedPTS: first, lastDecodedPTS: last,
+            freshness: freshness, processing: processing)
+        var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+        ingress.updateOccupancy(items: unhealthy ? 4 : 0, bytes: unhealthy ? 40 : 0, phase: .admitting, at: 100)
+        var thermal = PublishingThermalTracker(), transport = PublishingTransportStatisticsTracker()
+        for index in 100...115 {
+            let time = Double(index)
+            thermal.observe(.init(state: .nominal, sampledAt: time))
+            transport.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(index * 1000),
+                sentBytes: UInt64(index * 10000), retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 1,
+                estimatedBandwidthMbps: 100, senderBufferedBytes: 0, senderBufferMilliseconds: 0, availableSenderBytes: 10000))
+        }
+        let diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: clock, receipt: applied.receipt,
+            ingress: ingress.poll(at: native.now), transport: transport.snapshot, thermal: thermal.snapshot)
+        return (source, diagnostics)
+    }
+    static func make(sourceHealth: Bool = true, foreignPublication: Bool = false,
+                     deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
+                     unhealthySource: Bool = false) async throws -> Self {
+        let native = CandidateQualityNative(initialProfile: initialProfile)
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
+        let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
+        let attempt = try XCTUnwrap(UUID(uuidString: template.status.publication!.publishingAttemptId))
+        let probeID = try XCTUnwrap(UUID(uuidString: template.status.receiverProbe!.snapshot.id))
+        let owner = try PublishingQualitySession(operations: native.operations, profiles: [
+            .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+            .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)],
+            attemptID: attempt, initial: .init(profileID: initialProfile.rawValue, videoBitrate: initialProfile.bitRate),
+            strategy: .measuredCandidateTrials, behavior: .progressive, uptime: { native.now }, instant: { native.instant })
+        try await owner.bootstrap()
+        let state = await owner.snapshot
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0, settings: try XCTUnwrap(state.applied),
+            receipt: try XCTUnwrap(state.receipt), acknowledgedAt: 100)
+        native.setNow(115.1)
+        var sourceObservation: WorkerSourceIntervalObservation?
+        var sourceDiagnostics: PublishingQualityTelemetry.Diagnostics?
+        var sourceAdvice: QualityController.Recommendation?
+        if sourceHealth {
+            var healthTemplate = template
+            if foreignPublication {
+                healthTemplate.status.publication?.readerId = "10000000-0000-4000-8000-000000000099"
+            }
+            let health = try source(native: native, template: healthTemplate, applied: applied, unhealthy: unhealthySource)
+            sourceObservation = health.0; sourceDiagnostics = health.1
+            if !deferHealthEvaluation {
+                let healthDecision = try await owner.evaluate(source: health.0, diagnostics: health.1,
+                    workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                    transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                    instant: native.instant)
+                sourceAdvice = healthDecision.recommendation
+                if !unhealthySource { XCTAssertEqual(healthDecision.state, .healthy, "Fixture health: \(healthDecision.reasons)") }
+            }
+        } else {
+            _ = try await owner.evaluate(window(attempt: attempt, start: 110, duration: 5, sequence: 1))
+        }
+        var tracker = WorkerReceiverProbeTracker()
+        for (time, messages) in [(111.0, 100), (113.0, 2200), (115.0, 4400)] {
+            var response = template, p = template.status.receiverProbe!.snapshot
+            p.publishingGeneration = "7"; p.convention = "mpegts-null-probe-v2"; p.stage = 3; p.bitRate = 12_000_000
+            p.deliveredMessages = String(messages); p.deliveredPayloadBytes = String(messages * 1316)
+            p.totalDeliveredPayloadBytes = p.deliveredPayloadBytes; p.nextSequence = p.deliveredMessages; p.pendingPackets = 0
+            p.observedAtNanoseconds = String(Int64(time * 1e9)); p.firstDeliveredAtNanoseconds = "109500000000"
+            p.lastDeliveredAtNanoseconds = String(Int64((time - 0.01) * 1e9))
+            response.status.receiverProbe = .init(snapshot: p, ageUpperBoundMs: 10)
+            let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response,
+                expected: .init(gameId: "match", generation: 2, workerId: "mac", publishingAttemptId: attempt.uuidString.lowercased(),
+                    probeId: probeID.uuidString.lowercased(), publishingGeneration: 7, bitRate: 12_000_000, stage: 3),
+                receivedAt: native.anchor + .seconds(time - 100), requestDuration: .milliseconds(10)))
+            tracker.observe(evidence, acceptedPayloadBytes: UInt64(messages * 1316), senderActive: true,
+                at: native.anchor + .seconds(time - 100))
+        }
+        let pair = try XCTUnwrap(tracker.latestPair)
+        let binding = PublishingProbeObservation(id: probeID, publishingGeneration: 7, bitRate: 12_000_000, startedAt: 109,
+            leaseDeadline: 109.9, acceptedPayloadBytes: 100 * 1316, lastAcceptedAt: 109.59, reason: nil, stage: 3,
+            permitsCurrentOwner: { _, _, _ in true })
+        var probe = binding
+        probe.leaseDeadline = 115.3; probe.acceptedPayloadBytes = 6000 * 1316; probe.lastAcceptedAt = 115.09
+        let admission = try XCTUnwrap(PublishingCandidateAdmission.laboratoryIPv4(measurement: .init(id: UUID(),
+            scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1),
+            profile: initialProfile == .low240 ? .low360 : .sd540, publishingGeneration: 7, startedAt: 110, endedAt: 114.06, firstInputAt: 110, lastInputAt: 114,
+            sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400),
+            applied: applied, binding: binding, boundAt: 109.6, completedAt: 114.07, probe: probe, pair: pair,
+            authority: PublishingCandidateAuthority(pair.newer.end),
+            clock: .init(before: 115.1, instant: native.instant, after: 115.1), currentReceipt: { native.receipt }, candidateIsCurrent: { true }))
+        return .init(native: native, owner: owner, admission: admission, source: sourceObservation,
+                     sourceDiagnostics: sourceDiagnostics, sourceAdvice: sourceAdvice)
+    }
+}
+final class CandidateQualityNative: @unchecked Sendable {
+    let initialProfile: PublishingVideoProfile
+    init(initialProfile: PublishingVideoProfile = .low240) { self.initialProfile = initialProfile }
+    // Driver source evaluation samples the real clock; align the fixture's
+    // active 115.1-second observation with its construction instant.
+    let anchor = ContinuousClock.now - .seconds(15.1)
+    private let lock = NSLock()
+    private let firstEncoder = UUID(), secondEncoder = UUID()
+    private var time = 100.0, stopped = 0
+    private var history: [String] = []
+    private var current: PublishingBitRateChange?
+    private var onProfile: (@Sendable () -> Void)?
+    var now: Double { lock.withLock { time } }
+    var instant: ContinuousClock.Instant { anchor + .seconds(now - 100) }
+    var receipt: PublishingBitRateChange? { lock.withLock { current } }
+    var calls: [String] { lock.withLock { history } }
+    var stops: Int { lock.withLock { stopped } }
+    func setNow(_ value: Double) { lock.withLock { time = value } }
+    func setProfileAction(_ value: @escaping @Sendable () -> Void) { lock.withLock { onProfile = value } }
+    func replaceReceipt() { lock.withLock {
+        current = .init(publishingGeneration: 7, configuration: .init(id: UUID(), encoderSessionID: firstEncoder, bitRate: 350_000)!,
+                        acceptedAt: time, lastSubmittedSourcePTS: .zero)
+    } }
+    var operations: PublishingQualitySession.Operations {
+        .init(setBitRate: { rate, _ in
+            self.lock.withLock {
+                let first = self.history.isEmpty
+                self.history.append("rate:\(rate)")
+                let receipt = PublishingBitRateChange(publishingGeneration: 7,
+                    configuration: .init(id: UUID(), encoderSessionID: first ? self.firstEncoder : self.secondEncoder, bitRate: rate)!,
+                    acceptedAt: self.time, lastSubmittedSourcePTS: .init(value: first ? 100 : 201, timescale: 30))!
+                self.current = receipt
+                return receipt
+            }
+        }, stop: { self.lock.withLock { self.stopped += 1 } }, videoStartup: {
+            .init(profile: self.initialProfile, width: self.initialProfile.width, height: self.initialProfile.height,
+                  publishingGeneration: 7, encoderSessionID: self.firstEncoder,
+                  firstSourcePTS: .zero, submittedAt: 99, completedAt: 99.5, observedAt: 100)
+        }, setProfile: { profile, _ in
+            let action = self.lock.withLock { self.history.append("profile:\(profile.rawValue)"); return self.onProfile }
+            action?()
+            return .init(profile: profile, publishingGeneration: 7, previousEncoderSessionID: self.firstEncoder,
+                encoderSessionID: self.secondEncoder, lastOldSourcePTS: .init(value: 150, timescale: 30),
+                firstNewSourcePTS: .init(value: 200, timescale: 30), width: profile.width, height: profile.height,
+                rawVideoFramesDropped: 0, acknowledgedAt: self.now)!
+        })
     }
 }
