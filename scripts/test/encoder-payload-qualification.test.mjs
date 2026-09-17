@@ -298,3 +298,147 @@ test('version 6 pins the half-resolution pair and every actual output dimension'
     assert.throws(() => qualifyEncoderPayload(report));
   }
 });
+
+function nativeMacFixture() {
+  const report = withNativeSnapshots();
+  report.formatVersion = 9;
+  report.platform = 'macOS';
+  report.experiment = 'native-mac-rate-control';
+  for (const run of report.runs) {
+    run.encodedWidth = 1920;
+    run.encodedHeight = 1080;
+    for (const frame of run.frames) {
+      frame.encodedWidth = 1920;
+      frame.encodedHeight = 1080;
+    }
+    for (const snapshot of Object.values(run.native)) {
+      snapshot.properties.UsingHardwareAcceleratedVideoEncoder = {
+        supported: true,
+        status: 0,
+        value: true,
+        type: null,
+        readWriteStatus: null,
+      };
+    }
+  }
+  return report;
+}
+test('native Mac experiment requires actual hardware and output geometry while retaining rate math', () => {
+  const result = qualifyEncoderPayload(nativeMacFixture());
+  assert.equal(result.frames, 2402);
+  assert.equal(result.dynamicLowToInitialHigh, 0.25);
+  assert.match(result.scope, /native macOS/);
+  for (const damage of [
+    (r) => {
+      r.platform = 'iOS Simulator';
+    },
+    (r) => {
+      r.experiment = 'other';
+    },
+    (r) => {
+      r.runs[0].native.bootstrap.properties.UsingHardwareAcceleratedVideoEncoder.value = false;
+    },
+    (r) => {
+      r.runs[1].native.final.properties.UsingHardwareAcceleratedVideoEncoder = {
+        supported: false,
+        status: -12900,
+        value: null,
+        type: null,
+        readWriteStatus: null,
+      };
+    },
+    (r) => {
+      r.runs[0].frames[700].encodedWidth = 640;
+    },
+    (r) => {
+      r.runs[1].encodedHeight = 360;
+    },
+    (r) => {
+      r.runs[0].receipts[1].bitRate = 600000;
+    },
+  ]) {
+    const report = nativeMacFixture();
+    damage(report);
+    assert.throws(() => qualifyEncoderPayload(report));
+  }
+});
+
+test('native Mac low-latency comparison keeps hardware, native failure and request evidence mandatory', () => {
+  const report = lowLatencyFixture();
+  report.formatVersion = 10;
+  report.platform = 'macOS';
+  for (const run of report.runs)
+    for (const snapshot of Object.values(run.native))
+      snapshot.properties.UsingHardwareAcceleratedVideoEncoder = {
+        supported: true,
+        status: 0,
+        value: true,
+        type: null,
+        readWriteStatus: null,
+      };
+  assert.equal(qualifyEncoderPayload(report).lowLatencyToDefault, 1);
+  for (const damage of [
+    (r) => {
+      r.runs[1].lowLatencyRateControlRequested = false;
+    },
+    (r) => {
+      r.runs[1].nativeFailure = 'codecFailed(status: -12908)';
+    },
+    (r) => {
+      r.runs[0].native.final.properties.UsingHardwareAcceleratedVideoEncoder.value = false;
+    },
+    (r) => {
+      r.platform = 'iOS Simulator';
+    },
+  ]) {
+    const damaged = structuredClone(report);
+    damage(damaged);
+    assert.throws(() => qualifyEncoderPayload(damaged));
+  }
+});
+
+test('native low-latency average-only comparison preserves explicit unsupported native properties', () => {
+  const report = lowLatencyFixture();
+  report.formatVersion = 11;
+  report.platform = 'macOS';
+  report.experiment = 'native-low-latency-average-only';
+  for (const [index, run] of report.runs.entries()) {
+    run.dataRateLimitsRequested = index === 0 ? 'rate-times-1.5' : 'omitted';
+    for (const snapshot of Object.values(run.native)) {
+      snapshot.properties.UsingHardwareAcceleratedVideoEncoder =
+        index === 0
+          ? { supported: true, status: 0, value: true, type: null, readWriteStatus: null }
+          : { supported: false, status: -12900, value: null, type: null, readWriteStatus: null };
+      if (index === 1)
+        snapshot.properties.DataRateLimits = {
+          supported: true,
+          status: -12900,
+          value: null,
+          type: null,
+          readWriteStatus: null,
+        };
+    }
+  }
+  assert.equal(qualifyEncoderPayload(report).lowLatencyToDefault, 1);
+  for (const damage of [
+    (r) => {
+      r.runs[1].dataRateLimitsRequested = 'rate-times-1.5';
+    },
+    (r) => {
+      r.runs[1].native.bootstrap.properties.DataRateLimits.value = [1, 1];
+    },
+    (r) => {
+      r.runs[1].native.final.properties.AverageBitRate.value = 6000000;
+    },
+    (r) => {
+      r.runs[0].native.bootstrap.properties.UsingHardwareAcceleratedVideoEncoder.value = false;
+    },
+    (r) => {
+      r.runs[1].frames.pop();
+    },
+  ]) {
+    const damaged = structuredClone(report);
+    damage(damaged);
+    assert.throws(() => qualifyEncoderPayload(damaged));
+  }
+});

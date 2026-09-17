@@ -14,19 +14,26 @@ const percentile = (rows, fraction) =>
 export function qualifyEncoderPayload(report) {
   if (report.formatVersion === 7 || report.formatVersion === 8)
     return qualifyEncoderResolutionTransition(report);
-  assert.ok([1, 2, 3, 4, 5, 6].includes(report.formatVersion));
+  assert.ok([1, 2, 3, 4, 5, 6, 9, 10, 11].includes(report.formatVersion));
+  const averageOnly = report.formatVersion === 11;
+  const nativeMac = [9, 10, 11].includes(report.formatVersion);
+  if (report.formatVersion === 9) assert.equal(report.experiment, 'native-mac-rate-control');
   const preparation = report.formatVersion === 3;
   const halfResolution = report.formatVersion === 6;
   const resolution = report.formatVersion === 4 || halfResolution;
-  const lowLatency = report.formatVersion === 5;
-  if (lowLatency) assert.equal(report.experiment, 'fresh-low-latency-rate-control');
+  const lowLatency = [5, 10, 11].includes(report.formatVersion);
+  if (lowLatency)
+    assert.equal(
+      report.experiment,
+      averageOnly ? 'native-low-latency-average-only' : 'fresh-low-latency-rate-control',
+    );
   if (preparation) assert.equal(report.experiment, 'frame-rate-before-prepare');
   if (resolution)
     assert.equal(
       report.experiment,
       halfResolution ? 'fresh-half-resolution-profiles' : 'fresh-resolution-profiles',
     );
-  assert.equal(report.platform, 'iOS Simulator');
+  assert.equal(report.platform, nativeMac ? 'macOS' : 'iOS Simulator');
   assert.equal(report.workload, 'motion-blocks16');
   assert.equal(report.width, 1920);
   assert.equal(report.height, 1080);
@@ -62,7 +69,9 @@ export function qualifyEncoderPayload(report) {
     if (preparation)
       assert.equal(run.preparation, index === 0 ? 'production' : 'expectedFrameRateBeforePrepare');
     if (lowLatency) assert.equal(run.lowLatencyRateControlRequested, index === 1);
-    if (resolution || lowLatency) {
+    if (averageOnly)
+      assert.equal(run.dataRateLimitsRequested, index === 0 ? 'rate-times-1.5' : 'omitted');
+    if (resolution || lowLatency || nativeMac) {
       assert.equal(
         run.encodedWidth,
         resolution && index === 1 ? (halfResolution ? 960 : 1280) : 1920,
@@ -83,8 +92,16 @@ export function qualifyEncoderPayload(report) {
     );
     if (report.formatVersion >= 2) {
       assert.deepEqual(Object.keys(run.native).sort(), ['bootstrap', 'final']);
-      qualifyNativeEncoderSnapshot(run.native.bootstrap, rates[0]);
-      qualifyNativeEncoderSnapshot(run.native.final, rates.at(-1));
+      const snapshotOptions = {
+        dataRateLimits: averageOnly && index === 1 ? 'unsupported' : 'bounded',
+      };
+      qualifyNativeEncoderSnapshot(run.native.bootstrap, rates[0], snapshotOptions);
+      qualifyNativeEncoderSnapshot(run.native.final, rates.at(-1), snapshotOptions);
+      if (nativeMac && !(averageOnly && index === 1))
+        for (const snapshot of Object.values(run.native)) {
+          assert.equal(snapshot.properties.UsingHardwareAcceleratedVideoEncoder.status, 0);
+          assert.equal(snapshot.properties.UsingHardwareAcceleratedVideoEncoder.value, true);
+        }
       assert.equal(
         run.native.bootstrap.properties.EncoderID.value,
         run.native.final.properties.EncoderID.value,
@@ -128,7 +145,7 @@ export function qualifyEncoderPayload(report) {
       assert.equal(fixtureFrameID(f.sourcePTS), i);
       assert.equal(fixtureFrameID(f.outputPTS), i);
       assert.equal(f.encoderSessionID, session);
-      if (resolution || lowLatency) {
+      if (resolution || lowLatency || nativeMac) {
         assert.equal(f.encodedWidth, run.encodedWidth);
         assert.equal(f.encodedHeight, run.encodedHeight);
       }
@@ -188,8 +205,9 @@ export function qualifyEncoderPayload(report) {
       });
     }
   }
-  const scope =
-    'Compressed H.264 sample payload under paced simulator input; not network capacity, recovery or physical-device qualification.';
+  const scope = nativeMac
+    ? 'Compressed H.264 payload on native macOS under paced input; hardware status is independently reported, not implied by platform. Not network capacity, recovery or physical iPhone qualification.'
+    : 'Compressed H.264 sample payload under paced simulator input; not network capacity, recovery or physical-device qualification.';
   if (lowLatency)
     return {
       frames: totalFrames,

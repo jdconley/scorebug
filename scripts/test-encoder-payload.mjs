@@ -8,56 +8,76 @@ import { createOwnedSimulator } from './owned-simulator.mjs';
 import { qualifyEncoderPayload } from './encoder-payload-qualification.mjs';
 
 assert.equal(process.platform, 'darwin');
+const nativeMacAverageOnly = process.argv.slice(2).includes('--native-mac-average-only');
+const nativeMacLowLatency = process.argv.slice(2).includes('--native-mac-low-latency');
+const nativeMac =
+  nativeMacAverageOnly || nativeMacLowLatency || process.argv.slice(2).includes('--native-mac');
+const scheme = nativeMac
+  ? 'ScorebugEncoderMacQualificationTests'
+  : 'ScorebugEncoderQualificationTests';
 const drainedTransition = process.argv.slice(2).includes('--drained-transition');
 const transition = process.argv.slice(2).includes('--transition');
 const halfResolution = process.argv.slice(2).includes('--half-resolution');
-const lowLatency = process.argv.slice(2).includes('--low-latency');
+const lowLatency =
+  nativeMacAverageOnly || nativeMacLowLatency || process.argv.slice(2).includes('--low-latency');
 const preparation = process.argv.slice(2).includes('--preparation');
 const resolution = process.argv.slice(2).includes('--resolution');
 assert.deepEqual(
   process.argv.slice(2),
-  drainedTransition
-    ? ['--drained-transition']
-    : transition
-      ? ['--transition']
-      : halfResolution
-        ? ['--half-resolution']
-        : lowLatency
-          ? ['--low-latency']
-          : resolution
-            ? ['--resolution']
-            : preparation
-              ? ['--preparation']
-              : [],
+  nativeMac
+    ? [
+        nativeMacAverageOnly
+          ? '--native-mac-average-only'
+          : nativeMacLowLatency
+            ? '--native-mac-low-latency'
+            : '--native-mac',
+      ]
+    : drainedTransition
+      ? ['--drained-transition']
+      : transition
+        ? ['--transition']
+        : halfResolution
+          ? ['--half-resolution']
+          : lowLatency
+            ? ['--low-latency']
+            : resolution
+              ? ['--resolution']
+              : preparation
+                ? ['--preparation']
+                : [],
 );
 const testClass =
   transition || drainedTransition ? 'EncoderResolutionTransitionTests' : 'EncoderPayloadTests';
-const method = drainedTransition
-  ? 'testDrainedResolutionTransitions'
-  : transition
-    ? 'testPacedResolutionTransitions'
-    : halfResolution
-      ? 'testFreshHalfResolutionProfiles'
-      : lowLatency
-        ? 'testFreshLowLatencyRateControl'
-        : resolution
-          ? 'testFreshResolutionProfiles'
-          : preparation
-            ? 'testFreshFrameRatePreparation'
-            : 'testControlledRatesAndFreshLowEncoder';
-const attachmentName = drainedTransition
-  ? 'EncoderDrainedTransition'
-  : transition
-    ? 'EncoderResolutionTransition'
-    : halfResolution
-      ? 'EncoderHalfResolution'
-      : lowLatency
-        ? 'EncoderLowLatency'
-        : resolution
-          ? 'EncoderResolution'
-          : preparation
-            ? 'EncoderPreparation'
-            : 'EncoderPayload';
+const method = nativeMacAverageOnly
+  ? 'testFreshLowLatencyAverageOnly'
+  : drainedTransition
+    ? 'testDrainedResolutionTransitions'
+    : transition
+      ? 'testPacedResolutionTransitions'
+      : halfResolution
+        ? 'testFreshHalfResolutionProfiles'
+        : lowLatency
+          ? 'testFreshLowLatencyRateControl'
+          : resolution
+            ? 'testFreshResolutionProfiles'
+            : preparation
+              ? 'testFreshFrameRatePreparation'
+              : 'testControlledRatesAndFreshLowEncoder';
+const attachmentName = nativeMacAverageOnly
+  ? 'EncoderLowLatencyAverageOnly'
+  : drainedTransition
+    ? 'EncoderDrainedTransition'
+    : transition
+      ? 'EncoderResolutionTransition'
+      : halfResolution
+        ? 'EncoderHalfResolution'
+        : lowLatency
+          ? 'EncoderLowLatency'
+          : resolution
+            ? 'EncoderResolution'
+            : preparation
+              ? 'EncoderPreparation'
+              : 'EncoderPayload';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.SCOREBUG_IOS_RUNTIME ?? '17.5';
 assert.match(runtime, /^\d+\.\d+(?:\.\d+)?$/);
@@ -72,19 +92,25 @@ const artifact = await mkdtemp(
   join(
     root,
     'artifacts/qa/' +
-      (drainedTransition
-        ? 'encoder-drained-transition-'
-        : transition
-          ? 'encoder-resolution-transition-'
-          : halfResolution
-            ? 'encoder-half-resolution-'
-            : lowLatency
-              ? 'encoder-low-latency-'
-              : resolution
-                ? 'encoder-resolution-'
-                : preparation
-                  ? 'encoder-preparation-'
-                  : 'encoder-payload-'),
+      (nativeMac
+        ? nativeMacAverageOnly
+          ? 'encoder-native-mac-average-only-'
+          : nativeMacLowLatency
+            ? 'encoder-native-mac-low-latency-'
+            : 'encoder-native-mac-'
+        : drainedTransition
+          ? 'encoder-drained-transition-'
+          : transition
+            ? 'encoder-resolution-transition-'
+            : halfResolution
+              ? 'encoder-half-resolution-'
+              : lowLatency
+                ? 'encoder-low-latency-'
+                : resolution
+                  ? 'encoder-resolution-'
+                  : preparation
+                    ? 'encoder-preparation-'
+                    : 'encoder-payload-'),
   ),
 );
 console.log('Encoder payload diagnostic evidence: ' + artifact);
@@ -92,9 +118,9 @@ await writeFile(
   join(artifact, 'configuration.json'),
   JSON.stringify(
     {
-      runtime,
-      device: 'iPhone-14',
-      scheme: 'ScorebugEncoderQualificationTests',
+      runtime: nativeMac ? 'native-macOS' : runtime,
+      device: nativeMac ? 'Mac' : 'iPhone-14',
+      scheme,
       method,
       scope: 'isolated native encoder; no network',
     },
@@ -121,17 +147,20 @@ async function run(binary, args, label, { timeout = 60000, cleanup = false } = {
   return r.stdout.trim();
 }
 try {
-  const runtimes = JSON.parse(
-    await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], 'runtimes'),
-  );
   const runtimeID = 'com.apple.CoreSimulator.SimRuntime.iOS-' + runtime.replaceAll('.', '-');
-  assert.ok(
-    runtimes.runtimes.some((r) => r.identifier === runtimeID && r.isAvailable),
-    'Requested simulator runtime unavailable',
-  );
+  if (!nativeMac) {
+    const runtimes = JSON.parse(
+      await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], 'runtimes'),
+    );
+    assert.ok(
+      runtimes.runtimes.some((r) => r.identifier === runtimeID && r.isAvailable),
+      'Requested simulator runtime unavailable',
+    );
+  }
   await run('xcodegen', ['generate', '--spec', join(root, 'ios/Project.yml')], 'generate');
   cancellation.signal.throwIfAborted();
-  simulator = await createOwnedSimulator(run, 'Scorebug Encoder ' + randomUUID(), runtimeID);
+  if (!nativeMac)
+    simulator = await createOwnedSimulator(run, 'Scorebug Encoder ' + randomUUID(), runtimeID);
   let workflowError;
   try {
     await run(
@@ -140,10 +169,10 @@ try {
         '-project',
         join(root, 'ios/Scorebug.xcodeproj'),
         '-scheme',
-        'ScorebugEncoderQualificationTests',
-        '-only-testing:ScorebugEncoderQualificationTests/' + testClass + '/' + method,
+        scheme,
+        '-only-testing:' + scheme + '/' + testClass + '/' + method,
         '-destination',
-        'platform=iOS Simulator,id=' + simulator,
+        nativeMac ? 'platform=macOS' : 'platform=iOS Simulator,id=' + simulator,
         '-destination-timeout',
         '60',
         '-parallel-testing-enabled',
@@ -182,7 +211,8 @@ try {
     .flatMap((r) => r.attachments)
     .filter((a) => a.suggestedHumanReadableName.startsWith(attachmentName));
   assert.equal(rows.length, 1, 'Missing or duplicate encoder payload attachment');
-  assert.equal(rows[0].deviceId, simulator);
+  if (nativeMac) assert.ok(typeof rows[0].deviceId === 'string' && rows[0].deviceId.length > 0);
+  else assert.equal(rows[0].deviceId, simulator);
   const name = rows[0].exportedFileName;
   assert.equal(basename(name), name);
   const path = join(artifact, 'attachments', name);
@@ -192,19 +222,25 @@ try {
   const report = JSON.parse(raw);
   assert.equal(
     report.formatVersion,
-    drainedTransition
-      ? 8
-      : transition
-        ? 7
-        : halfResolution
-          ? 6
-          : lowLatency
-            ? 5
-            : resolution
-              ? 4
-              : preparation
-                ? 3
-                : 2,
+    nativeMac
+      ? nativeMacAverageOnly
+        ? 11
+        : nativeMacLowLatency
+          ? 10
+          : 9
+      : drainedTransition
+        ? 8
+        : transition
+          ? 7
+          : halfResolution
+            ? 6
+            : lowLatency
+              ? 5
+              : resolution
+                ? 4
+                : preparation
+                  ? 3
+                  : 2,
     'Current probe must supply native property snapshots',
   );
   const result = qualifyEncoderPayload(report);

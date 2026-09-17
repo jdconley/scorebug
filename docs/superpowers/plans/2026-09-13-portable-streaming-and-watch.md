@@ -1376,3 +1376,20 @@ Measured video payload still reaches 3.546 Mbps, close to the preceding 540p run
 control/cheaper candidate qualification remains a prerequisite for low startup and
 reset-to-minimum. Automatic adaptation and production defaults remain unchanged.
 Evidence is frozen in `artifacts/qa/low360-final-verification.json`.
+
+
+[Native Mac rate-control diagnosis](2026-09-16-native-mac-rate-control.md) now runs
+the same isolated encoder workload on this Mac, with separate versioned evidence
+and before/after native hardware readbacks. Run `encoder-native-mac-QrOxha` preserves
+all 2,402 frames but produces 5.659 Mbps after a live 1.5 Mbps request and 4.936 Mbps
+in a fresh low session. This disproves an explanation confined to the simulator;
+it does not identify the underlying rate-control cause or qualify low bandwidth.
+
+Two native low-latency experiments are retained as failures: `GO9om3` fails with
+unsupported DataRateLimits (-12900), and average-only `mBkLHK` accepts the rate
+but fails with generic codec status -1 after one frame. Neither is enabled in
+production. All 1,195 tooling tests and the simulator diagnostic build pass; five
+old simulator runs replay unchanged. Independent arithmetic/session checks agree
+with the baseline and reject 10 damaged variants. The final evidence manifest is
+`artifacts/qa/mac-rate-final-verification.json`. Next isolate the exact callback
+failure and measure lower-resolution native costs before admitting a recovery tier.

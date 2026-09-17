@@ -28,7 +28,12 @@ const scalar = (v) =>
     v.every((n) => typeof n === 'number' && Number.isFinite(n)));
 const keys = (value, expected) => assert.deepEqual(Object.keys(value).sort(), [...expected].sort());
 
-export function qualifyNativeEncoderSnapshot(snapshot, expectedRate) {
+export function qualifyNativeEncoderSnapshot(
+  snapshot,
+  expectedRate,
+  { dataRateLimits = 'bounded' } = {},
+) {
+  assert.ok(['bounded', 'unsupported'].includes(dataRateLimits));
   keys(snapshot, [
     'supportedQueryStatus',
     'properties',
@@ -74,7 +79,12 @@ export function qualifyNativeEncoderSnapshot(snapshot, expectedRate) {
   assert.ok(string(p.EncoderID.value) && p.EncoderID.value.length > 0);
   assert.equal(p.AverageBitRate.status, 0);
   assert.equal(p.AverageBitRate.value, expectedRate);
-  assert.equal(p.DataRateLimits.status, 0);
-  assert.deepEqual(p.DataRateLimits.value, [(expectedRate / 8) * 1.5, 1]);
+  if (dataRateLimits === 'unsupported') {
+    assert.equal(p.DataRateLimits.status, -12900);
+    assert.equal(p.DataRateLimits.value, null);
+  } else {
+    assert.equal(p.DataRateLimits.status, 0);
+    assert.deepEqual(p.DataRateLimits.value, [(expectedRate / 8) * 1.5, 1]);
+  }
   return snapshot;
 }

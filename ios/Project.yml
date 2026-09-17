@@ -121,6 +121,22 @@ targets:
     dependencies:
       - package: ScorebugMedia
       - package: HaishinKit
+  ScorebugEncoderMacQualificationTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '14.0'
+    sources:
+      - path: Sources/Scorebug/Capture/FixtureCameraSource.swift
+      - path: Sources/Scorebug/Capture/FixtureMotionPattern.swift
+      - path: EncoderQualificationTests/EncoderPayloadTests.swift
+      - path: EncoderQualificationTests/NativeEncoderSnapshot.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.encoder.macqualification
+    dependencies:
+      - package: ScorebugMedia
+      - package: HaishinKit
   ScorebugFilmModelTests:
     type: bundle.unit-test
     platform: macOS
@@ -140,6 +156,13 @@ targets:
       - package: ScorebugStreaming
       - package: ScorebugCore
 schemes:
+  ScorebugEncoderMacQualificationTests:
+    build:
+      targets:
+        ScorebugEncoderMacQualificationTests: all
+    test:
+      targets:
+        - ScorebugEncoderMacQualificationTests
   ScorebugEncoderQualificationTests:
     build:
       targets:
