@@ -622,6 +622,15 @@ try {
       join(artifact, 'worker-cadence-reports.json'),
     );
   }
+  if (measuredTrial) {
+    for (const name of ['native-profile-transitions.json', 'native-candidate-lifecycle.json']) {
+      await cp(
+        join(container, 'Library/Application Support/Scorebug/QA', name),
+        join(artifact, name),
+        { errorOnExist: true, force: false },
+      );
+    }
+  }
   if (decoderStall || measuredTrial) {
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/delivery-deadlines.json'),

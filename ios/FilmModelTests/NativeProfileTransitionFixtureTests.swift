@@ -96,6 +96,25 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
             "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
         XCTAssertThrowsError(try NativeProfileTransitionEvidence.requestedSequence(environment: env), "Stall reset cannot invoke fixed schedule")
     }
+    func testMeasuredSequenceHasThreeBoundedPhasesAndCannotUseScheduledRoute() throws {
+        let sequence = try XCTUnwrap(NativeProfileTransitionSequence(rawValue: "measured240"))
+        XCTAssertEqual(sequence.initialProfile, .low240)
+        XCTAssertEqual(sequence.destinations, [.low360, .low240])
+        let proof = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), sequence: sequence)
+        record(proof, 0, .low240); record(proof, 1, .low360); record(proof, 2, .low240)
+        XCTAssertEqual(try snapshot(proof)["formatVersion"] as? Int, 8)
+        XCTAssertEqual(try snapshot(proof)["sequence"] as? String, "measured240")
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, false)
+        record(proof, 3, .low360)
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+        let env = ["SCOREBUG_TEST_PROFILE_TRANSITIONS": "measured240", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+        XCTAssertThrowsError(try NativeProfileTransitionEvidence.requestedSequence(environment: env))
+        let conflicting = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), adaptive: true, sequence: sequence)
+        XCTAssertEqual(try snapshot(conflicting)["invalid"] as? Bool, true)
+    }
     func testTransitionWrapperPassesThroughActualFirstFrameReceipt() {
         let native = TransitionStartupPublisher()
         let wrapper = NativeProfileTransitionPublisher(publisher: native, evidence: evidence(), adaptive: true)

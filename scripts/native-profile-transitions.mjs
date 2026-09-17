@@ -75,18 +75,24 @@ export function qualifyNativeProfileTransitions(
     !requirePacingEvidence || requireFrameEvidence,
     'Pacing requires current raw frame evidence',
   );
-  assert.ok(['1', 'low240', 'stall540'].includes(sequence), 'Unknown transition sequence');
+  assert.ok(
+    ['1', 'low240', 'stall540', 'measured240'].includes(sequence),
+    'Unknown transition sequence',
+  );
+  const measured = sequence === 'measured240';
+  assert.ok(!measured || !adaptive, 'Measured trial has its own bounded sequence');
   const stallReset = sequence === 'stall540';
   assert.ok(!stallReset || !adaptive, 'Stall reset is one controlled downward transition');
   const minimum = sequence === 'low240';
   assert.ok(!minimum || !adaptive, 'Minimum sequence is a controlled experiment');
-  if (minimum || stallReset) assert.equal(format.sequence, sequence);
+  if (minimum || stallReset || measured) assert.equal(format.sequence, sequence);
   else assert.equal(format.sequence, undefined);
   const hasFrameEvidence =
-    format.formatVersion === (stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
+    format.formatVersion === (measured ? 8 : stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
   assert.ok(
     hasFrameEvidence ||
       (!minimum &&
+        !measured &&
         !stallReset &&
         !requireFrameEvidence &&
         format.formatVersion === (adaptive ? 3 : 2)),
@@ -109,6 +115,7 @@ export function qualifyNativeProfileTransitions(
     assert.ok(
       format.phases.length >= 3 && format.phases.length <= 17 && format.phases.length % 2 === 1,
     );
+  else if (measured) assert.ok(format.phases.length >= 1 && format.phases.length <= 3);
   else assert.equal(format.phases.length, stallReset ? 2 : 3);
   assert.equal(format.receipts.length, format.phases.length - 1);
   assert.equal(format.encoderSessions.length, format.phases.length);
@@ -136,12 +143,54 @@ export function qualifyNativeProfileTransitions(
     'Every encoded frame needs native format evidence',
   );
   const phases = format.phases.map((p, i) => {
-    assert.equal(p.width, stallReset ? (i === 0 ? 960 : 426) : i % 2 ? 960 : minimum ? 426 : 1920);
-    assert.equal(p.height, stallReset ? (i === 0 ? 540 : 240) : i % 2 ? 540 : minimum ? 240 : 1080);
+    assert.equal(
+      p.width,
+      measured
+        ? i === 1
+          ? 640
+          : 426
+        : stallReset
+          ? i === 0
+            ? 960
+            : 426
+          : i % 2
+            ? 960
+            : minimum
+              ? 426
+              : 1920,
+    );
+    assert.equal(
+      p.height,
+      measured
+        ? i === 1
+          ? 360
+          : 240
+        : stallReset
+          ? i === 0
+            ? 540
+            : 240
+          : i % 2
+            ? 540
+            : minimum
+              ? 240
+              : 1080,
+    );
     assert.ok(Number.isSafeInteger(p.frames) && p.frames > 0);
     const first = fixtureFrameID(p.firstSourcePTS),
       last = fixtureFrameID(p.lastSourcePTS);
     const encoder = format.encoderSessions[i];
+    if (measured) {
+      assert.match(encoder.encoderSessionID, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i);
+      assert.ok(
+        !format.encoderSessions
+          .slice(0, i)
+          .some(
+            (prior) =>
+              prior.encoderSessionID.toLowerCase() === encoder.encoderSessionID.toLowerCase(),
+          ),
+        'Measured phases must have distinct native encoder identities',
+      );
+    }
     assert.equal(encoder.frames, p.frames);
     assert.equal(fixtureFrameID(encoder.firstSourcePTS), first);
     assert.equal(fixtureFrameID(encoder.lastSourcePTS), last);
@@ -167,12 +216,14 @@ export function qualifyNativeProfileTransitions(
     }
     const shortTrial = adaptive && i > 0 && i % 2 === 0 && i < format.phases.length - 1;
     assert.ok(
-      last - first >= (shortTrial ? 1 : 15) * 30,
+      measured ? last >= first : last - first >= (shortTrial ? 1 : 15) * 30,
       'Insufficient native phase source coverage',
     );
     assert.ok(
       Number.isFinite(p.maximumSourceGapSeconds) &&
-        p.maximumSourceGapSeconds > 0 &&
+        (measured && p.frames === 1
+          ? p.maximumSourceGapSeconds === 0
+          : p.maximumSourceGapSeconds > 0) &&
         p.maximumSourceGapSeconds <= 0.5,
     );
     assert.ok(
@@ -235,7 +286,17 @@ export function qualifyNativeProfileTransitions(
       after = phases[i + 1];
     assert.equal(
       r.profile,
-      stallReset ? '240p30' : i % 2 === 0 ? '540p30' : minimum ? '240p30' : '1080p30',
+      measured
+        ? i === 0
+          ? '360p30'
+          : '240p30'
+        : stallReset
+          ? '240p30'
+          : i % 2 === 0
+            ? '540p30'
+            : minimum
+              ? '240p30'
+              : '1080p30',
     );
     assert.equal(r.publishingGeneration, format.publishingGeneration);
     assert.equal(
@@ -279,7 +340,10 @@ export function qualifyNativeProfileTransitions(
     if (i > 0) assert.ok(r.acknowledgedAt > format.receipts[i - 1].acknowledgedAt);
   });
   return {
-    ...(minimum || stallReset ? { sequence } : {}),
+    ...(minimum || stallReset || measured ? { sequence } : {}),
+    ...(measured
+      ? { trialConfirmed: false, mediaHealthQualified: false, upgradeAuthorized: false }
+      : {}),
     ...(compressedFrames ? { compressedFrames } : {}),
     scope: format.scope,
     publishingGeneration: format.publishingGeneration,
@@ -293,10 +357,12 @@ export function qualifyNativeProfileTransitions(
       assert.ok(nativeCompletionGapSeconds >= 0 && compressedOutputGapSeconds >= 0);
       return { nativeCompletionGapSeconds, compressedOutputGapSeconds };
     }),
-    note: stallReset
-      ? 'One observed native reset; the scoped fault/controller qualification supplies causality, and receiver wall-clock continuity is not inferred.'
-      : adaptive
-        ? 'Adaptive native formats and saved source correspondence; pressure decisions require separate policy replay, and receiver wall-clock continuity is not inferred.'
-        : 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
+    note: measured
+      ? 'Observed measured-trial formats only; admission, lifecycle, trial confirmation and receiver wall-clock continuity require separate qualification.'
+      : stallReset
+        ? 'One observed native reset; the scoped fault/controller qualification supplies causality, and receiver wall-clock continuity is not inferred.'
+        : adaptive
+          ? 'Adaptive native formats and saved source correspondence; pressure decisions require separate policy replay, and receiver wall-clock continuity is not inferred.'
+          : 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
   };
 }

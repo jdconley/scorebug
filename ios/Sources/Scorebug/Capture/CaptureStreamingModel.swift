@@ -181,6 +181,7 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             let measuredTrial = try NativeMeasuredTrialFixture.requested(environment: environment)
              let candidateProfile = try NativeCandidateFixture.requested(environment: environment)
              let candidateHeadroom = try NativeCandidateHeadroomFixture.requested(environment: environment)
              let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
@@ -201,9 +202,15 @@ struct PublishingClockObservation: Equatable, Sendable {
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
              let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
+             let transitions = measuredTrial ? observations.map {
+                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: .measured)
+             } : nil
              let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
              let didStop: (@Sendable () -> Void)?
-             if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }
+             if let proof {
+                 observer = { frame in proof.observe(frame); transitions?.observe(frame) }
+                 didStop = { proof.persist() }
+             }
              else { observer = nil; didStop = nil }
              let candidateTransport: PublishingCandidateTransport?
              let audioObserver: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
@@ -213,7 +220,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                  candidateTransport = window; audioObserver = { window.observeAudio($0) }
              } else { candidateTransport = nil; audioObserver = nil }
              let publisher = SRTMediaPublisher(url: target, observations: observations,
-                 encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame) } }, videoProfile: profile,
+                 encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame); transitions?.observeEncoder(frame) } }, videoProfile: profile,
                  compressedVideoObserver: observer, compressedAudioObserver: audioObserver,
                  didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
              proof?.observeStartup(from: publisher)
@@ -226,7 +233,13 @@ struct PublishingClockObservation: Equatable, Sendable {
              if let candidateProfile {
                  guard let observations, let candidateTransport else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return try NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
-                     candidate: candidateProfile, transport: candidateTransport, candidateHeadroom: candidateHeadroom)
+                     candidate: candidateProfile, transport: candidateTransport, candidateHeadroom: candidateHeadroom,
+                     lifecycle: measuredTrial ? NativeCandidateLifecycleAudit(scope: observations.snapshot.scope) : nil,
+                     profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
+                     joinedStop: transitions.map { evidence in {
+                         evidence.close()
+                         if let data = try? evidence.data() { await NativeProfileTransitionEvidence.persist(data) }
+                     } })
              }
              return primary
              #else

@@ -630,3 +630,186 @@ for (const [name, damage] of Object.entries({
     damage(input);
     assert.throws(() => verify(input));
   });
+
+function measuredFixture(phaseCount = 3) {
+  const f = fixture(phaseCount);
+  f.format.formatVersion = 8;
+  f.format.sequence = 'measured240';
+  for (const [i, phase] of f.format.phases.entries()) {
+    phase.width = i === 1 ? 640 : 426;
+    phase.height = i === 1 ? 360 : 240;
+  }
+  f.format.receipts.forEach((r, i) => {
+    r.profile = i === 0 ? '360p30' : '240p30';
+    r.width = f.format.phases[i + 1].width;
+    r.height = f.format.phases[i + 1].height;
+  });
+  f.format.compressedFrames = f.format.phases.flatMap((p, phase) =>
+    Array.from({ length: p.frames }, (_, n) => ({
+      sourcePTS: pts(phase * 900 + n),
+      observedAt: p.firstObservedAt + n / 30,
+      byteCount: n % 60 === 0 ? 4000 : 1000,
+      isSync: n % 60 === 0,
+    })),
+  );
+  return f;
+}
+const measuredOptions = { sequence: 'measured240', requireFrameEvidence: true };
+test('measured format evidence distinguishes unchanged, upgraded and reset without trial permission', () => {
+  for (const count of [1, 2, 3]) {
+    const f = measuredFixture(count);
+    const result = qualifyNativeProfileTransitions(
+      f.format,
+      f.snapshot,
+      f.liveIDs,
+      measuredOptions,
+    );
+    assert.deepEqual(
+      result.phases.map((p) => p.height),
+      [240, 360, 240].slice(0, count),
+    );
+    assert.equal(result.trialConfirmed, false);
+    assert.equal(result.upgradeAuthorized, false);
+    assert.throws(() => qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs));
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+        ...measuredOptions,
+        adaptive: true,
+      }),
+    );
+  }
+});
+test('measured sequence requires exact complete native format and receipt evidence', () => {
+  for (const corrupt of [
+    (f) => {
+      f.format.formatVersion = 6;
+    },
+    (f) => {
+      f.format.sequence = 'low240';
+    },
+    (f) => {
+      f.format.phases[1].height = 540;
+    },
+    (f) => {
+      f.format.phases[0].width = 640;
+    },
+    (f) => {
+      f.format.receipts[0].profile = '540p30';
+    },
+    (f) => {
+      f.format.receipts.pop();
+    },
+    (f) => {
+      f.format.compressedFrames.shift();
+    },
+    (f) => {
+      f.format.compressedFrames[900].isSync = false;
+    },
+    (f) => {
+      f.format.encoderSessions[1].encoderSessionID = f.format.encoderSessions[0].encoderSessionID;
+    },
+    (f) => {
+      f.liveIDs.splice(f.liveIDs.indexOf(900), 1);
+    },
+  ]) {
+    const f = measuredFixture();
+    corrupt(f);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions),
+    );
+  }
+  const f = measuredFixture(4);
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions),
+  );
+});
+
+test('measured unchanged baseline still requires a valid native encoder identity', () => {
+  const f = measuredFixture(1);
+  f.format.encoderSessions[0].encoderSessionID = 'unknown';
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions),
+  );
+});
+test('short measured rollback phase is observable but cannot claim ten-second confirmation', () => {
+  const f = measuredFixture(2);
+  const p = f.format.phases[1],
+    e = f.format.encoderSessions[1];
+  p.frames = e.frames = 150;
+  p.lastSourcePTS = e.lastSourcePTS = pts(1049);
+  p.lastObservedAt = p.firstObservedAt + 149 / 30;
+  e.lastCompletedAt = e.firstCompletedAt + 149 / 30;
+  f.format.frames = 1050;
+  f.format.compressedFrames = f.format.compressedFrames.slice(0, 1050);
+  f.snapshot.completed[0].encodedVideo.callbackCount = '1050';
+  f.snapshot.completed[0].encodedVideo.lastSourcePTS = pts(1049);
+  f.liveIDs = f.liveIDs.filter((id) => id <= 1049);
+  const result = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions);
+  assert.equal(result.phases[1].nativeFrames, 150);
+  assert.equal(result.trialConfirmed, false);
+  assert.equal(result.upgradeAuthorized, false);
+});
+
+function singleFrameTrialFixture() {
+  const f = measuredFixture(3);
+  const trial = f.format.phases[1],
+    encoder = f.format.encoderSessions[1];
+  trial.frames = encoder.frames = 1;
+  trial.lastSourcePTS = encoder.lastSourcePTS = pts(900);
+  trial.lastObservedAt = trial.firstObservedAt;
+  encoder.lastCompletedAt = encoder.firstCompletedAt;
+  trial.maximumSourceGapSeconds =
+    trial.maximumObservationGapSeconds =
+    encoder.maximumCompletionGapSeconds =
+      0;
+  const tail = f.format.phases[2],
+    tailEncoder = f.format.encoderSessions[2];
+  tail.firstSourcePTS = tailEncoder.firstSourcePTS = pts(901);
+  tail.lastSourcePTS = tailEncoder.lastSourcePTS = pts(1800);
+  tail.firstObservedAt = 100.01 + 901 / 30;
+  tail.lastObservedAt = tail.firstObservedAt + 899 / 30;
+  tailEncoder.firstCompletedAt = 100 + 901 / 30;
+  tailEncoder.lastCompletedAt = 100 + 1800 / 30;
+  f.format.receipts[0].acknowledgedAt = 130.02;
+  Object.assign(f.format.receipts[1], {
+    lastOldSourcePTS: pts(900),
+    firstNewSourcePTS: pts(901),
+    acknowledgedAt: tail.firstObservedAt + 0.01,
+  });
+  f.format.compressedFrames = f.format.compressedFrames.slice(0, 901).concat(
+    Array.from({ length: 900 }, (_, n) => ({
+      sourcePTS: pts(901 + n),
+      observedAt: tail.firstObservedAt + n / 30,
+      byteCount: 1000,
+      isSync: n % 60 === 0,
+    })),
+  );
+  f.format.frames = 1801;
+  f.snapshot.completed[0].encodedVideo.callbackCount = '1801';
+  f.snapshot.completed[0].encodedVideo.lastSourcePTS = pts(1800);
+  f.liveIDs = f.liveIDs.filter((id) => id <= 1800);
+  return f;
+}
+test('single-frame measured trial followed by reset remains format-only evidence', () => {
+  const f = singleFrameTrialFixture();
+  const result = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions);
+  assert.deepEqual(
+    result.phases.map((p) => p.nativeFrames),
+    [900, 1, 900],
+  );
+  assert.equal(result.trialConfirmed, false);
+  assert.equal(result.mediaHealthQualified, false);
+  assert.equal(result.upgradeAuthorized, false);
+  f.format.compressedFrames[900].isSync = false;
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions),
+  );
+});
+test('measured sequence cannot invoke scheduled transition CLI route', () => {
+  assert.throws(() =>
+    nativeProfileTransitions({
+      ...options,
+      environment: { ...options.environment, SCOREBUG_TEST_PROFILE_TRANSITIONS: 'measured240' },
+    }),
+  );
+});

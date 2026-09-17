@@ -202,17 +202,27 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private var publisherStartedAt: Double?
     private var baseline: Pressure?, finalPressure: Pressure?
     private var polls = 0, maximumThermal = -1
+    private var frozenMeasurementExport: Data?
     private var measurement: Data?
     private var candidateCost: PublishingCandidateCost?
     private let candidateAuthority = CandidateAuthority()
     private var work: Task<Void, Never>?, shutdown: Task<Void, Never>?
     private var primaryStartup: Task<Void, Error>?
+    private let lifecycle: NativeCandidateLifecycleAudit?
+    private let profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)?
+    private let joinedStop: (@Sendable () async -> Void)?
+    private var completedCandidateID: UUID?
+    private var profileWrites: [UUID: Task<PublishingVideoProfileChange, Error>] = [:]
+    private var bitRateWrites: [UUID: Task<PublishingBitRateChange, Error>] = [:]
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport, candidateHeadroom: Bool = false) throws {
+         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport, candidateHeadroom: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
+         profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
+         joinedStop: (@Sendable () async -> Void)? = nil) throws {
         let owner = try PublishingCandidateMeasurement(scope: scope, profile: candidate, transport: transport)
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile; timing = Timing()
         self.candidateHeadroom = candidateHeadroom
+        self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
         operations = .init(start: {
             guard let startup = publisher.videoStartup, startup.profile == liveProfile,
                   transport.arm(publishingGeneration: startup.publishingGeneration) else {
@@ -224,9 +234,12 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             typedResult: { PublishingCandidateCost(await owner.result()) })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         operations: Operations, timing: Timing, candidateHeadroom: Bool = false) {
+         operations: Operations, timing: Timing, candidateHeadroom: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
+         profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
+         joinedStop: (@Sendable () async -> Void)? = nil) {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
+        self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
     }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func setDiagnostics(_ read: @escaping @Sendable () -> Pressure?) { diagnostics = read }
@@ -262,6 +275,28 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     func transportStatistics() async -> PublishingTransportStatistics? { await publisher.transportStatistics() }
     func probeObservation() async -> PublishingProbeObservation? { await (publisher as? any PublishingProbeObserving)?.probeObservation() }
     func setVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
+        guard !stopped else { throw PublishingSessionError.invalidState }
+        if let lifecycle, bitRateWrites.count >= 48 {
+            lifecycle.rejectOverflow(); throw PublishingSessionError.invalidState
+        }
+        let id = UUID()
+        lifecycle?.beginBitRate(id: id, target: value, requestedAt: ProcessInfo.processInfo.systemUptime)
+        let task = Task {
+            do {
+                let receipt = try await performVideoBitRate(value)
+                lifecycle?.finishBitRate(id: id, completedAt: ProcessInfo.processInfo.systemUptime, receipt: receipt, failure: nil)
+                return receipt
+            } catch {
+                lifecycle?.finishBitRate(id: id, completedAt: ProcessInfo.processInfo.systemUptime, receipt: nil, failure: String(describing: error))
+                throw error
+            }
+        }
+        bitRateWrites[id] = task
+        defer { bitRateWrites[id] = nil }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    private func performVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
+        guard !stopped else { throw PublishingSessionError.invalidState }
         // One verified bootstrap write may precede candidate ownership. Reserve
         // it before awaiting native work so concurrent calls cannot share it.
         guard candidateHeadroom, started, !stopped, invalidReason == nil,
@@ -289,7 +324,45 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         }
     }
     func setVideoProfile(_ value: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
-        revoke(.ownerChanged); return try await publisher.setVideoProfile(value)
+        guard !stopped else { throw PublishingSessionError.invalidState }
+        if let lifecycle, profileWrites.count >= 16 {
+            lifecycle.rejectOverflow(); throw PublishingSessionError.invalidState
+        }
+        let id = UUID()
+        lifecycle?.beginProfile(id: id, target: value, requestedAt: ProcessInfo.processInfo.systemUptime,
+            measurementID: completedCandidateID,
+            authorityPermitted: candidateCost.map { candidateAuthority.permits($0.id) } ?? false,
+            binding: pinnedProbe, boundAt: probeBoundAt, candidateCompletedAt: probeCompletedAt, currentProbe: currentProbe)
+        // Capture the permission actually held at dispatch before synchronously
+        // retiring it. No actor await may separate these two operations.
+        revoke(.ownerChanged)
+        let task = Task {
+            let result: Result<PublishingVideoProfileChange, Error>
+            do {
+                guard !stopped else { throw PublishingSessionError.invalidState }
+                result = .success(try await publisher.setVideoProfile(value))
+            }
+            catch { result = .failure(error) }
+            let completedAt = ProcessInfo.processInfo.systemUptime
+            if case let .success(receipt) = result { profileReceipt?(receipt) }
+            if let lifecycle {
+                let readStartedAt = ProcessInfo.processInfo.systemUptime
+                let observation = await probeObservation()
+                let readCompletedAt = ProcessInfo.processInfo.systemUptime
+                switch result {
+                case let .success(receipt):
+                    lifecycle.finishProfile(id: id, completedAt: completedAt, receipt: receipt, failure: nil,
+                        readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: observation)
+                case let .failure(error):
+                    lifecycle.finishProfile(id: id, completedAt: completedAt, receipt: nil, failure: String(describing: error),
+                        readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: observation)
+                }
+            }
+            return try result.get()
+        }
+        profileWrites[id] = task
+        defer { profileWrites[id] = nil }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func revoke(_ reason: PublishingCandidateMeasurement.Reason) {
         candidateAuthority.revoke()
@@ -303,12 +376,21 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         stopped = true; revoke(.publisherStopped); work?.cancel()
         if let shutdown { await shutdown.value; return }
         let pending = work, startup = primaryStartup
+        let profiles = Array(profileWrites.values), bitRates = Array(bitRateWrites.values)
         let task = Task {
             await publisher.stop()
             _ = try? await startup?.value
+            for write in profiles { _ = try? await write.value }
+            for write in bitRates { _ = try? await write.value }
             await pending?.value
             if measurement == nil { measurement = await operations.result() }
-            if let data = try? exportData(), data.count <= 256 * 1024 { await operations.export(data) }
+            // Measured mode exports the diagnostic frozen at measurement join;
+            // later application retirement belongs only to lifecycle evidence.
+            if lifecycle != nil, frozenMeasurementExport == nil { frozenMeasurementExport = try? exportData() }
+            let data = lifecycle == nil ? try? exportData() : frozenMeasurementExport
+            if let data, data.count <= 256 * 1024 { await operations.export(data) }
+            await joinedStop?()
+            await lifecycle?.closeAndExport()
         }
         shutdown = task
         await task.value
@@ -411,6 +493,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         if sampling { revoke(.deadline) }
     }
     private func run() async {
+        defer {
+            if lifecycle != nil, measurement != nil { frozenMeasurementExport = try? exportData() }
+        }
         do {
             guard timing.delay >= .zero, timing.poll > .zero, (1...50).contains(timing.maximumPolls),
                   (1...250).contains(timing.maximumProbeWaitPolls) else { throw PublishingSessionError.invalidState }
@@ -435,6 +520,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 if candidateHeadroom { probeCompletedAt = ProcessInfo.processInfo.systemUptime }
             }
             measurement = result
+            completedCandidateID = cost?.id
             if !stopped, invalidReason == nil, let cost,
                cost.scope == scope, cost.publishingGeneration == pinnedProbe?.publishingGeneration,
                let boundAt = probeBoundAt, let completedAt = probeCompletedAt,

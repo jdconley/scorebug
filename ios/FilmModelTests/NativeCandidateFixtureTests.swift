@@ -609,9 +609,203 @@ extension NativeCandidateFixtureTests {
             XCTAssertEqual(fake.events.contains("candidateStart"), sampling)
         }
     }
-    private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10)) -> NativeCandidatePublisher {
+    func testStopJoinsSuspendedNativeProfileWriteBeforeExport() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake)
+        fake.allowProfileWrite = true; fake.blockProfileWrite = true
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement()
+        let write = Task { try await wrapper.setVideoProfile(.low360) }
+        await wait { fake.events.contains("profile") }
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        // Stop of the transport does not prove a separately suspended setter has joined.
+        try await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(fake.exports, 0)
+        fake.releaseProfileWrite()
+        _ = try await write.value
+        await stop.value
+        XCTAssertEqual(fake.exports, 1)
+    }
+
+    func testLifecycleCapturesAuthorityBeforeRevocationAndKeepsClosedMeasurement() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10), lifecycle: audit,
+            profileReceipt: { fake.receivedProfile($0) }, joinedStop: { fake.markJoinedStop() })
+        fake.produceTypedCost = true; fake.allowProfileWrite = true; fake.allowBitRateWrite = true; fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement()
+        let snapshot = await wrapper.candidateSnapshot()
+        let candidate = try XCTUnwrap(snapshot)
+        let receipt = try await wrapper.setVideoProfile(.low360)
+        XCTAssertFalse(candidate.permitsCurrentCandidate(candidate.cost.id))
+        _ = try await wrapper.setVideoBitRate(600_000)
+        _ = try await wrapper.setVideoProfile(.low240)
+        async let first: Void = wrapper.stop()
+        async let second: Void = wrapper.stop()
+        _ = await (first, second)
+        let object = try XCTUnwrap(fake.lifecycleObject)
+        XCTAssertEqual(object["formatVersion"] as? Int, 1)
+        XCTAssertEqual(object["isClosed"] as? Bool, true)
+        XCTAssertEqual(object["overflow"] as? Bool, false)
+        let rows = try XCTUnwrap(object["profileRequests"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertNotEqual(rows[0]["requestID"] as? String, rows[1]["requestID"] as? String)
+        XCTAssertEqual(rows[0]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
+        XCTAssertEqual(rows[1]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
+        XCTAssertEqual(rows[0]["authorityPermitted"] as? Bool, true)
+        XCTAssertEqual(rows[1]["authorityPermitted"] as? Bool, false)
+        XCTAssertEqual(rows[0]["targetProfile"] as? String, "360p30")
+        XCTAssertEqual(rows[1]["targetProfile"] as? String, "240p30")
+        let binding = try XCTUnwrap(rows[0]["probeBinding"] as? [String: Any])
+        let observation = try XCTUnwrap(binding["observation"] as? [String: Any])
+        XCTAssertEqual(observation["id"] as? String, candidate.binding.id.uuidString)
+        let native = try XCTUnwrap(rows[0]["receipt"] as? [String: Any])
+        XCTAssertEqual(native["encoderSessionID"] as? String, receipt.encoderSessionID.uuidString)
+        XCTAssertEqual(native["acknowledgedAt"] as? Double, receipt.acknowledgedAt)
+        let completed = try XCTUnwrap(rows[0]["completedAt"] as? Double)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(rows[0]["requestedAt"] as? Double), receipt.acknowledgedAt)
+        XCTAssertGreaterThanOrEqual(completed, receipt.acknowledgedAt)
+        let terminal = try XCTUnwrap(rows[0]["terminalProbeRead"] as? [String: Any])
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["startedAt"] as? Double), completed)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["completedAt"] as? Double), try XCTUnwrap(terminal["startedAt"] as? Double))
+        XCTAssertNil(terminal["acknowledgedAt"])
+        let rates = try XCTUnwrap(object["bitRateRequests"] as? [[String: Any]])
+        XCTAssertEqual(rates.count, 1)
+        XCTAssertEqual(rates[0]["profileRequestID"] as? String, rows[0]["requestID"] as? String)
+        XCTAssertEqual((rates[0]["receipt"] as? [String: Any])?["bitRate"] as? Int, 600_000)
+        XCTAssertEqual(fake.receivedProfiles.count, 2)
+        XCTAssertEqual(fake.joinedStops, 1)
+        XCTAssertEqual(fake.lifecycleExports, 1)
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull, "measured candidate closes before configuration retirement")
+        // The closed candidate's final probe is never replaced by lifecycle reads.
+        let closedBinding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+        XCTAssertLessThanOrEqual(try XCTUnwrap((closedBinding["final"] as? [String: Any])?["observedAt"] as? Double), candidate.completedAt)
+    }
+
+    func testLifecycleFailureMissingProbeAndOverflowRemainBoundedDiagnostics() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, lifecycle: audit)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }; fake.finish(); await wrapper.waitForMeasurement()
+        for _ in 0..<18 {
+            do { _ = try await wrapper.setVideoProfile(.low240); XCTFail("expected native error") } catch {}
+        }
+        await wrapper.stop()
+        let object = try XCTUnwrap(fake.lifecycleObject)
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        let rows = try XCTUnwrap(object["profileRequests"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 16)
+        XCTAssertEqual(Set(rows.compactMap { $0["requestID"] as? String }).count, 16)
+        XCTAssertTrue(rows.allSatisfy { $0["outcome"] as? String == "failed" && $0["receipt"] is NSNull })
+        XCTAssertTrue(rows.allSatisfy { ($0["terminalProbeRead"] as? [String: Any])?["observation"] is NSNull })
+        XCTAssertEqual(fake.exports, 1)
+    }
+
+    func testLifecycleStopJoinsTerminalObservationAndRejectsNewDispatch() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, lifecycle: audit, joinedStop: { fake.markJoinedStop() })
+        fake.allowProfileWrite = true
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }; fake.finish(); await wrapper.waitForMeasurement()
+        fake.blockNextProbeRead(); fake.holdProbeAcrossStop = true
+        let write = Task { try await wrapper.setVideoProfile(.low360) }
+        await wait { fake.probeReadIsBlocked }
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        try await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(fake.lifecycleExports, 0); XCTAssertEqual(fake.joinedStops, 0)
+        do { _ = try await wrapper.setVideoProfile(.low240); XCTFail("stop must reject new dispatch") } catch {}
+        XCTAssertEqual(fake.events.filter { $0 == "profile" }.count, 1)
+        fake.releaseProbeRead(); _ = try await write.value; await stop.value
+        XCTAssertEqual(fake.lifecycleExports, 1); XCTAssertEqual(fake.joinedStops, 1)
+    }
+
+    func testLifecycleJoinsBitRateWriteAndCapturesConcurrentProfileAsAmbiguous() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, lifecycle: audit)
+        fake.allowProfileWrite = true; fake.allowBitRateWrite = true; fake.blockBitRateWrite = true
+        fake.holdBitRateAcrossStop = true; fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }; fake.finish(); await wrapper.waitForMeasurement()
+        _ = try await wrapper.setVideoProfile(.low360)
+        let write = Task { try await wrapper.setVideoBitRate(600_000) }
+        await wait { fake.events.contains("bitRate") }
+        _ = try await wrapper.setVideoProfile(.low240)
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        try await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(fake.lifecycleExports, 0)
+        fake.releaseBitRateWrite(); _ = try await write.value; await stop.value
+        let object = try XCTUnwrap(fake.lifecycleObject)
+        let profiles = try XCTUnwrap(object["profileRequests"] as? [[String: Any]])
+        let rates = try XCTUnwrap(object["bitRateRequests"] as? [[String: Any]])
+        XCTAssertEqual(rates[0]["profileRequestID"] as? String, profiles[0]["requestID"] as? String,
+            "preserve dispatch-time association rather than relabeling it after an await")
+        XCTAssertEqual(rates[0]["profileLinkUnambiguous"] as? Bool, false)
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        XCTAssertEqual(fake.lifecycleExports, 1)
+    }
+
+    func testLifecycleBitRateFailuresAndOverflowDoNotSuppressNativeOperations() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, lifecycle: audit)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }; fake.finish(); await wrapper.waitForMeasurement()
+        for _ in 0..<50 { do { _ = try await wrapper.setVideoBitRate(123); XCTFail("expected native error") } catch {} }
+        await wrapper.stop()
+        let object = try XCTUnwrap(fake.lifecycleObject)
+        let rates = try XCTUnwrap(object["bitRateRequests"] as? [[String: Any]])
+        XCTAssertEqual(rates.count, 48)
+        XCTAssertEqual(fake.events.filter { $0 == "bitRate" }.count, 50)
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertTrue(rates.allSatisfy { $0["outcome"] as? String == "failed" && $0["failure"] is String })
+        XCTAssertEqual(fake.exports, 1)
+    }
+
+    func testLifecycleBoundsConcurrentNativeWorkBeforeDispatch() async throws {
+        for profile in [true, false] {
+            let fake = CandidateFixtureFake()
+            let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+            let wrapper = makeCandidate(fake, lifecycle: audit)
+            fake.allowProfileWrite = true; fake.blockProfileWrite = true
+            fake.allowBitRateWrite = true; fake.blockBitRateWrite = true
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }; fake.finish(); await wrapper.waitForMeasurement()
+            let limit = profile ? 16 : 48, event = profile ? "profile" : "bitRate"
+            let writes = (0..<limit).map { _ in Task {
+                if profile { _ = try await wrapper.setVideoProfile(.low360) }
+                else { _ = try await wrapper.setVideoBitRate(600_000) }
+            } }
+            await wait { fake.events.filter { $0 == event }.count == limit }
+            let extra = Task {
+                do {
+                    if profile { _ = try await wrapper.setVideoProfile(.low360) }
+                    else { _ = try await wrapper.setVideoBitRate(600_000) }
+                    return true
+                } catch { return false }
+            }
+            try await Task.sleep(for: .milliseconds(25))
+            XCTAssertEqual(fake.events.filter { $0 == event }.count, limit)
+            fake.releaseProfileWrite(); fake.releaseBitRateWrite()
+            for write in writes { try await write.value }
+            let accepted = await extra.value
+            XCTAssertFalse(accepted, "excess pending work must fail without dispatch")
+            await wrapper.stop()
+            XCTAssertEqual(fake.lifecycleObject?["overflow"] as? Bool, true)
+        }
+    }
+
+    private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10), lifecycle: NativeCandidateLifecycleAudit? = nil, profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil, joinedStop: (@Sendable () async -> Void)? = nil) -> NativeCandidatePublisher {
         .init(publisher: fake, scope: fake.scope, liveProfile: .low240,
-            operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom)
+            operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom, lifecycle: lifecycle, profileReceipt: profileReceipt, joinedStop: joinedStop)
     }
     private func wait(_ predicate: @escaping () -> Bool) async {
         for _ in 0..<1000 { if predicate() { return }; try? await Task.sleep(for: .milliseconds(1)) }
@@ -639,6 +833,35 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
     var typedCostFault: Int? { get { lock.withLock { storedTypedCostFault } } set { lock.withLock { storedTypedCostFault = newValue } } }
     var producedCost: PublishingCandidateCost? { lock.withLock { storedProducedCost } }
     private var storedAllowBitRateWrite = false, storedBlockBitRateWrite = false
+    private var storedLifecycleData: Data?, storedLifecycleExports = 0, storedJoinedStops = 0
+    private var storedReceivedProfiles: [PublishingVideoProfileChange] = [], storedHoldProbeAcrossStop = false
+    var lifecycleExports: Int { lock.withLock { storedLifecycleExports } }
+    var joinedStops: Int { lock.withLock { storedJoinedStops } }
+    var receivedProfiles: [PublishingVideoProfileChange] { lock.withLock { storedReceivedProfiles } }
+    var holdProbeAcrossStop: Bool { get { lock.withLock { storedHoldProbeAcrossStop } } set { lock.withLock { storedHoldProbeAcrossStop = newValue } } }
+    var lifecycleObject: [String: Any]? { lock.withLock { storedLifecycleData.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } } }
+    func exportLifecycle(_ data: Data) { lock.withLock { storedLifecycleData = data; storedLifecycleExports += 1 } }
+    func receivedProfile(_ receipt: PublishingVideoProfileChange) { lock.withLock { storedReceivedProfiles.append(receipt) } }
+    func markJoinedStop() { lock.withLock { storedJoinedStops += 1 } }
+    private var storedHoldBitRateAcrossStop = false
+    var holdBitRateAcrossStop: Bool { get { lock.withLock { storedHoldBitRateAcrossStop } } set { lock.withLock { storedHoldBitRateAcrossStop = newValue } } }
+    private var storedAllowProfileWrite = false, storedBlockProfileWrite = false
+    private let profileGate = AsyncStream<Void>.makeStream()
+    var allowProfileWrite: Bool { get { lock.withLock { storedAllowProfileWrite } } set { lock.withLock { storedAllowProfileWrite = newValue } } }
+    var blockProfileWrite: Bool { get { lock.withLock { storedBlockProfileWrite } } set { lock.withLock { storedBlockProfileWrite = newValue } } }
+    func releaseProfileWrite() { profileGate.continuation.finish() }
+    func setVideoProfile(_ value: PublishingVideoProfile) async throws -> PublishingVideoProfileChange {
+        lock.withLock { storedEvents.append("profile") }
+        if blockProfileWrite { for await _ in profileGate.stream {} }
+        guard allowProfileWrite, let startup = videoStartup,
+              let receipt = PublishingVideoProfileChange(profile: value, publishingGeneration: startup.publishingGeneration,
+                previousEncoderSessionID: startup.encoderSessionID, encoderSessionID: UUID(),
+                lastOldSourcePTS: .zero, firstNewSourcePTS: CMTime(value: 1, timescale: 30),
+                width: value.width, height: value.height, rawVideoFramesDropped: 0,
+                acknowledgedAt: ProcessInfo.processInfo.systemUptime)
+        else { throw PublishingSessionError.invalidState }
+        return receipt
+    }
     private let bitRateGate = AsyncStream<Void>.makeStream()
     var allowBitRateWrite: Bool { get { lock.withLock { storedAllowBitRateWrite } } set { lock.withLock { storedAllowBitRateWrite = newValue } } }
     var blockBitRateWrite: Bool { get { lock.withLock { storedBlockBitRateWrite } } set { lock.withLock { storedBlockBitRateWrite = newValue } } }
@@ -774,7 +997,7 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
         else { throw PublishingSessionError.bitRateUpdateFailed }
         return receipt
     }
-    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); releaseProbeRead(); releaseBitRateWrite(); finish() }
+    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); if !holdProbeAcrossStop { releaseProbeRead() }; if !holdBitRateAcrossStop { releaseBitRateWrite() }; finish() }
 }
 /// Complete typed native evidence with accelerated wall-clock submission. The
 /// source still covers four seconds, and the validator uses the shorter duration.

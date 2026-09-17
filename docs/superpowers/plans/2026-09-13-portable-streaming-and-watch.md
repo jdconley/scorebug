@@ -2172,3 +2172,24 @@ replay tests, clean simulator build-for-testing and unsigned iPhone/Watch Releas
 builds. Reviews approved the runtime and timing regression fixes. The immutable
 manifest is `artifacts/qa/measured-live-trial-final-verification.json`; all six native
 diagnostics retain their failed whole-run status and original evidence.
+
+### 2026-09-17: native measured transitions and lifecycle evidence
+
+The explicit measured simulator route now exports complete native phase evidence
+and a separate bounded lifecycle history. Stop joins encoder changes, bitrate
+writes and terminal probe reads before exporting. Completed candidate diagnostics
+remain immutable while runtime authority still retires immediately. Reviews and
+382 model/502 affected Node tests passed.
+
+A native run independently verified 240p→360p→240p, exact profile/bitrate receipts
+within their owned application deadlines, and all 121 measured candidate frames
+within the actual baseline and decoded stream. The 1080p local recording and live
+output fully decoded at approximately 30 fps with no frame loss after initial
+acquisition and all audio markers. Evidence is indexed by
+`artifacts/qa/measured-transition-final-verification.json`.
+
+The trial reset when the current report exceeded 250 ms, so sustained confirmation
+is still unproven. Next improve telemetry scheduling without loosening freshness,
+then join admission, lifecycle and post-change health into the full independent
+native-trial gate. Production increases and physical/remote performance remain
+unqualified; the goal stays active.
