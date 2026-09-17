@@ -1572,3 +1572,22 @@ cannot meet the 250 ms conservative watchdog freshness budget. Next qualify actu
 fast-report response time, then short source/lateness measurements and candidate
 headroom before enabling progressive production adaptation. Existing local recording
 and fixed minimum startup continue independently.
+
+
+[Native fast-report timing](2026-09-17-native-cadence-report-timing.md) now has a
+bounded DEBUG simulator audit and an independent checker. Actual fixed240 run
+`native-app-ToYhHS` used 100 ms worker reporting and native polling. All 747 settled
+reports across 98.481 seconds met the 250 ms freshness budget; p95 age was 219.069 ms,
+maximum 247.844 ms, and the largest usable-report gap 164.092 ms. Initial helper
+availability took 7.403 seconds from the first status row and is outside this settled
+claim. Raw server/request/residence bounds reconcile independently.
+
+Media remained continuous: 3,291 saved live frames after 34 acquisition frames and
+3,667 clean archive frames, all expected 54/61 audio markers, and clean full decodes.
+All 1,222 tooling, 348 Core and 248 native model tests pass, plus simulator and
+unsigned combined iPhone/Watch Release builds. Evidence:
+`artifacts/qa/cadence-timing-final-verification.json`. Normal local reporting freshness
+is now qualified at this configuration. Controlled-stall/reset reaction timing,
+short expected-source/lateness reconciliation, candidate headroom, real automatic
+transitions and physical/remote qualification remain. Production adaptation and
+normal reporting defaults are unchanged.

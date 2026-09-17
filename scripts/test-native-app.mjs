@@ -1,3 +1,4 @@
+import { nativeCadenceReports, qualifyNativeCadenceReports } from './native-cadence-reports.mjs';
 import { qualifyNativeVideoCost } from './native-video-cost.mjs';
 import { qualifyNativeReceiverIntervals } from './native-receiver-intervals.mjs';
 import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
@@ -76,6 +77,13 @@ assert.ok(
 );
 const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const cadenceReports = nativeCadenceReports({
+  environment: process.env,
+  streaming,
+  requirePublication,
+  requireProcessing,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
 const { requireQuality, requireConfirmation } = nativeQualityOptions({
   environment: process.env,
@@ -148,6 +156,7 @@ await writeFile(
       publishPeerLatencyMs: publishPeerLatencyMs ?? null,
       publishPacing: publishPacing ?? null,
       sourceCadencePacing,
+      cadenceReports,
       streaming,
       requirePublication,
       requireProcessing,
@@ -447,6 +456,7 @@ try {
       requireReceiverProbe: bandwidthProbe !== null,
       uplinkProfile,
       liveProfile,
+      cadenceReports,
       decoderThreading,
       publishPeerLatencyMs,
       publishPacing,
@@ -509,6 +519,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
+      `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
@@ -540,6 +551,12 @@ try {
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });
   let observationSnapshot, archiveDiagnosticsSnapshot, qualitySnapshot;
+  if (cadenceReports) {
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/worker-cadence-reports.json'),
+      join(artifact, 'worker-cadence-reports.json'),
+    );
+  }
   if (requireQuality) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
@@ -809,6 +826,16 @@ try {
         holdSeconds: streamingOptions.holdSeconds,
         savedFrames: directRecorderDelivery.savedFrames,
       });
+    }
+    if (cadenceReports) {
+      const result = qualifyNativeCadenceReports({
+        audit: JSON.parse(await readFile(join(artifact, 'worker-cadence-reports.json'), 'utf8')),
+        scope: observationSnapshot.scope,
+      });
+      await writeFile(
+        join(artifact, 'cadence-report-qualification.json'),
+        JSON.stringify(result, null, 2),
+      );
     }
     workerReportAge = qualifyWorkerReportAge({
       snapshot: observationSnapshot,

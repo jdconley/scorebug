@@ -28,6 +28,7 @@ export async function nativeStreamingFixture({
   requireReceiverProbe = false,
   uplinkProfile = null,
   liveProfile = '1080p30',
+  cadenceReports = false,
   decoderThreading = 'automatic',
   publishPeerLatencyMs,
   publishPacing,
@@ -387,7 +388,7 @@ export async function nativeStreamingFixture({
               ENCODER: 'videotoolbox',
               DECODER_THREADING: decoderThreading,
               WORKER_REPORT_INTERVAL_MS:
-                process.env.SCOREBUG_TEST_NATIVE_QUALITY === '1' ? '100' : '1000',
+                process.env.SCOREBUG_TEST_NATIVE_QUALITY === '1' || cadenceReports ? '100' : '1000',
               VIDEO_PROFILE: liveProfile,
               SCORE_DIR: join(artifact, 'worker'),
               FFMPEG_PATH: ffmpeg,

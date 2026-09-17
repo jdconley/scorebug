@@ -52,6 +52,15 @@ struct PublishingClockObservation: Equatable, Sendable {
         false
         #endif
     }()
+    var cadenceReportFixtureWriter: ((Data) async -> Void)? = {
+        #if targetEnvironment(simulator)
+        guard WorkerCadenceReportAudit.requested(environment: ProcessInfo.processInfo.environment) else { return nil }
+        return { await WorkerCadenceReportAudit.persist($0) }
+        #else
+        return nil
+        #endif
+    }()
+    private var cadenceReportAudit: WorkerCadenceReportAudit?
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
     private var receiverProbeHistory = ReceiverProbeFixtureHistory()
     var receiverProbeFixtureWriter: ((Data) async -> Void)? = {
@@ -87,7 +96,12 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var current: CurrentCapture?
     private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?, probeObserver: (any PublishingProbeObserving)?)?
     private var coordinator: BroadcastCommandCoordinator?
-    var controlPollInterval: Duration { qualityDriver == nil ? .seconds(2) : .milliseconds(100) }
+    var controlPollInterval: Duration {
+        #if DEBUG
+        if cadenceReportFixtureWriter != nil { return .milliseconds(100) }
+        #endif
+        return qualityDriver == nil ? .seconds(2) : .milliseconds(100)
+    }
     private var qualityDriver: PublishingQualityDriver?
     #if DEBUG
     private var transitionDriver: NativeProfileTransitionDriver?
@@ -350,6 +364,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
                 #if DEBUG
+                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit()
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
                     else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }
@@ -486,6 +501,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                 workerSourceInterval = nil
             }
             #if DEBUG
+            if let publishing, localState == .publishing, publishing.attempt == diagnosticAttemptID {
+                let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
+                cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
+                    helper: workerDecoderCadenceFreshness, receivedAt: received, requestDuration: requestDuration,
+                    receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime)
+            }
             if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
                 let previous = workerSourceIntervalHistory.last
                 if previous?.sequence != interval.sequence || previous?.workerEpoch != interval.workerEpoch ||
@@ -654,6 +675,10 @@ struct PublishingClockObservation: Equatable, Sendable {
             publishing.context.tap.detach(publishing.session)
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
+            cadenceReportAudit?.close()
+            let cadenceData = try? cadenceReportAudit?.data()
+            let cadenceWriter = cadenceReportFixtureWriter
+            cadenceReportAudit = nil
             let transitions = transitionDriver; transitionDriver = nil; transitions?.cancel()
             let adaptiveProof = adaptiveProfileEvidence; adaptiveProfileEvidence = nil
             // Production fixture I/O defaults only on explicitly enabled simulators.
@@ -685,6 +710,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 #endif
                 await session.stop()
                 #if DEBUG
+                if let cadenceData, let cadenceWriter { await cadenceWriter(cadenceData) }
                 if let probeData, let probeWriter { await probeWriter(probeData) }
                 if let adaptiveProof {
                     adaptiveProof.close()

@@ -717,6 +717,22 @@ import XCTest
         XCTAssertFalse(model.needsStorageRetry)
     }
 
+    func testCadenceAuditClosesOnlyAtJoinedPublisherTeardown() async throws {
+        let server = CaptureTestServer()
+        let streaming = makeModel(server: server)
+        var exported: Data?
+        streaming.cadenceReportFixtureWriter = { exported = $0 }
+        XCTAssertEqual(streaming.controlPollInterval, .milliseconds(100))
+        await streaming.restore(); streaming.captureChanged(captureContext()); await streaming.startStreaming()
+        await server.setStatusOverride(workerAgeResponse()); await streaming.pollControl()
+        XCTAssertNil(exported)
+        await streaming.stopStreaming()
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual(audit["closed"] as? Bool, true)
+        let rows = try XCTUnwrap(audit["rows"] as? [[String: Any]])
+        XCTAssertFalse(rows.isEmpty); XCTAssertTrue(rows.last?["sampleAgeSeconds"] is NSNull)
+    }
+
     func testCadenceDoesNotRequireSourceHistoryAndClearsOnMismatchExpiryAndStop() async throws {
         let server = CaptureTestServer()
         var owner: VideoFrameObservationOwner?
