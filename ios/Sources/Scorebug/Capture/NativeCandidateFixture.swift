@@ -41,7 +41,7 @@ enum NativeCandidateFixture {
                     "allowFrameReordering": s.allowFrameReordering as Any? ?? NSNull()],
                 "frames": e.frames.map { f in ["sourcePTS": time(f.sourcePTS), "outputPTS": time(f.outputPTS),
                     "encoderSessionID": f.encoderSessionID.uuidString, "submittedAt": f.submittedAt, "completedAt": f.completedAt,
-                    "dequeuedAt": f.dequeuedAt, "byteCount": f.byteCount, "width": f.width, "height": f.height, "isSync": f.isSync] }]
+                    "dequeuedAt": f.dequeuedAt, "admittedAt": f.admittedAt, "rawByteCount": f.rawByteCount, "byteCount": f.byteCount, "width": f.width, "height": f.height, "isSync": f.isSync] }]
         }
         return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("null".utf8)
     }
@@ -209,7 +209,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         }
     }
     private func exportData() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "isClosed": true,
+        try JSONSerialization.data(withJSONObject: ["formatVersion": 2, "isClosed": true,
+            "resourceLimits": ["rawQueueCount": 4, "unresolvedInputCount": 16,
+                "unresolvedRawBytes": 64 * 1024 * 1024, "rawBytesPerInput": 16 * 1024 * 1024],
             "scope": NativeCandidateFixture.scope(scope), "liveProfile": liveProfile.rawValue,
             "publisherStartedAt": publisherStartedAt as Any? ?? NSNull(), "closedAt": ProcessInfo.processInfo.systemUptime,
             "invalidReason": invalidReason as Any? ?? NSNull(), "pressureBaseline": baseline?.object as Any? ?? NSNull(),

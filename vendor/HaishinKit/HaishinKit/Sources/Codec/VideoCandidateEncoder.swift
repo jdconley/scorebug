@@ -9,6 +9,8 @@ public final class VideoCandidateEncoder: @unchecked Sendable {
         public let sourcePTS: CMTime
         public let outputPTS: CMTime
         public let encoderSessionID: UUID
+        public let admittedAt: Double
+        public let rawByteCount: Int
         public let submittedAt: Double
         public let completedAt: Double
         public let dequeuedAt: Double
@@ -72,8 +74,9 @@ public final class VideoCandidateEncoder: @unchecked Sendable {
             throw error
         }
     }
-    /// Accepts at most four unresolved raw frames. Never waits for the encoder or
-    /// schedules a per-frame task. A malformed/overflowing active offer fails the run.
+    /// Queues at most four raw frames, with at most sixteen unresolved inputs and
+    /// 64 MiB of outstanding raw payload. Never waits for the encoder or schedules
+    /// a per-frame task. A malformed/overflowing active offer fails the run.
     @discardableResult public func offer(_ sample: CMSampleBuffer) -> Bool { state.offer(sample) }
     /// Native completion may block beyond admission's deadline; it is always joined.
     public func finish() async -> Result {
@@ -90,6 +93,8 @@ private enum CandidateStartupError: Error { case invalidSettings, alreadyStarted
 private final class CandidateState: @unchecked Sendable {
     private struct Record {
         let pts: CMTime
+        let admittedAt: Double
+        let rawByteCount: Int
         var submitted = false
         var callback: VideoEncoderFrame?
         var output: VideoCandidateEncoder.Frame?
@@ -104,6 +109,7 @@ private final class CandidateState: @unchecked Sendable {
     private var failure: String?
     private var records: [Record] = []
     private var unresolved = 0, outputCount = 0
+    private var outstandingRawBytes = 0
     private var inputFormat: CMFormatDescription?
     private var sessionID: UUID?
     private var terminal: VideoCandidateEncoder.Result?
@@ -174,8 +180,14 @@ private final class CandidateState: @unchecked Sendable {
             }
             if let inputFormat, !CFEqual(inputFormat, format) { reject("inputFormatChanged"); return false }
             guard records.count < 121 else { reject("frameLimit"); return false }
-            guard unresolved < 4 else { reject("unresolvedInputLimit"); return false }
-            inputFormat = format; records.append(.init(pts: pts)); unresolved += 1
+            let rawBytes = CVPixelBufferGetDataSize(image)
+            guard unresolved < 16 else { reject("unresolvedInputLimit"); return false }
+            guard rawBytes <= 64 * 1024 * 1024 - outstandingRawBytes else {
+                reject("unresolvedRawByteLimit"); return false
+            }
+            inputFormat = format
+            records.append(.init(pts: pts, admittedAt: at, rawByteCount: rawBytes))
+            unresolved += 1; outstandingRawBytes += rawBytes
             switch continuation.yield(sample) {
             case .enqueued: return true
             default: reject("rawQueueFailure"); return false
@@ -199,6 +211,7 @@ private final class CandidateState: @unchecked Sendable {
                   frame.submittedAt.isFinite, frame.completedAt.isFinite,
                   frame.submittedAt >= (startedAt ?? .infinity), frame.completedAt >= frame.submittedAt,
                   let index = records.firstIndex(where: { CMTimeCompare($0.pts, frame.sourcePTS) == 0 }),
+                  frame.submittedAt >= records[index].admittedAt,
                   records[index].callback == nil else { reject("invalidNativeCallback"); return }
             if let sessionID, sessionID != frame.encoderSessionID { reject("encoderSessionChanged"); return }
             sessionID = frame.encoderSessionID; records[index].callback = frame
@@ -228,10 +241,12 @@ private final class CandidateState: @unchecked Sendable {
             let sync = !(notSync as? Bool ?? false)
             guard index != 0 || sync else { reject("missingInitialKeyframe"); return nil }
             let frame = VideoCandidateEncoder.Frame(sourcePTS: records[index].pts, outputPTS: pts,
-                encoderSessionID: callback.encoderSessionID, submittedAt: callback.submittedAt,
+                encoderSessionID: callback.encoderSessionID, admittedAt: records[index].admittedAt,
+                rawByteCount: records[index].rawByteCount, submittedAt: callback.submittedAt,
                 completedAt: callback.completedAt, dequeuedAt: at, byteCount: data.dataLength,
                 width: dimensions.width, height: dimensions.height, isSync: sync)
             records[index].output = frame; unresolved -= 1
+            outstandingRawBytes -= records[index].rawByteCount
             return frame
         }
     }
@@ -241,7 +256,7 @@ private final class CandidateState: @unchecked Sendable {
             if startedAt == nil { failure = failure ?? "notStarted" }
             if records.isEmpty { failure = failure ?? "noFrames" }
             if nativeFailure != nil { failure = failure ?? "nativeFailure" }
-            if unresolved != 0 || records.contains(where: { !$0.submitted || $0.callback == nil || $0.output == nil }) || outputCount != records.count {
+            if unresolved != 0 || outstandingRawBytes != 0 || records.contains(where: { !$0.submitted || $0.callback == nil || $0.output == nil }) || outputCount != records.count {
                 failure = failure ?? "incompleteJoin"
             }
             let result = VideoCandidateEncoder.Result(id: id, settings: settings,

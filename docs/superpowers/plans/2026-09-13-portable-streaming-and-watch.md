@@ -1959,3 +1959,33 @@ Verification passes 74 focused and 1,772 tooling tests, simulator build-for-test
 the native experiment and unchanged SDK provenance. Raw evidence is retained in
 `artifacts/qa/encoder-buffer-depth-oICaqc`; source and evidence hashes are recorded
 in `artifacts/qa/candidate-buffer-depth-final-verification.json`.
+
+### 2026-09-17: bounded candidate measurement qualified during recording and streaming
+
+[Candidate resource bounds](2026-09-17-candidate-resource-bounds.md) now preserve
+the four-entry raw ingress queue while permitting at most sixteen unresolved
+inputs and 64 MiB of aggregate raw payload. Count and byte reservations are
+released only after validated compressed dequeue. Fresh native evidence includes
+admission timestamps and actual raw byte sizes; independent version 2 verification
+reconstructs the bounds. Historical version 1 checks remain available.
+
+Three native simulator trials qualified 360p, 540p and 1080p candidate encoding
+alongside 1080p local recording and 240p live publishing. Each candidate reconciled
+121 frames over four seconds, peaking at fourteen unresolved inputs and 43,606,080
+raw bytes. Measured pre-mux video costs were approximately 3.72, 3.67 and 6.88 Mbps,
+respectively. All archive and received-live saved ranges were consecutive at
+approximately 30 fps, with all expected audio markers matched and no pressure
+counter increases. These are finite simulator measurements, not physical-device
+or sustained thermal qualification.
+
+SDK 243, Streaming 123, native model 309 and tooling 1,795 tests passed, along with
+simulator and unsigned combined phone/Watch builds, both Watch architectures,
+SDK provenance, spec and quality reviews. A stale incremental Streaming consumer
+layout was resolved by a clean rebuild with unchanged sources; the failed and
+clean evidence is retained. Frozen evidence:
+`artifacts/qa/candidate-resource-bounds-final-verification.json`.
+
+Next combine fresh candidate video cost with audio/mux/transport cost and repeated
+fresh headroom observations, then enable and qualify upward trials and recovery.
+Normal production automatic upgrades remain disabled. Long-session campaigns,
+physical phone/Watch networking and portable remote workers remain open.

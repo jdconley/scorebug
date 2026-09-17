@@ -14,14 +14,21 @@ import VideoToolbox
         let session = CandidateSession(), id = UUID()
         let encoder = try VideoCandidateEncoder(settings: settings, id: id, sessionFactory: { _, _ in session })
         #expect(!encoder.offer(try raw(.zero)))
+        let sample = try raw(.zero), pixel = try #require(sample.imageBuffer)
         try await encoder.start()
-        #expect(encoder.offer(try raw(.zero)))
+        let beforeOffer = ProcessInfo.processInfo.systemUptime
+        #expect(encoder.offer(sample))
+        let afterOffer = ProcessInfo.processInfo.systemUptime
         let result = await encoder.finish()
         #expect(result.id == id && result.outcome == .completed)
         #expect(result.acceptedInputCount == 1 && result.outputCount == 1 && result.frames.count == 1)
         #expect(result.frames.first?.byteCount == 8 && result.frames.first?.isSync == true)
         #expect(result.frames.first?.width == 32 && result.frames.first?.height == 32)
         #expect(result.frames.first?.encoderSessionID == result.encoderSessionID)
+        let frame = try #require(result.frames.first)
+        #expect(frame.admittedAt >= beforeOffer && frame.admittedAt <= afterOffer)
+        #expect(frame.admittedAt <= frame.submittedAt)
+        #expect(frame.rawByteCount == CVPixelBufferGetDataSize(pixel))
         #expect(result.settings.bitRate == settings.bitRate)
         #expect(result.failure == nil && result.nativeFailure == nil)
         #expect(!encoder.offer(try raw(CMTime(value: 1, timescale: 30))))
@@ -77,13 +84,106 @@ import VideoToolbox
         #expect(session.events == ["submit", "complete", "invalidate"])
     }
 
-    @Test func outstandingInputBoundRejectsTheFifthUnresolvedFrame() async throws {
-        let session = CandidateSession(), encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
+    @Test(arguments: [false, true])
+    func unresolvedCountRejectsSeventeenthAfterIngressDrains(callbacksOnly: Bool) async throws {
+        let session = CandidateSession(fault: "missingOutput", immediate: callbacksOnly)
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
         try await encoder.start()
-        for i in 0..<4 { #expect(encoder.offer(try raw(CMTime(value: Int64(i), timescale: 30)))) }
-        #expect(!encoder.offer(try raw(CMTime(value: 4, timescale: 30))))
-        let result = await encoder.finish()
-        #expect(result.outcome == .failed && result.acceptedInputCount == 4)
+        do {
+            for i in 0..<16 {
+                try #require(encoder.offer(try raw(CMTime(value: Int64(i), timescale: 30))))
+                try #require(await session.waitForSubmissions(i + 1))
+            }
+            if callbacksOnly { #expect(session.callbackCount == 16) }
+            #expect(!encoder.offer(try raw(CMTime(value: 16, timescale: 30))))
+            let result = await encoder.finish()
+            #expect(result.outcome == .failed && result.acceptedInputCount == 16)
+            #expect(result.failure == "unresolvedInputLimit")
+        } catch {
+            _ = await encoder.cancel()
+            throw error
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func aggregateRawByteBoundIsIndependentOfCountAndCallbacks(callbacksOnly: Bool) async throws {
+        let session = CandidateSession(fault: "missingOutput", immediate: callbacksOnly)
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
+        try await encoder.start()
+        do {
+            let first = try raw(.zero, size: 1600)
+            let pixel = try #require(first.imageBuffer), bytes = CVPixelBufferGetDataSize(pixel)
+            let capacity = (64 * 1024 * 1024) / bytes
+            try #require(capacity > 4 && capacity < 16)
+            for i in 0..<capacity {
+                let sample = i == 0 ? first : try raw(CMTime(value: Int64(i), timescale: 30), size: 1600)
+                try #require(encoder.offer(sample))
+                try #require(await session.waitForSubmissions(i + 1))
+            }
+            if callbacksOnly { #expect(session.callbackCount == capacity) }
+            #expect(!encoder.offer(try raw(CMTime(value: Int64(capacity), timescale: 30), size: 1600)))
+            let result = await encoder.finish()
+            #expect(result.outcome == .failed && result.acceptedInputCount == capacity)
+            #expect(result.failure == "unresolvedRawByteLimit")
+        } catch {
+            _ = await encoder.cancel()
+            throw error
+        }
+    }
+
+    @Test(arguments: [64, 1600])
+    func validatedDequeueRecyclesCountAndRawByteCredits(size: Int) async throws {
+        let session = CandidateSession(), outputs = CandidateOutputs()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session },
+            outputObserver: { _ in outputs.received() })
+        try await encoder.start()
+        do {
+            let first = try raw(.zero, size: size)
+            let bytes = CVPixelBufferGetDataSize(try #require(first.imageBuffer))
+            let capacity = min(16, (64 * 1024 * 1024) / bytes)
+            for i in 0..<capacity {
+                let sample = i == 0 ? first : try raw(CMTime(value: Int64(i), timescale: 30), size: size)
+                try #require(encoder.offer(sample))
+                try #require(await session.waitForSubmissions(i + 1))
+            }
+            // Drain exactly one output and await its validated observer, avoiding a
+            // fake burst through the independent eight-output compressed queue.
+            #expect(session.releaseNext() == noErr)
+            try #require(await outputs.wait(for: 1))
+            try #require(encoder.offer(try raw(CMTime(value: Int64(capacity), timescale: 30), size: size)))
+            try #require(await session.waitForSubmissions(capacity + 1))
+            for i in 1...capacity {
+                #expect(session.releaseNext() == noErr)
+                try #require(await outputs.wait(for: i + 1))
+            }
+            let result = await encoder.finish()
+            #expect(result.outcome == .completed)
+            #expect(result.acceptedInputCount == capacity + 1 && result.outputCount == capacity + 1)
+            #expect(result.frames.allSatisfy { $0.rawByteCount == bytes && $0.admittedAt <= $0.submittedAt })
+        } catch {
+            _ = await encoder.cancel()
+            throw error
+        }
+    }
+
+    @Test func rawIngressStillHoldsOnlyFourQueuedInputsWhileNativeAppendIsBlocked() async throws {
+        let gate = CandidateGate(), session = CandidateSession(convertGate: gate)
+        defer { gate.open() }
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
+        try await encoder.start()
+        do {
+            try #require(encoder.offer(try raw(.zero)))
+            try #require(await gate.waitForEntry())
+            for i in 1...4 { #expect(encoder.offer(try raw(CMTime(value: Int64(i), timescale: 30)))) }
+            #expect(!encoder.offer(try raw(CMTime(value: 5, timescale: 30))))
+            gate.open()
+            let result = await encoder.finish()
+            #expect(result.outcome == .failed && result.failure == "rawQueueFailure")
+        } catch {
+            gate.open()
+            _ = await encoder.cancel()
+            throw error
+        }
     }
 
     @Test(arguments: ["compressed", "audio", "notReady", "negative", "epoch", "invalid", "duplicate", "backward", "format", "oversize", "span"])
@@ -304,13 +404,28 @@ private final class CandidateSession: VTSessionConvertible, @unchecked Sendable 
     private let lock = NSLock()
     private var pending: [(CMTime, PublishingQueue<CMSampleBuffer>?, VideoEncoderCompletionObserver?)] = []
     private var log: [String] = []
+    private var callbacks = 0
     private let gate: CandidateGate?
+    private let convertGate: CandidateGate?
     private let fault: String?
     private let immediate: Bool
-    init(gate: CandidateGate? = nil, fault: String? = nil, immediate: Bool = false) {
-        self.gate = gate; self.fault = fault; self.immediate = immediate
+    init(gate: CandidateGate? = nil, fault: String? = nil, immediate: Bool = false, convertGate: CandidateGate? = nil) {
+        self.gate = gate; self.fault = fault; self.immediate = immediate; self.convertGate = convertGate
     }
     var events: [String] { lock.withLock { log } }
+    var callbackCount: Int { lock.withLock { callbacks } }
+    func waitForSubmissions(_ count: Int) async -> Bool {
+        for _ in 0..<1000 {
+            if lock.withLock({ log.filter { $0 == "submit" }.count >= count && (!immediate || callbacks >= count) }) { return true }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
+    }
+    func releaseNext() -> OSStatus {
+        let value = lock.withLock { pending.isEmpty ? nil : pending.removeFirst() }
+        guard let (pts, output, callback) = value else { return -100 }
+        return emit(pts, output, callback)
+    }
     func wait(for event: String) async -> Bool {
         for _ in 0..<1000 {
             if events.contains(event) { return true }
@@ -327,6 +442,7 @@ private final class CandidateSession: VTSessionConvertible, @unchecked Sendable 
             log.append("submit")
             if !immediate { pending.append((sample.presentationTimeStamp, continuation, encoderCompletionObserver)) }
         }
+        convertGate?.pause()
         if immediate { _ = emit(sample.presentationTimeStamp, continuation, encoderCompletionObserver) }
     }
     func completeFrames() -> OSStatus {
@@ -340,7 +456,10 @@ private final class CandidateSession: VTSessionConvertible, @unchecked Sendable 
     }
     private func emit(_ pts: CMTime, _ output: PublishingQueue<CMSampleBuffer>?, _ callback: VideoEncoderCompletionObserver?) -> OSStatus {
         let resultPTS = fault == "callbackMismatch" ? CMTime(value: 1, timescale: 1) : pts
-        if fault != "missingCallback" { callback?(pts, resultPTS) }
+        if fault != "missingCallback" {
+            callback?(pts, resultPTS)
+            lock.withLock { callbacks += 1 }
+        }
         if fault == "duplicateCallback" { callback?(pts, resultPTS) }
         if fault == "missingOutput" { return noErr }
         do {

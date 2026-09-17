@@ -44,9 +44,12 @@ framework pools, raw video, operating-system buffers, libSRT queues, producer-ow
 input, array metadata, and other application allocations are outside these numbers.
 The compressed video byte check does not apply to decompressed playback images.
 
-The optional candidate encoder has a separate budget. It admits at most four
-unresolved raw inputs, each at most 16 MiB, across its queue and native submissions.
-Credit returns only when the corresponding compressed output is reconciled. It
+The optional candidate encoder has a separate budget. Its raw ingress queue holds
+at most four inputs. Across queued and native work, it admits at most sixteen
+unresolved inputs and 64 MiB of aggregate raw payload, with each input at most
+16 MiB. Count and actual pixel-buffer byte reservations return only when the
+corresponding compressed output is validated and dequeued. Frame evidence records
+admission time and raw payload size so both limits can be independently checked. It
 uses its own 8 × 2 MiB compressed queue and retains at most 121 scalar frame records.
 Admission ends within eight monotonic seconds and spans at most 4.25 seconds of
 source timestamps. These limits do not count producer-owned buffers or bound native

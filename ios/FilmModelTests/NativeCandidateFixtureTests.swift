@@ -1,9 +1,35 @@
 import Foundation
 import ScorebugMedia
-import ScorebugStreaming
+@testable import ScorebugStreaming
 import XCTest
 
 final class NativeCandidateFixtureTests: XCTestCase {
+    @MainActor func testSerializationPreservesActualRawBytesAndAdmissionTime() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low360)
+        try await candidate.start()
+        let sample = try candidateVideo().sampleBuffer
+        let before = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(candidate.offer(sample))
+        let after = ProcessInfo.processInfo.systemUptime
+        let result = await candidate.finish()
+        XCTAssertEqual(result.encoding.outcome, .completed)
+        let measurement = PublishingCandidateMeasurement.Result(id: candidate.id, scope: scope, profile: .low360,
+            reason: .completed, startedAt: before, endedAt: ProcessInfo.processInfo.systemUptime,
+            acceptedInputCount: 1, firstInputPTS: sample.presentationTimeStamp,
+            lastInputPTS: sample.presentationTimeStamp, encoding: result)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeCandidateFixture.data(measurement)) as? [String: Any])
+        let encoding = try XCTUnwrap(object["encoding"] as? [String: Any])
+        let frames = try XCTUnwrap(encoding["frames"] as? [[String: Any]])
+        XCTAssertEqual(frames.count, 1)
+        let frame = try XCTUnwrap(frames.first)
+        XCTAssertEqual(frame["rawByteCount"] as? Int, CVPixelBufferGetDataSize(try XCTUnwrap(sample.imageBuffer)))
+        let admitted = try XCTUnwrap(frame["admittedAt"] as? Double)
+        XCTAssertGreaterThanOrEqual(admitted, before)
+        XCTAssertLessThanOrEqual(admitted, after)
+    }
+
     func testFlagsRequireExclusiveHigherCandidateAndFullFixedProfileFixture() throws {
         let valid = ["SCOREBUG_TEST_CANDIDATE_PROFILE": "540p30", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
             "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
@@ -38,6 +64,10 @@ extension NativeCandidateFixtureTests {
         _ = await (one, two)
         XCTAssertEqual(fake.stops, 1); XCTAssertEqual(fake.exports, 1)
         XCTAssertEqual(fake.object?["invalidReason"] is NSNull, true)
+        XCTAssertEqual(fake.object?["formatVersion"] as? Int, 2)
+        XCTAssertEqual(fake.object?["resourceLimits"] as? [String: Int],
+            ["rawQueueCount": 4, "unresolvedInputCount": 16, "unresolvedRawBytes": 64 * 1024 * 1024,
+             "rawBytesPerInput": 16 * 1024 * 1024])
     }
     func testNewDropsStaleThermalAndMissingDiagnosticsRevokeOptionalOnly() async throws {
         for fault in 0..<5 {

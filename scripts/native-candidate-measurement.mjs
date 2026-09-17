@@ -44,8 +44,20 @@ const uuid = (s) =>
   typeof s === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(s);
 /** Measures actual pre-mux video payload only. Does not assert candidate pixel
  * quality, available network capacity, audio/mux costs or physical-device safety. */
-export function qualifyNativeCandidateMeasurement(proof, { scope, profile, liveProfile, format }) {
-  assert.equal(proof.formatVersion, 1);
+export function qualifyNativeCandidateMeasurement(
+  proof,
+  { scope, profile, liveProfile, format, requiredFormatVersion = 1 },
+) {
+  assert.ok([1, 2].includes(requiredFormatVersion));
+  assert.equal(proof.formatVersion, requiredFormatVersion);
+  const resources = proof.formatVersion === 2;
+  if (resources)
+    assert.deepEqual(proof.resourceLimits, {
+      rawQueueCount: 4,
+      unresolvedInputCount: 16,
+      unresolvedRawBytes: 64 * 1024 * 1024,
+      rawBytesPerInput: 16 * 1024 * 1024,
+    });
   assert.equal(proof.isClosed, true);
   assert.equal(proof.invalidReason, null);
   assert.deepEqual(proof.scope, scope);
@@ -93,6 +105,7 @@ export function qualifyNativeCandidateMeasurement(proof, { scope, profile, liveP
   assert.equal(lastFrame - firstFrame, 120);
   assert.ok(firstFrame >= format.firstFrame && lastFrame <= format.lastFrame);
   let outstanding = [];
+  const resourceEvents = [];
   let bytes = 0,
     previous,
     maximumFrameBytes = 0,
@@ -122,11 +135,49 @@ export function qualifyNativeCandidateMeasurement(proof, { scope, profile, liveP
     // raw admission timestamps, native submissions cannot exceed that bound.
     outstanding = outstanding.filter((end) => end > f.submittedAt);
     outstanding.push(f.dequeuedAt);
-    assert.ok(outstanding.length <= 4, 'Impossible unresolved candidate input count');
+    if (!resources)
+      assert.ok(outstanding.length <= 4, 'Impossible unresolved candidate input count');
+    if (resources) {
+      assert.ok(
+        finite(f.admittedAt) && f.admittedAt >= m.startedAt && f.admittedAt <= f.submittedAt,
+        'Raw admission must precede native submission within the current measurement',
+      );
+      if (previous) assert.ok(f.admittedAt > previous.admittedAt, 'Raw admissions must increase');
+      assert.ok(
+        Number.isSafeInteger(f.rawByteCount) &&
+          f.rawByteCount > 0 &&
+          f.rawByteCount <= 16 * 1024 * 1024,
+        'Missing or invalid actual raw input byte count',
+      );
+      if (f.dequeuedAt > f.admittedAt) {
+        resourceEvents.push({ at: f.admittedAt, count: 1, bytes: f.rawByteCount });
+        resourceEvents.push({ at: f.dequeuedAt, count: -1, bytes: -f.rawByteCount });
+      }
+    }
     previous = f;
     bytes += f.byteCount;
     maximumFrameBytes = Math.max(maximumFrameBytes, f.byteCount);
     maximumLatency = Math.max(maximumLatency, f.dequeuedAt - f.submittedAt);
+  }
+  let maximumUnresolvedInputs = 0,
+    maximumUnresolvedRawBytes = 0;
+  if (resources) {
+    resourceEvents.sort((a, b) => a.at - b.at || a.count - b.count);
+    let count = 0,
+      bytes = 0;
+    for (const event of resourceEvents) {
+      count += event.count;
+      bytes += event.bytes;
+      assert.ok(count >= 0 && count <= 16, 'Impossible unresolved candidate input count');
+      assert.ok(
+        bytes >= 0 && bytes <= 64 * 1024 * 1024,
+        'Impossible unresolved candidate raw bytes',
+      );
+      maximumUnresolvedInputs = Math.max(maximumUnresolvedInputs, count);
+      maximumUnresolvedRawBytes = Math.max(maximumUnresolvedRawBytes, bytes);
+    }
+    assert.equal(count, 0);
+    assert.equal(bytes, 0);
   }
   const submissionDuration = e.frames.at(-1).submittedAt - e.frames[0].submittedAt;
   assert.ok(submissionDuration > 0 && 120 / submissionDuration >= 24 && maximumLatency <= 1.5);
@@ -171,6 +222,7 @@ export function qualifyNativeCandidateMeasurement(proof, { scope, profile, liveP
       proof.maximumThermal >= Math.max(baseline.thermal, final.thermal),
   );
   return {
+    ...(resources ? { maximumUnresolvedInputs, maximumUnresolvedRawBytes } : {}),
     profile,
     liveProfile,
     scope,

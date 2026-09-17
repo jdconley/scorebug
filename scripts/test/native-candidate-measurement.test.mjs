@@ -182,3 +182,141 @@ test('rejects impossible outstanding native submissions', () => {
   }
   assert.throws(() => qualifyNativeCandidateMeasurement(proof, expected));
 });
+
+const limitsV2 = {
+  rawQueueCount: 4,
+  unresolvedInputCount: 16,
+  unresolvedRawBytes: 64 * 1024 * 1024,
+  rawBytesPerInput: 16 * 1024 * 1024,
+};
+const expectedV2 = { ...expected, requiredFormatVersion: 2 };
+function fixtureV2(latency = 0.45) {
+  const p = fixture();
+  p.formatVersion = 2;
+  p.resourceLimits = { ...limitsV2 };
+  for (const f of p.measurement.encoding.frames) {
+    f.admittedAt = f.submittedAt - 0.001;
+    f.rawByteCount = 3114720;
+    f.completedAt = f.submittedAt + latency - 0.001;
+    f.dequeuedAt = f.submittedAt + latency;
+  }
+  p.measurement.endedAt = 124 + latency;
+  p.pressureFinal.observedAt = p.measurement.endedAt + 0.01;
+  p.pressureFinal.sampledAt = p.pressureFinal.observedAt - 0.1;
+  return p;
+}
+test('v2 qualifies measured fourteen-input buffering with independent byte accounting', () => {
+  const r = qualifyNativeCandidateMeasurement(fixtureV2(), expectedV2);
+  assert.equal(r.maximumUnresolvedInputs, 14);
+  assert.equal(r.maximumUnresolvedRawBytes, 14 * 3114720);
+  assert.equal(r.bytes, 128000);
+});
+test('v2 allows sixteen unresolved inputs while preserving historical v1 four-input semantics', () => {
+  assert.equal(
+    qualifyNativeCandidateMeasurement(fixtureV2(0.51), expectedV2).maximumUnresolvedInputs,
+    16,
+  );
+  assert.equal(qualifyNativeCandidateMeasurement(fixture(), expected).frames, 121);
+  assert.throws(() => qualifyNativeCandidateMeasurement(fixture(), expectedV2));
+  assert.throws(() => qualifyNativeCandidateMeasurement(fixtureV2(), expected));
+});
+test('v2 accounts from raw admission, including time waiting for native submission', () => {
+  const p = fixtureV2(0.51);
+  p.measurement.startedAt -= 0.07;
+  p.pressureBaseline.observedAt -= 0.07;
+  p.pressureBaseline.sampledAt -= 0.07;
+  for (const f of p.measurement.encoding.frames) f.admittedAt -= 0.07;
+  assert.throws(() => qualifyNativeCandidateMeasurement(p, expectedV2));
+});
+test('v2 releases byte credit on dequeue and permits a larger cumulative finite window', () => {
+  const p = fixtureV2(0.02);
+  for (const f of p.measurement.encoding.frames) f.rawByteCount = 16 * 1024 * 1024;
+  const r = qualifyNativeCandidateMeasurement(p, expectedV2);
+  assert.equal(r.maximumUnresolvedInputs, 1);
+  assert.equal(r.maximumUnresolvedRawBytes, 16 * 1024 * 1024);
+});
+const resourceFaults = {
+  'seventeen outstanding': (p) => {
+    for (const f of p.measurement.encoding.frames) {
+      f.completedAt = f.submittedAt + 0.54;
+      f.dequeuedAt = f.submittedAt + 0.55;
+    }
+    p.measurement.endedAt = 124.55;
+    p.pressureFinal.observedAt = 124.56;
+    p.pressureFinal.sampledAt = 124.46;
+  },
+  'byte overflow below count bound': (p) => {
+    for (const f of p.measurement.encoding.frames) f.rawByteCount = 5 * 1024 * 1024;
+  },
+  'callbacks cannot release raw credit': (p) => {
+    for (const f of p.measurement.encoding.frames) {
+      f.completedAt = f.submittedAt + 0.01;
+      f.rawByteCount = 5 * 1024 * 1024;
+    }
+  },
+  'missing raw byte count': (p) => {
+    delete p.measurement.encoding.frames[0].rawByteCount;
+  },
+  'zero raw bytes': (p) => {
+    p.measurement.encoding.frames[0].rawByteCount = 0;
+  },
+  'fractional raw bytes': (p) => {
+    p.measurement.encoding.frames[0].rawByteCount = 1.5;
+  },
+  'oversized raw input': (p) => {
+    p.measurement.encoding.frames[0].rawByteCount = 16 * 1024 * 1024 + 1;
+  },
+  'missing admission': (p) => {
+    delete p.measurement.encoding.frames[0].admittedAt;
+  },
+  'nonfinite admission': (p) => {
+    p.measurement.encoding.frames[0].admittedAt = Infinity;
+  },
+  'admission before owner': (p) => {
+    p.measurement.encoding.frames[0].admittedAt = 100;
+  },
+  'admission after native submission': (p) => {
+    p.measurement.encoding.frames[0].admittedAt = 120.1;
+  },
+  'out of order admission': (p) => {
+    p.measurement.encoding.frames[1].admittedAt = 119.995;
+  },
+  'false count declaration': (p) => {
+    p.resourceLimits.unresolvedInputCount = 17;
+  },
+  'false byte declaration': (p) => {
+    p.resourceLimits.unresolvedRawBytes += 1;
+  },
+  'false ingress declaration': (p) => {
+    p.resourceLimits.rawQueueCount = 16;
+  },
+  'false per input declaration': (p) => {
+    p.resourceLimits.rawBytesPerInput += 1;
+  },
+  'missing limits': (p) => {
+    delete p.resourceLimits;
+  },
+};
+for (const [name, mutate] of Object.entries(resourceFaults))
+  test(`v2 rejects ${name}`, () => {
+    const p = fixtureV2();
+    mutate(p);
+    assert.throws(() => qualifyNativeCandidateMeasurement(p, expectedV2));
+  });
+
+test('v2 accepts the exact aggregate byte boundary independently of the sixteen-frame limit', () => {
+  const p = fixtureV2(0.11);
+  for (const f of p.measurement.encoding.frames) f.rawByteCount = 16 * 1024 * 1024;
+  const r = qualifyNativeCandidateMeasurement(p, expectedV2);
+  assert.equal(r.maximumUnresolvedInputs, 4);
+  assert.equal(r.maximumUnresolvedRawBytes, 64 * 1024 * 1024);
+});
+test('v2 releases a prior raw reservation at an equal admission timestamp', () => {
+  const p = fixtureV2(0.032);
+  const frames = p.measurement.encoding.frames;
+  for (let i = 0; i < frames.length - 1; i++) {
+    frames[i].dequeuedAt = frames[i + 1].admittedAt;
+    frames[i].completedAt = frames[i].dequeuedAt - 0.001;
+  }
+  assert.equal(qualifyNativeCandidateMeasurement(p, expectedV2).maximumUnresolvedInputs, 1);
+});

@@ -74,8 +74,13 @@ does not link an Intel simulator executable; this Mac uses the ARM64 slice.
 bounded admission. `finish` and `cancel` close admission and join input consumption,
 native completion and output consumption before returning scalar results. Limits
 are 121 frames, 4.25 seconds of source time, eight seconds of admission time,
-16 MiB per raw sample, four unresolved inputs and the existing 8 × 2 MiB compressed
-queue. The admission deadline cannot impose a hard timeout on a native completion
+16 MiB per raw sample, a four-input raw ingress queue, sixteen unresolved inputs,
+64 MiB of aggregate outstanding raw payload and the existing 8 × 2 MiB compressed
+queue. Count and actual pixel-buffer payload bytes are reserved before enqueue and
+released only after validated compressed-output dequeue, not at native callback.
+Each output frame records its admission time and raw payload bytes. These payload
+bounds exclude opaque native encoder allocations and are not a process memory
+limit. The admission deadline cannot impose a hard timeout on a native completion
 call; shutdown retains ownership until that call returns.
 
 Successful measurement reconciles every accepted input with a native completion
