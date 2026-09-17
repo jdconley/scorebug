@@ -15,6 +15,22 @@ struct PublishingDeliveryObservation: Sendable {
     let delivery: WorkerDecoderDeliveryFreshness
     let appliedRevision: UInt64
     let result: DeliveryDeadlineResult
+    let observedAtLowerBound: Double
+    let authority: PublishingDeliveryAuthority?
+
+    /// Precisely classified negative evidence only. Healthy/uncertain windows
+    /// never acquire recovery credit through this downward-only adapter.
+    func failureSignal(sequence: UInt64) -> QualityController.DeliveryFailure? {
+        guard result.uncertainFrames == 0 else { return nil }
+        let duration = source.windowEnd - source.windowStart
+        let floor = duration == 1 && Double(result.onTimeFrames) < ProgressiveStreamingPolicy.freshFrameFloor
+        let loss = duration == 2 && Double(result.lateFrames + result.missingFrames) / Double(result.expectedFrames) > ProgressiveStreamingPolicy.maximumLossFraction
+        guard floor || loss else { return nil }
+        return .init(attemptID: source.scope.publishingAttemptID, appliedRevision: appliedRevision, sequence: sequence,
+            start: source.windowStart, end: source.windowEnd, expectedFrames: result.expectedFrames,
+            onTimeFrames: result.onTimeFrames, lateFrames: result.lateFrames, missingFrames: result.missingFrames,
+            observedAtLowerBound: observedAtLowerBound)
+    }
 
     static func classify(history: VideoSourceHistorySnapshot, clock: PublishingClockObservation,
                          applied: PublishingQualityTelemetry.Applied,
@@ -22,9 +38,10 @@ struct PublishingDeliveryObservation: Sendable {
                          delivery: WorkerDecoderDeliveryFreshness,
                          windowStart: Double, windowEnd: Double, at now: Double,
                          instant: ContinuousClock.Instant, maximumSampleAge: Double,
-                         latencyBudget: Double) throws -> Self {
+                         latencyBudget: Double, authority: PublishingDeliveryAuthority? = nil) throws -> Self {
         let receipt = applied.receipt, context = delivery.context
-        guard diagnostics.isPublishing, !clock.isClosed, clock.scope == history.scope,
+        guard authority.map({ $0.permits(delivery) }) ?? true,
+              diagnostics.isPublishing, !clock.isClosed, clock.scope == history.scope,
               history.scope.publishingAttemptID == applied.attemptID,
               history.scope.matchID == context.gameId, history.scope.broadcastGeneration == context.generation,
               context.publication.publishingAttemptId == applied.attemptID.uuidString.lowercased(),
@@ -55,6 +72,7 @@ struct PublishingDeliveryObservation: Sendable {
             frames: source.frames.map { .init(pts: $0.decodedPTS, capturedAt: $0.capturedAt) },
             windowStart: windowStart, windowEnd: windowEnd, evaluatedAt: now,
             sampleAgeUpperBound: seconds, maximumSampleAge: maximumSampleAge, latencyBudget: latencyBudget)
-        return .init(source: source, delivery: delivery, appliedRevision: applied.revision, result: result)
+        return .init(source: source, delivery: delivery, appliedRevision: applied.revision, result: result,
+            observedAtLowerBound: now - seconds, authority: authority)
     }
 }

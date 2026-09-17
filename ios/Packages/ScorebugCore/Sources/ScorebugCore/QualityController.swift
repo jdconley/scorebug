@@ -97,6 +97,28 @@ public struct QualityController: Sendable {
             self.sequence = sequence; self.observedAtLowerBound = observedAtLowerBound
         }
     }
+    /// Fully classified source delivery failure. One- and two-second windows
+    /// have separate overlap watermarks and can never contribute healthy credit.
+    public struct DeliveryFailure: Sendable {
+        public let attemptID: UUID
+        public let appliedRevision: UInt64
+        public let sequence: UInt64
+        public let start: Double
+        public let end: Double
+        public let expectedFrames: Int
+        public let onTimeFrames: Int
+        public let lateFrames: Int
+        public let missingFrames: Int
+        public let observedAtLowerBound: Double
+        public init(attemptID: UUID, appliedRevision: UInt64, sequence: UInt64,
+                    start: Double, end: Double, expectedFrames: Int, onTimeFrames: Int,
+                    lateFrames: Int, missingFrames: Int, observedAtLowerBound: Double) {
+            self.attemptID = attemptID; self.appliedRevision = appliedRevision; self.sequence = sequence
+            self.start = start; self.end = end; self.expectedFrames = expectedFrames
+            self.onTimeFrames = onTimeFrames; self.lateFrames = lateFrames; self.missingFrames = missingFrames
+            self.observedAtLowerBound = observedAtLowerBound
+        }
+    }
     public enum State: Equatable, Sendable { case unknown, healthy, degraded, disconnected, stalled, insufficient, probing }
     public enum Reason: Equatable, Sendable {
         case missingCapture, missingEncoded, missingReceiver, staleReceiver, missingSourceLoss, missingQueue, missingCapacity
@@ -141,6 +163,7 @@ public struct QualityController: Sendable {
     private var appliedAt: Double
     private var lastEnd: Double?
     private var lastSequence: UInt64?
+    private var deliveryFailureEnds: [Int: (revision: UInt64, end: Double)] = [:]
     private var recoveryStart: Double?
     private var healthyNotBefore = 0.0
     private var pending: Recommendation?
@@ -236,6 +259,52 @@ public struct QualityController: Sendable {
         return .init(state: .stalled,
             reasons: minimumResetRequired ? [.stalled] : [.stalled, .minimumProfileInsufficient],
             recommendation: pending)
+    }
+
+    /// Failure-only admission from completed deadline classifications. It shares
+    /// global decision ordering while preserving regular-window recovery coverage.
+    public mutating func evaluateDeliveryFailure(_ signal: DeliveryFailure, at now: Double) throws -> Decision {
+        let duration = signal.end - signal.start
+        do {
+            guard now.isFinite, (0...1e12).contains(now) else { throw ValidationError.invalidTime }
+            try recordTime(now)
+            guard behavior == .progressive else { throw ValidationError.invalidWindow }
+            guard signal.attemptID == attemptID else { throw ValidationError.wrongAttempt }
+            guard signal.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
+            guard signal.sequence > 0, lastSequence.map({ signal.sequence > $0 }) ?? true
+            else { throw ValidationError.outOfOrder }
+            guard [signal.start, signal.end, signal.observedAtLowerBound].allSatisfy({ $0.isFinite && (0...1e12).contains($0) }),
+                  signal.start >= appliedAt, duration == 1 || duration == 2,
+                  signal.end <= signal.observedAtLowerBound, signal.observedAtLowerBound <= now
+            else { throw ValidationError.invalidWindow }
+            guard now - signal.end <= 2,
+                  now - signal.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge
+            else { throw ValidationError.staleWindow }
+            guard (1...240).contains(signal.expectedFrames),
+                  [signal.onTimeFrames, signal.lateFrames, signal.missingFrames].allSatisfy({ (0...240).contains($0) }),
+                  signal.onTimeFrames + signal.lateFrames + signal.missingFrames == signal.expectedFrames
+            else { throw ValidationError.invalidWindow }
+            if let previous = deliveryFailureEnds[Int(duration)], previous.revision == appliedRevision,
+               signal.start < previous.end { throw ValidationError.outOfOrder }
+            let triggered = duration == 1
+                ? Double(signal.onTimeFrames) < ProgressiveStreamingPolicy.freshFrameFloor
+                : Double(signal.lateFrames + signal.missingFrames) / Double(signal.expectedFrames) > ProgressiveStreamingPolicy.maximumLossFraction
+            guard triggered else { throw ValidationError.invalidWindow }
+        } catch { invalidateTelemetry(); throw error }
+        deliveryFailureEnds[Int(duration)] = (appliedRevision, signal.end)
+        lastSequence = signal.sequence
+        healthyNotBefore = now
+        latchMinimumReset(forceApplication: upwardApplicationInFlight)
+        if minimumResetRequired {
+            pending = .init(kind: .reset, attemptID: attemptID, windowSequence: signal.sequence,
+                appliedRevision: appliedRevision,
+                validUntil: min(signal.end + 2, signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                settings: minimumSettings)
+        }
+        var reasons: [Reason] = [duration == 1 ? .freshFrameFloor : .sourceLoss]
+        if signal.onTimeFrames == 0 { reasons.append(.stalled) }
+        if applied == minimumSettings { reasons.append(.minimumProfileInsufficient) }
+        return .init(state: signal.onTimeFrames == 0 ? .stalled : .degraded, reasons: reasons, recommendation: pending)
     }
 
     /// Short local observations can only decrease or roll back. They must not

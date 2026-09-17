@@ -29,7 +29,15 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
     private(set) var workerDecoderCadenceFreshness: WorkerDecoderCadenceFreshness?
-    private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness?
+    private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness? {
+        didSet {
+            if let delivery = workerDecoderDeliveryFreshness, deliveryAuthority?.permits(delivery) == true { return }
+            deliveryAuthority?.revoke()
+            deliveryAuthority = workerDecoderDeliveryFreshness.map(PublishingDeliveryAuthority.init)
+        }
+    }
+    private var deliveryAuthority: PublishingDeliveryAuthority?
+    deinit { deliveryAuthority?.revoke() }
     private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
     @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness?
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
@@ -377,7 +385,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                           let delivery = self.workerDecoderDeliveryFreshness,
                           let clock = current.session.snapshot.transportClock else { return nil }
                     return .init(history: history, clock: .init(scope: history.scope, transportClock: clock, isClosed: false),
-                        diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery)
+                        diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery, authority: self.deliveryAuthority)
                 }
                 #if DEBUG
                 cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit()

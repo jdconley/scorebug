@@ -6,9 +6,104 @@ import ScorebugStreaming
 import XCTest
 
 final class PublishingDeliverySourceWindowTests: XCTestCase {
+    private var bitRate = 350_000
+    func testFailureAdapterKeepsStrictLossBoundaryAndRejectsUncertainty() throws {
+        XCTAssertNil(try classify(missing: [40,41,42], late: []).failureSignal(sequence: 1))
+        let value = try classify(missing: [40,41,42,43], late: [])
+        let failure = try XCTUnwrap(value.failureSignal(sequence: 2))
+        XCTAssertEqual(failure.expectedFrames, 60); XCTAssertEqual(failure.missingFrames, 4)
+        XCTAssertEqual(failure.onTimeFrames, 56); XCTAssertEqual(failure.appliedRevision, 7)
+        XCTAssertEqual(failure.observedAtLowerBound, 4.5); XCTAssertEqual(failure.sequence, 2)
+        XCTAssertNil(try classify(missing: [], late: [], latency: 0.55, ageMs: 100, deadline: 0.5).failureSignal(sequence: 3))
+    }
+    private func deliveryOwner(_ native: DeadlineNative, behavior: QualityController.Behavior = .progressive) throws -> PublishingQualitySession {
+        try .init(operations: .init(setBitRate: { rate, _ in native.write(rate) }, stop: {}, videoStartup: { native.startup }),
+            profiles: [.init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 700_000)],
+            attemptID: session, initial: .init(profileID: "240p30", videoBitrate: bitRate),
+            behavior: behavior, uptime: { native.now })
+    }
+    func testNativeOwnerConsumesFailureOnceAndAppliesMinimum() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap(); native.setNow(4.5)
+        let observation = try classify(missing: [40,41,42,43], late: [], revision: 0, profileID: "240p30", submittedBoundary: .zero, withAuthority: true)
+        let authority = try XCTUnwrap(observation.authority)
+        let decision = try await owner.evaluateDeliveryFailure(observation, authority: authority, instant: instant)
+        let reset = try XCTUnwrap(decision?.recommendation)
+        XCTAssertEqual(reset.kind, .reset); XCTAssertEqual(reset.settings.videoBitrate, 350_000)
+        let duplicate = try await owner.evaluateDeliveryFailure(observation, authority: authority, instant: instant)
+        XCTAssertNil(duplicate)
+        // Retiring later telemetry must not erase an already justified reset.
+        authority.revoke()
+        try await owner.apply(reset)
+        let state = await owner.snapshot
+        XCTAssertEqual(state.applied?.videoBitrate, 350_000); XCTAssertEqual(state.revision, 1)
+        XCTAssertNil(state.lastWindow); XCTAssertNotNil(state.lastDeliveryFailure)
+        XCTAssertEqual(native.calls, 2)
+        await owner.stop()
+    }
+    func testNativeOwnerRejectsRetiredStaleAndWrongRevisionBeforeLatching() async throws {
+        for fault in ["retired", "stale", "revision", "configuration"] {
+            bitRate = 700_000
+            let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+            try await owner.bootstrap(); native.setNow(fault == "stale" ? 4.751 : 4.5)
+            if fault == "configuration" { bitRate = 600_000 }
+            let observation = try classify(missing: [40,41,42,43], late: [], revision: fault == "revision" ? 1 : 0,
+                profileID: "240p30", submittedBoundary: .zero, withAuthority: true)
+            let authority = try XCTUnwrap(observation.authority)
+            if fault == "retired" { authority.revoke() }
+            do { _ = try await owner.evaluateDeliveryFailure(observation, authority: authority, instant: instant); XCTFail(fault) } catch {}
+            XCTAssertEqual(native.calls, 1)
+            let advice = try await owner.checkTrialDeadline(); XCTAssertNil(advice)
+            await owner.stop()
+        }
+    }
+    func testReplacementAuthorityCannotReauthorizeAnOlderClassification() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap(); native.setNow(4.5)
+        let observation = try classify(missing: [40,41,42,43], late: [], revision: 0, profileID: "240p30", submittedBoundary: .zero, withAuthority: true)
+        let retired = try XCTUnwrap(observation.authority)
+        retired.revoke()
+        let replacement = PublishingDeliveryAuthority(delivery: observation.delivery)
+        do {
+            _ = try await owner.evaluateDeliveryFailure(observation, authority: replacement, instant: instant)
+            XCTFail("A new authority must not authorize a classification created before it")
+        } catch {}
+        let advice = try await owner.checkTrialDeadline(); XCTAssertNil(advice)
+        await owner.stop()
+    }
+    func testQueuedFailureExpiresBeforeNextHealthPoll() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap(); native.setNow(4.53)
+        let observation = try classify(missing: [40,41,42,43], late: [], revision: 0, profileID: "240p30",
+            submittedBoundary: .zero, withAuthority: true, expiresAt: "2040-01-01T00:00:00.020Z")
+        let authority = try XCTUnwrap(observation.authority)
+        XCTAssertTrue(authority.permits(observation.delivery), "No health poll has revoked the context yet")
+        do {
+            _ = try await owner.evaluateDeliveryFailure(observation, authority: authority, instant: instant + .milliseconds(30))
+            XCTFail("Status expiry must reject even when sample age is below 250ms")
+        } catch {}
+        let advice = try await owner.checkTrialDeadline(); XCTAssertNil(advice)
+        XCTAssertEqual(native.calls, 1)
+        await owner.stop()
+    }
+    func testDeliveryAuthorityRetiresEvidencePermanently() throws {
+        let delivery = try classify().delivery
+        let authority = PublishingDeliveryAuthority(delivery: delivery)
+        XCTAssertTrue(authority.permits(delivery))
+        XCTAssertFalse(authority.permits(try classify(workerEpoch: "66666666-6666-4666-8666-666666666666").delivery))
+        XCTAssertFalse(authority.permits(try classify(deliveryScope: "77777777-7777-4777-8777-777777777777").delivery))
+        authority.revoke()
+        XCTAssertFalse(authority.permits(delivery))
+        authority.revoke()
+        XCTAssertFalse(authority.permits(delivery))
+        XCTAssertTrue(PublishingDeliveryAuthority(delivery: delivery).permits(delivery))
+    }
     private let session = UUID()
     private var configuration: VideoEncodingConfiguration {
-        .init(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, encoderSessionID: session, bitRate: 350_000)!
+        .init(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, encoderSessionID: session, bitRate: bitRate)!
     }
     private var scope: VideoFrameObservationScope {
         .init(recordingID: "recording", matchID: "game", broadcastGeneration: 1,
@@ -124,13 +219,19 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     private let instant = ContinuousClock.now
     private func classify(missing: Set<Int> = [40], late: Set<Int> = [50],
                           latency: Double = 0.5, ageMs: Double = 0,
-                          deadline: Double = 1, fault: Int = -1, decodedThrough: Int = 90, audit: PublishingDeliveryMonitor.Audit? = nil) throws -> PublishingDeliveryObservation {
+                          deadline: Double = 1, fault: Int = -1, decodedThrough: Int = 90,
+                          workerEpoch: String = "22222222-2222-2222-2222-222222222222",
+                          deliveryScope: String = "55555555-5555-5555-5555-555555555555",
+                          revision: UInt64 = 7, profileID: String = "minimum", submittedBoundary: CMTime? = nil,
+                          withAuthority: Bool = false,
+                          expiresAt: String = "2040-01-01T00:00:05Z",
+                          audit: PublishingDeliveryMonitor.Audit? = nil) throws -> PublishingDeliveryObservation {
         let h = try history(missing: missing)
         let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1)!
         let receipt = PublishingBitRateChange(publishingGeneration: 1, configuration: configuration,
-            acceptedAt: 0, lastSubmittedSourcePTS: nil)!
-        var applied = PublishingQualityTelemetry.Applied(attemptID: session, revision: 7,
-            settings: .init(profileID: "minimum", videoBitrate: configuration.bitRate), receipt: receipt, acknowledgedAt: 0)
+            acceptedAt: 0, lastSubmittedSourcePTS: submittedBoundary)!
+        var applied = PublishingQualityTelemetry.Applied(attemptID: session, revision: revision,
+            settings: .init(profileID: profileID, videoBitrate: configuration.bitRate), receipt: receipt, acknowledgedAt: 0)
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 0, maxItems: 4, maxBytes: 100)
         var diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: clock, receipt: receipt,
             ingress: ingress.poll(at: 4.5), transport: PublishingTransportStatisticsTracker().snapshot,
@@ -144,7 +245,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         }
         if fault == 8 { rows.append((40 * 3000 - 1919, 2)) }
         rows.sort { $0.at < $1.at }
-        let wire: [String: Any] = ["formatVersion": 1, "scopeID": "55555555-5555-5555-5555-555555555555",
+        let wire: [String: Any] = ["formatVersion": 1, "scopeID": deliveryScope,
             "sampledAtMs": 4500, "coverageAtMs": 0, "afterOrdinal": 0, "lastOrdinal": rows.count,
             "arrivals": rows.map { [$0.pts as Any, $0.at * 1000] }, "invalidReason": NSNull(), "ended": false]
         let packet = try JSONDecoder().decode(DecoderDeliveryPacket.self,
@@ -158,13 +259,14 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             clock: .init(convention: "mpegts-ingress-origin-90k-v1", originPTS: "10919"))
         var response = WorkerMediaStatusResponse(status: .init(gameId: "game", generation: 1,
             workerId: "worker", state: .producingOutput, observation: observation,
-            observedAt: "2040-01-01T00:00:00Z", expiresAt: "2040-01-01T00:00:05Z",
-            workerEpoch: "22222222-2222-2222-2222-222222222222", publication: publication),
+            observedAt: "2040-01-01T00:00:00Z", expiresAt: expiresAt,
+            workerEpoch: workerEpoch, publication: publication),
             serverTime: "2040-01-01T00:00:00Z")
         response.status.decoderDeliveryAgeUpperBoundMs = ageMs
         var tracker = WorkerDecoderDeliveryTracker()
         let delivery = try XCTUnwrap(tracker.observe(response: response, expectedPublishingAttemptID: session,
             receivedAt: instant, requestDuration: .zero))
+        let authority = withAuthority ? PublishingDeliveryAuthority(delivery: delivery) : nil
         switch fault {
         case 0: diagnostics.isPublishing = false
         case 1: diagnostics.receipt = nil
@@ -177,7 +279,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         if let audit {
             let input = PublishingDeliveryMonitor.Input(history: h,
                 clock: .init(scope: scope, transportClock: clock, isClosed: false),
-                diagnostics: diagnostics, delivery: delivery)
+                diagnostics: diagnostics, delivery: delivery, authority: authority)
             audit.record(input: input, applied: applied, at: 0.5, instant: instant)
             audit.record(input: input, applied: applied, at: 4.5, instant: instant)
             audit.record(input: input, applied: applied, at: 4.5, instant: instant)
@@ -188,7 +290,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             applied: applied, diagnostics: diagnostics, delivery: delivery,
             windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : 4.5,
             instant: fault == 7 ? instant + .seconds(6) : instant,
-            maximumSampleAge: 0.25, latencyBudget: deadline)
+            maximumSampleAge: 0.25, latencyBudget: deadline, authority: authority)
     }
     func testAuthenticatedAdapterClassifiesLocalLossAndLateFramesSeparately() throws {
         let value = try classify()
@@ -253,4 +355,22 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         }
     }
 
+}
+
+private final class DeadlineNative: @unchecked Sendable {
+    private let lock = NSLock()
+    private let initial: VideoEncodingConfiguration
+    private var time = 0.0, count = 0
+    init(configuration: VideoEncodingConfiguration) { initial = configuration }
+    var now: Double { lock.withLock { time } }
+    var calls: Int { lock.withLock { count } }
+    var startup: PublishingVideoStartup? { .init(profile: .low240, width: 426, height: 240,
+        publishingGeneration: 1, encoderSessionID: initial.encoderSessionID, firstSourcePTS: .zero,
+        submittedAt: 0, completedAt: 0, observedAt: 0) }
+    func setNow(_ value: Double) { lock.withLock { time = value } }
+    func write(_ rate: Int) -> PublishingBitRateChange { lock.withLock {
+        count += 1
+        let config = rate == initial.bitRate ? initial : VideoEncodingConfiguration(id: UUID(), encoderSessionID: initial.encoderSessionID, bitRate: rate)!
+        return PublishingBitRateChange(publishingGeneration: 1, configuration: config, acceptedAt: time, lastSubmittedSourcePTS: .zero)!
+    } }
 }

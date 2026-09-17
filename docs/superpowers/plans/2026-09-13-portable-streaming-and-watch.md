@@ -1766,3 +1766,17 @@ in `artifacts/qa/deadline-baseline-final-verification.json`. Next connect scoped
 deadline failures to minimum-reset decisions and qualify actual reset/recovery;
 the experiment does not yet activate automatic adaptation or qualify physical
 devices, candidate headroom, or remote workers.
+
+[Deadline-reset ownership integration](2026-09-17-deadline-reset-integration.md)
+now maps fully classified one-second floor and two-second loss failures into scoped
+Core minimum-reset decisions. Independent lane watermarks permit overlapping
+failure observations without giving recovery credit. Native owner tests dispatch
+and acknowledge a minimum-rate reset once; malformed, stale, retired or mismatched
+measurements cannot initiate it. Classification retains its exact revocable worker
+context authority, and admission separately rechecks status expiry before the next
+health poll. Already justified reset intent survives later telemetry retirement.
+
+The Core and native admission checkpoint is independently reviewed and tested.
+Driver activation, decision export and a new actual reset experiment are the next
+steps; the injected native-operation test does not qualify physical encoder behavior
+or automatic recovery. Evidence: `artifacts/qa/deadline-reset-final-verification.json`.

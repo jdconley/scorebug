@@ -63,6 +63,7 @@ enum PublishingDeliveryMonitor {
         let clock: PublishingClockObservation
         let diagnostics: PublishingQualityTelemetry.Diagnostics
         let delivery: WorkerDecoderDeliveryFreshness
+        var authority: PublishingDeliveryAuthority? = nil
     }
 
     /// Explicit qualification export. Scalar metadata only, bounded to 256 rows.
@@ -124,7 +125,7 @@ enum PublishingDeliveryMonitor {
                     let observation = try PublishingDeliveryObservation.classify(history: input.history, clock: input.clock,
                         applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
                         windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
-                        maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget)
+                        maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget, authority: input.authority)
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
                     row["history"] = Self.history(input.history, start: window.start, anchor: observation.source.anchorSourcePTS)
                     let result = observation.result

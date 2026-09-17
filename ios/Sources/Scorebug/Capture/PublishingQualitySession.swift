@@ -17,6 +17,7 @@ actor PublishingQualitySession {
         let acknowledgedAt: Double?
         let lastWindow: QualityController.Window?
         let lastDecoderStall: QualityController.DecoderStall?
+        let lastDeliveryFailure: QualityController.DeliveryFailure?
         let evaluatedAt: Double?
         let isClosed: Bool
         let isBusy: Bool
@@ -42,6 +43,10 @@ actor PublishingQualitySession {
     private var acknowledgedAt: Double?
     private var lastWindow: QualityController.Window?
     private var lastDecoderStall: QualityController.DecoderStall?
+    private var lastDeliveryFailure: QualityController.DeliveryFailure?
+    private var deliveryAuthority: PublishingDeliveryAuthority?
+    private var deliveryRevision: UInt64?
+    private var deliveryEnds: [Int: Double] = [:]
     private var evaluatedAt: Double?
     private var pending: QualityController.Recommendation?
     private var busy = false
@@ -103,7 +108,8 @@ actor PublishingQualitySession {
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
-        lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
+        lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, lastDeliveryFailure: lastDeliveryFailure,
+        evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
@@ -228,6 +234,56 @@ actor PublishingQualitySession {
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
             consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal
+            pending = decision.recommendation; evaluatedAt = now
+            return decision
+        } catch { policy.invalidateTelemetry(); pending = nil; throw error }
+    }
+    /// Classification occurred synchronously at the current-input boundary.
+    /// Retirement is checked again here after actor scheduling, before the
+    /// known failure may latch a reset. No await occurs during admission.
+    func evaluateDeliveryFailure(_ observation: PublishingDeliveryObservation,
+                                 authority: PublishingDeliveryAuthority,
+                                 instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
+        try admit()
+        guard behavior == .progressive else { return nil }
+        guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        defer { self.policy = policy }
+        do {
+            let now = try time(), source = observation.source
+            guard observation.authority === authority, authority.permits(observation.delivery),
+                  source.scope.publishingAttemptID == attemptID,
+                  observation.delivery.context.publication.publishingAttemptId == attemptID.uuidString.lowercased(),
+                  observation.appliedRevision == policy.appliedRevision,
+                  source.publishingGeneration == receipt.publishingGeneration,
+                  source.configuration == receipt.configuration,
+                  source.configuration.bitRate == policy.applied.videoBitrate,
+                  source.windowStart >= acknowledgedAt else { throw PublishingQualityTelemetry.Failure.ownership }
+            let duration = source.windowEnd - source.windowStart
+            guard [1.0, 2.0].contains(duration) else { throw QualityController.ValidationError.invalidWindow }
+            let lane = Int(duration)
+            if deliveryAuthority === authority, deliveryRevision == policy.appliedRevision,
+               let end = deliveryEnds[lane], source.windowStart < end { return nil }
+            // Status TTL can expire while work is queued, before the model's
+            // next health poll revokes its context authority.
+            guard let currentAge = observation.delivery.sampleAgeUpperBound(at: instant ?? .now),
+                  currentAge >= .zero,
+                  currentAge <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                  observation.observedAtLowerBound.isFinite, observation.observedAtLowerBound <= now,
+                  source.windowEnd <= observation.observedAtLowerBound,
+                  now - observation.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
+                  now - source.windowEnd <= 2 else { throw PublishingQualityTelemetry.Failure.freshness }
+            if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
+                if deliveryAuthority != nil { policy.invalidateTelemetry(); pending = nil }
+                deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
+            }
+            deliveryEnds[lane] = source.windowEnd
+            guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
+            guard let signal = observation.failureSignal(sequence: lastPolicySequence + 1) else {
+                if observation.result.uncertainFrames > 0 { policy.invalidateTelemetry(); pending = nil }
+                return nil
+            }
+            let decision = try policy.evaluateDeliveryFailure(signal, at: now)
+            lastPolicySequence = signal.sequence; lastDeliveryFailure = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
         } catch { policy.invalidateTelemetry(); pending = nil; throw error }
