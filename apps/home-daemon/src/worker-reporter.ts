@@ -1,5 +1,8 @@
 import {
   DECODED_VIDEO_TRANSPORT_CLOCK,
+  WORKER_DECODER_DELIVERY_PROTOCOL,
+  deliveryDelta,
+  type DecoderDeliveryCursor,
   WORKER_PROCESSING_PROTOCOL,
   WORKER_DECODER_CADENCE_PROTOCOL,
   WORKER_PIPELINE_READ_IDENTITY,
@@ -16,6 +19,7 @@ const session = z.object({
   pipelineReadIdentity: z.string().optional(),
   workerProcessing: z.string().optional(),
   decoderCadence: z.string().optional(),
+  decoderDelivery: z.string().optional(),
 });
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
@@ -25,6 +29,7 @@ export class WorkerReporter {
   private readonly base: URL;
   private session: z.infer<typeof session> | undefined;
   private sequence = 0;
+  private deliveryCursor: DecoderDeliveryCursor | undefined;
   private inFlight: Promise<void> | undefined;
   constructor(
     url: string,
@@ -99,6 +104,7 @@ export class WorkerReporter {
     return parsed.data;
   }
   private async register(signal: AbortSignal): Promise<void> {
+    this.deliveryCursor = undefined;
     this.session = await this.post(
       'sessions',
       { workerId: this.workerId, runId: this.runId },
@@ -155,6 +161,18 @@ export class WorkerReporter {
         observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
       )
         delete observation.decoderCadence;
+      if (
+        registered.decoderDelivery !== WORKER_DECODER_DELIVERY_PROTOCOL ||
+        !canIdentifyRead ||
+        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+      )
+        delete observation.decoderDelivery;
+      else if (observation.decoderDelivery)
+        observation.decoderDelivery = deliveryDelta(
+          observation.decoderDelivery,
+          this.deliveryCursor,
+        );
       if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
       const sequence = ++this.sequence;
       try {
@@ -173,6 +191,11 @@ export class WorkerReporter {
         );
         checkDeadline();
         this.session = { ...registered, timingToken: acknowledgement.timingToken };
+        if (observation.decoderDelivery)
+          this.deliveryCursor = {
+            scopeID: observation.decoderDelivery.scopeID,
+            lastOrdinal: observation.decoderDelivery.lastOrdinal,
+          };
         return;
       } catch (error) {
         if (!(error instanceof MissingSession)) throw error;

@@ -1660,3 +1660,25 @@ Measured full-history reporting at 10 Hz would cost about 1.16 Mbps before overh
 so it must use bounded deltas/coalescing. Production automatic adaptation remains
 disabled until those gates and candidate-headroom/recovery checks pass. Physical
 phone/Watch and remote CPU/GPU/cloud qualification remain outstanding.
+
+
+[Incremental delivery reporting](2026-09-17-incremental-delivery-reporting.md) now
+carries bounded arrival history through capability-negotiated worker reports and
+opted-in authenticated status queries. Acknowledged cursors avoid repeating the full
+ring; lost acknowledgements, API restarts and client cursor loss resynchronize safely.
+Frozen samples cannot be made fresh by a new timing token, including after omission.
+
+Actual FFmpeg/HTTP fixture `incremental-delivery-native-r4qx4E` reconstructed 478
+arrivals across 161 status reports, with nonempty acknowledgement loss at ordinal160,
+API restart/full worker snapshot at208 and client resynchronization at304. Delivery
+payload averaged 22.541 kbps including acquisition/resynchronization; complete HTTP
+bodies averaged 62.462 kbps upstream and 70.034 kbps downstream before network overhead.
+Saved output fully decodes. Independent reconstruction rejects six corrupted variants.
+All 6 protocol, 378 worker, 448 API and 1,272 tooling tests and both TypeScript
+application typechecks pass. Evidence: `artifacts/qa/incremental-delivery-final-verification.json`.
+
+Next bind this stream into the native consumer, current publication/worker epoch and
+complete capture/configuration windows. The local experiment qualifies authenticated
+HTTP reporting, not physical phone deadlines or relay attachment. Automatic quality
+recovery, candidate headroom, reconnect, physical Watch/phone and remote worker gates
+remain open.

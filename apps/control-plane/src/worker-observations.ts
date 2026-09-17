@@ -1,3 +1,10 @@
+import {
+  advanceDelivery,
+  deliveryDelta,
+  WORKER_DECODER_DELIVERY_PROTOCOL,
+  type DecoderDeliveryPacket,
+  type DecoderDeliveryCursor,
+} from '@scorebug/protocol';
 import { advanceCadence, type CadenceHistory } from './decoder-cadence.js';
 import {
   processingFitsObservation,
@@ -60,6 +67,9 @@ type Report = {
   lastDecodedPTS?: number;
   decodedAge?: { sequence: number; ageMs: number; at: number | undefined };
   decodedUpperAge?: UpperAge;
+  delivery?: DecoderDeliveryPacket;
+  deliveryAssignment?: { gameId: string; generation: number };
+  deliverySampleAge?: { ageMs: number; at: number };
   cadence?: CadenceHistory;
   cadenceAssignment?: { gameId: string; generation: number };
   cadenceSampleAge?: { ageMs: number; at: number };
@@ -74,6 +84,7 @@ type Session = {
   readIds: Set<string>;
   processingScopes: Set<string>;
   cadenceScopes: Set<string>;
+  deliveryScopes: Set<string>;
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
@@ -149,6 +160,7 @@ export class WorkerObservations {
         pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
         workerProcessing: WORKER_PROCESSING_PROTOCOL,
         decoderCadence: WORKER_DECODER_CADENCE_PROTOCOL,
+        decoderDelivery: WORKER_DECODER_DELIVERY_PROTOCOL,
         ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
@@ -159,6 +171,7 @@ export class WorkerObservations {
       readIds: new Set(),
       processingScopes: new Set(),
       cadenceScopes: new Set(),
+      deliveryScopes: new Set(),
       ...(sampled !== undefined
         ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
         : {}),
@@ -176,6 +189,7 @@ export class WorkerObservations {
       pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
       workerProcessing: WORKER_PROCESSING_PROTOCOL,
       decoderCadence: WORKER_DECODER_CADENCE_PROTOCOL,
+      decoderDelivery: WORKER_DECODER_DELIVERY_PROTOCOL,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
     };
@@ -287,6 +301,28 @@ export class WorkerObservations {
     } catch {
       throw new WorkerObservationError('observation_conflict');
     }
+    const nextDelivery = observation.decoderDelivery;
+    const priorDelivery = sameAttempt ? previous?.delivery : undefined;
+    const deliveryAssignment = sameAttempt ? previous?.deliveryAssignment : undefined;
+    let delivery: DecoderDeliveryPacket | undefined;
+    try {
+      if (
+        nextDelivery &&
+        (!pipelineReadId ||
+          observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          !['starting', 'producing_output'].includes(observation.state) ||
+          observation.attempt <= 0 ||
+          (deliveryAssignment &&
+            (deliveryAssignment.gameId !== observation.gameId ||
+              deliveryAssignment.generation !== observation.generation)) ||
+          (worker.current.deliveryScopes.has(nextDelivery.scopeID) &&
+            priorDelivery?.scopeID !== nextDelivery.scopeID))
+      )
+        throw new Error('delivery_scope');
+      delivery = advanceDelivery(priorDelivery, nextDelivery);
+    } catch {
+      throw new WorkerObservationError('observation_conflict');
+    }
     const beforeVideo = sameAttempt ? previous?.decodedVideo : undefined;
     const afterVideo = observation.decodedVideo;
     let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
@@ -374,7 +410,22 @@ export class WorkerObservations {
       nextCadence && token && receivedAt !== undefined
         ? upperAge(0, token.issuedAt, receivedAt)
         : undefined;
+    const sameDeliverySample =
+      nextDelivery && priorDelivery?.sampledAtMs === nextDelivery.sampledAtMs;
+    // A token obtained after an already reported sample cannot date that sample.
+    // Preserve its earlier proof, or leave it unknown across an unproven/omitted report.
+    const deliverySampleAge =
+      nextDelivery && receivedAt !== undefined
+        ? sameDeliverySample
+          ? previous?.deliverySampleAge
+            ? upperAge(previous.deliverySampleAge.ageMs, previous.deliverySampleAge.at, receivedAt)
+            : undefined
+          : token
+            ? upperAge(0, token.issuedAt, receivedAt)
+            : undefined
+        : undefined;
     const now = this.now();
+    if (nextDelivery) worker.current.deliveryScopes.add(nextDelivery.scopeID);
     if (nextCadence) worker.current.cadenceScopes.add(nextCadence.scopeID);
     if (pipelineReadId !== undefined) worker.current.readIds.add(pipelineReadId);
     if (processing) worker.current.processingScopes.add(processing.scopeID);
@@ -392,6 +443,18 @@ export class WorkerObservations {
         : {}),
       ...(cadenceSampleAge !== undefined && receivedAt !== undefined
         ? { cadenceSampleAge: { ageMs: cadenceSampleAge, at: receivedAt } }
+        : {}),
+      ...(delivery
+        ? {
+            delivery,
+            deliveryAssignment: deliveryAssignment ?? {
+              gameId: observation.gameId,
+              generation: observation.generation,
+            },
+          }
+        : {}),
+      ...(deliverySampleAge !== undefined && receivedAt !== undefined
+        ? { deliverySampleAge: { ageMs: deliverySampleAge, at: receivedAt } }
         : {}),
       sequence: body.sequence,
       request,
@@ -458,7 +521,10 @@ export class WorkerObservations {
     };
   }
 
-  status(gameId: string): WorkerMediaStatusResponse {
+  status(
+    gameId: string,
+    deliveryRequest?: true | DecoderDeliveryCursor,
+  ): WorkerMediaStatusResponse {
     const sampled = this.sampleMonotonic();
     const { broadcast } = this.media.get(gameId);
     const now = this.now();
@@ -489,6 +555,20 @@ export class WorkerObservations {
         ? WORKER_OBSERVATION_TTL_MS - (sampled - report.receivedAt)
         : 0;
     const observation = structuredClone(report.observation);
+    delete observation.decoderDelivery;
+    let decoderDeliveryAgeUpperBoundMs: number | undefined;
+    if (deliveryRequest && report.observation.decoderDelivery && report.delivery) {
+      observation.decoderDelivery = deliveryDelta(
+        report.delivery,
+        deliveryRequest === true ? undefined : deliveryRequest,
+      );
+      if (sampled !== undefined && report.deliverySampleAge)
+        decoderDeliveryAgeUpperBoundMs = upperAge(
+          report.deliverySampleAge.ageMs,
+          report.deliverySampleAge.at,
+          sampled,
+        );
+    }
     let decodedVideoAgeUpperBoundMs: number | undefined;
     if (observation.decodedVideo?.completed) {
       const completed = observation.decodedVideo.completed;
@@ -515,6 +595,7 @@ export class WorkerObservations {
       status: {
         ...base,
         ...(decoderCadenceAgeUpperBoundMs !== undefined ? { decoderCadenceAgeUpperBoundMs } : {}),
+        ...(decoderDeliveryAgeUpperBoundMs !== undefined ? { decoderDeliveryAgeUpperBoundMs } : {}),
         workerEpoch: session.workerEpoch,
         state: remaining <= 0 ? 'stale' : report.observation.state,
         observation,

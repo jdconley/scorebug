@@ -1,3 +1,4 @@
+import type { DecoderDeliveryPacket } from '@scorebug/protocol';
 import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
 import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
@@ -48,7 +49,7 @@ export type PipelineHandle = {
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
   /** Short decoder-arrival windows; no source-loss or viewer-delivery claim. */
   snapshotDecoderCadence?: () => DecoderCadenceSnapshot;
-  /** Optional local arrival log; authenticated reporting is not yet negotiated. */
+  /** Optional local arrival log, separate from negotiated packet reporting. */
   snapshotDecoderDelivery?: () => DecoderDeliverySnapshot | null;
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
   snapshotProcessing?: () => WorkerProcessingSnapshot | null;
@@ -56,6 +57,7 @@ export type PipelineHandle = {
   snapshotVideoEvidence?: () => {
     decodedVideo: DecodedVideoSnapshot;
     decoderCadence?: DecoderCadenceSnapshot;
+    decoderDelivery?: DecoderDeliveryPacket;
     processing?: WorkerProcessingReport;
   };
 };
@@ -213,7 +215,7 @@ export type PipelineTerminal = Readonly<{
 }>;
 
 export type PipelineOptions = {
-  /** Explicit local observation; never exported in media status yet. */
+  /** Enable the bounded arrival collector and negotiated reporting packets. */
   deliveryTimeline?: boolean;
   /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
   encoderTiming?: boolean;
@@ -483,6 +485,7 @@ export function startPipeline(
     return {
       decodedVideo: video,
       decoderCadence: decoderCadence.snapshot(),
+      ...(decoderDelivery ? { decoderDelivery: decoderDelivery.packet() } : {}),
       ...(processing
         ? {
             processing: {

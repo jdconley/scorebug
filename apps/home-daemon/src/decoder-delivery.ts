@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { DECODER_DELIVERY_MAX_ARRIVALS, type DecoderDeliverySnapshot } from '@scorebug/protocol';
+import {
+  DECODER_DELIVERY_MAX_ARRIVALS,
+  type DecoderDeliverySnapshot,
+  type DecoderDeliveryPacket,
+} from '@scorebug/protocol';
 import { DecodedVideoParser } from './decoded-video.js';
 export type { DecoderDeliverySnapshot } from '@scorebug/protocol';
 /** Bounded complete arrival log. No absolute worker timestamp leaves the snapshot.
@@ -10,6 +14,7 @@ export class DecoderDeliveryTelemetry {
   private lastOrdinal = 0;
   private lastNow: number | undefined;
   private coverageStart: number | undefined;
+  private readonly origin: number;
   private invalidReason: string | null = null;
   private ended = false;
   private readonly parser = new DecodedVideoParser(
@@ -18,6 +23,7 @@ export class DecoderDeliveryTelemetry {
   );
   constructor(private readonly now: () => number = () => performance.now()) {
     this.coverageStart = this.time();
+    this.origin = this.coverageStart ?? 0;
   }
   private fail(reason: string) {
     this.invalidReason ??= reason;
@@ -65,6 +71,20 @@ export class DecoderDeliveryTelemetry {
     this.parser.end();
     this.time();
     this.ended = true;
+  }
+  packet(): DecoderDeliveryPacket {
+    const now = this.time() ?? this.lastNow ?? this.origin;
+    return {
+      formatVersion: 1,
+      scopeID: this.scopeID,
+      sampledAtMs: now - this.origin,
+      coverageAtMs: (this.coverageStart ?? this.origin) - this.origin,
+      afterOrdinal: Math.max(0, this.lastOrdinal - DECODER_DELIVERY_MAX_ARRIVALS),
+      lastOrdinal: this.lastOrdinal,
+      arrivals: this.arrivals.map((e) => [e.pts, e.at - this.origin]),
+      invalidReason: this.invalidReason,
+      ended: this.ended,
+    };
   }
   snapshot(): DecoderDeliverySnapshot {
     const now = this.time() ?? this.lastNow ?? 0;

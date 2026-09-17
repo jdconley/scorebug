@@ -1100,3 +1100,142 @@ it('rejected processing does not consume read IDs, scopes, sequences or timing t
   expect((await f.report(body)).status).toBe(200);
   expect((await f.status()).status.observation.processing.scopeID).toBe(o.processing.scopeID);
 });
+
+const deliveryFull = (n = 3) => ({
+  formatVersion: 1 as const,
+  scopeID: '11111111-1111-4111-8111-111111111111',
+  sampledAtMs: n * 40 + 10,
+  coverageAtMs: 0,
+  afterOrdinal: 0,
+  lastOrdinal: n,
+  arrivals: Array.from({ length: n }, (_, i) => [i * 3000, (i + 1) * 40]),
+  invalidReason: null,
+  ended: false,
+});
+it('authenticates and reconstructs delivery deltas, with opt-in status and server timing provenance', async () => {
+  const f = await fixture();
+  expect(f.session.decoderDelivery).toBe('decoder-delivery-delta-v1');
+  const body: any = {
+    ...f.body,
+    timingToken: f.session.timingToken,
+    pipelineReadId: '22222222-2222-4222-8222-222222222222',
+    observation: {
+      ...f.body.observation,
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      decoderDelivery: deliveryFull(),
+    },
+  };
+  expect((await f.report(body, 'bad')).status).toBe(401);
+  const response = await f.report(body);
+  expect(response.status).toBe(200);
+  const ack = await response.json();
+  expect((await f.status()).status.observation).not.toHaveProperty('decoderDelivery');
+  const get = async (query = 'decoderDelivery=decoder-delivery-delta-v1') =>
+    (await f.request('/v1/matches/match/media/status?' + query, f.scorer.token)).json();
+  const first = await get();
+  expect(first.status.observation.decoderDelivery).toEqual(deliveryFull());
+  expect(first.status.decoderDeliveryAgeUpperBoundMs).toBeGreaterThanOrEqual(0);
+  const next = deliveryFull(6);
+  next.afterOrdinal = 3;
+  next.arrivals = next.arrivals.slice(3);
+  const second = {
+    ...body,
+    sequence: 2,
+    timingToken: ack.timingToken,
+    observation: { ...body.observation, decoderDelivery: next },
+  };
+  expect((await f.report(second)).status).toBe(200);
+  expect((await get()).status.observation.decoderDelivery).toEqual(deliveryFull(6));
+  const delta = await get(
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryScope=' + next.scopeID + '&deliveryAfter=3',
+  );
+  expect(delta.status.observation.decoderDelivery).toEqual(next);
+  const damaged = structuredClone(second);
+  damaged.sequence = 3;
+  damaged.observation.decoderDelivery.arrivals[0][0]++;
+  expect((await f.report(damaged)).status).toBe(409);
+  const omitted = { ...body, sequence: 3 };
+  delete omitted.observation.decoderDelivery;
+  expect((await f.report(omitted)).status).toBe(200);
+  expect((await get()).status).not.toHaveProperty('decoderDeliveryAgeUpperBoundMs');
+  expect((await get()).status.observation).not.toHaveProperty('decoderDelivery');
+});
+it('rejects malformed delivery queries and cross-attempt reuse, and leaves unproven sample age unknown', async () => {
+  const f = await fixture();
+  const body: any = {
+    ...f.body,
+    pipelineReadId: '22222222-2222-4222-8222-222222222222',
+    observation: {
+      ...f.body.observation,
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      decoderDelivery: deliveryFull(),
+    },
+  };
+  expect((await f.report(body)).status).toBe(200);
+  const url = '/v1/matches/match/media/status?decoderDelivery=decoder-delivery-delta-v1';
+  const status = await (await f.request(url, f.scorer.token)).json();
+  expect(status.status).not.toHaveProperty('decoderDeliveryAgeUpperBoundMs');
+  for (const query of [
+    'decoderDelivery=future',
+    'deliveryAfter=1',
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryAfter=1',
+    'decoderDelivery=decoder-delivery-delta-v1&deliveryScope=bad&deliveryAfter=1',
+  ])
+    expect(
+      (await f.request('/v1/matches/match/media/status?' + query, f.scorer.token)).status,
+    ).toBe(400);
+  body.sequence = 2;
+  body.pipelineReadId = '33333333-3333-4333-8333-333333333333';
+  body.observation.attempt = 2;
+  expect((await f.report(body)).status).toBe(409);
+});
+
+it('a new token cannot refresh or retrospectively date a frozen delivery sample', async () => {
+  const { WorkerObservations } = await import('../src/worker-observations.js');
+  for (const withInitialToken of [true, false]) {
+    const f = await fixture();
+    let clock = 0;
+    const store = new WorkerObservations(f.matches.media, Date.now, () => clock);
+    const registered = store.register({ workerId: 'mac', runId: 'frozen' });
+    clock = 100;
+    const body: any = {
+      ...f.body,
+      sessionId: registered.sessionId,
+      ...(withInitialToken ? { timingToken: registered.timingToken } : {}),
+      pipelineReadId: '22222222-2222-4222-8222-222222222222',
+      observation: {
+        ...f.body.observation,
+        decodedVideo: {
+          clock: 'mpegts-pts-90k-v1',
+          completed: null,
+          invalidReason: null,
+          ended: false,
+        },
+        decoderDelivery: deliveryFull(),
+      },
+    };
+    const ack = store.report(body);
+    clock = 400;
+    store.report({ ...body, sequence: 2, timingToken: ack.timingToken });
+    const age = store.status('match', true).status.decoderDeliveryAgeUpperBoundMs;
+    if (withInitialToken) expect(age).toBe(400);
+    else expect(age).toBeUndefined();
+    const omitted = { ...body, sequence: 3, observation: { ...body.observation } };
+    delete omitted.observation.decoderDelivery;
+    clock = 500;
+    const omissionAck = store.report(omitted);
+    clock = 600;
+    store.report({ ...body, sequence: 4, timingToken: omissionAck.timingToken });
+    expect(store.status('match', true).status.decoderDeliveryAgeUpperBoundMs).toBeUndefined();
+  }
+});

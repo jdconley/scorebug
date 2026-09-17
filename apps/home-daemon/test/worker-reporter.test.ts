@@ -759,3 +759,97 @@ it('negotiates cadence only with exact capability, transport clock and private r
     );
   }
 });
+
+const deliveryFull = (n: number) => ({
+  formatVersion: 1 as const,
+  scopeID: '11111111-1111-4111-8111-111111111111',
+  sampledAtMs: n * 40 + 10,
+  coverageAtMs: 0,
+  afterOrdinal: 0,
+  lastOrdinal: n,
+  arrivals: Array.from({ length: n }, (_, i) => [i * 3000, (i + 1) * 40] as [number, number]),
+  invalidReason: null,
+  ended: false,
+});
+const deliveryObservation = (n: number) => ({
+  ...observation,
+  pipelineReadId: '22222222-2222-4222-8222-222222222222',
+  decodedVideo: { clock: 'mpegts-pts-90k-v1', completed: null, invalidReason: null, ended: false },
+  decoderDelivery: deliveryFull(n),
+});
+it('sends only newly acknowledged arrivals and safely resends after a lost acknowledgement', async () => {
+  let reports = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: 'delivery-session',
+            pipelineReadIdentity: 'srt-read-query-v1',
+            decodedVideoClock: 'mpegts-pts-90k-v1',
+            decoderDelivery: 'decoder-delivery-delta-v1',
+          },
+        }
+      : { body: { accepted: true }, ...(++reports === 2 ? { drop: true } : {}) },
+  );
+  await f.reporter.report(() => deliveryObservation(3));
+  await expect(f.reporter.report(() => deliveryObservation(6))).rejects.toThrow();
+  await f.reporter.report(() => deliveryObservation(9));
+  const packets = f.requests
+    .filter((r) => r.path.endsWith('observations'))
+    .map((r) => r.body.observation.decoderDelivery);
+  expect(packets.map((p) => [p.afterOrdinal, p.arrivals.length])).toEqual([
+    [0, 3],
+    [3, 3],
+    [3, 6],
+  ]);
+});
+it.each(['legacy', 'wrong', 'no-read', 'no-clock'])(
+  'omits unnegotiated delivery extension: %s',
+  async (mode) => {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? {
+            sessionId: 'delivery-session',
+            pipelineReadIdentity: 'srt-read-query-v1',
+            decodedVideoClock: mode === 'no-clock' ? undefined : 'mpegts-pts-90k-v1',
+            decoderDelivery:
+              mode === 'legacy'
+                ? undefined
+                : mode === 'wrong'
+                  ? 'future'
+                  : 'decoder-delivery-delta-v1',
+          }
+        : { accepted: true },
+    }));
+    const sample: any = deliveryObservation(3);
+    if (mode === 'no-read') delete sample.pipelineReadId;
+    await f.reporter.report(() => sample);
+    expect(f.requests.at(-1)!.body.observation).not.toHaveProperty('decoderDelivery');
+    expect(sample.decoderDelivery).toBeDefined();
+  },
+);
+it('renegotiates delivery and resets cursor after API restart', async () => {
+  let registrations = 0,
+    reports = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: `s${++registrations}`,
+            pipelineReadIdentity: 'srt-read-query-v1',
+            decodedVideoClock: 'mpegts-pts-90k-v1',
+            decoderDelivery: 'decoder-delivery-delta-v1',
+          },
+        }
+      : ++reports === 2
+        ? { status: 409, body: { error: 'worker_session_unknown' } }
+        : { body: { accepted: true } },
+  );
+  await f.reporter.report(() => deliveryObservation(3));
+  await f.reporter.report(() => deliveryObservation(6));
+  expect(
+    f.requests
+      .filter((r) => r.path.endsWith('observations'))
+      .map((r) => r.body.observation.decoderDelivery.afterOrdinal),
+  ).toEqual([0, 3, 0]);
+});

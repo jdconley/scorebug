@@ -1,3 +1,8 @@
+import {
+  deliveryPacketValid,
+  WORKER_DECODER_DELIVERY_PROTOCOL,
+  type DecoderDeliveryPacket,
+} from '@scorebug/protocol';
 import { decoderCadenceSchema } from '../decoder-cadence.js';
 import { workerProcessingSchema, processingFitsObservation } from '../worker-processing.js';
 import { Hono } from 'hono';
@@ -100,8 +105,46 @@ export function mediaRoutes(
     c.set('credential', credential);
     await next();
   });
-  app.get('/status', scoped, async (c) =>
-    c.json(await publicationStatus(c.get('credential').gameId, observations, relayLifecycle)),
+  app.get(
+    '/status',
+    scoped,
+    zValidator(
+      'query',
+      z
+        .object({
+          decoderDelivery: z.literal(WORKER_DECODER_DELIVERY_PROTOCOL).optional(),
+          deliveryScope: z.string().length(36).regex(PUBLISHING_ATTEMPT_ID_PATTERN).optional(),
+          deliveryAfter: z
+            .string()
+            .regex(/^(0|[1-9][0-9]*)$/)
+            .transform(Number)
+            .pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER))
+            .optional(),
+        })
+        .strict()
+        .refine(
+          (q) =>
+            (q.deliveryScope === undefined) === (q.deliveryAfter === undefined) &&
+            (q.deliveryScope === undefined || q.decoderDelivery !== undefined),
+        ),
+    ),
+    async (c) => {
+      const q = c.req.valid('query');
+      const request = q.decoderDelivery
+        ? q.deliveryScope !== undefined
+          ? { scopeID: q.deliveryScope, lastOrdinal: q.deliveryAfter! }
+          : true
+        : undefined;
+      return c.json(
+        await publicationStatus(
+          c.get('credential').gameId,
+          observations,
+          relayLifecycle,
+          undefined,
+          request,
+        ),
+      );
+    },
   );
   app.get('/', scoped, (c) =>
     c.json({
@@ -223,6 +266,7 @@ export function workerRoutes(
               scoreRevision: sequence.nullable(),
               decodedVideo: decodedVideo.optional(),
               decoderCadence: decoderCadenceSchema.optional(),
+              decoderDelivery: z.custom<DecoderDeliveryPacket>(deliveryPacketValid).optional(),
               processing: workerProcessingSchema.optional(),
             })
             .strict()
@@ -237,7 +281,8 @@ export function workerRoutes(
     ),
     (c) => {
       const body = c.req.valid('json');
-      const { decodedVideo, processing, decoderCadence, ...observation } = body.observation;
+      const { decodedVideo, processing, decoderCadence, decoderDelivery, ...observation } =
+        body.observation;
       const { timingToken, pipelineReadId, ...request } = body;
       return c.json(
         observations.report({
@@ -248,6 +293,7 @@ export function workerRoutes(
             ...observation,
             ...(decodedVideo ? { decodedVideo } : {}),
             ...(decoderCadence ? { decoderCadence } : {}),
+            ...(decoderDelivery ? { decoderDelivery } : {}),
             ...(processing ? { processing } : {}),
           },
         }),

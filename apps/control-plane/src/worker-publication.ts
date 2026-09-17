@@ -1,4 +1,4 @@
-import type { WorkerMediaStatusResponse } from '@scorebug/protocol';
+import type { DecoderDeliveryCursor, WorkerMediaStatusResponse } from '@scorebug/protocol';
 import type { WorkerObservations } from './worker-observations.js';
 import type { RelayLifecycle } from './relay-lifecycle.js';
 import { canonical } from './canonical-json.js';
@@ -9,8 +9,9 @@ export async function publicationStatus(
   observations: WorkerObservations,
   relay?: RelayLifecycle,
   monotonicNow: () => number = () => performance.now(),
+  deliveryRequest?: true | DecoderDeliveryCursor,
 ): Promise<WorkerMediaStatusResponse> {
-  const initial = observations.status(gameId);
+  const initial = observations.status(gameId, deliveryRequest);
   const before = observations.readScope(initial);
   if (!before || !relay) return initial;
   const started = monotonicNow();
@@ -20,7 +21,7 @@ export async function publicationStatus(
   } catch {
     // Diagnostic availability never turns ordinary status into a control failure.
   }
-  const latest = observations.status(gameId);
+  const latest = observations.status(gameId, deliveryRequest);
   const after = observations.readScope(latest);
   if (found && after && canonical(before) === canonical(after)) {
     latest.status.publication = found.publication;

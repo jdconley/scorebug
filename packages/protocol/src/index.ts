@@ -7,3 +7,5 @@ export * from './worker-processing.js';
 export * from './receiver-probe.js';
 export * from './decoder-cadence.js';
 export * from './decoder-delivery.js';
+
+export * from './decoder-delivery-report.js';

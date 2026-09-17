@@ -49,6 +49,7 @@ const supervisor = new WorkerSupervisor({
         onProgress,
         stopTimeoutMs: 1000,
         encoderTiming,
+        deliveryTimeline: true,
         ...(diagnostics.onTerminal && { onTerminal: diagnostics.onTerminal }),
       },
     );

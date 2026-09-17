@@ -91,3 +91,34 @@ it('matches the shared native golden timeline without absolute worker timestamps
   f.at(3100);
   expect({ ...f.t.snapshot(), scopeID: golden.scopeID }).toEqual(golden);
 });
+
+it('produces stable scope-relative tuple times while snapshots age and history retires', () => {
+  const f = fixture();
+  f.at(110);
+  f.frame(3000);
+  f.at(120);
+  f.frame(0);
+  f.at(150);
+  const a = f.t.packet();
+  expect(a).toMatchObject({
+    sampledAtMs: 50,
+    coverageAtMs: 0,
+    afterOrdinal: 0,
+    lastOrdinal: 2,
+    arrivals: [
+      [3000, 10],
+      [0, 20],
+    ],
+  });
+  f.at(200);
+  expect(f.t.packet().arrivals).toEqual(a.arrivals);
+  for (let i = 0; i < 256; i++) {
+    f.at(210 + i);
+    f.frame(6000 + i * 3000);
+  }
+  expect(f.t.packet()).toMatchObject({ afterOrdinal: 2, lastOrdinal: 258, coverageAtMs: 20 });
+  f.t.end();
+  const ended = f.t.packet();
+  f.at(9999);
+  expect(f.t.packet()).toEqual(ended);
+});
