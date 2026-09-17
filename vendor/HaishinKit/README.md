@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and eleven added publishing/bitrate/clock/replacement/probe source primitives. Original upstream hashes
+files and fourteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -68,6 +68,23 @@ native probes now use v2; receiver matching includes stage plus UUID. See the
 
 The local deployment floor is iOS 17/macOS 13. The inherited libsrt binary still
 does not link an Intel simulator executable; this Mac uses the ARM64 slice.
+
+`VideoCandidateEncoder` owns one finite raw-video measurement using the existing
+`VideoCodec` settings and native encoder. Explicit startup precedes synchronous
+bounded admission. `finish` and `cancel` close admission and join input consumption,
+native completion and output consumption before returning scalar results. Limits
+are 121 frames, 4.25 seconds of source time, eight seconds of admission time,
+16 MiB per raw sample, four unresolved inputs and the existing 8 × 2 MiB compressed
+queue. The admission deadline cannot impose a hard timeout on a native completion
+call; shutdown retains ownership until that call returns.
+
+Successful measurement reconciles every accepted input with a native completion
+and actual compressed H.264 output from one encoder session, including startup
+keyframe bytes. The requested settings are not native property readback. Results
+measure video payload only; audio, mux, transport cost and available network
+capacity require separate qualification. This primitive does not alter a live
+publisher or an archive, and concurrent resource contention still needs validation
+before production quality increases are enabled.
 
 Verified live average-bitrate changes use `SRTStream.setVerifiedVideoBitRate` with
 an active publishing-generation token. They require a ready raw-video encoder,

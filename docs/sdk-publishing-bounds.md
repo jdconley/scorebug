@@ -2,8 +2,9 @@
 
 The maintained HaishinKit 2.2.5 patch preserves startup audio, the shared audio/video
 clock, composition offsets, and a valid first video PTS of zero. It adds finite
-compressed publishing queues and terminal, observable failure. The initial profile
-is 1080p30 at 6 Mbps; higher profiles require separate qualification against these
+compressed publishing queues and terminal, observable failure. The current app
+starts live video at 240p30/350 kbps; its independent archive retains its own
+settings. Higher live profiles require separate qualification against these
 limits. This is a contract for named queues, not a claim that framework allocations
 or process RSS have a mathematical upper bound.
 
@@ -42,6 +43,17 @@ CMSampleBuffer/AVAudioBuffer object overhead and backing capacity, codec interna
 framework pools, raw video, operating-system buffers, libSRT queues, producer-owned
 input, array metadata, and other application allocations are outside these numbers.
 The compressed video byte check does not apply to decompressed playback images.
+
+The optional candidate encoder has a separate budget. It admits at most four
+unresolved raw inputs, each at most 16 MiB, across its queue and native submissions.
+Credit returns only when the corresponding compressed output is reconciled. It
+uses its own 8 × 2 MiB compressed queue and retains at most 121 scalar frame records.
+Admission ends within eight monotonic seconds and spans at most 4.25 seconds of
+source timestamps. These limits do not count producer-owned buffers or bound native
+framework allocations. A failed or cancelled candidate produces no successful
+measurement and cannot terminate either the live publisher or local recording.
+Calling `finish` or `cancel` joins all candidate tasks and captured native completion;
+an admission deadline is not a hard timeout on a blocking native completion call.
 
 The SRT publishing raw-video input uses the caller's positive frame bound, or a
 default of two when previously unbounded. Dropping a stale raw frame before encoding

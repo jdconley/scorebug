@@ -40,7 +40,19 @@ import Testing
         let gate = StreamProbeWakeGate(); defer { gate.release() }
         let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
         let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
-            probeWakeRunner: { _, _ in await gate.wait() })
+            probeWakeRunner: { probe, accounting in
+                let scheduler = Task {
+                    await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
+                }
+                let deadline = ContinuousClock.now + .seconds(1)
+                while !Task.isCancelled && ContinuousClock.now < deadline {
+                    let sample = probe.snapshot(now: { ProcessInfo.processInfo.systemUptime })
+                    if sample.acceptedPayloadBytes > 0 || sample.reason != nil { break }
+                    try? await Task.sleep(for: .milliseconds(1))
+                }
+                scheduler.cancel(); await scheduler.value
+                await gate.wait()
+            })
         await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
         await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
         let generation = try #require(await stream.publishingGeneration)
@@ -48,6 +60,11 @@ import Testing
         var end = ContinuousClock.now + .seconds(1)
         while !gate.entered && ContinuousClock.now < end { await Task.yield() }
         try #require(gate.entered)
+        // Padding acceptance follows the single transport consumer's completed
+        // media sends. Closing an entered media send intentionally kills its
+        // connection; this test isolates joining the probe wake owner instead.
+        let accepted = await stream.bandwidthProbeSnapshot?.acceptedPayloadBytes ?? 0
+        try #require(accepted > 0)
         let first = Task { await stream.close(); gate.didClose() }
         end = ContinuousClock.now + .seconds(1)
         while await stream.bandwidthProbeSnapshot?.reason != .closed && ContinuousClock.now < end { await Task.yield() }
@@ -59,8 +76,44 @@ import Testing
         #expect(await stream.publishingGeneration == nil)
         gate.release(); await first.value; await second.value
         #expect(gate.closes == 2)
+        let connected = await connection.connected
+        let connectionError = await connection.publishingError
+        #expect(connected, "Republish requires a surviving connection; error=\(String(describing: connectionError))")
         await stream.setExpectedMedias([.video]); await stream.publish()
         #expect(await stream.publishingGeneration != nil)
+        await stream.close(); await connection.close()
+    }
+    @Test func closeDuringEnteredMediaSendTerminatesConnectionBeforeRepublish() async throws {
+        let media = PaddingMediaGate(); defer { media.release() }
+        let socket = SRTSocket(sender: { data in
+            media.enter(); return Int32(data.count)
+        }, statisticsReader: probeStatistics)
+        let connection = SRTConnection(socket: socket)
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        media.arm()
+        await stream.append(try paddingVideo(0))
+        var end = ContinuousClock.now + .seconds(2)
+        while !media.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(media.entered)
+        // close cancels the transport task while its socket send is entered.
+        // Releasing the native call exposes that cancellation at the next check.
+        await stream.close()
+        media.release()
+        end = ContinuousClock.now + .seconds(2)
+        while await connection.publishingError == nil && ContinuousClock.now < end { await Task.yield() }
+        let error = await connection.publishingError
+        #expect(await socket.publishingError == .outputTerminated(boundary: "SRT socket cancelled send"))
+        // The connection's send catch and failure observer race to latch the
+        // terminal reason; both must close it, while the socket reason is exact.
+        #expect(error != nil)
+        end = ContinuousClock.now + .seconds(2)
+        while await connection.connected && ContinuousClock.now < end { await Task.yield() }
+        #expect(await connection.connected == false)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration == nil)
         await stream.close(); await connection.close()
     }
     @Test func finishStillJoinsOriginalDrainWhenCloseOverlaps() async throws {

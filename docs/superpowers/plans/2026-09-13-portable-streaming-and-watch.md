@@ -1913,3 +1913,29 @@ fresh measured candidate encoding cost (keyframes, audio, mux and overhead) with
 repeated native headroom observations, then qualify minimum-first upward trials
 and recovery. Long-session campaign policy, sustained impairment/thermal tests,
 physical iPhone/Watch routes and portable remote CPU/GPU deployment remain open.
+
+### 2026-09-17: bounded candidate video encoding
+
+[Candidate encoding](2026-09-17-candidate-encoder.md) now measures actual H.264
+output at a proposed profile using the publishing codec and settings. A separate
+single-use owner admits at most four unresolved raw inputs, 121 total frames,
+4.25 seconds of source time and eight seconds of admission time. It reconciles
+every accepted frame with native completion and compressed output from one encoder
+session, retaining initial-keyframe bytes. Cancellation and finish join native work
+before returning. Closing admission checks the deadline independently of the timer.
+
+The Streaming adapter binds results to recording, match, broadcast generation,
+publishing attempt and applied revision. Actual native tests cover scaling and the
+app's 426×240 H.264 High-profile recipe. This is finite video-payload evidence;
+it does not yet qualify a complete fresh scene window, audio/mux/transport cost,
+spare bandwidth, or concurrent encoder resource impact. Capture fan-out, pressure
+cancellation and candidate/headroom admission remain the next integration step.
+Production automatic quality increases remain disabled.
+
+Verification passes 240 SDK and 105 streaming tests, simulator build-for-testing,
+unsigned combined phone/Watch Release (including arm64_32), patch provenance and
+spec/quality review. Frozen evidence:
+`artifacts/qa/candidate-encoder-final-verification.json`. The close-owner test now
+establishes completed media sends before requiring connection reuse; a controlled
+case separately verifies terminal cancellation during an entered send. No live
+transport behavior changed.
