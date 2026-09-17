@@ -5,6 +5,124 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testCandidateWaitsForFreshOverlappingSourceWithoutConsumingIdentity() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true, priorHealthEnd: 110)
+        var data: Data?, calls = 0
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, export: { data = $0 })
+        driver.candidateInputProvider = { _ in calls += 1; return f.admission }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertEqual(events.filter { $0["kind"] as? String == "candidate" }.count, 1)
+    }
+
+    func testSourceArrivingDuringProviderAwaitIsReadAtCandidateExecution() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now })
+        driver.candidateInputProvider = { state in
+            XCTAssertNil(state.lastWindow)
+            _ = try? await f.owner.evaluate(source: try! XCTUnwrap(f.source), diagnostics: try! XCTUnwrap(f.sourceDiagnostics),
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            return f.admission
+        }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        await driver.stop()
+    }
+
+    func testSourceInvalidatedDuringProviderAwaitCannotConsumeCandidate() async throws {
+        let f = try await CandidateQualityFixture.make()
+        var data: Data?
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now }, export: { data = $0 })
+        driver.candidateInputProvider = { _ in
+            var invalid = try! f.diagnostics(); invalid.isPublishing = false
+            _ = try? await f.owner.evaluateLocalPressure(diagnostics: invalid, transportLimits: nil)
+            return f.admission
+        }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertFalse(events.contains { $0["kind"] as? String == "candidate" || ($0["reason"] as? String)?.hasPrefix("candidate-") == true })
+    }
+
+    func testUnavailableCadenceProviderBlocksSourceAndCandidatePositivePaths() async throws {
+        for ownerLost in [false, true] {
+            let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+            let driver = PublishingQualityDriver(owner: f.owner,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now })
+            let diagnostics = try f.diagnostics()
+            driver.cadenceInputProvider = { ownerLost ? nil : .init(cadence: nil, diagnostics: diagnostics) }
+            var calls = 0
+            driver.candidateInputProvider = { _ in calls += 1; return f.admission }
+            await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+            XCTAssertEqual(calls, 0)
+            XCTAssertEqual(f.native.calls, ["rate:350000"])
+            let state = await f.owner.snapshot
+            XCTAssertNil(state.lastWindow)
+            await driver.stop()
+        }
+    }
+
+    func testMissingCurrentCadenceResetsOwnedTrialImmediately() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        f.native.setNow(116)
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now })
+        let current = try f.diagnostics()
+        driver.cadenceInputProvider = { .init(cadence: nil, diagnostics: current) }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current)?.value
+        let state = await f.owner.snapshot
+        XCTAssertEqual(state.revision, 2)
+        XCTAssertEqual(state.applied?.profileID, "240p30")
+        await driver.stop()
+    }
+
+    func testMissingCadenceWithInvalidReceiptInvalidatesProbationImmediately() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        f.native.setNow(116)
+        var invalid = try f.diagnostics(); invalid.receipt = nil
+        do { try await f.owner.noteUnavailableCadence(diagnostics: invalid); XCTFail("Invalid receipt") }
+        catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .ownership) }
+        let reset = try await f.owner.checkTrialDeadline()
+        XCTAssertEqual(reset?.kind, .reset)
+        await f.owner.stop()
+    }
+
+    func testMeasuredDeliveryModeRetainsSourceHealthBeforeCandidateAdmission() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true)
+        driver.candidateInputProvider = { state in
+            XCTAssertNotNil(state.lastWindow)
+            return f.admission
+        }
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        await driver.stop()
+    }
+
     func testNewHealthySourceAndCandidateApplyInSameTick() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
         let driver = PublishingQualityDriver(owner: f.owner,
@@ -94,17 +212,23 @@ import XCTest
     }
     func testRevokedCandidateFromAsyncProviderDoesNotStopOrWrite() async throws {
         let f = try await CandidateQualityFixture.make()
-        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil, uptime: { f.native.now })
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now }, export: { exported = $0 })
         driver.candidateInputProvider = { _ in
             await Task.yield()
             f.admission.authority.revoke()
             return f.admission
         }
         await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
         XCTAssertEqual(f.native.calls.count, 1)
         XCTAssertEqual(f.native.stops, 0)
         XCTAssertFalse(driver.isClosed)
         await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertEqual(events.filter { $0["kind"] as? String == "rejected" && $0["reason"] as? String == "candidate-staleAdvice" }.count, 1)
     }
     func testTransportEvidencePreservesBandwidthEstimateOnActualCollectionWithoutInventingCapacity() throws {
         var history = PublishingTransportStatisticsTracker()

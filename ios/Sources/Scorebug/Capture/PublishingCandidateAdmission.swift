@@ -71,6 +71,17 @@ struct PublishingCandidateAdmission: Sendable {
     let probe: PublishingProbeObservation
     private let currentReceipt: @Sendable () -> PublishingBitRateChange?
     private let candidateIsCurrent: @Sendable () -> Bool
+    #if DEBUG
+    private struct AuditWitness: Sendable {
+        let measurement: Measurement
+        let binding: PublishingProbeObservation
+        let boundAt: Double
+        let completedAt: Double
+        let pair: WorkerReceiverProbeIntervalPair
+        let clock: Clock
+    }
+    private var auditWitness: AuditWitness? = nil
+    #endif
 
     // An explicit IPv4 laboratory convention. This is not a generic estimate for
     // cellular, IPv6, encapsulated routes, or a production admission default.
@@ -136,8 +147,13 @@ struct PublishingCandidateAdmission: Sendable {
             settings: .init(profileID: m.profile.rawValue, videoBitrate: m.profile.bitRate),
             measuredStart: m.startedAt, measuredEnd: m.endedAt, evaluatedAt: now, validUntil: deadline,
             candidateTransportBitsPerSecond: cost, deliveredPaddingBitsPerSecond: padding)
-        return .init(value: value, applied: applied, authority: authority, receiver: receiver,
+        var admission = Self(value: value, applied: applied, authority: authority, receiver: receiver,
             probe: probe, currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent)
+        #if DEBUG
+        admission.auditWitness = .init(measurement: m, binding: binding, boundAt: boundAt,
+            completedAt: completedAt, pair: pair, clock: clock)
+        #endif
+        return admission
     }
     func permits(applied: PublishingQualityTelemetry.Applied, at now: Double,
                  instant: ContinuousClock.Instant) -> Bool {
@@ -169,3 +185,80 @@ extension PublishingCandidateAdmission.Measurement {
             transportBytes: cost.transportBytes, transportMessageCount: cost.transportMessageCount)
     }
 }
+
+#if DEBUG
+extension PublishingCandidateAdmission {
+    /// Frozen admission inputs, independent of later receipt/probe changes. This
+    /// bounded export owns no media and never reads a later receiver observation.
+    func auditData() throws -> Data {
+        guard let w = auditWitness else { throw CocoaError(.coderValueNotFound) }
+        func object<T: Encodable>(_ value: T) throws -> Any {
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+        }
+        func bounds(_ range: ClosedRange<ContinuousClock.Instant>) -> [Double] {
+            let projected = w.clock.bounds(range)
+            return [projected.lowerBound, projected.upperBound]
+        }
+        func point(_ instant: ContinuousClock.Instant) -> [Double] { bounds(instant...instant) }
+        func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
+        func time(_ pts: CMTime) -> [String: Any] {
+            ["value": String(pts.value), "timescale": pts.timescale, "epoch": String(pts.epoch), "flags": pts.flags.rawValue]
+        }
+        func probeObject(_ p: PublishingProbeObservation) -> [String: Any] {
+            ["id": p.id.uuidString.lowercased(), "publishingGeneration": String(p.publishingGeneration),
+             "stage": optional(p.stage), "bitRate": p.bitRate, "startedAt": p.startedAt,
+             "leaseDeadline": p.leaseDeadline, "acceptedPayloadBytes": String(p.acceptedPayloadBytes),
+             "lastAcceptedAt": optional(p.lastAcceptedAt), "reason": optional(p.reason)]
+        }
+        func interval(_ i: WorkerReceiverProbeInterval) throws -> [String: Any] {
+            let end = i.end, e = end.expected, duration = i.duration.components
+            return ["start": try object(i.start),
+                "end": ["snapshot": try object(end.snapshot), "publication": try object(end.publication),
+                    "workerEpoch": end.workerEpoch, "workerAttempt": end.workerAttempt,
+                    "expected": ["gameId": e.gameId, "generation": e.generation, "workerId": e.workerId,
+                        "publishingAttemptId": e.publishingAttemptId, "publishingGeneration": String(e.publishingGeneration),
+                        "probeId": e.probeId, "stage": optional(e.stage), "bitRate": e.bitRate],
+                    "serverAgeUpperBoundMs": end.serverAgeUpperBoundMs,
+                    "receivedAtUptimeBounds": point(end.receivedAt),
+                    "requestStartedAtUptimeBounds": point(end.requestStartedAt),
+                    "requestDurationSeconds": Clock.seconds(end.requestStartedAt.duration(to: end.receivedAt)),
+                    "snapshotAgeUpperBoundSeconds": optional(end.snapshotAgeUpperBound(at: w.clock.instant).map(Clock.seconds)),
+                    "lastDeliveryAgeUpperBoundSeconds": optional(end.lastDeliveryAgeUpperBound(at: w.clock.instant).map(Clock.seconds))],
+                "receiverClockOffsetUptimeBounds": bounds(i.receiverClockOffsetBounds),
+                "startUptimeBounds": bounds(i.startBounds), "endUptimeBounds": bounds(i.endBounds),
+                "durationNanoseconds": String(duration.seconds * 1_000_000_000 + duration.attoseconds / 1_000_000_000),
+                "deliveredMessages": String(i.deliveredMessages),
+                "deliveredPayloadBytesLowerBound": String(i.deliveredPayloadBytesLowerBound),
+                "payloadBitsPerSecondLowerBound": i.payloadBitsPerSecondLowerBound]
+        }
+        let m = w.measurement, receipt = applied.receipt
+        let result: [String: Any] = ["formatVersion": 1, "convention": "measured-candidate-ipv4-v1",
+            "evaluatedAt": value.evaluatedAt, "validUntil": value.validUntil,
+            "measurement": ["id": m.id.uuidString.lowercased(),
+                "scope": ["recordingID": m.scope.recordingID, "matchID": m.scope.matchID,
+                    "broadcastGeneration": m.scope.broadcastGeneration,
+                    "publishingAttemptID": m.scope.publishingAttemptID.uuidString,
+                    "appliedProfileRevision": String(m.scope.appliedProfileRevision)],
+                "profile": m.profile.rawValue, "publishingGeneration": String(m.publishingGeneration),
+                "startedAt": m.startedAt, "endedAt": m.endedAt, "firstInputAt": m.firstInputAt,
+                "lastInputAt": m.lastInputAt, "sourceDuration": m.sourceDuration, "submissionDuration": m.submissionDuration,
+                "transportBytes": m.transportBytes, "transportMessageCount": m.transportMessageCount],
+            "applied": ["attemptID": applied.attemptID.uuidString.lowercased(), "revision": String(applied.revision),
+                "profileID": applied.settings.profileID, "videoBitrate": applied.settings.videoBitrate,
+                "acknowledgedAt": applied.acknowledgedAt,
+                "receipt": ["generation": String(receipt.publishingGeneration),
+                    "configurationID": receipt.configuration.id.uuidString.lowercased(),
+                    "encoderSessionID": receipt.configuration.encoderSessionID.uuidString.lowercased(),
+                    "bitRate": receipt.configuration.bitRate, "acceptedAt": receipt.acceptedAt,
+                    "lastSubmittedPTS": optional(receipt.lastSubmittedSourcePTS.map(time))]],
+            "binding": probeObject(w.binding), "boundAt": w.boundAt, "completedAt": w.completedAt,
+            "probe": probeObject(probe),
+            "clock": ["before": w.clock.before, "after": w.clock.after,
+                "receiverClockOffsetUptimeBounds": bounds(w.pair.newer.receiverClockOffsetBounds)],
+            "intervals": try [interval(w.pair.older), interval(w.pair.newer)],
+            "candidateTransportBitsPerSecond": value.candidateTransportBitsPerSecond,
+            "deliveredPaddingBitsPerSecond": value.deliveredPaddingBitsPerSecond]
+        return try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    }
+}
+#endif

@@ -2,6 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as options from '../native-streaming-options.mjs';
 
+test('measured trials receive the same fresh worker report cadence as quality qualification', () => {
+  assert.equal(options.fixtureWorkerReportInterval({ environment: {} }), 1000);
+  assert.equal(
+    options.fixtureWorkerReportInterval({ environment: { SCOREBUG_TEST_NATIVE_QUALITY: '1' } }),
+    100,
+  );
+  assert.equal(options.fixtureWorkerReportInterval({ environment: {}, cadenceReports: true }), 100);
+  assert.equal(options.fixtureWorkerReportInterval({ environment: {}, measuredTrial: true }), 100);
+  for (const key of ['cadenceReports', 'measuredTrial']) {
+    for (const value of [1, '1', null]) {
+      assert.throws(() => options.fixtureWorkerReportInterval({ environment: {}, [key]: value }));
+    }
+  }
+});
+
 test('deadline experiment retains default and requires exact controlled-fixture override', () => {
   assert.equal(options.fixtureDeliveryDeadline({ environment: {}, decoderStall: false }), 1);
   for (const raw of ['1000', '1500']) {

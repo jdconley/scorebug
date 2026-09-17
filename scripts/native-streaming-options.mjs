@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict';
 
+export function fixtureWorkerReportInterval({
+  environment,
+  cadenceReports = false,
+  measuredTrial = false,
+}) {
+  assert.equal(typeof cadenceReports, 'boolean');
+  assert.equal(typeof measuredTrial, 'boolean');
+  return environment.SCOREBUG_TEST_NATIVE_QUALITY === '1' || cadenceReports || measuredTrial
+    ? 100
+    : 1000;
+}
+
 /** Called after continuity qualification of the known 30 fps source fixture. */
 export function qualifyNativeStreamingHold({ holdSeconds, savedFrames }) {
   assert.ok(
@@ -142,8 +154,13 @@ export function fixtureDecoderThreading(environment) {
 }
 
 /** Independent requested budget, forwarded unchanged through the native test boundary. */
-export function fixtureDeliveryDeadline({ environment, decoderStall }) {
+export function fixtureDeliveryDeadline({ environment, decoderStall, measuredTrial = false }) {
   const raw = environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS;
+  assert.equal(typeof measuredTrial, 'boolean');
+  if (measuredTrial) {
+    assert.equal(raw, '1500', 'Measured trial requires the explicit qualified 1500 ms experiment');
+    return 1.5;
+  }
   if (raw === undefined) return 1;
   assert.ok(
     decoderStall && ['1000', '1500'].includes(raw),

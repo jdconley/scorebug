@@ -10,6 +10,7 @@ enum PublishingDeliveryMonitor {
     #if DEBUG
     /// Explicit simulator qualification only; no production deadline default.
     static func fixtureLatencyBudget(environment: [String: String]) throws -> Double {
+        if try NativeMeasuredTrialFixture.requested(environment: environment) { return 1.5 }
         guard let raw = environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] else { return 1 }
         guard ["1000", "1500"].contains(raw), WorkerCadenceReportAudit.requested(environment: environment),
               ["1", "reset540"].contains(environment["SCOREBUG_TEST_DECODER_STALL"] ?? "") else {

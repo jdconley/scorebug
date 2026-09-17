@@ -88,6 +88,15 @@ final class NativeStreamingTests: XCTestCase {
             app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = candidate
         }
         let cadenceReports = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CADENCE_REPORTS"] ?? ""
+        let measuredTrial = ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"] ?? ""
+        if !measuredTrial.isEmpty {
+            XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(candidateHeadroom, "1")
+            XCTAssertEqual(candidate, "360p30"); XCTAssertEqual(liveProfile, "240p30")
+            XCTAssertEqual(probe, "staged"); XCTAssertTrue(cadenceReports.isEmpty)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"], "1")
+            app.launchEnvironment["SCOREBUG_TEST_MEASURED_TRIAL"] = measuredTrial
+            app.launchEnvironment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] = "1"
+        }
         if !cadenceReports.isEmpty {
             XCTAssertEqual(cadenceReports, "1"); XCTAssertEqual(liveProfile, "240p30")
             XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && probe.isEmpty && uplinkPort.isEmpty)
@@ -101,8 +110,11 @@ final class NativeStreamingTests: XCTestCase {
         }
         let deliveryDeadline = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] ?? ""
         if !deliveryDeadline.isEmpty {
-            XCTAssertTrue(["1000", "1500"].contains(deliveryDeadline)); XCTAssertFalse(decoderStall.isEmpty)
-            XCTAssertEqual(cadenceReports, "1")
+            if measuredTrial == "1" { XCTAssertEqual(deliveryDeadline, "1500") }
+            else {
+                XCTAssertTrue(["1000", "1500"].contains(deliveryDeadline)); XCTAssertFalse(decoderStall.isEmpty)
+                XCTAssertEqual(cadenceReports, "1")
+            }
             app.launchEnvironment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = deliveryDeadline
         }
         let deadlineResets = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DEADLINE_RESETS"] ?? ""

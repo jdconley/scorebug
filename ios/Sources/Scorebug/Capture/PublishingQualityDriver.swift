@@ -7,7 +7,13 @@ import ScorebugMedia
 @MainActor final class PublishingQualityDriver {
     var candidateInputProvider: ((PublishingQualitySession.Snapshot) async -> PublishingCandidateAdmission?)?
     var deliveryInputProvider: (() -> PublishingDeliveryMonitor.Input?)?
+    struct CadenceInput {
+        let cadence: WorkerDecoderCadenceFreshness?
+        let diagnostics: PublishingQualityTelemetry.Diagnostics
+    }
+    var cadenceInputProvider: (() -> CadenceInput?)?
     private let enableDeliveryFailures: Bool
+    private let enableMeasuredSourceEvaluation: Bool
     private let deliveryAudit: PublishingDeliveryMonitor.Audit?
     private let deliveryExport: ((Data) async -> Void)?
     private let owner: PublishingQualitySession
@@ -29,8 +35,9 @@ import ScorebugMedia
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, export: ((Data) async -> Void)? = nil) {
+         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, export: ((Data) async -> Void)? = nil) {
         self.enableDeliveryFailures = enableDeliveryFailures
+        self.enableMeasuredSourceEvaluation = enableMeasuredSourceEvaluation
         self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
@@ -103,41 +110,64 @@ import ScorebugMedia
             }
             // This fixture qualifies downward deadline actions only. Unknown,
             // uncertain and overlapping windows cannot grant recovery credit.
-            var canEvaluateSource = !enableDeliveryFailures
-            if !enableDeliveryFailures, let cadence, await owner.usesDecoderStallPolicy {
-                let decision: QualityController.Decision?
-                do {
-                    decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: diagnostics)
-                    cadenceRejection = nil
-                } catch {
-                    decision = nil; canEvaluateSource = false
-                    let reason = Self.reason(error), key = "\(state.revision ?? 0)/\(reason)"
-                    if cadenceRejection != key {
-                        cadenceRejection = key
-                        await record("rejected", reason: "cadence-" + reason)
-                    }
-                }
+            var canEvaluateSource = !enableDeliveryFailures || enableMeasuredSourceEvaluation
+            var canEvaluateCandidate = true
+            var currentDiagnostics: PublishingQualityTelemetry.Diagnostics? = diagnostics
+            if canEvaluateSource, await owner.usesDecoderStallPolicy {
                 try Task.checkCancellation()
                 guard !isClosed else { return }
-                if let decision {
-                    await record("decoderStall", decision: decision, cadence: cadence)
-                    if let advice = decision.recommendation { try await apply(advice) }
-                    return
+                var currentCadence = cadence
+                if let provider = cadenceInputProvider {
+                    let input = provider()
+                    currentCadence = input?.cadence
+                    currentDiagnostics = input?.diagnostics
+                    if currentCadence == nil {
+                        // No fallback to the tick's captured proof. Owner loss
+                        // supplies no diagnostics; valid ownership with absent
+                        // cadence invalidates probation without inventing health.
+                        canEvaluateSource = false; canEvaluateCandidate = false
+                        if let input {
+                            do { try await owner.noteUnavailableCadence(diagnostics: input.diagnostics) }
+                            catch { await record("rejected", reason: "cadence-" + Self.reason(error)) }
+                        }
+                    }
                 }
-                // A repeated fresh stall cannot give an old source window healthy
-                // recovery credit. It also need not dispatch the same reset twice.
-                if cadence.observedStall(maximumSampleAge: .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)) == true {
-                    canEvaluateSource = false
+                if let cadence = currentCadence, let cadenceDiagnostics = currentDiagnostics {
+                    let decision: QualityController.Decision?
+                    do {
+                        decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: cadenceDiagnostics)
+                        cadenceRejection = nil
+                    } catch {
+                        decision = nil; canEvaluateSource = false; canEvaluateCandidate = false
+                        let reason = Self.reason(error), key = "\(state.revision ?? 0)/\(reason)"
+                        if cadenceRejection != key {
+                            cadenceRejection = key
+                            await record("rejected", reason: "cadence-" + reason)
+                        }
+                    }
+                    try Task.checkCancellation()
+                    guard !isClosed else { return }
+                    if let decision {
+                        await record("decoderStall", decision: decision, cadence: cadence)
+                        if let advice = decision.recommendation { try await apply(advice) }
+                        return
+                    }
+                    // A repeated fresh stall cannot give an old source window healthy
+                    // recovery credit. It also need not dispatch the same reset twice.
+                    if cadence.observedStall(maximumSampleAge: .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)) == true {
+                        canEvaluateSource = false; canEvaluateCandidate = false
+                    }
                 }
             }
             if let rollback = try await owner.checkTrialDeadline() {
                 try await apply(rollback)
                 return
             }
-            if canEvaluateSource, let source, try await evaluateSource(source, state: state, diagnostics: diagnostics) { return }
+            guard let currentDiagnostics else { return }
+            if canEvaluateSource, let source, try await evaluateSource(source, state: state, diagnostics: currentDiagnostics) { return }
             let decision: QualityController.Decision?
             do {
-                decision = try await owner.evaluateLocalPressure(diagnostics: diagnostics, transportLimits: transportLimits)
+                decision = try await owner.evaluateLocalPressure(diagnostics: currentDiagnostics, transportLimits: transportLimits)
                 localRejection = nil
             } catch {
                 let reason = Self.reason(error), key = "\(state.revision ?? 0)/\(reason)"
@@ -150,11 +180,11 @@ import ScorebugMedia
             try Task.checkCancellation()
             guard !isClosed else { return }
             if let decision {
-                await record("localPressure", decision: decision, diagnostics: diagnostics)
+                await record("localPressure", decision: decision, diagnostics: currentDiagnostics)
                 if let advice = decision.recommendation { try await apply(advice) }
                 return
             }
-            try await evaluateCandidateInput()
+            if canEvaluateCandidate { try await evaluateCandidateInput() }
         } catch {
             guard !isClosed, !Task.isCancelled else { return }
             isClosed = true
@@ -173,10 +203,13 @@ import ScorebugMedia
         let candidate = await provider(state)
         try Task.checkCancellation()
         guard !isClosed, let candidate, candidate.value.id != consumedCandidateID else { return }
-        consumedCandidateID = candidate.value.id
         let decision: QualityController.Decision
-        do { decision = try await owner.evaluateCandidate(candidate) }
-        catch {
+        do {
+            guard let evaluated = try await owner.evaluateCandidateWhenSourceReady(candidate) else { return }
+            consumedCandidateID = candidate.value.id
+            decision = evaluated
+        } catch {
+            consumedCandidateID = candidate.value.id
             guard !isClosed, !Task.isCancelled else { return }
             await record("rejected", candidate: candidate, reason: "candidate-" + Self.reason(error))
             return
@@ -235,7 +268,7 @@ import ScorebugMedia
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { isClosed = true; deliveryInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() { isClosed = true; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -248,7 +281,7 @@ import ScorebugMedia
             if let deliveryExport, let data = try? deliveryAudit?.data() { await deliveryExport(data) }
             if let export, let data = try? JSONSerialization.data(withJSONObject:
                 ["formatVersion": 4, "overflow": overflow, "deadlineFailuresEnabled": enableDeliveryFailures,
-                 "decoderStallEnabled": !enableDeliveryFailures, "events": events], options: [.sortedKeys]) {
+                 "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation, "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events], options: [.sortedKeys]) {
                 await export(data)
             }
         }
@@ -319,6 +352,11 @@ import ScorebugMedia
             row["evidence"] = Self.evidence(diagnostics, source: source, window: window)
         }
         if let candidate {
+            #if DEBUG
+            if let data = try? candidate.auditData(), let witness = try? JSONSerialization.jsonObject(with: data) {
+                row["candidateAdmission"] = witness
+            }
+            #endif
             let value = candidate.value
             row["candidate"] = ["id": value.id.uuidString, "attemptID": value.attemptID.uuidString,
                 "appliedRevision": String(value.appliedRevision), "baselineProfileID": value.baseline.profileID,
@@ -404,15 +442,20 @@ import ScorebugMedia
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
+        let measured = try NativeMeasuredTrialFixture.requested(environment: environment)
         let deliveryLatencyBudget = try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment)
-        let enableDeliveryFailures = try PublishingDeliveryMonitor.fixtureResetsRequested(environment: environment)
+        let requestedDeliveryFailures = try PublishingDeliveryMonitor.fixtureResetsRequested(environment: environment)
+        let enableDeliveryFailures = measured || requestedDeliveryFailures
         let resetStall = environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540"
         let minimumStall = (environment["SCOREBUG_TEST_DECODER_STALL"] == "1" || resetStall)
             && WorkerCadenceReportAudit.requested(environment: environment)
-        guard environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1" || minimumStall,
+        guard measured || environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1" || minimumStall,
               VideoObservationFixture.requested(environment: environment) else { return nil }
         let adaptive = try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment)
-        let profiles: [QualityController.Profile] = resetStall ? [
+        let profiles: [QualityController.Profile] = measured ? [
+            .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+            .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000)
+        ] : resetStall ? [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)
         ] : minimumStall ? [
@@ -423,15 +466,15 @@ import ScorebugMedia
         ] : [.init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)]
         let owner = try PublishingQualitySession(session: session,
             profiles: profiles, attemptID: attemptID,
-            initial: .init(profileID: resetStall ? "540p30" : minimumStall ? "240p30" : "1080p30", videoBitrate: resetStall ? 1_500_000 : minimumStall ? 350_000 : 6_000_000),
-            strategy: adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
-            behavior: minimumStall ? .progressive : .legacy)
+            initial: .init(profileID: resetStall ? "540p30" : (minimumStall || measured) ? "240p30" : "1080p30", videoBitrate: resetStall ? 1_500_000 : (minimumStall || measured) ? 350_000 : 6_000_000),
+            strategy: measured ? .measuredCandidateTrials : adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
+            behavior: (minimumStall || measured) ? .progressive : .legacy)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
-            deliveryAudit: minimumStall ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25) : nil,
-            deliveryExport: minimumStall ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
-            enableDeliveryFailures: enableDeliveryFailures,
+            deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25) : nil,
+            deliveryExport: (minimumStall || measured) ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
+            enableDeliveryFailures: enableDeliveryFailures, enableMeasuredSourceEvaluation: measured,
             export: { data in
                 await Task.detached {
                     let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

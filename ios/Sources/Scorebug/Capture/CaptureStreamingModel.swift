@@ -37,9 +37,43 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
     }
     private var deliveryAuthority: PublishingDeliveryAuthority?
-    deinit { deliveryAuthority?.revoke() }
+    deinit { deliveryAuthority?.revoke(); candidateAuthority?.revoke() }
     private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
-    @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness?
+    @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness? {
+        didSet {
+            if let evidence = workerReceiverProbeFreshness, candidateAuthority?.permits(evidence) == true { return }
+            candidateAuthority?.revoke()
+            candidateAuthority = workerReceiverProbeFreshness.map(PublishingCandidateAuthority.init)
+        }
+    }
+    private(set) var candidateAuthority: PublishingCandidateAuthority?
+    private var probeReadSequence: UInt64 = 0
+    private var acceptedProbeReadSequence: UInt64 = 0
+    struct MeasuredCandidate: Sendable {
+        let measurement: PublishingCandidateAdmission.Measurement
+        let binding: PublishingProbeObservation
+        let probe: PublishingProbeObservation
+        let boundAt: Double
+        let completedAt: Double
+        let permitsCurrentCandidate: @Sendable (UUID) -> Bool
+    }
+    typealias MeasuredCandidateReader = @MainActor () async -> MeasuredCandidate?
+    /// Injection uses the same provider ownership boundary as the explicit lab route.
+    /// Ordinary publishing never installs a candidate provider.
+    var measuredCandidateFactory: ((any MediaPublisher) -> MeasuredCandidateReader?) = { publisher in
+        #if DEBUG && targetEnvironment(simulator)
+        guard (try? NativeMeasuredTrialFixture.requested(environment: ProcessInfo.processInfo.environment)) == true,
+              let candidate = publisher as? NativeCandidatePublisher else { return nil }
+        return {
+            guard let snapshot = await candidate.candidateSnapshot() else { return nil }
+            return MeasuredCandidate(measurement: .init(snapshot.cost), binding: snapshot.binding, probe: snapshot.probe,
+                boundAt: snapshot.boundAt, completedAt: snapshot.completedAt,
+                permitsCurrentCandidate: snapshot.permitsCurrentCandidate)
+        }
+        #else
+        return nil
+        #endif
+    }
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
     private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
@@ -251,6 +285,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
         let previous = current
         if context?.id != previous?.id || context?.tap !== previous?.tap {
+            // Revoke before recording/report/control work can suspend, including
+            // replacement taps that deliberately reuse a recording identifier.
+            candidateAuthority?.revoke()
+            if previous != nil, context != nil { clearWorker() }
             workerSourceTracker.clear()
             workerSourceInterval = nil
             #if DEBUG
@@ -403,6 +441,19 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try await session.start()
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
+                if let readCandidate = measuredCandidateFactory(publisher) {
+                    qualityDriver?.candidateInputProvider = { [weak self] state in
+                        await self?.measuredCandidateInput(state, readCandidate: readCandidate)
+                    }
+                }
+                qualityDriver?.cadenceInputProvider = { [weak self, weak session] in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return nil }
+                    return .init(cadence: self.workerDecoderCadenceFreshness, diagnostics: .init(snapshot: session.snapshot))
+                }
                 qualityDriver?.deliveryInputProvider = { [weak self] in
                     guard let self, let current = self.publishing, current.attempt == attempt,
                           self.localState == .publishing, self.diagnosticAttemptID == attempt,
@@ -529,9 +580,15 @@ struct PublishingClockObservation: Equatable, Sendable {
             // Read sender acceptance after the receiver response; earlier local
             // counts could legitimately lag bytes already observed by the relay.
             let probeReadStartedAt = ProcessInfo.processInfo.systemUptime
-            let probe = await publishing?.probeObserver?.probeObservation()
+            let readSequence = nextProbeReadSequence()
+            let observedProbe = await publishing?.probeObserver?.probeObservation()
             let probeReadFinishedAt = ProcessInfo.processInfo.systemUptime
             guard observedEpoch == workerEpoch else { return }
+            let probe = acceptProbeObservation(observedProbe, sequence: readSequence)
+            // A response whose native join was overtaken has no truthful native
+            // read bracket for the newer proof. Preserve current evidence and
+            // wait for the next control response instead of relabelling it.
+            guard acceptedProbeReadSequence == readSequence else { return }
             updateReceiverProbe(response: response, probe: probe, receivedAt: received, requestDuration: requestDuration,
                 requestStartedAtUptime: requestStartedAtUptime, responseReceivedAtUptime: responseReceivedAtUptime,
                 probeReadStartedAt: probeReadStartedAt, probeReadFinishedAt: probeReadFinishedAt)
@@ -642,6 +699,83 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
     }
 
+    private func nextProbeReadSequence() -> UInt64 {
+        probeReadSequence += 1
+        return probeReadSequence
+    }
+
+    /// A bounded latest native sample. A late reader can use newer accepted
+    /// ownership, but cannot move its byte count, stage or lease backwards.
+    @discardableResult private func acceptProbeObservation(_ value: PublishingProbeObservation?, sequence: UInt64) -> PublishingProbeObservation? {
+        guard sequence > acceptedProbeReadSequence else { return receiverProbeOwner }
+        let instant = ContinuousClock.now, now = ProcessInfo.processInfo.systemUptime
+        guard let value, value.isActive(at: now),
+              value.publishingGeneration == publishing?.session.snapshot.transportClock?.publishingGeneration else {
+            acceptedProbeReadSequence = sequence
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+            workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+            return nil
+        }
+        if let prior = receiverProbeOwner {
+            let sameOwner = prior.id == value.id && prior.publishingGeneration == value.publishingGeneration &&
+                prior.stage == value.stage && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
+            if sameOwner {
+                guard value.acceptedPayloadBytes >= prior.acceptedPayloadBytes,
+                      value.leaseDeadline >= prior.leaseDeadline,
+                      (value.lastAcceptedAt ?? 0) >= (prior.lastAcceptedAt ?? 0) else { return prior }
+            } else {
+                receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+                workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+            }
+        }
+        acceptedProbeReadSequence = sequence
+        receiverProbeOwner = value
+        receiverProbeLeaseDeadline = instant + .seconds(value.leaseDeadline - now)
+        return value
+    }
+
+    func measuredCandidateInput(_ state: PublishingQualitySession.Snapshot,
+                                readCandidate: MeasuredCandidateReader) async -> PublishingCandidateAdmission? {
+        guard let original = publishing else { return nil }
+        let session = original.session, attempt = original.attempt, tap = original.context.tap
+        let ownerEpoch = workerEpoch
+        func ownsCurrent() -> Bool {
+            guard let live = publishing else { return false }
+            return !Task.isCancelled && workerEpoch == ownerEpoch && live.session === session && live.attempt == attempt &&
+                diagnosticAttemptID == attempt && localState == .publishing &&
+                activeRecordingID == original.context.id && current?.tap === tap &&
+                live.session.snapshot.state == .publishing && live.session.snapshot.failure == nil
+        }
+        guard ownsCurrent(), state.attemptID == attempt, !state.isClosed, !state.isBusy else { return nil }
+        let refreshSequence = nextProbeReadSequence()
+        let nativeProbe = await original.probeObserver?.probeObservation()
+        guard ownsCurrent() else { return nil }
+        // This observes a real native lease even before candidate completion.
+        // Receiver report timestamps remain anchored to the original response.
+        guard acceptProbeObservation(nativeProbe, sequence: refreshSequence) != nil else { return nil }
+        guard state.revision == 0, let settings = state.applied, let receipt = state.receipt,
+              let acknowledgedAt = state.acknowledgedAt,
+              let boundAuthority = candidateAuthority else { return nil }
+        let candidateSequence = nextProbeReadSequence()
+        let candidate = await readCandidate()
+        guard ownsCurrent(), candidateAuthority === boundAuthority, let candidate else { return nil }
+        guard let probe = acceptProbeObservation(candidate.probe, sequence: candidateSequence) else { return nil }
+        // Read every mutable input only after the final await. Exact scope also
+        // binds recording/tap observations, not just the publishing attempt.
+        guard candidate.measurement.scope == publishing?.observations?.snapshot.scope,
+              let pair = receiverProbeTracker.latestPair, let authority = candidateAuthority,
+              authority.permits(pair.newer.end), authority.permits(pair.older.end) else { return nil }
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0,
+            settings: settings, receipt: receipt, acknowledgedAt: acknowledgedAt)
+        let id = candidate.measurement.id, permitsCandidate = candidate.permitsCurrentCandidate
+        return .laboratoryIPv4(measurement: candidate.measurement, applied: applied,
+            binding: candidate.binding, boundAt: candidate.boundAt, completedAt: candidate.completedAt,
+            probe: probe, pair: pair, authority: authority, clock: .sample(),
+            currentReceipt: { [weak session] in session?.snapshot.lastBitRateChange },
+            candidateIsCurrent: { permitsCandidate(id) })
+    }
+
     private func updateReceiverProbe(response: WorkerMediaStatusResponse, probe: PublishingProbeObservation?,
                                      receivedAt: ContinuousClock.Instant, requestDuration: Duration,
                                      requestStartedAtUptime: Double, responseReceivedAtUptime: Double,
@@ -733,6 +867,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     private func detachPublisher() {
+        candidateAuthority?.revoke()
         if let publishing {
             publishing.context.tap.detach(publishing.session)
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
@@ -804,6 +939,8 @@ struct PublishingClockObservation: Equatable, Sendable {
         publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
     }
     private func clearWorker() {
+        candidateAuthority?.revoke(); candidateAuthority = nil
+        acceptedProbeReadSequence = nextProbeReadSequence()
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
         workerSourceTracker.clear(); workerSourceInterval = nil
         if publishing == nil { workerDeliveryTracker.reset() } else { workerDeliveryTracker.unavailable() }
@@ -868,6 +1005,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         catch { needsStorageRetry = true; throw CaptureControlError.storage }
     }
     private func fail(_ error: Error) {
+        candidateAuthority?.revoke()
         if error is CancellationError || error as? CaptureControlError == .recordingStopped { return }
         if localState == .starting { localState = .failed }
         if error as? CaptureControlError == .storage || error as? BroadcastCoordinatorError == .storageFailure {

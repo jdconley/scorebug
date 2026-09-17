@@ -3,6 +3,7 @@ import {
   qualifyNativeCandidateMeasurement,
 } from './native-candidate-measurement.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
+import { nativeMeasuredTrial } from './native-measured-trial.mjs';
 import { qualifyCandidateProbeHeadroom } from './candidate-probe-headroom.mjs';
 import {
   qualifyNativeDeadlineDecisions,
@@ -100,7 +101,6 @@ const cadenceReports = nativeCadenceReports({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const decoderStall = nativeControlledStall({ environment: process.env, cadenceReports });
-const deliveryLatencyBudget = fixtureDeliveryDeadline({ environment: process.env, decoderStall });
 const deadlineResets = fixtureDeadlineResets({ environment: process.env, decoderStall });
 const stallReset = decoderStall && process.env.SCOREBUG_TEST_DECODER_STALL === 'reset540';
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
@@ -151,6 +151,20 @@ const candidateProfile = nativeCandidateProfile({
   holdSeconds: streamingOptions.holdSeconds,
   liveProfile,
 });
+const measuredTrial = nativeMeasuredTrial({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+  liveProfile,
+});
+const workerOutputProfile = measuredTrial ? '360p30' : liveProfile;
+const deliveryLatencyBudget = fixtureDeliveryDeadline({
+  environment: process.env,
+  decoderStall,
+  measuredTrial,
+});
 const sourceCadencePacing = nativeSourceCadencePacing({
   environment: process.env,
   adaptiveProfiles,
@@ -198,6 +212,8 @@ await writeFile(
       fixtureWorkload,
       uplinkProfile,
       liveProfile,
+      workerOutputProfile,
+      measuredTrial,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -294,7 +310,7 @@ async function analyze(path, index, live = false) {
         '-show_streams',
         '-show_frames',
         '-show_entries',
-        'stream=codec_type,width,height,sample_rate,channels:frame=media_type,best_effort_timestamp_time,nb_samples',
+        'stream=codec_type,width,height,sample_rate,channels:frame=media_type,best_effort_timestamp_time,nb_samples,width,height',
         '-of',
         'json',
         path,
@@ -304,12 +320,16 @@ async function analyze(path, index, live = false) {
   );
   const video = probe.streams.find((item) => item.codec_type === 'video');
   const audio = probe.streams.find((item) => item.codec_type === 'audio');
-  const geometry = nativeMediaGeometry(liveProfile, live);
+  const geometry = nativeMediaGeometry(workerOutputProfile, live);
   assert.equal(video?.width, geometry.width);
   assert.equal(video?.height, geometry.height);
   assert.equal(Number(audio?.sample_rate), live ? 44_100 : 48_000);
   assert.equal(audio?.channels, 1);
   const frames = probe.frames.filter((item) => item.media_type === 'video');
+  for (const frame of frames) {
+    assert.equal(frame.width, geometry.width, 'Decoded frame width changed');
+    assert.equal(frame.height, geometry.height, 'Decoded frame height changed');
+  }
   const pcm = probe.frames.filter((item) => item.media_type === 'audio');
   assert.ok(frames.length >= 60, 'Export must contain at least two seconds of decoded video');
   const times = frames.map((item) => Number(item.best_effort_timestamp_time));
@@ -490,7 +510,9 @@ try {
       candidateHeadroom,
       uplinkProfile,
       liveProfile,
+      workerOutputProfile,
       cadenceReports,
+      measuredTrial,
       decoderStall,
       deadlineResets,
       decoderThreading,
@@ -564,6 +586,8 @@ try {
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
       `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
       `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
+      `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
+      `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
       `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
@@ -592,20 +616,20 @@ try {
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });
   let observationSnapshot, archiveDiagnosticsSnapshot, qualitySnapshot;
-  if (cadenceReports) {
+  if (cadenceReports || measuredTrial) {
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/worker-cadence-reports.json'),
       join(artifact, 'worker-cadence-reports.json'),
     );
   }
-  if (decoderStall) {
+  if (decoderStall || measuredTrial) {
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/delivery-deadlines.json'),
       join(artifact, 'delivery-deadlines.json'),
       { errorOnExist: true, force: false },
     );
   }
-  if (requireQuality || decoderStall) {
+  if (requireQuality || decoderStall || measuredTrial) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
     qualitySnapshot = JSON.parse(await readFile(file, 'utf8'));
@@ -708,7 +732,7 @@ try {
     nativeVideoCostQualification = qualifyNativeVideoCost(
       JSON.parse(costBytes.toString('utf8')),
       nativeFormatQualification,
-      decoderStall
+      decoderStall || measuredTrial
         ? {
             initialReceipt: qualitySnapshot.events.find((event) => event.kind === 'bootstrap')
               ?.receipt,
@@ -1049,6 +1073,8 @@ try {
         streamingOptions,
         fixtureWorkload,
         liveProfile,
+        workerOutputProfile,
+        measuredTrial,
         nativeFormatQualification,
         nativeVideoCostQualification,
         candidateProfile,
@@ -1081,6 +1107,10 @@ try {
       null,
       2,
     ),
+  );
+  assert.ok(
+    !measuredTrial,
+    'Measured trial admission/application qualification is not yet implemented',
   );
   console.log(
     `${['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,

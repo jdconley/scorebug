@@ -5,6 +5,239 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testOnlyExplicitMeasuredFactoryInstallsCandidateProviderAndStopClearsIt() async throws {
+        for enabled in [false, true] {
+            let server = CaptureTestServer()
+            var driver: PublishingQualityDriver?
+            let model = makeModel(server: server, qualityFactory: { session, attempt in
+                let owner = try PublishingQualitySession(session: session,
+                    profiles: [.init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000)],
+                    attemptID: attempt, initial: .init(profileID: "240p30", videoBitrate: 350_000))
+                let value = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil)
+                driver = value; return value
+            })
+            if enabled { model.measuredCandidateFactory = { _ in { nil } } }
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            XCTAssertEqual(driver?.candidateInputProvider != nil, enabled)
+            let cadenceProvider = driver?.cadenceInputProvider
+            XCTAssertNotNil(cadenceProvider?())
+            XCTAssertNil(cadenceProvider?()?.cadence)
+            model.captureChanged(captureContext())
+            XCTAssertNil(cadenceProvider?(), "A replacement tap cannot inherit cadence ownership")
+            await model.stopStreaming()
+            XCTAssertNil(driver?.candidateInputProvider)
+            XCTAssertNil(driver?.cadenceInputProvider)
+            XCTAssertNil(cadenceProvider?())
+        }
+    }
+
+    func testMeasuredProviderRechecksAuthorityAfterSuspendedCandidateRead() async throws {
+        for replacement in [false, true] {
+            var session: PublishingSession?
+            let (model, server, _, response) = try await receiverProbeModel { value, _ in session = value; return nil }
+            let receipt = try await XCTUnwrap(session).setVideoBitRate(350_000)
+            await server.setStatusOverride(response); await model.pollControl()
+            let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+            let authority = try XCTUnwrap(model.candidateAuthority)
+            let state = candidateState(model, receipt: receipt), gate = FilmTestGate()
+            let read = Task { await model.measuredCandidateInput(state) { await gate.enter(); return nil } }
+            await gate.waitUntilEntered()
+            if replacement { model.captureChanged(captureContext()) }
+            else {
+                var changed = response
+                changed.status.publication?.readerId = UUID().uuidString.lowercased()
+                await server.setStatusOverride(changed); await model.pollControl()
+            }
+            XCTAssertFalse(authority.permits(receiver))
+            await gate.release()
+            let result = await read.value
+            XCTAssertNil(result)
+            await model.stopStreaming()
+        }
+    }
+
+    func testMeasuredProviderUsesNewerPairAfterAwaitAndReturnedAdmissionRevokesOnStop() async throws {
+        var session: PublishingSession?
+        let (model, server, publisher, initial) = try await receiverProbeModel { value, _ in session = value; return nil }
+        let live = try XCTUnwrap(session)
+        let receipt = try await live.setVideoBitRate(350_000)
+        let start = ProcessInfo.processInfo.systemUptime + 0.02
+        let original = await publisher.probeValue()
+        var probe = try XCTUnwrap(original)
+        probe.stage = 3; probe.bitRate = 12_000_000
+        probe.startedAt = start - 1; probe.leaseDeadline = start + 0.25
+        probe.acceptedPayloadBytes = 1316; probe.lastAcceptedAt = start - 0.01
+        let binding = probe
+        await publisher.setRenewProbeLeaseOnRead(true)
+        var response = initial
+        response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+        response.status.receiverProbe?.snapshot.stage = 3
+        response.status.receiverProbe?.snapshot.bitRate = 12_000_000
+        response.status.receiverProbe?.ageUpperBoundMs = 1
+        response.status.receiverProbe?.snapshot.firstDeliveredAtNanoseconds = "1000000"
+        func report(at offset: Double, messages: Int, delayBeforeStatus: Bool = false) async throws {
+            try await Task.sleep(for: .seconds(max(0, start + offset - ProcessInfo.processInfo.systemUptime)))
+            let deliveredAt = ProcessInfo.processInfo.systemUptime
+            let ns = Int64((deliveredAt - start) * 1e9)
+            response.status.receiverProbe?.snapshot.observedAtNanoseconds = String(ns)
+            response.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = String(ns)
+            response.status.receiverProbe?.snapshot.deliveredMessages = String(messages)
+            response.status.receiverProbe?.snapshot.nextSequence = String(messages)
+            response.status.receiverProbe?.snapshot.deliveredPayloadBytes = String(messages * 1316)
+            response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String(messages * 1316)
+            probe.leaseDeadline = deliveredAt + 0.3
+            probe.acceptedPayloadBytes = UInt64(messages * 1316)
+            probe.lastAcceptedAt = deliveredAt
+            await publisher.setProbe(probe)
+            // The packet event stays fixed across recovery; only sampling occurs at /status.
+            let template = response
+            await server.setStatusResponseFactory { sampledAt in
+                var sampled = template
+                sampled.status.receiverProbe?.snapshot.observedAtNanoseconds = String(Int64((sampledAt - start) * 1e9))
+                return sampled
+            }
+            if delayBeforeStatus {
+                let delay = FilmTestGate(); await server.setSnapshotGate(delay)
+                let poll = Task { await model.pollControl() }
+                await delay.waitUntilEntered()
+                try await Task.sleep(for: .milliseconds(400))
+                await delay.release(); await poll.value
+            } else { await model.pollControl() }
+            let sampledProbe = await publisher.probeValue()
+            probe = try XCTUnwrap(sampledProbe)
+            XCTAssertEqual(probe.lastAcceptedAt, deliveredAt)
+            XCTAssertEqual(probe.acceptedPayloadBytes, UInt64(messages * 1316))
+            if delayBeforeStatus {
+                let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+                let observed = try XCTUnwrap(Int64(receiver.snapshot.observedAtNanoseconds))
+                XCTAssertGreaterThan(observed - ns, 350_000_000)
+                XCTAssertEqual(receiver.snapshot.lastDeliveredAtNanoseconds, String(ns))
+                XCTAssertGreaterThan(try XCTUnwrap(receiver.lastDeliveryAgeUpperBound()), .milliseconds(350))
+                XCTAssertGreaterThan(probe.leaseDeadline, deliveredAt + 0.4)
+            }
+        }
+        try await report(at: 1.65, messages: 100, delayBeforeStatus: true)
+        try await report(at: 3.15, messages: 1150)
+        let state = candidateState(model, receipt: receipt)
+        let measurement = PublishingCandidateAdmission.Measurement(id: UUID(), scope: try XCTUnwrap(model.videoObservation?.scope),
+            profile: .low360, publishingGeneration: 1, startedAt: start, endedAt: start + 4.02,
+            firstInputAt: start, lastInputAt: start + 4, sourceDuration: 4, submissionDuration: 4,
+            transportBytes: 376_000, transportMessageCount: 400)
+        let staleProbe = probe, gate = FilmTestGate()
+        let pending = Task {
+            await model.measuredCandidateInput(state) {
+                await gate.enter()
+                return .init(measurement: measurement, binding: binding, probe: staleProbe,
+                    boundAt: start - 0.01, completedAt: start + 4.03, permitsCurrentCandidate: { $0 == measurement.id })
+            }
+        }
+        await gate.waitUntilEntered()
+        try await report(at: 4.35, messages: 2250)
+        await gate.release()
+        let result = await pending.value
+        let admission = try XCTUnwrap(result)
+        XCTAssertEqual(admission.receiver.snapshot.deliveredMessages, "2250")
+        XCTAssertTrue(admission.permits(applied: admission.applied, at: ProcessInfo.processInfo.systemUptime, instant: .now))
+        model.captureChanged(nil)
+        XCTAssertFalse(admission.permits(applied: admission.applied, at: ProcessInfo.processInfo.systemUptime, instant: .now))
+        await model.stopStreaming()
+    }
+
+    func testMeasuredProviderRefreshesNativeLeaseWithoutRenewingRemoteEvidence() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let probeValue = await publisher.probeValue()
+        var probe = try XCTUnwrap(probeValue)
+        probe.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.15
+        await publisher.setProbe(probe)
+        await server.setStatusOverride(response); await model.pollControl()
+        let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+        let authority = try XCTUnwrap(model.candidateAuthority)
+        probe.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.3
+        await publisher.setProbe(probe)
+        let input = await model.measuredCandidateInput(candidateState(model)) { XCTFail("No bootstrap receipt"); return nil }
+        XCTAssertNil(input)
+        XCTAssertEqual(model.workerReceiverProbeFreshness?.receivedAt, receiver.receivedAt)
+        XCTAssertTrue(authority.permits(receiver))
+        model.pollLocalHealth(at: .now + .milliseconds(200))
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        model.pollLocalHealth(at: .now + .seconds(2))
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        XCTAssertFalse(authority.permits(receiver))
+        await model.stopStreaming()
+    }
+
+    func testLatePollNativeReadCannotRollBackProviderLease() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let probeValue = await publisher.probeValue()
+        var probe = try XCTUnwrap(probeValue)
+        probe.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.15
+        await publisher.setProbe(probe)
+        await server.setStatusOverride(response); await model.pollControl()
+        let gate = FilmTestGate(); await publisher.setProbeGate(gate)
+        let poll = Task { await model.pollControl() }
+        await gate.waitUntilEntered()
+        await publisher.setProbeGate(nil)
+        probe.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.3
+        probe.acceptedPayloadBytes += 1316
+        await publisher.setProbe(probe)
+        _ = await model.measuredCandidateInput(candidateState(model)) { nil }
+        await gate.release(); await poll.value
+        model.pollLocalHealth(at: .now + .milliseconds(200))
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        await model.stopStreaming()
+    }
+
+    func testMeasuredProviderRechecksTapAfterSuspendedNativeRead() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        await server.setStatusOverride(response); await model.pollControl()
+        let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+        let authority = try XCTUnwrap(model.candidateAuthority)
+        let state = candidateState(model)
+        let gate = FilmTestGate(); await publisher.setProbeGate(gate)
+        let read = Task { await model.measuredCandidateInput(state) { XCTFail("Replaced owner"); return nil } }
+        await gate.waitUntilEntered()
+        model.captureChanged(captureContext())
+        XCTAssertFalse(authority.permits(receiver))
+        await gate.release()
+        let result = await read.value
+        XCTAssertNil(result); XCTAssertNil(model.workerReceiverProbeFreshness)
+        await model.stopStreaming()
+    }
+
+    func testReceiverPublicationChangeAndStopRevokeReturnedAuthority() async throws {
+        let (model, server, _, initial) = try await receiverProbeModel()
+        await server.setStatusOverride(initial); await model.pollControl()
+        let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+        let authority = try XCTUnwrap(model.candidateAuthority)
+        var changed = initial
+        changed.status.publication?.readerId = UUID().uuidString.lowercased()
+        await server.setStatusOverride(changed); await model.pollControl()
+        XCTAssertFalse(authority.permits(receiver))
+        if let latest = model.workerReceiverProbeFreshness, let latestAuthority = model.candidateAuthority {
+            model.captureChanged(nil)
+            XCTAssertFalse(latestAuthority.permits(latest))
+        }
+        await model.stopStreaming()
+    }
+
+    private func candidateState(_ model: CaptureStreamingModel, receipt: PublishingBitRateChange? = nil) -> PublishingQualitySession.Snapshot {
+        .init(attemptID: model.videoObservation!.scope.publishingAttemptID,
+            applied: receipt == nil ? nil : .init(profileID: "240p30", videoBitrate: 350_000),
+            revision: receipt == nil ? nil : 0, receipt: receipt, profileReceipt: nil, application: nil,
+            acknowledgedAt: receipt?.acceptedAt, lastWindow: nil, lastDecoderStall: nil, lastDeliveryFailure: nil,
+            evaluatedAt: nil, isClosed: false, isBusy: false)
+    }
+
+    func testReplacementTapSynchronouslyWithdrawsReceiverEvidence() async throws {
+        let (model, server, _, response) = try await receiverProbeModel()
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        model.captureChanged(captureContext())
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        XCTAssertNil(model.workerReceiverProbeInterval)
+        await model.stopStreaming()
+    }
+
     func testProbeObservationRateCeilingDependsOnStageAndRequiresCurrentOwner() {
         var sample = PublishingProbeObservation(id: UUID(), publishingGeneration: 1, bitRate: 2_000_000,
             startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil,
@@ -290,10 +523,10 @@ import XCTest
         await model.stopStreaming()
     }
 
-    private func receiverProbeModel() async throws -> (CaptureStreamingModel, CaptureTestServer, CaptureTestPublisher, WorkerMediaStatusResponse) {
+    private func receiverProbeModel(qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = { _, _ in nil }) async throws -> (CaptureStreamingModel, CaptureTestServer, CaptureTestPublisher, WorkerMediaStatusResponse) {
         let server = CaptureTestServer(), publisher = CaptureTestPublisher()
         await publisher.setTransportClock(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1))
-        let model = makeModel(server: server, publisher: publisher)
+        let model = makeModel(server: server, publisher: publisher, qualityFactory: qualityFactory)
         await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
         await publisher.waitForTransportClockReads(1)
         let scope = try XCTUnwrap(model.videoObservation?.scope)
@@ -2033,13 +2266,21 @@ final class CaptureStopOrderTrace: @unchecked Sendable {
 actor CaptureTestPublisher: MediaPublisher, PublishingProbeObserving {
     var probe: PublishingProbeObservation?
     private var probeGate: FilmTestGate?
+    private var renewProbeLeaseOnRead = false
+    func setRenewProbeLeaseOnRead(_ value: Bool) { renewProbeLeaseOnRead = value }
     func probeValue() -> PublishingProbeObservation? { probe }
     func setProbe(_ value: PublishingProbeObservation?) { probe = value }
     func setProbeGate(_ value: FilmTestGate?) { probeGate = value }
     func probeObservation() async -> PublishingProbeObservation? {
+        if renewProbeLeaseOnRead { probe?.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.3 }
         let value = probe
         if let probeGate { await probeGate.enter() }
         return value
+    }
+    func setVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
+        .init(publishingGeneration: clock?.publishingGeneration ?? 1,
+            configuration: VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: value)!,
+            acceptedAt: ProcessInfo.processInfo.systemUptime, lastSubmittedSourcePTS: nil)!
     }
     var isPublishing = false
     var startCount = 0
@@ -2104,6 +2345,8 @@ actor CaptureTestServer {
     var statusGate: FilmTestGate?
     var statusFailure = false
     var statusOverride: WorkerMediaStatusResponse?
+    private var statusResponseFactory: (@Sendable (Double) -> WorkerMediaStatusResponse)?
+    func setStatusResponseFactory(_ value: (@Sendable (Double) -> WorkerMediaStatusResponse)?) { statusResponseFactory = value }
     var deliveryQueries: [String] = []
     func setStatusFailure(_ value: Bool) { statusFailure = value }
     func setStatusOverride(_ value: WorkerMediaStatusResponse?) { statusOverride = value }
@@ -2173,9 +2416,11 @@ actor CaptureTestServer {
             deliveryQueries.append(request.url?.query ?? "")
             let failure = statusFailure
             let response = statusOverride ?? WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time)
+            let responseFactory = statusResponseFactory
             if let statusGate { await statusGate.enter() }
             if failure { throw URLError(.networkConnectionLost) }
-            data = try JSONEncoder().encode(response)
+            // Existing gated tests retain the response captured before suspension.
+            data = try JSONEncoder().encode(responseFactory?(ProcessInfo.processInfo.systemUptime) ?? response)
         } else {
             // Gate one snapshot only so submit's ownership refresh remains independent.
             if let snapshotGate { self.snapshotGate = nil; await snapshotGate.enter() }

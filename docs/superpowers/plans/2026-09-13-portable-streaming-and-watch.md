@@ -2124,3 +2124,51 @@ and explicit live simulator route still need wiring and independent trial,
 withdrawal and rollback qualification. Existing fixed-profile headroom evidence
 remains unchanged. Phone/Watch networking, long sessions and other proxy hosts
 remain open; the goal is still active.
+
+### 2026-09-17: measured candidate provider and native integration diagnostics
+
+The current model now supplies typed candidate evidence after bootstrap, with
+fresh native probe reads and ownership checks after asynchronous work. The
+explicit measured simulator route combines source health, deadline monitoring,
+actual candidate cost and receiver padding at baseline 240p/target 360p. It requests
+100 ms worker reports, an explicit 1.5-second delivery budget, and raw report
+capture; the separate 250 ms freshness limit remains unchanged.
+
+Native diagnostics exposed and reproduced integration failures that unit tests
+alone did not catch: reporting at 1 Hz could not satisfy freshness; the old 1-second
+delivery budget was below measured normal latency; the driver could consume its
+one-shot candidate 128 ms before matching source health; and the first healthy
+post-upgrade delivery could incorrectly invalidate a trial solely because its
+owned encoder revision changed. The caller now defers candidate evaluation until
+fresh matching overlap exists. Successful native/policy acknowledgment advances
+delivery revision and clears lane watermarks while retaining worker authority.
+Actual authority replacement and bad delivery still invalidate/reset.
+
+The independent candidate witness replay checks the exact latest receiver pair,
+raw candidate cost, native lease/counter consistency and conservative clock
+chronology. It explicitly grants neither media health nor upgrade authorization.
+Diagnostic C independently proves 130 healthy deadline windows and continuous
+30 fps archive/live media. Diagnostic D performed native 240p→360p→240p with exact
+profile/bitrate receipts and continuous 30 fps media; its reset exposed the
+revision-bookkeeping bug above. Diagnostic E verified the correction and exposed
+an older cadence snapshot surviving actor waits. The driver now reads current
+cadence and matching diagnostics after those waits, with exact recording/session
+ownership. Diagnostic F upgraded and reset correctly when the current report
+aged from 218 ms to 261 ms, crossing the unchanged 250 ms freshness limit. Its
+archive and live output fully decoded at approximately 30 fps with no fixture
+frame loss. Sustained ten-second confirmation still needs telemetry scheduling
+work and independent native transition/lifecycle evidence.
+
+Detailed evidence, failures and next steps are retained in
+[the runtime integration plan](2026-09-17-runtime-candidate-admission.md). Full
+native transition/lifecycle replay, sustained trial confirmation and controlled
+withdrawal/rollback qualification remain open. The fixed-profile validator is
+kept strict and rejects a stream that changes dimensions. Production automatic
+upgrades, physical-device performance and other proxy hosts remain unqualified;
+the autonomous goal stays active.
+
+This integration checkpoint passed all 374 FilmModel tests, 451 affected independent
+replay tests, clean simulator build-for-testing and unsigned iPhone/Watch Release
+builds. Reviews approved the runtime and timing regression fixes. The immutable
+manifest is `artifacts/qa/measured-live-trial-final-verification.json`; all six native
+diagnostics retain their failed whole-run status and original evidence.

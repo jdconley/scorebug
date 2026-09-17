@@ -114,6 +114,36 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         XCTAssertNil(f.admit(candidateIsCurrent: { token.isCurrent }))
         XCTAssertFalse(admission.permits(applied: f.applied, at: 115.1, instant: anchor + .seconds(115.1)))
     }
+    func testAuditFreezesTheExactAdmissionPairAndNativeBinding() throws {
+        let f = try fixture(), admission = try XCTUnwrap(f.admit())
+        let data = try admission.auditData()
+        XCTAssertLessThan(data.count, 32 * 1024)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["formatVersion"] as? Int, 1)
+        XCTAssertEqual(object["convention"] as? String, "measured-candidate-ipv4-v1")
+        let measurement = try XCTUnwrap(object["measurement"] as? [String: Any])
+        XCTAssertEqual(measurement["id"] as? String, f.measurement.id.uuidString.lowercased())
+        XCTAssertEqual(measurement["transportBytes"] as? Int, f.measurement.transportBytes)
+        XCTAssertEqual(measurement["transportMessageCount"] as? Int, f.measurement.transportMessageCount)
+        XCTAssertEqual(measurement["submissionDuration"] as? Double, 4)
+        let baseline = try XCTUnwrap(object["applied"] as? [String: Any])
+        XCTAssertEqual(baseline["revision"] as? String, "0")
+        let receipt = try XCTUnwrap(baseline["receipt"] as? [String: Any])
+        XCTAssertEqual(receipt["configurationID"] as? String, f.applied.receipt.configuration.id.uuidString.lowercased())
+        let intervals = try XCTUnwrap(object["intervals"] as? [[String: Any]])
+        XCTAssertEqual(intervals.count, 2)
+        XCTAssertEqual(intervals[0]["deliveredPayloadBytesLowerBound"] as? String, String(f.pair.older.deliveredPayloadBytesLowerBound))
+        let end = try XCTUnwrap(intervals[1]["end"] as? [String: Any])
+        let snapshot = try XCTUnwrap(end["snapshot"] as? [String: Any])
+        XCTAssertEqual(snapshot["observedAtNanoseconds"] as? String, f.pair.newer.end.snapshot.observedAtNanoseconds)
+        let probe = try XCTUnwrap(object["probe"] as? [String: Any])
+        XCTAssertEqual(probe["leaseDeadline"] as? Double, f.probe.leaseDeadline)
+        XCTAssertEqual(object["boundAt"] as? Double, f.boundAt)
+        XCTAssertEqual(object["completedAt"] as? Double, f.completedAt)
+        // Later owner retirement cannot rewrite what was observed at admission.
+        f.authority.revoke()
+        XCTAssertEqual(try admission.auditData(), data)
+    }
 }
 
 private final class CandidateAdmissionTestToken: @unchecked Sendable {

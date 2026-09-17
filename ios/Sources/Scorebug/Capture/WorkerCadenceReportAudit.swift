@@ -10,7 +10,8 @@ struct WorkerCadenceReportAudit {
     private var overflow = false
     private var invalid = false
     static func requested(environment: [String: String]) -> Bool {
-        environment["SCOREBUG_TEST_CADENCE_REPORTS"] == "1"
+        if (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true { return true }
+        return environment["SCOREBUG_TEST_CADENCE_REPORTS"] == "1"
             && VideoObservationFixture.requested(environment: environment)
             && environment["SCOREBUG_TEST_LIVE_PROFILE"] == "240p30"
             && environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16"

@@ -1,0 +1,54 @@
+import XCTest
+
+final class NativeMeasuredTrialFixtureTests: XCTestCase {
+    private var valid: [String: String] { [
+        "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+        "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged",
+        "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+        "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+        "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+    ] }
+
+    func testExplicitMeasuredRouteAndOrdinaryRouteIsolation() throws {
+        XCTAssertFalse(try NativeMeasuredTrialFixture.requested(environment: [:]))
+        XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: valid))
+        XCTAssertTrue(WorkerCadenceReportAudit.requested(environment: valid))
+        XCTAssertFalse(WorkerCadenceReportAudit.requested(environment: [:]))
+        XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: valid), 1.5)
+        XCTAssertEqual(try NativeCandidateFixture.requested(environment: valid), .low360)
+        XCTAssertEqual(try NativeBandwidthProbePublisher.requested(environment: valid), .staged)
+        for hold in ["90", "600"] {
+            var environment = valid; environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = hold
+            XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+        }
+    }
+
+    func testMeasuredRouteRejectsMissingPrerequisitesAndOtherControllers() throws {
+        for key in valid.keys where key != "SCOREBUG_TEST_MEASURED_TRIAL" {
+            var environment = valid; environment.removeValue(forKey: key)
+            XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: environment), key)
+        }
+        for (key, values) in [
+            "SCOREBUG_TEST_MEASURED_TRIAL": ["", "0", "true"],
+            "SCOREBUG_TEST_CANDIDATE_HEADROOM": ["0"],
+            "SCOREBUG_TEST_CANDIDATE_PROFILE": ["540p30", "1080p30"],
+            "SCOREBUG_TEST_BANDWIDTH_PROBE": ["renew", "expire"],
+            "SCOREBUG_TEST_LIVE_PROFILE": ["360p30"],
+            "SCOREBUG_TEST_MOTION_FIXTURE": ["1"],
+            "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": ["0"],
+            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": ["0"],
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["89", "601", "90.5", "090"],
+            "SCOREBUG_TEST_NATIVE_QUALITY": ["1"], "SCOREBUG_TEST_NATIVE_CONFIRMATION": ["1"],
+            "SCOREBUG_TEST_ADAPTIVE_PROFILES": ["1"], "SCOREBUG_TEST_PROFILE_TRANSITIONS": ["1"],
+            "SCOREBUG_TEST_SOURCE_CADENCE_PACING": ["1"], "SCOREBUG_TEST_UPLINK_PROXY_PORT": ["1234"],
+            "SCOREBUG_TEST_UPLINK_PROFILE": ["passthrough"], "SCOREBUG_TEST_DECODER_STALL": ["1"],
+            "SCOREBUG_TEST_CADENCE_REPORTS": ["1"], "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": ["1000", "1500.0"],
+            "SCOREBUG_TEST_DEADLINE_RESETS": ["1"]
+        ] {
+            for value in values {
+                var environment = valid; environment[key] = value
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: environment), "\(key)=\(value)")
+            }
+        }
+    }
+}

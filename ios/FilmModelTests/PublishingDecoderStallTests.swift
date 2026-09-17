@@ -158,6 +158,73 @@ final class PublishingDecoderStallTests: XCTestCase {
             XCTAssertEqual(n.calls, 1); await o.stop()
         }
     }
+    @MainActor func testDriverUsesCurrentCadenceAfterOwnerAwaitInsteadOfTickCapture() async throws {
+        for latestStalled in [false, true] {
+            let native = StallNative(), owner = try owner(native)
+            try await owner.bootstrap(); native.setNow(102)
+            var exported: Data?, reads = 0
+            let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+                uptime: { native.now }, export: { exported = $0 })
+            let current = try cadence(stalled: latestStalled, receivedAt: .now)
+            let currentDiagnostics = try diagnostics(native)
+            driver.cadenceInputProvider = { reads += 1; return .init(cadence: current, diagnostics: currentDiagnostics) }
+            let captured = try cadence(stalled: false, age: latestStalled ? 50 : 251, receivedAt: .now)
+            await driver.tick(encoderReady: true, source: nil, cadence: captured, diagnostics: currentDiagnostics)?.value
+            XCTAssertEqual(reads, 1)
+            XCTAssertEqual(native.calls, latestStalled ? 2 : 1)
+            await driver.stop()
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+            let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+            XCTAssertFalse(events.contains { $0["reason"] as? String == "cadence-freshness" })
+        }
+    }
+
+    func testUnavailableCadenceRechecksReappearingReceiptAndPreservesProgress() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        let cached = try cadence(stalled: false, pts: 200000)
+        _ = try await owner.evaluateDecoderStall(cadence: cached, diagnostics: diagnostics(native), instant: instant)
+        try await owner.noteUnavailableCadence(diagnostics: diagnostics(native))
+        do {
+            _ = try await owner.evaluateDecoderStall(cadence: cached, diagnostics: diagnostics(native), instant: instant + .seconds(1))
+            XCTFail("Missing cadence cannot preserve a freshness bypass")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+        do {
+            _ = try await owner.evaluateDecoderStall(cadence: cadence(stalled: false), diagnostics: diagnostics(native), instant: instant)
+            XCTFail("A gap cannot reset the progress watermark")
+        } catch { XCTAssertEqual(error as? QualityController.ValidationError, .outOfOrder) }
+        await owner.stop()
+    }
+
+    func testUnavailableCadencePreservesAlreadyPendingReset() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        let decision = try await owner.evaluateDecoderStall(cadence: cadence(), diagnostics: diagnostics(native), instant: instant)
+        let reset = try XCTUnwrap(decision?.recommendation)
+        try await owner.noteUnavailableCadence(diagnostics: diagnostics(native))
+        try await owner.apply(reset)
+        XCTAssertEqual(native.calls, 2)
+        await owner.stop()
+    }
+
+    @MainActor func testCurrentStaleCadenceStillRejectsAndProviderClearsOnCancel() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, export: { exported = $0 })
+        let old = try cadence(stalled: false, age: 251, receivedAt: .now)
+        let d = try diagnostics(native)
+        driver.cadenceInputProvider = { .init(cadence: old, diagnostics: d) }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: d)?.value
+        driver.cancel(); XCTAssertNil(driver.cadenceInputProvider)
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        XCTAssertTrue(events.contains { $0["reason"] as? String == "cadence-freshness" })
+        XCTAssertEqual(native.calls, 1)
+    }
+
     @MainActor func testDeadlineFixtureIgnoresCompetingFreshDecoderStall() async throws {
         let n = StallNative(), o = try owner(n)
         let driver = PublishingQualityDriver(owner: o, workerLimits: nil, transportLimits: nil,

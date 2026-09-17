@@ -51,6 +51,7 @@ actor PublishingQualitySession {
     private var evaluatedAt: Double?
     private var pendingCandidate: PublishingCandidateAdmission?
     private var candidateHealthSource: SourceScope?
+    private var requiresCadenceFreshnessValidation = false
     private var pending: QualityController.Recommendation? {
         didSet {
             if pending?.candidateID != pendingCandidate?.value.id { pendingCandidate = nil }
@@ -156,6 +157,34 @@ actor PublishingQualitySession {
             receipt = result; acknowledgedAt = now
         } catch { await stop(); throw error }
     }
+    /// The caller may discover a completed candidate between worker windows.
+    /// Defer its one-shot policy event until a current overlapping source is
+    /// available. Readiness and consumption share one actor turn; provider
+    /// suspension can neither freeze an old window nor bypass invalidation.
+    func evaluateCandidateWhenSourceReady(_ admission: PublishingCandidateAdmission) throws -> QualityController.Decision? {
+        try admit()
+        guard let policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
+        let now = try time(), instant = sampleInstant()
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
+            settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)
+        // Revoked or changed owners retain the existing rejection behavior;
+        // deferral is solely for absent/incompatible temporal source coverage.
+        guard admission.permits(applied: applied, at: now, instant: instant) else {
+            return try evaluateCandidate(admission, instant: instant)
+        }
+        let receiver = admission.receiver
+        guard let source = candidateHealthSource,
+              source.gameID == receiver.expected.gameId, source.generation == receiver.expected.generation,
+              source.workerId == receiver.expected.workerId, source.epoch == receiver.workerEpoch,
+              source.attempt == receiver.workerAttempt, source.publication == receiver.publication,
+              let window = lastWindow, let observedReceiver = window.receiver,
+              window.attemptID == attemptID, window.appliedRevision == policy.appliedRevision,
+              window.end <= now, now - window.end <= 2,
+              observedReceiver.observedAt <= now, now - observedReceiver.observedAt <= 2,
+              window.end > admission.value.measuredStart, window.start < admission.value.measuredEnd else { return nil }
+        return try evaluateCandidate(admission, instant: instant)
+    }
+
     /// Recheck caller-owned authority after actor scheduling. This event consumes
     /// no source sequence and cannot manufacture health from candidate duration.
     func evaluateCandidate(_ admission: PublishingCandidateAdmission,
@@ -259,6 +288,32 @@ actor PublishingQualitySession {
             return decision
         } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
+    /// A current publisher with absent cadence supplies unknown evidence, never
+    /// a healthy sample. Only an already justified downward action is preserved.
+    func noteUnavailableCadence(diagnostics: PublishingQualityTelemetry.Diagnostics) throws {
+        try admit()
+        guard behavior == .progressive, var policy, let receipt, let acknowledgedAt else { return }
+        defer { self.policy = policy }
+        candidateHealthSource = nil
+        // Preserve identity/progress/stall watermarks, but a reappearing receipt
+        // must validate freshness again before the consumed-receipt fast path.
+        requiresCadenceFreshnessValidation = true
+        let preserveDownward = pending.map { $0.kind == .decrease || $0.kind == .reset || $0.kind == .rollback } == true
+        do {
+            let now = try time()
+            guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
+            _ = try PublishingQualityTelemetry.localPressureWindow(
+                applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
+                    settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+                diagnostics: diagnostics, transportLimits: nil, sequence: lastPolicySequence + 1,
+                after: lastWindow?.end, at: now)
+        } catch {
+            if !preserveDownward { policy.invalidateTelemetry(); pending = nil }
+            throw error
+        }
+        if !preserveDownward { policy.invalidateTelemetry(); pending = nil }
+    }
+
     func evaluateDecoderStall(cadence: WorkerDecoderCadenceFreshness, diagnostics: PublishingQualityTelemetry.Diagnostics,
                               instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
         try admit()
@@ -274,7 +329,7 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now)
             // A consumed downward-only sample cannot acquire new meaning merely
             // by aging in a local cache. A newly received stale report still rejects.
-            guard consumedCadenceReceipt != cadence.receiptID else { return nil }
+            guard requiresCadenceFreshnessValidation || consumedCadenceReceipt != cadence.receiptID else { return nil }
             let signal = try PublishingQualityTelemetry.decoderStall(cadence: cadence, applied: applied,
                 diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
             let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
@@ -284,6 +339,7 @@ actor PublishingQualitySession {
             }
             if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
             decoderScope = scope; decoderProgress = progress; consumedCadenceReceipt = cadence.receiptID
+            requiresCadenceFreshnessValidation = false
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
             candidateHealthSource = nil
@@ -415,6 +471,10 @@ actor PublishingQualitySession {
             // write on that exact new encoder must precede the single policy ack.
             try policy.acknowledge(admitted, applied: advice.settings, at: now)
             self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil; application = admitted
+            // This revision change is our acknowledged write, not replacement
+            // of the receiver context. Keep its revocable identity while new
+            // source/configuration windows start their own delivery watermarks.
+            deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
             if let format { profileReceipt = format }
         } catch { await stop(); throw error }
     }
