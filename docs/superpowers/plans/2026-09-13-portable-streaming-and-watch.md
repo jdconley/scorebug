@@ -1748,3 +1748,21 @@ and unsigned combined iPhone/Watch Release builds. Independent review closed
 older-anchor export, sticky tracker exhaustion and conservative age-bound findings.
 Evidence: `artifacts/qa/native-deadline-final-verification.json`. Candidate actual
 cost/headroom, recovery, reconnect, physical devices and remote workers remain open.
+
+[The explicit 1.5-second deadline experiment](2026-09-17-deadline-baseline-experiment.md)
+now proves healthy baseline delivery and disturbance detection in actual simulator
+run `native-app-AozzeP`. It independently reconciles 136 classified windows and
+retains 15 freshness-unknown windows. There are 87 healthy one-second windows and
+44 healthy two-second windows. The owned 1.965-second decoder pause produces a
+zero-on-time-FPS one-second window and a two-second window with 35/60 frames
+missing at measurement; the overlapping lanes are never summed into recovery.
+A later continuous 31-second span proves healthy receiver delivery only.
+
+Independent 1080p archive: 3,678 fully decoded frames and 61/61 audio markers.
+Live output also fully decodes with zero eventual source loss. All 372 Core,
+274 native model and 1,317 tooling tests, ARM64 simulator and unsigned combined
+iPhone/Watch Release builds pass. Source and all previous evidence are preserved
+in `artifacts/qa/deadline-baseline-final-verification.json`. Next connect scoped
+deadline failures to minimum-reset decisions and qualify actual reset/recovery;
+the experiment does not yet activate automatic adaptation or qualify physical
+devices, candidate headroom, or remote workers.

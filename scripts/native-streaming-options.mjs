@@ -141,6 +141,17 @@ export function fixtureDecoderThreading(environment) {
   return mode ?? 'automatic';
 }
 
+/** Independent requested budget, forwarded unchanged through the native test boundary. */
+export function fixtureDeliveryDeadline({ environment, decoderStall }) {
+  const raw = environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS;
+  if (raw === undefined) return 1;
+  assert.ok(
+    decoderStall && ['1000', '1500'].includes(raw),
+    'Unsupported controlled-fixture deadline',
+  );
+  return Number(raw) / 1000;
+}
+
 /** Native SDK milliseconds, not FFmpeg URL microseconds; absent preserves defaults. */
 export function fixturePublishPeerLatency(environment) {
   const raw = environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS;

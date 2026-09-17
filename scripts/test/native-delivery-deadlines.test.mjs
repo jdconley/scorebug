@@ -179,6 +179,106 @@ test('independent verifier exists and reconciles Swift-shaped scalar evidence', 
   assert.equal(result.counts.lateFrames, 1);
   assert.equal(result.counts.missingFrames, 1);
   assert.equal(result.counts.uncertainFrames, 1);
+  assert.equal(result.latencyBudget, 1);
+  assert.equal(result.maximumSampleAge, 0.25);
+  assert.deepEqual(result.lanes[0].observations, {
+    healthyRows: 0,
+    lateRows: 1,
+    missingRows: 1,
+    uncertainRows: 1,
+    below24FPSRows: 0,
+    below30FPSRows: 0,
+  });
+});
+
+function baselineFixture() {
+  const f = fixture(),
+    row = f.audit.rows[0],
+    report = f.reports.rows[0],
+    packet = report.response.status.observation.decoderDelivery;
+  f.audit.latencyBudget = 1.5;
+  // Complete the longer deadline window without changing actual arrival times.
+  row.evaluatedAt += 0.1;
+  report.receivedUptime += 0.1;
+  report.evaluatedUptime += 0.1;
+  packet.sampledAtMs += 100;
+  row.timeline = deliverySnapshot(packet);
+  row.result = {
+    expectedFrames: 30,
+    onTimeFrames: 29,
+    lateFrames: 0,
+    missingFrames: 1,
+    uncertainFrames: 0,
+    onTimeFPS: 29,
+    failureFraction: 1 / 30,
+  };
+  return f;
+}
+
+test('the 1.5-second baseline requires explicit matching expectation and reconciled counts', async () => {
+  const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+  const f = baselineFixture();
+  assert.throws(() => qualifyNativeDeliveryDeadlines(f), /deadline budgets/);
+  assert.throws(
+    () => qualifyNativeDeliveryDeadlines({ ...f, expectedLatencyBudget: 1 }),
+    /deadline budgets/,
+  );
+  const result = qualifyNativeDeliveryDeadlines({ ...f, expectedLatencyBudget: 1.5 });
+  assert.equal(result.latencyBudget, 1.5);
+  assert.equal(result.maximumSampleAge, 0.25);
+  assert.equal(result.counts.onTimeFrames, 29);
+  assert.equal(result.lanes[0].observations.missingRows, 1);
+  assert.equal(result.lanes[0].observations.uncertainRows, 0);
+  assert.equal(result.actualNativeDeadlineEvidenceQualified, true);
+  assert.equal(result.automaticAdaptationQualified, false);
+  assert.equal(result.recoveryQualified, false);
+  f.audit.rows[0].result = fixture().audit.rows[0].result;
+  assert.throws(
+    () => qualifyNativeDeliveryDeadlines({ ...f, expectedLatencyBudget: 1.5 }),
+    /Deadline onTimeFrames differs/,
+  );
+});
+
+test('only numeric expected budgets 1 and 1.5 are supported and must match the audit', async () => {
+  const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+  assert.equal(
+    qualifyNativeDeliveryDeadlines({ ...fixture(), expectedLatencyBudget: 1 }).successfulRows,
+    1,
+  );
+  for (const expectedLatencyBudget of [0, 2, -1, null, '1', '1.5', NaN, Infinity, {}, []]) {
+    assert.throws(
+      () => qualifyNativeDeliveryDeadlines({ ...fixture(), expectedLatencyBudget }),
+      /deadline budget/,
+      `Reject unsupported expectation ${String(expectedLatencyBudget)}`,
+    );
+  }
+  assert.throws(
+    () => qualifyNativeDeliveryDeadlines({ ...fixture(), expectedLatencyBudget: 1.5 }),
+    /deadline budgets/,
+  );
+  for (const latencyBudget of [undefined, null, '1', '1.5', 2, NaN]) {
+    const f = fixture();
+    f.audit.latencyBudget = latencyBudget;
+    assert.throws(() => qualifyNativeDeliveryDeadlines(f), /deadline budgets/);
+  }
+});
+
+test('explicit 1.5-second deadline retains the fixed freshness ceiling', async () => {
+  const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+  const f = baselineFixture();
+  f.audit.maximumSampleAge = 0.3;
+  assert.throws(
+    () => qualifyNativeDeliveryDeadlines({ ...f, expectedLatencyBudget: 1.5 }),
+    /deadline budgets/,
+  );
+  f.audit.maximumSampleAge = 0.25;
+  f.reports.rows[0].response.status.decoderDeliveryAgeUpperBoundMs = 221;
+  f.reports.rows[0].deliverySampleAgeSeconds = 0.241;
+  f.audit.rows[0].sampleAgeSeconds = 0.25;
+  assert.throws(
+    () => qualifyNativeDeliveryDeadlines({ ...f, expectedLatencyBudget: 1.5 }),
+    /sample age.*stale/,
+  );
 });
 
 for (const [name, damage] of Object.entries({
@@ -230,6 +330,14 @@ test('unknown rows remain unknown and do not establish qualification', async () 
   assert.equal(result.unknownRows, 1);
   assert.equal(result.successfulRows, 0);
   assert.equal(result.actualNativeDeadlineEvidenceQualified, false);
+  assert.deepEqual(result.lanes[0].observations, {
+    healthyRows: 0,
+    lateRows: 0,
+    missingRows: 0,
+    uncertainRows: 0,
+    below24FPSRows: 0,
+    below30FPSRows: 0,
+  });
 });
 
 test('reconciles actual Swift classifier export against synthetic wire packets', async () => {
@@ -286,6 +394,35 @@ test('reconciles actual Swift classifier export against synthetic wire packets',
   assert.equal(result.observations.healthyRows, 1);
   assert.equal(result.observations.below24FPSRows, 0);
   assert.equal(result.lanes.length, 2);
+  assert.deepEqual(
+    result.lanes.map(({ duration, observations }) => ({ duration, observations })),
+    [
+      {
+        duration: 1,
+        observations: {
+          healthyRows: 1,
+          lateRows: 1,
+          missingRows: 1,
+          uncertainRows: 0,
+          below24FPSRows: 0,
+          below30FPSRows: 1,
+        },
+      },
+      {
+        duration: 2,
+        observations: {
+          healthyRows: 0,
+          lateRows: 1,
+          missingRows: 1,
+          uncertainRows: 0,
+          below24FPSRows: 0,
+          below30FPSRows: 1,
+        },
+      },
+    ],
+  );
+  assert.equal(result.automaticAdaptationQualified, false);
+  assert.equal(result.recoveryQualified, false);
 });
 
 function splitReports(f) {
@@ -477,6 +614,8 @@ test('reports measured below-24 FPS without requiring healthy media', async () =
   const result = qualifyNativeDeliveryDeadlines(f);
   assert.equal(result.observations.below24FPSRows, 1);
   assert.equal(result.observations.healthyRows, 0);
+  assert.equal(result.lanes[0].observations.below24FPSRows, 1);
+  assert.equal(result.lanes[0].observations.healthyRows, 0);
   assert.equal(result.actualNativeDeadlineEvidenceQualified, true);
   assert.equal(result.automaticAdaptationQualified, false);
   assert.equal(result.recoveryQualified, false);

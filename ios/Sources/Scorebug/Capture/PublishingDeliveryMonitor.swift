@@ -7,6 +7,17 @@ import ScorebugMedia
 /// and must never both contribute recovery credit. Scheduling alone proves no
 /// source ownership, freshness or deadline result.
 enum PublishingDeliveryMonitor {
+    #if DEBUG
+    /// Explicit simulator qualification only; no production deadline default.
+    static func fixtureLatencyBudget(environment: [String: String]) throws -> Double {
+        guard let raw = environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] else { return 1 }
+        guard ["1000", "1500"].contains(raw), WorkerCadenceReportAudit.requested(environment: environment),
+              ["1", "reset540"].contains(environment["SCOREBUG_TEST_DECODER_STALL"] ?? "") else {
+            throw Schedule.Failure.invalidBudget
+        }
+        return raw == "1500" ? 1.5 : 1
+    }
+    #endif
     struct Window: Equatable, Sendable {
         let start: Double
         let end: Double

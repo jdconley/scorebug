@@ -310,6 +310,7 @@ import ScorebugMedia
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
+        let deliveryLatencyBudget = try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment)
         let resetStall = environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540"
         let minimumStall = (environment["SCOREBUG_TEST_DECODER_STALL"] == "1" || resetStall)
             && WorkerCadenceReportAudit.requested(environment: environment)
@@ -333,7 +334,7 @@ import ScorebugMedia
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
-            deliveryAudit: minimumStall ? try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25) : nil,
+            deliveryAudit: minimumStall ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25) : nil,
             deliveryExport: minimumStall ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             export: { data in
                 await Task.detached {

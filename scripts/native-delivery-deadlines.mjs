@@ -486,10 +486,19 @@ function classify(row, frames, budget, age) {
 /** Reconciles scalar evidence from the actual native/report exports. Synthetic inputs
  * can test this verifier, but do not themselves qualify a real capture/relay run.
  * Lane totals intentionally overlap: never sum them into recovery or adaptation credit. */
-export function qualifyNativeDeliveryDeadlines({ audit, reports, scope }) {
+export function qualifyNativeDeliveryDeadlines({
+  audit,
+  reports,
+  scope,
+  expectedLatencyBudget = 1,
+}) {
   envelope(audit, 256, 'deadline audit');
   assert(
-    audit.latencyBudget === 1 && audit.maximumSampleAge === 0.25,
+    expectedLatencyBudget === 1 || expectedLatencyBudget === 1.5,
+    'Unsupported expected deadline budget',
+  );
+  assert(
+    audit.latencyBudget === expectedLatencyBudget && audit.maximumSampleAge === 0.25,
     'Unexpected experiment deadline budgets',
   );
   const reconstructed = reconstructReports(reports, scope),
@@ -550,6 +559,14 @@ export function qualifyNativeDeliveryDeadlines({ audit, reports, scope }) {
         successfulRows: 0,
         unknownRows: 0,
         coverageSeconds: 0,
+        observations: {
+          healthyRows: 0,
+          lateRows: 0,
+          missingRows: 0,
+          uncertainRows: 0,
+          below24FPSRows: 0,
+          below30FPSRows: 0,
+        },
         start: row.start,
         end: row.start,
       };
@@ -609,21 +626,25 @@ export function qualifyNativeDeliveryDeadlines({ audit, reports, scope }) {
     const frames = sourceFrames(row, scope),
       result = classify(row, frames, audit.latencyBudget, conservativeAge);
     for (const key of Object.keys(counts)) counts[key] += result[key];
-    if (result.lateFrames) observations.lateRows++;
-    if (result.missingFrames) observations.missingRows++;
-    if (result.uncertainFrames) observations.uncertainRows++;
-    else {
-      const fps = result.onTimeFrames / (row.end - row.start);
-      if (fps < 24) observations.below24FPSRows++;
-      if (fps < 30) observations.below30FPSRows++;
-      if (result.lateFrames === 0 && result.missingFrames === 0 && fps >= 30)
-        observations.healthyRows++;
+    for (const observed of [observations, lane.observations]) {
+      if (result.lateFrames) observed.lateRows++;
+      if (result.missingFrames) observed.missingRows++;
+      if (result.uncertainFrames) observed.uncertainRows++;
+      else {
+        const fps = result.onTimeFrames / (row.end - row.start);
+        if (fps < 24) observed.below24FPSRows++;
+        if (fps < 30) observed.below30FPSRows++;
+        if (result.lateFrames === 0 && result.missingFrames === 0 && fps >= 30)
+          observed.healthyRows++;
+      }
     }
     successfulRows++;
     lane.successfulRows++;
     lane.coverageSeconds += lane.duration;
   }
   return {
+    latencyBudget: audit.latencyBudget,
+    maximumSampleAge: audit.maximumSampleAge,
     rowCount: audit.rows.length,
     reportCount: reports.rows.length,
     successfulRows,

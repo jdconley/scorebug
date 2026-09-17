@@ -2,6 +2,25 @@ import Foundation
 import XCTest
 
 final class PublishingDeliveryMonitorTests: XCTestCase {
+    func testDeadlineBudgetOverrideRequiresExactControlledFixture() throws {
+        XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: [:]), 1)
+        let base = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_CADENCE_REPORTS": "1",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_DECODER_STALL": "1"]
+        for raw in ["1000", "1500"] {
+            var environment = base
+            environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = raw
+            XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment), Double(raw)! / 1000)
+            for key in base.keys {
+                var incomplete = environment; incomplete.removeValue(forKey: key)
+                XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: incomplete), key)
+            }
+        }
+        for raw in ["", "1500.0", "01500", " 1500", "1500 ", "1.5", "1e3", "2000", "0", "NaN"] {
+            var environment = base; environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = raw
+            XCTAssertThrowsError(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment), raw)
+        }
+    }
     func testSchedulesIndependentNonoverlappingWindowsAfterDeadline() throws {
         var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: 1, maximumSampleAge: 0.25)
         XCTAssertEqual(schedule.poll(at: 10.1, identity: "a"), [])

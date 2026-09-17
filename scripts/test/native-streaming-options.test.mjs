@@ -2,6 +2,49 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as options from '../native-streaming-options.mjs';
 
+test('deadline experiment retains default and requires exact controlled-fixture override', () => {
+  assert.equal(options.fixtureDeliveryDeadline({ environment: {}, decoderStall: false }), 1);
+  for (const raw of ['1000', '1500']) {
+    assert.equal(
+      options.fixtureDeliveryDeadline({
+        environment: { SCOREBUG_TEST_DELIVERY_DEADLINE_MS: raw },
+        decoderStall: true,
+      }),
+      Number(raw) / 1000,
+    );
+    assert.throws(
+      () =>
+        options.fixtureDeliveryDeadline({
+          environment: { SCOREBUG_TEST_DELIVERY_DEADLINE_MS: raw },
+          decoderStall: false,
+        }),
+      /deadline/i,
+    );
+  }
+  for (const raw of [
+    '',
+    '1500.0',
+    '01500',
+    ' 1500',
+    '1500 ',
+    '1.5',
+    '1e3',
+    '2000',
+    '0',
+    'NaN',
+    1500,
+    null,
+  ])
+    assert.throws(
+      () =>
+        options.fixtureDeliveryDeadline({
+          environment: { SCOREBUG_TEST_DELIVERY_DEADLINE_MS: raw },
+          decoderStall: true,
+        }),
+      /deadline/i,
+    );
+});
+
 test('short native run retains its existing hold and history', () => {
   assert.deepEqual(options.nativeStreamingOptions({ streaming: true, environment: {} }), {
     holdSeconds: 12,

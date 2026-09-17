@@ -44,6 +44,7 @@ import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
   fixtureDecoderThreading,
+  fixtureDeliveryDeadline,
   fixturePublishPeerLatency,
   fixturePublishPacing,
   nativeSourceCadencePacing,
@@ -88,6 +89,7 @@ const cadenceReports = nativeCadenceReports({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const decoderStall = nativeControlledStall({ environment: process.env, cadenceReports });
+const deliveryLatencyBudget = fixtureDeliveryDeadline({ environment: process.env, decoderStall });
 const stallReset = decoderStall && process.env.SCOREBUG_TEST_DECODER_STALL === 'reset540';
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
 const { requireQuality, requireConfirmation } = nativeQualityOptions({
@@ -163,6 +165,7 @@ await writeFile(
       sourceCadencePacing,
       cadenceReports,
       decoderStall,
+      deliveryLatencyBudget,
       stallReset,
       streaming,
       requirePublication,
@@ -529,6 +532,7 @@ try {
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
       `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
       `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? process.env.SCOREBUG_TEST_DECODER_STALL : ''}`,
+      `SCOREBUG_TEST_DELIVERY_DEADLINE_MS=${process.env.SCOREBUG_TEST_DELIVERY_DEADLINE_MS ?? ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
@@ -873,6 +877,7 @@ try {
         audit: JSON.parse(await readFile(join(artifact, 'delivery-deadlines.json'), 'utf8')),
         reports: JSON.parse(await readFile(join(artifact, 'worker-cadence-reports.json'), 'utf8')),
         scope: observationSnapshot.scope,
+        expectedLatencyBudget: deliveryLatencyBudget,
       });
       assert(deadlineResult.successfulRows >= 20, 'Insufficient native deadline coverage');
       for (const duration of [1, 2]) {
@@ -887,6 +892,20 @@ try {
         deadlineResult.counts.lateFrames + deadlineResult.counts.missingFrames > 0,
         'Owned decoder pause produced no classified deadline failures',
       );
+      if (deliveryLatencyBudget === 1.5) {
+        for (const duration of [1, 2]) {
+          assert(
+            deadlineResult.lanes.some(
+              (lane) => lane.duration === duration && lane.observations.healthyRows >= 10,
+            ),
+            'Insufficient proven healthy baseline in deadline lane',
+          );
+        }
+        assert(
+          deadlineResult.observations.below24FPSRows > 0,
+          'No fully classified deadline FPS failure',
+        );
+      }
       await writeFile(
         join(artifact, 'delivery-deadline-qualification.json'),
         JSON.stringify(deadlineResult, null, 2),
