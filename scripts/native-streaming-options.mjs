@@ -100,8 +100,16 @@ export function nativeUplinkOptions({
   );
   const profile = environment.SCOREBUG_TEST_UPLINK_PROFILE;
   if (profile === undefined) return null;
-  assert.ok(['passthrough', 'rate4m'].includes(profile), 'Unsupported native uplink profile');
-  if (profile === 'rate4m')
+  assert.ok(
+    ['passthrough', 'rate4m', 'rate3m'].includes(profile),
+    'Unsupported native uplink profile',
+  );
+  if (profile === 'rate3m')
+    assert.ok(
+      liveProfile === '240p30' && !requireQuality && !requireConfirmation,
+      'The 3 Mbps qualification requires the fixed240 profile',
+    );
+  if (profile === 'rate4m' || profile === 'rate3m')
     assert.ok(
       Number.isSafeInteger(holdSeconds) && holdSeconds >= 180 && holdSeconds <= 600,
       'Scheduled uplink requires 180 through 600 seconds hold',

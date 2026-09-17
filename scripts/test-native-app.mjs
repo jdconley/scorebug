@@ -567,8 +567,9 @@ try {
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
   const uplinkQualification = uplinkProfile
-    ? (uplinkProfile === 'rate4m' ? qualifyNativeUplinkSchedule : qualifyNativeUplinkProxy)(
+    ? (uplinkProfile === 'passthrough' ? qualifyNativeUplinkProxy : qualifyNativeUplinkSchedule)(
         JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'), 'utf8')),
+        uplinkProfile,
       )
     : undefined;
   if (streaming) {
@@ -866,7 +867,7 @@ try {
     ),
   );
   console.log(
-    `${uplinkProfile === 'rate4m' || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

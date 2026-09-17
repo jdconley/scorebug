@@ -47,9 +47,14 @@ export async function nativeStreamingFixture({
   assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
-    uplinkProfile === null || ['passthrough', 'rate4m'].includes(uplinkProfile),
+    uplinkProfile === null || ['passthrough', 'rate4m', 'rate3m'].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
+  if (uplinkProfile === 'rate3m')
+    assert.ok(
+      liveProfile === '240p30' && requirePublication && !requireReceiverProbe,
+      'The 3 Mbps fixture requires fixed240 publication without a probe',
+    );
   assert.equal(typeof requireReceiverProbe, 'boolean');
   assert.ok(!requireReceiverProbe || requirePublication);
   const names = [];
@@ -217,11 +222,14 @@ export async function nativeStreamingFixture({
         receiverPort: ingestPort,
         forward: { recordTimeline: true },
         reverse: { recordTimeline: true },
-        ...(uplinkProfile === 'rate4m'
+        ...(['rate4m', 'rate3m'].includes(uplinkProfile)
           ? {
               forwardRateSchedule: [
                 { atMilliseconds: 0, rateBitsPerSecond: null },
-                { atMilliseconds: 60000, rateBitsPerSecond: 4000000 },
+                {
+                  atMilliseconds: 60000,
+                  rateBitsPerSecond: uplinkProfile === 'rate3m' ? 3000000 : 4000000,
+                },
                 { atMilliseconds: 120000, rateBitsPerSecond: null },
               ],
             }

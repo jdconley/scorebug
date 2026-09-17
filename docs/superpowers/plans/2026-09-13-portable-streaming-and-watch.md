@@ -1427,3 +1427,20 @@ tests, worker typechecking and both Apple builds pass. Independent verification
 rejects 11 damaged variants. Evidence is in `artifacts/qa/low240-final-verification.json`.
 Next test an explicit 3 Mbps uplink, then minimum-profile transitions and progressive
 health/policy integration. Automatic adaptation and production startup remain gated.
+
+
+[Fixed240 at 3 Mbps](2026-09-16-240p-3mbps.md) now passes in
+`native-app-2H0AUs`: 6,386 consecutive archive frames, 5,981 consecutive retained
+live frames, all audio markers, clean full decodes and 30 fps minimum reported
+receiver cadence. The actual 3 Mbps phase lasts 60,000.510291 ms, carries
+16,868,736 wire bytes and drops no proxy packets. Measured video windows peak at
+1.989 Mbps. This qualifies a useful lower-bandwidth fixed scenario on the local
+simulator, not automatic adaptation or achievement of the nominal 350 kbps setting.
+
+All 1,202 tooling tests pass; three retained 4 Mbps runs replay unchanged and are
+rejected under the 3 Mbps expectation. Independent verification rejects 16 damaged
+variants. Every process owner joins; hashes are in
+`artifacts/qa/rate3m-final-verification.json`. Next qualify controlled
+240p → 540p → 240p transitions, then integrate the required short-window health,
+minimum reset and progressive recovery policy. Physical-device and remote-host
+qualification remain open.

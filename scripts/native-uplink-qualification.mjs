@@ -141,7 +141,9 @@ function validateScheduledDirection(d, { rate, closed, at, previous, allowOverfl
 }
 
 /** This proves applied transport phases, never native adaptation or recovery. */
-export function qualifyNativeUplinkSchedule(snapshot) {
+export function qualifyNativeUplinkSchedule(snapshot, profile = 'rate4m') {
+  assert.ok(['rate4m', 'rate3m'].includes(profile), 'Unsupported expected uplink schedule');
+  const rateBitsPerSecond = profile === 'rate3m' ? 3000000 : 4000000;
   assert.equal(snapshot.formatVersion, 1);
   assert.equal(snapshot.closed, true);
   assert.equal(snapshot.foreignPeerPackets, 0);
@@ -149,7 +151,7 @@ export function qualifyNativeUplinkSchedule(snapshot) {
   const s = snapshot.forwardRateSchedule;
   const expected = [
     { atMilliseconds: 0, rateBitsPerSecond: null },
-    { atMilliseconds: 60000, rateBitsPerSecond: 4000000 },
+    { atMilliseconds: 60000, rateBitsPerSecond },
     { atMilliseconds: 120000, rateBitsPerSecond: null },
   ];
   assert.deepEqual(s.requested, expected);
@@ -198,7 +200,7 @@ export function qualifyNativeUplinkSchedule(snapshot) {
     recovery.forward.queue.forwarded.wireBytes - limited.forward.queue.forwarded.wireBytes;
   assert.ok(limitedForwardWireBytes > 0, 'No traffic during limited phase');
   assert.ok(
-    limitedForwardWireBytes <= 16384 + (limitedDurationMilliseconds * 4000000) / 8000 + 1,
+    limitedForwardWireBytes <= 16384 + (limitedDurationMilliseconds * rateBitsPerSecond) / 8000 + 1,
     'Limited phase exceeded wire-rate ceiling',
   );
   assert.ok(
@@ -206,7 +208,7 @@ export function qualifyNativeUplinkSchedule(snapshot) {
     'Missing recovery traffic coverage',
   );
   return {
-    profile: 'rate4m',
+    profile,
     limitedDurationMilliseconds,
     limitedForwardWireBytes,
     forwardPackets: snapshot.forward.queue.forwarded.packets,
