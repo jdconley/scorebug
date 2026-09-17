@@ -1482,3 +1482,24 @@ scoped freshness/reporting, expected-source/lateness reconciliation and direct
 minimum reset/recovery. Source/evidence hashes are in
 `artifacts/qa/decoder-cadence-final-verification.json`; no new archive, SRT, physical
 phone/Watch or remote-worker qualification is claimed by this observer experiment.
+
+
+[Authenticated decoder cadence reporting](2026-09-16-decoder-cadence-reporting.md)
+now carries optional one-/two-second snapshots from the actual pipeline sample
+through negotiated worker reporting and authenticated media status into native
+wire models. Current private read identity, transport coordinates, scope retirement,
+window/progress monotonicity and omission handling gate the API. Server timing-token
+bounds plus native request/residence accounting establish snapshot freshness for
+an explicitly expected publishing attempt; missing reports never synthesize stalls.
+
+All 445 API, 361 worker, 323 Core, one protocol and 1,205 tooling tests pass, both
+services typecheck, and ARM64 simulator/unsigned iPhone+Watch Release builds pass.
+All 661 prior real FFmpeg snapshots replay unchanged through authenticated routes
+with every age bound reconciled and unauthorized requests rejected. Shared golden
+JSON covers native interoperability. Evidence is in
+`artifacts/qa/cadence-report-final-verification.json`. This route replay does not
+establish a live relay association or physical-device performance.
+
+Next qualify short report/poll timing, expected-source/lateness reconciliation,
+and consumption by the priority minimum-reset/recovery controller. Production
+worker report cadence remains 1,000 ms; automatic quality behavior is unchanged.

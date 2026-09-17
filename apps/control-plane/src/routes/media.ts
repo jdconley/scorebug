@@ -1,3 +1,4 @@
+import { decoderCadenceSchema } from '../decoder-cadence.js';
 import { workerProcessingSchema, processingFitsObservation } from '../worker-processing.js';
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
@@ -221,6 +222,7 @@ export function workerRoutes(
               outTimeUs: sequence.nullable(),
               scoreRevision: sequence.nullable(),
               decodedVideo: decodedVideo.optional(),
+              decoderCadence: decoderCadenceSchema.optional(),
               processing: workerProcessingSchema.optional(),
             })
             .strict()
@@ -235,7 +237,7 @@ export function workerRoutes(
     ),
     (c) => {
       const body = c.req.valid('json');
-      const { decodedVideo, processing, ...observation } = body.observation;
+      const { decodedVideo, processing, decoderCadence, ...observation } = body.observation;
       const { timingToken, pipelineReadId, ...request } = body;
       return c.json(
         observations.report({
@@ -245,6 +247,7 @@ export function workerRoutes(
           observation: {
             ...observation,
             ...(decodedVideo ? { decodedVideo } : {}),
+            ...(decoderCadence ? { decoderCadence } : {}),
             ...(processing ? { processing } : {}),
           },
         }),

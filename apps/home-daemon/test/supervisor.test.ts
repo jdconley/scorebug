@@ -555,6 +555,7 @@ it('samples processing and decoder evidence atomically and clears processing out
   const sample: any = {
     decodedVideo: { completed: null, invalidReason: null, ended: false },
     processing: { scopeID: 'owned' },
+    decoderCadence: { scopeID: 'cadence-owned' },
   };
   r.children[0]!.handle.snapshotVideoEvidence = () => sample;
   r.children[0]!.handle.snapshotDecodedVideo = () => {
@@ -563,11 +564,15 @@ it('samples processing and decoder evidence atomically and clears processing out
   r.children[0]!.progress({ frame: 300, outTimeUs: 10000000 });
   const report = r.supervisor.observation();
   expect(report?.processing).toEqual(sample.processing);
+  expect(report?.decoderCadence).toEqual(sample.decoderCadence);
+  report!.decoderCadence!.scopeID = 'mutated';
+  expect(sample.decoderCadence.scopeID).toBe('cadence-owned');
   expect(report?.decodedVideo).toEqual(sample.decodedVideo);
   report!.processing!.scopeID = 'mutated';
   expect(sample.processing.scopeID).toBe('owned');
   const closing = r.supervisor.close();
   expect(r.supervisor.observation()?.processing).toBeUndefined();
+  expect(r.supervisor.observation()?.decoderCadence).toBeUndefined();
   r.children[0]!.exit();
   await closing;
 });

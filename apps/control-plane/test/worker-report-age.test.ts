@@ -648,3 +648,115 @@ it('processing completion cannot refresh the age of its original decoder window'
   expect(completed.status.observation.decodedVideo.completed.ageMs).toBe(1050);
   expect(completed.status.observation.processing.interval.pendingFrames).toBe(0);
 });
+
+function cadenceBody(f: Awaited<ReturnType<typeof fixture>>) {
+  return {
+    ...f.body,
+    timingToken: f.session.timingToken,
+    pipelineReadId: '22222222-2222-4222-8222-222222222222',
+    observation: {
+      ...f.body.observation,
+      decodedVideo: {
+        ...f.body.observation.decodedVideo!,
+        completed: null,
+        clock: 'mpegts-pts-90k-v1',
+      },
+      decoderCadence: {
+        formatVersion: 1,
+        scopeID: '11111111-1111-4111-8111-111111111111',
+        oneSecond: {
+          sequence: 2,
+          durationMs: 1000,
+          ageMs: 100,
+          firstPTS: 90000,
+          lastPTS: 177000,
+          freshFrames: 30,
+          duplicateFrames: 0,
+          reorderedFrames: 0,
+          valid: true,
+        },
+        twoSeconds: {
+          sequence: 1,
+          durationMs: 2000,
+          ageMs: 100,
+          firstPTS: 0,
+          lastPTS: 177000,
+          freshFrames: 60,
+          duplicateFrames: 0,
+          reorderedFrames: 0,
+          valid: true,
+        },
+        progress: { lastFreshPTS: 180000, ageMs: 50, stalled: false },
+        invalidReason: null,
+        ended: false,
+      },
+    },
+  };
+}
+it('cadence snapshot age includes token transit and residence without changing measured progress', async () => {
+  const f = await fixture();
+  expect(f.session.decoderCadence).toBe('decoder-cadence-v1');
+  const body = cadenceBody(f);
+  f.time(150);
+  await f.accept(body);
+  f.time(200);
+  const result = await f.status();
+  expect(result.status.decoderCadenceAgeUpperBoundMs).toBe(100);
+  expect(result.status.observation.decoderCadence).toEqual(body.observation.decoderCadence);
+  f.time(1200);
+  const later = await f.status();
+  expect(later.status.decoderCadenceAgeUpperBoundMs).toBe(1100);
+  expect(later.status.observation.decoderCadence.progress.stalled).toBe(false);
+});
+it('cadence omission is unknown and cannot erase anti-replay history', async () => {
+  const f = await fixture();
+  const body = cadenceBody(f);
+  await f.accept(body);
+  const omitted: any = structuredClone(body);
+  omitted.sequence = 2;
+  delete omitted.observation.decoderCadence;
+  await f.accept(omitted);
+  const status = await f.status();
+  expect(status.status.observation.decoderCadence).toBeUndefined();
+  expect(status.status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
+  body.sequence = 3;
+  body.observation.decoderCadence.progress.ageMs = 49;
+  expect((await f.report(body)).status).toBe(409);
+});
+it('cadence cannot qualify freshness without timing provenance or after clock failure', async () => {
+  for (const mode of ['missing', 'foreign', 'clock']) {
+    const f = await fixture();
+    const body: any = cadenceBody(f);
+    if (mode === 'missing') delete body.timingToken;
+    if (mode === 'foreign') body.timingToken = 'not-issued';
+    if (mode === 'clock') f.throwClock();
+    await f.accept(body);
+    expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
+  }
+});
+it('cadence scope cannot change within an attempt or return in a later attempt', async () => {
+  const f = await fixture();
+  const body = cadenceBody(f);
+  await f.accept(body);
+  body.sequence = 2;
+  body.observation.decoderCadence.scopeID = '33333333-3333-4333-8333-333333333333';
+  expect((await f.report(body)).status).toBe(409);
+  body.observation.attempt = 2;
+  body.pipelineReadId = '44444444-4444-4444-8444-444444444444';
+  await f.accept(body);
+  body.sequence = 3;
+  body.observation.attempt = 3;
+  body.pipelineReadId = '55555555-5555-4555-8555-555555555555';
+  body.observation.decoderCadence.scopeID = '11111111-1111-4111-8111-111111111111';
+  expect((await f.report(body)).status).toBe(409);
+});
+it('cadence requires current explicit read identity and valid transport coordinates', async () => {
+  for (const field of ['read', 'clock', 'shape']) {
+    const f = await fixture();
+    const body: any = cadenceBody(f);
+    if (field === 'read') delete body.pipelineReadId;
+    if (field === 'clock') delete body.observation.decodedVideo.clock;
+    if (field === 'shape') body.observation.decoderCadence.progress.stalled = true;
+    expect([400, 409]).toContain((await f.report(body)).status);
+  }
+});

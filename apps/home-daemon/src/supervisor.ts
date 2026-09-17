@@ -129,6 +129,7 @@ export class WorkerSupervisor {
     const active = this.active;
     let decodedVideo: WorkerPipelineObservation['decodedVideo'];
     let processing: WorkerPipelineObservation['processing'];
+    let decoderCadence: WorkerPipelineObservation['decoderCadence'];
     try {
       const evidence = active?.handle.snapshotVideoEvidence?.();
       const snapshot =
@@ -137,6 +138,17 @@ export class WorkerSupervisor {
           ? undefined
           : active?.handle.snapshotDecodedVideo?.());
       if (snapshot) decodedVideo = structuredClone(snapshot);
+      if (
+        evidence?.decoderCadence &&
+        active &&
+        !active.stopping &&
+        !this.closed &&
+        (state.state === 'starting' || state.state === 'producing_output') &&
+        active.input.gameId === state.gameId &&
+        active.input.generation === state.generation &&
+        active.pipelineReadId
+      )
+        decoderCadence = structuredClone(evidence.decoderCadence);
       if (
         evidence?.processing &&
         active &&
@@ -162,6 +174,7 @@ export class WorkerSupervisor {
       scoreRevision: active?.input.scoreRevision ?? null,
       ...(decodedVideo ? { decodedVideo } : {}),
       ...(processing ? { processing } : {}),
+      ...(decoderCadence ? { decoderCadence } : {}),
       ...(active &&
       !active.stopping &&
       active.input.gameId === state.gameId &&

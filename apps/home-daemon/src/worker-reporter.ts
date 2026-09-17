@@ -1,6 +1,7 @@
 import {
   DECODED_VIDEO_TRANSPORT_CLOCK,
   WORKER_PROCESSING_PROTOCOL,
+  WORKER_DECODER_CADENCE_PROTOCOL,
   WORKER_PIPELINE_READ_IDENTITY,
   type WorkerPipelineObservation,
 } from '@scorebug/protocol';
@@ -14,6 +15,7 @@ const session = z.object({
   decodedVideoClock: z.string().optional(),
   pipelineReadIdentity: z.string().optional(),
   workerProcessing: z.string().optional(),
+  decoderCadence: z.string().optional(),
 });
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
@@ -146,6 +148,13 @@ export class WorkerReporter {
         observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
       )
         delete observation.processing;
+      if (
+        registered.decoderCadence !== WORKER_DECODER_CADENCE_PROTOCOL ||
+        !canIdentifyRead ||
+        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+      )
+        delete observation.decoderCadence;
       if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
       const sequence = ++this.sequence;
       try {

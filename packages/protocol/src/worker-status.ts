@@ -1,3 +1,4 @@
+import type { DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { WorkerReceiverProbe } from './receiver-probe.js';
 import type { WorkerProcessingReport } from './worker-processing.js';
 /** Sanitized process observations and decoder-ingress cadence; never viewer delivery. */
@@ -75,6 +76,7 @@ export type WorkerObservation = {
   scoreRevision: number | null;
   /** Omitted by legacy workers; absence is unknown, never healthy. */
   decodedVideo?: DecodedVideoSnapshot;
+  decoderCadence?: DecoderCadenceSnapshot;
   processing?: WorkerProcessingReport;
 };
 /** Private worker-to-API correlation, not a new authorization capability. */
@@ -92,6 +94,7 @@ export type WorkerSessionResponse = {
   decodedVideoClock?: string;
   pipelineReadIdentity?: string;
   workerProcessing?: string;
+  decoderCadence?: string;
   sessionId: string;
   serverTime: string;
   /** Opaque server monotonic timing provenance; echo with a later snapshot. */
@@ -127,6 +130,8 @@ export type WorkerMediaStatus = {
   /** Proven upper age including report transit and server residence, rounded up in ms.
    * Omitted when unavailable; server-owned, never supplied by the worker. */
   decodedVideoAgeUpperBoundMs?: number;
+  /** Upper age of the cadence SNAPSHOT, not of its last frame or completed windows. */
+  decoderCadenceAgeUpperBoundMs?: number;
   observedAt: string | null;
   expiresAt: string | null;
 };

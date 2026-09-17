@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { DecodedVideoInvalidReason } from '@scorebug/protocol';
+import type {
+  DecodedVideoInvalidReason,
+  DecoderCadenceWindow,
+  DecoderCadenceSnapshot,
+} from '@scorebug/protocol';
 import { DecodedVideoParser } from './decoded-video.js';
 
 type Counts = {
@@ -9,22 +13,7 @@ type Counts = {
   duplicateFrames: number;
   reorderedFrames: number;
 };
-export type DecoderCadenceWindow = Counts & {
-  sequence: number;
-  durationMs: 1000 | 2000;
-  ageMs: number;
-  valid: boolean;
-};
-export type DecoderCadenceSnapshot = {
-  formatVersion: 1;
-  scopeID: string;
-  oneSecond: DecoderCadenceWindow | null;
-  twoSeconds: DecoderCadenceWindow | null;
-  /** Decoder-arrival progress only; never source lateness or viewer delivery. */
-  progress: { lastFreshPTS: number; ageMs: number; stalled: boolean } | null;
-  invalidReason: DecodedVideoInvalidReason | null;
-  ended: boolean;
-};
+export type { DecoderCadenceWindow, DecoderCadenceSnapshot } from '@scorebug/protocol';
 const empty = (): Counts => ({
   firstPTS: null,
   lastPTS: null,

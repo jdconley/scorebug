@@ -43,17 +43,19 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
     public var outTimeUs: Int?
     public var scoreRevision: Int?
     public var decodedVideo: DecodedVideoSnapshot?
+    public var decoderCadence: DecoderCadenceSnapshot?
     public var processing: WorkerProcessingReport?
 
     public init(gameId: String, generation: Int, state: WorkerState, reason: WorkerReason?, attempt: Int,
-                frame: Int?, outTimeUs: Int?, scoreRevision: Int?, decodedVideo: DecodedVideoSnapshot? = nil, processing: WorkerProcessingReport? = nil) {
+                frame: Int?, outTimeUs: Int?, scoreRevision: Int?, decodedVideo: DecodedVideoSnapshot? = nil, processing: WorkerProcessingReport? = nil, decoderCadence: DecoderCadenceSnapshot? = nil) {
         self.gameId = gameId; self.generation = generation; self.state = state; self.reason = reason
         self.attempt = attempt; self.frame = frame; self.outTimeUs = outTimeUs; self.scoreRevision = scoreRevision
         self.decodedVideo = decodedVideo
         self.processing = processing
+        self.decoderCadence = decoderCadence
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, decodedVideo, processing }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, state, reason, attempt, frame, outTimeUs, scoreRevision, decodedVideo, processing, decoderCadence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         gameId = try c.decode(String.self, forKey: .gameId); generation = try c.decode(Int.self, forKey: .generation)
@@ -62,6 +64,7 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
         outTimeUs = try c.decodeIfPresent(Int.self, forKey: .outTimeUs); scoreRevision = try c.decodeIfPresent(Int.self, forKey: .scoreRevision)
         decodedVideo = try c.decodeIfPresent(DecodedVideoSnapshot.self, forKey: .decodedVideo)
         processing = try? c.decodeIfPresent(WorkerProcessingReport.self, forKey: .processing)
+        decoderCadence = try? c.decodeIfPresent(DecoderCadenceSnapshot.self, forKey: .decoderCadence)
     }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -75,6 +78,7 @@ public struct WorkerObservation: Codable, Equatable, Sendable {
         try container.encode(scoreRevision, forKey: .scoreRevision)
         try container.encodeIfPresent(decodedVideo, forKey: .decodedVideo)
         try container.encodeIfPresent(processing, forKey: .processing)
+        try container.encodeIfPresent(decoderCadence, forKey: .decoderCadence)
     }
 }
 
@@ -90,6 +94,8 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
     public var expiresAt: String?
     /// Conservative server-relative age of the completed decoded-video window.
     public var decodedVideoAgeUpperBoundMs: Double?
+    /// Conservative age of the cadence snapshot, separate from its frame/window ages.
+    public var decoderCadenceAgeUpperBoundMs: Double?
     /// Untrusted optional wire metadata. Use validatedPublication before consuming it.
     public var publication: WorkerPublication?
     /// Optional measurement for the enclosing publication. Never use as publication identity.
@@ -97,16 +103,17 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
 
     public init(gameId: String, generation: Int, workerId: String?, state: WorkerMediaState,
                 observation: WorkerObservation?, observedAt: String?, expiresAt: String?, decodedVideoAgeUpperBoundMs: Double? = nil,
-                workerEpoch: String? = nil, publication: WorkerPublication? = nil, receiverProbe: WorkerReceiverProbe? = nil) {
+                workerEpoch: String? = nil, publication: WorkerPublication? = nil, receiverProbe: WorkerReceiverProbe? = nil, decoderCadenceAgeUpperBoundMs: Double? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId; self.state = state
         self.observation = observation; self.observedAt = observedAt; self.expiresAt = expiresAt
         self.decodedVideoAgeUpperBoundMs = decodedVideoAgeUpperBoundMs
+        self.decoderCadenceAgeUpperBoundMs = decoderCadenceAgeUpperBoundMs
         self.workerEpoch = workerEpoch
         self.publication = publication
         self.receiverProbe = receiverProbe
     }
 
-    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs, publication, receiverProbe }
+    private enum CodingKeys: String, CodingKey { case gameId, generation, workerId, workerEpoch, state, observation, observedAt, expiresAt, decodedVideoAgeUpperBoundMs, publication, receiverProbe, decoderCadenceAgeUpperBoundMs }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -119,6 +126,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         observedAt = try container.decodeIfPresent(String.self, forKey: .observedAt)
         expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
         decodedVideoAgeUpperBoundMs = try container.decodeIfPresent(Double.self, forKey: .decodedVideoAgeUpperBoundMs)
+        decoderCadenceAgeUpperBoundMs = try? container.decodeIfPresent(Double.self, forKey: .decoderCadenceAgeUpperBoundMs)
         // Additive metadata must never invalidate an otherwise usable status.
         publication = try? container.decodeIfPresent(WorkerPublication.self, forKey: .publication)
         receiverProbe = try? container.decodeIfPresent(WorkerReceiverProbe.self, forKey: .receiverProbe)
@@ -134,6 +142,7 @@ public struct WorkerMediaStatus: Codable, Equatable, Sendable {
         try container.encode(observedAt, forKey: .observedAt)
         try container.encode(expiresAt, forKey: .expiresAt)
         try container.encodeIfPresent(decodedVideoAgeUpperBoundMs, forKey: .decodedVideoAgeUpperBoundMs)
+        try container.encodeIfPresent(decoderCadenceAgeUpperBoundMs, forKey: .decoderCadenceAgeUpperBoundMs)
         try container.encodeIfPresent(publication, forKey: .publication)
         try container.encodeIfPresent(receiverProbe, forKey: .receiverProbe)
     }

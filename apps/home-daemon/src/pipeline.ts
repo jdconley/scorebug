@@ -52,6 +52,7 @@ export type PipelineHandle = {
   snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
   snapshotVideoEvidence?: () => {
     decodedVideo: DecodedVideoSnapshot;
+    decoderCadence?: DecoderCadenceSnapshot;
     processing?: WorkerProcessingReport;
   };
 };
@@ -470,6 +471,7 @@ export function startPipeline(
         : null;
     return {
       decodedVideo: video,
+      decoderCadence: decoderCadence.snapshot(),
       ...(processing
         ? {
             processing: {

@@ -1,3 +1,4 @@
+import { advanceCadence, type CadenceHistory } from './decoder-cadence.js';
 import {
   processingFitsObservation,
   processingProgresses,
@@ -7,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
   WORKER_PROCESSING_PROTOCOL,
+  WORKER_DECODER_CADENCE_PROTOCOL,
   type WorkerProcessingReport,
   WORKER_PIPELINE_READ_IDENTITY,
   DECODED_VIDEO_TRANSPORT_CLOCK,
@@ -58,6 +60,9 @@ type Report = {
   lastDecodedPTS?: number;
   decodedAge?: { sequence: number; ageMs: number; at: number | undefined };
   decodedUpperAge?: UpperAge;
+  cadence?: CadenceHistory;
+  cadenceAssignment?: { gameId: string; generation: number };
+  cadenceSampleAge?: { ageMs: number; at: number };
 };
 // An undefined age preserves overflow/contradiction evidence until this window is replaced.
 type UpperAge = { sequence: number; ageMs: number | undefined; at: number };
@@ -68,6 +73,7 @@ type Session = {
   workerEpoch: string;
   readIds: Set<string>;
   processingScopes: Set<string>;
+  cadenceScopes: Set<string>;
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
@@ -142,6 +148,7 @@ export class WorkerObservations {
         decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
         pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
         workerProcessing: WORKER_PROCESSING_PROTOCOL,
+        decoderCadence: WORKER_DECODER_CADENCE_PROTOCOL,
         ...this.timingResponse(worker.current),
         serverTime: new Date(this.now()).toISOString(),
       };
@@ -151,6 +158,7 @@ export class WorkerObservations {
       workerEpoch: randomUUID(),
       readIds: new Set(),
       processingScopes: new Set(),
+      cadenceScopes: new Set(),
       ...(sampled !== undefined
         ? { currentToken: { value: randomUUID(), issuedAt: sampled } }
         : {}),
@@ -167,6 +175,7 @@ export class WorkerObservations {
       decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
       pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
       workerProcessing: WORKER_PROCESSING_PROTOCOL,
+      decoderCadence: WORKER_DECODER_CADENCE_PROTOCOL,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
     };
@@ -253,6 +262,31 @@ export class WorkerObservations {
           beforeProcessing?.scopeID !== processing.scopeID))
     )
       throw new WorkerObservationError('observation_conflict');
+    const priorCadence = sameAttempt ? previous?.cadence : undefined;
+    const cadenceAssignment = sameAttempt ? previous?.cadenceAssignment : undefined;
+    let cadence: CadenceHistory | undefined;
+    const nextCadence = observation.decoderCadence;
+    try {
+      if (
+        nextCadence &&
+        (!pipelineReadId ||
+          observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          !['starting', 'producing_output'].includes(observation.state) ||
+          observation.attempt <= 0 ||
+          (cadenceAssignment &&
+            (cadenceAssignment.gameId !== observation.gameId ||
+              cadenceAssignment.generation !== observation.generation)) ||
+          (worker.current.cadenceScopes.has(nextCadence.scopeID) &&
+            priorCadence?.snapshot.scopeID !== nextCadence.scopeID) ||
+          (observation.decodedVideo?.completed?.lastPTS != null &&
+            (nextCadence.progress == null ||
+              nextCadence.progress.lastFreshPTS < observation.decodedVideo.completed.lastPTS)))
+      )
+        throw new Error('cadence_scope');
+      cadence = advanceCadence(priorCadence, nextCadence);
+    } catch {
+      throw new WorkerObservationError('observation_conflict');
+    }
     const beforeVideo = sameAttempt ? previous?.decodedVideo : undefined;
     const afterVideo = observation.decodedVideo;
     let lastDecodedPTS = sameAttempt ? previous?.lastDecodedPTS : undefined;
@@ -336,12 +370,29 @@ export class WorkerObservations {
         }
       }
     }
+    const cadenceSampleAge =
+      nextCadence && token && receivedAt !== undefined
+        ? upperAge(0, token.issuedAt, receivedAt)
+        : undefined;
     const now = this.now();
+    if (nextCadence) worker.current.cadenceScopes.add(nextCadence.scopeID);
     if (pipelineReadId !== undefined) worker.current.readIds.add(pipelineReadId);
     if (processing) worker.current.processingScopes.add(processing.scopeID);
     worker.current.report = {
       ...(knownReadId !== undefined ? { pipelineReadId: knownReadId } : {}),
       ...(pipelineReadId !== undefined ? { activeReadId: pipelineReadId } : {}),
+      ...(cadence
+        ? {
+            cadence,
+            cadenceAssignment: cadenceAssignment ?? {
+              gameId: observation.gameId,
+              generation: observation.generation,
+            },
+          }
+        : {}),
+      ...(cadenceSampleAge !== undefined && receivedAt !== undefined
+        ? { cadenceSampleAge: { ageMs: cadenceSampleAge, at: receivedAt } }
+        : {}),
       sequence: body.sequence,
       request,
       observation: structuredClone(observation),
@@ -456,9 +507,14 @@ export class WorkerObservations {
       if (sampled !== undefined && upper?.sequence === completed.sequence)
         decodedVideoAgeUpperBoundMs = upperAge(upper.ageMs ?? NaN, upper.at, sampled);
     }
+    const decoderCadenceAgeUpperBoundMs =
+      observation.decoderCadence && report.cadenceSampleAge && sampled !== undefined
+        ? upperAge(report.cadenceSampleAge.ageMs, report.cadenceSampleAge.at, sampled)
+        : undefined;
     return {
       status: {
         ...base,
+        ...(decoderCadenceAgeUpperBoundMs !== undefined ? { decoderCadenceAgeUpperBoundMs } : {}),
         workerEpoch: session.workerEpoch,
         state: remaining <= 0 ? 'stale' : report.observation.state,
         observation,

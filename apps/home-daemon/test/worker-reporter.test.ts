@@ -720,3 +720,42 @@ it('renegotiates processing on session renewal and omits it after capability dow
   expect(reports[1]!.body.observation).not.toHaveProperty('processing');
   expect(reports[1]!.body.observation.scoreRevision).toBe(2);
 });
+
+it('negotiates cadence only with exact capability, transport clock and private read identity', async () => {
+  for (const mode of ['current', 'legacy', 'wrong', 'no-read', 'no-clock']) {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? {
+            sessionId: 'cadence-session',
+            pipelineReadIdentity: 'srt-read-query-v1',
+            decodedVideoClock: mode === 'no-clock' ? undefined : 'mpegts-pts-90k-v1',
+            decoderCadence:
+              mode === 'legacy' ? undefined : mode === 'wrong' ? 'future-v2' : 'decoder-cadence-v1',
+          }
+        : { accepted: true },
+    }));
+    const decoderCadence = {
+      formatVersion: 1 as const,
+      scopeID: '11111111-1111-4111-8111-111111111111',
+      oneSecond: null,
+      twoSeconds: null,
+      progress: null,
+      invalidReason: null,
+      ended: false,
+    };
+    await f.reporter.report(() => ({
+      ...observation,
+      ...(mode === 'no-read' ? {} : { pipelineReadId: '22222222-2222-4222-8222-222222222222' }),
+      decodedVideo: {
+        clock: 'mpegts-pts-90k-v1',
+        completed: null,
+        invalidReason: null,
+        ended: false,
+      },
+      decoderCadence,
+    }));
+    expect(f.requests[1]!.body.observation.decoderCadence).toEqual(
+      mode === 'current' ? decoderCadence : undefined,
+    );
+  }
+});
