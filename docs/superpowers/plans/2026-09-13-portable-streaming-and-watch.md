@@ -2193,3 +2193,21 @@ is still unproven. Next improve telemetry scheduling without loosening freshness
 then join admission, lifecycle and post-change health into the full independent
 native-trial gate. Production increases and physical/remote performance remain
 unqualified; the goal stays active.
+
+### 2026-09-17: monotonic telemetry polling and stage timing
+
+Control polling now uses fixed monotonic start-to-start slots, skips overruns and
+preserves sequential requests, interval changes and cancellation. A bounded DEBUG
+audit separates maintenance, HTTP, native probe reads and processing. Freshness
+limits and ownership guards are unchanged. All 390 FilmModel tests, clean simulator
+and unsigned phone/Watch Release builds passed; both reviews approved.
+
+The native comparison improved median report spacing from 133 ms to 100 ms.
+Independent replay verified the 240p→360p→240p sequence, native receipts, candidate
+source correspondence and continuous 30 fps archive/live media with all audio
+markers. The trial nevertheless reset after approximately 9.3 seconds on delivery
+freshness; sustained confirmation remains unproven. Exact delivery evidence across
+policy actor waits and worker timing-token age are the next investigation, along
+with the full independent measured-trial gate. Evidence is indexed by
+`artifacts/qa/telemetry-scheduling-final-verification.json`; production increases and
+physical/remote performance remain unqualified. The goal remains active.

@@ -523,6 +523,9 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// A separate modest timer drives this method. A delayed request never blocks
     /// camera health. Local state and observation expiry use pollLocalHealth().
     func pollControl() async {
+        #if DEBUG
+        let controlStartedUptime = ProcessInfo.processInfo.systemUptime
+        #endif
         if needsStorageRetry && setup == nil { restored = false }
         await restore()
         // Defer the owned broadcast stop until publisher finish settles. Each
@@ -584,11 +587,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                 guard observedEpoch == workerEpoch else { return }
                 throw error
             }
+            let received = ContinuousClock.now
+            let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
             guard observedEpoch == workerEpoch else { return }
             guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
                   response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return }
-            let received = ContinuousClock.now
-            let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
             let requestDuration = requestStart.duration(to: received)
             // Read sender acceptance after the receiver response; earlier local
             // counts could legitimately lag bytes already observed by the relay.
@@ -630,7 +633,10 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
                 cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
                     helper: workerDecoderCadenceFreshness, delivery: workerDecoderDeliveryFreshness, receivedAt: received, requestDuration: requestDuration,
-                    receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime)
+                    receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime,
+                    timing: .init(controlStartedUptime: controlStartedUptime, statusRequestStartedUptime: requestStartedAtUptime,
+                        responseReceivedUptime: responseReceivedAtUptime, probeReadStartedUptime: probeReadStartedAt,
+                        probeReadFinishedUptime: probeReadFinishedAt, auditEvaluatedUptime: evaluatedUptime))
             }
             if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
                 let previous = workerSourceIntervalHistory.last

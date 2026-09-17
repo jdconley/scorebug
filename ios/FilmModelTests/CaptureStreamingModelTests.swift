@@ -1129,6 +1129,31 @@ import XCTest
         XCTAssertFalse(rows.isEmpty); XCTAssertTrue(rows.last?["sampleAgeSeconds"] is NSNull)
     }
 
+    func testCadenceTimingSeparatesDelayedRecoveryFromStatusAndNativeRead() async throws {
+        let server = CaptureTestServer(), model = makeModel(server: server)
+        var exported: Data?
+        model.cadenceReportFixtureWriter = { exported = $0 }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        let gate = FilmTestGate()
+        await server.setSnapshotGate(gate)
+        let poll = Task { await model.pollControl() }
+        await gate.waitUntilEntered()
+        try await Task.sleep(for: .milliseconds(60))
+        await gate.release(); await poll.value
+        await model.stopStreaming()
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual(audit["invalid"] as? Bool, false)
+        let rows = try XCTUnwrap(audit["rows"] as? [[String: Any]])
+        let row = try XCTUnwrap(rows.last)
+        let timing = try XCTUnwrap(row["timing"] as? [String: Double])
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(timing["maintenanceSeconds"]), 0.06)
+        XCTAssertEqual(timing["responseReceivedUptime"], row["receivedUptime"] as? Double)
+        XCTAssertEqual(timing["auditEvaluatedUptime"], row["evaluatedUptime"] as? Double)
+        let residence = try XCTUnwrap(timing["responseProcessingSeconds"]) + XCTUnwrap(timing["nativeProbeSeconds"]) + XCTUnwrap(timing["postProbeProcessingSeconds"])
+        XCTAssertEqual(residence, try XCTUnwrap(row["residenceSeconds"] as? Double), accuracy: 0.001)
+    }
+
     func testCadenceDoesNotRequireSourceHistoryAndClearsOnMismatchExpiryAndStop() async throws {
         let server = CaptureTestServer()
         var owner: VideoFrameObservationOwner?

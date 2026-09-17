@@ -53,10 +53,8 @@ struct ContentView: View {
     @MainActor private func monitorStreamingControl() async {
         guard scenePhase == .active else { return }
         await streaming.restore()
-        while !Task.isCancelled {
-            await streaming.pollControl()
-            do { try await Task.sleep(for: streaming.controlPollInterval) } catch { return }
-        }
+        await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
+            poll: { await streaming.pollControl() })
     }
     @MainActor private func monitorStreamingHealth() async {
         guard scenePhase == .active else { return }
