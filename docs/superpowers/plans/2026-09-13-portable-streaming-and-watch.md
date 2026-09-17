@@ -1916,3 +1916,24 @@ Verification passes 123 Streaming, 308 native model and 1,613 tooling tests, the
 unsigned phone/Watch Release build and SDK provenance. Both simulator workflows
 completed, while their independent candidate gates correctly failed. Frozen evidence:
 `artifacts/qa/candidate-sampling-final-verification.json`.
+
+### 2026-09-17: native candidate buffering isolated; frame-delay setting unsupported
+
+[Frame-delay diagnostic](2026-09-17-candidate-frame-delay.md) uses the exact shared
+360p candidate settings and the structured 1080p source. In the iPhone 14/iOS 17.5
+simulator, both unchanged four-frame controls produced no output during more than
+one second of native submission idle time, then emitted all four frames on drain.
+Setting MaxFrameDelayCount to three failed with `kVTPropertyNotSupportedErr`
+(-12900). This identifies reproducible native buffering, but qualifies no remedy.
+Production encoding and its four-unresolved-input bound remain unchanged.
+
+The diagnostic preserves raw evidence on failure and separately validates source
+identity, native timing, outstanding-input bounds and property status. All 85
+focused verifier tests and 1,698 tooling tests pass, as do simulator
+build-for-testing, SDK provenance and spec/quality reviews. Frozen evidence:
+`artifacts/qa/candidate-frame-delay-final-verification.json`.
+
+Next measure the default encoder's required buffering depth in a finite test-only
+experiment with explicit raw-byte accounting, before revising any production
+resource bound. Complete candidate cost, automatic upward trials/recovery,
+long-session campaigns, physical phone/Watch routes and remote workers remain open.

@@ -120,6 +120,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: live.scorebug.encoder.qualification
     dependencies:
       - package: ScorebugMedia
+      - package: ScorebugStreaming
       - package: HaishinKit
   ScorebugEncoderMacQualificationTests:
     type: bundle.unit-test
