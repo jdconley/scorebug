@@ -160,3 +160,158 @@ private actor ProbeFixtureOperations: MediaPublisher {
         XCTAssertTrue(entered)
     }
 }
+
+extension NativeBandwidthProbeFixtureTests {
+    func testStagedModeIsExplicitAndRequiresTheSameExclusiveFixtureRoute() throws {
+        let valid = ["SCOREBUG_TEST_BANDWIDTH_PROBE": "staged", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_LIVE_PROFILE": "540p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+        XCTAssertEqual(try NativeBandwidthProbePublisher.requested(environment: valid), .staged)
+    }
+
+    func testStagedScheduleRetiresEachOwnerAndExportsCumulativeBytes() async throws {
+        let fixture = StagedProbeFixtureOperations()
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1))
+        try await publisher.start(); await publisher.waitForProbe()
+        var counts = await fixture.counts()
+        XCTAssertEqual(counts.renew, 3); XCTAssertEqual(counts.replace, 2); XCTAssertEqual(counts.export, 0)
+        await publisher.stop(); await publisher.stop()
+        counts = await fixture.counts()
+        XCTAssertEqual(counts.cancel, 3); XCTAssertEqual(counts.export, 1)
+        let object = try await fixture.exportedObject()
+        XCTAssertEqual(object["formatVersion"] as? Int, 2)
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        XCTAssertEqual(object["result"] as? String, "completed")
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+        XCTAssertEqual(events.compactMap { $0["phase"] as? String },
+            ["began", "renewed", "retired", "replaced", "renewed", "retired", "replaced", "renewed", "retired", "final"])
+        let samples = try events.map { try XCTUnwrap($0["sample"] as? [String: Any]) }
+        XCTAssertEqual(samples.compactMap { $0["stage"] as? Int }, [1,1,1,2,2,2,3,3,3,3])
+        XCTAssertEqual(samples.last?["totalAcceptedPayloadBytes"] as? String, "3948")
+        XCTAssertEqual(samples.last?["acceptedPayloadBytes"] as? String, "1316")
+        XCTAssertEqual(samples.last?["reason"] as? String, "cancelled")
+        XCTAssertEqual(Set(samples.compactMap { $0["campaignStartedAt"] as? Double }).count, 1)
+        for (index, event) in events.enumerated() where event["phase"] as? String == "retired" {
+            let requested = try XCTUnwrap(event["retirementRequestedAt"] as? Double)
+            XCTAssertGreaterThanOrEqual(requested, try XCTUnwrap(events[index - 1]["observedAt"] as? Double))
+            XCTAssertLessThanOrEqual(requested, try XCTUnwrap(event["observedAt"] as? Double))
+        }
+    }
+
+    func testStagedScheduleRejectsMutatedTransitionEvidence() async throws {
+        for fault in StagedProbeFixtureOperations.Fault.allCases {
+            let fixture = StagedProbeFixtureOperations(fault: fault)
+            let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+                operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1))
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            let object = try await fixture.exportedObject()
+            XCTAssertEqual(object["invalid"] as? Bool, true, "\(fault)")
+            XCTAssertEqual(object["result"] as? String, "invalidEvidence", "\(fault)")
+        }
+    }
+
+    func testStopDuringStagedReplacementJoinsBeforeExport() async throws {
+        let fixture = StagedProbeFixtureOperations(gateReplacement: true)
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1))
+        try await publisher.start(); await fixture.waitUntilEntered()
+        await publisher.stop()
+        let counts = await fixture.counts()
+        XCTAssertEqual(counts.replace, 1); XCTAssertEqual(counts.renew, 1); XCTAssertEqual(counts.export, 1)
+        let object = try await fixture.exportedObject()
+        XCTAssertEqual(object["result"] as? String, "cancelled")
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+        XCTAssertEqual((events.last?["sample"] as? [String: Any])?["reason"] as? String, "cancelled")
+    }
+
+    func testStagedMissingFinalSnapshotCannotExportSuccessfulEvidence() async throws {
+        let fixture = StagedProbeFixtureOperations(missingFinalSnapshot: true)
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1))
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        let object = try await fixture.exportedObject()
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        XCTAssertEqual(object["result"] as? String, "invalidEvidence")
+    }
+
+    func testStagedMaximumScheduleAndEventBudgetAreBounded() async throws {
+        for polls in [200, 201] {
+            let fixture = StagedProbeFixtureOperations()
+            let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+                operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 600, stagePolls: polls))
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            let object = try await fixture.exportedObject()
+            XCTAssertEqual(object["invalid"] as? Bool, polls == 201)
+            XCTAssertEqual((object["events"] as? [Any])?.count, polls == 200 ? 607 : 0)
+        }
+    }
+}
+
+private actor StagedProbeFixtureOperations: MediaPublisher {
+    enum Fault: CaseIterable { case stage, campaign, cumulative, localBytes, identity, rate }
+    private let fault: Fault?
+    private let gateReplacement: Bool, missingFinalSnapshot: Bool
+    private var stopped = false, entered = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var sample: NativeBandwidthProbeSample?
+    private var renews = 0, replacements = 0, cancels = 0, exports: [Data] = []
+    init(fault: Fault? = nil, gateReplacement: Bool = false, missingFinalSnapshot: Bool = false) {
+        self.fault = fault; self.gateReplacement = gateReplacement; self.missingFinalSnapshot = missingFinalSnapshot
+    }
+    func start() async throws {}
+    func append(_ sample: CapturedMediaSample) async throws {}
+    var isPublishing: Bool { !stopped }
+    func stop() async { stopped = true; waiter?.resume(); waiter = nil }
+    func operations() -> NativeBandwidthProbePublisher.Operations {
+        .init(clock: { PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 7) },
+            begin: { throw Failure.unexpected }, renew: { _, _ in await self.renew() },
+            cancel: { _, _ in await self.cancel() }, snapshot: { await self.snapshot() },
+            export: { await self.export($0) }, beginStaged: { await self.begin() },
+            replace: { id, generation, stage, rate in try await self.replace(id, generation, stage, rate) })
+    }
+    func begin() -> NativeBandwidthProbeSample {
+        let now = ProcessInfo.processInfo.systemUptime
+        let value = NativeBandwidthProbeSample(id: UUID(), publishingGeneration: 7, bitRate: 500_000,
+            startedAt: now, leaseDeadline: now + 0.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil,
+            stage: 1, permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: now, totalAcceptedPayloadBytes: 0)
+        sample = value; return value
+    }
+    func renew() -> NativeBandwidthProbeSample {
+        renews += 1
+        let prior = sample!, now = ProcessInfo.processInfo.systemUptime
+        let value = NativeBandwidthProbeSample(id: prior.id, publishingGeneration: 7, bitRate: prior.bitRate,
+            startedAt: prior.startedAt, leaseDeadline: now + 0.3, acceptedPayloadBytes: prior.acceptedPayloadBytes + 1316,
+            lastAcceptedAt: now, reason: prior.reason, stage: prior.stage, permitsCurrentOwner: prior.permitsCurrentOwner,
+            campaignStartedAt: prior.campaignStartedAt, totalAcceptedPayloadBytes: prior.totalAcceptedPayloadBytes! + 1316)
+        sample = value; return value
+    }
+    func snapshot() -> NativeBandwidthProbeSample? { stopped && missingFinalSnapshot ? nil : sample }
+    func replace(_ id: UUID, _ generation: UInt64, _ stage: Int, _ rate: Int) async throws -> NativeBandwidthProbeSample {
+        replacements += 1
+        let prior = sample!
+        XCTAssertEqual(prior.reason, "cancelled"); XCTAssertEqual(id, prior.id)
+        XCTAssertEqual(generation, 7); XCTAssertEqual(stage, prior.stage)
+        if gateReplacement { entered = true; await withCheckedContinuation { waiter = $0 } }
+        let now = ProcessInfo.processInfo.systemUptime
+        let value = NativeBandwidthProbeSample(id: fault == .identity ? prior.id : UUID(), publishingGeneration: 7,
+            bitRate: fault == .rate ? 123 : rate, startedAt: now, leaseDeadline: now + 0.3,
+            acceptedPayloadBytes: fault == .localBytes ? 1316 : 0, lastAcceptedAt: fault == .localBytes ? now : nil,
+            reason: stopped ? "cancelled" : nil, stage: fault == .stage ? stage : stage + 1,
+            permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: fault == .campaign ? now : prior.campaignStartedAt,
+            totalAcceptedPayloadBytes: fault == .cumulative ? 0 : prior.totalAcceptedPayloadBytes)
+        sample = value; return value
+    }
+    func cancel() { cancels += 1; if sample?.reason == nil { sample?.reason = "cancelled" } }
+    func export(_ data: Data) { exports.append(data) }
+    func counts() -> (renew: Int, replace: Int, cancel: Int, export: Int) { (renews, replacements, cancels, exports.count) }
+    func exportedObject() throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exports.last)) as? [String: Any])
+    }
+    func waitUntilEntered() async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !entered, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(entered)
+    }
+    private enum Failure: Error { case unexpected }
+}

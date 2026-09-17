@@ -34,7 +34,7 @@ qualification remain in the [portable streaming plan](../../../docs/superpowers/
 Experimental native bandwidth probing is opt-in at construction with
 `allowsBandwidthProbes: true` on `SRTPublisher` or `SRTMediaPublisher`.
 `beginBandwidthProbe(bitRate:)` returns a UUID/generation-scoped immutable snapshot;
-renew and cancel require both exact values. Start and renewal are serialized as
+renew and cancel require both exact values. Start, renewal and replacement are serialized as
 one owned operation. Stop cancels and joins it, and settings changes invalidate
 pending acknowledgments and revoke the current probe. An abandoned or failed
 renewal also revokes the existing lease without stopping otherwise healthy media.
@@ -54,4 +54,23 @@ native authority without creating a new authority. Native cancellation/replaceme
 expiry and failure revoke retained observations; consumers must check ownership as
 well as age and lease after async calls. Locally fabricated snapshots without native
 authority are diagnostics only. Authenticated v2 matching is implemented separately
-from the still-pending repeated native probe scheduler and quality admission.
+from quality admission.
+
+`beginBandwidthProbe(bitRate:staged: true)` starts an explicitly staged campaign.
+`replaceBandwidthProbe(id:publishingGeneration:stage:bitRate:)` replaces only the
+current exact staged identity. Both adapters validate the returned stage, generation,
+UUID, rate and campaign accounting before acknowledging it. Renewal cannot change
+stage or campaign. Rejected handles are cancelled; an optional probe failure does
+not itself stop otherwise healthy media. The default start remains legacy v1.
+
+Snapshots also forward `campaignStartedAt` and `totalAcceptedPayloadBytes` for
+staged owners. These counters describe local acceptance only. SDK stage/byte/time
+limits persist through replacement; they cannot be reset by adapter calls.
+
+The app's DEBUG `staged` fixture exercises 500 kbps, 1 Mbps and 2 Mbps in sequence,
+renewing each for 80 polls at 100 ms and recording its terminal snapshot before
+replacement. Its bounded version-2 export includes a cancellation-request timestamp
+for each retirement. Stop joins work before export. The CLI still permits only
+legacy probe modes pending independent staged sender/receiver/interval verification;
+these adapter and fixture tests do not qualify sustained spare capacity or automatic
+quality upgrades. See the [staged publisher plan](../../../docs/superpowers/plans/2026-09-17-staged-probe-publishers.md).

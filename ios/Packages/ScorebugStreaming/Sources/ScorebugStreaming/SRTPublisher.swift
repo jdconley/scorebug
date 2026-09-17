@@ -223,28 +223,60 @@ public actor SRTPublisher {
         return receipt
     }
 
-    public func beginBandwidthProbe(bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
         return try await runProbeOperation(generation: generation, revision: revision) {
             try await self.performProbeOperation(generation: generation, revision: revision) {
-                PublishingBandwidthProbeSnapshot(try await self.stream.beginBandwidthProbe(bitRate: bitRate, publishingGeneration: generation))
+                let value = PublishingBandwidthProbeSnapshot(try await self.stream.beginBandwidthProbe(
+                    bitRate: bitRate, publishingGeneration: generation, staged: staged))
+                guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate) else {
+                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
+                    throw PublishingBandwidthProbeError.obsolete
+                }
+                return value
             }
         }
     }
 
     public func renewBandwidthProbe(id: UUID, publishingGeneration: UInt64) async throws -> PublishingBandwidthProbeSnapshot {
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
-        guard generation == publishingGeneration, probeIdentity?.id == id,
-              probeIdentity?.publishingGeneration == generation else { throw PublishingBandwidthProbeError.obsolete }
+        guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
+              prior.publishingGeneration == generation else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
         return try await runProbeOperation(generation: generation, revision: revision) {
             try await self.performProbeOperation(generation: generation, revision: revision) {
-                PublishingBandwidthProbeSnapshot(try await self.stream.renewBandwidthProbe(id: id, publishingGeneration: generation))
+                let value = PublishingBandwidthProbeSnapshot(try await self.stream.renewBandwidthProbe(id: id, publishingGeneration: generation))
+                guard value.isValidRenewal(of: prior) else {
+                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
+                    throw PublishingBandwidthProbeError.obsolete
+                }
+                return value
+            }
+        }
+    }
+
+    public func replaceBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
+                                      bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
+        guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
+              prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        let revision = probeRevision
+        return try await runProbeOperation(generation: generation, revision: revision) {
+            try await self.performProbeOperation(generation: generation, revision: revision) {
+                let value = PublishingBandwidthProbeSnapshot(try await self.stream.replaceBandwidthProbe(
+                    id: id, publishingGeneration: generation, stage: stage, bitRate: bitRate))
+                guard value.isValidReplacement(of: prior, bitRate: bitRate) else {
+                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
+                    throw PublishingBandwidthProbeError.obsolete
+                }
+                return value
             }
         }
     }

@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import Foundation
 import Darwin
@@ -21,8 +22,78 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             XCTAssertTrue(healthy)
             do { _ = try await adapter.beginBandwidthProbe(bitRate: 500_000); XCTFail() }
             catch { XCTAssertEqual(error as? PublishingBandwidthProbeError, .disabled) }
+            do { _ = try await adapter.beginBandwidthProbe(bitRate: 500_000, staged: true); XCTFail() }
+            catch { XCTAssertEqual(error as? PublishingBandwidthProbeError, .disabled) }
             do { try await adapter.configure(); XCTFail("configure must be pre-start only") }
             catch { XCTAssertEqual(error as? SRTPublisher.PublisherError, .notPublishing) }
+            await adapter.stop()
+        } catch {
+            start.cancel()
+            await adapter.stop()
+            _ = await start.result
+            throw error
+        }
+    }
+
+    func testConnectedNativeAdapterStagesReplaceAndRetainAuthority() async throws {
+        let adapter = SRTPublisher(allowsBandwidthProbes: true)
+        try await adapter.configure()
+        let listener = try ProbeTestListener()
+        defer { listener.close() }
+        let url = listener.url
+        let start = Task { try await adapter.start(url) }
+        do {
+            try await listener.accept()
+            try await start.value
+            await adapter.video(try probeTransportVideo())
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+            let audio = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+            audio.frameLength = 4096
+            for channel in 0..<2 { audio.floatChannelData![channel].initialize(repeating: 0, count: 4096) }
+            await adapter.audio(audio, when: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: 10)))
+            let deadline = ContinuousClock.now + .seconds(2)
+            while await adapter.transportClock() == nil, ContinuousClock.now < deadline { await Task.yield() }
+            let clock = await adapter.transportClock()
+            XCTAssertNotNil(clock, "A/V startup must establish the native transport clock")
+            // libSRT initializes RTT at 100 ms. Exchange packets until actual
+            // loopback acknowledgements satisfy the native 50 ms probe gate.
+            let statisticsDeadline = ContinuousClock.now + .seconds(2)
+            var frame = 1
+            var admissionReady = false
+            while ContinuousClock.now < statisticsDeadline {
+                if let statistics = await adapter.transportStatistics(), statistics.rttMilliseconds <= 50,
+                   statistics.senderBufferMilliseconds <= 50 { admissionReady = true; break }
+                await adapter.video(try probeTransportVideo(frame))
+                frame += 1
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(admissionReady, "Loopback statistics must satisfy native admission")
+            let first = try await adapter.beginBandwidthProbe(bitRate: 500_000, staged: true)
+            XCTAssertEqual(first.stage, 1)
+            XCTAssertEqual(first.campaignStartedAt, first.startedAt)
+            XCTAssertEqual(first.totalAcceptedPayloadBytes, 0)
+            let firstAuthority = try XCTUnwrap(first.authority)
+            for (id, generation, stage) in [(UUID(), first.publishingGeneration, UInt32(1)),
+                (first.id, first.publishingGeneration + 1, 1), (first.id, first.publishingGeneration, 2)] {
+                do { _ = try await adapter.replaceBandwidthProbe(id: id, publishingGeneration: generation, stage: stage, bitRate: 1_000_000); XCTFail() }
+                catch { XCTAssertEqual(error as? PublishingBandwidthProbeError, .obsolete) }
+            }
+            // A failed optional replacement revokes the old authority but keeps
+            // its identity available for an explicit valid retry.
+            do { _ = try await adapter.replaceBandwidthProbe(id: first.id, publishingGeneration: first.publishingGeneration, stage: 1, bitRate: 0); XCTFail() }
+            catch { XCTAssertEqual(error as? PublishingBandwidthProbeError, .failed) }
+            XCTAssertFalse(firstAuthority.permits(id: first.id, generation: first.publishingGeneration, stage: 1))
+            let second = try await adapter.replaceBandwidthProbe(id: first.id, publishingGeneration: first.publishingGeneration, stage: 1, bitRate: 1_000_000)
+            XCTAssertNotEqual(second.id, first.id)
+            XCTAssertEqual(second.stage, 2)
+            XCTAssertEqual(second.campaignStartedAt, first.campaignStartedAt)
+            XCTAssertEqual(second.acceptedPayloadBytes, 0)
+            let renewed = try await adapter.renewBandwidthProbe(id: second.id, publishingGeneration: second.publishingGeneration)
+            XCTAssertEqual(renewed.stage, second.stage)
+            XCTAssertTrue(renewed.authority === second.authority)
+            XCTAssertEqual(renewed.campaignStartedAt, first.campaignStartedAt)
+            let healthy = await adapter.isPublishing()
+            XCTAssertTrue(healthy)
             await adapter.stop()
         } catch {
             start.cancel()
@@ -290,4 +361,29 @@ private final class ProbeTestListener {
         srt_close(socket)
     }
     enum Failure: Error { case socket, timeout }
+}
+
+// Minimal transport input establishes a clock; this is not decoder qualification.
+private func probeTransportVideo(_ frame: Int = 0) throws -> CMSampleBuffer {
+    var format: CMVideoFormatDescription?
+    XCTAssertEqual(CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_H264,
+        width: 16, height: 16, extensions: nil, formatDescriptionOut: &format), noErr)
+    let bytes: [UInt8] = [0, 0, 0, 2, 0x65, 0x7a]
+    var block: CMBlockBuffer?
+    XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+        blockLength: bytes.count, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+        offsetToData: 0, dataLength: bytes.count, flags: 0, blockBufferOut: &block), noErr)
+    let buffer = try XCTUnwrap(block)
+    bytes.withUnsafeBytes { raw in
+        XCTAssertEqual(CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: buffer,
+            offsetIntoDestination: 0, dataLength: bytes.count), noErr)
+    }
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: CMTime(value: 300 + Int64(frame), timescale: 30), decodeTimeStamp: .invalid)
+    var size = bytes.count
+    var sample: CMSampleBuffer?
+    XCTAssertEqual(CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: buffer,
+        formatDescription: format, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+        sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample), noErr)
+    return try XCTUnwrap(sample)
 }

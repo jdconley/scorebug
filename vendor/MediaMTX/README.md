@@ -165,8 +165,9 @@ or read errors. Private publisher snapshots use `mpegts-null-probe-v2`, numeric
 `stage` and decimal-string `totalDeliveredPayloadBytes`; existing counter fields
 refer to the current stage. V1 snapshots omit the two new fields.
 
-This is a wire and accounting foundation only. Native live probes continue to
-emit v1. Authenticated status now validates v2 stage and cumulative counters;
+This is a wire and accounting foundation only. Default native probes emit v1;
+explicit staged native APIs and a bounded DEBUG scheduler now emit v2 but still
+need full relay/media qualification. Authenticated status validates v2 stage and cumulative counters;
 shared native matching additionally requires the locally owned stage.
 Fixture defaults and regular deployments are unchanged. The previously qualified
 `receiver-probe-v1` image remains frozen; its qualification does not cover this

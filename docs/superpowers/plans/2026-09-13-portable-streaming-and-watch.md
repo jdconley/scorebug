@@ -1868,3 +1868,22 @@ wire staged APIs through publisher adapters and the DEBUG scheduler, then qualif
 actual staged SRT with independent local recording. Measured candidate cost,
 automatic upgrades/recovery, long-session campaigns, physical phone/Watch and
 remote workers remain open; production adaptation is still disabled.
+
+
+[Staged publisher adapters and DEBUG scheduler](2026-09-17-staged-probe-publishers.md)
+now expose the native staged lifecycle to the app. Both adapters reject wrong stage,
+identity or campaign accounting and preserve joined operation cancellation. A bounded
+DEBUG schedule runs 500 kbps, 1 Mbps and 2 Mbps owners, collecting retirement totals
+and timestamps before replacement. Missing final shutdown evidence invalidates an
+admitted run. Legacy behavior remains available; CLI staged qualification is still
+closed pending independent verifier support.
+
+Verification passes 99 streaming and 298 native model tests, including native
+loopback adapter replacement/retry and the 12 DEBUG fixture tests, plus simulator
+and unsigned combined phone/Watch builds. Both embedded Watch slices are present;
+reviews are approved. Frozen evidence:
+`artifacts/qa/staged-probe-publisher-final-verification.json`. Next update independent
+sender/receiver/interval verifiers and staged relay selection, then perform the real
+multi-stage A/V and local archive qualification. Measured candidate cost, automatic
+upgrades/recovery, long-session campaigns and physical/remote qualification remain
+open. Production quality adaptation remains disabled.

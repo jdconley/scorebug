@@ -14,10 +14,16 @@ struct NativeBandwidthProbeSample: Sendable {
     var reason: String?
     var stage: Int? = nil
     var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?) -> Bool)? = nil
+    var campaignStartedAt: Double? = nil
+    var totalAcceptedPayloadBytes: UInt64? = nil
     var object: [String: Any] {
-        ["id": id.uuidString, "publishingGeneration": String(publishingGeneration), "bitRate": bitRate,
+        var object: [String: Any] = ["id": id.uuidString, "publishingGeneration": String(publishingGeneration), "bitRate": bitRate,
          "startedAt": startedAt, "leaseDeadline": leaseDeadline, "acceptedPayloadBytes": String(acceptedPayloadBytes),
          "lastAcceptedAt": lastAcceptedAt as Any? ?? NSNull(), "reason": reason as Any? ?? NSNull()]
+        if let stage { object["stage"] = stage }
+        if let campaignStartedAt { object["campaignStartedAt"] = campaignStartedAt }
+        if let totalAcceptedPayloadBytes { object["totalAcceptedPayloadBytes"] = String(totalAcceptedPayloadBytes) }
+        return object
     }
 }
 extension NativeBandwidthProbeSample {
@@ -25,18 +31,20 @@ extension NativeBandwidthProbeSample {
         self.init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
             lastAcceptedAt: value.lastAcceptedAt, reason: value.reason?.rawValue,
-            stage: value.stage.flatMap(Int.init(exactly:)), permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner)
+            stage: value.stage.flatMap(Int.init(exactly:)), permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner,
+            campaignStartedAt: value.campaignStartedAt, totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes)
     }
 }
 
 /// DEBUG-only optional traffic owner. PublishingSession still owns media admission;
 /// recording never waits for this task. Shutdown joins work before exporting proof.
 actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
-    enum Mode: String, Sendable { case renew, expire }
+    enum Mode: String, Sendable { case renew, expire, staged }
     struct Timing: Sendable {
         var delay: Duration = .seconds(20)
         var poll: Duration = .milliseconds(100)
         var maximumPolls: Int = 600
+        var stagePolls: Int = 80
     }
     struct Operations: Sendable {
         let clock: @Sendable () async -> PublishingTransportClock?
@@ -45,6 +53,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         let cancel: @Sendable (UUID, UInt64) async -> Void
         let snapshot: @Sendable () async -> NativeBandwidthProbeSample?
         let export: @Sendable (Data) async -> Void
+        var beginStaged: @Sendable () async throws -> NativeBandwidthProbeSample = { throw PublishingBandwidthProbeError.disabled }
+        var replace: @Sendable (UUID, UInt64, Int, Int) async throws -> NativeBandwidthProbeSample = { _,_,_,_ in throw PublishingBandwidthProbeError.disabled }
     }
     private let publisher: any MediaPublisher
     private let scope: VideoFrameObservationScope
@@ -57,7 +67,12 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private var handle: NativeBandwidthProbeSample?
     private struct Event {
         let phase: String, at: Double, sample: NativeBandwidthProbeSample
-        var object: [String: Any] { ["phase": phase, "observedAt": at, "sample": sample.object] }
+        let retirementRequestedAt: Double?
+        var object: [String: Any] {
+            var object: [String: Any] = ["phase": phase, "observedAt": at, "sample": sample.object]
+            if let retirementRequestedAt { object["retirementRequestedAt"] = retirementRequestedAt }
+            return object
+        }
     }
     private var events: [Event] = []
     private var work: Task<Void, Never>?
@@ -70,7 +85,13 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             renew: { NativeBandwidthProbeSample(try await publisher.renewBandwidthProbe(id: $0, publishingGeneration: $1)) },
             cancel: { await publisher.cancelBandwidthProbe(id: $0, publishingGeneration: $1) },
             snapshot: { await publisher.bandwidthProbeSnapshot().map(NativeBandwidthProbeSample.init) },
-            export: { await Self.persist($0) })
+            export: { await Self.persist($0) },
+            beginStaged: { NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 500_000, staged: true)) },
+            replace: { id, generation, stage, rate in
+                guard let ordinal = UInt32(exactly: stage) else { throw PublishingBandwidthProbeError.obsolete }
+                return NativeBandwidthProbeSample(try await publisher.replaceBandwidthProbe(id: id,
+                    publishingGeneration: generation, stage: ordinal, bitRate: rate))
+            })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, mode: Mode,
          operations: Operations, timing: Timing) {
@@ -109,6 +130,10 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             await publisher.stop() // Release any native operation blocked during admission.
             await pending?.value
             if let value = await operations.snapshot() { _ = record(value, phase: "final") }
+            else if mode == .staged, handle != nil || !events.isEmpty {
+                invalid = true
+                if result == "completed" || result == "withdrawn" { result = "invalidEvidence" }
+            }
             closed = true
             if let data = try? data() { await operations.export(data) }
         }
@@ -119,7 +144,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
 
     private func run() async {
         do {
-            guard timing.delay >= .zero, timing.poll >= .zero, (1...600).contains(timing.maximumPolls) else {
+            guard timing.delay >= .zero, timing.poll >= .zero, (1...600).contains(timing.maximumPolls),
+                  mode != .staged || ((1...200).contains(timing.stagePolls) && timing.stagePolls * 3 <= timing.maximumPolls) else {
                 throw FixtureError.invalidEvidence
             }
             try await Task.sleep(for: timing.delay)
@@ -133,58 +159,144 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             }
             try Task.checkCancellation()
             guard generation != nil else { result = "clockUnavailable"; return }
-            let value = try await operations.begin()
-            handle = value
-            guard record(value, phase: "began") else { throw FixtureError.invalidEvidence }
-            try Task.checkCancellation()
-            result = "completed"
-            if value.reason == nil {
-                for _ in 0..<timing.maximumPolls {
-                    try await Task.sleep(for: timing.poll)
-                    try Task.checkCancellation()
-                    guard ProcessInfo.processInfo.systemUptime - value.startedAt < 50 else { break }
-                    let next: NativeBandwidthProbeSample?
-                    if mode == .renew { next = try await operations.renew(value.id, value.publishingGeneration) }
-                    else { next = await operations.snapshot() }
-                    try Task.checkCancellation()
-                    guard let next, record(next, phase: mode == .renew ? "renewed" : "observed") else {
-                        throw FixtureError.invalidEvidence
+            if mode == .staged { try await runStaged() }
+            else {
+                let value = try await operations.begin()
+                handle = value
+                guard record(value, phase: "began") else { throw FixtureError.invalidEvidence }
+                try Task.checkCancellation()
+                result = "completed"
+                if value.reason == nil {
+                    for _ in 0..<timing.maximumPolls {
+                        try await Task.sleep(for: timing.poll)
+                        try Task.checkCancellation()
+                        guard ProcessInfo.processInfo.systemUptime - value.startedAt < 50 else { break }
+                        let next: NativeBandwidthProbeSample?
+                        if mode == .renew { next = try await operations.renew(value.id, value.publishingGeneration) }
+                        else { next = await operations.snapshot() }
+                        try Task.checkCancellation()
+                        guard let next, record(next, phase: mode == .renew ? "renewed" : "observed") else {
+                            throw FixtureError.invalidEvidence
+                        }
+                        if next.reason != nil { result = "withdrawn"; break }
                     }
-                    if next.reason != nil { result = "withdrawn"; break }
-                }
-            } else { result = "withdrawn" }
+                } else { result = "withdrawn" }
+            }
         } catch {
             if Task.isCancelled || error is CancellationError { result = "cancelled" }
             else if error is FixtureError { invalid = true; result = "invalidEvidence" }
             else { result = "operationFailed" }
         }
-        if let handle { await operations.cancel(handle.id, handle.publishingGeneration) }
+        if let handle, mode != .staged || handle.reason == nil {
+            await operations.cancel(handle.id, handle.publishingGeneration)
+        }
     }
 
-    @discardableResult private func record(_ value: NativeBandwidthProbeSample, phase: String) -> Bool {
+    private static let stagedBitRates = [500_000, 1_000_000, 2_000_000]
+    private func runStaged() async throws {
+        var current = try await operations.beginStaged()
+        handle = current
+        try Task.checkCancellation()
+        guard record(current, phase: "began") else { throw FixtureError.invalidEvidence }
+        result = "completed"
+        for (index, _) in Self.stagedBitRates.enumerated() {
+            if current.reason != nil { result = "withdrawn"; return }
+            for _ in 0..<timing.stagePolls {
+                try await Task.sleep(for: timing.poll)
+                try Task.checkCancellation()
+                let renewed = try await operations.renew(current.id, current.publishingGeneration)
+                handle = renewed
+                try Task.checkCancellation()
+                guard record(renewed, phase: "renewed") else { throw FixtureError.invalidEvidence }
+                current = renewed
+                if renewed.reason != nil { result = "withdrawn"; return }
+            }
+            let retirementRequestedAt = ProcessInfo.processInfo.systemUptime
+            await operations.cancel(current.id, current.publishingGeneration)
+            try Task.checkCancellation()
+            guard let retired = await operations.snapshot() else { throw FixtureError.invalidEvidence }
+            handle = retired
+            try Task.checkCancellation()
+            guard retired.reason != nil,
+                  record(retired, phase: "retired", retirementRequestedAt: retirementRequestedAt) else {
+                throw FixtureError.invalidEvidence
+            }
+            if retired.reason != "cancelled" { result = "withdrawn"; return }
+            if index == Self.stagedBitRates.count - 1 { return }
+            guard let stage = retired.stage else { throw FixtureError.invalidEvidence }
+            let replacement = try await operations.replace(retired.id, retired.publishingGeneration, stage,
+                Self.stagedBitRates[index + 1])
+            handle = replacement
+            try Task.checkCancellation()
+            guard record(replacement, phase: "replaced") else { throw FixtureError.invalidEvidence }
+            current = replacement
+        }
+    }
+
+    @discardableResult private func record(_ value: NativeBandwidthProbeSample, phase: String,
+                                           retirementRequestedAt: Double? = nil) -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
-        guard !closed, events.count < 602, now.isFinite, value.startedAt.isFinite,
+        guard !closed, events.count < (mode == .staged ? 607 : 602), now.isFinite, value.startedAt.isFinite,
               value.startedAt >= 0, value.startedAt <= now, value.leaseDeadline.isFinite,
               value.leaseDeadline > value.startedAt, value.leaseDeadline <= value.startedAt + 60.3,
-              value.publishingGeneration == generation, value.bitRate == 1_000_000,
+              value.publishingGeneration == generation,
               value.acceptedPayloadBytes <= 16 * 1024 * 1024, value.acceptedPayloadBytes % 1316 == 0,
               (value.acceptedPayloadBytes == 0) == (value.lastAcceptedAt == nil),
               value.lastAcceptedAt.map({ $0.isFinite && $0 >= value.startedAt && $0 <= now }) ?? true else {
             invalid = true; return false
         }
-        if let prior = events.last {
-            guard value.id == prior.sample.id, value.startedAt == prior.sample.startedAt,
-                  value.acceptedPayloadBytes >= prior.sample.acceptedPayloadBytes,
-                  value.leaseDeadline >= prior.sample.leaseDeadline, now >= prior.at,
-                  prior.sample.reason == nil || (value.reason == prior.sample.reason && value.acceptedPayloadBytes == prior.sample.acceptedPayloadBytes) else {
+        if mode == .staged {
+            guard let stage = value.stage, (1...3).contains(stage), value.bitRate == Self.stagedBitRates[stage - 1],
+                  let origin = value.campaignStartedAt, origin.isFinite, origin >= 0, origin <= value.startedAt,
+                  value.startedAt - origin < 60, value.leaseDeadline <= origin + 60.3,
+                  let total = value.totalAcceptedPayloadBytes, total <= 16 * 1024 * 1024,
+                  total % 1316 == 0, total >= value.acceptedPayloadBytes,
+                  value.lastAcceptedAt.map({ $0 <= value.leaseDeadline && $0 < origin + 60 }) ?? true else {
                 invalid = true; return false
             }
+            if phase == "retired" {
+                guard let retirementRequestedAt, retirementRequestedAt.isFinite,
+                      retirementRequestedAt >= (events.last?.at ?? value.startedAt), retirementRequestedAt <= now,
+                      value.reason != nil else { invalid = true; return false }
+            } else if retirementRequestedAt != nil { invalid = true; return false }
+        } else if value.bitRate != 1_000_000 || value.stage != nil || value.campaignStartedAt != nil || value.totalAcceptedPayloadBytes != nil {
+            invalid = true; return false
         }
-        events.append(.init(phase: phase, at: now, sample: value))
+        if let prior = events.last {
+            guard now >= prior.at else { invalid = true; return false }
+            if mode == .staged, value.stage != prior.sample.stage {
+                guard (phase == "replaced" || (phase == "final" && result == "cancelled")),
+                      value.stage == prior.sample.stage.map({ $0 + 1 }), value.id != prior.sample.id,
+                      prior.sample.reason == "cancelled", value.startedAt >= prior.at,
+                      value.campaignStartedAt == prior.sample.campaignStartedAt,
+                      value.acceptedPayloadBytes == 0,
+                      value.totalAcceptedPayloadBytes == prior.sample.totalAcceptedPayloadBytes else {
+                    invalid = true; return false
+                }
+            } else {
+                guard phase != "replaced", value.id == prior.sample.id, value.startedAt == prior.sample.startedAt,
+                      value.acceptedPayloadBytes >= prior.sample.acceptedPayloadBytes,
+                      value.leaseDeadline >= prior.sample.leaseDeadline,
+                      prior.sample.reason == nil || (value.reason == prior.sample.reason && value.acceptedPayloadBytes == prior.sample.acceptedPayloadBytes),
+                      prior.sample.lastAcceptedAt.map({ old in value.lastAcceptedAt.map { $0 >= old } ?? false }) ?? true else {
+                    invalid = true; return false
+                }
+                if mode == .staged {
+                    guard value.campaignStartedAt == prior.sample.campaignStartedAt,
+                          let total = value.totalAcceptedPayloadBytes, let oldTotal = prior.sample.totalAcceptedPayloadBytes,
+                          total >= oldTotal, total - oldTotal == value.acceptedPayloadBytes - prior.sample.acceptedPayloadBytes else {
+                        invalid = true; return false
+                    }
+                }
+            }
+        } else if phase != "began" || (mode == .staged && (value.stage != 1 || value.campaignStartedAt != value.startedAt || value.totalAcceptedPayloadBytes != 0)) {
+            invalid = true; return false
+        }
+        events.append(.init(phase: phase, at: now, sample: value, retirementRequestedAt: retirementRequestedAt))
         return true
     }
     private func data() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "isClosed": closed, "invalid": invalid,
+        try JSONSerialization.data(withJSONObject: ["formatVersion": mode == .staged ? 2 : 1, "isClosed": closed, "invalid": invalid,
             "mode": mode.rawValue, "result": result,
             "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,

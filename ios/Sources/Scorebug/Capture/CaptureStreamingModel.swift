@@ -76,7 +76,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var receiverProbeHistory = ReceiverProbeFixtureHistory()
     var receiverProbeFixtureWriter: ((Data) async -> Void)? = {
         #if targetEnvironment(simulator)
-        guard ["renew", "expire"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? "") else { return nil }
+        guard ["renew", "expire", "staged"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? "") else { return nil }
         return { await ReceiverProbeFixtureHistory.persist($0) }
         #else
         return nil

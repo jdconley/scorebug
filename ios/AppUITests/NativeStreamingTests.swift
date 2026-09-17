@@ -62,7 +62,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
         if !probe.isEmpty {
-            XCTAssertTrue(["renew", "expire"].contains(probe)); XCTAssertEqual(liveProfile, "540p30")
+            XCTAssertTrue(["renew", "expire", "staged"].contains(probe)); XCTAssertEqual(liveProfile, "540p30")
             XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
             app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
         }
