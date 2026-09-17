@@ -11,6 +11,7 @@ async function fixture(t, overrides = {}) {
   const artifact = await mkdtemp(join(tmpdir(), 'direct-recorder-'));
   t.after(() => rm(artifact, { recursive: true, force: true }));
   const child = new EventEmitter();
+  child.stderr = new EventEmitter();
   child.pid = 4242;
   const kills = [];
   child.kill = (signal) => {
@@ -39,9 +40,9 @@ async function fixture(t, overrides = {}) {
     child,
     kills,
     calls,
-    start: () =>
+    start: (packetTiming = false) =>
       implementation.startDirectRTMPRecorder(
-        { artifact, ffmpeg: '/resolved/ffmpeg', port: 19359 },
+        { artifact, ffmpeg: '/resolved/ffmpeg', port: 19359, packetTiming },
         options,
       ),
     recording: () => writeFile(join(artifact, 'sink-recordings/direct.mp4'), 'media'),
@@ -52,6 +53,37 @@ async function fixture(t, overrides = {}) {
 
 test('exports the recorder lifecycle API', () => {
   assert.equal(typeof implementation.startDirectRTMPRecorder, 'function');
+});
+
+test('optional timestamp diagnostics drain stderr and persist only bounded numeric evidence on close', async (t) => {
+  const f = await fixture(t);
+  const recorder = await f.start(true);
+  assert.ok(f.calls[0].args.includes('-debug_ts'));
+  assert.ok(f.calls[0].args.includes('-nostats'));
+  assert.deepEqual(f.calls[0].options.stdio, ['ignore', 'ignore', 'pipe']);
+  f.child.stderr.emit(
+    'data',
+    Buffer.from(
+      'secret-publish-url\n[vist#0:0/h264 @ 0xabc] demuxer -> ist_index:0:0 type:video pkt_pts:429 pkt_pts_time:0.429 pkt_dts:429 pkt_dts_time:0.429 duration:33\n',
+    ),
+  );
+  await f.recording();
+  f.child.emit('close', 0, null);
+  await recorder.finish();
+  const raw = await readFile(join(f.artifact, 'direct-rtmp-packet-timing.json'), 'utf8');
+  assert.doesNotMatch(raw, /secret/);
+  const timing = JSON.parse(raw);
+  assert.equal(timing.demux.video.first[0].ptsSeconds, '0.429');
+  assert.equal(timing.recognized, false);
+});
+
+test('timestamp evidence cannot overwrite an earlier artifact', async (t) => {
+  const f = await fixture(t);
+  const path = join(f.artifact, 'direct-rtmp-packet-timing.json');
+  await writeFile(path, 'previous');
+  await assert.rejects(f.start(true), /refuses to overwrite/);
+  assert.equal(f.calls.length, 0);
+  assert.equal(await readFile(path, 'utf8'), 'previous');
 });
 
 test('readiness observes only the owned PID and exact loopback listener without connecting', async (t) => {

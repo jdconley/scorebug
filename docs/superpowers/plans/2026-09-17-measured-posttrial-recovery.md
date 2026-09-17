@@ -25,7 +25,7 @@ The reset verifier must distinguish decoder-stall versus delivery-failure preced
 - [x] Extend measured policy replay with a separately named prefix verifier: independently prove bootstrap, candidate admission and confirmed probation from unchanged raw events through the confirmation boundary. It may accept the already-qualified full native three-phase history but must expose exactly where proof ends; the full successful verifier remains strict. Extend causal probe retirement only through explicit recovery context, allowing one later owned reset and preserving first trial ownership/counters.
 - [x] Integrate the recovery option into the local fixture and harness. Copy all raw artifacts once; retain archive/scoring/A/V/ingress/processing/direct-recorder checks. A diagnostic cannot print a complete recovery pass until a mandatory independent recovery verifier exists and passes. No loss-policy weakening to make the fault pass.
 - [x] Run one stable native diagnostic after model/tool checks and review. Preserve any failure, prove exact pre-fault confirmation from raw evidence, and implement/refine recovery replay against actual artifacts. Require native reset receipt/deadline, causal failure evidence, minimum-profile source correspondence and at least10 seconds of healthy contiguous post-reset delivery/telemetry. Test negative mutations and prior successful/no-fault artifacts.
-- [ ] Run affected regressions, independent spec/quality reviews and a complete fresh native recovery gate once stable. Investigate unexpected failures without widening freshness, frame-loss or application limits. Update plans/evidence, verify old artifacts unchanged and commit. Keep the overall goal active.
+- [x] Run affected regressions, independent spec/quality reviews and a complete fresh native recovery gate once stable. Investigate unexpected failures without widening freshness, frame-loss or application limits. Update plans/evidence, verify old artifacts unchanged and commit. Keep the overall goal active.
 
 ## Boundaries
 
@@ -112,3 +112,18 @@ those first packets. The gap therefore exists in the recorded packet presentatio
 timeline too; the responsible upstream or mux stage is still unlocated. Next add
 bounded first-audio/first-video PTS diagnostics at the necessary publisher, worker
 and recorder boundaries, preserving each clock domain and excluding credentials.
+
+## Fresh complete recovery checkpoint
+
+The follow-up recorder-provenance work produced a fresh full harness pass in
+`native-app-Ic6DDc` (exit 0, unchanged frozen runtime source). It qualifies the
+measured increase, an owned 1,996 ms decoder stall, reset to minimum and 10.0001
+seconds of healthy recovery; both MP4s fully decode, with a complete 1080p local
+archive and native scoring. All 2,276 tool tests pass. See
+[the startup-audio provenance plan](2026-09-17-startup-audio-provenance.md) for the
+bounded diagnostics and verification details.
+
+This run has audio leading video by 507 ms consistently before and after recorder
+muxing, so it does not reproduce or resolve D's late-audio defect. Earlier raw
+failures retain their original results. Production automatic upgrades, repeated
+ramp-up, network-loss recovery and physical/other-host qualification remain open.

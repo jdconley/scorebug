@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { RecorderPacketTiming } from './recorder-packet-timing.mjs';
 
 const execute = promisify(execFile);
 const failure = (reason) => new Error(`Direct RTMP recorder ${reason}`);
@@ -31,7 +32,10 @@ function ownsListener(stdout, pid, port) {
   return false;
 }
 
-export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, dependencies = {}) {
+export async function startDirectRTMPRecorder(
+  { artifact, ffmpeg, port, packetTiming = false },
+  dependencies = {},
+) {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw failure('has invalid port');
   const {
     spawn: spawnChild = spawn,
@@ -46,8 +50,10 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
   const relativePath = 'sink-recordings/direct.mp4';
   const recording = join(artifact, relativePath);
   const manifestPath = join(artifact, 'direct-rtmp-recorder.json');
+  const timingPath = join(artifact, 'direct-rtmp-packet-timing.json');
+  const timing = packetTiming ? new RecorderPacketTiming() : undefined;
   await mkdir(join(artifact, 'sink-recordings'), { recursive: true });
-  for (const path of [recording, manifestPath]) {
+  for (const path of [recording, manifestPath, ...(packetTiming ? [timingPath] : [])]) {
     const exists = await stat(path).then(
       () => true,
       (error) => {
@@ -65,6 +71,7 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
       [
         '-nostdin',
         '-n',
+        ...(packetTiming ? ['-debug_ts', '-nostats'] : []),
         '-listen',
         '1',
         '-i',
@@ -82,11 +89,12 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
         'mp4',
         recording,
       ],
-      { stdio: 'ignore' },
+      { stdio: packetTiming ? ['ignore', 'ignore', 'pipe'] : 'ignore' },
     );
   } catch {
     throw failure('failed to spawn');
   }
+  if (timing) child.stderr.on('data', (chunk) => timing.push(chunk));
 
   let outcome;
   let readinessObserved = false;
@@ -110,6 +118,10 @@ export async function startDirectRTMPRecorder({ artifact, ffmpeg, port }, depend
   const persisted = closed.then(async (manifest) => {
     try {
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
+      if (timing)
+        await writeFile(timingPath, `${JSON.stringify(timing.finish(), null, 2)}\n`, {
+          flag: 'wx',
+        });
     } catch {
       throw failure('could not persist its manifest');
     }

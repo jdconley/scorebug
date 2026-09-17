@@ -268,6 +268,7 @@ export async function nativeStreamingFixture({
         artifact,
         ffmpeg: mediaTools().ffmpeg,
         port: sinkPort,
+        packetTiming: true,
       });
     return {
       publishingProxyPort: uplink?.port,
