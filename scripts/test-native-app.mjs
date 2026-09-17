@@ -97,6 +97,9 @@ const profileTransitions = nativeProfileTransitions({
   requirePublication,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const profileTransitionSequence = profileTransitions
+  ? process.env.SCOREBUG_TEST_PROFILE_TRANSITIONS
+  : undefined;
 const adaptiveProfiles = nativeAdaptiveProfiles({
   environment: process.env,
   streaming,
@@ -155,6 +158,7 @@ await writeFile(
       uplinkProfile,
       liveProfile,
       profileTransitions,
+      profileTransitionSequence,
       adaptiveProfiles,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
@@ -505,7 +509,7 @@ try {
       `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
-      `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitions ? '1' : ''}`,
+      `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
       `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
@@ -688,6 +692,7 @@ try {
         liveSegments.flat(),
         {
           adaptive: adaptiveProfiles,
+          sequence: profileTransitionSequence ?? '1',
           requireFrameEvidence: true,
           requirePacingEvidence: sourceCadencePacing,
         },
@@ -840,6 +845,7 @@ try {
         nativeFormatQualification,
         nativeVideoCostQualification,
         profileTransitions,
+        profileTransitionSequence,
         adaptiveProfiles,
         profileTransitionQualification,
         bandwidthProbeQualification,

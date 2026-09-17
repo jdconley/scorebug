@@ -186,6 +186,42 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
         XCTAssertEqual(try snapshot(proof)["isClosed"] as? Bool, true)
         XCTAssertEqual((try snapshot(proof)["receipts"] as? [Any])?.count, 0)
     }
+    @MainActor func testMinimumDriverReturnsToItsInitialProfileAndJoinsExport() async throws {
+        XCTAssertEqual(NativeProfileTransitionSequence.minimum.initialProfile, .low240)
+        XCTAssertEqual(NativeProfileTransitionSequence.standard.initialProfile, .hd1080)
+        let proof = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), sequence: .minimum)
+        let publisher = TransitionPublisher(), session = try PublishingSession(publisher: publisher)
+        try await session.start()
+        var exported: Data?
+        let driver = NativeProfileTransitionDriver(session: session, evidence: proof,
+            waits: [.milliseconds(1), .milliseconds(1)], export: { exported = $0 })
+        await driver.waitForSchedule()
+        let profiles = await publisher.profiles
+        XCTAssertEqual(profiles, [.sd540, .low240])
+        XCTAssertNil(exported)
+        await driver.stop(); await driver.stop()
+        let stopCount = await publisher.stops
+        XCTAssertEqual(stopCount, 1)
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual(result["formatVersion"] as? Int, 6)
+        XCTAssertEqual(result["sequence"] as? String, "low240")
+        XCTAssertEqual(result["isClosed"] as? Bool, true)
+        XCTAssertEqual(result["invalid"] as? Bool, false)
+    }
+    func testMinimumSequenceRequiresExplicitFixtureAdmission() throws {
+        let env = ["SCOREBUG_TEST_PROFILE_TRANSITIONS": "low240", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+        XCTAssertTrue(try NativeProfileTransitionEvidence.requested(environment: env))
+        XCTAssertEqual(try NativeProfileTransitionEvidence.requestedSequence(environment: env), .minimum)
+        for (key, value) in [("SCOREBUG_TEST_PROFILE_TRANSITIONS", "low240 "),
+            ("SCOREBUG_TEST_NATIVE_QUALITY", "1"), ("SCOREBUG_TEST_LIVE_PROFILE", "240p30"),
+            ("SCOREBUG_TEST_ADAPTIVE_PROFILES", "1"), ("SCOREBUG_TEST_UPLINK_PROFILE", "rate3m"),
+            ("SCOREBUG_TEST_STREAM_HOLD_SECONDS", "89")] {
+            var invalid = env; invalid[key] = value
+            XCTAssertThrowsError(try NativeProfileTransitionEvidence.requestedSequence(environment: invalid))
+        }
+    }
     func testExplicitAppFlagsRejectMixedExperiments() throws {
         let env = ["SCOREBUG_TEST_PROFILE_TRANSITIONS": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
             "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]

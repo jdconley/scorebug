@@ -36,7 +36,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let transitions = ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] ?? ""
         if !transitions.isEmpty {
-            XCTAssertEqual(transitions, "1"); XCTAssertTrue(qualityFlag.isEmpty && liveProfile.isEmpty)
+            XCTAssertTrue(["1", "low240"].contains(transitions)); XCTAssertTrue(qualityFlag.isEmpty && liveProfile.isEmpty)
             XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
             app.launchEnvironment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] = transitions
         }

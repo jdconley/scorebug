@@ -1444,3 +1444,21 @@ variants. Every process owner joins; hashes are in
 240p → 540p → 240p transitions, then integrate the required short-window health,
 minimum reset and progressive recovery policy. Physical-device and remote-host
 qualification remain open.
+
+
+[Controlled minimum-profile transitions](2026-09-16-minimum-profile-transitions.md)
+now pass on the iOS 17.5 simulator in `native-app-MLneuc`. Actual native encoder
+formats are 240p → 540p → 240p; 3,353 consecutive encoded frames become 3,318
+consecutive saved live frames after 35-frame acquisition. The separate 1080p
+archive retains all 3,725 frames. All audio markers match and full decodes are
+clean. The two encoder replacements each pause compressed output by about 414 ms;
+receiver wall-clock continuity and automatic adaptation remain unqualified.
+
+All 1,205 tooling and 233 model tests pass, as do the native simulator workflow and
+unsigned iPhone/Watch Release build. Two retained transition results replay
+unchanged; the independent audit rejects 18 damaged variants. FFmpeg's observed
+SIGTERM/255 shutdown joins successfully under the existing terminal contract,
+with the final live frame saved. Sources/evidence are frozen in
+`artifacts/qa/minimum-transition-final-verification.json`. Next implement short
+health windows/watchdog, priority minimum reset and conservative recovery under
+the progressive streaming design, while preserving the receiver-continuity gate.

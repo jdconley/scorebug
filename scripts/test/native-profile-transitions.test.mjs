@@ -310,3 +310,108 @@ test('current full profile evidence requires and returns independently reconcile
     );
   }
 });
+
+test('minimum transition mode requires the same exclusive full pipeline', () => {
+  const minimum = {
+    ...options,
+    environment: { ...options.environment, SCOREBUG_TEST_PROFILE_TRANSITIONS: 'low240' },
+  };
+  assert.equal(nativeProfileTransitions(minimum), true);
+  for (const flag of ['low360', '240p30', 'low240 '])
+    assert.throws(() =>
+      nativeProfileTransitions({
+        ...minimum,
+        environment: { ...minimum.environment, SCOREBUG_TEST_PROFILE_TRANSITIONS: flag },
+      }),
+    );
+  for (const key of [
+    'SCOREBUG_TEST_NATIVE_QUALITY',
+    'SCOREBUG_TEST_ADAPTIVE_PROFILES',
+    'SCOREBUG_TEST_UPLINK_PROFILE',
+    'SCOREBUG_TEST_LIVE_PROFILE',
+  ])
+    assert.throws(() =>
+      nativeProfileTransitions({ ...minimum, environment: { ...minimum.environment, [key]: '1' } }),
+    );
+  assert.throws(() => nativeProfileTransitions({ ...minimum, holdSeconds: 89 }));
+});
+
+function minimumFixture() {
+  const f = fixture();
+  f.format.formatVersion = 6;
+  f.format.sequence = 'low240';
+  for (const n of [0, 2]) Object.assign(f.format.phases[n], { width: 426, height: 240 });
+  Object.assign(f.format.receipts[1], { profile: '240p30', width: 426, height: 240 });
+  f.format.compressedFrames = f.format.phases.flatMap((p, phase) =>
+    Array.from({ length: p.frames }, (_, n) => ({
+      sourcePTS: pts(phase * 900 + n),
+      observedAt: p.firstObservedAt + n / 30,
+      byteCount: n % 60 === 0 ? 4000 : 1000,
+      isSync: n % 60 === 0,
+    })),
+  );
+  return f;
+}
+
+test('minimum qualification binds actual startup and return geometry to caller sequence', () => {
+  const f = minimumFixture();
+  const result = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+    sequence: 'low240',
+    requireFrameEvidence: true,
+  });
+  assert.equal(result.sequence, 'low240');
+  assert.deepEqual(
+    result.phases.map((p) => [p.width, p.height]),
+    [
+      [426, 240],
+      [960, 540],
+      [426, 240],
+    ],
+  );
+  assert.equal(result.compressedFrames.frames, 2700);
+  assert.throws(() => qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs));
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+      sequence: 'low240',
+      adaptive: true,
+    }),
+  );
+});
+
+test('minimum qualification rejects mismatched or incomplete proof', () => {
+  for (const damage of [
+    (f) => {
+      f.format.sequence = '1';
+    },
+    (f) => {
+      delete f.format.sequence;
+    },
+    (f) => {
+      f.format.formatVersion = 4;
+    },
+    (f) => {
+      delete f.format.compressedFrames;
+    },
+    (f) => {
+      f.format.phases[0].width = 1920;
+    },
+    (f) => {
+      f.format.phases[2].height = 1080;
+    },
+    (f) => {
+      f.format.receipts[1].profile = '1080p30';
+    },
+    (f) => {
+      f.format.compressedFrames[900].isSync = false;
+    },
+    (f) => {
+      f.liveIDs.splice(900, 20);
+    },
+  ]) {
+    const f = minimumFixture();
+    damage(f);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, { sequence: 'low240' }),
+    );
+  }
+});

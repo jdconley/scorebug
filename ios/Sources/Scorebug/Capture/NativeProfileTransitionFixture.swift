@@ -4,11 +4,19 @@ import Foundation
 import ScorebugMedia
 import ScorebugStreaming
 
+enum NativeProfileTransitionSequence: String, Sendable {
+    case standard = "1"
+    case minimum = "low240"
+    var initialProfile: PublishingVideoProfile { self == .minimum ? .low240 : .hd1080 }
+    var destinations: [PublishingVideoProfile] { [.sd540, initialProfile] }
+}
+
 /// Bounded scalar evidence for one explicit simulator experiment. It owns no media.
 final class NativeProfileTransitionEvidence: @unchecked Sendable {
     private let lock = NSLock()
     private let scope: VideoFrameObservationScope
     private let adaptive: Bool
+    let sequence: NativeProfileTransitionSequence
     private var phaseLimit: Int { adaptive ? 17 : 3 }
     private struct Phase {
         let width: Int32, height: Int32, first: CMTime
@@ -32,7 +40,10 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     private var frames = 0
     private var generation: UInt64?
     private var invalid = false, closed = false
-    init(scope: VideoFrameObservationScope, adaptive: Bool = false) { self.scope = scope; self.adaptive = adaptive }
+    init(scope: VideoFrameObservationScope, adaptive: Bool = false, sequence: NativeProfileTransitionSequence = .standard) {
+        self.scope = scope; self.adaptive = adaptive; self.sequence = sequence
+        if adaptive && sequence != .standard { invalid = true }
+    }
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
                height: frame.height, valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264,
@@ -99,7 +110,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     func close() { lock.withLock { closed = true } }
     func data() throws -> Data {
         let object: [String: Any] = lock.withLock {
-            ["formatVersion": adaptive ? 5 : 4, "isClosed": closed, "invalid": invalid, "frames": frames,
+            var result: [String: Any] = ["formatVersion": sequence == .minimum ? 6 : adaptive ? 5 : 4, "isClosed": closed, "invalid": invalid, "frames": frames,
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],
@@ -121,6 +132,8 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
                 "lastOldSourcePTS": Self.time($0.lastOldSourcePTS), "firstNewSourcePTS": Self.time($0.firstNewSourcePTS),
                 "width": $0.width, "height": $0.height, "rawVideoFramesDropped": String($0.rawVideoFramesDropped),
                 "acknowledgedAt": $0.acknowledgedAt] as [String: Any] }]
+            if sequence == .minimum { result["sequence"] = sequence.rawValue }
+            return result
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
@@ -128,8 +141,11 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
         ["value": String(pts.value), "timescale": pts.timescale, "epoch": String(pts.epoch), "flags": pts.flags.rawValue]
     }
     static func requested(environment: [String: String]) throws -> Bool {
-        guard let flag = environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"], !flag.isEmpty else { return false }
-        guard flag == "1", VideoObservationFixture.requested(environment: environment),
+        try requestedSequence(environment: environment) != nil
+    }
+    static func requestedSequence(environment: [String: String]) throws -> NativeProfileTransitionSequence? {
+        guard let flag = environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"], !flag.isEmpty else { return nil }
+        guard let sequence = NativeProfileTransitionSequence(rawValue: flag), VideoObservationFixture.requested(environment: environment),
               environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
               (environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? "").isEmpty,
               (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,
@@ -139,7 +155,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
               (environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "").isEmpty,
               let raw = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"], let hold = Int(raw),
               String(hold) == raw, (90...600).contains(hold) else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-        return true
+        return sequence
     }
     static func cadencePacingRequested(environment: [String: String]) throws -> Bool {
         guard let flag = environment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"], !flag.isEmpty else { return false }
@@ -174,12 +190,12 @@ final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
     let evidence: NativeProfileTransitionEvidence
     let adaptive: Bool
     private let publisher: any MediaPublisher
-    init(url: URL, observations: VideoFrameObservationOwner, adaptive: Bool = false, pacesEncodedVideo: Bool = false) {
+    init(url: URL, observations: VideoFrameObservationOwner, adaptive: Bool = false, pacesEncodedVideo: Bool = false, sequence: NativeProfileTransitionSequence = .standard) {
         self.adaptive = adaptive
-        let evidence = NativeProfileTransitionEvidence(scope: observations.snapshot.scope, adaptive: adaptive)
+        let evidence = NativeProfileTransitionEvidence(scope: observations.snapshot.scope, adaptive: adaptive, sequence: sequence)
         self.evidence = evidence
         publisher = SRTMediaPublisher(url: url, observations: observations,
-            encoderConfigurationObserver: { evidence.observeEncoder($0) },
+            encoderConfigurationObserver: { evidence.observeEncoder($0) }, videoProfile: sequence.initialProfile,
             compressedVideoObserver: { evidence.observe($0) }, pacesEncodedVideo: pacesEncodedVideo)
     }
     func start() async throws { try await publisher.start() }
@@ -196,7 +212,7 @@ final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
     }
 }
 
-/// Fixed experimental schedule: down after 20 seconds, up 40 seconds later.
+/// Fixed experimental schedule: change after 20 seconds, return 40 seconds later.
 /// This is deliberately separate from the production quality controller.
 @MainActor final class NativeProfileTransitionDriver {
     private let session: PublishingSession
@@ -211,7 +227,7 @@ final class NativeProfileTransitionPublisher: MediaPublisher, Sendable {
         work = Task {
             guard waits.count == 2, waits.allSatisfy({ $0 >= .zero }) else { evidence.fail(); return }
             do {
-                for (wait, profile) in zip(waits, [PublishingVideoProfile.sd540, .hd1080]) {
+                for (wait, profile) in zip(waits, evidence.sequence.destinations) {
                     try await Task.sleep(for: wait)
                     try Task.checkCancellation()
                     let receipt = try await session.setVideoProfile(profile)

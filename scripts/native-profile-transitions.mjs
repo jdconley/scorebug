@@ -41,7 +41,7 @@ export function nativeProfileTransitions({
   const flag = environment.SCOREBUG_TEST_PROFILE_TRANSITIONS;
   if (flag === undefined) return false;
   assert.ok(
-    flag === '1' &&
+    ['1', 'low240'].includes(flag) &&
       streaming &&
       requireProcessing &&
       requirePublication &&
@@ -64,18 +64,29 @@ export function qualifyNativeProfileTransitions(
   format,
   snapshot,
   liveIDs,
-  { adaptive = false, requireFrameEvidence = false, requirePacingEvidence = false } = {},
+  {
+    adaptive = false,
+    requireFrameEvidence = false,
+    requirePacingEvidence = false,
+    sequence = '1',
+  } = {},
 ) {
   assert.ok(
     !requirePacingEvidence || requireFrameEvidence,
     'Pacing requires current raw frame evidence',
   );
-  const hasFrameEvidence = format.formatVersion === (adaptive ? 5 : 4);
+  assert.ok(['1', 'low240'].includes(sequence), 'Unknown transition sequence');
+  const minimum = sequence === 'low240';
+  assert.ok(!minimum || !adaptive, 'Minimum sequence is a controlled experiment');
+  if (minimum) assert.equal(format.sequence, sequence);
+  else assert.equal(format.sequence, undefined);
+  const hasFrameEvidence = format.formatVersion === (minimum ? 6 : adaptive ? 5 : 4);
   assert.ok(
-    hasFrameEvidence || (!requireFrameEvidence && format.formatVersion === (adaptive ? 3 : 2)),
+    hasFrameEvidence ||
+      (!minimum && !requireFrameEvidence && format.formatVersion === (adaptive ? 3 : 2)),
   );
   const compressedFrames = hasFrameEvidence
-    ? qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence })
+    ? qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence, sequence })
     : undefined;
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);
@@ -119,8 +130,8 @@ export function qualifyNativeProfileTransitions(
     'Every encoded frame needs native format evidence',
   );
   const phases = format.phases.map((p, i) => {
-    assert.equal(p.width, i % 2 ? 960 : 1920);
-    assert.equal(p.height, i % 2 ? 540 : 1080);
+    assert.equal(p.width, i % 2 ? 960 : minimum ? 426 : 1920);
+    assert.equal(p.height, i % 2 ? 540 : minimum ? 240 : 1080);
     assert.ok(Number.isSafeInteger(p.frames) && p.frames > 0);
     const first = fixtureFrameID(p.firstSourcePTS),
       last = fixtureFrameID(p.lastSourcePTS);
@@ -216,7 +227,7 @@ export function qualifyNativeProfileTransitions(
   format.receipts.forEach((r, i) => {
     const before = phases[i],
       after = phases[i + 1];
-    assert.equal(r.profile, i % 2 === 0 ? '540p30' : '1080p30');
+    assert.equal(r.profile, i % 2 === 0 ? '540p30' : minimum ? '240p30' : '1080p30');
     assert.equal(r.publishingGeneration, format.publishingGeneration);
     assert.equal(
       r.previousEncoderSessionID.toLowerCase(),
@@ -259,6 +270,7 @@ export function qualifyNativeProfileTransitions(
     if (i > 0) assert.ok(r.acknowledgedAt > format.receipts[i - 1].acknowledgedAt);
   });
   return {
+    ...(minimum ? { sequence } : {}),
     ...(compressedFrames ? { compressedFrames } : {}),
     scope: format.scope,
     publishingGeneration: format.publishingGeneration,

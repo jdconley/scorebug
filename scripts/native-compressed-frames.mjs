@@ -5,9 +5,16 @@ import { fixtureFrameID } from './video-observation-qualification.mjs';
 export function qualifyNativeCompressedFrames(
   format,
   snapshot,
-  { requirePacingEvidence = false } = {},
+  { requirePacingEvidence = false, sequence = '1' } = {},
 ) {
-  assert.ok(format.formatVersion === 4 || format.formatVersion === 5);
+  assert.ok(['1', 'low240'].includes(sequence));
+  if (sequence === 'low240') {
+    assert.equal(format.formatVersion, 6);
+    assert.equal(format.sequence, sequence);
+  } else {
+    assert.ok(format.formatVersion === 4 || format.formatVersion === 5);
+    assert.equal(format.sequence, undefined);
+  }
   assert.equal(format.isClosed, true);
   assert.equal(format.invalid, false);
   assert.equal(snapshot.isClosed, true);

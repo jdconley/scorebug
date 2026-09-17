@@ -126,9 +126,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                  let target = try VideoObservationFixture.publishingURL(url, environment: environment)
                  return NativeProfileTransitionPublisher(url: target, observations: observations, adaptive: true, pacesEncodedVideo: cadencePacing)
              }
-             if try NativeProfileTransitionEvidence.requested(environment: environment) {
+             if let sequence = try NativeProfileTransitionEvidence.requestedSequence(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-                 return NativeProfileTransitionPublisher(url: url, observations: observations)
+                 return NativeProfileTransitionPublisher(url: url, observations: observations, sequence: sequence)
              }
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
