@@ -1503,3 +1503,25 @@ establish a live relay association or physical-device performance.
 Next qualify short report/poll timing, expected-source/lateness reconciliation,
 and consumption by the priority minimum-reset/recovery controller. Production
 worker report cadence remains 1,000 ms; automatic quality behavior is unchanged.
+
+
+[Progressive minimum-reset policy](2026-09-16-progressive-reset-policy.md) now adds
+explicit progressive behavior to the controller and native quality-session adapter.
+Frame-floor/source-loss failures and failed trials target the lowest qualified
+profile directly, with sticky reset ownership and 10/20/40/60-second healthy recovery
+holds. Four healthy seconds permit the next eligible increase; every progressive
+increase receives probation, and successful probation clears repeated-failure history.
+Unknown evidence cannot erase a pending reset or accumulate healthy recovery.
+
+All 342 Core and 235 native model tests pass, together with ARM64 simulator and
+unsigned iPhone/Watch Release builds. Native adapter tests verify direct 1080p ->
+240p requests and exact encoder/bitrate receipts before starting the recovery hold.
+They use controlled operation receipts, not a new live media run. The source/evidence
+manifest is `artifacts/qa/progressive-reset-final-verification.json`.
+
+Production activation is still pending: reconcile short source delivery/lateness
+and watchdog evidence, qualify report reaction time, wire actual minimum startup,
+and qualify candidate cost/headroom plus real automatic transitions. Native receipt
+failure currently retires publishing; minimum-profile reconnect must accompany
+activation. The existing driver continues using its legacy default until those gates
+are satisfied. No additional physical phone/Watch or remote worker result is claimed.

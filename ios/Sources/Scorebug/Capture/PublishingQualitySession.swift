@@ -29,6 +29,7 @@ actor PublishingQualitySession {
     private let profiles: [QualityController.Profile]
     private let attemptID: UUID
     private let initial: QualityController.Settings
+    private let behavior: QualityController.Behavior
     private let strategy: QualityController.RecoveryStrategy
     private let uptime: @Sendable () -> Double
     private var policy: QualityController?
@@ -58,21 +59,23 @@ actor PublishingQualitySession {
     private var lastSource: (scope: SourceScope, sequence: Int64)?
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
-         initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials) throws {
+         initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
+         behavior: QualityController.Behavior = .legacy) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
             stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
-            profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy,
+            profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
             uptime: { ProcessInfo.processInfo.systemUptime })
     }
     init(operations: Operations, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
+         behavior: QualityController.Behavior = .legacy,
          uptime: @escaping @Sendable () -> Double) throws {
         let now = uptime()
-        _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy)
+        _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy, behavior: behavior)
         guard now <= 1e12 else { throw QualityController.ValidationError.invalidTime }
         self.operations = operations; self.profiles = profiles; self.attemptID = attemptID
-        self.initial = initial; self.strategy = strategy; self.uptime = uptime; self.lastNow = now
+        self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
     }
     var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
@@ -92,7 +95,7 @@ actor PublishingQualitySession {
             let now = try time()
             try validate(result, rate: initial.videoBitrate, start: start, deadline: deadline, now: now)
             policy = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial,
-                at: now, recoveryStrategy: strategy)
+                at: now, recoveryStrategy: strategy, behavior: behavior)
             receipt = result; acknowledgedAt = now
         } catch { await stop(); throw error }
     }

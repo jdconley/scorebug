@@ -344,6 +344,65 @@ final class PublishingQualityProfileTests: XCTestCase {
             .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
         ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000), uptime: { native.now })
     }
+    private func progressiveOwner(_ native: ProfileQualityNative) throws -> PublishingQualitySession {
+        try .init(operations: native.operations, profiles: [
+            .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000),
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
+        ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 6_000_000),
+           strategy: .receiverValidatedProfileTrials, behavior: .progressive, uptime: { native.now })
+    }
+    private func progressiveFailure(_ owner: PublishingQualitySession, _ native: ProfileQualityNative) async throws -> QualityController.Recommendation {
+        try await owner.bootstrap()
+        native.setNow(101)
+        let d = try await owner.evaluate(.init(attemptID: attempt, sequence: 1, appliedRevision: 0,
+            start: 100, end: 101, capturedFreshFrames: 30, encodedFreshFrames: 23, receiver: nil,
+            sourceLoss: nil, meanQueueOccupancy: 0, usableVideoCapacity: nil,
+            connectivity: .connected, thermalPressure: .nominal, workerPressure: .unknown))
+        return try XCTUnwrap(d.recommendation)
+    }
+    func testProgressiveResetSkipsMiddleAndHoldsOnlyAfterJoinedNativeReceipts() async throws {
+        let native = ProfileQualityNative(), owner = try progressiveOwner(native)
+        let advice = try await progressiveFailure(owner, native)
+        XCTAssertEqual(advice.kind, .reset)
+        XCTAssertEqual(advice.settings, .init(profileID: "240p30", videoBitrate: 350_000))
+        try await owner.apply(advice)
+        let state = await owner.snapshot
+        XCTAssertEqual(state.revision, 1)
+        XCTAssertEqual(state.applied, advice.settings)
+        XCTAssertEqual(state.profileReceipt?.profile, .low240)
+        XCTAssertEqual(state.receipt?.configuration.encoderSessionID, state.profileReceipt?.encoderSessionID)
+        XCTAssertEqual(state.acknowledgedAt, 101.5)
+        XCTAssertEqual(native.calls, ["rate:6000000", "profile:240p30", "rate:350000"])
+        XCTAssertEqual(native.deadlines, [102, 103, 103])
+        for i in 0..<10 {
+            let start = 101.5 + Double(i)
+            native.setNow(start + 1)
+            let d = try await owner.evaluate(.init(attemptID: attempt, sequence: UInt64(i + 2), appliedRevision: 1,
+                start: start, end: start + 1, capturedFreshFrames: 30, encodedFreshFrames: 30,
+                receiver: .init(freshFrames: 30, observedAt: start + 1),
+                sourceLoss: .init(expectedFrames: 30, lostFrames: 0), meanQueueOccupancy: 0,
+                usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal,
+                workerPressure: .nominal, transportPressure: .nominal))
+            if i < 9 { XCTAssertNil(d.recommendation) }
+            else { XCTAssertEqual(d.recommendation?.kind, .trial); XCTAssertEqual(d.recommendation?.settings.profileID, "540p30") }
+        }
+        await owner.stop()
+        XCTAssertEqual(native.stops, 1)
+    }
+    func testProgressiveResetBadNativeReceiptRetiresPublishingWithoutClaimingMinimum() async throws {
+        for mode in [ProfileQualityNative.Mode.wrongProfile, .wrongRate, .expiredBitrate] {
+            let native = ProfileQualityNative(), owner = try progressiveOwner(native)
+            let advice = try await progressiveFailure(owner, native)
+            native.setMode(mode)
+            do { try await owner.apply(advice); XCTFail("Unverified native reset") } catch {}
+            let state = await owner.snapshot
+            XCTAssertTrue(state.isClosed)
+            XCTAssertEqual(state.revision, 0)
+            XCTAssertEqual(state.applied?.profileID, "1080p30")
+            XCTAssertEqual(native.stops, 1)
+        }
+    }
     private func decrease(_ owner: PublishingQualitySession, _ native: ProfileQualityNative) async throws -> QualityController.Recommendation {
         try await owner.bootstrap()
         native.setNow(105)
