@@ -1703,3 +1703,24 @@ Next complete native source/configuration windows and decoder PTS projection, th
 qualify deadline loss/floor decisions against actual simulator capture. Automatic
 recovery, candidate headroom, reconnect, physical devices and remote workers remain
 required; this consumer checkpoint enables no new quality decisions.
+
+
+[Delivery source windows](2026-09-17-delivery-source-windows.md) now prove complete
+one/two-second captured-source expectations and project every expected frame into
+the bound decoder PTS domain. Local encoder omissions remain in the denominator.
+Retained capture/completion brackets, exact encoded provenance, verified settings
+and checked wrap arithmetic prevent incomplete history from becoming false health.
+The app adapter binds classification to current native ownership and authenticated
+sample age, and rejects decoded arrivals for explicitly unencoded captures. Uncertain
+timing cannot establish healthy on-time FPS.
+
+Independent review's unmatched right encoder bracket counterexample is fixed with a
+failing-then-passing regression. All 372 Core and 265 native model tests pass, including
+12 new source/adapter tests; ARM64 simulator build-for-testing and unsigned combined
+iPhone/Watch Release builds pass. All 24 prior frozen evidence files remain unchanged.
+Evidence: `artifacts/qa/delivery-source-final-verification.json`.
+
+The adapter is ready for capture-loop window scheduling and actual simulator/relay
+deadline qualification. It does not yet drive automatic quality decisions. Candidate
+actual-cost/headroom, recovery, reconnect, physical phone/Watch and remote worker
+qualification remain required.
