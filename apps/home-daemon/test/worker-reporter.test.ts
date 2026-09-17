@@ -853,3 +853,261 @@ it('renegotiates delivery and resets cursor after API restart', async () => {
       .map((r) => r.body.observation.decoderDelivery.afterOrdinal),
   ).toEqual([0, 3, 0]);
 });
+
+const sampleTiming = 'worker-sample-timing-v1';
+it('obtains fresh timing before sampling each report and coalesces during the challenge', async () => {
+  const events: string[] = [];
+  let challenges = 0;
+  const f = await fixture(async (path) => {
+    if (path.endsWith('sessions'))
+      return { body: { sessionId: 'one', sampleTiming, timingToken: 'legacy' } };
+    if (path.endsWith('sample-timing')) {
+      events.push('challenge');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events.push('issued');
+      return { body: { timingToken: `fresh-${++challenges}` } };
+    }
+    events.push('report');
+    return { body: { accepted: true, timingToken: 'cached-ack' } };
+  });
+  const sample = () => {
+    events.push('sample');
+    return observation;
+  };
+  const first = f.reporter.report(sample);
+  expect(
+    f.reporter.report(() => {
+      throw new Error('must coalesce');
+    }),
+  ).toBe(first);
+  await first;
+  await f.reporter.report(sample);
+  expect(events).toEqual([
+    'challenge',
+    'issued',
+    'sample',
+    'report',
+    'challenge',
+    'issued',
+    'sample',
+    'report',
+  ]);
+  expect(
+    f.requests.filter((r) => r.path.endsWith('observations')).map((r) => r.body.timingToken),
+  ).toEqual(['fresh-1', 'fresh-2']);
+  expect(f.requests.filter((r) => r.path.endsWith('sample-timing')).map((r) => r.body)).toEqual([
+    { workerId: 'mac', sessionId: 'one' },
+    { workerId: 'mac', sessionId: 'one' },
+  ]);
+  expect(f.requests.every((r) => r.auth === 'Bearer private-token')).toBe(true);
+});
+it('omits proof when the negotiated timing endpoint cannot issue a token', async () => {
+  const f = await fixture((path) => ({
+    body: path.endsWith('sessions')
+      ? { sessionId: 'one', sampleTiming, timingToken: 'cached' }
+      : path.endsWith('sample-timing')
+        ? {}
+        : { accepted: true, timingToken: 'cached-ack' },
+  }));
+  await f.reporter.report(() => observation);
+  await f.reporter.report(() => observation);
+  const reports = f.requests.filter((r) => r.path.endsWith('observations'));
+  expect(reports).toHaveLength(2);
+  expect(reports.every((r) => !Object.hasOwn(r.body, 'timingToken'))).toBe(true);
+});
+it.each(['http', 'malformed', 'transport'])(
+  'never samples or falls back to cached proof after a %s challenge failure',
+  async (mode) => {
+    let samples = 0;
+    const f = await fixture((path) =>
+      path.endsWith('sessions')
+        ? { body: { sessionId: 'one', sampleTiming, timingToken: 'cached' } }
+        : path.endsWith('sample-timing')
+          ? mode === 'http'
+            ? { status: 503, body: { error: 'unavailable' } }
+            : mode === 'transport'
+              ? { body: {}, drop: true }
+              : { body: { timingToken: 42 } }
+          : { body: { accepted: true } },
+    );
+    await expect(
+      f.reporter.report(() => {
+        samples++;
+        return observation;
+      }),
+    ).rejects.toThrow();
+    expect(samples).toBe(0);
+    expect(f.requests.some((r) => r.path.endsWith('observations'))).toBe(false);
+  },
+);
+it('recovers an unknown session at challenge time before sampling and resets delivery cursor', async () => {
+  let registrations = 0,
+    challenges = 0,
+    samples = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? {
+          body: {
+            sessionId: `s${++registrations}`,
+            sampleTiming,
+            pipelineReadIdentity: 'srt-read-query-v1',
+            decodedVideoClock: transportClock,
+            decoderDelivery: 'decoder-delivery-delta-v1',
+          },
+        }
+      : path.endsWith('sample-timing')
+        ? ++challenges === 2
+          ? { status: 409, body: { error: 'worker_session_unknown' } }
+          : { body: { timingToken: `fresh-${challenges}` } }
+        : { body: { accepted: true } },
+  );
+  await f.reporter.report(() => {
+    samples++;
+    return deliveryObservation(3);
+  });
+  await f.reporter.report(() => {
+    samples++;
+    return deliveryObservation(6);
+  });
+  expect(registrations).toBe(2);
+  expect(samples).toBe(2);
+  expect(
+    f.requests
+      .filter((r) => r.path.endsWith('observations'))
+      .map((r) => [r.body.sessionId, r.body.observation.decoderDelivery.afterOrdinal]),
+  ).toEqual([
+    ['s1', 0],
+    ['s2', 0],
+  ]);
+});
+it.each(['worker_session_unknown', 'worker_session_retired'])(
+  'bounds challenge recovery for %s without sampling',
+  async (error) => {
+    let registrations = 0,
+      samples = 0;
+    const f = await fixture((path) =>
+      path.endsWith('sessions')
+        ? { body: { sessionId: `s${++registrations}`, sampleTiming } }
+        : path.endsWith('sample-timing')
+          ? { status: 409, body: { error } }
+          : { body: { accepted: true } },
+    );
+    await expect(
+      f.reporter.report(() => {
+        samples++;
+        return observation;
+      }),
+    ).rejects.toThrow('worker_report_rejected');
+    expect(registrations).toBe(error === 'worker_session_unknown' ? 2 : 1);
+    expect(samples).toBe(0);
+  },
+);
+it('includes registration and fresh challenge in a single deadline', async () => {
+  let samples = 0;
+  const f = await fixture(
+    (path) =>
+      path.endsWith('sessions')
+        ? { body: { sessionId: 'one', sampleTiming }, delay: 40 }
+        : path.endsWith('sample-timing')
+          ? { body: { timingToken: 'fresh' }, delay: 90 }
+          : { body: { accepted: true } },
+    100,
+  );
+  await expect(
+    f.reporter.report(() => {
+      samples++;
+      return observation;
+    }),
+  ).rejects.toThrow('worker_report_unavailable');
+  expect(samples).toBe(0);
+  expect(f.requests.map((r) => r.path.split('/').at(-1))).toEqual(['sessions', 'sample-timing']);
+});
+it.each([undefined, 'future-version'])(
+  'preserves legacy timing for capability %s',
+  async (sampleTiming) => {
+    const f = await fixture((path) => ({
+      body: path.endsWith('sessions')
+        ? { sessionId: 'one', sampleTiming, timingToken: 'legacy' }
+        : { accepted: true, timingToken: 'legacy-next' },
+    }));
+    await f.reporter.report(() => observation);
+    await f.reporter.report(() => observation);
+    expect(f.requests.slice(1).map((r) => r.body.timingToken)).toEqual(['legacy', 'legacy-next']);
+  },
+);
+
+it('shares one recovery budget across challenge and observation session failures', async () => {
+  let registrations = 0,
+    challenges = 0,
+    samples = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? { body: { sessionId: `s${++registrations}`, sampleTiming } }
+      : path.endsWith('sample-timing') && ++challenges > 1
+        ? { body: { timingToken: 'fresh' } }
+        : { status: 409, body: { error: 'worker_session_unknown' } },
+  );
+  await expect(
+    f.reporter.report(() => {
+      samples++;
+      return observation;
+    }),
+  ).rejects.toThrow('worker_report_rejected');
+  expect(registrations).toBe(2);
+  expect(samples).toBe(1);
+  expect(f.requests.map((r) => r.path.split('/').at(-1))).toEqual([
+    'sessions',
+    'sample-timing',
+    'sessions',
+    'sample-timing',
+    'observations',
+  ]);
+});
+it('re-challenges and resamples after an observation loses its session', async () => {
+  let registrations = 0,
+    challenges = 0,
+    samples = 0;
+  const f = await fixture((path) =>
+    path.endsWith('sessions')
+      ? { body: { sessionId: `s${++registrations}`, sampleTiming } }
+      : path.endsWith('sample-timing')
+        ? { body: { timingToken: `fresh-${++challenges}` } }
+        : registrations === 1
+          ? { status: 409, body: { error: 'worker_session_unknown' } }
+          : { body: { accepted: true } },
+  );
+  await f.reporter.report(() => ({ ...observation, scoreRevision: ++samples }));
+  expect(samples).toBe(2);
+  expect(
+    f.requests
+      .filter((r) => r.path.endsWith('observations'))
+      .map((r) => [r.body.sessionId, r.body.timingToken, r.body.observation.scoreRevision]),
+  ).toEqual([
+    ['s1', 'fresh-1', 1],
+    ['s2', 'fresh-2', 2],
+  ]);
+});
+it('keeps the original deadline through challenge session recovery', async () => {
+  let registrations = 0,
+    samples = 0;
+  const f = await fixture(
+    (path) =>
+      path.endsWith('sessions')
+        ? {
+            body: { sessionId: `s${++registrations}`, sampleTiming },
+            delay: registrations === 1 ? 0 : 90,
+          }
+        : path.endsWith('sample-timing')
+          ? { status: 409, body: { error: 'worker_session_unknown' }, delay: 40 }
+          : { body: { accepted: true } },
+    100,
+  );
+  await expect(
+    f.reporter.report(() => {
+      samples++;
+      return observation;
+    }),
+  ).rejects.toThrow('worker_report_unavailable');
+  expect(samples).toBe(0);
+  expect(registrations).toBe(2);
+});

@@ -90,8 +90,18 @@ export type WorkerPublication = {
   publishingAttemptId: string;
   clock: { convention: 'mpegts-ingress-origin-90k-v1'; originPTS: string };
 };
+/** Obtain a fresh server token immediately before sampling each observation. */
+export const WORKER_SAMPLE_TIMING_PROTOCOL = 'worker-sample-timing-v1';
+export type WorkerSampleTimingRequest = { workerId: string; sessionId: string };
+export type WorkerSampleTimingResponse = {
+  serverTime: string;
+  /** Omitted when the server cannot establish monotonic issuance provenance. */
+  timingToken?: string;
+};
 export type WorkerSessionRequest = { workerId: string; runId: string };
 export type WorkerSessionResponse = {
+  /** Exact capability match enables a fresh challenge before each sample. */
+  sampleTiming?: string;
   /** Clock convention accepted by this API session. */
   decodedVideoClock?: string;
   pipelineReadIdentity?: string;

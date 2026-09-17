@@ -6,6 +6,7 @@ import {
   WORKER_PROCESSING_PROTOCOL,
   WORKER_DECODER_CADENCE_PROTOCOL,
   WORKER_PIPELINE_READ_IDENTITY,
+  WORKER_SAMPLE_TIMING_PROTOCOL,
   type WorkerPipelineObservation,
 } from '@scorebug/protocol';
 import { randomUUID } from 'node:crypto';
@@ -20,7 +21,9 @@ const session = z.object({
   workerProcessing: z.string().optional(),
   decoderCadence: z.string().optional(),
   decoderDelivery: z.string().optional(),
+  sampleTiming: z.string().optional(),
 });
+const sampleTiming = z.object({ timingToken: identifier.optional() });
 const accepted = z.object({ accepted: z.literal(true), timingToken: identifier.optional() });
 class MissingSession extends Error {}
 
@@ -93,7 +96,7 @@ export class WorkerReporter {
       throw new Error('worker_report_unavailable');
     }
     if (
-      path === 'observations' &&
+      (path === 'observations' || path === 'sample-timing') &&
       response.status === 409 &&
       z.object({ error: z.literal('worker_session_unknown') }).safeParse(value).success
     )
@@ -124,64 +127,76 @@ export class WorkerReporter {
     };
     for (let attempt = 0; attempt < 2; attempt++) {
       checkDeadline();
-      if (!this.session) await this.register(signal);
-      checkDeadline();
-      const registered = this.session!;
-      let sampled: WorkerPipelineObservation | null;
       try {
-        sampled = structuredClone(sample());
-      } catch {
-        throw new Error('worker_report_unavailable');
-      }
-      checkDeadline();
-      if (sampled === null) return;
-      const { pipelineReadId, ...observation } = sampled;
-      if (
-        observation.decodedVideo &&
-        (registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
-          observation.decodedVideo.clock !== DECODED_VIDEO_TRANSPORT_CLOCK)
-      )
-        delete observation.decodedVideo.clock;
-      const canIdentifyRead =
-        registered.pipelineReadIdentity === WORKER_PIPELINE_READ_IDENTITY &&
-        typeof pipelineReadId === 'string' &&
-        pipelineReadId.length === 36 &&
-        canonicalUUID.test(pipelineReadId);
-      if (
-        registered.workerProcessing !== WORKER_PROCESSING_PROTOCOL ||
-        !canIdentifyRead ||
-        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
-        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
-      )
-        delete observation.processing;
-      if (
-        registered.decoderCadence !== WORKER_DECODER_CADENCE_PROTOCOL ||
-        !canIdentifyRead ||
-        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
-        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
-      )
-        delete observation.decoderCadence;
-      if (
-        registered.decoderDelivery !== WORKER_DECODER_DELIVERY_PROTOCOL ||
-        !canIdentifyRead ||
-        registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
-        observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
-      )
-        delete observation.decoderDelivery;
-      else if (observation.decoderDelivery)
-        observation.decoderDelivery = deliveryDelta(
-          observation.decoderDelivery,
-          this.deliveryCursor,
-        );
-      if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
-      const sequence = ++this.sequence;
-      try {
+        if (!this.session) await this.register(signal);
+        checkDeadline();
+        const registered = this.session!;
+        const timingToken =
+          registered.sampleTiming === WORKER_SAMPLE_TIMING_PROTOCOL
+            ? (
+                await this.post(
+                  'sample-timing',
+                  { workerId: this.workerId, sessionId: registered.sessionId },
+                  sampleTiming,
+                  signal,
+                )
+              ).timingToken
+            : registered.timingToken;
+        checkDeadline();
+        let sampled: WorkerPipelineObservation | null;
+        try {
+          sampled = structuredClone(sample());
+        } catch {
+          throw new Error('worker_report_unavailable');
+        }
+        checkDeadline();
+        if (sampled === null) return;
+        const { pipelineReadId, ...observation } = sampled;
+        if (
+          observation.decodedVideo &&
+          (registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+            observation.decodedVideo.clock !== DECODED_VIDEO_TRANSPORT_CLOCK)
+        )
+          delete observation.decodedVideo.clock;
+        const canIdentifyRead =
+          registered.pipelineReadIdentity === WORKER_PIPELINE_READ_IDENTITY &&
+          typeof pipelineReadId === 'string' &&
+          pipelineReadId.length === 36 &&
+          canonicalUUID.test(pipelineReadId);
+        if (
+          registered.workerProcessing !== WORKER_PROCESSING_PROTOCOL ||
+          !canIdentifyRead ||
+          registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+        )
+          delete observation.processing;
+        if (
+          registered.decoderCadence !== WORKER_DECODER_CADENCE_PROTOCOL ||
+          !canIdentifyRead ||
+          registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+        )
+          delete observation.decoderCadence;
+        if (
+          registered.decoderDelivery !== WORKER_DECODER_DELIVERY_PROTOCOL ||
+          !canIdentifyRead ||
+          registered.decodedVideoClock !== DECODED_VIDEO_TRANSPORT_CLOCK ||
+          observation.decodedVideo?.clock !== DECODED_VIDEO_TRANSPORT_CLOCK
+        )
+          delete observation.decoderDelivery;
+        else if (observation.decoderDelivery)
+          observation.decoderDelivery = deliveryDelta(
+            observation.decoderDelivery,
+            this.deliveryCursor,
+          );
+        if (this.sequence >= Number.MAX_SAFE_INTEGER) throw new Error('worker_report_unavailable');
+        const sequence = ++this.sequence;
         const acknowledgement = await this.post(
           'observations',
           {
             workerId: this.workerId,
             sessionId: registered.sessionId,
-            timingToken: registered.timingToken,
+            timingToken,
             sequence,
             ...(canIdentifyRead ? { pipelineReadId } : {}),
             observation,

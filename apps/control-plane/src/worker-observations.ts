@@ -14,6 +14,9 @@ import {
 import { randomUUID } from 'node:crypto';
 import {
   WORKER_OBSERVATION_TTL_MS,
+  WORKER_SAMPLE_TIMING_PROTOCOL,
+  type WorkerSampleTimingRequest,
+  type WorkerSampleTimingResponse,
   WORKER_PROCESSING_PROTOCOL,
   WORKER_DECODER_CADENCE_PROTOCOL,
   type WorkerProcessingReport,
@@ -88,6 +91,7 @@ type Session = {
   report?: Report;
   currentToken?: TimingToken;
   previousToken?: TimingToken;
+  pendingSampleToken?: TimingToken;
 };
 
 function upperAge(ageMs: number, start: number, end: number): number | undefined {
@@ -156,6 +160,7 @@ export class WorkerObservations {
     if (worker?.current.runId === runId)
       return {
         sessionId: worker.current.sessionId,
+        sampleTiming: WORKER_SAMPLE_TIMING_PROTOCOL,
         decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
         pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
         workerProcessing: WORKER_PROCESSING_PROTOCOL,
@@ -185,6 +190,7 @@ export class WorkerObservations {
     }
     return {
       sessionId: current.sessionId,
+      sampleTiming: WORKER_SAMPLE_TIMING_PROTOCOL,
       decodedVideoClock: DECODED_VIDEO_TRANSPORT_CLOCK,
       pipelineReadIdentity: WORKER_PIPELINE_READ_IDENTITY,
       workerProcessing: WORKER_PROCESSING_PROTOCOL,
@@ -192,6 +198,25 @@ export class WorkerObservations {
       decoderDelivery: WORKER_DECODER_DELIVERY_PROTOCOL,
       serverTime: new Date(this.now()).toISOString(),
       ...this.timingResponse(current),
+    };
+  }
+
+  sampleTiming({ workerId, sessionId }: WorkerSampleTimingRequest): WorkerSampleTimingResponse {
+    const worker = this.workers.get(workerId);
+    if (worker?.retiredSessions.has(sessionId))
+      throw new WorkerObservationError('worker_session_retired');
+    if (!worker || worker.current.sessionId !== sessionId)
+      throw new WorkerObservationError('worker_session_unknown');
+    const issuedAt = this.sampleMonotonic();
+    // Independent bounded slot: never redate or evict the legacy token pair.
+    delete worker.current.pendingSampleToken;
+    if (issuedAt !== undefined)
+      worker.current.pendingSampleToken = { value: randomUUID(), issuedAt };
+    return {
+      serverTime: new Date(this.now()).toISOString(),
+      ...(worker.current.pendingSampleToken
+        ? { timingToken: worker.current.pendingSampleToken.value }
+        : {}),
     };
   }
 
@@ -377,11 +402,13 @@ export class WorkerObservations {
     }
     const session = worker.current;
     const token =
-      body.timingToken === session.currentToken?.value
-        ? session.currentToken
-        : body.timingToken === session.previousToken?.value
-          ? session.previousToken
-          : undefined;
+      body.timingToken === session.pendingSampleToken?.value && session.pendingSampleToken
+        ? session.pendingSampleToken
+        : body.timingToken === session.currentToken?.value
+          ? session.currentToken
+          : body.timingToken === session.previousToken?.value
+            ? session.previousToken
+            : undefined;
     let decodedUpperAge = sameAgeScope ? previous?.decodedUpperAge : undefined;
     if (afterVideo?.completed) {
       const window = afterVideo.completed;
@@ -406,9 +433,41 @@ export class WorkerObservations {
         }
       }
     }
+    const beforeCadence = priorCadence?.snapshot;
+    const beforeCoordinate = beforeCadence?.oneSecond
+      ? beforeCadence.oneSecond.sequence * 1000 + beforeCadence.oneSecond.ageMs
+      : undefined;
+    const nextCoordinate = nextCadence?.oneSecond
+      ? nextCadence.oneSecond.sequence * 1000 + nextCadence.oneSecond.ageMs
+      : undefined;
+    if (
+      nextCoordinate !== undefined &&
+      (!Number.isFinite(nextCoordinate) ||
+        nextCoordinate > Number.MAX_SAFE_INTEGER ||
+        (beforeCoordinate !== undefined && nextCoordinate < beforeCoordinate))
+    )
+      throw new WorkerObservationError('observation_conflict');
+    // Cadence has no explicit sampledAt field. Window age/sequence or fresh-PTS
+    // progress/age must advance to establish a new sample coordinate. Flags alone
+    // cannot make a cached snapshot fresh; retain history across optional omission.
+    const sameCadenceSample =
+      nextCadence &&
+      beforeCadence &&
+      (beforeCadence.oneSecond && nextCadence.oneSecond
+        ? beforeCoordinate === nextCoordinate
+        : beforeCadence.progress && nextCadence.progress
+          ? beforeCadence.progress.lastFreshPTS === nextCadence.progress.lastFreshPTS &&
+            beforeCadence.progress.ageMs === nextCadence.progress.ageMs
+          : !beforeCadence.progress && !nextCadence.progress);
     const cadenceSampleAge =
-      nextCadence && token && receivedAt !== undefined
-        ? upperAge(0, token.issuedAt, receivedAt)
+      nextCadence && receivedAt !== undefined
+        ? sameCadenceSample
+          ? previous?.cadenceSampleAge
+            ? upperAge(previous.cadenceSampleAge.ageMs, previous.cadenceSampleAge.at, receivedAt)
+            : undefined
+          : token
+            ? upperAge(0, token.issuedAt, receivedAt)
+            : undefined
         : undefined;
     const sameDeliverySample =
       nextDelivery && priorDelivery?.sampledAtMs === nextDelivery.sampledAtMs;
@@ -478,6 +537,8 @@ export class WorkerObservations {
       ...(decodedAge ? { decodedAge } : {}),
       ...(decodedUpperAge ? { decodedUpperAge } : {}),
     };
+    // Consume only the exact pending challenge used by a successfully accepted new report.
+    if (token && token === session.pendingSampleToken) delete session.pendingSampleToken;
     // Rotate only after all acceptance checks and age calculations; previous remains immutable.
     if (receivedAt !== undefined && token && token === session.currentToken) {
       session.previousToken = token;

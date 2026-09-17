@@ -114,6 +114,8 @@ async function fixture(initial = 100) {
   };
   return {
     matches,
+    app,
+    post,
     observations,
     body,
     session,
@@ -759,4 +761,267 @@ it('cadence requires current explicit read identity and valid transport coordina
     if (field === 'shape') body.observation.decoderCadence.progress.stalled = true;
     expect([400, 409]).toContain((await f.report(body)).status);
   }
+});
+
+const freshTiming = 'worker-sample-timing-v1';
+async function challenge(f: Awaited<ReturnType<typeof fixture>>, sessionId = f.session.sessionId) {
+  const response = await f.post('sample-timing', { workerId: 'mac', sessionId });
+  expect(response.status).toBe(200);
+  return response.json();
+}
+it('advertises fresh sample timing and bounds the current sample after long idle', async () => {
+  const f = await fixture();
+  expect(f.session.sampleTiming).toBe(freshTiming);
+  f.time(10_000);
+  const timing = await challenge(f);
+  expect(timing.timingToken).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
+  f.time(10_010);
+  await f.accept({ ...cadenceBody(f), timingToken: timing.timingToken });
+  f.time(10_015);
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(15);
+  expect((await f.register()).timingToken).toBe(f.session.timingToken);
+});
+it('timing challenges do not mutate existing report age, epoch, or legacy issuance', async () => {
+  const f = await fixture();
+  await f.accept(cadenceBody(f));
+  f.time(200);
+  const before = await f.status();
+  const legacy = await f.register();
+  await challenge(f);
+  await challenge(f);
+  expect(await f.status()).toEqual(before);
+  expect((await f.register()).timingToken).toBe(legacy.timingToken);
+  f.time(300);
+  await f.accept({
+    ...f.body,
+    sequence: 2,
+    timingToken: legacy.timingToken,
+    observation: {
+      ...f.body.observation,
+      decodedVideo: { ...f.body.observation.decodedVideo!, clock: 'mpegts-pts-90k-v1' },
+    },
+  });
+  expect((await f.status()).status.decodedVideoAgeUpperBoundMs).toBe(250);
+});
+it('accepts exact duplicates without consuming a later pending challenge', async () => {
+  const f = await fixture();
+  f.time(200);
+  const first = await challenge(f);
+  const body = { ...cadenceBody(f), timingToken: first.timingToken };
+  await f.accept(body);
+  f.time(300);
+  const next = await challenge(f);
+  await f.accept(body);
+  f.time(310);
+  const advancing = structuredClone(body);
+  advancing.sequence++;
+  advancing.timingToken = next.timingToken;
+  advancing.observation.decoderCadence.oneSecond.ageMs++;
+  advancing.observation.decoderCadence.twoSeconds.ageMs++;
+  await f.accept(advancing);
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(10);
+});
+it.each(['evicted', 'consumed', 'foreign'])(
+  'does not prove timing with a %s challenge',
+  async (mode) => {
+    const f = await fixture();
+    const old = await challenge(f);
+    if (mode === 'evicted') await challenge(f);
+    if (mode === 'consumed')
+      await f.accept({
+        ...f.body,
+        timingToken: old.timingToken,
+        observation: { ...f.body.observation, decodedVideo: undefined },
+      });
+    if (mode === 'foreign') {
+      const other = await f.post('sessions', { workerId: 'other', runId: 'run' });
+      const registered = await other.json();
+      const timing = await f.post('sample-timing', {
+        workerId: 'other',
+        sessionId: registered.sessionId,
+      });
+      old.timingToken = (await timing.json()).timingToken;
+    }
+    await f.accept({ ...cadenceBody(f), sequence: 2, timingToken: old.timingToken });
+    expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
+  },
+);
+it('keeps a pending challenge when a report is rejected', async () => {
+  const f = await fixture();
+  const timing = await challenge(f);
+  const body = { ...cadenceBody(f), timingToken: timing.timingToken };
+  expect(
+    (await f.report({ ...body, observation: { ...body.observation, generation: 2 } })).status,
+  ).toBe(409);
+  f.time(120);
+  await f.accept(body);
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(20);
+});
+it.each(['throw', 'backward', 'nonfinite'])(
+  'omits fresh proof after a %s clock failure',
+  async (mode) => {
+    const f = await fixture();
+    if (mode === 'throw') f.throwClock();
+    else f.time(mode === 'backward' ? 99 : NaN);
+    expect((await challenge(f)).timingToken).toBeUndefined();
+    f.restoreClock();
+    f.time(200);
+    expect((await challenge(f)).timingToken).toBeUndefined();
+    await f.accept(cadenceBody(f));
+    expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
+  },
+);
+it('requires authenticated strict session-bound timing requests', async () => {
+  const f = await fixture();
+  const path = '/v1/worker/sample-timing';
+  expect(
+    (
+      await f.app.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      })
+    ).status,
+  ).toBe(401);
+  for (const body of [
+    {},
+    { workerId: 'mac', sessionId: f.session.sessionId, timingToken: 'injected' },
+    { workerId: 'mac', sessionId: 7 },
+  ])
+    expect((await f.post('sample-timing', body)).status).toBe(400);
+  const unknown = await f.post('sample-timing', { workerId: 'mac', sessionId: 'missing' });
+  expect(unknown.status).toBe(409);
+  expect(await unknown.json()).toEqual({ error: 'worker_session_unknown' });
+  await f.register('replacement');
+  const retired = await f.post('sample-timing', {
+    workerId: 'mac',
+    sessionId: f.session.sessionId,
+  });
+  expect(retired.status).toBe(409);
+  expect(await retired.json()).toEqual({ error: 'worker_session_retired' });
+});
+it.each(['retained', 'omitted', 'unproven'])(
+  'cannot redate unchanged cadence with a new challenge (%s)',
+  async (mode) => {
+    const f = await fixture();
+    const first = await challenge(f);
+    const body = {
+      ...cadenceBody(f),
+      timingToken: mode === 'unproven' ? 'unknown' : first.timingToken,
+    };
+    await f.accept(body);
+    if (mode === 'omitted')
+      await f.accept({
+        ...f.body,
+        sequence: 2,
+        observation: { ...f.body.observation, decodedVideo: body.observation.decodedVideo },
+      });
+    f.time(1000);
+    const next = await challenge(f);
+    await f.accept({ ...body, sequence: 3, timingToken: next.timingToken });
+    expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(
+      mode === 'retained' ? 900 : undefined,
+    );
+  },
+);
+it('cannot redate an unchanged delivery sample and keeps merged delta history', async () => {
+  const f = await fixture();
+  const first = await challenge(f);
+  const body = {
+    ...cadenceBody(f),
+    timingToken: first.timingToken,
+    observation: {
+      ...cadenceBody(f).observation,
+      decoderDelivery: {
+        formatVersion: 1,
+        scopeID: '33333333-3333-4333-8333-333333333333',
+        sampledAtMs: 80,
+        coverageAtMs: 0,
+        afterOrdinal: 0,
+        lastOrdinal: 1,
+        arrivals: [[3000, 40]],
+        invalidReason: null,
+        ended: false,
+      },
+    },
+  };
+  await f.accept(body);
+  f.time(1000);
+  const next = await challenge(f);
+  await f.accept({
+    ...body,
+    sequence: 2,
+    timingToken: next.timingToken,
+    observation: {
+      ...body.observation,
+      decoderDelivery: { ...body.observation.decoderDelivery, afterOrdinal: 1, arrivals: [] },
+    },
+  });
+  const result = f.observations.status('match', true);
+  expect(result.status.decoderDeliveryAgeUpperBoundMs).toBe(900);
+  expect(result.status.observation?.decoderDelivery?.arrivals).toEqual([[3000, 40]]);
+});
+
+it.each([
+  ['equal', 1100],
+  ['regressed', 1500],
+] as const)(
+  'does not redate a %s cadence coordinate hidden by a higher window sequence',
+  async (mode, initialAge) => {
+    const f = await fixture();
+    const first = await challenge(f);
+    const body = { ...cadenceBody(f), timingToken: first.timingToken };
+    const old = structuredClone(body);
+    old.observation.decoderCadence.oneSecond = {
+      ...old.observation.decoderCadence.oneSecond,
+      sequence: 1,
+      ageMs: initialAge,
+      firstPTS: 0,
+      lastPTS: 87000,
+    };
+    (old.observation.decoderCadence as any).twoSeconds = null;
+    await f.accept(old);
+    f.time(1000);
+    const next = await challenge(f);
+    body.sequence = 2;
+    body.timingToken = next.timingToken;
+    if (mode === 'regressed') expect((await f.report(body)).status).toBe(409);
+    else {
+      await f.accept(body);
+      expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(900);
+    }
+  },
+);
+
+it('does not consume a pending challenge when a legacy report succeeds', async () => {
+  const f = await fixture();
+  const timing = await challenge(f);
+  const body = cadenceBody(f);
+  await f.accept(body);
+  const next = structuredClone(body);
+  next.sequence++;
+  next.observation.decoderCadence.oneSecond.ageMs++;
+  next.observation.decoderCadence.twoSeconds.ageMs++;
+  next.timingToken = timing.timingToken;
+  f.time(110);
+  await f.accept(next);
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBe(10);
+});
+it('cannot use a fresh challenge from a retired session in its replacement', async () => {
+  const f = await fixture();
+  const old = await challenge(f);
+  const replacement = await f.register('replacement');
+  await f.accept({
+    ...cadenceBody(f),
+    sessionId: replacement.sessionId,
+    timingToken: old.timingToken,
+  });
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
+});
+it('loses pending fresh proof when the clock fails after issuance', async () => {
+  const f = await fixture();
+  const timing = await challenge(f);
+  f.throwClock();
+  await f.accept({ ...cadenceBody(f), timingToken: timing.timingToken });
+  expect((await f.status()).status.decoderCadenceAgeUpperBoundMs).toBeUndefined();
 });

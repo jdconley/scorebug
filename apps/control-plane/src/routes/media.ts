@@ -244,6 +244,11 @@ export function workerRoutes(
     c.json(observations.register(c.req.valid('json'))),
   );
   app.post(
+    '/sample-timing',
+    zValidator('json', z.object({ workerId: id, sessionId: id }).strict()),
+    (c) => c.json(observations.sampleTiming(c.req.valid('json'))),
+  );
+  app.post(
     '/observations',
     zValidator(
       'json',

@@ -2211,3 +2211,27 @@ policy actor waits and worker timing-token age are the next investigation, along
 with the full independent measured-trial gate. Evidence is indexed by
 `artifacts/qa/telemetry-scheduling-final-verification.json`; production increases and
 physical/remote performance remain unqualified. The goal remains active.
+
+### 2026-09-17: fresh worker timing and observed native confirmation
+
+Worker/API registration now negotiates a fresh timing challenge immediately before
+each sample. The server keeps one independent session-bound token; old token
+issuance, report idempotency, ownership and 250 ms consumer freshness remain
+conservative. Repeated cadence samples retain their original age. The reporter
+keeps coalescing, a shared deadline and bounded session recovery. All 500 server
+and 392 worker tests, affected builds/typechecks and two independent reviews passed.
+
+The native comparison reduced median audited report age from 178 ms to 73 ms.
+The controller logged trial confirmation after upgrading from 240p to 360p and
+stayed there until stop, approximately 69 seconds after acknowledgment. Independent
+replay verified native phases/receipts, candidate source correspondence, all 147
+healthy deadline windows and continuous 30 fps archive/live A/V with all markers.
+
+This is observed runtime confirmation, not complete independent trial admission
+qualification. The full harness still rejects the changing stream at its old
+fixed-format gate. Next join candidate witness, native probe retirement, lifecycle
+and policy probation into the complete measured verifier, then exercise controlled
+withdrawal/recovery and longer sessions before physical devices and other hosts.
+Production increases remain disabled; the goal stays active. Details and evidence
+are in [the fresh worker timing plan](2026-09-17-fresh-worker-sample-timing.md) and
+`artifacts/qa/fresh-worker-timing-final-verification.json`.
