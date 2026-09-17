@@ -1393,3 +1393,20 @@ old simulator runs replay unchanged. Independent arithmetic/session checks agree
 with the baseline and reject 10 damaged variants. The final evidence manifest is
 `artifacts/qa/mac-rate-final-verification.json`. Next isolate the exact callback
 failure and measure lower-resolution native costs before admitting a recovery tier.
+
+
+[Encoder pixel-format correction](2026-09-16-encoder-pixel-format.md) fixes the
+streaming codec's input attribute: use the raw image's media subtype (NV12/BGRA),
+not the general `vide` media type. Three actual sample-format regressions reproduce
+the error before the fix. All 201 SDK, 79 streaming and 1,195 tooling tests pass;
+the simulator diagnostic and unsigned iPhone/Watch Release build also pass.
+
+Native fixed360 pressure run `native-app-H73kCA` retains 6,448 consecutive archive
+frames and 6,043 consecutive live frames, all audio markers, clean decodes and
+29.8 fps minimum reported receiver cadence through a measured 60-second 4 Mbps
+phase. Independent verification rejects 11 damaged variants. Video cost still peaks
+at 3.547 Mbps. The native Mac controlled comparison retains 2,402 frames with
+unchanged per-frame byte counts, and low-latency average-only encoding still fails.
+The setup defect is corrected; lower-bandwidth fallback and automatic adaptation
+remain unqualified. Source/evidence hashes and joined-owner outcomes are retained
+in `artifacts/qa/pixel-format-final-verification-v2.json`.

@@ -363,6 +363,15 @@
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
+@@ -82,7 +220,7 @@
+             var attributes: [NSString: AnyObject] = [:]
+             if let inputFormat {
+                 // Specify the pixel format of the uncompressed video.
+-                attributes[kCVPixelBufferPixelFormatTypeKey] = inputFormat.mediaType.rawValue as CFNumber
++                attributes[kCVPixelBufferPixelFormatTypeKey] = CMFormatDescriptionGetMediaSubType(inputFormat) as CFNumber
+             }
+             return attributes.isEmpty ? nil : attributes
+         case .decompression:
 @@ -97,19 +235,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
