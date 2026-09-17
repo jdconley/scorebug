@@ -124,7 +124,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     private let instant = ContinuousClock.now
     private func classify(missing: Set<Int> = [40], late: Set<Int> = [50],
                           latency: Double = 0.5, ageMs: Double = 0,
-                          deadline: Double = 1, fault: Int = -1) throws -> PublishingDeliveryObservation {
+                          deadline: Double = 1, fault: Int = -1, decodedThrough: Int = 90, audit: PublishingDeliveryMonitor.Audit? = nil) throws -> PublishingDeliveryObservation {
         let h = try history(missing: missing)
         let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1)!
         let receipt = PublishingBitRateChange(publishingGeneration: 1, configuration: configuration,
@@ -137,7 +137,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             thermal: PublishingThermalTracker().snapshot)
         // Explicit synthetic clock/publication binding; no physical latency claim.
         var rows: [(pts: Int64, at: Double)] = []
-        for i in 0...90 where !missing.contains(i) {
+        for i in 0...decodedThrough where !missing.contains(i) {
             let pts = Int64(i) * 3000 - 1919
             let delay = late.contains(i) ? 1.2 : latency
             rows.append((pts: pts, at: Double(i) / 30 + delay))
@@ -174,6 +174,15 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         case 5: diagnostics.ingress = nil
         default: break
         }
+        if let audit {
+            let input = PublishingDeliveryMonitor.Input(history: h,
+                clock: .init(scope: scope, transportClock: clock, isClosed: false),
+                diagnostics: diagnostics, delivery: delivery)
+            audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
+            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
+            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
+        }
         return try PublishingDeliveryObservation.classify(history: h,
             clock: .init(scope: scope, transportClock: clock, isClosed: fault == 6),
             applied: applied, diagnostics: diagnostics, delivery: delivery,
@@ -200,6 +209,48 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     func testAdapterRejectsChangedOwnershipExpiredProofAndImpossibleLocalArrival() throws {
         for fault in 0...9 { XCTAssertThrowsError(try classify(fault: fault), "fault \(fault)") }
         XCTAssertThrowsError(try classify(ageMs: 251))
+    }
+
+    func testDeadlineAuditExportsActualClassifierResultsOncePerWindow() throws {
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        _ = try classify(audit: audit)
+        audit.close()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(json["formatVersion"] as? Int, 1)
+        XCTAssertEqual(json["closed"] as? Bool, true)
+        XCTAssertEqual(json["overflow"] as? Bool, false)
+        let rows = try XCTUnwrap(json["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 3)
+        let twoSeconds = try XCTUnwrap(rows.first { ($0["end"] as? Double) == 3 && ($0["start"] as? Double) == 1 })
+        let result = try XCTUnwrap(twoSeconds["result"] as? [String: Any])
+        XCTAssertEqual(result["missingFrames"] as? Int, 1)
+        XCTAssertEqual(result["lateFrames"] as? Int, 1)
+        XCTAssertEqual(result["onTimeFrames"] as? Int, 58)
+        let history = try XCTUnwrap(twoSeconds["history"] as? [String: Any])
+        XCTAssertEqual(history["trimmedCaptureFrames"] as? Int, 29)
+        XCTAssertEqual(history["omittedCaptureFrames"] as? String, "0")
+        XCTAssertNotNil(twoSeconds["timeline"])
+        XCTAssertEqual(twoSeconds["sampleAgeSeconds"] as? Double, 0)
+        XCTAssertEqual(twoSeconds["reason"] as? String, nil)
+        if let output = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DEADLINE_EXPORT"], !output.isEmpty {
+            try audit.data().write(to: URL(fileURLWithPath: output))
+        }
+    }
+
+    func testDeadlineAuditRetainsTheOlderDecoderAnchorDuringSilence() throws {
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        _ = try classify(missing: [], late: [], decodedThrough: 20, audit: audit)
+        audit.close()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        let rows = try XCTUnwrap(json["rows"] as? [[String: Any]])
+        for row in rows {
+            let history = try XCTUnwrap(row["history"] as? [String: Any])
+            for stage in ["capture", "encoded"] {
+                let frames = try XCTUnwrap(history[stage] as? [[String: Any]])
+                XCTAssertTrue(frames.contains { ($0["sourcePTS"] as? [String: Any])?["value"] as? String == "60000" },
+                    "Export must retain the actual older decoded anchor in \(stage)")
+            }
+        }
     }
 
 }

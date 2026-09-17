@@ -369,6 +369,16 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try await session.start()
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
+                qualityDriver?.deliveryInputProvider = { [weak self] in
+                    guard let self, let current = self.publishing, current.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == current.context.id, self.current?.tap === current.context.tap,
+                          let history = current.observations?.sourceHistorySnapshot,
+                          let delivery = self.workerDecoderDeliveryFreshness,
+                          let clock = current.session.snapshot.transportClock else { return nil }
+                    return .init(history: history, clock: .init(scope: history.scope, transportClock: clock, isClosed: false),
+                        diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery)
+                }
                 #if DEBUG
                 cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit()
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
@@ -515,7 +525,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             if let publishing, localState == .publishing, publishing.attempt == diagnosticAttemptID {
                 let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
                 cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
-                    helper: workerDecoderCadenceFreshness, receivedAt: received, requestDuration: requestDuration,
+                    helper: workerDecoderCadenceFreshness, delivery: workerDecoderDeliveryFreshness, receivedAt: received, requestDuration: requestDuration,
                     receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime)
             }
             if workerReportAgeProofsEnabled, let interval = workerSourceInterval {

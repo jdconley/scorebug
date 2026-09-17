@@ -1,3 +1,4 @@
+import { qualifyNativeDeliveryDeadlines } from './native-delivery-deadlines.mjs';
 import { qualifyNativeStallReset } from './native-stall-reset.mjs';
 import { nativeControlledStall, qualifyNativeControlledStall } from './native-controlled-stall.mjs';
 import { nativeCadenceReports, qualifyNativeCadenceReports } from './native-cadence-reports.mjs';
@@ -565,6 +566,13 @@ try {
       join(artifact, 'worker-cadence-reports.json'),
     );
   }
+  if (decoderStall) {
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/delivery-deadlines.json'),
+      join(artifact, 'delivery-deadlines.json'),
+      { errorOnExist: true, force: false },
+    );
+  }
   if (requireQuality || decoderStall) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
@@ -860,6 +868,28 @@ try {
       await writeFile(
         join(artifact, 'controlled-stall-qualification.json'),
         JSON.stringify(result, null, 2),
+      );
+      const deadlineResult = qualifyNativeDeliveryDeadlines({
+        audit: JSON.parse(await readFile(join(artifact, 'delivery-deadlines.json'), 'utf8')),
+        reports: JSON.parse(await readFile(join(artifact, 'worker-cadence-reports.json'), 'utf8')),
+        scope: observationSnapshot.scope,
+      });
+      assert(deadlineResult.successfulRows >= 20, 'Insufficient native deadline coverage');
+      for (const duration of [1, 2]) {
+        assert(
+          deadlineResult.lanes.some(
+            (lane) => lane.duration === duration && lane.successfulRows >= 10,
+          ),
+          'Missing native deadline lane',
+        );
+      }
+      assert(
+        deadlineResult.counts.lateFrames + deadlineResult.counts.missingFrames > 0,
+        'Owned decoder pause produced no classified deadline failures',
+      );
+      await writeFile(
+        join(artifact, 'delivery-deadline-qualification.json'),
+        JSON.stringify(deadlineResult, null, 2),
       );
     }
     if (cadenceReports) {

@@ -5,6 +5,9 @@ import ScorebugMedia
 
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
+    var deliveryInputProvider: (() -> PublishingDeliveryMonitor.Input?)?
+    private let deliveryAudit: PublishingDeliveryMonitor.Audit?
+    private let deliveryExport: ((Data) async -> Void)?
     private let owner: PublishingQualitySession
     private let workerLimits: PublishingQualityTelemetry.WorkerLimits?
     private let transportLimits: PublishingQualityTelemetry.TransportLimits?
@@ -22,7 +25,9 @@ import ScorebugMedia
     private(set) var isClosed = false
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
-         transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }, export: ((Data) async -> Void)? = nil) {
+         transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+        self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
     @discardableResult func tick(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics) -> Task<Void, Never>? {
@@ -60,6 +65,16 @@ import ScorebugMedia
                 bootstrapCount += 1
                 await record("bootstrap")
                 return
+            }
+            // Read current caller-owned evidence only after the actor await.
+            // No asynchronous work occurs between this read and classification.
+            let currentDelivery = deliveryInputProvider?()
+            if let settings = state.applied, let revision = state.revision, let receipt = state.receipt,
+               let acknowledgedAt = state.acknowledgedAt, !state.isBusy, !state.isClosed {
+                let now = uptime(), instant = ContinuousClock.now
+                deliveryAudit?.record(input: currentDelivery,
+                    applied: .init(attemptID: state.attemptID, revision: revision, settings: settings,
+                        receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant)
             }
             var canEvaluateSource = true
             if let cadence, await owner.usesDecoderStallPolicy {
@@ -157,7 +172,7 @@ import ScorebugMedia
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { isClosed = true; task?.cancel() }
+    func cancel() { isClosed = true; deliveryInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -166,6 +181,8 @@ import ScorebugMedia
             await owner.stop()
             await work?.value
             await record("stopped", allowClosed: true)
+            deliveryAudit?.close()
+            if let deliveryExport, let data = try? deliveryAudit?.data() { await deliveryExport(data) }
             if let export, let data = try? JSONSerialization.data(withJSONObject:
                 ["formatVersion": 4, "overflow": overflow, "events": events], options: [.sortedKeys]) {
                 await export(data)
@@ -316,6 +333,8 @@ import ScorebugMedia
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
+            deliveryAudit: minimumStall ? try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25) : nil,
+            deliveryExport: minimumStall ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             export: { data in
                 await Task.detached {
                     let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

@@ -20,7 +20,7 @@ struct WorkerCadenceReportAudit {
         Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
     mutating func record(response: WorkerMediaStatusResponse, expectedAttempt: UUID,
-                         helper: WorkerDecoderCadenceFreshness?, receivedAt: ContinuousClock.Instant,
+                         helper: WorkerDecoderCadenceFreshness?, delivery: WorkerDecoderDeliveryFreshness? = nil, receivedAt: ContinuousClock.Instant,
                          requestDuration: Duration, receivedUptime: Double,
                          instant: ContinuousClock.Instant, evaluatedUptime: Double) {
         guard !closed else { return }
@@ -34,6 +34,8 @@ struct WorkerCadenceReportAudit {
             "receivedUptime": receivedUptime, "evaluatedUptime": evaluatedUptime,
             "requestSeconds": Self.seconds(requestDuration),
             "residenceSeconds": Self.seconds(receivedAt.duration(to: instant)),
+            "deliveryReceiptID": delivery?.receiptID.uuidString.lowercased() as Any? ?? NSNull(),
+            "deliverySampleAgeSeconds": delivery?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "sampleAgeSeconds": helper?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "observedStall": helper?.observedStall(maximumSampleAge: .milliseconds(250), at: instant) as Any? ?? NSNull()])
     }

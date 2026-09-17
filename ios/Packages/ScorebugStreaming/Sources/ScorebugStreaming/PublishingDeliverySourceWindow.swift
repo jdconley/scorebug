@@ -20,6 +20,7 @@ public struct PublishingDeliverySourceWindow: Sendable {
     public let windowEnd: Double
     public let frames: [Frame]
     public let encodedFrames: Int
+    public let anchorSourcePTS: CMTime
 
     public static func match(history: VideoSourceHistorySnapshot, clock: PublishingTransportClock,
                              receipt: PublishingBitRateChange, acknowledgedAt: Double,
@@ -109,7 +110,7 @@ public struct PublishingDeliverySourceWindow: Sendable {
         }
         return .init(scope: history.scope, publishingGeneration: clock.publishingGeneration,
             configuration: receipt.configuration, windowStart: windowStart, windowEnd: windowEnd,
-            frames: frames, encodedFrames: encodedIndices.count)
+            frames: frames, encodedFrames: encodedIndices.count, anchorSourcePTS: anchor.source)
     }
 
     private static func modulo(_ ticks: Int64) -> Int64 {

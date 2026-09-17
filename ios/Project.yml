@@ -186,6 +186,8 @@ schemes:
     test:
       targets:
         - ScorebugFilmModelTests
+      environmentVariables:
+        SCOREBUG_TEST_DEADLINE_EXPORT: $(SCOREBUG_TEST_DEADLINE_EXPORT)
   Scorebug:
     build:
       targets:

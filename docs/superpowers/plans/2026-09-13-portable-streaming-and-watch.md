@@ -1724,3 +1724,27 @@ The adapter is ready for capture-loop window scheduling and actual simulator/rel
 deadline qualification. It does not yet drive automatic quality decisions. Candidate
 actual-cost/headroom, recovery, reconnect, physical phone/Watch and remote worker
 qualification remain required.
+
+### Native deadline monitor checkpoint
+
+[The native monitor](2026-09-17-native-deadline-monitor.md) now schedules bounded
+one/two-second source windows from current capture and authenticated worker evidence.
+An independent verifier reconstructs raw reports and checks the native results.
+Actual simulator run `native-app-AG9LAw` emitted 150 windows: 124 classified,
+26 freshness-unknown. The owned 2.040-second decoder pause produced deadline
+failures while the independent 1080p archive fully decoded with 3,658 frames and
+60/60 audio markers. Final buffered live output also fully decoded without source
+loss; eventual arrival does not erase missed deadlines.
+
+The experimental one-second deadline provided no proven healthy windows because
+normal arrival intervals commonly straddle that deadline. Measured upper latency
+p99 is 1.201 seconds among matched arrivals in classified one-second windows.
+The next separately recorded experiment will test a 1.5-second budget with the
+same 250 ms freshness cap and owned decoder pause. This is an experimental margin,
+not a production default. Automatic adaptation/recovery remain gated.
+
+All 372 Core, 273 native model and 1,313 tooling tests pass, with ARM64 simulator
+and unsigned combined iPhone/Watch Release builds. Independent review closed
+older-anchor export, sticky tracker exhaustion and conservative age-bound findings.
+Evidence: `artifacts/qa/native-deadline-final-verification.json`. Candidate actual
+cost/headroom, recovery, reconnect, physical devices and remote workers remain open.

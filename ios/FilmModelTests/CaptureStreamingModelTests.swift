@@ -1753,11 +1753,21 @@ import XCTest
     }
 
     func testDeliveryConsumerUsesCursorAndClearsOnOmissionExpiryAndDetach() async throws {
-        let server = CaptureTestServer(); var owner: VideoFrameObservationOwner?
-        let model = makeModel(server: server, observationFactory: { scope in
-            let value = try VideoFrameObservationOwner(scope: scope); owner = value; return value
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        var owner: VideoFrameObservationOwner?, driver: PublishingQualityDriver?, auditData: Data?
+        await publisher.setTransportClock(PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1))
+        let model = makeModel(server: server, publisher: publisher, observationFactory: { scope in
+            let value = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 8); owner = value; return value
+        }, qualityFactory: { session, attempt in
+            let quality = try PublishingQualitySession(session: session,
+                profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],
+                attemptID: attempt, initial: .init(profileID: "hd", videoBitrate: 6_000_000))
+            let created = PublishingQualityDriver(owner: quality, workerLimits: nil, transportLimits: nil)
+            driver = created; return created
         })
+        model.cadenceReportFixtureWriter = { auditData = $0 }
         await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await publisher.waitForTransportClockReads(1)
         let observed = try XCTUnwrap(owner)
         var response = workerAgeResponse()
         response.status.workerEpoch = "22222222-2222-4222-8222-222222222222"
@@ -1774,6 +1784,7 @@ import XCTest
         response.status.observation?.decoderDelivery = try packet(10)
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertEqual(model.workerDecoderDeliveryFreshness?.snapshot.lastOrdinal,1)
+        XCTAssertEqual(driver?.deliveryInputProvider?()?.delivery.receiptID, model.workerDecoderDeliveryFreshness?.receiptID)
         response.status.observation?.decoderDelivery = try packet(20,delta:true)
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertEqual(model.workerDecoderDeliveryFreshness?.sampledAtMs,20)
@@ -1782,6 +1793,7 @@ import XCTest
         response.status.observation?.decoderDelivery = nil
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertNil(model.workerDecoderDeliveryFreshness); XCTAssertEqual(model.localState,.publishing)
+        XCTAssertNil(driver?.deliveryInputProvider?())
         response.status.observation?.decoderDelivery = try packet(30)
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertNotNil(model.workerDecoderDeliveryFreshness)
@@ -1789,7 +1801,13 @@ import XCTest
         response.status.observation?.decoderDelivery = try packet(40)
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertNotNil(model.workerDecoderDeliveryFreshness)
+        let receipt = try XCTUnwrap(model.workerDecoderDeliveryFreshness?.receiptID.uuidString.lowercased())
+        XCTAssertEqual(driver?.deliveryInputProvider?()?.delivery.receiptID.uuidString.lowercased(), receipt)
         await model.stopStreaming(); XCTAssertNil(model.workerDecoderDeliveryFreshness)
+        XCTAssertNil(driver?.deliveryInputProvider)
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(auditData)) as? [String: Any])
+        let rows = try XCTUnwrap(audit["rows"] as? [[String: Any]])
+        XCTAssertTrue(rows.contains { ($0["deliveryReceiptID"] as? String) == receipt })
     }
 
     private func workerAgeResponse(bound: Double? = 550) -> WorkerMediaStatusResponse {

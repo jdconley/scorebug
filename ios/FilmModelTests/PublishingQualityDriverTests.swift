@@ -59,6 +59,25 @@ import XCTest
         XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: evidence))
     }
 
+    func testDeadlineProviderIsReadAtExecutionAndClearedOnCancel() async throws {
+        let native = DriverNative(); native.release()
+        let (driver, diagnostics) = try make(native)
+        var first = 0, second = 0
+        driver.deliveryInputProvider = { first += 1; return nil }
+        await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
+        let work = driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)
+        driver.deliveryInputProvider = { second += 1; return nil }
+        await work?.value
+        XCTAssertEqual(first, 0)
+        XCTAssertEqual(second, 1)
+        let pending = driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)
+        driver.cancel()
+        await pending?.value
+        XCTAssertNil(driver.deliveryInputProvider)
+        XCTAssertEqual(second, 1)
+        await driver.stop()
+    }
+
     private func make(_ native: DriverNative) throws -> (PublishingQualityDriver, PublishingQualityTelemetry.Diagnostics) {
         let owner = try PublishingQualitySession(operations: native.operations,
             profiles: [.init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],

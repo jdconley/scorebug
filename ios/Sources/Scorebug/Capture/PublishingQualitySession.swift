@@ -8,6 +8,7 @@ import ScorebugMedia
 actor PublishingQualitySession {
     enum Failure: Error, Equatable { case notReady, busy, closed, staleAdvice, unsupportedProfile, invalidReceipt, startupPending }
     struct Snapshot: Sendable {
+        let attemptID: UUID
         let applied: QualityController.Settings?
         let revision: UInt64?
         let receipt: PublishingBitRateChange?
@@ -100,7 +101,7 @@ actor PublishingQualitySession {
         self.operations = operations; self.profiles = profiles; self.attemptID = attemptID
         self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
     }
-    var snapshot: Snapshot { .init(applied: policy?.applied, revision: policy?.appliedRevision,
+    var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
         lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
