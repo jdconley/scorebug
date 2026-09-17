@@ -208,3 +208,42 @@ test('first completed delivery cannot predate a zero-message observation', () =>
   delete records[0].probe.lastDeliveredAtNanoseconds;
   assert.throws(() => qualify(records));
 });
+test('authenticated collection retains staged metadata while redacting credentials', () => {
+  const c = connection(),
+    m = new Map();
+  Object.assign(c.scorebugBandwidthProbe, {
+    convention: 'mpegts-null-probe-v2',
+    stage: 2,
+    totalDeliveredPayloadBytes: '3948',
+    firstDeliveredAtNanoseconds: '900000000',
+  });
+  recordReceiverProbeEvidence(m, listing(c), scope, secret, timing(1));
+  const record = [...m.values()][0];
+  assert.equal(record.probe.stage, 2);
+  assert.equal(record.probe.totalDeliveredPayloadBytes, '3948');
+  assert.ok(!JSON.stringify(record).includes(secret));
+  assert.ok(!JSON.stringify(record).includes('sbp1='));
+  c.scorebugBandwidthProbe.stage = 3;
+  assert.equal(record.probe.stage, 2);
+});
+for (const patch of [
+  { stage: 1 },
+  { totalDeliveredPayloadBytes: '1316' },
+  { convention: 'mpegts-null-probe-v2', stage: 0, totalDeliveredPayloadBytes: '1316' },
+  { convention: 'mpegts-null-probe-v2', stage: 33, totalDeliveredPayloadBytes: '1316' },
+  { convention: 'mpegts-null-probe-v2', stage: 1, totalDeliveredPayloadBytes: '01316' },
+  { convention: 'mpegts-null-probe-v2', stage: 1, totalDeliveredPayloadBytes: '0' },
+  {
+    convention: 'mpegts-null-probe-v2',
+    stage: 1,
+    totalDeliveredPayloadBytes: '16776368',
+    pendingPackets: 1,
+  },
+])
+  test(`collection rejects malformed staged metadata ${JSON.stringify(patch)}`, () => {
+    const c = connection();
+    Object.assign(c.scorebugBandwidthProbe, { firstDeliveredAtNanoseconds: '900000000' }, patch);
+    assert.throws(() =>
+      recordReceiverProbeEvidence(new Map(), listing(c), scope, secret, timing(1)),
+    );
+  });

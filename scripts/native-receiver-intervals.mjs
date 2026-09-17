@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { qualifyNativeBandwidthProbe } from './native-bandwidth-probe.mjs';
 import { qualifyWorkerPublicationEvidence } from './worker-publication-evidence.mjs';
-import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
+import {
+  qualifyReceiverProbeEvidence,
+  validateReceiverProbeSnapshot,
+  assertReceiverProbeProgress,
+} from './receiver-probe-evidence.mjs';
 const uuid = (s) =>
   typeof s === 'string' &&
   /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(s) &&
@@ -16,11 +20,24 @@ function packetProgress(p) {
   return uint(p.deliveredMessages) * 7n + BigInt(p.pendingPackets);
 }
 function validateSnapshot(p, accepted) {
-  assert.equal(p.convention, 'mpegts-null-probe-v1');
+  validateReceiverProbeSnapshot(p);
+  const staged = accepted.stage !== undefined;
+  assert.equal(p.convention, staged ? 'mpegts-null-probe-v2' : 'mpegts-null-probe-v1');
+  if (staged) {
+    assert.equal(p.stage, accepted.stage);
+    assert.equal(
+      Number(p.totalDeliveredPayloadBytes) - Number(p.deliveredPayloadBytes),
+      accepted.totalAcceptedPayloadBytes - accepted.acceptedPayloadBytes,
+    );
+    assert.ok(
+      Number(p.deliveredPayloadBytes) + (p.pendingPackets ? 1316 : 0) <=
+        accepted.acceptedPayloadBytes,
+    );
+  }
   assert.equal(p.invalidReason, undefined);
   assert.equal(p.id, accepted.id.toLowerCase());
   assert.equal(p.publishingGeneration, accepted.publishingGeneration);
-  assert.equal(p.bitRate, 1000000);
+  assert.equal(p.bitRate, staged ? accepted.bitRate : 1000000);
   const count = uint(p.deliveredMessages, 12748n);
   assert.equal(uint(p.deliveredPayloadBytes), count * 1316n);
   assert.equal(p.nextSequence, p.deliveredMessages);
@@ -53,6 +70,8 @@ export function qualifyNativeReceiverIntervals(
     scope,
     publishingGeneration: accepted.publishingGeneration,
   });
+  const staged = accepted.mode === 'staged';
+  if (staged) assert.deepEqual(native, accepted);
   for (const key of ['id', 'publishingGeneration', 'acceptedPayloadBytes'])
     assert.equal(native[key], accepted[key]);
   const receiver = qualifyReceiverProbeEvidence(records, scope, accepted);
@@ -61,7 +80,7 @@ export function qualifyNativeReceiverIntervals(
   assert.equal(proof.invalid, false);
   assert.deepEqual(proof.scope, scope);
   assert.ok(Array.isArray(proof.intervals) && proof.intervals.length <= 128);
-  if (accepted.mode === 'renew')
+  if (staged || accepted.mode === 'renew')
     assert.ok(proof.intervals.length > 0, 'No native receiver intervals');
   else assert.equal(accepted.mode, 'expire');
   const snapshots = records.map((r) => r.probe);
@@ -72,7 +91,26 @@ export function qualifyNativeReceiverIntervals(
     minimumRate = Infinity;
   let offsetLower = -Infinity,
     offsetUpper = Infinity;
+  const seenStages = new Set();
+  let coveredIntervals = 0;
+  const combinedSnapshots = snapshots.map(validateReceiverProbeSnapshot);
   for (const row of proof.intervals) {
+    const stage = staged ? accepted.stages.find((s) => s.stage === row.nativeProbeStage) : accepted;
+    assert.ok(stage, 'Unknown native probe stage');
+    if (staged) {
+      assert.ok(
+        row.evaluatedAt < stage.retirementRequestedAt,
+        'Interval evaluated after retirement request',
+      );
+      if (prior)
+        assert.ok(row.nativeProbeStage >= prior.nativeProbeStage, 'Native stage regressed');
+    } else assert.equal(row.nativeProbeStage, undefined);
+    const stageEvents = staged
+      ? nativeProof.events.filter((e) => e.sample.stage === stage.stage)
+      : nativeProof.events;
+    const stageSnapshots = staged
+      ? snapshots.filter((p) => p.stage === stage.stage && p.id === stage.id)
+      : snapshots;
     const worker = workers.find(
       (w) =>
         w.workerId === row.workerId &&
@@ -122,19 +160,19 @@ export function qualifyNativeReceiverIntervals(
       ) < 1e-6,
       'Understated snapshot age',
     );
-    assert.equal(row.nativeStartedAt, nativeProof.events[0].sample.startedAt);
+    assert.equal(row.nativeStartedAt, stageEvents[0].sample.startedAt);
     assert.ok(
       row.nativeStartedAt <= row.nativeLastAcceptedAt &&
         row.nativeLastAcceptedAt <= row.nativeReadFinishedAt &&
         row.evaluatedAt < row.nativeLeaseDeadline,
     );
     assert.ok(
-      nativeProof.events.some((e) => e.sample.leaseDeadline === row.nativeLeaseDeadline),
+      stageEvents.some((e) => e.sample.leaseDeadline === row.nativeLeaseDeadline),
       'Unobserved native lease',
     );
     assert.ok(row.nativeLeaseDeadline - 0.3 <= row.nativeReadFinishedAt + 1e-6);
     const reportedAccepted = uint(row.acceptedPayloadBytes);
-    for (const event of nativeProof.events) {
+    for (const event of stageEvents) {
       const n = uint(event.sample.acceptedPayloadBytes),
         last = event.sample.lastAcceptedAt;
       if (last === row.nativeLastAcceptedAt) assert.equal(n, reportedAccepted);
@@ -152,12 +190,21 @@ export function qualifyNativeReceiverIntervals(
     );
     offsetUpper = Math.min(offsetUpper, row.responseReceivedAt * 1000 - receiverMilliseconds);
     assert.ok(offsetLower <= offsetUpper, 'Native/receiver clocks cannot fit the request bounds');
+    let independentlyCovered = true;
     for (const p of [row.start, row.end]) {
-      validateSnapshot(p, accepted);
+      validateSnapshot(p, stage);
+      combinedSnapshots.push(validateReceiverProbeSnapshot(p));
       const at = uint(p.observedAtNanoseconds);
-      const before = snapshots.findLast((s) => uint(s.observedAtNanoseconds) <= at);
-      const after = snapshots.find((s) => uint(s.observedAtNanoseconds) >= at);
-      assert.ok(before && after, 'Native endpoint outside independent receiver coverage');
+      const before = stageSnapshots.findLast((s) => uint(s.observedAtNanoseconds) <= at);
+      const after = stageSnapshots.find((s) => uint(s.observedAtNanoseconds) >= at);
+      if (!before || !after) {
+        assert.ok(staged, 'Native endpoint outside independent receiver coverage');
+        // Independent polling need not catch the first/last app sample at a
+        // stage boundary. Keep validating this row and the combined history,
+        // but never include its load or duration in qualified coverage.
+        independentlyCovered = false;
+        continue;
+      }
       assert.ok(
         packetProgress(before) <= packetProgress(p) && packetProgress(p) <= packetProgress(after),
         'Independent receiver counter mismatch',
@@ -184,7 +231,7 @@ export function qualifyNativeReceiverIntervals(
     const nextIdentity = [p, row.workerId, row.workerEpoch, row.workerAttempt];
     if (identity) assert.deepEqual(nextIdentity, identity);
     else identity = nextIdentity;
-    assert.equal(row.nativeProbeId, accepted.id.toLowerCase());
+    assert.equal(row.nativeProbeId, stage.id.toLowerCase());
     assert.equal(row.nativePublishingGeneration, accepted.publishingGeneration);
     const count = uint(row.end.deliveredMessages) - uint(row.start.deliveredMessages);
     const elapsed = uint(row.end.observedAtNanoseconds) - uint(row.start.observedAtNanoseconds);
@@ -199,7 +246,7 @@ export function qualifyNativeReceiverIntervals(
       Number.isFinite(row.payloadBitsPerSecondLowerBound) &&
         Math.abs(rate - row.payloadBitsPerSecondLowerBound) < 0.001,
     );
-    const nativeBytes = uint(row.acceptedPayloadBytes, BigInt(accepted.acceptedPayloadBytes));
+    const nativeBytes = uint(row.acceptedPayloadBytes, BigInt(stage.acceptedPayloadBytes));
     assert.equal(nativeBytes % 1316n, 0n);
     assert.ok(
       (uint(row.end.deliveredMessages) + (row.end.pendingPackets ? 1n : 0n)) * 1316n <= nativeBytes,
@@ -223,21 +270,52 @@ export function qualifyNativeReceiverIntervals(
         uint(row.start.observedAtNanoseconds) >= uint(prior.end.observedAtNanoseconds),
         'Overlapping native intervals',
       );
-      assert.ok(nativeBytes >= uint(prior.acceptedPayloadBytes));
+      if (!staged || row.nativeProbeStage === prior.nativeProbeStage)
+        assert.ok(nativeBytes >= uint(prior.acceptedPayloadBytes));
       assert.ok(
         row.requestStartedAt >= prior.responseReceivedAt && row.evaluatedAt >= prior.evaluatedAt,
       );
     }
     prior = row;
-    total += lowerBytes;
-    duration += elapsed;
-    minimumRate = Math.min(minimumRate, rate);
+    if (independentlyCovered) {
+      coveredIntervals++;
+      if (staged) seenStages.add(stage.stage);
+      total += lowerBytes;
+      duration += elapsed;
+      minimumRate = Math.min(minimumRate, rate);
+    }
   }
+  // Polling can leave a wide bracket containing several app endpoints. Check
+  // their ordered union so individually plausible endpoints cannot contradict
+  // one another between independent observations.
+  combinedSnapshots.sort((a, b) =>
+    Number(BigInt(a.observedAtNanoseconds) - BigInt(b.observedAtNanoseconds)),
+  );
+  for (let i = 1; i < combinedSnapshots.length; i++) {
+    const current = combinedSnapshots[i],
+      previous = combinedSnapshots[i - 1];
+    if (!staged || current.stage === previous.stage) assertReceiverProbeProgress(current, previous);
+    else {
+      assert.ok(current.stage > previous.stage, 'Receiver stage chronology regressed');
+      if (current.firstDeliveredAtNanoseconds !== undefined)
+        assert.ok(
+          uint(current.firstDeliveredAtNanoseconds) >= uint(previous.observedAtNanoseconds),
+          'Next stage delivery predates previous stage observation',
+        );
+    }
+  }
+  if (staged) assert.deepEqual([...seenStages], [1, 2, 3], 'Missing covered native stage');
   return {
-    intervalCount: proof.intervals.length,
+    ...(staged
+      ? {
+          observedIntervalCount: proof.intervals.length,
+          unbracketedIntervalCount: proof.intervals.length - coveredIntervals,
+        }
+      : {}),
+    intervalCount: coveredIntervals,
     deliveredPayloadBytesLowerBound: Number(total),
     receiverReadCoverageSeconds: Number(duration) / 1e9,
-    minimumPayloadBitsPerSecondLowerBound: proof.intervals.length ? minimumRate : null,
+    minimumPayloadBitsPerSecondLowerBound: coveredIntervals ? minimumRate : null,
     receiverCapacityQualified: false,
   };
 }

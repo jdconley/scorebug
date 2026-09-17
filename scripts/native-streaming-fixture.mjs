@@ -1,3 +1,4 @@
+import { nativeRelayImageTag } from './native-relay-image.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
 import assert from 'node:assert/strict';
 import { recordReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
@@ -27,6 +28,7 @@ export async function nativeStreamingFixture({
   decodedWindowLimit = 64,
   requirePublication = false,
   requireReceiverProbe = false,
+  stagedReceiverProbe = false,
   uplinkProfile = null,
   liveProfile = '1080p30',
   cadenceReports = false,
@@ -64,8 +66,11 @@ export async function nativeStreamingFixture({
       liveProfile === '240p30' && requirePublication && !requireReceiverProbe,
       'The 3 Mbps fixture requires fixed240 publication without a probe',
     );
-  assert.equal(typeof requireReceiverProbe, 'boolean');
-  assert.ok(!requireReceiverProbe || requirePublication);
+  const relayTag = nativeRelayImageTag({
+    requirePublication,
+    requireReceiverProbe,
+    stagedReceiverProbe,
+  });
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
@@ -167,11 +172,9 @@ export async function nativeStreamingFixture({
     if (errors.length) throw new AggregateError(errors, 'Owned proxy cleanup failed');
   }
   try {
-    let ingestImage = 'bluenviron/mediamtx:1.21.0';
+    let ingestImage = relayTag;
     if (requirePublication) {
-      const tag = requireReceiverProbe
-        ? 'scorebug/ingest:receiver-probe-v1'
-        : 'scorebug/ingest:recovery-v1';
+      const tag = relayTag;
       ingestImage = await run(
         'docker',
         ['image', 'inspect', tag, '--format', '{{.Id}}'],

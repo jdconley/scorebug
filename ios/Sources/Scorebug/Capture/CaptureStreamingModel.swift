@@ -109,7 +109,9 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var coordinator: BroadcastCommandCoordinator?
     var controlPollInterval: Duration {
         #if DEBUG
-        if cadenceReportFixtureWriter != nil { return .milliseconds(100) }
+        // Probe evidence has a 300-ms observed lease. A two-second status
+        // cadence would let local health expire every interval baseline.
+        if cadenceReportFixtureWriter != nil || receiverProbeFixtureWriter != nil { return .milliseconds(100) }
         #endif
         return qualityDriver == nil ? .seconds(2) : .milliseconds(100)
     }

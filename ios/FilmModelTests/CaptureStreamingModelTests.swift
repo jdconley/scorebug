@@ -5,6 +5,20 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testReceiverProbeFixturePollsWithinNativeLeaseWithoutWeakeningDefaultCadence() async throws {
+        let (model, _, _, _) = try await receiverProbeModel()
+        model.cadenceReportFixtureWriter = nil
+        model.receiverProbeFixtureWriter = nil
+        XCTAssertEqual(model.controlPollInterval, .seconds(2))
+        model.receiverProbeFixtureWriter = { _ in }
+        // A 300-ms observed native lease must be refreshed before local health
+        // expires it; otherwise a one-second receiver interval never forms.
+        XCTAssertLessThan(model.controlPollInterval, .milliseconds(300))
+        XCTAssertGreaterThanOrEqual(model.controlPollInterval, .milliseconds(100))
+        model.receiverProbeFixtureWriter = nil
+        XCTAssertEqual(model.controlPollInterval, .seconds(2))
+        await model.stopStreaming()
+    }
     func testObservedLeaseGapCannotBeBridgedByAStillRenewedNativeOwner() async throws {
         let (model, server, publisher, initial) = try await receiverProbeModel()
         let value = await publisher.probeValue()

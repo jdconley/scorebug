@@ -45,9 +45,12 @@ the qualification fixture's read query is only a unique test marker.
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:receiver-probe-v1 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-v2 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
+
+Current cumulative source must use the fresh `staged-probe-v2` tag. Preserve the
+previously qualified `receiver-probe-v1` and `recovery-v1` images.
 
 The image contains a static Linux binary and CA certificates. Mount a configured
 `/mediamtx.yml`; the explicit config argument makes an absent file an error. For
@@ -145,7 +148,7 @@ The cumulative `staged-probe-wire-v2` build preserves `SBUGPRB1` accounting and
 adds explicit `SBUGPRB2` parsing. Build a fresh tag for this source:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-wire-v2 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-v2 vendor/MediaMTX
 ```
 
 V2 keeps bytes 0–48 of each packet's v1 layout except for the version marker.
@@ -166,11 +169,36 @@ or read errors. Private publisher snapshots use `mpegts-null-probe-v2`, numeric
 refer to the current stage. V1 snapshots omit the two new fields.
 
 This is a wire and accounting foundation only. Default native probes emit v1;
-explicit staged native APIs and a bounded DEBUG scheduler now emit v2 but still
-need full relay/media qualification. Authenticated status validates v2 stage and cumulative counters;
+explicit staged native APIs and a bounded DEBUG scheduler emit v2. Finite
+simulator relay/media qualification is recorded below. Authenticated status validates v2 stage and cumulative counters;
 shared native matching additionally requires the locally owned stage.
 Fixture defaults and regular deployments are unchanged. The previously qualified
 `receiver-probe-v1` image remains frozen; its qualification does not cover this
 new cumulative source. Repeated native SRT stages, capacity/admission decisions,
 physical-device behavior and deployment have not been qualified by these Go tests.
 See the [staged wire plan](../../docs/superpowers/plans/2026-09-17-staged-probe-wire.md).
+
+## Staged simulator qualification
+
+The native fixture accepts `SCOREBUG_TEST_BANDWIDTH_PROBE=staged` only with
+fixed `540p30`, `blocks16` motion, authenticated publication and worker processing,
+a direct RTMP recorder and a bounded 90–600 second hold. It selects
+`scorebug/ingest:staged-probe-v2`, records its immutable image ID and runs that ID.
+Legacy probe modes retain the frozen `receiver-probe-v1` image.
+
+Independent verifiers reconcile three ordered 500 kbps, 1 Mbps and 2 Mbps stages
+against native lease/counter evidence, authenticated relay polling and native
+receiver intervals. They preserve the publication clock and cumulative byte
+budget across replacements, and reject contradictory endpoint histories.
+These rates describe offered probe load; successful delivery alone does not
+establish spare capacity or authorize a quality increase.
+
+See the [staged qualification plan](../../docs/superpowers/plans/2026-09-17-staged-probe-qualification.md)
+for current test results and the real-media qualification boundary.
+
+The complete iPhone 14/iOS 17.5 simulator run `native-app-PnVEYX` reconciled all
+3,411,072 accepted probe payload bytes and 18 independently bracketed intervals
+(six per stage). Three boundary intervals were excluded from qualified coverage.
+The independent 1080p archive and 540p live output decoded without source loss;
+all expected audio markers survived. This finite result does not qualify spare
+capacity, automatic quality increases, physical devices or remote deployments.

@@ -1808,7 +1808,7 @@ at0.477seconds after the decision. Fresh before-pause and stalled in-pause scope
 PTS samples bind the fault to that decision without mixing Node and phone clocks.
 The receiver decoded the first new-format source frame and complete tail.
 
-The independent1080p archive finishes with3686 fully decoded frames, no source loss
+The independent 1080p archive finishes with3686 fully decoded frames, no source loss
 and61/61 audio markers. All1442 tooling,385 Core and287 native model tests and both
 Apple builds pass; reviews are approved. Frozen evidence:
 `artifacts/qa/deadline-profile-final-verification.json`. Next qualify measured
@@ -1887,3 +1887,29 @@ sender/receiver/interval verifiers and staged relay selection, then perform the 
 multi-stage A/V and local archive qualification. Measured candidate cost, automatic
 upgrades/recovery, long-session campaigns and physical/remote qualification remain
 open. Production quality adaptation remains disabled.
+
+### 2026-09-17: staged probes qualified through the native media pipeline
+
+[Staged probe qualification](2026-09-17-staged-probe-qualification.md) now verifies
+three native SRT probe stages at 500 kbps, 1 Mbps and 2 Mbps against authenticated
+relay polling and app receiver intervals. Publication clock and cumulative byte
+budgets survive replacements. Impossible pacing bursts, lease-boundary
+acceptance and contradictory interval histories fail qualification. Staged runs
+select a separately pinned relay image; legacy image defaults remain intact.
+
+The full fixed540p iPhone14/iOS17.5 simulator run `native-app-PnVEYX` reconciled
+3,411,072 accepted/delivered payload bytes. It qualified 18 independently covered
+intervals (six per stage), explicitly excluding three polling-boundary intervals
+from qualified totals while validating their histories. The independent 1080p
+archive had 3,639 consecutive source frames/60 audio markers; live 540p had 3,264
+consecutive frames/54 audio markers. Both decoded with zero source loss; minimum
+reported receiver cadence was 29.8 fps. The DEBUG probe fixture now polls within
+the 300 ms observed lease; expiry, revocation and normal production cadence remain
+unchanged.
+
+Tooling 1,609 and native model 299 tests passed. Frozen evidence:
+`artifacts/qa/staged-probe-qualification-final-verification.json`. Next combine
+fresh measured candidate encoding cost (keyframes, audio, mux and overhead) with
+repeated native headroom observations, then qualify minimum-first upward trials
+and recovery. Long-session campaign policy, sustained impairment/thermal tests,
+physical iPhone/Watch routes and portable remote CPU/GPU deployment remain open.

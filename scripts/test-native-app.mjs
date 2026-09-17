@@ -471,6 +471,7 @@ try {
     proxy = await nativeStreamingFixture({
       requirePublication,
       requireReceiverProbe: bandwidthProbe !== null,
+      stagedReceiverProbe: bandwidthProbe === 'staged',
       uplinkProfile,
       liveProfile,
       cadenceReports,
