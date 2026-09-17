@@ -1462,3 +1462,23 @@ with the final live frame saved. Sources/evidence are frozen in
 `artifacts/qa/minimum-transition-final-verification.json`. Next implement short
 health windows/watchdog, priority minimum reset and conservative recovery under
 the progressive streaming design, while preserving the receiver-continuity gate.
+
+
+[Decoder short-window measurements](2026-09-16-decoder-short-windows.md) now attach
+to the real FFmpeg decoded-PTS pipe. Constant-space one-/two-second windows and a
+unique-frame progress watchdog distinguish live stalls from unstarted, invalid or
+closed telemetry. All 360 worker tests, worker typechecking and 1,205 tooling tests
+pass. Actual paced/pause/resume run `decoder-cadence-native-Q8lxKX` reconciles 661
+snapshots, 22 complete windows and all 478 accepted decoder frames against separate
+arrival history and the decoded output. It detects >=1,000 ms without fresh
+progress and observes resume in 26.06 ms. Ten damaged evidence variants reject.
+
+The initial UDP fixture required a forced stop and remains a failed qualification;
+the rerun uses an explicit finite UDP read timeout and joins orderly SIGTERM/255.
+Its measured 187-frame startup burst proves why high arrival cadence alone cannot
+qualify healthy source delivery. These local worker snapshots are not yet reported
+through authenticated media status or used for quality decisions. Next complete
+scoped freshness/reporting, expected-source/lateness reconciliation and direct
+minimum reset/recovery. Source/evidence hashes are in
+`artifacts/qa/decoder-cadence-final-verification.json`; no new archive, SRT, physical
+phone/Watch or remote-worker qualification is claimed by this observer experiment.

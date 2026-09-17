@@ -1,3 +1,4 @@
+import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
 import type { WorkerProcessingReport } from '@scorebug/protocol';
 import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
@@ -44,6 +45,8 @@ export type PipelineHandle = {
   waitExit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   /** Decoder ingress only; PTS ticks use 1/90000. Fresh pipeline means fresh scope. */
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
+  /** Short decoder-arrival windows; no source-loss or viewer-delivery claim. */
+  snapshotDecoderCadence?: () => DecoderCadenceSnapshot;
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
   snapshotProcessing?: () => WorkerProcessingSnapshot | null;
   snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
@@ -202,6 +205,7 @@ export type PipelineTerminal = Readonly<{
   outputProgress: PipelineProgress | null;
   encoderTiming?: EncoderTimingSnapshot;
   decodedFrameHistory?: DecodedFrameHistorySnapshot;
+  decoderCadence?: DecoderCadenceSnapshot;
 }>;
 
 export type PipelineOptions = {
@@ -304,6 +308,7 @@ export function startPipeline(
     ? new EncoderTimingTelemetry(options.monotonicNow)
     : undefined;
   const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
+  const decoderCadence = new DecoderCadenceTelemetry(options.monotonicNow);
   const decodedHistory = encoderTiming
     ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID)
     : undefined;
@@ -325,6 +330,7 @@ export function startPipeline(
     try {
       options.onTerminal?.({
         decodedVideo: lifetime.snapshot(),
+        decoderCadence: decoderCadence.snapshot(),
         telemetryEOF,
         ...(diagnostics ? { diagnostics } : {}),
         encoderExit: encoderExit ? { ...encoderExit } : null,
@@ -341,6 +347,7 @@ export function startPipeline(
   };
   const failedBeforeSpawn = () => {
     decodedVideo.end();
+    decoderCadence.end();
     encoderTiming?.end();
     decodedHistory?.end();
     terminal();
@@ -381,7 +388,12 @@ export function startPipeline(
     const telemetry = child.stdio[4] as Readable;
     observeDecodedPipe(
       telemetry,
-      [decodedVideo, ...(lifetime ? [lifetime] : []), ...(decodedHistory ? [decodedHistory] : [])],
+      [
+        decodedVideo,
+        decoderCadence,
+        ...(lifetime ? [lifetime] : []),
+        ...(decodedHistory ? [decodedHistory] : []),
+      ],
       () => {
         telemetryEOF = true;
       },
@@ -425,6 +437,7 @@ export function startPipeline(
     });
     child.once('close', () => {
       decodedVideo.end();
+      decoderCadence.end();
       encoderTiming?.end();
       decodedHistory?.end();
       terminal();
@@ -476,6 +489,7 @@ export function startPipeline(
       send({ type: 'stop' });
     },
     waitExit: () => exit,
+    snapshotDecoderCadence: () => decoderCadence.snapshot(),
     snapshotEncoderTiming: () => encoderTiming?.snapshot() ?? null,
     snapshotProcessing: () =>
       decodedHistory && encoderTiming

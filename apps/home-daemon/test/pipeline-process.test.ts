@@ -394,18 +394,17 @@ it('routes dedicated telemetry independently of progress and drains the terminal
     process.stdout.write('frame=9\\nout_time_us=9\\nprogress=end\\n');
     require('node:fs').writeSync(3, 'frame:0 pts:9000 pts_time:0.1\\nscorebug.source=1\\n');
     process.stderr.write('SECRET_DIAGNOSTIC');
+    setTimeout(() => {}, 500);
   `);
   let time = 0;
   const progress: unknown[] = [];
   try {
     const pipeline = startPipeline(fixture.spec, fixture.log, {
-      monotonicNow: () => {
-        const value = time;
-        time += 5000;
-        return value;
-      },
+      monotonicNow: () => time,
       onProgress: (value) => progress.push(value),
     });
+    await expect.poll(() => pipeline.snapshotDecoderCadence?.().progress?.lastFreshPTS).toBe(9000);
+    time = 5000;
     expect(await boundedExit(pipeline)).toEqual({ code: 0, signal: null });
     expect(progress).toEqual([{ frame: 9, outTimeUs: 9 }]);
     expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
@@ -457,6 +456,10 @@ it('emits one terminal after late pipe data and before actual exit resolves, ret
     expect(terminal).toEqual([
       {
         diagnostics: emptyDiagnostics.snapshot(),
+        decoderCadence: expect.objectContaining({
+          ended: true,
+          progress: { lastFreshPTS: 9000, ageMs: 0, stalled: false },
+        }),
         telemetryEOF: true,
         encoderExit: { code: 23, signal: null },
         outputProgress: { frame: 7, outTimeUs: 900 },

@@ -22,6 +22,12 @@ it('emits one unknown terminal on a synchronous guardian spawn failure', async (
   const pipeline = startPipeline(spec, log, { onTerminal: terminal });
   expect(await pipeline.waitExit()).toEqual({ code: null, signal: null });
   expect(terminal).toHaveBeenCalledExactlyOnceWith({
+    decoderCadence: expect.objectContaining({
+      ended: true,
+      progress: null,
+      oneSecond: null,
+      twoSeconds: null,
+    }),
     telemetryEOF: false,
     encoderExit: null,
     outputProgress: null,
@@ -76,4 +82,51 @@ it('waits for close after a guardian pre-spawn error and contains throwing termi
   expect(terminal.mock.calls[0]![0]).toMatchObject({ telemetryEOF: true, encoderExit: null });
   child.emit('close');
   expect(terminal).toHaveBeenCalledTimes(1);
+});
+
+it('seals the cadence owner on pre-spawn failure without manufacturing a stall', async () => {
+  fork.mockImplementationOnce(() => {
+    throw new Error('spawn');
+  });
+  const pipeline = startPipeline(spec, log);
+  await pipeline.waitExit();
+  expect(pipeline.snapshotDecoderCadence?.()).toMatchObject({
+    ended: true,
+    progress: null,
+    oneSecond: null,
+    twoSeconds: null,
+  });
+});
+
+it('samples one-second stalls from the real dedicated pipe and joins its final snapshot', async () => {
+  let now = 100;
+  const pipe = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    pid: 1,
+    connected: true,
+    send: vi.fn(),
+    stdout: new PassThrough(),
+    stdio: [null, null, null, null, pipe, new PassThrough()],
+    exitCode: null,
+    signalCode: null,
+  });
+  fork.mockReturnValueOnce(child);
+  const terminal = vi.fn();
+  const pipeline = startPipeline(spec, log, { monotonicNow: () => now, onTerminal: terminal });
+  pipe.write('frame:0 pts:0 pts_time:0\nscorebug.source=1\n');
+  now = 1100;
+  const live = pipeline.snapshotDecoderCadence?.();
+  expect(live).toMatchObject({
+    ended: false,
+    progress: { lastFreshPTS: 0, ageMs: 1000, stalled: true },
+    oneSecond: { freshFrames: 1 },
+  });
+  pipe.end();
+  child.emit('message', { event: 'exit', code: 0, signal: null });
+  child.emit('close', 0, null);
+  expect(await pipeline.waitExit()).toEqual({ code: 0, signal: null });
+  const final = pipeline.snapshotDecoderCadence?.();
+  expect(final).toMatchObject({ ended: true, progress: { stalled: false } });
+  expect(final?.scopeID).toBe(live?.scopeID);
+  expect(terminal.mock.calls[0]?.[0]?.decoderCadence).toEqual(final);
 });
