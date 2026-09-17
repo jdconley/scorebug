@@ -142,7 +142,7 @@
 +}
 --- a/internal/defs/api_srt.go
 +++ b/internal/defs/api_srt.go
-@@ -23,6 +23,30 @@
+@@ -23,6 +23,32 @@
  	APISRTConnStatePublish APISRTConnState = "publish"
  )
  
@@ -156,6 +156,8 @@
 +// APISRTBandwidthProbe counts complete marked messages delivered before demux.
 +// Scope and authority come from the enclosing authenticated publisher connection.
 +type APISRTBandwidthProbe struct {
++	Stage                       *int    `json:"stage,omitempty"`
++	TotalDeliveredPayloadBytes  string  `json:"totalDeliveredPayloadBytes,omitempty"`
 +	Convention                  string  `json:"convention"`
 +	ID                          string  `json:"id"`
 +	PublishingGeneration        string  `json:"publishingGeneration"`
@@ -173,7 +175,7 @@
  // APISRTConn is a SRT connection.
  type APISRTConn struct {
  	ID         uuid.UUID       `json:"id"`
-@@ -32,6 +56,10 @@
+@@ -32,6 +58,10 @@
  	Path       string          `json:"path"`
  	Query      string          `json:"query"`
  	User       string          `json:"user"`
@@ -1746,7 +1748,7 @@
 +}
 --- /dev/null
 +++ b/internal/servers/srt/probe_reader.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,204 @@
 +package srt
 +
 +import (
@@ -1762,7 +1764,9 @@
 +)
 +
 +// probeReader observes delivered TS bytes without changing demux input or errors.
-+// It owns one partial packet and one attempt; invalid evidence never stops media.
++// It owns one partial packet and one current stage; invalid evidence never stops media.
++// A bounded stage number replaces retired-identity storage. Clock and total bytes
++// belong to the publication and survive stage replacement.
 +type probeReader struct {
 +	r           io.Reader
 +	now         func() time.Time
@@ -1770,6 +1774,9 @@
 +	mutex       sync.Mutex
 +	partial     [188]byte
 +	used        int
++	version     byte
++	stage       uint32
++	totalBytes  uint64
 +	seen        bool
 +	id          uuid.UUID
 +	generation  uint64
@@ -1834,15 +1841,34 @@
 +		return
 +	}
 +	// Other TS packets, including ordinary anonymous null packets, are not probes.
-+	if p[1]&0x1f != 0x1f || p[2] != 0xff || !bytes.Equal(p[4:12], []byte("SBUGPRB1")) {
++	if p[1]&0x1f != 0x1f || p[2] != 0xff ||
++		(!bytes.Equal(p[4:12], []byte("SBUGPRB1")) && !bytes.Equal(p[4:12], []byte("SBUGPRB2"))) {
 +		return
 +	}
++	version := p[11]
++	if !r.seen {
++		r.version = version
++	}
 +	r.seen = true
++	if r.version != version {
++		r.fail("scope")
++		return
++	}
 +	if !bytes.Equal(p[:4], []byte{0x47, 0x1f, 0xff, 0x10}) {
 +		r.fail("shape")
 +		return
 +	}
-+	for _, v := range p[49:] {
++	tail := 49
++	var stage uint32
++	if version == '2' {
++		stage = binary.BigEndian.Uint32(p[49:53])
++		if stage == 0 || stage > 32 {
++			r.fail("shape")
++			return
++		}
++		tail = 53
++	}
++	for _, v := range p[tail:] {
 +		if v != 0xff {
 +			r.fail("shape")
 +			return
@@ -1860,6 +1886,20 @@
 +		r.id = id
 +		r.generation = generation
 +		r.rate = rate
++		r.stage = stage
++	} else if version == '2' && stage != r.stage {
++		// A replacement must start after a complete message. Unseen stage gaps
++		// are allowed, and a historical UUID may return at a newer stage.
++		if stage < r.stage || id == r.id || generation != r.generation ||
++			sequence != 0 || p[48] != 0 || r.pending != 0 {
++			r.fail("scope")
++			return
++		}
++		r.id = id
++		r.rate = rate
++		r.stage = stage
++		r.messages = 0
++		r.first, r.last = nil, nil
 +	} else if r.id != id || r.generation != generation || r.rate != rate {
 +		r.fail("scope")
 +		return
@@ -1868,7 +1908,7 @@
 +		r.fail("sequence")
 +		return
 +	}
-+	if (r.messages+1)*1316 > 16*1024*1024 {
++	if r.totalBytes+1316 > 16*1024*1024 {
 +		r.fail("byteLimit")
 +		return
 +	}
@@ -1876,6 +1916,7 @@
 +	if r.pending == 7 {
 +		r.pending = 0
 +		r.messages++
++		r.totalBytes += 1316
 +		if r.first == nil {
 +			first := at
 +			r.first = &first
@@ -1896,6 +1937,12 @@
 +		DeliveredMessages: strconv.FormatUint(r.messages, 10), DeliveredPayloadBytes: strconv.FormatUint(r.messages*1316, 10),
 +		NextSequence: strconv.FormatUint(r.messages, 10), PendingPackets: r.pending,
 +		ObservedAtNanoseconds: strconv.FormatInt(at, 10), InvalidReason: r.invalid}
++	if r.version == '2' {
++		value.Convention = "mpegts-null-probe-v2"
++		stage := int(r.stage)
++		value.Stage = &stage
++		value.TotalDeliveredPayloadBytes = strconv.FormatUint(r.totalBytes, 10)
++	}
 +	if r.first != nil {
 +		s := strconv.FormatInt(*r.first, 10)
 +		value.FirstDeliveredAtNanoseconds = &s
@@ -1908,13 +1955,14 @@
 +}
 --- /dev/null
 +++ b/internal/servers/srt/probe_reader_test.go
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,441 @@
 +package srt
 +
 +import (
 +	"bytes"
 +	"encoding/binary"
 +	"encoding/hex"
++	"encoding/json"
 +	"io"
 +	"strconv"
 +	"sync"
@@ -2115,6 +2163,239 @@
 +	require.Equal(t, "byteLimit", s.InvalidReason)
 +	require.Equal(t, strconv.Itoa(messages), s.DeliveredMessages)
 +	require.Equal(t, strconv.Itoa(messages*1316), s.DeliveredPayloadBytes)
++}
++
++// Literal prefix is independent of the parser and the v1 message builder.
++// Fixed vector: UUID 00112233-4455-6677-8899-aabbccddeeff, generation
++// 0x0102030405060708, sequence zero, 1Mbps, ordinal zero, stage 0x1f.
++func probeV2Message(stage uint32, identity byte, sequence uint64, rate uint32) []byte {
++	prefix, _ := hex.DecodeString("471fff10534255475052423200112233445566778899aabbccddeeff01020304050607080000000000000000000f4240000000001f")
++	b := bytes.Repeat([]byte{0xff}, 1316)
++	for part := 0; part < 7; part++ {
++		p := b[part*188:]
++		copy(p, prefix)
++		p[12] = identity
++		binary.BigEndian.PutUint64(p[36:], sequence)
++		binary.BigEndian.PutUint32(p[44:], rate)
++		p[48] = byte(part)
++		binary.BigEndian.PutUint32(p[49:], stage)
++	}
++	return b
++}
++
++func probeJSON(t *testing.T, r *probeReader) map[string]any {
++	t.Helper()
++	s := r.snapshot()
++	require.NotNil(t, s)
++	b, err := json.Marshal(s)
++	require.NoError(t, err)
++	var result map[string]any
++	require.NoError(t, json.Unmarshal(b, &result))
++	return result
++}
++
++func TestProbeReaderV2FixedVectorFragmentedMixedMedia(t *testing.T) {
++	for _, chunk := range []int{1, 17, 187, 188, 189, 1316, 4096} {
++		t.Run(strconv.Itoa(chunk), func(t *testing.T) {
++			message := probeV2Message(31, 0, 0, 1000000)
++			for part := 0; part < 7; part++ {
++				p := message[part*188 : (part+1)*188]
++				require.Equal(t, "471fff10534255475052423200112233445566778899aabbccddeeff01020304050607080000000000000000000f4240", hex.EncodeToString(p[:48]))
++				require.Equal(t, byte(part), p[48])
++				require.Equal(t, []byte{0, 0, 0, 31}, p[49:53])
++				require.Equal(t, bytes.Repeat([]byte{0xff}, 135), p[53:])
++			}
++			ordinary := bytes.Repeat([]byte{0xff}, 188)
++			copy(ordinary, []byte{0x47, 0x1f, 0xff, 0x10})
++			media := append([]byte{}, ordinary...)
++			media[1], media[2] = 1, 0
++			var input []byte
++			for at := 0; at < len(message); at += 188 {
++				input = append(input, ordinary...)
++				input = append(input, message[at:at+188]...)
++				input = append(input, media...)
++			}
++			r := newProbeReader(&probeChunkReader{input, chunk, io.ErrUnexpectedEOF}, time.Now)
++			output, err := io.ReadAll(r)
++			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
++			require.Equal(t, input, output)
++			s := probeJSON(t, r)
++			require.Equal(t, "mpegts-null-probe-v2", s["convention"])
++			require.Equal(t, float64(31), s["stage"])
++			require.Equal(t, "00112233-4455-6677-8899-aabbccddeeff", s["id"])
++			require.Equal(t, "72623859790382856", s["publishingGeneration"])
++			require.Equal(t, "1316", s["totalDeliveredPayloadBytes"])
++			require.Equal(t, "1", s["deliveredMessages"])
++			require.NotContains(t, s, "invalidReason")
++		})
++	}
++}
++
++func TestProbeReaderV2TransitionsCountersAndClock(t *testing.T) {
++	base := time.Unix(0, 0)
++	now := base
++	r := newProbeReader(bytes.NewReader(nil), func() time.Time { return now })
++	feed := func(b []byte) {
++		r.r = bytes.NewReader(b)
++		out := make([]byte, len(b))
++		n, err := r.Read(out)
++		require.NoError(t, err)
++		require.Equal(t, len(b), n)
++		require.Equal(t, b, out)
++	}
++	now = base.Add(time.Second)
++	feed(append(probeV2Message(3, 0, 0, 1), probeV2Message(3, 0, 1, 1)...))
++	old := probeJSON(t, r)
++	require.Equal(t, "2", old["deliveredMessages"])
++	now = base.Add(2 * time.Second)
++	next := probeV2Message(8, 1, 0, 2000000)
++	feed(next[:188])
++	s := probeJSON(t, r)
++	require.Equal(t, float64(8), s["stage"])
++	require.Equal(t, float64(2000000), s["bitRate"])
++	require.Equal(t, "0", s["deliveredMessages"])
++	require.Equal(t, "0", s["deliveredPayloadBytes"])
++	require.Equal(t, "0", s["nextSequence"])
++	require.Equal(t, float64(1), s["pendingPackets"])
++	require.Equal(t, "2632", s["totalDeliveredPayloadBytes"])
++	require.NotContains(t, s, "firstDeliveredAtNanoseconds")
++	require.NotContains(t, s, "lastDeliveredAtNanoseconds")
++	now = base.Add(3 * time.Second)
++	feed(next[188:])
++	s = probeJSON(t, r)
++	require.Equal(t, "3948", s["totalDeliveredPayloadBytes"])
++	require.Equal(t, "3000000000", s["firstDeliveredAtNanoseconds"])
++	require.Equal(t, "3000000000", s["lastDeliveredAtNanoseconds"])
++	require.Equal(t, "3000000000", s["observedAtNanoseconds"])
++	// Reusing an older UUID at a higher stage is legal: stage+UUID is identity.
++	feed(probeV2Message(32, 0, 0, 1000000))
++	s = probeJSON(t, r)
++	require.Equal(t, float64(32), s["stage"])
++	require.Equal(t, "5264", s["totalDeliveredPayloadBytes"])
++	require.NotContains(t, s, "invalidReason")
++	require.Equal(t, "1000000000", old["firstDeliveredAtNanoseconds"])
++	now = base.Add(2 * time.Second)
++	require.Equal(t, "clock", r.snapshot().InvalidReason)
++}
++
++func TestProbeReaderV2FaultsStickyAndPassThrough(t *testing.T) {
++	v2 := func(stage uint32, id byte, seq uint64) []byte { return probeV2Message(stage, id, seq, 1000000) }
++	mutate := func(offset int, value byte) []byte { b := v2(2, 1, 0); b[offset] = value; return b }
++	tests := []struct {
++		name, reason  string
++		before, after []byte
++	}{
++		{"sameStageUUID", "scope", v2(1, 0, 0), v2(1, 1, 1)},
++		{"sameStageRate", "scope", v2(1, 0, 0), probeV2Message(1, 0, 1, 1)},
++		{"oldStage", "scope", v2(2, 0, 0), v2(1, 1, 0)},
++		{"higherSameUUID", "scope", v2(1, 1, 0), v2(2, 1, 0)},
++		{"partialPrior", "scope", v2(1, 0, 0)[:188], v2(2, 1, 0)},
++		{"generation", "scope", v2(1, 0, 0), mutate(35, 9)},
++		{"sequenceStart", "scope", v2(1, 0, 0), v2(2, 1, 1)},
++		{"ordinalStart", "scope", v2(1, 0, 0), mutate(48, 1)},
++		{"v1ToV2", "scope", probeTestMessage(0), v2(2, 1, 0)},
++		{"v2ToV1", "scope", v2(1, 0, 0), probeTestMessage(1)},
++		{"zeroStage", "shape", nil, v2(0, 0, 0)},
++		{"excessStage", "shape", nil, v2(33, 0, 0)},
++		{"maxStage", "shape", nil, v2(^uint32(0), 0, 0)},
++		{"header", "shape", nil, mutate(3, 0x30)},
++		{"tailStart", "shape", nil, mutate(53, 0)},
++		{"tailEnd", "shape", nil, mutate(187, 0)},
++		{"ordinalRange", "shape", nil, mutate(48, 7)},
++		{"zeroRate", "shape", nil, probeV2Message(1, 0, 0, 0)},
++		{"excessRate", "shape", nil, probeV2Message(1, 0, 0, 2000001)},
++		{"firstSequence", "sequence", nil, v2(1, 0, 1)},
++		{"duplicate", "sequence", v2(1, 0, 0), v2(1, 0, 0)},
++		{"partialPacket", "truncated", nil, v2(1, 0, 0)[:189]},
++		{"partialMessage", "truncated", nil, v2(1, 0, 0)[:188]},
++	}
++	zeroID := v2(1, 0, 0)
++	clear(zeroID[12:28])
++	zeroGen := v2(1, 0, 0)
++	clear(zeroGen[28:36])
++	tests = append(tests, struct {
++		name, reason  string
++		before, after []byte
++	}{"zeroID", "shape", nil, zeroID}, struct {
++		name, reason  string
++		before, after []byte
++	}{"zeroGeneration", "shape", nil, zeroGen})
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			data := append(append([]byte{}, tt.before...), tt.after...)
++			r := newProbeReader(&probeChunkReader{data, 71, io.ErrUnexpectedEOF}, time.Now)
++			out, err := io.ReadAll(r)
++			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
++			require.Equal(t, data, out)
++			s := probeJSON(t, r)
++			require.Equal(t, tt.reason, s["invalidReason"])
++			r.r = bytes.NewReader(v2(32, 2, 0))
++			_, err = io.ReadAll(r)
++			require.NoError(t, err)
++			after := probeJSON(t, r)
++			for _, field := range []string{"invalidReason", "id", "stage", "deliveredPayloadBytes", "totalDeliveredPayloadBytes"} {
++				require.Equal(t, s[field], after[field])
++			}
++		})
++	}
++}
++
++func TestProbeReaderV2CumulativeCapAndConcurrentSnapshots(t *testing.T) {
++	const messages = 16 * 1024 * 1024 / 1316
++	var input []byte
++	for seq := 0; seq < messages/2; seq++ {
++		input = append(input, probeV2Message(1, 0, uint64(seq), 1)...)
++	}
++	for seq := 0; seq <= messages-messages/2; seq++ {
++		input = append(input, probeV2Message(32, 1, uint64(seq), 2000000)...)
++	}
++	r := newProbeReader(bytes.NewReader(input), time.Now)
++	done := make(chan struct{})
++	var wg sync.WaitGroup
++	for range 4 {
++		wg.Go(func() {
++			for {
++				select {
++				case <-done:
++					return
++				default:
++					if s := r.snapshot(); s != nil {
++						s.ID = "local"
++					}
++				}
++			}
++		})
++	}
++	out, err := io.ReadAll(r)
++	close(done)
++	wg.Wait()
++	require.NoError(t, err)
++	require.Equal(t, input, out)
++	s := probeJSON(t, r)
++	require.Equal(t, "byteLimit", s["invalidReason"])
++	require.Equal(t, strconv.Itoa(messages*1316), s["totalDeliveredPayloadBytes"])
++	require.Equal(t, strconv.Itoa(messages-messages/2), s["deliveredMessages"])
++	require.Equal(t, strconv.Itoa((messages-messages/2)*1316), s["deliveredPayloadBytes"])
++}
++
++func TestProbeReaderV1JSONRemainsUnchanged(t *testing.T) {
++	r := newProbeReader(bytes.NewReader(probeTestMessage(0)), func() time.Time { return time.Unix(0, 0) })
++	_, err := io.ReadAll(r)
++	require.NoError(t, err)
++	b, err := json.Marshal(r.snapshot())
++	require.NoError(t, err)
++	require.JSONEq(t, `{"convention":"mpegts-null-probe-v1","id":"00112233-4455-6677-8899-aabbccddeeff","publishingGeneration":"72623859790382856","bitRate":1000000,"deliveredMessages":"1","deliveredPayloadBytes":"1316","nextSequence":"1","pendingPackets":0,"observedAtNanoseconds":"0","firstDeliveredAtNanoseconds":"0","lastDeliveredAtNanoseconds":"0"}`, string(b))
++}
++
++func TestProbeReaderV2MalformedSnapshotStillDeclaresV2Fields(t *testing.T) {
++	r := newProbeReader(bytes.NewReader(probeV2Message(0, 0, 0, 1000000)), time.Now)
++	_, err := io.ReadAll(r)
++	require.NoError(t, err)
++	s := probeJSON(t, r)
++	require.Equal(t, "mpegts-null-probe-v2", s["convention"])
++	require.Equal(t, float64(0), s["stage"])
++	require.Equal(t, "0", s["totalDeliveredPayloadBytes"])
++	require.Equal(t, "shape", s["invalidReason"])
 +}
 --- a/internal/servers/srt/server_test.go
 +++ b/internal/servers/srt/server_test.go

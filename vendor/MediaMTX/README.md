@@ -138,3 +138,37 @@ freshness/interval and candidate-cost admission are still separate work.
 See the [receiver accounting plan](../../docs/superpowers/plans/2026-09-16-receiver-probe-accounting.md).
 The regular deployment configurations and previously tagged recovery-v1 image
 remain unchanged.
+
+## Staged probe wire foundation
+
+The cumulative `staged-probe-wire-v2` build preserves `SBUGPRB1` accounting and
+adds explicit `SBUGPRB2` parsing. Build a fresh tag for this source:
+
+```sh
+docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-wire-v2 vendor/MediaMTX
+```
+
+V2 keeps bytes 0–48 of each packet's v1 layout except for the version marker.
+Bytes 49–52 carry a big-endian stage in 1...32; bytes 53–187 remain `0xff`.
+The first observed stage may exceed one. Replacement requires a higher stage,
+a different current UUID, the same publishing generation, sequence/ordinal zero,
+and a complete prior message. Stages may skip numbers and change offered rate.
+Stage plus UUID is the identity; a UUID from an older stage may return at a later
+stage. The observer retains no retired-UUID collection.
+
+Stage replacement resets current-stage message/byte counters and first/last
+delivery timestamps. The receiver clock, origin and cumulative complete-message
+payload persist; the 16 MiB cap spans every stage in the connection. Same-stage
+identity/rate changes, old stages, mixed wire versions, incomplete transitions
+and malformed input permanently invalidate evidence without changing media bytes
+or read errors. Private publisher snapshots use `mpegts-null-probe-v2`, numeric
+`stage` and decimal-string `totalDeliveredPayloadBytes`; existing counter fields
+refer to the current stage. V1 snapshots omit the two new fields.
+
+This is a wire and accounting foundation only. Native live probes continue to
+emit v1, and existing authenticated status consumers reject unqualified v2.
+Fixture defaults and regular deployments are unchanged. The previously qualified
+`receiver-probe-v1` image remains frozen; its qualification does not cover this
+new cumulative source. Repeated native SRT stages, capacity/admission decisions,
+physical-device behavior and deployment have not been qualified by these Go tests.
+See the [staged wire plan](../../docs/superpowers/plans/2026-09-17-staged-probe-wire.md).

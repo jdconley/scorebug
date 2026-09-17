@@ -1815,3 +1815,20 @@ Apple builds pass; reviews are approved. Frozen evidence:
 candidate cost/headroom and minimum-first upgrades/recovery; reconnect/soaks,
 physical phone/Watch and remote workers remain open. Production adaptation remains
 disabled until these gates are satisfied.
+
+
+[Staged probe wire foundation](2026-09-17-staged-probe-wire.md) adds an explicit
+versioned stage ordinal to optional null-packet measurements. The relay accepts
+ordered stages, isolates their delivery counts, and preserves cumulative traffic
+limits and invalid-evidence state across replacements. Existing v1 probes remain
+unchanged; native publishing still emits v1 and authenticated consumers still reject
+unqualified v2 evidence. This is a prerequisite for repeating measurements after
+conditions improve, not proof of spare capacity or completed automatic upgrades.
+
+Verification passes 204 SDK tests, 61 control-plane tests, 23 receiver-probe tests,
+three Go relay packages with race detection, both maintained patch provenance
+checks, ARM64 simulator build-for-testing and unsigned combined phone/Watch Release.
+Evidence: `artifacts/qa/staged-probe-wire-final-verification.json`. Next carry stage
+identity through authenticated status and current native ownership, join replacement
+owners, enforce cumulative sender limits, then qualify repeated native probes and
+fresh candidate cost. No new live-media or physical/remote qualification is claimed.

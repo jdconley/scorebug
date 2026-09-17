@@ -58,6 +58,16 @@ DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
   swift test --package-path vendor/HaishinKit
 ```
 
+The internal `SRTProbeMessage.encodeStage` helper adds the `SBUGPRB2` wire
+foundation for repeated bandwidth measurements. Every null TS packet includes a
+1...32 stage ordinal after its existing UUID, generation, message sequence, rate
+and packet ordinal. Input validation precedes integer conversion. The legacy
+encoder and the live probe still emit `SBUGPRB1`; this helper does not enable new
+traffic or repeated native owners. Receiver matching must include stage plus UUID,
+and cumulative sender budgets, joined replacement and authenticated stage status
+remain required before use. See the
+[staged wire plan](../../docs/superpowers/plans/2026-09-17-staged-probe-wire.md).
+
 The local deployment floor is iOS 17/macOS 13. The inherited libsrt binary still
 does not link an Intel simulator executable; this Mac uses the ARM64 slice.
 
