@@ -6,7 +6,7 @@ import ScorebugMedia
 /// Opt-in application binding. The caller must qualify profiles and telemetry.
 /// No capture model starts this owner until source/pressure alignment is qualified.
 actor PublishingQualitySession {
-    enum Failure: Error, Equatable { case notReady, busy, closed, staleAdvice, unsupportedProfile, invalidReceipt }
+    enum Failure: Error, Equatable { case notReady, busy, closed, staleAdvice, unsupportedProfile, invalidReceipt, startupPending }
     struct Snapshot: Sendable {
         let applied: QualityController.Settings?
         let revision: UInt64?
@@ -23,6 +23,7 @@ actor PublishingQualitySession {
         let setBitRate: @Sendable (Int, Double) async throws -> PublishingBitRateChange
         let stop: @Sendable () async -> Void
         var isPublishing: @Sendable () -> Bool = { true }
+        var videoStartup: @Sendable () -> PublishingVideoStartup? = { nil }
         var setProfile: (@Sendable (PublishingVideoProfile, Double) async throws -> PublishingVideoProfileChange)? = nil
     }
     private let operations: Operations
@@ -63,6 +64,7 @@ actor PublishingQualitySession {
          behavior: QualityController.Behavior = .legacy) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
             stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing },
+            videoStartup: { session.videoStartup },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
             uptime: { ProcessInfo.processInfo.systemUptime })
@@ -87,13 +89,28 @@ actor PublishingQualitySession {
         try admit()
         guard policy == nil else { throw Failure.staleAdvice }
         let start = try time(), deadline = start + 2
+        let startup = behavior == .progressive ? operations.videoStartup() : nil
+        if behavior == .progressive && startup == nil { throw Failure.startupPending }
         busy = true
         defer { busy = false }
         do {
+            if let startup {
+                guard startup.profile.rawValue == initial.profileID,
+                      let profile = profiles.first(where: { $0.id == initial.profileID }),
+                      startup.width == profile.width, startup.height == profile.height,
+                      startup.observedAt <= start else { throw Failure.invalidReceipt }
+            }
             let result = try await operations.setBitRate(initial.videoBitrate, deadline)
             try afterWrite()
             let now = try time()
             try validate(result, rate: initial.videoBitrate, start: start, deadline: deadline, now: now)
+            if let startup {
+                guard operations.videoStartup() == startup,
+                      result.publishingGeneration == startup.publishingGeneration,
+                      result.configuration.encoderSessionID == startup.encoderSessionID,
+                      let pts = result.lastSubmittedSourcePTS,
+                      CMTimeCompare(pts, startup.firstSourcePTS) >= 0 else { throw Failure.invalidReceipt }
+            }
             policy = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial,
                 at: now, recoveryStrategy: strategy, behavior: behavior)
             receipt = result; acknowledgedAt = now

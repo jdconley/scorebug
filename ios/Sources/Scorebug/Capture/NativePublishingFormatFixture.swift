@@ -13,6 +13,12 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     let videoCost: PublishingVideoCostOwner
     private var compressedRows: [[String: Any]] = []
     private var encodingRows: [[String: Any]] = []
+    private var firstEncoding: [String: Any]?
+    private var firstCompressed: [String: Any]?
+    private var startupRead: (@Sendable () -> PublishingVideoStartup?)?
+    func observeStartup(from publisher: SRTMediaPublisher) {
+        lock.withLock { startupRead = { [weak publisher] in publisher?.videoStartup } }
+    }
     private var frames = 0
     private var invalid = false
     private var generation: UInt64?
@@ -26,19 +32,24 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     }
     func observeEncoding(_ frame: SRTPublisher.EncoderFrame) {
         lock.withLock {
-            encodingRows.append(["sourcePTS": Self.time(frame.sourcePTS), "outputPTS": Self.time(frame.outputPTS),
+            let row: [String: Any] = ["sourcePTS": Self.time(frame.sourcePTS), "outputPTS": Self.time(frame.outputPTS),
                 "encoderSessionID": frame.encoderSessionID.uuidString,
                 "configurationID": frame.configuration.map { $0.id.uuidString } as Any? ?? NSNull(),
                 "configuredBitRate": frame.configuration.map { $0.bitRate } as Any? ?? NSNull(),
-                "submittedAt": frame.submittedAt, "completedAt": frame.completedAt])
+                "submittedAt": frame.submittedAt, "completedAt": frame.completedAt]
+            firstEncoding = firstEncoding ?? row
+            encodingRows.append(row)
             if encodingRows.count > 1024 { encodingRows.removeFirst() }
         }
     }
     func observe(_ frame: SRTPublisher.CompressedVideoFrame) {
         lock.withLock {
-            compressedRows.append(["sourcePTS": Self.time(frame.sourcePTS), "publishingGeneration": String(frame.publishingGeneration),
+            let row: [String: Any] = ["sourcePTS": Self.time(frame.sourcePTS), "publishingGeneration": String(frame.publishingGeneration),
                 "width": frame.width, "height": frame.height, "bytes": frame.byteCount,
-                "dequeuedAt": frame.dequeuedAt, "valid": frame.valid, "wasEncoded": frame.wasEncoded, "codec": frame.codec])
+                "dequeuedAt": frame.dequeuedAt, "valid": frame.valid, "wasEncoded": frame.wasEncoded, "codec": frame.codec,
+                "isSync": frame.isSync as Any? ?? NSNull()]
+            firstCompressed = firstCompressed ?? row
+            compressedRows.append(row)
             if compressedRows.count > 1024 { compressedRows.removeFirst() }
         }
         record(generation: frame.publishingGeneration, pts: frame.sourcePTS, width: frame.width,
@@ -59,8 +70,17 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
         }
     }
     func data() throws -> Data {
+        let startup = lock.withLock { startupRead }?()
+        let startupJSON: [String: Any]? = startup.map {
+            ["profile": $0.profile.rawValue, "width": $0.width, "height": $0.height,
+             "publishingGeneration": String($0.publishingGeneration), "encoderSessionID": $0.encoderSessionID.uuidString,
+             "firstSourcePTS": Self.time($0.firstSourcePTS), "submittedAt": $0.submittedAt,
+             "completedAt": $0.completedAt, "observedAt": $0.observedAt]
+        }
         let value: [String: Any] = lock.withLock {
             ["formatVersion": 1, "isClosed": true, "profile": profile.rawValue,
+             "startup": startupJSON as Any? ?? NSNull(),
+             "firstEncoding": firstEncoding as Any? ?? NSNull(), "firstCompressed": firstCompressed as Any? ?? NSNull(),
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                        "broadcastGeneration": scope.broadcastGeneration,
                        "publishingAttemptID": scope.publishingAttemptID.uuidString,

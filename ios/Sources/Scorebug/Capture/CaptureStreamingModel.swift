@@ -132,7 +132,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              }
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
-             let proof = profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
+             let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
              let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
              let didStop: (@Sendable () -> Void)?
              if let proof { observer = { proof.observe($0) }; didStop = { proof.persist() } }
@@ -140,13 +140,14 @@ struct PublishingClockObservation: Equatable, Sendable {
              let publisher = SRTMediaPublisher(url: target, observations: observations,
                  encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame) } }, videoProfile: profile,
                  compressedVideoObserver: observer, didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
+             proof?.observeStartup(from: publisher)
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope, mode: probeMode)
              }
              return publisher
              #else
-             return SRTMediaPublisher(url: url, observations: observations)
+             return SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup)
              #endif
          },
          observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in

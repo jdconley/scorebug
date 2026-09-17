@@ -3,6 +3,9 @@ import Foundation
 
 /// Immutable live encoder choice. It never configures the local archive.
 public enum PublishingVideoProfile: String, Sendable, CaseIterable {
+    /// Normal app connections start at the lowest implemented live profile.
+    /// Capture/archive settings are independently owned.
+    public static let minimumStartup = PublishingVideoProfile.low240
     case hd1080 = "1080p30"
     case sd540 = "540p30"
     case low360 = "360p30"

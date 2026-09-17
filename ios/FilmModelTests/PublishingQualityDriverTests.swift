@@ -108,6 +108,34 @@ import XCTest
         XCTAssertEqual(application["windowSequence"] as? String, "105")
         XCTAssertEqual(application["id"] as? String, snapshot.application?.id.uuidString)
     }
+    func testPendingFirstFrameDoesNotWriteOrCloseUntilBoundedWaitExpires() async throws {
+        for arrivesAtDeadline in [false, true] {
+        let native = DriverNative()
+        native.release()
+        var operations = native.operations
+        operations.videoStartup = {
+            guard arrivesAtDeadline, native.now >= 102 else { return nil }
+            return .init(profile: .low240, width: 426, height: 240, publishingGeneration: 7,
+                encoderSessionID: UUID(), firstSourcePTS: .zero, submittedAt: 100, completedAt: 101, observedAt: 101.9)
+        }
+        let owner = try PublishingQualitySession(operations: operations,
+            profiles: [.init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000)],
+            attemptID: UUID(), initial: .init(profileID: "240p30", videoBitrate: 350_000), behavior: .progressive,
+            uptime: { native.now })
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil, uptime: { native.now })
+        let diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: nil, receipt: nil, ingress: nil,
+            transport: PublishingTransportStatisticsTracker().snapshot, thermal: PublishingThermalTracker().snapshot)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
+        XCTAssertFalse(driver.isClosed); XCTAssertEqual(native.calls, 0)
+        native.setNow(101.999)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
+        XCTAssertFalse(driver.isClosed); XCTAssertEqual(native.calls, 0)
+        native.setNow(102)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
+        XCTAssertTrue(driver.isClosed); XCTAssertEqual(native.calls, 0); XCTAssertEqual(native.stops, 1)
+        await driver.stop()
+        }
+    }
     func testWaitsForEncoderAndCoalescesHealthTicksIntoOneBootstrap() async throws {
         let native = DriverNative(), (driver, diagnostics) = try make(native)
         driver.tick(encoderReady: false, source: nil, diagnostics: diagnostics)

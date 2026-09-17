@@ -344,8 +344,18 @@ final class PublishingQualityProfileTests: XCTestCase {
             .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
         ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000), uptime: { native.now })
     }
-    private func progressiveOwner(_ native: ProfileQualityNative) throws -> PublishingQualitySession {
-        try .init(operations: native.operations, profiles: [
+    private func progressiveOwner(_ native: ProfileQualityNative, startupMode: Int = 0) throws -> PublishingQualitySession {
+        var operations = native.operations
+        operations.videoStartup = {
+            guard startupMode != 1 else { return nil }
+            let profile: PublishingVideoProfile = startupMode == 2 ? .low240 : .hd1080
+            return .init(profile: profile, width: profile.width, height: profile.height,
+                publishingGeneration: startupMode == 4 ? 8 : 7,
+                encoderSessionID: startupMode == 3 ? UUID() : native.oldEncoder,
+                firstSourcePTS: .init(value: startupMode == 6 ? 101 : 100, timescale: 30),
+                submittedAt: 99, completedAt: 99.1, observedAt: startupMode == 5 ? 101 : 99.2)
+        }
+        return try .init(operations: operations, profiles: [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000),
             .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
@@ -360,6 +370,24 @@ final class PublishingQualityProfileTests: XCTestCase {
             sourceLoss: nil, meanQueueOccupancy: 0, usableVideoCapacity: nil,
             connectivity: .connected, thermalPressure: .nominal, workerPressure: .unknown))
         return try XCTUnwrap(d.recommendation)
+    }
+    func testProgressiveBootstrapRequiresActualFirstFrameBeforeAnyRateWrite() async throws {
+        let native = ProfileQualityNative(), owner = try progressiveOwner(native, startupMode: 1)
+        do { try await owner.bootstrap(); XCTFail("Missing first compressed frame") }
+        catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .startupPending) }
+        let state = await owner.snapshot
+        XCTAssertNil(state.applied); XCTAssertFalse(state.isClosed)
+        XCTAssertEqual(native.calls, []); XCTAssertEqual(native.stops, 0)
+        await owner.stop()
+    }
+    func testProgressiveBootstrapRejectsWrongFirstProfileEncoderGenerationTimeOrSourceBoundary() async throws {
+        for mode in 2...6 {
+            let native = ProfileQualityNative(), owner = try progressiveOwner(native, startupMode: mode)
+            do { try await owner.bootstrap(); XCTFail("Unmatched startup receipt") } catch {}
+            let state = await owner.snapshot
+            XCTAssertNil(state.applied); XCTAssertTrue(state.isClosed)
+            XCTAssertEqual(native.stops, 1)
+        }
     }
     func testProgressiveResetSkipsMiddleAndHoldsOnlyAfterJoinedNativeReceipts() async throws {
         let native = ProfileQualityNative(), owner = try progressiveOwner(native)

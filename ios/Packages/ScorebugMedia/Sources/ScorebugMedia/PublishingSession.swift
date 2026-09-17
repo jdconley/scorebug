@@ -10,6 +10,8 @@ import Foundation
 /// Stop must finish even if its caller is cancelled. Destination credentials belong
 /// in the injected publisher, never in session errors or diagnostic snapshots.
 public protocol MediaPublisher: Sendable {
+    /// Synchronous scalar-only first-frame evidence owned by this publisher.
+    var videoStartup: PublishingVideoStartup? { get }
     func start() async throws
     func append(_ sample: CapturedMediaSample) async throws
     var isPublishing: Bool { get async }
@@ -27,6 +29,7 @@ public protocol MediaPublisher: Sendable {
 }
 
 public extension MediaPublisher {
+    var videoStartup: PublishingVideoStartup? { nil }
     func transportClock() async -> PublishingTransportClock? { nil }
     func transportStatistics() async -> PublishingTransportStatistics? { nil }
     func setVideoBitRate(_ bitsPerSecond: Int) async throws -> PublishingBitRateChange { throw PublishingSessionError.bitRateUpdateFailed }
@@ -92,6 +95,7 @@ public final class PublishingSession: Sendable {
     }
     deinit { core.cancel() }
     public var snapshot: PublishingSessionSnapshot { core.snapshot }
+    public var videoStartup: PublishingVideoStartup? { core.videoStartup }
     public func start() async throws { try await core.start() }
     @discardableResult public func offer(_ sample: CapturedMediaSample) -> Bool { core.offer(sample) }
     public func stop() async { await core.stop() }
@@ -148,6 +152,11 @@ private final class PublishingCore: @unchecked Sendable {
         }
         mailbox = try BoundedMailbox(maxItems: maxItems, maxBytes: maxBytes, overflowPolicy: .dropOldest,
                                      ingressObservation: configuration)
+    }
+    var videoStartup: PublishingVideoStartup? {
+        guard lock.withLock({ state == .publishing }) else { return nil }
+        let value = publisher.videoStartup
+        return lock.withLock { state == .publishing ? value : nil }
     }
     var snapshot: PublishingSessionSnapshot {
         lock.withLock {

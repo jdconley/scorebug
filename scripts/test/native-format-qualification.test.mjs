@@ -63,3 +63,61 @@ test('fixed240 requires actual native240 dimensions and exact profile identity',
   assert.throws(() => qualifyNativeFormat({ ...low, width: 960, height: 540 }, snapshot, '240p30'));
   assert.throws(() => qualifyNativeFormat(low, snapshot, '540p30'));
 });
+
+test('startup requires the actual first encoder and compressed callback join', () => {
+  const firstEncoding = {
+    sourcePTS: pts(1),
+    outputPTS: pts(1),
+    encoderSessionID: '11111111-1111-4111-8111-111111111111',
+    submittedAt: 10,
+    completedAt: 10.1,
+  };
+  const firstCompressed = {
+    sourcePTS: pts(1),
+    publishingGeneration: '2',
+    width: 960,
+    height: 540,
+    valid: true,
+    wasEncoded: true,
+    codec: 0x61766331,
+    bytes: 100,
+    isSync: true,
+    dequeuedAt: 10.2,
+  };
+  const startup = {
+    profile: '540p30',
+    width: 960,
+    height: 540,
+    publishingGeneration: '2',
+    encoderSessionID: firstEncoding.encoderSessionID,
+    firstSourcePTS: pts(1),
+    submittedAt: 10,
+    completedAt: 10.1,
+    observedAt: 10.2,
+  };
+  const value = { ...format, firstEncoding, firstCompressed, startup };
+  assert.deepEqual(
+    qualifyNativeFormat(value, snapshot, '540p30', { requireStartup: true }).startup,
+    startup,
+  );
+  for (const patch of [
+    { startup: null },
+    { firstEncoding: null },
+    { firstCompressed: null },
+    { startup: { ...startup, encoderSessionID: 'other' } },
+    { startup: { ...startup, publishingGeneration: '3' } },
+    { startup: { ...startup, profile: '240p30' } },
+    { startup: { ...startup, firstSourcePTS: pts(2) } },
+    { startup: { ...startup, observedAt: 11 } },
+    { firstEncoding: { ...firstEncoding, outputPTS: pts(2) } },
+    { firstEncoding: { ...firstEncoding, completedAt: 10.3 } },
+    { firstCompressed: { ...firstCompressed, isSync: false } },
+    { firstCompressed: { ...firstCompressed, codec: 0 } },
+    { firstCompressed: { ...firstCompressed, bytes: 0 } },
+    { firstCompressed: { ...firstCompressed, width: 1920 } },
+  ]) {
+    assert.throws(() =>
+      qualifyNativeFormat({ ...value, ...patch }, snapshot, '540p30', { requireStartup: true }),
+    );
+  }
+});

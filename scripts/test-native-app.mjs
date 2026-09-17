@@ -627,6 +627,7 @@ try {
       JSON.parse(formatBytes.toString('utf8')),
       observationSnapshot,
       liveProfile,
+      { requireStartup: true },
     );
     const costPath = join(artifact, 'native-video-cost.json');
     await cp(

@@ -12,6 +12,8 @@ public actor SRTMediaPublisher: MediaPublisher {
     public typealias TransportMetrics = (rttMilliseconds: Double, droppedPackets: Int32, sentBytes: UInt64)
     private enum State { case prepared, starting, publishing, stopped }
     public nonisolated let videoCost: PublishingVideoCostOwner?
+    private nonisolated let startupRead: @Sendable () -> PublishingVideoStartup?
+    public nonisolated var videoStartup: PublishingVideoStartup? { startupRead() }
     private let operations: Operations
     private var state = State.prepared
     private var startup: Task<Void, Error>?
@@ -35,6 +37,7 @@ public actor SRTMediaPublisher: MediaPublisher {
             compressedVideoObserver: compressedVideoObserver, pacesEncodedVideo: pacesEncodedVideo,
             allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost)
         self.videoCost = adapter.videoCost
+        self.startupRead = { adapter.videoStartup }
         operations = Operations(configure: { try await adapter.configure() },
             start: { try await adapter.start(url) },
             append: { sample in
@@ -70,7 +73,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var cancelProbe: @Sendable (UUID, UInt64) async -> Void = { _, _ in }
         var probeSnapshot: @Sendable () async -> PublishingBandwidthProbeSnapshot? = { nil }
     }
-    init(operations: Operations) { self.operations = operations; videoCost = nil }
+    init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
     public func start() async throws {
         guard state == .prepared else { throw PublisherError.invalidState }

@@ -17,7 +17,9 @@ enum VideoObservationFixture {
     enum UplinkError: Error { case invalidFixtureRoute }
 
     static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
-        guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else { return .hd1080 }
+        guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else {
+            return requested(environment: environment) ? .hd1080 : .minimumStartup
+        }
         guard let profile = PublishingVideoProfile(rawValue: raw), profile != .hd1080, requested(environment: environment),
               environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
               (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,

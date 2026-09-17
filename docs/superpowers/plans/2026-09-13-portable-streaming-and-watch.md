@@ -1525,3 +1525,31 @@ and qualify candidate cost/headroom plus real automatic transitions. Native rece
 failure currently retires publishing; minimum-profile reconnect must accompany
 activation. The existing driver continues using its legacy default until those gates
 are satisfied. No additional physical phone/Watch or remote worker result is claimed.
+
+
+[Minimum startup and first-frame evidence](2026-09-16-minimum-startup-evidence.md)
+now makes normal app connections configure 240p30 before the first live frame. Each
+attempt/reconnect owns a fresh constant-size first-frame observer. Progressive
+bootstrap joins actual compressed dimensions/source identity to the first native
+encoder, then requires a matching verified bitrate receipt before recording applied
+settings. Missing evidence has a bounded wait; wrong or late evidence cannot silently
+become verified startup. Archive configuration and explicit historical fixtures remain
+independent.
+
+Verification: 256 Media, 87 Streaming, 342 Core, 238 native model and 1,206 tooling
+tests pass, plus ARM64 simulator and unsigned iPhone/Watch Release builds. Actual
+`native-app-UwfiUF` fixed240 streaming passes: first compressed H.264 sync frame is
+426x240, all 3,381 native frames are consecutive, and raw first callbacks reconcile
+exactly with the production adapter receipt. First local pre-mux output appears
+0.500781 seconds after observation begins. Saved live media contains 3,348 consecutive
+frames after 33 acquisition frames; the clean 1080p archive contains 3,723 consecutive
+frames. Both fully decode, all 55 live/61 archive audio markers match, and owned
+processes finish cleanly. Fourteen altered actual receipts reject independently.
+Evidence: `artifacts/qa/minimum-startup-final-verification.json`.
+
+This verifies local first-frame encoding and fixed-profile media, not viewer startup
+latency or physical minimum-profile support. Actual disconnect/reconnect qualification,
+source-timed short delivery/watchdog integration, report reaction timing, fresh
+candidate cost/headroom and real automatic transitions remain before progressive
+production activation. Normal live publishing currently stays at the minimum until
+that automatic recovery path is qualified.

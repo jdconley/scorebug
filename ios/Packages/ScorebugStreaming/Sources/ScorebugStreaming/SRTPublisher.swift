@@ -10,6 +10,10 @@ import ScorebugMedia
 public actor SRTPublisher {
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
     public let videoCost: PublishingVideoCostOwner?
+    private nonisolated let startupEvidence: PublishingVideoStartupOwner
+    /// Historical evidence remains available after the terminal drain. Session
+    /// admission separately requires this same publisher to still be running.
+    public nonisolated var videoStartup: PublishingVideoStartup? { startupEvidence.snapshot.receipt }
     private let videoProfile: PublishingVideoProfile
     public struct EncoderConfiguration: Equatable, Sendable {
         public let id: UUID
@@ -54,6 +58,8 @@ public actor SRTPublisher {
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
                 videoCost: PublishingVideoCostOwner? = nil) {
+        let startupEvidence = PublishingVideoStartupOwner(profile: videoProfile)
+        self.startupEvidence = startupEvidence
         let cost = videoCost ?? observations.map { PublishingVideoCostOwner(scope: $0.snapshot.scope) }
         self.videoCost = cost
         self.stopPolicy = stopPolicy
@@ -61,8 +67,9 @@ public actor SRTPublisher {
         // Immutable ownership prevents late native completions from reaching a
         // later publishing attempt. Observe synchronously without retaining media.
         let configurationObserver: VideoEncoderConfigurationObserver?
-        if observations != nil || encoderConfigurationObserver != nil || cost != nil {
-            configurationObserver = { frame in
+        configurationObserver = { frame in
+                startupEvidence.recordEncoding(sourcePTS: frame.sourcePTS, outputPTS: frame.outputPTS,
+                    encoderSessionID: frame.encoderSessionID, submittedAt: frame.submittedAt, completedAt: frame.completedAt)
                 let configuration = frame.configuration.flatMap {
                     VideoEncodingConfiguration(id: $0.id, encoderSessionID: $0.encoderSessionID, bitRate: $0.bitRate)
                 }
@@ -78,9 +85,12 @@ public actor SRTPublisher {
                 cost?.observeEncoding(EncoderFrame(frame))
                 encoderConfigurationObserver?(EncoderFrame(frame))
             }
-        } else { configurationObserver = nil }
         stream = SRTStream(connection: connection, encoderConfigurationObserver: configurationObserver,
                            compressedVideoObserver: { frame in
+                               startupEvidence.recordCompressed(sourcePTS: frame.sourcePTS, publishingGeneration: frame.publishingGeneration,
+                                   width: Int(frame.width), height: Int(frame.height),
+                                   valid: frame.valid && frame.wasEncoded && frame.codec == kCMVideoCodecType_H264,
+                                   isSync: frame.isSync == true, dequeuedAt: frame.dequeuedAt)
                                cost?.observeCompressed(frame)
                                compressedVideoObserver?(frame)
                            }, pacesEncodedVideo: pacesEncodedVideo,
@@ -372,6 +382,7 @@ public actor SRTPublisher {
                 await connection.close()
             }
             videoCost?.close()
+            startupEvidence.close()
         }
         shutdown = pending
         await pending.value

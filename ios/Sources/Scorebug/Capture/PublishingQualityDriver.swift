@@ -17,6 +17,7 @@ import ScorebugMedia
     private var consumed: String?
     private var noted: String?
     private var localRejection: String?
+    private var startupWaitStartedAt: Double?
     private(set) var isClosed = false
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
@@ -39,7 +40,20 @@ import ScorebugMedia
             guard !isClosed else { return }
             if state.applied == nil {
                 guard encoderReady else { return }
-                try await owner.bootstrap()
+                if let start = startupWaitStartedAt {
+                    let now = uptime()
+                    guard now.isFinite, now >= start, now - start < 2 else { throw PublishingQualitySession.Failure.invalidReceipt }
+                }
+                do { try await owner.bootstrap() }
+                catch PublishingQualitySession.Failure.startupPending {
+                    let now = uptime()
+                    guard now.isFinite, (0...1e12).contains(now) else { throw PublishingQualitySession.Failure.invalidReceipt }
+                    let start = startupWaitStartedAt ?? now
+                    startupWaitStartedAt = start
+                    guard now >= start, now - start < 2 else { throw PublishingQualitySession.Failure.invalidReceipt }
+                    return
+                }
+                startupWaitStartedAt = nil
                 try Task.checkCancellation()
                 guard !isClosed else { return }
                 bootstrapCount += 1
