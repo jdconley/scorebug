@@ -29,6 +29,13 @@ public struct WorkerReceiverProbeTracker: Sendable {
         init(_ e: WorkerReceiverProbeFreshness) {
             expected = e.expected; epoch = e.workerEpoch; attempt = e.workerAttempt; publication = e.publication
         }
+        func matchesPublication(_ other: Self) -> Bool {
+            expected.gameId == other.expected.gameId && expected.generation == other.expected.generation &&
+            expected.workerId == other.expected.workerId &&
+            expected.publishingAttemptId == other.expected.publishingAttemptId &&
+            expected.publishingGeneration == other.expected.publishingGeneration &&
+            epoch == other.epoch && attempt == other.attempt && publication == other.publication
+        }
     }
     private var scope: Scope?
     private var previous: WorkerReceiverProbeFreshness?
@@ -42,8 +49,30 @@ public struct WorkerReceiverProbeTracker: Sendable {
         acceptedPayloadBytes: UInt64, senderActive: Bool, at instant: ContinuousClock.Instant = .now) -> WorkerReceiverProbeInterval? {
         guard let evidence else { suspend(); return nil }
         let nextScope = Scope(evidence)
-        if scope != nextScope { reset(); scope = nextScope }
+        if let scope, !scope.matchesPublication(nextScope) ||
+            // Preserve v1's independently owned single-probe replacement behavior.
+            (scope.expected.stage == nil && nextScope.expected.stage == nil && scope != nextScope) {
+            reset()
+        }
         guard !isQuarantined else { return nil }
+        if let scope {
+            switch (scope.expected.stage, nextScope.expected.stage) {
+            case (nil, nil): break
+            case let (oldStage?, newStage?):
+                guard newStage >= oldStage,
+                      newStage != oldStage || scope.expected == nextScope.expected,
+                      newStage == oldStage || scope.expected.probeId != nextScope.expected.probeId else {
+                    quarantine(); return nil
+                }
+                if newStage > oldStage {
+                    // A local stage replacement breaks coverage, never clock or
+                    // cumulative history. No history array is needed (at most 32 stages).
+                    suspend(); previousAccepted = nil
+                }
+            default: quarantine(); return nil
+            }
+        }
+        scope = nextScope
         guard evaluatedAt.map({ instant >= $0 }) ?? true else { quarantine(); return nil }
         evaluatedAt = instant
         expire(at: instant)
@@ -64,20 +93,39 @@ public struct WorkerReceiverProbeTracker: Sendable {
         if let previous {
             let old = previous.snapshot
             let oldMessages = UInt64(old.deliveredMessages)!, oldObserved = UInt64(old.observedAtNanoseconds)!
-            guard evidence.requestStartedAt >= previous.receivedAt, observed >= oldObserved,
-                  messages >= oldMessages,
-                  messages * 7 + UInt64(p.pendingPackets) >= oldMessages * 7 + UInt64(old.pendingPackets) else {
+            guard evidence.requestStartedAt >= previous.receivedAt, observed >= oldObserved else {
                 quarantine(); return nil
             }
-            if let first = old.firstDeliveredAtNanoseconds {
-                guard p.firstDeliveredAtNanoseconds == first else { quarantine(); return nil }
-            }
-            if messages == oldMessages {
-                guard p.lastDeliveredAtNanoseconds == old.lastDeliveredAtNanoseconds else { quarantine(); return nil }
-            } else {
-                guard let last = p.lastDeliveredAtNanoseconds.flatMap(UInt64.init), last >= oldObserved,
-                      oldMessages != 0 || (p.firstDeliveredAtNanoseconds.flatMap(UInt64.init).map { $0 >= oldObserved } ?? false) else {
+            if p.stage != old.stage {
+                // Prior pending packets reserve a whole message even if their
+                // completion was not observed before replacing the probe.
+                let required = UInt64(old.totalDeliveredPayloadBytes!)! +
+                    (old.pendingPackets > 0 ? 1316 : 0) + messages * 1316
+                guard UInt64(p.totalDeliveredPayloadBytes!)! >= required,
+                      messages == 0 || (p.firstDeliveredAtNanoseconds.flatMap(UInt64.init).map { $0 >= oldObserved } ?? false) else {
                     quarantine(); return nil
+                }
+            } else {
+                guard messages >= oldMessages,
+                      messages * 7 + UInt64(p.pendingPackets) >= oldMessages * 7 + UInt64(old.pendingPackets) else {
+                    quarantine(); return nil
+                }
+                if let totalText = p.totalDeliveredPayloadBytes {
+                    let total = UInt64(totalText)!, oldTotal = UInt64(old.totalDeliveredPayloadBytes!)!
+                    guard total >= oldTotal, total - oldTotal == (messages - oldMessages) * 1316 else {
+                        quarantine(); return nil
+                    }
+                }
+                if let first = old.firstDeliveredAtNanoseconds {
+                    guard p.firstDeliveredAtNanoseconds == first else { quarantine(); return nil }
+                }
+                if messages == oldMessages {
+                    guard p.lastDeliveredAtNanoseconds == old.lastDeliveredAtNanoseconds else { quarantine(); return nil }
+                } else {
+                    guard let last = p.lastDeliveredAtNanoseconds.flatMap(UInt64.init), last >= oldObserved,
+                          oldMessages != 0 || (p.firstDeliveredAtNanoseconds.flatMap(UInt64.init).map { $0 >= oldObserved } ?? false) else {
+                        quarantine(); return nil
+                    }
                 }
             }
         }

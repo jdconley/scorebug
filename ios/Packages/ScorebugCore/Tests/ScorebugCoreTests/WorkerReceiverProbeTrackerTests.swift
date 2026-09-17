@@ -19,7 +19,8 @@ final class WorkerReceiverProbeTrackerTests: XCTestCase {
         return try XCTUnwrap(WorkerReceiverProbeFreshness(response: response,
             expected: .init(gameId: "match", generation: 2, workerId: "mac",
                 publishingAttemptId: response.status.publication!.publishingAttemptId,
-                probeId: p.id, publishingGeneration: 1, bitRate: 1_000_000),
+                probeId: response.status.receiverProbe!.snapshot.id, publishingGeneration: UInt64(response.status.receiverProbe!.snapshot.publishingGeneration)!,
+                bitRate: response.status.receiverProbe!.snapshot.bitRate, stage: response.status.receiverProbe!.snapshot.stage),
             receivedAt: anchor + .seconds(seconds), requestDuration: .milliseconds(10)))
     }
     @discardableResult private func observe(_ tracker: inout WorkerReceiverProbeTracker, seconds: Double, messages: Int,
@@ -29,6 +30,160 @@ final class WorkerReceiverProbeTrackerTests: XCTestCase {
             acceptedPayloadBytes: accepted ?? UInt64((messages + (pending > 0 ? 1 : 0)) * 1316),
             senderActive: active, at: anchor + .seconds(seconds))
     }
+    @discardableResult private func stage(_ tracker: inout WorkerReceiverProbeTracker,
+        _ number: Int, seconds: Double, messages: Int, totalMessages: Int, pending: Int = 0,
+        first: Double = 0.1, id: Int? = nil, accepted: UInt64? = nil,
+        change: (inout WorkerMediaStatusResponse) -> Void = { _ in }) throws -> WorkerReceiverProbeInterval? {
+        try observe(&tracker, seconds: seconds, messages: messages, pending: pending, accepted: accepted) {
+            $0.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+            $0.status.receiverProbe?.snapshot.stage = number
+            $0.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String(totalMessages * 1316)
+            $0.status.receiverProbe?.snapshot.id = String(format: "60000000-0000-4000-8000-%012d", id ?? number)
+            $0.status.receiverProbe?.snapshot.firstDeliveredAtNanoseconds = messages == 0 ? nil : String(Int64(first * 1e9))
+            change(&$0)
+        }
+    }
+
+    func testV2AdvancingStagesResetOnlyStageWindowAndPermitSkippedStagesAndHistoricalUUID() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90)
+        XCTAssertNotNil(try stage(&tracker, 1, seconds: 2, messages: 180, totalMessages: 180))
+        XCTAssertNil(try stage(&tracker, 3, seconds: 3, messages: 20, totalMessages: 220, first: 2))
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNil(tracker.latest)
+        XCTAssertNotNil(try stage(&tracker, 3, seconds: 4, messages: 110, totalMessages: 310, first: 2))
+        XCTAssertNil(try stage(&tracker, 4, seconds: 5, messages: 20, totalMessages: 330, first: 4, id: 1))
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNotNil(try stage(&tracker, 4, seconds: 6, messages: 110, totalMessages: 420, first: 4, id: 1))
+    }
+
+    func testV2StageAndIdentitySubstitutionsQuarantineSamePublication() throws {
+        let faults: [(inout WorkerMediaStatusResponse) -> Void] = [
+            { $0.status.receiverProbe?.snapshot.stage = 1 },
+            { $0.status.receiverProbe?.snapshot.stage = 2 },
+            { $0.status.receiverProbe?.snapshot.id = "60000000-0000-4000-8000-000000000002" },
+            { $0.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v1"; $0.status.receiverProbe?.snapshot.stage = nil; $0.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = nil },
+        ]
+        for fault in faults {
+            var tracker = WorkerReceiverProbeTracker()
+            try stage(&tracker, 2, seconds: 1, messages: 90, totalMessages: 180)
+            XCTAssertNil(try stage(&tracker, 3, seconds: 2, messages: 20, totalMessages: 220, first: 1, change: fault))
+            XCTAssertTrue(tracker.isQuarantined)
+        }
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 2, seconds: 1, messages: 90, totalMessages: 180)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 2, messages: 180, totalMessages: 270) {
+            $0.status.receiverProbe?.snapshot.bitRate = 500_000
+        })
+        XCTAssertTrue(tracker.isQuarantined)
+        tracker.reset()
+        try observe(&tracker, seconds: 1, messages: 90)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 2, messages: 20, totalMessages: 110, first: 1))
+        XCTAssertTrue(tracker.isQuarantined)
+    }
+
+    func testV2StageCannotWashCounterClockSerialOrPendingContradictions() throws {
+        let faults: [(inout WorkerMediaStatusResponse) -> Void] = [
+            { $0.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String(110 * 1316) },
+            { $0.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String(20 * 1316) },
+            { $0.status.receiverProbe?.snapshot.firstDeliveredAtNanoseconds = "999999999" },
+            { $0.status.receiverProbe?.snapshot.observedAtNanoseconds = "4000000000"; $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "3990000000" },
+            { $0.status.receiverProbe?.snapshot.observedAtNanoseconds = "999999999"; $0.status.receiverProbe?.snapshot.firstDeliveredAtNanoseconds = "900000000"; $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "990000000" },
+        ]
+        for fault in faults {
+            var tracker = WorkerReceiverProbeTracker()
+            try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90, pending: 1)
+            tracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: anchor + .seconds(1.1))
+            XCTAssertNil(try stage(&tracker, 2, seconds: 2, messages: 20, totalMessages: 111, first: 1, change: fault))
+            XCTAssertTrue(tracker.isQuarantined)
+            XCTAssertNil(try stage(&tracker, 3, seconds: 3, messages: 20, totalMessages: 200, first: 2))
+            XCTAssertTrue(tracker.isQuarantined)
+        }
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 1.005, messages: 0, totalMessages: 90))
+        XCTAssertTrue(tracker.isQuarantined)
+    }
+
+    func testV2SameStageTotalDeltaMustMatchStageBytes() throws {
+        for total in [99, 101, 80] {
+            var tracker = WorkerReceiverProbeTracker()
+            try stage(&tracker, 1, seconds: 1, messages: 20, totalMessages: 90)
+            XCTAssertNil(try stage(&tracker, 1, seconds: 2, messages: 30, totalMessages: total))
+            XCTAssertTrue(tracker.isQuarantined)
+        }
+    }
+
+    func testV2SameStageUUIDSwapAndSenderRegressionFailClosed() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 2, seconds: 1, messages: 90, totalMessages: 180)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 2, messages: 180, totalMessages: 270, id: 3))
+        XCTAssertTrue(tracker.isQuarantined)
+        tracker.reset()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90, accepted: 200 * 1316)
+        XCTAssertNil(try stage(&tracker, 1, seconds: 2, messages: 180, totalMessages: 180))
+        XCTAssertTrue(tracker.isQuarantined)
+    }
+
+    func testV2StaleStageSuppliesNoCreditAndCannotEraseCumulativeHighWater() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90, pending: 1)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 3, messages: 20, totalMessages: 111, first: 1) {
+            $0.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = "1000000000"
+        })
+        XCTAssertNil(tracker.latest)
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNil(try stage(&tracker, 3, seconds: 4, messages: 20, totalMessages: 110, first: 3))
+        XCTAssertTrue(tracker.isQuarantined)
+    }
+
+    func testV2NativeGenerationReplacementResetsQuarantineAndV1ScopeBehaviorIsPreserved() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90)
+        try stage(&tracker, 1, seconds: 2, messages: 80, totalMessages: 90)
+        XCTAssertTrue(tracker.isQuarantined)
+        XCTAssertNil(try stage(&tracker, 1, seconds: 3, messages: 20, totalMessages: 20) {
+            $0.status.receiverProbe?.snapshot.publishingGeneration = "2"
+        })
+        XCTAssertFalse(tracker.isQuarantined)
+        tracker.reset()
+        try observe(&tracker, seconds: 1, messages: 90)
+        try observe(&tracker, seconds: 2, messages: 80)
+        XCTAssertTrue(tracker.isQuarantined)
+        XCTAssertNil(try observe(&tracker, seconds: 3, messages: 20) {
+            $0.status.receiverProbe?.snapshot.id = "70000000-0000-4000-8000-000000000001"
+        })
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNotNil(try observe(&tracker, seconds: 4, messages: 110) {
+            $0.status.receiverProbe?.snapshot.id = "70000000-0000-4000-8000-000000000001"
+        })
+    }
+
+    func testV2PendingReservationAndEmptyStageBaseline() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90, pending: 6)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 2, messages: 0, totalMessages: 91))
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNotNil(try stage(&tracker, 2, seconds: 3, messages: 20, totalMessages: 111, first: 2))
+        XCTAssertFalse(tracker.isQuarantined)
+    }
+
+    func testV2QuarantineSurvivesStageReplacementButNewPublicationCanReset() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        try stage(&tracker, 1, seconds: 1, messages: 90, totalMessages: 90)
+        try stage(&tracker, 1, seconds: 2, messages: 80, totalMessages: 90)
+        XCTAssertTrue(tracker.isQuarantined)
+        XCTAssertNil(try stage(&tracker, 2, seconds: 3, messages: 20, totalMessages: 110, first: 2))
+        XCTAssertTrue(tracker.isQuarantined)
+        XCTAssertNil(try stage(&tracker, 1, seconds: 4, messages: 20, totalMessages: 20) {
+            $0.status.publication?.publisherId = "50000000-0000-4000-8000-000000000005"
+        })
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNotNil(try stage(&tracker, 1, seconds: 5, messages: 110, totalMessages: 110) {
+            $0.status.publication?.publisherId = "50000000-0000-4000-8000-000000000005"
+        })
+    }
+
     func testIntervalSubtractsAlreadyReceivedPartialPacketsAndUsesReceiverElapsedTime() throws {
         var tracker = WorkerReceiverProbeTracker()
         XCTAssertNil(try observe(&tracker, seconds: 1, messages: 90, pending: 3))

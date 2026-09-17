@@ -43,6 +43,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
     private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
+    private var receiverProbeOwner: PublishingProbeObservation?
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
@@ -582,7 +583,10 @@ struct PublishingClockObservation: Equatable, Sendable {
         workerDecoderDeliveryFreshness = workerDeliveryTracker.latest
         receiverProbeTracker.expire(at: instant)
         workerReceiverProbeInterval = receiverProbeTracker.latest
-        if receiverProbeLeaseDeadline.map({ instant < $0 }) != true {
+        if receiverProbeLeaseDeadline.map({ instant < $0 }) != true ||
+            receiverProbeOwner?.isActive(at: ProcessInfo.processInfo.systemUptime) != true {
+            receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: instant)
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
             workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
         }
         if workerReceiverProbeFreshness?.snapshotAgeUpperBound(at: instant).map({ $0 <= WorkerReceiverProbeTracker.maximumAge }) != true ||
@@ -625,14 +629,16 @@ struct PublishingClockObservation: Equatable, Sendable {
               probe.publishingGeneration == publishing.session.snapshot.transportClock?.publishingGeneration,
               let worker = commandState?.snapshot?.broadcast.selection?.workerId else {
             receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false, at: now)
-            receiverProbeLeaseDeadline = nil
+            receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
             workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil; return
         }
         // ContinuousClock was sampled before uptime: conversion errs toward expiry.
         receiverProbeLeaseDeadline = now + .seconds(probe.leaseDeadline - nativeNow)
+        receiverProbeOwner = probe
         let expected = WorkerReceiverProbeExpectation(gameId: response.status.gameId, generation: publishing.generation,
             workerId: worker, publishingAttemptId: publishing.attempt.uuidString.lowercased(),
-            probeId: probe.id.uuidString.lowercased(), publishingGeneration: probe.publishingGeneration, bitRate: probe.bitRate)
+            probeId: probe.id.uuidString.lowercased(), publishingGeneration: probe.publishingGeneration,
+            bitRate: probe.bitRate, stage: probe.stage)
         let evidence = WorkerReceiverProbeFreshness(response: response, expected: expected,
             receivedAt: receivedAt, requestDuration: requestDuration)
         workerReceiverProbeInterval = receiverProbeTracker.observe(evidence, acceptedPayloadBytes: probe.acceptedPayloadBytes,
@@ -779,7 +785,8 @@ struct PublishingClockObservation: Equatable, Sendable {
         workerDecoderDeliveryFreshness = nil
         if publishing == nil { receiverProbeTracker.reset() }
         else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }
-        receiverProbeLeaseDeadline = nil; workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
+        receiverProbeLeaseDeadline = nil; receiverProbeOwner = nil
+        workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil
         #if DEBUG
         workerReportAgeProofHistory.clear()
         workerSourceIntervalHistory = []

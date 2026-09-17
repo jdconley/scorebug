@@ -175,19 +175,31 @@ const probe = {
   firstDeliveredAtNanoseconds: '100000000',
   lastDeliveredAtNanoseconds: '900000000',
 };
-it('sanitizes probe evidence from the selected publisher without changing identity', async () => {
-  const list: any[] = items();
-  list[0].scorebugBandwidthProbe = { ...probe, id: readId };
-  list[1].scorebugBandwidthProbe = { ...probe, privateField: 'must-not-leak' };
-  const f = await fixture(page(list));
-  expect(await f.client.publication(path, readId)).toEqual({
-    readerId,
-    publisherId,
-    publisherQuery,
-    clock,
-    receiverProbe: probe,
-  });
-});
+it.each([1, 2])(
+  'sanitizes v%s probe evidence from the selected publisher without changing identity',
+  async (version) => {
+    const selectedProbe =
+      version === 1
+        ? probe
+        : {
+            ...probe,
+            convention: 'mpegts-null-probe-v2',
+            stage: 3,
+            totalDeliveredPayloadBytes: '5264',
+          };
+    const list: any[] = items();
+    list[0].scorebugBandwidthProbe = { ...probe, id: readId };
+    list[1].scorebugBandwidthProbe = { ...selectedProbe, privateField: 'must-not-leak' };
+    const f = await fixture(page(list));
+    expect(await f.client.publication(path, readId)).toEqual({
+      readerId,
+      publisherId,
+      publisherQuery,
+      clock,
+      receiverProbe: selectedProbe,
+    });
+  },
+);
 it.each([
   { convention: 'other' },
   { id: '00000000-0000-0000-0000-000000000000' },

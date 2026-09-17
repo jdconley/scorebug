@@ -12,6 +12,8 @@ struct NativeBandwidthProbeSample: Sendable {
     let acceptedPayloadBytes: UInt64
     let lastAcceptedAt: Double?
     var reason: String?
+    var stage: Int? = nil
+    var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?) -> Bool)? = nil
     var object: [String: Any] {
         ["id": id.uuidString, "publishingGeneration": String(publishingGeneration), "bitRate": bitRate,
          "startedAt": startedAt, "leaseDeadline": leaseDeadline, "acceptedPayloadBytes": String(acceptedPayloadBytes),
@@ -22,7 +24,8 @@ extension NativeBandwidthProbeSample {
     init(_ value: PublishingBandwidthProbeSnapshot) {
         self.init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
-            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason?.rawValue)
+            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason?.rawValue,
+            stage: value.stage.flatMap(Int.init(exactly:)), permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner)
     }
 }
 
@@ -87,7 +90,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         guard let value = await operations.snapshot() else { return nil }
         return .init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
-            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason)
+            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason, stage: value.stage,
+            permitsCurrentOwner: value.permitsCurrentOwner)
     }
     func append(_ sample: CapturedMediaSample) async throws { try await publisher.append(sample) }
     var isPublishing: Bool { get async { await publisher.isPublishing } }

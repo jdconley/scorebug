@@ -1,5 +1,5 @@
 import Foundation
-import ScorebugCore
+@testable import ScorebugCore
 import XCTest
 
 final class WorkerReceiverProbeTests: XCTestCase {
@@ -19,6 +19,71 @@ final class WorkerReceiverProbeTests: XCTestCase {
     private func helper(_ response: WorkerMediaStatusResponse, at: ContinuousClock.Instant = .now,
                         duration: Duration = .zero, expected: WorkerReceiverProbeExpectation? = nil) -> WorkerReceiverProbeFreshness? {
         .init(response: response, expected: expected ?? expectation(), receivedAt: at, requestDuration: duration)
+    }
+
+    func testV2GoldenIsValidatedAndRoundTrips() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "receiver-probe-status-v2", withExtension: "json", subdirectory: "Fixtures"))
+        let bytes = try Data(contentsOf: url)
+        let response = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: bytes)
+        XCTAssertNotNil(response.status.receiverProbe?.snapshot.validated)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: JSONEncoder().encode(response)) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: bytes) as? NSDictionary)
+    }
+
+    func testV2RequiresCanonicalBoundedStageAndCumulativeBytes() throws {
+        var response = try fixture()
+        response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+        response.status.receiverProbe?.snapshot.stage = 3
+        response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = "5264"
+        var expected = expectation(); expected.stage = 3
+        XCTAssertNotNil(helper(response, expected: expected))
+        XCTAssertNil(helper(response))
+        expected.stage = 2
+        XCTAssertNil(helper(response, expected: expected))
+        XCTAssertNil(helper(try fixture(), expected: expected))
+        expected.stage = 3
+        let changes: [(inout ReceiverProbeSnapshot) -> Void] = [
+            { $0.stage = nil }, { $0.stage = 0 }, { $0.stage = 33 }, { $0.stage = Int.max },
+            { $0.totalDeliveredPayloadBytes = nil }, { $0.totalDeliveredPayloadBytes = "05264" },
+            { $0.totalDeliveredPayloadBytes = "5264\n" }, { $0.totalDeliveredPayloadBytes = "+5264" },
+            { $0.totalDeliveredPayloadBytes = "٥٢٦٤" }, { $0.totalDeliveredPayloadBytes = "5265" },
+            { $0.totalDeliveredPayloadBytes = "1316" }, { $0.totalDeliveredPayloadBytes = "16777684" },
+            { $0.totalDeliveredPayloadBytes = "18446744073709551616" },
+            { $0.totalDeliveredPayloadBytes = "16776368"; $0.pendingPackets = 1 },
+            { $0.totalDeliveredPayloadBytes = "16776368"; $0.pendingPackets = 6 },
+        ]
+        for (index, change) in changes.enumerated() {
+            var malformed = response; change(&malformed.status.receiverProbe!.snapshot)
+            XCTAssertNil(helper(malformed, expected: expected), "fault \(index)")
+        }
+        response.status.receiverProbe?.snapshot.pendingPackets = 0
+        response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = "16776368"
+        XCTAssertNotNil(helper(response, expected: expected))
+        // UInt64 parsing must also work when Int is only 32 bits (arm64_32 Watch).
+        response.status.receiverProbe?.snapshot.observedAtNanoseconds = "86400000000000"
+        XCTAssertNotNil(helper(response, expected: expected))
+        let original = try XCTUnwrap(response.status.receiverProbe?.snapshot)
+        for (key, values) in [("stage", [NSNull(), "3", 1.5, []] as [Any]),
+                              ("totalDeliveredPayloadBytes", [NSNull(), 5264, []] as [Any])] {
+            for value in values {
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+                object[key] = value
+                XCTAssertThrowsError(try JSONDecoder().decode(ReceiverProbeSnapshot.self, from: JSONSerialization.data(withJSONObject: object)))
+            }
+        }
+    }
+
+    func testV1CannotCarryStageOrCumulativeCountersEvenAsNull() throws {
+        let original = try XCTUnwrap(fixture().status.receiverProbe?.snapshot)
+        for key in ["stage", "totalDeliveredPayloadBytes"] {
+            for value: Any in [NSNull(), 3, "5264", []] {
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+                object[key] = value
+                let bytes = try JSONSerialization.data(withJSONObject: object)
+                let decoded = try? JSONDecoder().decode(ReceiverProbeSnapshot.self, from: bytes)
+                XCTAssertNil(decoded?.validated, key)
+            }
+        }
     }
 
     func testSharedGoldenRoundTripsWithoutContaminatingPublicationIdentity() throws {

@@ -4,6 +4,40 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite struct SRTBandwidthProbeTests {
+    @Test func retainedSnapshotAuthorityIsRevokedWithoutRefreshingSnapshot() throws {
+        let probe = try makeProbe()
+        let old = probe.snapshot(now: { 10 })
+        let authority = try #require(old.authority)
+        #expect(authority.permits(id: old.id, generation: old.publishingGeneration, stage: nil))
+        #expect(!authority.permits(id: UUID(), generation: old.publishingGeneration, stage: nil))
+        #expect(!authority.permits(id: old.id, generation: 2, stage: nil))
+        #expect(!authority.permits(id: old.id, generation: old.publishingGeneration, stage: 1))
+        probe.cancel(.replaced)
+        #expect(old.reason == nil)
+        #expect(!authority.permits(id: old.id, generation: old.publishingGeneration, stage: nil))
+        #expect(!probe.renew(now: { 10.1 }))
+        #expect(!authority.permits(id: old.id, generation: old.publishingGeneration, stage: nil))
+    }
+    @Test(arguments: ["expiry", "pressure", "failure", "cancel", "finished", "closed"])
+    func everyTerminalPathRevokesRetainedAuthority(mode: String) throws {
+        let probe = try makeProbe()
+        let old = probe.snapshot(now: { 10 })
+        let authority = try #require(old.authority)
+        switch mode {
+        case "expiry": _ = probe.snapshot(now: { 10.3 })
+        case "pressure":
+            _ = try probe.offer(statistics: nil, now: { 10.02 }, send: { _ in Issue.record("Unexpected send"); return true })
+        case "failure":
+            struct Failed: Error {}
+            #expect(throws: Failed.self) {
+                try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in throw Failed() })
+            }
+        case "cancel": probe.cancel(.cancelled)
+        case "finished": probe.cancel(.finished)
+        default: probe.cancel(.closed)
+        }
+        #expect(!authority.permits(id: old.id, generation: old.publishingGeneration, stage: nil))
+    }
     @Test func probeWireVectorIsNetworkOrderAndEveryPacketHasIdentity() throws {
         let id = try #require(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff"))
         let data = SRTProbeMessage.encode(id: id, generation: 0x0102030405060708,

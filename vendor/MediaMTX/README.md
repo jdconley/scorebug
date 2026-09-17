@@ -166,7 +166,8 @@ or read errors. Private publisher snapshots use `mpegts-null-probe-v2`, numeric
 refer to the current stage. V1 snapshots omit the two new fields.
 
 This is a wire and accounting foundation only. Native live probes continue to
-emit v1, and existing authenticated status consumers reject unqualified v2.
+emit v1. Authenticated status now validates v2 stage and cumulative counters;
+shared native matching additionally requires the locally owned stage.
 Fixture defaults and regular deployments are unchanged. The previously qualified
 `receiver-probe-v1` image remains frozen; its qualification does not cover this
 new cumulative source. Repeated native SRT stages, capacity/admission decisions,

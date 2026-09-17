@@ -13,7 +13,7 @@ struct ReceiverProbeFixtureHistory {
         invalid = invalid || quarantined
         guard let interval else { return }
         let end = interval.end
-        let key = "\(end.workerEpoch)/\(end.workerAttempt)/\(end.publication.readerId)/\(end.snapshot.id)/\(end.snapshot.observedAtNanoseconds)"
+        let key = "\(end.workerEpoch)/\(end.workerAttempt)/\(end.publication.readerId)/\(end.snapshot.id)/\(end.snapshot.stage.map(String.init) ?? "legacy")/\(end.snapshot.observedAtNanoseconds)"
         guard !keys.contains(key) else { return }
         guard rows.count < 128 else { invalid = true; return }
         guard let age = end.snapshotAgeUpperBound(at: instant), let deliveryAge = end.lastDeliveryAgeUpperBound(at: instant),
@@ -41,6 +41,7 @@ struct ReceiverProbeFixtureHistory {
                 "acceptedPayloadBytes": String(accepted.acceptedPayloadBytes),
                 "nativeProbeId": accepted.id.uuidString.lowercased(), "nativePublishingGeneration": String(accepted.publishingGeneration),
             ])
+            if let stage = accepted.stage { rows[rows.count - 1]["nativeProbeStage"] = stage }
             keys.insert(key)
         } catch { invalid = true }
     }

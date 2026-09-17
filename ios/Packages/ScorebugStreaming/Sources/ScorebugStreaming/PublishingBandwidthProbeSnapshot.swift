@@ -8,6 +8,7 @@ public enum PublishingBandwidthProbeError: Error, Equatable, Sendable {
 /// Local native acceptance only; this is not receiver delivery or usable capacity.
 public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
     public typealias Reason = SRTBandwidthProbeSnapshot.Reason
+    public typealias Authority = SRTBandwidthProbeAuthority
     public let id: UUID
     public let publishingGeneration: UInt64
     public let bitRate: Int
@@ -16,13 +17,16 @@ public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
     public let acceptedPayloadBytes: UInt64
     public let lastAcceptedAt: Double?
     public let reason: Reason?
+    public internal(set) var stage: UInt32? = nil
+    public internal(set) var authority: Authority? = nil
 }
 
 extension PublishingBandwidthProbeSnapshot {
     init(_ value: SRTBandwidthProbeSnapshot) {
         self.init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
-            acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt, reason: value.reason)
+            acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt, reason: value.reason,
+            stage: value.stage, authority: value.authority)
     }
 }
 

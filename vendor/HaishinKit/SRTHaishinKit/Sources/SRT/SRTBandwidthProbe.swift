@@ -4,6 +4,25 @@ public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
     case disabled, notPublishing, alreadyStarted, invalidConfiguration, unavailableStatistics, obsolete
 }
 
+/// Native-owner identity, revoked synchronously on every terminal probe path.
+/// This is time-blind ownership only; consumers must also validate snapshot age
+/// and lease. Reports and copied scalar values cannot construct an authority.
+public final class SRTBandwidthProbeAuthority: @unchecked Sendable, Equatable {
+    private let lock = NSLock()
+    private let id: UUID
+    private let generation: UInt64
+    private let stage: UInt32?
+    private var revoked = false
+    init(id: UUID, generation: UInt64, stage: UInt32? = nil) {
+        self.id = id; self.generation = generation; self.stage = stage
+    }
+    public func permits(id: UUID, generation: UInt64, stage: UInt32?) -> Bool {
+        lock.withLock { !revoked && self.id == id && self.generation == generation && self.stage == stage }
+    }
+    func revoke() { lock.withLock { revoked = true } }
+    public static func == (lhs: SRTBandwidthProbeAuthority, rhs: SRTBandwidthProbeAuthority) -> Bool { lhs === rhs }
+}
+
 /// Local transport acceptance only. Never receiver delivery or usable bandwidth.
 public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public enum Reason: String, Sendable {
@@ -18,14 +37,17 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public let acceptedPayloadBytes: UInt64
     public let lastAcceptedAt: Double?
     public let reason: Reason?
+    public internal(set) var stage: UInt32? = nil
+    public internal(set) var authority: SRTBandwidthProbeAuthority? = nil
 }
 
 /// One publication-owned attempt. Revocation is synchronous across actor hops.
 /// The lock serializes revocation with one nonblocking native send; its closure
 /// must not suspend, perform I/O other than that send, or reenter this object.
 final class SRTBandwidthProbe: @unchecked Sendable {
-    let id = UUID()
+    let id: UUID
     let generation: UInt64
+    private let authority: SRTBandwidthProbeAuthority
     private let lock = NSLock()
     private let bitRate: Int
     private let startedAt: Double
@@ -48,13 +70,15 @@ final class SRTBandwidthProbe: @unchecked Sendable {
               sampled <= at, at - sampled <= 0.1, statistics.msRTT.isFinite,
               (0...50).contains(statistics.msRTT), (0...50).contains(statistics.msSndBuf),
               statistics.pktSndDropTotal >= 0 else { throw SRTBandwidthProbeError.unavailableStatistics }
+        let id = UUID()
+        self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation)
         self.bitRate = bitRate; self.generation = generation; startedAt = at
         deadline = at + 0.3; lastTime = at; tokenAt = at; statisticsAt = sampled
         retransmitted = statistics.byteRetransTotal; dropped = statistics.pktSndDropTotal
     }
 
     @discardableResult private func stop(_ next: SRTBandwidthProbeSnapshot.Reason) -> Bool {
-        reason = reason ?? next; tokens = 0; return false
+        reason = reason ?? next; tokens = 0; authority.revoke(); return false
     }
     private func check(_ at: Double) -> Bool {
         guard reason == nil else { return false }
@@ -130,7 +154,8 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         lock.withLock {
             _ = check(now())
             return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
-                leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason)
+                leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
+                authority: authority)
         }
     }
 }

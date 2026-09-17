@@ -1832,3 +1832,21 @@ Evidence: `artifacts/qa/staged-probe-wire-final-verification.json`. Next carry s
 identity through authenticated status and current native ownership, join replacement
 owners, enforce cumulative sender limits, then qualify repeated native probes and
 fresh candidate cost. No new live-media or physical/remote qualification is claimed.
+
+
+[Staged probe status and ownership](2026-09-17-staged-probe-status.md) now carries v2
+identity through authenticated status and native matching. Stage changes retain
+connection clock and cumulative accounting; retired stages cannot become current
+again. An SDK-owned revocable authority accompanies local snapshots, so a response
+arriving after cancellation cannot supply measurement evidence. Local health also
+withdraws evidence before its old lease expires when the owner is revoked, and a
+measurement gap requires a new window baseline. Recording ownership stays active
+in the injected cancellation tests.
+
+Verification passes 397 Core, 206 SDK, 88 streaming, 479 control-plane, 1442 tooling
+and 292 native model tests, workspace typechecking, plus simulator and unsigned combined phone/Watch builds
+(including arm64_32), with approved reviews and SDK patch provenance. Frozen evidence:
+`artifacts/qa/staged-probe-status-final-verification.json`. Native live probes still
+emit v1: joined repeated native owners, cumulative sender budgets and actual staged
+media qualification follow. Measured candidate cost, automatic upgrades/recovery,
+physical phone/Watch routes and remote deployment remain open.

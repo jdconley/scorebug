@@ -213,3 +213,12 @@ sends do not advance the accepted sequence. This marker is attribution, not a
 credential. The pre-demux receiver must bind it to its authenticated publication;
 remultiplexed null counts cannot establish delivery. See the
 [receiver accounting design](../../docs/superpowers/specs/2026-09-16-receiver-probe-accounting-design.md).
+
+
+Native probe snapshots now carry a readonly `SRTBandwidthProbeAuthority` reference.
+Every terminal native probe path revokes it synchronously. `permits` checks exact
+UUID, generation and optional stage; it does not extend a lease or prove freshness,
+delivery or capacity. The streaming adapter retains this same authority, and app
+observations validate it after async reads and during local health polling. A copy
+of old scalar values cannot keep a cancelled owner current. Live probes still have
+no stage and emit v1 until joined replacement and cumulative sender budgets ship.

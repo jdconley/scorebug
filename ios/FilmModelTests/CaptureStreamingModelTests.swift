@@ -5,6 +5,118 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testObservedLeaseGapCannotBeBridgedByAStillRenewedNativeOwner() async throws {
+        let (model, server, publisher, initial) = try await receiverProbeModel()
+        let value = await publisher.probeValue()
+        var sample = try XCTUnwrap(value)
+        sample.leaseDeadline = ProcessInfo.processInfo.systemUptime + 0.3
+        await publisher.setProbe(sample)
+        var response = initial; response.status.receiverProbe?.ageUpperBoundMs = 100
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        let firstReceived = ContinuousClock.now
+        // Native renewal continues, but the app has not observed that new lease.
+        sample.leaseDeadline += 10; sample.acceptedPayloadBytes = 5264
+        await publisher.setProbe(sample)
+        try await Task.sleep(for: .milliseconds(350))
+        model.pollLocalHealth()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        try await Task.sleep(for: .milliseconds(700))
+        let elapsed = firstReceived.duration(to: .now).components
+        let observed = 1_000_000_000 + elapsed.seconds * 1_000_000_000 + elapsed.attoseconds / 1_000_000_000
+        response.status.receiverProbe?.snapshot.observedAtNanoseconds = String(observed)
+        response.status.receiverProbe?.snapshot.lastDeliveredAtNanoseconds = String(observed - 10_000_000)
+        response.status.receiverProbe?.snapshot.deliveredMessages = "4"
+        response.status.receiverProbe?.snapshot.deliveredPayloadBytes = "5264"
+        response.status.receiverProbe?.snapshot.nextSequence = "4"
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        XCTAssertNil(model.workerReceiverProbeInterval, "A new baseline is required after unavailable ownership evidence")
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+    func testLocalHealthWithdrawsRevokedProbeBeforeItsLeaseExpires() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let ownership = CaptureProbeOwnership()
+        let value = await publisher.probeValue()
+        var sample = try XCTUnwrap(value)
+        sample.permitsCurrentOwner = { _, _, _ in ownership.permits }
+        await publisher.setProbe(sample)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerReceiverProbeFreshness)
+        ownership.revoke()
+        model.pollLocalHealth()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        XCTAssertNil(model.workerReceiverProbeInterval)
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+    func testLegacySnapshotWithoutNativeOwnershipIsNotEvidence() async throws {
+        let (model, server, publisher, response) = try await receiverProbeModel()
+        let value = await publisher.probeValue()
+        var sample = try XCTUnwrap(value)
+        sample.permitsCurrentOwner = nil
+        await publisher.setProbe(sample)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNil(model.workerReceiverProbeFreshness)
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await model.stopStreaming()
+    }
+    func testStagedReceiverEvidenceRequiresExactLocalStageAndOwnership() async throws {
+        for mode in ["matched", "missingAuthority", "wrongStage", "legacyOwner"] {
+            let (model, server, publisher, initial) = try await receiverProbeModel()
+            let value = await publisher.probeValue()
+            var sample = try XCTUnwrap(value)
+            sample.stage = mode == "legacyOwner" ? nil : 3
+            sample.permitsCurrentOwner = nil
+            if mode != "missingAuthority" { sample.permitsCurrentOwner = { _, _, _ in true } }
+            await publisher.setProbe(sample)
+            var response = initial
+            response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+            response.status.receiverProbe?.snapshot.stage = mode == "wrongStage" ? 4 : 3
+            response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = "5264"
+            await server.setStatusOverride(response); await model.pollControl()
+            XCTAssertEqual(model.workerReceiverProbeFreshness != nil, mode == "matched", mode)
+            XCTAssertEqual(model.localState, .publishing)
+            XCTAssertEqual(model.activeRecordingID, "recording-1")
+            await model.stopStreaming()
+        }
+    }
+
+    func testRevokedSnapshotCannotSurviveSuspendedNativeRead() async throws {
+        for stage: Int? in [nil, 3] {
+            let (model, server, publisher, initial) = try await receiverProbeModel()
+            let ownership = CaptureProbeOwnership()
+            let value = await publisher.probeValue()
+            var sample = try XCTUnwrap(value)
+            sample.stage = stage
+            sample.permitsCurrentOwner = { _, _, _ in ownership.permits }
+            await publisher.setProbe(sample)
+            var response = initial
+            if let stage {
+                response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+                response.status.receiverProbe?.snapshot.stage = stage
+                response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = "5264"
+            }
+            await server.setStatusOverride(response); await model.pollControl()
+            XCTAssertNotNil(model.workerReceiverProbeFreshness)
+            let gate = FilmTestGate(); await publisher.setProbeGate(gate)
+            let polling = Task { await model.pollControl() }
+            await gate.waitUntilEntered()
+            ownership.revoke()
+            await publisher.setProbe(nil)
+            await gate.release(); await polling.value
+            XCTAssertNil(model.workerReceiverProbeFreshness)
+            XCTAssertNil(model.workerReceiverProbeInterval)
+            XCTAssertEqual(model.localState, .publishing)
+            XCTAssertEqual(model.activeRecordingID, "recording-1")
+            await model.stopStreaming()
+        }
+    }
+
     func testProbeEvidenceExpiresAtObservedNativeLeaseWithoutStoppingRecording() async throws {
         let (model, server, publisher, response) = try await receiverProbeModel()
         let nativeValue = await publisher.probeValue()
@@ -83,13 +195,17 @@ import XCTest
     }
 
     func testReceiverIntervalFixtureSerializesActualTrackerAndDeduplicates() async throws {
+        try await checkReceiverIntervalSerialization(stage: nil)
+        try await checkReceiverIntervalSerialization(stage: 3)
+    }
+    private func checkReceiverIntervalSerialization(stage: Int?) async throws {
         let (model, _, publisher, initial) = try await receiverProbeModel()
         let nativeValue = await publisher.probeValue()
-        let native = try XCTUnwrap(nativeValue)
+        var native = try XCTUnwrap(nativeValue); native.stage = stage
         let scope = try XCTUnwrap(model.videoObservation?.scope)
         let expected = WorkerReceiverProbeExpectation(gameId: "game-1", generation: 1, workerId: "worker-1",
             publishingAttemptId: scope.publishingAttemptID.uuidString.lowercased(), probeId: native.id.uuidString.lowercased(),
-            publishingGeneration: 1, bitRate: 1_000_000)
+            publishingGeneration: 1, bitRate: 1_000_000, stage: stage)
         var tracker = WorkerReceiverProbeTracker(), history = ReceiverProbeFixtureHistory()
         let anchor = ContinuousClock.now
         var end: WorkerReceiverProbeInterval?
@@ -100,6 +216,11 @@ import XCTest
             response.status.receiverProbe?.snapshot.deliveredMessages = String(n * 2)
             response.status.receiverProbe?.snapshot.deliveredPayloadBytes = String(n * 2632)
             response.status.receiverProbe?.snapshot.nextSequence = String(n * 2)
+            if let stage {
+                response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+                response.status.receiverProbe?.snapshot.stage = stage
+                response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String((n + 1) * 2632)
+            }
             let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response, expected: expected,
                 receivedAt: anchor + .seconds(n), requestDuration: .zero))
             end = tracker.observe(evidence, acceptedPayloadBytes: UInt64(n * 2632), senderActive: true, at: anchor + .seconds(n))
@@ -115,6 +236,9 @@ import XCTest
         XCTAssertEqual(json["invalid"] as? Bool, false)
         let rows = try XCTUnwrap(json["intervals"] as? [[String: Any]])
         XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?["nativeProbeStage"] as? Int, stage)
+        XCTAssertEqual((rows.first?["end"] as? [String: Any])?["stage"] as? Int, stage)
+        XCTAssertEqual((rows.first?["end"] as? [String: Any])?["totalDeliveredPayloadBytes"] as? String, stage == nil ? nil : "7896")
         XCTAssertEqual(rows.first?["serverAgeUpperBoundMs"] as? Double, 10)
         XCTAssertEqual(rows.first?["requestDurationMs"] as? Double, 0)
         XCTAssertEqual(rows.first?["residenceDurationMs"] as? Double, 0)
@@ -138,7 +262,7 @@ import XCTest
         let id = UUID()
         await publisher.setProbe(.init(id: id, publishingGeneration: 1, bitRate: 1_000_000,
             startedAt: now - 1, leaseDeadline: now + 10, acceptedPayloadBytes: 2632,
-            lastAcceptedAt: now - 0.01, reason: nil))
+            lastAcceptedAt: now - 0.01, reason: nil, permitsCurrentOwner: { _, _, _ in true }))
         var response = workerAgeResponse()
         response.status.workerEpoch = "22222222-2222-2222-2222-222222222222"
         response.status.publication = .init(readerId: "33333333-3333-3333-3333-333333333333",
@@ -2046,4 +2170,11 @@ private func streamingVideo(_ frame: Int64) throws -> CapturedMediaSample {
 
 private func testPublishStreamID(_ attempt: String) -> String {
     "publish:scorebug-0123456789abcdef-0123456789abcdef0123456789abcdef:sbp1=\(attempt)." + String(repeating: "a", count: 64)
+}
+
+private final class CaptureProbeOwnership: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    var permits: Bool { lock.withLock { active } }
+    func revoke() { lock.withLock { active = false } }
 }

@@ -47,3 +47,11 @@ no automatic renewal task, production quality admission or general `MediaPublish
 protocol change. A DEBUG fixture must explicitly own renewal and collect receiver
 confirmation before this can support a quality upgrade. See
 [adapter validation](../../../docs/superpowers/plans/2026-09-16-publisher-probe-adapter.md).
+
+
+`PublishingBandwidthProbeSnapshot` forwards the SDK's optional stage and readonly
+native authority without creating a new authority. Native cancellation/replacement,
+expiry and failure revoke retained observations; consumers must check ownership as
+well as age and lease after async calls. Locally fabricated snapshots without native
+authority are diagnostics only. Authenticated v2 matching is implemented separately
+from the still-pending repeated native probe scheduler and quality admission.
