@@ -4,6 +4,66 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite struct SRTStagedBandwidthProbeTests {
+    @Test func wakeFloorIsVersionedAndDoesNotChangeTokenEligibility() throws {
+        let staged = try makeProbe(rate: 12_000_000)
+        let legacy = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(10), at: 10)
+        #expect(staged.minimumWakeInterval == 0.0005)
+        #expect(legacy.minimumWakeInterval == 0.002)
+        // The first staged tick cannot grant a send before 1360 wire bytes accrue.
+        #expect(!staged.isEligible(now: { 10 + staged.minimumWakeInterval }))
+        #expect(staged.isEligible(now: { 10.001 }))
+        #expect(!legacy.isEligible(now: { 10 + legacy.minimumWakeInterval }))
+        #expect(legacy.isEligible(now: { 10.006 }))
+    }
+
+    @Test func stagedRateCeilingKeepsLegacyLimitAndOneMessagePacing() throws {
+        let probe = try makeProbe(rate: 12_000_000)
+        let interval = 1360.0 * 8 / 12_000_000
+        #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10 })) - interval) < 0.000000001)
+        #expect(!probe.isEligible(now: { 10 + interval / 2 }))
+        var messages: [Data] = []
+        #expect(try probe.offer(statistics: stats(10.2), now: { 10.2 }, send: { messages.append($0); return true }))
+        // A delayed wake can bank exactly one 1360-byte token, not a burst.
+        #expect(try !probe.offer(statistics: stats(10.2), now: { 10.2 }, send: { messages.append($0); return true }))
+        #expect(messages.count == 1 && messages.first?.count == 1316)
+        #expect(Array(try #require(messages.first)[44..<48]) == [0, 0xb7, 0x1b, 0])
+        #expect(abs(try #require(probe.nextOpportunityDelay(now: { 10.2 })) - interval) < 0.000000001)
+        #expect(probe.snapshot(now: { 10.2 }).acceptedPayloadBytes == 1316)
+        #expect(throws: SRTBandwidthProbeError.invalidConfiguration) { try makeProbe(rate: 12_000_001) }
+        let legacy = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(10), at: 10)
+        #expect(legacy.snapshot(now: { 10 }).bitRate == 2_000_000)
+        for rate in [2_000_001, 12_000_000] {
+            #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+                try SRTBandwidthProbe(bitRate: rate, generation: 1, statistics: stats(10), at: 10)
+            }
+        }
+    }
+
+    @Test(arguments: ["lease", "pressure", "cancel"])
+    func highRateRetainsRevocation(mode: String) throws {
+        let probe = try makeProbe(rate: 12_000_000)
+        let retained = probe.snapshot(now: { 10 })
+        let reason: SRTBandwidthProbeSnapshot.Reason
+        switch mode {
+        case "lease":
+            reason = .leaseExpired
+            #expect(!probe.renew(now: { 10.3 }))
+        case "pressure":
+            reason = .transportPressure
+            var mon = CBytePerfMon(); mon.msRTT = 51
+            #expect(try !probe.offer(statistics: .init(mon: mon, sampledAt: 10.02), now: { 10.02 }, send: { _ in
+                Issue.record("Pressured high-rate probe submitted"); return true
+            }))
+        default: reason = .cancelled; probe.cancel(.cancelled)
+        }
+        #expect(probe.snapshot(now: { 10.3 }).reason == reason)
+        #expect(retained.authority?.permits(id: retained.id, generation: 1, stage: 1) == false)
+        #expect(!probe.renew(now: { 10.3 }))
+        #expect(try !probe.offer(statistics: stats(10.3), now: { 10.3 }, send: { _ in
+            Issue.record("Revoked high-rate probe submitted"); return true
+        }))
+    }
+
     @Test func stagedWireBindsAuthorityAndUsesLocalAcceptedSequence() throws {
         let probe = try makeProbe(stage: 2, campaign: 9, previous: 1316 * 5)
         let original = probe.snapshot(now: { 10 })
@@ -56,9 +116,9 @@ import Testing
         #expect(current.campaignStartedAt == 10)
     }
 
-    @Test func cumulativeLimitAllowsLastWholeMessageThenRevokes() throws {
+    @Test(arguments: [1_000_000, 12_000_000]) func cumulativeLimitAllowsLastWholeMessageThenRevokes(rate: Int) throws {
         let lastWholeMessage = UInt64(16 * 1024 * 1024 / 1316) * 1316
-        let probe = try makeProbe(stage: 32, campaign: 9, previous: lastWholeMessage - 1316)
+        let probe = try makeProbe(stage: 32, campaign: 9, previous: lastWholeMessage - 1316, rate: rate)
         let original = probe.snapshot(now: { 10 })
         #expect(try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in true }))
         let final = probe.snapshot(now: { 10.02 })
@@ -75,8 +135,8 @@ import Testing
         }
     }
 
-    @Test func campaignDeadlineCannotRestartAtStageTransition() throws {
-        let probe = try makeProbe(stage: 2, at: 69.95, campaign: 10, previous: 1316)
+    @Test(arguments: [1_000_000, 12_000_000]) func campaignDeadlineCannotRestartAtStageTransition(rate: Int) throws {
+        let probe = try makeProbe(stage: 2, at: 69.95, campaign: 10, previous: 1316, rate: rate)
         #expect(probe.renew(now: { 69.97 }))
         #expect(try probe.offer(statistics: stats(69.98), now: { 69.98 }, send: { _ in true }))
         #expect(!probe.isEligible(now: { 70 }))
@@ -166,8 +226,8 @@ import Testing
 
     private enum Failure: Error { case injected }
     private func makeProbe(stage: UInt32 = 1, at: Double = 10, campaign: Double? = 10,
-                           previous: UInt64 = 0) throws -> SRTBandwidthProbe {
-        try .init(bitRate: 1_000_000, generation: 1, statistics: stats(at), at: at,
+                           previous: UInt64 = 0, rate: Int = 1_000_000) throws -> SRTBandwidthProbe {
+        try .init(bitRate: rate, generation: 1, statistics: stats(at), at: at,
             stage: stage, campaignStartedAt: campaign, previouslyAcceptedPayloadBytes: previous)
     }
     private func stats(_ at: Double) -> SRTPerformanceData {

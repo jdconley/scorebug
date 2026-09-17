@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 import { qualifyCandidateAVTransport } from './candidate-av-window.mjs';
+import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
 const rates = { '240p30': 350000, '360p30': 600000, '540p30': 1500000, '1080p30': 6000000 };
 export function nativeCandidateProfile({
   environment,
@@ -11,6 +12,7 @@ export function nativeCandidateProfile({
   holdSeconds,
   liveProfile,
 }) {
+  const combined = nativeCandidateHeadroom(environment);
   const profile = environment.SCOREBUG_TEST_CANDIDATE_PROFILE;
   if (profile === undefined) return null;
   assert.ok(
@@ -26,13 +28,13 @@ export function nativeCandidateProfile({
       holdSeconds <= 600 &&
       environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
+      (combined || environment.SCOREBUG_TEST_BANDWIDTH_PROBE === undefined) &&
       [
         'SCOREBUG_TEST_NATIVE_QUALITY',
         'SCOREBUG_TEST_NATIVE_CONFIRMATION',
         'SCOREBUG_TEST_ADAPTIVE_PROFILES',
         'SCOREBUG_TEST_PROFILE_TRANSITIONS',
         'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
-        'SCOREBUG_TEST_BANDWIDTH_PROBE',
         'SCOREBUG_TEST_UPLINK_PROXY_PORT',
         'SCOREBUG_TEST_DECODER_STALL',
       ].every((key) => environment[key] === undefined),

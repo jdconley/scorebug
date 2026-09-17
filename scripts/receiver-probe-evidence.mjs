@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { candidateHeadroomStageRates } from './native-candidate-headroom.mjs';
 import {
   recordPublishingAttemptEvidence,
   qualifyPublishingAttemptEvidence,
@@ -25,7 +26,9 @@ export function validateReceiverProbeSnapshot(p) {
   }
   assert.ok(uuid(p.id) && p.id !== '00000000-0000-0000-0000-000000000000');
   assert.ok(integer(p.publishingGeneration) > 0n);
-  assert.ok(Number.isSafeInteger(p.bitRate) && p.bitRate > 0 && p.bitRate <= 2000000);
+  assert.ok(
+    Number.isSafeInteger(p.bitRate) && p.bitRate > 0 && p.bitRate <= (staged ? 12000000 : 2000000),
+  );
   assert.equal(p.invalidReason, undefined, 'Invalid receiver proof');
   const messages = integer(p.deliveredMessages, BigInt(Math.floor((16 * 1024 * 1024) / 1316)));
   assert.equal(integer(p.deliveredPayloadBytes, 16n * 1024n * 1024n), messages * 1316n);
@@ -147,6 +150,9 @@ export function qualifyReceiverProbeEvidence(records, nativeScope, accepted) {
     'Missing receiver evidence',
   );
   const staged = accepted.mode === 'staged';
+  assert.ok(
+    accepted.schedule === undefined || (staged && accepted.schedule === 'candidate-headroom-v1'),
+  );
   let stages;
   if (staged) {
     assert.equal(accepted.stages?.length, 3);
@@ -155,7 +161,12 @@ export function qualifyReceiverProbeEvidence(records, nativeScope, accepted) {
       assert.equal(stage.stage, i + 1);
       assert.ok(uuid(stage.id) && stage.id !== '00000000-0000-0000-0000-000000000000');
       assert.equal(stage.publishingGeneration, accepted.publishingGeneration);
-      assert.equal(stage.bitRate, 500000 * 2 ** i);
+      assert.equal(
+        stage.bitRate,
+        accepted.schedule === 'candidate-headroom-v1'
+          ? candidateHeadroomStageRates[i]
+          : 500000 * 2 ** i,
+      );
       assert.ok(Number.isSafeInteger(stage.acceptedPayloadBytes) && stage.acceptedPayloadBytes > 0);
       assert.equal(stage.acceptedPayloadBytes % 1316, 0);
       const base = total;

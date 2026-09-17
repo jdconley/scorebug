@@ -50,7 +50,8 @@ public actor SRTStream {
                                     staged: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        let maximumBitRate = staged ? 12_000_000 : 2_000_000
+        guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
               let connection else { throw SRTBandwidthProbeError.notPublishing }
         guard bandwidthProbe == nil, !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
@@ -75,7 +76,7 @@ public actor SRTStream {
                                       stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
               let connection else { throw SRTBandwidthProbeError.notPublishing }
         guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected,

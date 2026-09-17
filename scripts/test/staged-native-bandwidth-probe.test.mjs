@@ -75,6 +75,32 @@ const mutateStage = (value, stage, change) => {
   for (const event of stageEvents(value, stage)) change(event.sample, event);
 };
 
+test('combined headroom schedule is explicit and cannot replace the historical schedule implicitly', () => {
+  const value = fixture();
+  for (const event of value.events)
+    event.sample.bitRate = [500_000, 2_000_000, 12_000_000][event.sample.stage - 1];
+  const result = qualifyNativeBandwidthProbe(value, {
+    mode: 'staged',
+    scope,
+    publishingGeneration: '7',
+    candidateHeadroom: true,
+  });
+  assert.equal(result.schedule, 'candidate-headroom-v1');
+  assert.deepEqual(
+    result.stages.map((s) => s.bitRate),
+    [500_000, 2_000_000, 12_000_000],
+  );
+  assert.throws(() => qualify(value));
+  assert.throws(() =>
+    qualifyNativeBandwidthProbe(fixture(), {
+      mode: 'staged',
+      scope,
+      publishingGeneration: '7',
+      candidateHeadroom: true,
+    }),
+  );
+});
+
 test('staged mode retains every exclusive fixed540 full-pipeline admission condition', () => {
   const input = {
     environment: {

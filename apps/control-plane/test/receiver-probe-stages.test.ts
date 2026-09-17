@@ -14,6 +14,17 @@ const golden = (version: number) =>
   );
 const v2 = () => golden(2).status.receiverProbe.snapshot;
 
+it('allows bounded HD probe rates only for staged v2', () => {
+  for (const bitRate of [2_000_001, 6_000_000, 12_000_000])
+    expect(parseReceiverProbe({ ...v2(), bitRate })?.bitRate).toBe(bitRate);
+  for (const bitRate of [0, 12_000_001, Infinity, 1.5])
+    expect(parseReceiverProbe({ ...v2(), bitRate })).toBeUndefined();
+  const legacy = golden(1).status.receiverProbe.snapshot;
+  expect(parseReceiverProbe({ ...legacy, bitRate: 2_000_000 })).toBeDefined();
+  for (const bitRate of [2_000_001, 12_000_000])
+    expect(parseReceiverProbe({ ...legacy, bitRate })).toBeUndefined();
+});
+
 it('preserves the complete staged identity and cumulative accounting', () => {
   const value = v2();
   expect(parseReceiverProbe(value)).toEqual(value);

@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { qualifyNativeReceiverIntervals } from '../native-receiver-intervals.mjs';
 import { stagedProbeEvidence } from './fixtures/staged-probe-evidence.mjs';
+
+test('combined schedule replays raw native events and exposes only independently bracketed interval indexes', () => {
+  const f = stagedProbeEvidence();
+  const rates = [500000, 2000000, 12000000];
+  f.accepted.schedule = 'candidate-headroom-v1';
+  for (const s of f.accepted.stages) s.bitRate = rates[s.stage - 1];
+  for (const e of f.nativeProof.events) e.sample.bitRate = rates[e.sample.stage - 1];
+  for (const r of f.records) r.probe.bitRate = rates[r.probe.stage - 1];
+  for (const r of f.proof.intervals)
+    for (const p of [r.start, r.end]) p.bitRate = rates[p.stage - 1];
+  const result = qualifyNativeReceiverIntervals(
+    f.proof,
+    f.records,
+    f.scope,
+    f.accepted,
+    f.workerRecords,
+    f.nativeProof,
+    { includeIntervalIndexes: true },
+  );
+  assert.deepEqual(result.coveredIntervalIndexes, [0, 1, 2]);
+});
 const qualify = (f) =>
   qualifyNativeReceiverIntervals(
     f.proof,

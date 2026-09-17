@@ -24,7 +24,7 @@ import Testing
 
     @Test func legalBoundsAndLegacyFormatRemainIndependent() throws {
         for stage: UInt32 in [1, 32] {
-            for rate in [1, 2_000_000] {
+            for rate in [1, 2_000_000, 2_000_001, 12_000_000] {
                 let sequence = UInt64(16 * 1024 * 1024 / 1316 - 1)
                 let data = try SRTProbeMessage.encodeStage(id: id, generation: UInt64.max,
                     stage: stage, sequence: sequence, bitRate: rate)
@@ -53,7 +53,7 @@ import Testing
         case 4: stage = .max
         case 5: rate = 0
         case 6: rate = -1
-        case 7: rate = 2_000_001
+        case 7: rate = 12_000_001
         case 8: rate = .max
         case 9: sequence = UInt64(16 * 1024 * 1024 / 1316)
         default: sequence = .max

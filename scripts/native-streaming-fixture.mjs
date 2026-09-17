@@ -29,6 +29,7 @@ export async function nativeStreamingFixture({
   requirePublication = false,
   requireReceiverProbe = false,
   stagedReceiverProbe = false,
+  candidateHeadroom = false,
   uplinkProfile = null,
   liveProfile = '1080p30',
   cadenceReports = false,
@@ -70,6 +71,7 @@ export async function nativeStreamingFixture({
     requirePublication,
     requireReceiverProbe,
     stagedReceiverProbe,
+    candidateHeadroom,
   });
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink;

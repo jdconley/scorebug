@@ -254,14 +254,16 @@ Backpressure stops only the probe; native or option-restoration errors retain th
 existing terminal publishing failure behavior, including accepted-byte evidence.
 
 The probe has a 300 ms renewable lease, 60-second/16 MiB bounds, a maximum 2 Mbps
-accounted target and no initial or catch-up burst. Fresh native statistics must
+legacy or 12 Mbps staged accounted target and no initial or catch-up burst. Fresh native statistics must
 show RTT and send buffer at most 50 ms with no new retransmission/drop counts.
 Missing statistics, pressure, finish, close or configuration changes revoke it.
 Configuration revision checks reject starts that overlap a settings change.
 One coalesced wake signal drives the existing transport consumer, which drains
 queued media before offering one optional message. An admitted probe owns a strict
 dispatch timer that only signals this consumer; it cannot send or bank messages.
-Its deadline follows token availability with a 2 ms minimum and 50 ms maximum.
+Its deadline follows token availability with a 2 ms legacy or 0.5 ms staged minimum
+and 50 ms maximum. The staged timer permits at most 2,000 callbacks per second;
+one-message token capacity and coalesced signals still prevent banking a burst.
 Finish and close revoke the permit, cancel the owner and join the dispatch
 cancellation handler, including an already entered callback. Timer precision is
 best-effort; opportunities can still underdeliver. Snapshots prove local acceptance

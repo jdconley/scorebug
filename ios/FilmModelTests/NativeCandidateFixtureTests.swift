@@ -5,6 +5,39 @@ import ScorebugMedia
 import XCTest
 
 final class NativeCandidateFixtureTests: XCTestCase {
+    func testCombinedHeadroomRouteRequiresExactCompleteOptInInBothParsers() throws {
+        let valid = ["SCOREBUG_TEST_CANDIDATE_HEADROOM": "1", "SCOREBUG_TEST_CANDIDATE_PROFILE": "540p30",
+            "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+        for profile in ["360p30", "540p30", "1080p30"] {
+            var environment = valid; environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = profile
+            XCTAssertEqual(try NativeCandidateFixture.requested(environment: environment)?.rawValue, profile)
+            XCTAssertEqual(try NativeBandwidthProbePublisher.requested(environment: environment), .staged)
+        }
+        for (key, value) in [("SCOREBUG_TEST_CANDIDATE_HEADROOM", ""), ("SCOREBUG_TEST_CANDIDATE_HEADROOM", "true"),
+            ("SCOREBUG_TEST_CANDIDATE_PROFILE", ""), ("SCOREBUG_TEST_BANDWIDTH_PROBE", "renew"),
+            ("SCOREBUG_TEST_LIVE_PROFILE", "540p30"), ("SCOREBUG_TEST_VIDEO_OBSERVATIONS", "0"),
+            ("SCOREBUG_TEST_MOTION_FIXTURE", "blocks"), ("SCOREBUG_TEST_STREAM_HOLD_SECONDS", "89"),
+            ("SCOREBUG_TEST_NATIVE_QUALITY", "1"), ("SCOREBUG_TEST_NATIVE_CONFIRMATION", "1"),
+            ("SCOREBUG_TEST_ADAPTIVE_PROFILES", "1"), ("SCOREBUG_TEST_PROFILE_TRANSITIONS", "1"),
+            ("SCOREBUG_TEST_SOURCE_CADENCE_PACING", "1"), ("SCOREBUG_TEST_UPLINK_PROXY_PORT", "1234"),
+            ("SCOREBUG_TEST_DECODER_STALL", "reset540")] {
+            var bad = valid; bad[key] = value
+            XCTAssertThrowsError(try NativeCandidateFixture.requested(environment: bad), "\(key)=\(value)")
+            XCTAssertThrowsError(try NativeBandwidthProbePublisher.requested(environment: bad), "\(key)=\(value)")
+        }
+        for environment in [["SCOREBUG_TEST_CANDIDATE_HEADROOM": "1"], ["SCOREBUG_TEST_CANDIDATE_HEADROOM": ""]] {
+            XCTAssertThrowsError(try NativeCandidateFixture.requested(environment: environment))
+            XCTAssertThrowsError(try NativeBandwidthProbePublisher.requested(environment: environment))
+        }
+        for key in ["SCOREBUG_TEST_CANDIDATE_PROFILE", "SCOREBUG_TEST_BANDWIDTH_PROBE"] {
+            var orphan = valid; orphan.removeValue(forKey: key)
+            XCTAssertThrowsError(try NativeCandidateFixture.requested(environment: orphan))
+            XCTAssertThrowsError(try NativeBandwidthProbePublisher.requested(environment: orphan))
+        }
+    }
+
     @MainActor func testSerializationPreservesActualRawBytesAndAdmissionTime() async throws {
         let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1)
@@ -205,10 +238,247 @@ extension NativeCandidateFixtureTests {
         XCTAssertEqual(fake.exports, 1)
         XCTAssertFalse(fake.events.contains("candidateStart"))
     }
-    private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero) -> NativeCandidatePublisher {
+    func testCombinedCompositionPreservesStartupPrimaryAppendAndProbeObservation() async throws {
+        let fake = CandidateFixtureFake()
+        fake.setProbe(stage: 3)
+        let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let probe = NativeBandwidthProbePublisher(publisher: fake, scope: scope, mode: .staged,
+            operations: .init(clock: { nil }, begin: { throw PublishingSessionError.invalidState },
+                renew: { _,_ in throw PublishingSessionError.invalidState }, cancel: { _,_ in },
+                snapshot: {
+                    guard let value = await fake.probeObservation() else { return nil }
+                    return NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
+                        bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
+                        acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
+                        reason: value.reason, stage: value.stage, permitsCurrentOwner: value.permitsCurrentOwner)
+                }, export: { _ in }), timing: .init(delay: .seconds(20)), candidateHeadroom: true)
+        let wrapper = NativeCandidatePublisher(publisher: probe, scope: scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(10)), candidateHeadroom: true)
+        XCTAssertEqual(wrapper.videoStartup, fake.videoStartup)
+        let forwarded = await wrapper.probeObservation(), source = await fake.probeObservation()
+        XCTAssertEqual(forwarded?.id, source?.id)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        try await wrapper.append(candidateVideo())
+        XCTAssertEqual(fake.events.suffix(2), ["primary", "candidate"])
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertEqual(fake.exports, 1); XCTAssertEqual(fake.stops, 1)
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testCombinedRefreshesLeaseAfterCandidateStartupJoin() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+        fake.setProbe(stage: 3); fake.blockCandidateStart = true
+        fake.updateProbeLease(after: 0.05)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.events.contains("candidateStart") }
+        try await Task.sleep(for: .milliseconds(60))
+        fake.updateProbeLease(after: 10)
+        fake.releaseCandidateStart()
+        await wait { fake.waiting }
+        try await wrapper.append(candidateVideo())
+        XCTAssertEqual(fake.events.suffix(2), ["primary", "candidate"])
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testCombinedWaitsForMatureCurrentFinalStageAndExportsBinding() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+        fake.setProbe(stage: 2)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start()
+        await wait { fake.probeReads >= 2 }
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        fake.setProbe(stage: 3, age: 0)
+        let reads = fake.probeReads
+        await wait { fake.probeReads >= reads + 2 }
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        fake.setProbe(stage: 3)
+        await wait { fake.waiting }
+        let observation = await wrapper.probeObservation()
+        let bound = try XCTUnwrap(observation)
+        try await wrapper.append(candidateVideo())
+        XCTAssertEqual(fake.events.suffix(2), ["primary", "candidate"])
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        let binding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+        let initial = try XCTUnwrap(binding["initial"] as? [String: Any])
+        let final = try XCTUnwrap(binding["final"] as? [String: Any])
+        XCTAssertEqual(initial["id"] as? String, bound.id.uuidString)
+        XCTAssertEqual(final["id"] as? String, bound.id.uuidString)
+        XCTAssertEqual(initial["stage"] as? Int, 3)
+        XCTAssertEqual(initial["bitRate"] as? Int, 12_000_000)
+        XCTAssertEqual(initial["publishingGeneration"] as? String, "7")
+        XCTAssertNotNil(initial["observedAt"] as? Double)
+        XCTAssertNotNil(final["observedAt"] as? Double)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(binding["completedAt"] as? Double), try XCTUnwrap(binding["boundAt"] as? Double))
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testCombinedRejectsMissingRetiredWrongStageAndStaleProbeAtGate() async throws {
+        for fault in [0, 1, 2, 3, 4, 5, 7] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, probeWaitPolls: 2)
+            fake.setProbe(stage: 3)
+            fake.mutateProbe(fault)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start()
+            await wait { !fake.reasons.isEmpty }
+            XCTAssertFalse(fake.events.contains("candidateStart"), "fault \(fault)")
+            await wrapper.stop()
+            XCTAssertNotNil(fake.object?["invalidReason"] as? String)
+        }
+    }
+    func testCombinedAppendRevalidatesSnapshotSupersededByMonitor() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+        fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.blockNextProbeRead()
+        let append = Task { try await wrapper.append(candidateVideo()) }
+        await wait { fake.probeReadIsBlocked }
+        fake.advanceProbeReceipt()
+        await wait { fake.pressureProbeBytes == 2 * 1316 }
+        let readsBeforeRelease = fake.probeReads
+        fake.releaseProbeRead()
+        try await append.value
+        XCTAssertGreaterThan(fake.probeReads, readsBeforeRelease, "a superseded response requires a fresh native read")
+        XCTAssertEqual(fake.events.suffix(2), ["primary", "candidate"])
+        XCTAssertFalse(fake.reasons.contains(.ownerChanged))
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+        let binding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+        let final = try XCTUnwrap(binding["final"] as? [String: Any])
+        XCTAssertEqual(final["acceptedPayloadBytes"] as? String, "2632")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(final["observedAt"] as? Double), try XCTUnwrap(binding["completedAt"] as? Double))
+    }
+    func testCombinedFreshRegressionStillRevokesWithAndWithoutSupersededRead() async throws {
+        for overlap in [false, true] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+            fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            let append: Task<Void, Error>?
+            if overlap {
+                fake.blockNextProbeRead()
+                append = Task { try await wrapper.append(candidateVideo()) }
+                await wait { fake.probeReadIsBlocked }
+            } else { append = nil }
+            fake.advanceProbeReceipt()
+            await wait { fake.pressureProbeBytes == 2 * 1316 }
+            fake.regressProbeReceipt()
+            if overlap { fake.releaseProbeRead(); try await append?.value }
+            else { try await wrapper.append(candidateVideo()) }
+            XCTAssertFalse(fake.events.contains("candidate"))
+            XCTAssertTrue(fake.reasons.contains(.ownerChanged))
+            await wrapper.stop()
+            XCTAssertEqual(fake.object?["invalidReason"] as? String, "ownerChanged")
+        }
+    }
+    func testCombinedAppendRefreshesRenewedLeaseBeforeMonitorPoll() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+        fake.setProbe(stage: 3); fake.updateProbeLease(after: 0.2)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        let initial = await fake.probeObservation()
+        let deadline = try XCTUnwrap(initial).leaseDeadline
+        let readsBefore = fake.probeReads
+        while ProcessInfo.processInfo.systemUptime <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        fake.updateProbeLease(after: 10)
+        XCTAssertEqual(fake.probeReads, readsBefore, "the monitor has not refreshed the expired cached lease")
+        try await wrapper.append(candidateVideo())
+        XCTAssertGreaterThan(fake.probeReads, readsBefore)
+        XCTAssertEqual(fake.events.suffix(2), ["primary", "candidate"])
+        XCTAssertFalse(fake.reasons.contains(.ownerChanged))
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+    }
+    func testCombinedAppendRejectsChangedCurrentIdentityAndRateBeforeMonitorPoll() async throws {
+        for fault in [5, 6, 7] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            let readsBefore = fake.probeReads
+            fake.mutateProbe(fault) // The previously pinned authority closure remains true.
+            try await wrapper.append(candidateVideo())
+            XCTAssertGreaterThan(fake.probeReads, readsBefore)
+            XCTAssertEqual(fake.events.last, "primary")
+            XCTAssertFalse(fake.events.contains("candidate"))
+            XCTAssertTrue(fake.reasons.contains(.ownerChanged))
+            await wrapper.stop()
+        }
+    }
+    func testCombinedAppendCannotOfferAfterSampleCompletesOrStopsDuringFreshRead() async throws {
+        for stop in [false, true] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.setProbe(stage: 3)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.blockNextProbeRead()
+            let append = Task { try await wrapper.append(candidateVideo()) }
+            await wait { fake.probeReadIsBlocked }
+            if stop { await wrapper.stop() }
+            else { fake.finish(); await wrapper.waitForMeasurement() }
+            fake.releaseProbeRead()
+            try await append.value
+            XCTAssertFalse(fake.events.contains("candidate"))
+            await wrapper.stop()
+            XCTAssertEqual(fake.exports, 1)
+            if !stop {
+                XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
+                let binding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+                let final = try XCTUnwrap(binding["final"] as? [String: Any])
+                XCTAssertLessThanOrEqual(try XCTUnwrap(final["observedAt"] as? Double),
+                    try XCTUnwrap(binding["completedAt"] as? Double), "a late append read cannot alter joined final evidence")
+            }
+        }
+    }
+    func testCombinedPinnedAuthorityRevocationPreventsNextOffer() async throws {
+        let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+        fake.setProbe(stage: 3)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.mutateProbe(4)
+        try await wrapper.append(candidateVideo())
+        XCTAssertFalse(fake.events.contains("candidate"))
+        XCTAssertTrue(fake.reasons.contains(.ownerChanged))
+        await wrapper.stop()
+    }
+    func testCombinedMonitorAndCompletionRequireFreshSameProbe() async throws {
+        for fault in [0, 1, 2, 3, 4, 5, 6, 7] {
+            for finish in [false, true] {
+                let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+                fake.setProbe(stage: 3)
+                await wrapper.setDiagnostics { fake.pressure }
+                try await wrapper.start(); await wait { fake.waiting }
+                fake.mutateProbe(fault)
+                if finish { fake.finish(); await wrapper.waitForMeasurement() }
+                else { await wait { fake.reasons.contains(.ownerChanged) } }
+                try await wrapper.append(candidateVideo())
+                XCTAssertFalse(fake.events.contains("candidate"))
+                await wrapper.stop()
+                XCTAssertEqual(fake.object?["invalidReason"] as? String, "ownerChanged", "fault \(fault), finish \(finish)")
+            }
+        }
+    }
+    func testCombinedStopDuringGateAndSampleJoinsBeforeSingleExport() async throws {
+        for sampling in [false, true] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true)
+            fake.setProbe(stage: sampling ? 3 : 2)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start()
+            await wait { sampling ? fake.waiting : fake.probeReads > 0 }
+            async let first: Void = wrapper.stop()
+            async let second: Void = wrapper.stop()
+            _ = await (first, second)
+            XCTAssertEqual(fake.stops, 1); XCTAssertEqual(fake.exports, 1)
+            XCTAssertEqual(fake.object?["invalidReason"] as? String, "publisherStopped")
+            XCTAssertEqual(fake.events.contains("candidateStart"), sampling)
+        }
+    }
+    private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10)) -> NativeCandidatePublisher {
         .init(publisher: fake, scope: .init(recordingID: "record", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1), liveProfile: .low240,
-            operations: fake.operations, timing: .init(delay: delay, poll: .milliseconds(10), maximumPolls: 50))
+            operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom)
     }
     private func wait(_ predicate: @escaping () -> Bool) async {
         for _ in 0..<1000 { if predicate() { return }; try? await Task.sleep(for: .milliseconds(1)) }
@@ -218,7 +488,10 @@ extension NativeCandidateFixtureTests {
 
 import CoreMedia
 import CoreVideo
-private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
+private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObserving, @unchecked Sendable {
+    let videoStartup = PublishingVideoStartup(profile: .low240, width: PublishingVideoProfile.low240.width,
+        height: PublishingVideoProfile.low240.height, publishingGeneration: 7, encoderSessionID: UUID(),
+        firstSourcePTS: .zero, submittedAt: 1, completedAt: 1, observedAt: 1)
     private let lock = NSLock()
     private let stream: AsyncStream<Void>
     private let continuation: AsyncStream<Void>.Continuation
@@ -227,7 +500,69 @@ private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
     private var fault: Int?, storedFail = false, storedBlockAppend = false
     private let appendGate = AsyncStream<Void>.makeStream()
     private let startGate = AsyncStream<Void>.makeStream()
-    private var storedBlockStart = false
+    private var storedBlockStart = false, storedBlockCandidateStart = false
+    private let candidateStartGate = AsyncStream<Void>.makeStream()
+    var blockCandidateStart: Bool { get { lock.withLock { storedBlockCandidateStart } } set { lock.withLock { storedBlockCandidateStart = newValue } } }
+    func releaseCandidateStart() { candidateStartGate.continuation.finish() }
+    func updateProbeLease(after interval: Double) { lock.withLock { probe?.leaseDeadline = ProcessInfo.processInfo.systemUptime + interval } }
+    private var probe: PublishingProbeObservation?, storedProbeReads = 0, authority = true
+    private var lastReturnedProbeBytes: UInt64?, storedPressureProbeBytes: UInt64?
+    var pressureProbeBytes: UInt64? { lock.withLock { storedPressureProbeBytes } }
+    func advanceProbeReceipt() {
+        lock.withLock {
+            probe?.acceptedPayloadBytes = 2 * 1316
+            probe?.lastAcceptedAt = ProcessInfo.processInfo.systemUptime
+            probe?.leaseDeadline = ProcessInfo.processInfo.systemUptime + 20
+        }
+    }
+    func regressProbeReceipt() {
+        lock.withLock {
+            probe?.acceptedPayloadBytes = 1316
+            probe?.leaseDeadline = ProcessInfo.processInfo.systemUptime + 10
+        }
+    }
+    private let probeReadGate = AsyncStream<Void>.makeStream()
+    private var storedBlockNextProbeRead = false, storedProbeReadIsBlocked = false
+    func blockNextProbeRead() { lock.withLock { storedBlockNextProbeRead = true } }
+    func releaseProbeRead() { probeReadGate.continuation.finish() }
+    var probeReadIsBlocked: Bool { lock.withLock { storedProbeReadIsBlocked } }
+    var probeReads: Int { lock.withLock { storedProbeReads } }
+    func setProbe(stage: Int, age: Double = 1) {
+        lock.withLock {
+            let now = ProcessInfo.processInfo.systemUptime
+            authority = true
+            probe = .init(id: UUID(), publishingGeneration: 7, bitRate: stage == 3 ? 12_000_000 : 2_000_000,
+                startedAt: now - age, leaseDeadline: now + 10, acceptedPayloadBytes: 1316,
+                lastAcceptedAt: now, reason: nil, stage: stage,
+                permitsCurrentOwner: { [weak self] _,_,_ in self?.lock.withLock { self?.authority == true } ?? false })
+        }
+    }
+    func mutateProbe(_ fault: Int) {
+        lock.withLock {
+            switch fault {
+            case 0: probe = nil
+            case 1: probe?.reason = "cancelled"
+            case 2: probe?.stage = 2
+            case 3: probe?.leaseDeadline = ProcessInfo.processInfo.systemUptime - 0.1
+            case 4: authority = false
+            case 5: probe?.bitRate = 2_000_000
+            case 6: probe?.id = UUID()
+            default: probe?.publishingGeneration = 8
+            }
+        }
+    }
+    func probeObservation() async -> PublishingProbeObservation? {
+        let (value, block) = lock.withLock {
+            storedProbeReads += 1
+            let block = storedBlockNextProbeRead
+            storedBlockNextProbeRead = false
+            if block { storedProbeReadIsBlocked = true }
+            return (probe, block)
+        }
+        if block { for await _ in probeReadGate.stream {} }
+        lock.withLock { lastReturnedProbeBytes = value?.acceptedPayloadBytes }
+        return value
+    }
     init() { let pair = AsyncStream<Void>.makeStream(); stream = pair.stream; continuation = pair.continuation }
     var events: [String] { lock.withLock { storedEvents } }
     var reasons: [PublishingCandidateMeasurement.Reason] { lock.withLock { storedReasons } }
@@ -243,6 +578,7 @@ private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
     func setFault(_ value: Int) { lock.withLock { fault = value } }
     var pressure: NativeCandidatePublisher.Pressure? {
         lock.withLock {
+            storedPressureProbeBytes = lastReturnedProbeBytes
             if fault == 4 { return nil }
             let now = ProcessInfo.processInfo.systemUptime
             return .init(observedAt: now, sampledAt: now - (fault == 2 ? 3 : 0), thermal: fault == 1 ? 2 : 0,
@@ -250,7 +586,10 @@ private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
         }
     }
     var operations: NativeCandidatePublisher.Operations {
-        .init(start: { self.lock.withLock { self.storedEvents.append("candidateStart") } },
+        .init(start: {
+            self.lock.withLock { self.storedEvents.append("candidateStart") }
+            if self.blockCandidateStart { for await _ in self.candidateStartGate.stream {} }
+        },
             offer: { _ in self.lock.withLock { self.storedEvents.append("candidate") }; return true },
             cancel: { reason in self.lock.withLock { self.storedReasons.append(reason) } },
             result: { self.lock.withLock { self.storedWaiting = true }; for await _ in self.stream {}; return Data("{}".utf8) },
@@ -267,7 +606,7 @@ private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
         if failAppend { throw PublishingSessionError.appendFailed }
     }
     var isPublishing: Bool { get async { true } }
-    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); finish() }
+    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); releaseProbeRead(); finish() }
 }
 private func candidateVideo(at pts: CMTime = .zero) throws -> CapturedMediaSample {
     var pixel: CVPixelBuffer?, format: CMVideoFormatDescription?, sample: CMSampleBuffer?

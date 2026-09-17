@@ -7,7 +7,7 @@ enum SRTProbeMessage {
     static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
                             sequence: UInt64, bitRate: Int) throws -> Data {
         guard id != UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)), generation > 0,
-              (1...32).contains(stage), (1...2_000_000).contains(bitRate),
+              (1...32).contains(stage), (1...12_000_000).contains(bitRate),
               sequence < UInt64(16 * 1024 * 1024 / 1316) else {
             throw SRTBandwidthProbeError.invalidConfiguration
         }

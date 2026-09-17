@@ -2,6 +2,8 @@ import {
   nativeCandidateProfile,
   qualifyNativeCandidateMeasurement,
 } from './native-candidate-measurement.mjs';
+import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
+import { qualifyCandidateProbeHeadroom } from './candidate-probe-headroom.mjs';
 import {
   qualifyNativeDeadlineDecisions,
   qualifyNativeDeadlineReset,
@@ -140,6 +142,7 @@ const bandwidthProbe = nativeBandwidthProbe({
   holdSeconds: streamingOptions.holdSeconds,
   liveProfile,
 });
+const candidateHeadroom = nativeCandidateHeadroom(process.env);
 const candidateProfile = nativeCandidateProfile({
   environment: process.env,
   streaming,
@@ -484,6 +487,7 @@ try {
       requirePublication,
       requireReceiverProbe: bandwidthProbe !== null,
       stagedReceiverProbe: bandwidthProbe === 'staged',
+      candidateHeadroom,
       uplinkProfile,
       liveProfile,
       cadenceReports,
@@ -559,6 +563,7 @@ try {
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
       `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
+      `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
       `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
@@ -669,6 +674,7 @@ try {
       'No interrupted recording status',
     );
   let candidateQualification,
+    candidateHeadroomQualification,
     nativeVideoCostQualification,
     nativeFormatQualification,
     profileTransitionQualification,
@@ -816,6 +822,7 @@ try {
         JSON.parse(bytes.toString('utf8')),
         {
           mode: bandwidthProbe,
+          candidateHeadroom,
           scope: videoObservation.scope,
           publishingGeneration: publishingClockObservation.publishingGeneration,
         },
@@ -842,6 +849,7 @@ try {
         bandwidthProbeQualification,
         JSON.parse(await readFile(join(artifact, 'worker-publication-status.json'), 'utf8')),
         JSON.parse(bytes.toString('utf8')),
+        { includeIntervalIndexes: candidateHeadroom },
       );
     }
     publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
@@ -997,6 +1005,26 @@ try {
       join(artifact, 'worker-report-age-qualification.json'),
       JSON.stringify(workerReportAge, null, 2),
     );
+    if (candidateHeadroom) {
+      candidateHeadroomQualification = qualifyCandidateProbeHeadroom({
+        candidate: candidateQualification,
+        candidateProof: JSON.parse(
+          await readFile(join(artifact, 'native-candidate-measurement.json'), 'utf8'),
+        ),
+        accepted: bandwidthProbeQualification,
+        nativeProof: JSON.parse(
+          await readFile(join(artifact, 'native-bandwidth-probe.json'), 'utf8'),
+        ),
+        intervals: JSON.parse(
+          await readFile(join(artifact, 'native-receiver-intervals.json'), 'utf8'),
+        ),
+        intervalQualification: nativeReceiverIntervalQualification,
+      });
+      await writeFile(
+        join(artifact, 'candidate-headroom-qualification.json'),
+        JSON.stringify(candidateHeadroomQualification, null, 2),
+      );
+    }
   }
   await mkdir(join(artifact, 'attachments'));
   await run(
@@ -1025,6 +1053,7 @@ try {
         nativeVideoCostQualification,
         candidateProfile,
         candidateQualification,
+        candidateHeadroomQualification,
         profileTransitions,
         profileTransitionSequence,
         adaptiveProfiles,

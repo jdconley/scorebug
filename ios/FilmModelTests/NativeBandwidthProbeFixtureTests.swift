@@ -162,6 +162,52 @@ private actor ProbeFixtureOperations: MediaPublisher {
 }
 
 extension NativeBandwidthProbeFixtureTests {
+    func testCombinedStageRetirementUsesAbsoluteEightSecondDeadline() async throws {
+        let clock = ProbeFixtureClock()
+        let fixture = StagedProbeFixtureOperations(clock: clock.read, renewed: { clock.advance(4) })
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 240,
+                stagePolls: 80, now: clock.read), candidateHeadroom: true)
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        let counts = await fixture.counts()
+        XCTAssertEqual(counts.renew, 6, "each absolute eight-second stage permits two four-second renewals")
+        XCTAssertEqual(counts.cancel, 3)
+        let object = try await fixture.exportedObject()
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        XCTAssertEqual(object["result"] as? String, "completed")
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+        for event in events where event["phase"] as? String == "retired" {
+            let sample = try XCTUnwrap(event["sample"] as? [String: Any])
+            XCTAssertEqual(try XCTUnwrap(event["retirementRequestedAt"] as? Double) - XCTUnwrap(sample["startedAt"] as? Double), 8, accuracy: 0.001)
+        }
+    }
+    func testCombinedProbeForwardsPrimaryStartup() async throws {
+        let fixture = StagedProbeFixtureOperations()
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1),
+            candidateHeadroom: true)
+        XCTAssertEqual(publisher.videoStartup, fixture.videoStartup)
+        XCTAssertNotNil(publisher.videoStartup)
+    }
+    func testCombinedScheduleUsesTwelveMbpsFinalStageAndTerminalJoins() async throws {
+        let fixture = StagedProbeFixtureOperations()
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+            operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 3, stagePolls: 1),
+            candidateHeadroom: true)
+        try await publisher.start(); await publisher.waitForProbe()
+        let before = await fixture.counts()
+        XCTAssertEqual(before.export, 0)
+        await publisher.stop(); await publisher.stop()
+        let counts = await fixture.counts()
+        XCTAssertEqual(counts.cancel, 3); XCTAssertEqual(counts.export, 1)
+        let object = try await fixture.exportedObject()
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        XCTAssertEqual(object["result"] as? String, "completed")
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+        let starts = events.filter { ["began", "replaced"].contains($0["phase"] as? String ?? "") }
+        XCTAssertEqual(starts.compactMap { ($0["sample"] as? [String: Any])?["bitRate"] as? Int }, [500_000, 2_000_000, 12_000_000])
+        XCTAssertLessThan(try JSONSerialization.data(withJSONObject: object).count, 256 * 1024)
+    }
     func testStagedModeIsExplicitAndRequiresTheSameExclusiveFixtureRoute() throws {
         let valid = ["SCOREBUG_TEST_BANDWIDTH_PROBE": "staged", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
             "SCOREBUG_TEST_LIVE_PROFILE": "540p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
@@ -252,13 +298,20 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
     enum Fault: CaseIterable { case stage, campaign, cumulative, localBytes, identity, rate }
     private let fault: Fault?
     private let gateReplacement: Bool, missingFinalSnapshot: Bool
+    private let clock: @Sendable () -> Double
+    private let renewed: @Sendable () -> Void
     private var stopped = false, entered = false
     private var waiter: CheckedContinuation<Void, Never>?
     private var sample: NativeBandwidthProbeSample?
     private var renews = 0, replacements = 0, cancels = 0, exports: [Data] = []
-    init(fault: Fault? = nil, gateReplacement: Bool = false, missingFinalSnapshot: Bool = false) {
+    init(fault: Fault? = nil, gateReplacement: Bool = false, missingFinalSnapshot: Bool = false,
+         clock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }, renewed: @escaping @Sendable () -> Void = {}) {
+        self.clock = clock; self.renewed = renewed
         self.fault = fault; self.gateReplacement = gateReplacement; self.missingFinalSnapshot = missingFinalSnapshot
     }
+    nonisolated let videoStartup = PublishingVideoStartup(profile: .low240, width: PublishingVideoProfile.low240.width,
+        height: PublishingVideoProfile.low240.height, publishingGeneration: 7, encoderSessionID: UUID(),
+        firstSourcePTS: .zero, submittedAt: 1, completedAt: 1, observedAt: 1)
     func start() async throws {}
     func append(_ sample: CapturedMediaSample) async throws {}
     var isPublishing: Bool { !stopped }
@@ -271,15 +324,15 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
             replace: { id, generation, stage, rate in try await self.replace(id, generation, stage, rate) })
     }
     func begin() -> NativeBandwidthProbeSample {
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = clock()
         let value = NativeBandwidthProbeSample(id: UUID(), publishingGeneration: 7, bitRate: 500_000,
             startedAt: now, leaseDeadline: now + 0.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil,
             stage: 1, permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: now, totalAcceptedPayloadBytes: 0)
         sample = value; return value
     }
     func renew() -> NativeBandwidthProbeSample {
-        renews += 1
-        let prior = sample!, now = ProcessInfo.processInfo.systemUptime
+        renews += 1; renewed()
+        let prior = sample!, now = clock()
         let value = NativeBandwidthProbeSample(id: prior.id, publishingGeneration: 7, bitRate: prior.bitRate,
             startedAt: prior.startedAt, leaseDeadline: now + 0.3, acceptedPayloadBytes: prior.acceptedPayloadBytes + 1316,
             lastAcceptedAt: now, reason: prior.reason, stage: prior.stage, permitsCurrentOwner: prior.permitsCurrentOwner,
@@ -293,7 +346,7 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
         XCTAssertEqual(prior.reason, "cancelled"); XCTAssertEqual(id, prior.id)
         XCTAssertEqual(generation, 7); XCTAssertEqual(stage, prior.stage)
         if gateReplacement { entered = true; await withCheckedContinuation { waiter = $0 } }
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = clock()
         let value = NativeBandwidthProbeSample(id: fault == .identity ? prior.id : UUID(), publishingGeneration: 7,
             bitRate: fault == .rate ? 123 : rate, startedAt: now, leaseDeadline: now + 0.3,
             acceptedPayloadBytes: fault == .localBytes ? 1316 : 0, lastAcceptedAt: fault == .localBytes ? now : nil,
@@ -314,4 +367,11 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
         XCTAssertTrue(entered)
     }
     private enum Failure: Error { case unexpected }
+}
+
+private final class ProbeFixtureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var now = ProcessInfo.processInfo.systemUptime
+    func read() -> Double { lock.withLock { now } }
+    func advance(_ interval: Double) { lock.withLock { now += interval } }
 }

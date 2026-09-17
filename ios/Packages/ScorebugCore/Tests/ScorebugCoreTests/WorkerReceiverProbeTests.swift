@@ -21,6 +21,31 @@ final class WorkerReceiverProbeTests: XCTestCase {
         .init(response: response, expected: expected ?? expectation(), receivedAt: at, requestDuration: duration)
     }
 
+    func testRateCeilingDependsOnWireVersionAndStillRequiresBoundedStage() throws {
+        var snapshot = try XCTUnwrap(fixture().status.receiverProbe?.snapshot)
+        snapshot.bitRate = 2_000_000
+        XCTAssertNotNil(snapshot.validated)
+        snapshot.bitRate = 2_000_001
+        XCTAssertNil(snapshot.validated)
+        snapshot.convention = "mpegts-null-probe-v2"
+        snapshot.stage = 1
+        snapshot.totalDeliveredPayloadBytes = snapshot.deliveredPayloadBytes
+        for rate in [2_000_001, 12_000_000] {
+            snapshot.bitRate = rate
+            XCTAssertNotNil(snapshot.validated)
+        }
+        snapshot.bitRate = 12_000_001
+        XCTAssertNil(snapshot.validated)
+        snapshot.bitRate = 12_000_000
+        snapshot.stage = nil
+        XCTAssertNil(snapshot.validated)
+        snapshot.stage = 33
+        XCTAssertNil(snapshot.validated)
+        snapshot.stage = 1
+        snapshot.convention = "mpegts-null-probe-v1"
+        XCTAssertNil(snapshot.validated)
+    }
+
     func testV2GoldenIsValidatedAndRoundTrips() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "receiver-probe-status-v2", withExtension: "json", subdirectory: "Fixtures"))
         let bytes = try Data(contentsOf: url)

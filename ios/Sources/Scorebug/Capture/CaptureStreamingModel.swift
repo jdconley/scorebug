@@ -148,6 +148,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
              let candidateProfile = try NativeCandidateFixture.requested(environment: environment)
+             let candidateHeadroom = try NativeCandidateHeadroomFixture.requested(environment: environment)
              let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
              let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
              if environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540", WorkerCadenceReportAudit.requested(environment: environment) {
@@ -182,16 +183,18 @@ struct PublishingClockObservation: Equatable, Sendable {
                  compressedVideoObserver: observer, compressedAudioObserver: audioObserver,
                  didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
              proof?.observeStartup(from: publisher)
+             let primary: any MediaPublisher
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-                 return NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope, mode: probeMode)
-             }
+                 primary = NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope,
+                     mode: probeMode, candidateHeadroom: candidateHeadroom)
+             } else { primary = publisher }
              if let candidateProfile {
                  guard let observations, let candidateTransport else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-                 return try NativeCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope, liveProfile: profile,
-                     candidate: candidateProfile, transport: candidateTransport)
+                 return try NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
+                     candidate: candidateProfile, transport: candidateTransport, candidateHeadroom: candidateHeadroom)
              }
-             return publisher
+             return primary
              #else
              return SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup)
              #endif

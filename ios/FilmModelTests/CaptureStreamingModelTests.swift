@@ -5,6 +5,31 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testProbeObservationRateCeilingDependsOnStageAndRequiresCurrentOwner() {
+        var sample = PublishingProbeObservation(id: UUID(), publishingGeneration: 1, bitRate: 2_000_000,
+            startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil,
+            reason: nil, permitsCurrentOwner: { _, _, _ in true })
+        XCTAssertTrue(sample.isActive(at: 10.1))
+        sample.bitRate = 2_000_001
+        XCTAssertFalse(sample.isActive(at: 10.1))
+        sample.stage = 1
+        XCTAssertTrue(sample.isActive(at: 10.1))
+        sample.bitRate = 12_000_000
+        XCTAssertTrue(sample.isActive(at: 10.1))
+        sample.bitRate = 12_000_001
+        XCTAssertFalse(sample.isActive(at: 10.1))
+        sample.bitRate = 12_000_000
+        sample.stage = 33
+        XCTAssertFalse(sample.isActive(at: 10.1))
+        sample.stage = 1
+        sample.permitsCurrentOwner = { _, _, _ in false }
+        XCTAssertFalse(sample.isActive(at: 10.1))
+        sample.permitsCurrentOwner = { _, _, _ in true }
+        XCTAssertFalse(sample.isActive(at: 10.3))
+        sample.reason = "cancelled"
+        XCTAssertFalse(sample.isActive(at: 10.1))
+    }
+
     func testReceiverProbeFixturePollsWithinNativeLeaseWithoutWeakeningDefaultCadence() async throws {
         let (model, _, _, _) = try await receiverProbeModel()
         model.cadenceReportFixtureWriter = nil

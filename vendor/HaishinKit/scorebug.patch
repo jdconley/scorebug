@@ -1336,7 +1336,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,338 @@
+@@ -8,6 +8,339 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1382,7 +1382,8 @@
 +                                    staged: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
 +        try Task.checkCancellation()
 +        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-+        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
++        let maximumBitRate = staged ? 12_000_000 : 2_000_000
++        guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
 +        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
 +              let connection else { throw SRTBandwidthProbeError.notPublishing }
 +        guard bandwidthProbe == nil, !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
@@ -1407,7 +1408,7 @@
 +                                      stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
 +        try Task.checkCancellation()
 +        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-+        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
++        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
 +        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
 +              let connection else { throw SRTBandwidthProbeError.notPublishing }
 +        guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected,
@@ -1675,7 +1676,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +354,7 @@
+@@ -22,7 +355,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1684,7 +1685,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +364,46 @@
+@@ -32,8 +365,46 @@
      }
 
      /// Creates a new stream object.
@@ -1732,7 +1733,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +415,7 @@
+@@ -45,7 +416,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1741,7 +1742,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +427,28 @@
+@@ -57,8 +428,28 @@
              }
              return
          }
@@ -1771,7 +1772,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +458,64 @@
+@@ -68,26 +459,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1856,7 +1857,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +544,90 @@
+@@ -116,16 +545,90 @@
          readyState = .playing
      }
 
@@ -1952,7 +1953,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +648,33 @@
+@@ -146,23 +649,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -1988,7 +1989,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +684,36 @@
+@@ -172,16 +685,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -3092,7 +3093,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,197 @@
 +import Foundation
 +
 +public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
@@ -3165,7 +3166,8 @@
 +    init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
 +         stage: UInt32? = nil, campaignStartedAt: Double? = nil,
 +         previouslyAcceptedPayloadBytes: UInt64 = 0) throws {
-+        guard (1...2_000_000).contains(bitRate), at.isFinite, at >= 0 else {
++        let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
++        guard (1...maximumBitRate).contains(bitRate), at.isFinite, at >= 0 else {
 +            throw SRTBandwidthProbeError.invalidConfiguration
 +        }
 +        if let stage {
@@ -3213,6 +3215,9 @@
 +        tokenAt = at
 +        return tokens >= 1360
 +    }
++    /// Versioned wake bound; readiness still requires one 1360-byte token.
++    var minimumWakeInterval: Double { stage == nil ? 0.002 : 0.0005 }
++
 +    /// A wake is only an opportunity. The same token cap and permit are checked
 +    /// again at native submission, so delayed timers never accumulate a burst.
 +    func nextOpportunityDelay(now: () -> Double) -> Double? {
@@ -3379,11 +3384,11 @@
 +                timer.cancel(); return
 +            }
 +            if delay == 0 { wake() }
-+            // At most 500 callbacks/s while media delays a ready probe. Each
-+            // callback coalesces a signal; it never banks bytes or sends media.
-+            timer.schedule(deadline: .now() + min(0.05, max(0.002, delay)), leeway: .nanoseconds(0))
++            // At most 500 legacy or 2000 staged callbacks/s while media delays
++            // a ready probe. Each signal coalesces; it never banks bytes or sends media.
++            timer.schedule(deadline: .now() + min(0.05, max(probe.minimumWakeInterval, delay)), leeway: .nanoseconds(0))
 +        }
-+        timer.schedule(deadline: .now() + .milliseconds(2), leeway: .nanoseconds(0))
++        timer.schedule(deadline: .now() + probe.minimumWakeInterval, leeway: .nanoseconds(0))
 +    }
 +
 +    static func run(probe: SRTBandwidthProbe, wake: @escaping @Sendable () -> Void) async {
@@ -3414,7 +3419,7 @@
 +    static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
 +                            sequence: UInt64, bitRate: Int) throws -> Data {
 +        guard id != UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)), generation > 0,
-+              (1...32).contains(stage), (1...2_000_000).contains(bitRate),
++              (1...32).contains(stage), (1...12_000_000).contains(bitRate),
 +              sequence < UInt64(16 * 1024 * 1024 / 1316) else {
 +            throw SRTBandwidthProbeError.invalidConfiguration
 +        }

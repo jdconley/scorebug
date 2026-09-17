@@ -45,12 +45,17 @@ the qualification fixture's read query is only a unique test marker.
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-v2 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-hd-v2 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
-Current cumulative source must use the fresh `staged-probe-v2` tag. Preserve the
-previously qualified `receiver-probe-v1` and `recovery-v1` images.
+Current cumulative source must use the fresh `staged-probe-hd-v2` tag. Preserve the
+previously qualified `staged-probe-v2`, `receiver-probe-v1` and `recovery-v1` images.
+
+The HD probe build accepts staged `SBUGPRB2` target rates up to 12 Mbps while
+legacy `SBUGPRB1` retains its 2 Mbps ceiling. The connection-wide 16 MiB payload
+cap and all identity, sequence and partial-message checks remain unchanged.
+Accepting a rate field does not establish achieved throughput or spare capacity.
 
 The image contains a static Linux binary and CA certificates. Mount a configured
 `/mediamtx.yml`; the explicit config argument makes an absent file an error. For

@@ -44,6 +44,7 @@ const snapshot = z.discriminatedUnion('convention', [
   z.object({
     ...fields,
     convention: z.literal('mpegts-null-probe-v2'),
+    bitRate: z.number().int().min(1).max(12_000_000),
     stage: z.number().int().min(1).max(32),
     totalDeliveredPayloadBytes: integer(16n * 1024n * 1024n),
   }),

@@ -15,11 +15,11 @@ final class SRTProbeWakeSchedule: @unchecked Sendable {
                 timer.cancel(); return
             }
             if delay == 0 { wake() }
-            // At most 500 callbacks/s while media delays a ready probe. Each
-            // callback coalesces a signal; it never banks bytes or sends media.
-            timer.schedule(deadline: .now() + min(0.05, max(0.002, delay)), leeway: .nanoseconds(0))
+            // At most 500 legacy or 2000 staged callbacks/s while media delays
+            // a ready probe. Each signal coalesces; it never banks bytes or sends media.
+            timer.schedule(deadline: .now() + min(0.05, max(probe.minimumWakeInterval, delay)), leeway: .nanoseconds(0))
         }
-        timer.schedule(deadline: .now() + .milliseconds(2), leeway: .nanoseconds(0))
+        timer.schedule(deadline: .now() + probe.minimumWakeInterval, leeway: .nanoseconds(0))
     }
 
     static func run(probe: SRTBandwidthProbe, wake: @escaping @Sendable () -> Void) async {

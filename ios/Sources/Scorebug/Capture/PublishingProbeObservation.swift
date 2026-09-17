@@ -18,9 +18,10 @@ struct PublishingProbeObservation: Sendable {
     var stage: Int?
     var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?) -> Bool)?
     func isActive(at now: Double) -> Bool {
+        let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
         guard stage.map({ (1...32).contains($0) }) ?? true,
               permitsCurrentOwner?(id, publishingGeneration, stage) == true else { return false }
-        guard reason == nil, publishingGeneration > 0, (1...2_000_000).contains(bitRate),
+        guard reason == nil, publishingGeneration > 0, (1...maximumBitRate).contains(bitRate),
               now.isFinite, startedAt.isFinite, startedAt >= 0, now >= startedAt, now - startedAt < 60,
               leaseDeadline.isFinite, leaseDeadline > now, leaseDeadline <= startedAt + 60.3,
               acceptedPayloadBytes <= 16 * 1024 * 1024, acceptedPayloadBytes % 1316 == 0,

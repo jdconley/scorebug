@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import {
+  nativeCandidateHeadroom,
+  candidateHeadroomStageRates,
+} from './native-candidate-headroom.mjs';
 
 export function nativeBandwidthProbe({
   environment,
@@ -8,6 +12,7 @@ export function nativeBandwidthProbe({
   holdSeconds,
   liveProfile,
 }) {
+  const combined = nativeCandidateHeadroom(environment);
   const mode = environment.SCOREBUG_TEST_BANDWIDTH_PROBE;
   if (mode === undefined) return null;
   assert.ok(
@@ -18,8 +23,9 @@ export function nativeBandwidthProbe({
       Number.isSafeInteger(holdSeconds) &&
       holdSeconds >= 90 &&
       holdSeconds <= 600 &&
-      liveProfile === '540p30' &&
-      environment.SCOREBUG_TEST_LIVE_PROFILE === '540p30' &&
+      liveProfile === (combined ? '240p30' : '540p30') &&
+      environment.SCOREBUG_TEST_LIVE_PROFILE === liveProfile &&
+      (combined || environment.SCOREBUG_TEST_CANDIDATE_PROFILE === undefined) &&
       environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
       [
@@ -64,9 +70,18 @@ function time(value) {
 }
 
 /** Validates local native acceptance/lease evidence, never receiver capacity. */
-export function qualifyNativeBandwidthProbe(proof, { mode, scope, publishingGeneration }) {
+export function qualifyNativeBandwidthProbe(
+  proof,
+  { mode, scope, publishingGeneration, candidateHeadroom = false },
+) {
+  assert.equal(typeof candidateHeadroom, 'boolean');
+  assert.ok(!candidateHeadroom || mode === 'staged');
   if (mode === 'staged')
-    return qualifyStagedNativeBandwidthProbe(proof, { scope, publishingGeneration });
+    return qualifyStagedNativeBandwidthProbe(proof, {
+      scope,
+      publishingGeneration,
+      candidateHeadroom,
+    });
   assert.ok(['renew', 'expire'].includes(mode));
   assert.equal(proof.formatVersion, 1);
   assert.equal(proof.isClosed, true);
@@ -170,7 +185,10 @@ export function qualifyNativeBandwidthProbe(proof, { mode, scope, publishingGene
   };
 }
 
-function qualifyStagedNativeBandwidthProbe(proof, { scope, publishingGeneration }) {
+function qualifyStagedNativeBandwidthProbe(
+  proof,
+  { scope, publishingGeneration, candidateHeadroom },
+) {
   const check = (condition, message) => assert.ok(condition, `Staged probe: ${message}`);
   const finiteTime = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const bytes = (value) => {
@@ -213,7 +231,8 @@ function qualifyStagedNativeBandwidthProbe(proof, { scope, publishingGeneration 
     origin,
     cumulative = 0n,
     lastRetired;
-  for (const [index, bitRate] of [500_000, 1_000_000, 2_000_000].entries()) {
+  const rates = candidateHeadroom ? candidateHeadroomStageRates : [500_000, 1_000_000, 2_000_000];
+  for (const [index, bitRate] of rates.entries()) {
     const stage = index + 1;
     const tokenCheckpoints = [];
     let first,
@@ -411,6 +430,7 @@ function qualifyStagedNativeBandwidthProbe(proof, { scope, publishingGeneration 
   );
   return {
     mode: 'staged',
+    ...(candidateHeadroom ? { schedule: 'candidate-headroom-v1' } : {}),
     publishingGeneration,
     acceptedPayloadBytes: Number(cumulative),
     totalAcceptedPayloadBytes: Number(cumulative),

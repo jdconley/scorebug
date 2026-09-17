@@ -60,9 +60,22 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(pacing, "1"); XCTAssertEqual(adaptive, "1")
             app.launchEnvironment["SCOREBUG_TEST_SOURCE_CADENCE_PACING"] = pacing
         }
+        let candidateHeadroom = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] ?? ""
+        if !candidateHeadroom.isEmpty {
+            XCTAssertEqual(candidateHeadroom, "1")
+            XCTAssertEqual(liveProfile, "240p30")
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], "staged")
+            XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""))
+            XCTAssertTrue((90...600).contains(holdSeconds)); XCTAssertEqual(motionFlag, "blocks16")
+            for key in ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
+                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL"] {
+                XCTAssertTrue((ProcessInfo.processInfo.environment[key] ?? "").isEmpty)
+            }
+            app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] = candidateHeadroom
+        }
         let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
         if !probe.isEmpty {
-            XCTAssertTrue(["renew", "expire", "staged"].contains(probe)); XCTAssertEqual(liveProfile, "540p30")
+            XCTAssertTrue(["renew", "expire", "staged"].contains(probe)); XCTAssertEqual(liveProfile, candidateHeadroom == "1" ? "240p30" : "540p30")
             XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
             app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
         }
@@ -70,7 +83,7 @@ final class NativeStreamingTests: XCTestCase {
         if !candidate.isEmpty {
             XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(candidate))
             XCTAssertTrue(["240p30", "360p30", "540p30"].contains(liveProfile))
-            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && probe.isEmpty && uplinkPort.isEmpty)
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && (probe.isEmpty || candidateHeadroom == "1") && uplinkPort.isEmpty)
             XCTAssertTrue((90...600).contains(holdSeconds))
             app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = candidate
         }

@@ -1,4 +1,6 @@
 /** Relay pre-demux read accounting, not viewer delivery or available capacity.
+ * Target-rate ceilings are 2 Mbps for legacy v1 and 12 Mbps for staged v2;
+ * both retain the same 16 MiB connection payload budget.
  * Integer strings preserve UInt64 identity on JS and watchOS arm64_32. */
 type ReceiverProbeFields = {
   id: string;

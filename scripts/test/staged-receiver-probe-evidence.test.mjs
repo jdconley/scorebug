@@ -1,8 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { qualifyReceiverProbeEvidence } from '../receiver-probe-evidence.mjs';
+import {
+  qualifyReceiverProbeEvidence,
+  validateReceiverProbeSnapshot,
+} from '../receiver-probe-evidence.mjs';
 import { stagedProbeEvidence } from './fixtures/staged-probe-evidence.mjs';
 const qualify = (f) => qualifyReceiverProbeEvidence(f.records, f.scope, f.accepted);
+test('combined headroom rates must match the explicitly qualified sender schedule', () => {
+  const f = stagedProbeEvidence();
+  f.accepted.schedule = 'candidate-headroom-v1';
+  for (const stage of f.accepted.stages)
+    stage.bitRate = [500000, 2000000, 12000000][stage.stage - 1];
+  for (const record of f.records)
+    record.probe.bitRate = [500000, 2000000, 12000000][record.probe.stage - 1];
+  assert.equal(qualify(f).stageCount, 3);
+  delete f.accepted.schedule;
+  assert.throws(() => qualify(f));
+  f.accepted.schedule = 'unknown';
+  assert.throws(() => qualify(f));
+});
+test('staged receiver snapshots allow HD rates without widening legacy probes', () => {
+  const p = stagedProbeEvidence().records[0].probe;
+  for (const bitRate of [2000001, 6000000, 12000000])
+    assert.equal(validateReceiverProbeSnapshot({ ...p, bitRate }).bitRate, bitRate);
+  for (const bitRate of [0, 12000001, Infinity, 1.5])
+    assert.throws(() => validateReceiverProbeSnapshot({ ...p, bitRate }));
+  const { stage, totalDeliveredPayloadBytes, ...legacy } = p;
+  legacy.convention = 'mpegts-null-probe-v1';
+  assert.equal(validateReceiverProbeSnapshot({ ...legacy, bitRate: 2000000 }).bitRate, 2000000);
+  for (const bitRate of [2000001, 12000000])
+    assert.throws(() => validateReceiverProbeSnapshot({ ...legacy, bitRate }));
+});
 test('reconciles three authenticated stage histories with one cumulative budget', () => {
   const f = stagedProbeEvidence(),
     result = qualify(f);

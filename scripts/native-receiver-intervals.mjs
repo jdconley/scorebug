@@ -63,12 +63,15 @@ export function qualifyNativeReceiverIntervals(
   accepted,
   workerRecords,
   nativeProof,
+  { includeIntervalIndexes = false } = {},
 ) {
+  assert.equal(typeof includeIntervalIndexes, 'boolean');
   const workers = qualifyWorkerPublicationEvidence(workerRecords, scope);
   const native = qualifyNativeBandwidthProbe(nativeProof, {
     mode: accepted.mode,
     scope,
     publishingGeneration: accepted.publishingGeneration,
+    candidateHeadroom: accepted.schedule === 'candidate-headroom-v1',
   });
   const staged = accepted.mode === 'staged';
   if (staged) assert.deepEqual(native, accepted);
@@ -93,8 +96,9 @@ export function qualifyNativeReceiverIntervals(
     offsetUpper = Infinity;
   const seenStages = new Set();
   let coveredIntervals = 0;
+  const coveredIntervalIndexes = [];
   const combinedSnapshots = snapshots.map(validateReceiverProbeSnapshot);
-  for (const row of proof.intervals) {
+  for (const [index, row] of proof.intervals.entries()) {
     const stage = staged ? accepted.stages.find((s) => s.stage === row.nativeProbeStage) : accepted;
     assert.ok(stage, 'Unknown native probe stage');
     if (staged) {
@@ -279,6 +283,7 @@ export function qualifyNativeReceiverIntervals(
     prior = row;
     if (independentlyCovered) {
       coveredIntervals++;
+      coveredIntervalIndexes.push(index);
       if (staged) seenStages.add(stage.stage);
       total += lowerBytes;
       duration += elapsed;
@@ -306,6 +311,7 @@ export function qualifyNativeReceiverIntervals(
   }
   if (staged) assert.deepEqual([...seenStages], [1, 2, 3], 'Missing covered native stage');
   return {
+    ...(includeIntervalIndexes ? { coveredIntervalIndexes } : {}),
     ...(staged
       ? {
           observedIntervalCount: proof.intervals.length,

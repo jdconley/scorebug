@@ -65,10 +65,11 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
 
     /// Mirrors the bounded authenticated API envelope, independently of decoding.
     var validated: (generation: UInt64, observed: UInt64, last: UInt64?)? {
+        let maximumBitRate = convention == "mpegts-null-probe-v2" ? 12_000_000 : 2_000_000
         guard invalidReason == nil,
               WorkerPublication.isCanonicalUUID(id), id != "00000000-0000-0000-0000-000000000000",
               let generation = Self.integer(publishingGeneration), generation > 0,
-              (1...2_000_000).contains(bitRate), (0...6).contains(pendingPackets),
+              (1...maximumBitRate).contains(bitRate), (0...6).contains(pendingPackets),
               let messages = Self.integer(deliveredMessages, maximum: 16 * 1024 * 1024 / 1316),
               let bytes = Self.integer(deliveredPayloadBytes, maximum: 16 * 1024 * 1024),
               bytes == messages * 1316, nextSequence == deliveredMessages,

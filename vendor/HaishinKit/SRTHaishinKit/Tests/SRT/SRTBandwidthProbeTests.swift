@@ -100,18 +100,20 @@ import Testing
         #expect(accounting.pending == 0)
         accounting.wake()
     }
-    @Test func wakeOwnerCancelledBeforeTimerResumeStillJoinsWithoutWaking() async throws {
+    @Test(arguments: [false, true]) func wakeOwnerCancelledBeforeTimerResumeStillJoinsWithoutWaking(staged: Bool) async throws {
         let at = ProcessInfo.processInfo.systemUptime
-        let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(at), at: at)
+        let probe = try SRTBandwidthProbe(bitRate: staged ? 12_000_000 : 2_000_000, generation: 1, statistics: stats(at), at: at,
+            stage: staged ? 1 : nil, campaignStartedAt: staged ? at : nil)
         let owner = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             await SRTProbeWakeSchedule.run(probe: probe, wake: { Issue.record("Cancelled owner woke transport") })
         }
         await owner.value
     }
-    @Test func wakeOwnerCancellationJoinsEnteredHandler() async throws {
+    @Test(arguments: [false, true]) func wakeOwnerCancellationJoinsEnteredHandler(staged: Bool) async throws {
         let at = ProcessInfo.processInfo.systemUptime
-        let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: stats(at), at: at)
+        let probe = try SRTBandwidthProbe(bitRate: staged ? 12_000_000 : 2_000_000, generation: 1, statistics: stats(at), at: at,
+            stage: staged ? 1 : nil, campaignStartedAt: staged ? at : nil)
         let gate = ProbeSubmissionGate(); defer { gate.release() }
         let owner = Task { await SRTProbeWakeSchedule.run(probe: probe, wake: { gate.enter() }); gate.markJoined() }
         let end = ContinuousClock.now + .seconds(1)

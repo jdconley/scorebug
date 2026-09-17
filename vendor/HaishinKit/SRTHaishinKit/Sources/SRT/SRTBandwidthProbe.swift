@@ -70,7 +70,8 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
          stage: UInt32? = nil, campaignStartedAt: Double? = nil,
          previouslyAcceptedPayloadBytes: UInt64 = 0) throws {
-        guard (1...2_000_000).contains(bitRate), at.isFinite, at >= 0 else {
+        let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
+        guard (1...maximumBitRate).contains(bitRate), at.isFinite, at >= 0 else {
             throw SRTBandwidthProbeError.invalidConfiguration
         }
         if let stage {
@@ -118,6 +119,9 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         tokenAt = at
         return tokens >= 1360
     }
+    /// Versioned wake bound; readiness still requires one 1360-byte token.
+    var minimumWakeInterval: Double { stage == nil ? 0.002 : 0.0005 }
+
     /// A wake is only an opportunity. The same token cap and permit are checked
     /// again at native submission, so delayed timers never accumulate a burst.
     func nextOpportunityDelay(now: () -> Double) -> Double? {

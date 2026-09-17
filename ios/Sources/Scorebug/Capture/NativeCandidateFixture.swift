@@ -4,9 +4,27 @@ import Foundation
 import ScorebugMedia
 import ScorebugStreaming
 
+/// One non-recursive route validator shared by both optional fixture parsers.
+enum NativeCandidateHeadroomFixture {
+    static func requested(environment: [String: String]) throws -> Bool {
+        guard let flag = environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] else { return false }
+        guard flag == "1", environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "staged",
+              ["360p30", "540p30", "1080p30"].contains(environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""),
+              environment["SCOREBUG_TEST_LIVE_PROFILE"] == "240p30",
+              try VideoObservationFixture.liveProfile(environment: environment) == .low240,
+              ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
+               "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING",
+               "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL"].allSatisfy({ (environment[$0] ?? "").isEmpty })
+        else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+        return true
+    }
+}
+
 enum NativeCandidateFixture {
     static func requested(environment: [String: String]) throws -> PublishingVideoProfile? {
+        let headroom = try NativeCandidateHeadroomFixture.requested(environment: environment)
         guard let raw = environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] else { return nil }
+        if headroom { return PublishingVideoProfile(rawValue: raw) }
         let live = try VideoObservationFixture.liveProfile(environment: environment)
         guard let profile = PublishingVideoProfile(rawValue: raw), profile.bitRate > live.bitRate,
               live != .hd1080, environment["SCOREBUG_TEST_LIVE_PROFILE"] == live.rawValue,
@@ -120,12 +138,30 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         var delay: Duration = .seconds(20)
         var poll: Duration = .milliseconds(100)
         var maximumPolls: Int = 50
+        var maximumProbeWaitPolls: Int = 250
     }
     private let publisher: any MediaPublisher
     private let scope: VideoFrameObservationScope
     private let liveProfile: PublishingVideoProfile
     private let operations: Operations
     private let timing: Timing
+    private let candidateHeadroom: Bool
+    private var pinnedProbe: PublishingProbeObservation?, currentProbe: PublishingProbeObservation?
+    private var acceptedProbeRevision = 0
+    private var probeBoundAt: Double?, probeCompletedAt: Double?
+    private var initialProbe: ProbeSnapshot?, finalProbe: ProbeSnapshot?
+    private struct ProbeSnapshot {
+        let value: PublishingProbeObservation
+        let observedAt: Double
+        var object: [String: Any] {
+            var object = NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
+                bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
+                acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
+                reason: value.reason, stage: value.stage).object
+            object["observedAt"] = observedAt
+            return object
+        }
+    }
     private var diagnostics: (@Sendable () -> Pressure?)?
     private var starting = false, started = false, stopped = false, sampling = false
     private var invalidReason: String?
@@ -137,9 +173,10 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private var primaryStartup: Task<Void, Error>?
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport) throws {
+         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport, candidateHeadroom: Bool = false) throws {
         let owner = try PublishingCandidateMeasurement(scope: scope, profile: candidate, transport: transport)
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile; timing = Timing()
+        self.candidateHeadroom = candidateHeadroom
         operations = .init(start: {
             guard let startup = publisher.videoStartup, startup.profile == liveProfile,
                   transport.arm(publishingGeneration: startup.publishingGeneration) else {
@@ -150,9 +187,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             result: { NativeCandidateFixture.data(await owner.result()) }, export: { await Self.persist($0) })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         operations: Operations, timing: Timing) {
+         operations: Operations, timing: Timing, candidateHeadroom: Bool = false) {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
-        self.operations = operations; self.timing = timing
+        self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
     }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func setDiagnostics(_ read: @escaping @Sendable () -> Pressure?) { diagnostics = read }
@@ -175,7 +212,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         let wasSampling = sampling
         do { try await publisher.append(sample) }
         catch { revoke(.pressure); throw error }
-        if wasSampling, sampling, !stopped, sample.kind == .video, checkPressure() { _ = operations.offer(sample) }
+        guard wasSampling, sampling, !stopped, sample.kind == .video else { return }
+        guard await refreshProbe(requiresSampling: true), sampling, !stopped, checkPressure() else { return }
+        _ = operations.offer(sample)
     }
     var isPublishing: Bool { get async {
         let healthy = await publisher.isPublishing
@@ -219,31 +258,97 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         finalPressure = value; maximumThermal = max(maximumThermal, value.thermal)
         return true
     }
+    private func checkProbeAuthority() -> Bool {
+        guard candidateHeadroom else { return true }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let pinnedProbe, let currentProbe,
+              pinnedProbe.permitsCurrentOwner?(pinnedProbe.id, pinnedProbe.publishingGeneration, pinnedProbe.stage) == true,
+              currentProbe.isActive(at: now) else { revoke(.ownerChanged); return false }
+        return true
+    }
+    private func waitForFinalProbe() async throws {
+        guard candidateHeadroom else { return }
+        let deadline = ProcessInfo.processInfo.systemUptime + 25
+        for _ in 0..<timing.maximumProbeWaitPolls {
+            try Task.checkCancellation()
+            guard !stopped, invalidReason == nil else { throw CancellationError() }
+            let value = await probeObservation()
+            try Task.checkCancellation()
+            let now = ProcessInfo.processInfo.systemUptime
+            guard !stopped, invalidReason == nil, now < deadline else { break }
+            if let value, value.stage == 3, value.bitRate == 12_000_000,
+               publisher.videoStartup?.publishingGeneration == value.publishingGeneration,
+               value.isActive(at: now), now - value.startedAt >= 0.5 {
+                pinnedProbe = value; currentProbe = value; probeBoundAt = now
+                initialProbe = .init(value: value, observedAt: now)
+                return
+            }
+            try await Task.sleep(for: timing.poll)
+        }
+        revoke(.deadline)
+        throw CancellationError()
+    }
+    private func refreshProbe(requiresSampling: Bool = false) async -> Bool {
+        guard candidateHeadroom else { return true }
+        for _ in 0..<3 {
+            let revision = acceptedProbeRevision
+            let value = await probeObservation()
+            // The native read can suspend past measurement completion or stop. A late
+            // raw-input read must neither reopen admission nor replace joined evidence.
+            guard !requiresSampling || (sampling && !stopped) else { return false }
+            guard !stopped, invalidReason == nil else { revoke(.ownerChanged); return false }
+            // An overlapping monitor or append may have accepted a newer snapshot.
+            // Re-read native state rather than compare an older response with it or
+            // give cached evidence a new observation time. Retries stay bounded.
+            if acceptedProbeRevision != revision { continue }
+            let now = ProcessInfo.processInfo.systemUptime
+            if let value { finalProbe = .init(value: value, observedAt: now) }
+            guard let pinnedProbe, let value,
+                  value.id == pinnedProbe.id, value.publishingGeneration == pinnedProbe.publishingGeneration,
+                  value.stage == pinnedProbe.stage, value.bitRate == pinnedProbe.bitRate,
+                  value.startedAt == pinnedProbe.startedAt, value.isActive(at: now),
+                  value.acceptedPayloadBytes >= (currentProbe?.acceptedPayloadBytes ?? 0),
+                  value.leaseDeadline >= (currentProbe?.leaseDeadline ?? 0) else {
+                revoke(.ownerChanged); return false
+            }
+            currentProbe = value
+            acceptedProbeRevision += 1
+            return checkProbeAuthority()
+        }
+        revoke(.deadline)
+        return false
+    }
     private func monitor() async {
         for _ in 0..<timing.maximumPolls {
             do { try await Task.sleep(for: timing.poll); try Task.checkCancellation() } catch { return }
             guard sampling, !stopped else { return }
             polls += 1
-            guard checkPressure() else { return }
+            guard await refreshProbe(), checkPressure() else { return }
         }
         if sampling { revoke(.deadline) }
     }
     private func run() async {
         do {
-            guard timing.delay >= .zero, timing.poll > .zero, (1...50).contains(timing.maximumPolls) else { throw PublishingSessionError.invalidState }
+            guard timing.delay >= .zero, timing.poll > .zero, (1...50).contains(timing.maximumPolls),
+                  (1...250).contains(timing.maximumProbeWaitPolls) else { throw PublishingSessionError.invalidState }
             try await Task.sleep(for: timing.delay)
             try Task.checkCancellation()
+            try await waitForFinalProbe()
             guard !stopped, invalidReason == nil, let value = diagnostics?(), value.valid else { revoke(.pressure); throw CancellationError() }
             baseline = value; finalPressure = value; maximumThermal = value.thermal
             try await operations.start()
             try Task.checkCancellation()
-            guard !stopped, invalidReason == nil, checkPressure() else { throw CancellationError() }
+            guard !stopped, invalidReason == nil, await refreshProbe(), checkPressure() else { throw CancellationError() }
             sampling = true
             let monitor = Task { await self.monitor() }
             let result = await operations.result()
             sampling = false
             monitor.cancel(); await monitor.value
-            if !stopped { _ = checkPressure() }
+            if !stopped {
+                _ = await refreshProbe()
+                _ = checkPressure()
+                if candidateHeadroom { probeCompletedAt = ProcessInfo.processInfo.systemUptime }
+            }
             measurement = result
         } catch {
             revoke(Task.isCancelled || stopped ? .publisherStopped : .startupFailed)
@@ -251,14 +356,20 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         }
     }
     private func exportData() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 3, "isClosed": true,
+        var object: [String: Any] = ["formatVersion": 3, "isClosed": true,
             "resourceLimits": ["rawQueueCount": 4, "unresolvedInputCount": 16,
                 "unresolvedRawBytes": 64 * 1024 * 1024, "rawBytesPerInput": 16 * 1024 * 1024],
             "scope": NativeCandidateFixture.scope(scope), "liveProfile": liveProfile.rawValue,
             "publisherStartedAt": publisherStartedAt as Any? ?? NSNull(), "closedAt": ProcessInfo.processInfo.systemUptime,
             "invalidReason": invalidReason as Any? ?? NSNull(), "pressureBaseline": baseline?.object as Any? ?? NSNull(),
             "pressureFinal": finalPressure?.object as Any? ?? NSNull(), "pressurePolls": polls, "maximumThermal": maximumThermal,
-            "measurement": try measurement.map { try JSONSerialization.jsonObject(with: $0) } ?? NSNull()], options: [.sortedKeys])
+            "measurement": try measurement.map { try JSONSerialization.jsonObject(with: $0) } ?? NSNull()]
+        if candidateHeadroom {
+            object["probeBinding"] = ["boundAt": probeBoundAt as Any? ?? NSNull(),
+                "completedAt": probeCompletedAt as Any? ?? NSNull(),
+                "initial": initialProbe?.object as Any? ?? NSNull(), "final": finalProbe?.object as Any? ?? NSNull()]
+        }
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
     private static func persist(_ data: Data) async {
         await Task.detached(priority: .utility) {

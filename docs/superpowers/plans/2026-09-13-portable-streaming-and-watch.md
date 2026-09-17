@@ -2054,3 +2054,43 @@ Next combine these fresh costs with repeated fresh headroom observations from th
 same publication, then qualify upward transitions and recovery. Production
 automatic upgrades remain disabled. Long sessions, physical phone/Watch networking
 and deployment on other proxy systems remain open.
+
+
+### 2026-09-17: concurrent candidate cost and receiver load qualified locally
+
+[Candidate cost and receiver headroom](2026-09-17-candidate-headroom.md) now has
+an explicit simulator route combining minimum-quality live publishing, independent
+1080p recording, fresh candidate A/V encoding and staged native SRT probes. Only
+staged-v2 permits up to 12 Mbps; legacy-v1 remains capped at 2 Mbps. Payload/time
+budgets, renewable ownership and joined teardown remain bounded, and the fresh
+relay image leaves earlier qualification images intact.
+
+Two fresh native runs each reconcile 121 candidate frames and their actual AAC,
+MPEG-TS and per-message IPv4 accounting. The 360p candidate costs 4.072 Mbps and
+requires 5.090 Mbps with the 25% margin; repeated receiver intervals confirm at
+least 10.024 Mbps of padding payload. The 1080p candidate costs 7.405 Mbps and
+requires 9.257 Mbps; repeated delivery confirms at least 9.770 Mbps. The comparison
+credits no nominal current live throughput. Exact probe identity, current leases,
+clock bounds, candidate overlap and receiver endpoints after candidate completion
+are independently checked; the latest eligible intervals control the result.
+
+Both archive/live saved ranges are consecutive at approximately 30 fps, with all
+expected audio markers and no candidate-window capture/publishing drop or rejection
+increases. Review exposed cached-lease and out-of-order async read failures. Tests
+reproduce them; bounded fresh revalidation and lifecycle checks prevent false
+cancellation, stale admission and overwriting joined evidence.
+
+Verification passes 270 SDK, 398 Core, 139 Streaming, 327 native model, 480 API and
+1,902 tooling tests, the relay probe race suite, type checks, provenance, clean
+simulator and unsigned phone/Watch builds, and independent reviews. All 4,839 prior
+frozen evidence files remain unchanged. Evidence manifest:
+`artifacts/qa/candidate-headroom-final-verification.json`.
+
+This is a historical local-IPv4 load qualification, not online admission or proof
+of sustained physical-device capacity. Results explicitly report media health
+qualification and upgrade authorization as false. Negative cases are covered in
+automated tests; combined native impairment/withdrawal campaigns remain open.
+Next add a candidate-specific runtime admission type, correlate fresh online media
+health, and exercise upward trials, rollback and recovery. Production automatic
+upgrades remain disabled. Long sessions, phone/Watch networking and remote proxy
+deployment remain open.
