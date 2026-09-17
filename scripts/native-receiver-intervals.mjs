@@ -63,7 +63,7 @@ export function qualifyNativeReceiverIntervals(
   accepted,
   workerRecords,
   nativeProof,
-  { includeIntervalIndexes = false } = {},
+  { includeIntervalIndexes = false, measuredRetirement } = {},
 ) {
   assert.equal(typeof includeIntervalIndexes, 'boolean');
   const workers = qualifyWorkerPublicationEvidence(workerRecords, scope);
@@ -72,6 +72,7 @@ export function qualifyNativeReceiverIntervals(
     scope,
     publishingGeneration: accepted.publishingGeneration,
     candidateHeadroom: accepted.schedule === 'candidate-headroom-v1',
+    measuredRetirement,
   });
   const staged = accepted.mode === 'staged';
   if (staged) assert.deepEqual(native, accepted);

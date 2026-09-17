@@ -2235,3 +2235,27 @@ withdrawal/recovery and longer sessions before physical devices and other hosts.
 Production increases remain disabled; the goal stays active. Details and evidence
 are in [the fresh worker timing plan](2026-09-17-fresh-worker-sample-timing.md) and
 `artifacts/qa/fresh-worker-timing-final-verification.json`.
+
+### 2026-09-17: complete measured native trial qualification
+
+The explicit measured route now independently joins startup, candidate A/V cost and
+actual source correspondence, receiver load/admission, causal native probe retirement,
+owned encoder/bitrate application, all intervening cadence reports and sustained
+post-change health. The fixed-profile gates remain strict. All 2,080 tool tests and
+independent reviews pass; the old successful diagnostic qualifies and an old reset
+diagnostic rejects without changing either artifact.
+
+Fresh iPhone 14/iOS 17.5 run `native-app-LkAs1j` passes the complete native harness:
+240p→360p, approximately 15 seconds of independently reconstructed probation, and
+69.6 seconds at the higher profile through stop. The clean 1080p archive has 3,671
+frames and all 61 audio markers; live output has 3,296 acquired frames and all 55
+markers. Both decode at approximately 30 fps without source loss after accounted
+initial acquisition. All 145 measured delivery windows are healthy, with no unknown
+classifications. Scoring, archive diagnostics, ingress and direct recorder checks
+also pass.
+
+This qualifies one successful local measured increase. Production increases remain
+disabled. Next qualify controlled withdrawal/reset/recovery and longer adaptive
+sessions, then physical phone/Watch networking and other proxy hosts. Details are
+in [the combined verifier plan](2026-09-17-combined-measured-trial-verifier.md) and
+`artifacts/qa/combined-measured-trial-final-verification.json`. The goal remains active.

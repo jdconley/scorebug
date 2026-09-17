@@ -188,3 +188,20 @@ The delivery rejection in `native-app-quXkEA` joins temporally to deadline row 5
 The worker used the previous report's timing token, so its 100 ms wait became part of the conservative age before a new snapshot was taken. The next implementation adds a negotiated immediate sampling challenge, retaining existing freshness, authority, legacy-token, deadline and recovery contracts. It also prevents repeated cadence snapshots from being redated. See [the fresh worker timing plan](2026-09-17-fresh-worker-sample-timing.md) for design, tests, reviews and native comparison. Production upgrade permission and the complete combined measured-trial gate remain separate.
 
 The negotiated fresh challenge implementation passed 500 server and 392 worker tests, scoped builds/typechecks, and independent spec/quality reviews. Native diagnostic `native-app-15qSdC` reduced median audited report age from 178.2 ms to 73.4 ms with the same 100 ms phone cadence and unchanged 250 ms limit. The runtime logged `trialConfirmed` at 360p and remained there until stop, with no freshness rejections. Existing independent validators qualified both native phases, lifecycle receipts, candidate source correspondence, all 147 healthy deadline windows and continuous 30 fps A/V. This establishes the timing improvement and observed runtime confirmation; full independent candidate/probe/admission/probation replay is still required. The old fixed-format gate correctly remains failed, production increases stay disabled, and the goal remains active. Continue with the combined measured gate using these raw artifacts, rather than another timing relaxation or repeat run without a new hypothesis.
+
+## Combined measured qualification checkpoint
+
+The next gate is implemented and passed: see
+[the combined measured verifier](2026-09-17-combined-measured-trial-verifier.md).
+All 2,080 tool tests pass, raw prior success/reset artifacts respectively qualify/
+reject, and fresh native run `native-app-LkAs1j` exits 0 with all recording/scoring/
+A/V/ingress and measured-trial checks intact. The trial reconstructs approximately
+15 seconds of contiguous healthy probation after a measured 240p→360p application;
+all 145 raw deadline windows are healthy. The clean 1080p archive and acquired live
+stream decode at 30 fps with no source loss and all audio markers.
+
+This supersedes the earlier missing combined-gate status for this successful local
+route only. Production increases, controlled measured failure/recovery, longer
+adaptive sessions and physical/remote performance remain unqualified. No old raw
+failure was edited or relabeled as a whole-run pass. Evidence is indexed by
+`artifacts/qa/combined-measured-trial-final-verification.json`.

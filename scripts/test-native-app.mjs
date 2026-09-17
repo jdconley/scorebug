@@ -4,6 +4,7 @@ import {
 } from './native-candidate-measurement.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
 import { nativeMeasuredTrial } from './native-measured-trial.mjs';
+import { measuredTrialArtifacts, qualifyMeasuredNativeTrial } from './measured-native-trial.mjs';
 import { qualifyCandidateProbeHeadroom } from './candidate-probe-headroom.mjs';
 import {
   qualifyNativeDeadlineDecisions,
@@ -68,6 +69,12 @@ import {
 } from './native-streaming-options.mjs';
 import { qualifyDirectRecorderDelivery } from './direct-recorder-qualification.mjs';
 import { measureVideoPayloadRate, qualifyStructuredMotionPayload } from './video-payload-rate.mjs';
+
+async function readBoundedJSON(path, maximum) {
+  const bytes = await readFile(path);
+  assert.ok(bytes.length <= maximum, `Oversized evidence: ${path}`);
+  return JSON.parse(bytes.toString('utf8'));
+}
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
@@ -641,7 +648,7 @@ try {
   if (requireQuality || decoderStall || measuredTrial) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
-    qualitySnapshot = JSON.parse(await readFile(file, 'utf8'));
+    qualitySnapshot = await readBoundedJSON(file, measuredTrialArtifacts.quality[1]);
   }
   if (streaming) {
     const observationPath = join(artifact, 'video-observation.json');
@@ -650,7 +657,10 @@ try {
       observationPath,
       { errorOnExist: true, force: false },
     );
-    observationSnapshot = JSON.parse(await readFile(observationPath, 'utf8'));
+    observationSnapshot = await readBoundedJSON(
+      observationPath,
+      measuredTrialArtifacts.snapshot[1],
+    );
     const archiveDiagnosticsPath = join(artifact, 'archive-diagnostics.json');
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/archive-diagnostics.json'),
@@ -706,7 +716,8 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let candidateQualification,
+  let measuredTrialQualification,
+    candidateQualification,
     candidateHeadroomQualification,
     nativeVideoCostQualification,
     nativeFormatQualification,
@@ -715,7 +726,7 @@ try {
     bandwidthProbeQualification,
     receiverProbeQualification,
     nativeReceiverIntervalQualification;
-  if (!stallReset && ['540p30', '360p30', '240p30'].includes(liveProfile)) {
+  if (!measuredTrial && !stallReset && ['540p30', '360p30', '240p30'].includes(liveProfile)) {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/native-publishing-format.json'),
@@ -749,7 +760,7 @@ try {
         : {},
     );
   }
-  if (candidateProfile) {
+  if (candidateProfile && !measuredTrial) {
     const candidatePath = join(artifact, 'native-candidate-measurement.json');
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/native-candidate-measurement.json'),
@@ -787,9 +798,32 @@ try {
       snapshot: archiveDiagnosticsSnapshot,
       recordingID: states[0].id,
     });
-    const decodedEvidence = JSON.parse(
-      await readFile(join(artifact, 'decoded-video-status.json'), 'utf8'),
-    );
+    let measuredRaw;
+    if (measuredTrial) {
+      // Fixed-format cost/candidate checks cannot describe an encoder change.
+      // Preserve all originals and qualify the explicit measured route instead.
+      for (const name of [
+        'native-publishing-format.json',
+        'native-candidate-measurement.json',
+        'native-bandwidth-probe.json',
+        'native-receiver-intervals.json',
+      ]) {
+        await cp(
+          join(container, 'Library/Application Support/Scorebug/QA', name),
+          join(artifact, name),
+          { errorOnExist: true, force: false },
+        );
+      }
+      measuredRaw = {};
+      for (const [key, [name, maximum]] of Object.entries(measuredTrialArtifacts))
+        measuredRaw[key] = await readBoundedJSON(join(artifact, name), maximum);
+    }
+    const decodedEvidence =
+      measuredRaw?.decodedEvidence ??
+      (await readBoundedJSON(
+        join(artifact, 'decoded-video-status.json'),
+        measuredTrialArtifacts.decodedEvidence[1],
+      ));
     const generations = [...new Set(decodedEvidence.map((item) => item.generation))];
     assert.equal(generations.length, 1, 'Fixture requires one observed publishing generation');
     assert.ok(
@@ -842,7 +876,7 @@ try {
       snapshot: observationSnapshot,
       expectedScope: videoObservation.scope,
     });
-    if (bandwidthProbe) {
+    if (bandwidthProbe && !measuredTrial) {
       const path = join(artifact, 'native-bandwidth-probe.json');
       await cp(
         join(container, 'Library/Application Support/Scorebug/QA/native-bandwidth-probe.json'),
@@ -1038,7 +1072,25 @@ try {
       join(artifact, 'worker-report-age-qualification.json'),
       JSON.stringify(workerReportAge, null, 2),
     );
-    if (candidateHeadroom) {
+    if (measuredTrial) {
+      measuredTrialQualification = qualifyMeasuredNativeTrial({
+        ...measuredRaw,
+        expectedScope: {
+          recordingID: states[0].id,
+          matchID: proxy.matchID,
+          broadcastGeneration: generations[0],
+        },
+        archiveIDs,
+        liveIDs: liveSegments.flat(),
+        completedWindowLimit: streamingOptions.completedWindowLimit,
+      });
+      await writeFile(
+        join(artifact, 'measured-trial-qualification.json'),
+        JSON.stringify(measuredTrialQualification, null, 2),
+        { flag: 'wx' },
+      );
+    }
+    if (candidateHeadroom && !measuredTrial) {
       candidateHeadroomQualification = qualifyCandidateProbeHeadroom({
         candidate: candidateQualification,
         candidateProof: JSON.parse(
@@ -1084,6 +1136,7 @@ try {
         liveProfile,
         workerOutputProfile,
         measuredTrial,
+        measuredTrialQualification,
         nativeFormatQualification,
         nativeVideoCostQualification,
         candidateProfile,
@@ -1117,12 +1170,9 @@ try {
       2,
     ),
   );
-  assert.ok(
-    !measuredTrial,
-    'Measured trial admission/application qualification is not yet implemented',
-  );
+  if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
   console.log(
-    `${['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

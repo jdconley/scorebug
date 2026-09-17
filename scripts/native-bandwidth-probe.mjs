@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { qualifyMeasuredProbeRetirement } from './measured-probe-retirement.mjs';
 import {
   nativeCandidateHeadroom,
   candidateHeadroomStageRates,
@@ -72,15 +73,20 @@ function time(value) {
 /** Validates local native acceptance/lease evidence, never receiver capacity. */
 export function qualifyNativeBandwidthProbe(
   proof,
-  { mode, scope, publishingGeneration, candidateHeadroom = false },
+  { mode, scope, publishingGeneration, candidateHeadroom = false, measuredRetirement },
 ) {
   assert.equal(typeof candidateHeadroom, 'boolean');
   assert.ok(!candidateHeadroom || mode === 'staged');
+  assert.ok(
+    measuredRetirement === undefined || (mode === 'staged' && candidateHeadroom),
+    'Measured retirement requires staged candidate headroom',
+  );
   if (mode === 'staged')
     return qualifyStagedNativeBandwidthProbe(proof, {
       scope,
       publishingGeneration,
       candidateHeadroom,
+      measuredRetirement,
     });
   assert.ok(['renew', 'expire'].includes(mode));
   assert.equal(proof.formatVersion, 1);
@@ -187,7 +193,7 @@ export function qualifyNativeBandwidthProbe(
 
 function qualifyStagedNativeBandwidthProbe(
   proof,
-  { scope, publishingGeneration, candidateHeadroom },
+  { scope, publishingGeneration, candidateHeadroom, measuredRetirement },
 ) {
   const check = (condition, message) => assert.ok(condition, `Staged probe: ${message}`);
   const finiteTime = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -208,7 +214,10 @@ function qualifyStagedNativeBandwidthProbe(
     'requires explicit version 2 and staged mode',
   );
   check(
-    proof.isClosed === true && proof.invalid === false && proof.result === 'completed',
+    proof.isClosed === true &&
+      proof.invalid === false &&
+      (proof.result === 'completed' ||
+        (measuredRetirement !== undefined && proof.result === 'operationFailed')),
     'requires closed completed valid proof',
   );
   assert.deepEqual(proof.scope, scope, 'Staged probe: publication scope mismatch');
@@ -225,6 +234,10 @@ function qualifyStagedNativeBandwidthProbe(
     'event count outside bounds',
   );
 
+  const retirement =
+    measuredRetirement === undefined
+      ? null
+      : qualifyMeasuredProbeRetirement(proof, measuredRetirement);
   const stages = [];
   let cursor = 0,
     priorTime = -1,
@@ -248,8 +261,11 @@ function qualifyStagedNativeBandwidthProbe(
         `expected ${phase} for stage ${stage}`,
       );
       const value = event.sample;
+      const terminalRead = phase === 'final' && retirement;
+      const retired = phase === 'retired' || terminalRead;
+      const observedAt = terminalRead ? retirement.retiredObservedAt : event.observedAt;
       check(
-        finiteTime(event.observedAt) && event.observedAt >= priorTime,
+        finiteTime(event.observedAt) && observedAt >= priorTime && observedAt <= event.observedAt,
         'nonmonotonic observation',
       );
       check(
@@ -261,7 +277,7 @@ function qualifyStagedNativeBandwidthProbe(
       check(uuid(value.id), 'malformed probe UUID');
       check(
         finiteTime(value.startedAt) &&
-          value.startedAt <= event.observedAt &&
+          value.startedAt <= observedAt &&
           finiteTime(value.campaignStartedAt),
         'invalid start or campaign time',
       );
@@ -295,7 +311,7 @@ function qualifyStagedNativeBandwidthProbe(
         check(
           finiteTime(value.lastAcceptedAt) &&
             value.lastAcceptedAt >= value.startedAt &&
-            value.lastAcceptedAt <= event.observedAt &&
+            value.lastAcceptedAt <= observedAt &&
             value.lastAcceptedAt < value.leaseDeadline &&
             value.lastAcceptedAt < origin + 60,
           'acceptance outside observation, lease, or campaign',
@@ -309,7 +325,7 @@ function qualifyStagedNativeBandwidthProbe(
         );
       }
       check(
-        value.reason === (phase === 'retired' ? 'cancelled' : null),
+        value.reason === (retired ? 'cancelled' : null),
         'unexpected active or retirement reason',
       );
       if (phase === 'retired') {
@@ -384,7 +400,7 @@ function qualifyStagedNativeBandwidthProbe(
       prior = value;
       priorBytes = accepted;
       priorTotal = total;
-      priorTime = event.observedAt;
+      priorTime = observedAt;
       return event;
     };
     read(stage === 1 ? 'began' : 'replaced');
@@ -394,7 +410,7 @@ function qualifyStagedNativeBandwidthProbe(
       renewals++;
     }
     check(renewals > 0, 'every stage requires a renewal');
-    lastRetired = read('retired');
+    lastRetired = read(stage === 3 && retirement ? 'final' : 'retired');
     check(priorBytes > 0n, 'every stage requires positive acceptance');
     cumulative = priorTotal;
     stages.push({
@@ -407,12 +423,16 @@ function qualifyStagedNativeBandwidthProbe(
       acceptedPayloadBytes: Number(priorBytes),
       totalAcceptedPayloadBytes: Number(cumulative),
       lastAcceptedAt: prior.lastAcceptedAt,
-      retirementRequestedAt: lastRetired.retirementRequestedAt,
-      retiredObservedAt: lastRetired.observedAt,
+      ...(stage === 3 && retirement
+        ? retirement
+        : {
+            retirementRequestedAt: lastRetired.retirementRequestedAt,
+            retiredObservedAt: lastRetired.observedAt,
+          }),
       reason: 'cancelled',
     });
   }
-  const final = proof.events[cursor++];
+  const final = retirement ? lastRetired : proof.events[cursor++];
   check(
     final?.phase === 'final' && cursor === proof.events.length,
     'requires exactly one final event after three retirements',
