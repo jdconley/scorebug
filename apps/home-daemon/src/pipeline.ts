@@ -1,3 +1,4 @@
+import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
 import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
 import type { WorkerProcessingReport } from '@scorebug/protocol';
@@ -47,6 +48,8 @@ export type PipelineHandle = {
   snapshotDecodedVideo?: () => DecodedVideoSnapshot;
   /** Short decoder-arrival windows; no source-loss or viewer-delivery claim. */
   snapshotDecoderCadence?: () => DecoderCadenceSnapshot;
+  /** Optional local arrival log; authenticated reporting is not yet negotiated. */
+  snapshotDecoderDelivery?: () => DecoderDeliverySnapshot | null;
   snapshotEncoderTiming?: () => EncoderTimingSnapshot | null;
   snapshotProcessing?: () => WorkerProcessingSnapshot | null;
   snapshotProcessingWindow?: () => WorkerProcessingWindow | null;
@@ -210,6 +213,8 @@ export type PipelineTerminal = Readonly<{
 }>;
 
 export type PipelineOptions = {
+  /** Explicit local observation; never exported in media status yet. */
+  deliveryTimeline?: boolean;
   /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
   encoderTiming?: boolean;
   /** Optional test diagnostics, emitted once after all guardian pipes close. */
@@ -310,6 +315,9 @@ export function startPipeline(
     : undefined;
   const decodedVideo = new DecodedVideoTelemetry(options.monotonicNow);
   const decoderCadence = new DecoderCadenceTelemetry(options.monotonicNow);
+  const decoderDelivery = options.deliveryTimeline
+    ? new DecoderDeliveryTelemetry(options.monotonicNow)
+    : undefined;
   const decodedHistory = encoderTiming
     ? new DecodedFrameHistory(options.monotonicNow, encoderTiming.scopeID)
     : undefined;
@@ -349,6 +357,7 @@ export function startPipeline(
   const failedBeforeSpawn = () => {
     decodedVideo.end();
     decoderCadence.end();
+    decoderDelivery?.end();
     encoderTiming?.end();
     decodedHistory?.end();
     terminal();
@@ -392,6 +401,7 @@ export function startPipeline(
       [
         decodedVideo,
         decoderCadence,
+        ...(decoderDelivery ? [decoderDelivery] : []),
         ...(lifetime ? [lifetime] : []),
         ...(decodedHistory ? [decodedHistory] : []),
       ],
@@ -439,6 +449,7 @@ export function startPipeline(
     child.once('close', () => {
       decodedVideo.end();
       decoderCadence.end();
+      decoderDelivery?.end();
       encoderTiming?.end();
       decodedHistory?.end();
       terminal();
@@ -492,6 +503,7 @@ export function startPipeline(
     },
     waitExit: () => exit,
     snapshotDecoderCadence: () => decoderCadence.snapshot(),
+    snapshotDecoderDelivery: () => decoderDelivery?.snapshot() ?? null,
     snapshotEncoderTiming: () => encoderTiming?.snapshot() ?? null,
     snapshotProcessing: () =>
       decodedHistory && encoderTiming

@@ -28,6 +28,7 @@ it('executes the configured media binary instead of the one on PATH', async () =
     expect(await pipeline.waitExit()).toEqual({ code: 0, signal: null });
     expect(protocol).toHaveProperty('DECODED_VIDEO_TRANSPORT_CLOCK', 'mpegts-pts-90k-v1');
     expect(pipeline.snapshotProcessingWindow?.()).toBeNull();
+    expect(pipeline.snapshotDecoderDelivery?.()).toBeNull();
     expect(pipeline.snapshotDecodedVideo?.()).toMatchObject({
       clock: 'mpegts-pts-90k-v1',
       ended: true,
@@ -703,4 +704,26 @@ it('bounds stderr drain after the encoder exits even if a descendant holds the p
     await pipeline.waitExit();
     await fixture.cleanup();
   }
+});
+
+it('optional decoder delivery timeline closes even when native spawning fails', async () => {
+  const pipeline = startPipeline(
+    {
+      gameId: 'delivery-failure',
+      pullUrl: 'unused',
+      publishUrl: 'unused',
+      scoreFile: '/tmp/score.txt',
+      nvenc: false,
+      ffmpegPath: '/definitely-not-an-installed-scorebug-encoder',
+    },
+    createLogger('error'),
+    { deliveryTimeline: true },
+  );
+  await boundedExit(pipeline);
+  expect(pipeline.snapshotDecoderDelivery?.()).toMatchObject({
+    formatVersion: 1,
+    ended: true,
+    arrivals: [],
+    lastOrdinal: 0,
+  });
 });

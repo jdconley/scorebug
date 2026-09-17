@@ -1638,3 +1638,25 @@ cost/headroom and bounded upward recovery, then minimum reconnect and longer aut
 runs. Production minimum startup remains in place. Physical iPhone/Watch and remote
 CPU/GPU/cloud qualification remain outstanding; the test's deliberate 540p startup
 is isolated to its explicit DEBUG simulator mode.
+
+
+[Delivery deadline evidence](2026-09-17-delivery-deadline-evidence.md) now supplies a
+bounded worker arrival timeline and a conservative native classifier for on-time,
+late, missing and uncertain frames. Buffered catch-up cannot repair missed deadlines;
+uncertain timing cannot provide complete healthy-delivery evidence. Review's exact
+deadline boundary finding is fixed and covered by a failing-then-passing regression.
+
+Actual local FFmpeg run `decoder-delivery-native-AQldhi` passed: 478 decoded frames,
+661 snapshots, a bounded 256-arrival history and clean output decode. Independent
+reconstruction matched every arrival identity and retained coverage boundary and
+rejected six corrupted variants. All 1 protocol, 371 worker, 358 Core, 1,272 tooling
+and 252 native model tests pass, with worker/API typechecks, ARM64 simulator and
+unsigned iPhone/Watch Release builds. Frozen evidence:
+`artifacts/qa/delivery-deadline-final-verification.json`.
+
+This is a local observer/classifier checkpoint. Authenticated compact reporting,
+complete native source/configuration matching and controller integration are next.
+Measured full-history reporting at 10 Hz would cost about 1.16 Mbps before overhead,
+so it must use bounded deltas/coalescing. Production automatic adaptation remains
+disabled until those gates and candidate-headroom/recovery checks pass. Physical
+phone/Watch and remote CPU/GPU/cloud qualification remain outstanding.
