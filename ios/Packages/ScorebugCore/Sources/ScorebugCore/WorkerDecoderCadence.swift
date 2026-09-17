@@ -46,6 +46,9 @@ public struct DecoderCadenceSnapshot: Codable, Equatable, Sendable {
 /// not establish source loss, on-time delivery, headroom, or viewer output.
 public struct WorkerDecoderCadenceFreshness: Sendable {
     public enum Window: Sendable { case oneSecond, twoSeconds }
+    /// Local consumption identity for one received response. Copies retain it;
+    /// this is not a worker epoch or a server authenticity claim.
+    public let receiptID: UUID
     public let gameId: String
     public let generation: Int
     public let workerId: String
@@ -74,6 +77,7 @@ public struct WorkerDecoderCadenceFreshness: Sendable {
         guard requestDuration <= Self.maximumAge - base else { return nil }
         let freshness = WorkerStatusFreshness(response: response, receivedAt: receivedAt, requestDuration: requestDuration)
         guard freshness.isFresh(at: receivedAt) else { return nil }
+        self.receiptID = UUID()
         self.gameId = status.gameId; self.generation = status.generation; self.workerId = workerId; self.workerEpoch = workerEpoch
         self.attempt = observation.attempt; self.publication = publication; self.snapshot = snapshot
         self.receivedAt = receivedAt; self.ageAtReceipt = base + requestDuration; self.statusFreshness = freshness

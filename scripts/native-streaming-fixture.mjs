@@ -1,3 +1,4 @@
+import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
 import assert from 'node:assert/strict';
 import { recordReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
@@ -29,6 +30,7 @@ export async function nativeStreamingFixture({
   uplinkProfile = null,
   liveProfile = '1080p30',
   cadenceReports = false,
+  decoderStall = false,
   decoderThreading = 'automatic',
   publishPeerLatencyMs,
   publishPacing,
@@ -62,7 +64,7 @@ export async function nativeStreamingFixture({
   let worker, done, workerEvidence, directRecorder, uplink;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
   let matchID;
-  let statusTask, statusAbort, statusError;
+  let statusTask, statusAbort, statusError, faultTask, faultError;
   const decodedWindows = new Map();
   const publications = new Map();
   const receiverProbes = new Map();
@@ -71,6 +73,8 @@ export async function nativeStreamingFixture({
   async function stopStatus() {
     statusAbort?.abort();
     await statusTask;
+    await faultTask;
+    if (faultError) throw new Error('Owned decoder stall failed');
   }
   async function saveStatus() {
     await saveNativeStatusEvidence({
@@ -296,6 +300,19 @@ export async function nativeStreamingFixture({
             );
             assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
             const { status } = await result.json();
+            if (decoderStall && !faultTask && worker && status.state === 'producing_output') {
+              faultTask = runOwnedDecoderStall({
+                worker,
+                signal: statusAbort.signal,
+                save: (value) =>
+                  writeFile(
+                    join(artifact, 'owned-decoder-stall.json'),
+                    JSON.stringify(value, null, 2),
+                  ),
+              }).catch((error) => {
+                faultError = error;
+              });
+            }
             recordDecodedVideoEvidence(decodedWindows, status, decodedWindowLimit);
             recordWorkerProcessingEvidence(workerProcessing, status, decodedWindowLimit);
             if (status.generation > 0 && status.workerId) {

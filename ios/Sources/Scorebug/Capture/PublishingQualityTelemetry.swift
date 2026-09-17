@@ -60,6 +60,23 @@ enum PublishingQualityTelemetry {
     }
     static func decoderStall(cadence: WorkerDecoderCadenceFreshness, applied: Applied, diagnostics: Diagnostics,
                              sequence: UInt64, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.DecoderStall? {
+        try validateDecoderContext(cadence: cadence, applied: applied, diagnostics: diagnostics, sequence: sequence, at: now)
+        guard let age = cadence.sampleAgeUpperBound(at: instant), age >= .zero,
+              age <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)
+        else { throw Failure.freshness }
+        guard cadence.snapshot.progress?.stalled == true else { return nil }
+        let seconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18
+        let lowerBound = now - seconds
+        // The complete one-second no-progress interval must follow the current
+        // native acknowledgment, even at the oldest possible sample time.
+        guard lowerBound >= applied.acknowledgedAt + ProgressiveStreamingPolicy.minimumDecoderStallDuration else { return nil }
+        return .init(attemptID: applied.attemptID, appliedRevision: applied.revision,
+                     sequence: sequence, observedAtLowerBound: lowerBound)
+    }
+    /// Current native ownership is checked even when a previously consumed
+    /// receipt is re-read by the local health loop.
+    static func validateDecoderContext(cadence: WorkerDecoderCadenceFreshness, applied: Applied, diagnostics: Diagnostics,
+                                       sequence: UInt64, at now: Double) throws {
         let receipt = applied.receipt
         guard diagnostics.isPublishing,
               let current = diagnostics.receipt, sameReceipt(current, receipt),
@@ -74,17 +91,6 @@ enum PublishingQualityTelemetry {
         guard now.isFinite, (0...1e12).contains(now), applied.acknowledgedAt.isFinite,
               applied.acknowledgedAt >= receipt.acceptedAt, applied.acknowledgedAt <= now, sequence > 0
         else { throw Failure.time }
-        guard let age = cadence.sampleAgeUpperBound(at: instant), age >= .zero,
-              age <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)
-        else { throw Failure.freshness }
-        guard cadence.snapshot.progress?.stalled == true else { return nil }
-        let seconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18
-        let lowerBound = now - seconds
-        // The complete one-second no-progress interval must follow the current
-        // native acknowledgment, even at the oldest possible sample time.
-        guard lowerBound >= applied.acknowledgedAt + ProgressiveStreamingPolicy.minimumDecoderStallDuration else { return nil }
-        return .init(attemptID: applied.attemptID, appliedRevision: applied.revision,
-                     sequence: sequence, observedAtLowerBound: lowerBound)
     }
     static func window(source: WorkerSourceIntervalObservation, applied: Applied, diagnostics: Diagnostics,
                        workerLimits: WorkerLimits?, transportLimits: TransportLimits?,

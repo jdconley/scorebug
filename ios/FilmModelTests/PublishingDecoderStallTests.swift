@@ -109,6 +109,43 @@ final class PublishingDecoderStallTests: XCTestCase {
         let state = await o.snapshot; XCTAssertNil(state.lastDecoderStall)
         await o.stop()
     }
+    func testConsumedReceiptCanAgeWithoutRevokingIndependentRecoveryButNewStaleReportCannot() async throws {
+        let n = StallNative(), o = try owner(n); try await o.bootstrap()
+        let cached = try cadence(stalled: false)
+        var advice: QualityController.Recommendation?
+        for i in 100..<104 {
+            n.setNow(Double(i + 1))
+            do {
+                _ = try await o.evaluateDecoderStall(cadence: cached, diagnostics: diagnostics(n),
+                    instant: instant + .seconds(i - 100))
+            } catch { XCTFail("Re-reading consumed evidence must not create a new rejected sample: \(error)") }
+            advice = try await o.evaluate(.init(attemptID: attempt, sequence: UInt64(i), appliedRevision: 0,
+                start: Double(i), end: Double(i + 1), capturedFreshFrames: 30, encodedFreshFrames: 30,
+                receiver: .init(freshFrames: 30, observedAt: Double(i + 1)), sourceLoss: .init(expectedFrames: 30, lostFrames: 0),
+                meanQueueOccupancy: 0, usableVideoCapacity: nil, connectivity: .connected,
+                thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal)).recommendation
+        }
+        XCTAssertEqual(advice?.kind, .trial)
+        do {
+            _ = try await o.evaluateDecoderStall(cadence: cadence(stalled: false, age: 251), diagnostics: diagnostics(n), instant: instant)
+            XCTFail("New stale response must still invalidate recovery")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+        if let advice {
+            do { try await o.apply(advice); XCTFail("Stale response must revoke pending increase") } catch {}
+        }
+        await o.stop()
+    }
+    func testConsumedReceiptStillChecksCurrentNativeOwnership() async throws {
+        let n = StallNative(), o = try owner(n); try await o.bootstrap(); n.setNow(102)
+        let cached = try cadence(stalled: false)
+        _ = try await o.evaluateDecoderStall(cadence: cached, diagnostics: diagnostics(n), instant: instant)
+        var wrong = try diagnostics(n); wrong.receipt = nil
+        do {
+            _ = try await o.evaluateDecoderStall(cadence: cached, diagnostics: wrong, instant: instant + .seconds(1))
+            XCTFail("Consumption identity must not bypass native ownership")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .ownership) }
+        await o.stop()
+    }
     func testLegacyIgnoresStallAndStaleReportCannotInventReset() async throws {
         for legacy in [false, true] {
             let n = StallNative(), o = try owner(n, behavior: legacy ? .legacy : .progressive)

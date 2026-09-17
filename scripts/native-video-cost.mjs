@@ -14,7 +14,7 @@ function uint(s) {
 /** Reconstructs cost from separately retained actual encoder/output callbacks.
  * Worker re-encoding changes bytes; this does not equate destination payload with
  * publisher payload, or turn current/historical cost into candidate capacity. */
-export function qualifyNativeVideoCost(proof, format) {
+export function qualifyNativeVideoCost(proof, format, { initialReceipt } = {}) {
   assert.equal(proof.formatVersion, 1);
   assert.equal(proof.isClosed, true);
   assert.equal(proof.invalidReason, null);
@@ -33,13 +33,33 @@ export function qualifyNativeVideoCost(proof, format) {
   // frames. Its first pre-mux frame anchors every two-second cost boundary.
   assert.equal(format.frames, format.lastFrame - format.firstFrame + 1);
   assert.equal(proof.compressed.length, Math.min(1024, format.frames));
-  const completedWindows = Math.floor((format.lastFrame - format.firstFrame) / 60);
+  let firstCostFrame = format.firstFrame;
+  if (initialReceipt) {
+    assert.equal(initialReceipt.generation, format.publishingGeneration);
+    assert.ok(uuid(initialReceipt.configurationID));
+    assert.equal(initialReceipt.encoderSessionID, format.startup?.encoderSessionID);
+    assert.ok(
+      finite(initialReceipt.acceptedAt) && initialReceipt.acceptedAt >= format.startup.observedAt,
+    );
+    assert.ok(Number.isSafeInteger(initialReceipt.bitRate) && initialReceipt.bitRate > 0);
+    firstCostFrame = fixtureFrameID(initialReceipt.lastSubmittedPTS) + 1;
+    // Only the initial acknowledgment, before any old two-second interval
+    // completed, is supported here. Later/multiple changes require other evidence.
+    assert.ok(firstCostFrame > format.firstFrame && firstCostFrame - format.firstFrame < 60);
+    for (const w of proof.intervals) {
+      assert.equal(w.configurationID, initialReceipt.configurationID);
+      assert.equal(w.encoderSessionID, initialReceipt.encoderSessionID);
+      assert.equal(w.configuredBitRate, initialReceipt.bitRate);
+      assert.ok(w.submissionStart >= initialReceipt.acceptedAt);
+    }
+  }
+  const completedWindows = Math.floor((format.lastFrame - firstCostFrame) / 60);
   assert.equal(proof.intervals.length, Math.min(8, completedWindows));
   proof.intervals.forEach((w, index) => {
     const sequence = completedWindows - proof.intervals.length + index + 1;
     assert.equal(uint(w.sequence), BigInt(sequence));
-    assert.equal(fixtureFrameID(w.sourceStartExclusive), format.firstFrame + (sequence - 1) * 60);
-    assert.equal(fixtureFrameID(w.sourceEndInclusive), format.firstFrame + sequence * 60);
+    assert.equal(fixtureFrameID(w.sourceStartExclusive), firstCostFrame + (sequence - 1) * 60);
+    assert.equal(fixtureFrameID(w.sourceEndInclusive), firstCostFrame + sequence * 60);
   });
   const encoded = new Map();
   for (const e of proof.encoded) {

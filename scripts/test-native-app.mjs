@@ -1,3 +1,4 @@
+import { nativeControlledStall, qualifyNativeControlledStall } from './native-controlled-stall.mjs';
 import { nativeCadenceReports, qualifyNativeCadenceReports } from './native-cadence-reports.mjs';
 import { qualifyNativeVideoCost } from './native-video-cost.mjs';
 import { qualifyNativeReceiverIntervals } from './native-receiver-intervals.mjs';
@@ -84,6 +85,7 @@ const cadenceReports = nativeCadenceReports({
   requireProcessing,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const decoderStall = nativeControlledStall({ environment: process.env, cadenceReports });
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
 const { requireQuality, requireConfirmation } = nativeQualityOptions({
   environment: process.env,
@@ -157,6 +159,7 @@ await writeFile(
       publishPacing: publishPacing ?? null,
       sourceCadencePacing,
       cadenceReports,
+      decoderStall,
       streaming,
       requirePublication,
       requireProcessing,
@@ -457,6 +460,7 @@ try {
       uplinkProfile,
       liveProfile,
       cadenceReports,
+      decoderStall,
       decoderThreading,
       publishPeerLatencyMs,
       publishPacing,
@@ -520,6 +524,7 @@ try {
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
       `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
+      `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? '1' : ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
@@ -557,7 +562,7 @@ try {
       join(artifact, 'worker-cadence-reports.json'),
     );
   }
-  if (requireQuality) {
+  if (requireQuality || decoderStall) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
     qualitySnapshot = JSON.parse(await readFile(file, 'utf8'));
@@ -657,6 +662,12 @@ try {
     nativeVideoCostQualification = qualifyNativeVideoCost(
       JSON.parse(costBytes.toString('utf8')),
       nativeFormatQualification,
+      decoderStall
+        ? {
+            initialReceipt: qualitySnapshot.events.find((event) => event.kind === 'bootstrap')
+              ?.receipt,
+          }
+        : {},
     );
   }
   let videoObservation,
@@ -826,6 +837,18 @@ try {
         holdSeconds: streamingOptions.holdSeconds,
         savedFrames: directRecorderDelivery.savedFrames,
       });
+    }
+    if (decoderStall) {
+      const result = qualifyNativeControlledStall({
+        quality: qualitySnapshot,
+        audit: JSON.parse(await readFile(join(artifact, 'worker-cadence-reports.json'), 'utf8')),
+        fault: JSON.parse(await readFile(join(artifact, 'owned-decoder-stall.json'), 'utf8')),
+        scope: observationSnapshot.scope,
+      });
+      await writeFile(
+        join(artifact, 'controlled-stall-qualification.json'),
+        JSON.stringify(result, null, 2),
+      );
     }
     if (cadenceReports) {
       const result = qualifyNativeCadenceReports({

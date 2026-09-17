@@ -77,6 +77,7 @@ actor PublishingQualitySession {
     private var decoderScope: DecoderScope?
     private var decoderProgress: Int64?
     private var consumedStallPTS: Int64?
+    private var consumedCadenceReceipt: UUID?
     var usesDecoderStallPolicy: Bool { behavior == .progressive }
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
@@ -207,9 +208,14 @@ actor PublishingQualitySession {
         do {
             let now = try time(), sampledInstant = instant ?? .now
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
-            let signal = try PublishingQualityTelemetry.decoderStall(cadence: cadence,
-                applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
-                    settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
+            let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
+                settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)
+            try PublishingQualityTelemetry.validateDecoderContext(cadence: cadence, applied: applied,
+                diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now)
+            // A consumed downward-only sample cannot acquire new meaning merely
+            // by aging in a local cache. A newly received stale report still rejects.
+            guard consumedCadenceReceipt != cadence.receiptID else { return nil }
+            let signal = try PublishingQualityTelemetry.decoderStall(cadence: cadence, applied: applied,
                 diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
             let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
             if let decoderScope, decoderScope != scope {
@@ -217,7 +223,7 @@ actor PublishingQualitySession {
                 decoderProgress = nil; consumedStallPTS = nil
             }
             if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
-            decoderScope = scope; decoderProgress = progress
+            decoderScope = scope; decoderProgress = progress; consumedCadenceReceipt = cadence.receiptID
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
             consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal

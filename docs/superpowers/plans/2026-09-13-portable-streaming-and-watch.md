@@ -1591,3 +1591,27 @@ is now qualified at this configuration. Controlled-stall/reset reaction timing,
 short expected-source/lateness reconciliation, candidate headroom, real automatic
 transitions and physical/remote qualification remain. Production adaptation and
 normal reporting defaults are unchanged.
+
+
+[Controlled native decoder stall](2026-09-17-native-controlled-decoder-stall.md)
+now exercises a real owned FFmpeg pause with the native progressive controller at
+fixed minimum quality. The passing rerun `native-app-hnaYMv` produced one minimum-hold
+decision within a conservative 1.443 seconds of last decoder progress, admitted at
+234.230 ms sample age, with no redundant encoder write. The 1.970-second pause
+resumed successfully. Fresh cached cadence reports are consumed once; new stale
+reports still reject and current native ownership is always checked. A first failed
+run also exposed the cost verifier's initial-configuration anchor assumption; the
+new receipt-qualified path reconstructs that boundary without weakening legacy runs.
+
+All 1,253 tooling, 348 Core and 250 native model tests pass, plus simulator and unsigned
+combined iPhone/Watch Release builds. Saved live media retains 3,263 consecutive
+frames after acquisition; the independent 1080p archive retains all 3,669 frames.
+Both fully decode with passing audio/coverage checks. This saved-media continuity
+is distinct from uninterrupted real-time delivery during the injected pause.
+Independent timing/cost/frame reconstruction and failed-run evidence are retained in
+`artifacts/qa/controlled-stall-final-verification.json`.
+
+Next qualify an actual higher-profile minimum reset write, short source/deadline
+measurements, candidate headroom, and full automatic recovery/reconnect. Physical
+phone/Watch and remote-worker gates remain. Production reporting and automatic
+adaptation defaults remain unchanged by the explicit simulator experiment.

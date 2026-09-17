@@ -73,6 +73,11 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue((90...120).contains(holdSeconds))
             app.launchEnvironment["SCOREBUG_TEST_CADENCE_REPORTS"] = cadenceReports
         }
+        let decoderStall = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DECODER_STALL"] ?? ""
+        if !decoderStall.isEmpty {
+            XCTAssertEqual(decoderStall, "1"); XCTAssertEqual(cadenceReports, "1")
+            app.launchEnvironment["SCOREBUG_TEST_DECODER_STALL"] = decoderStall
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

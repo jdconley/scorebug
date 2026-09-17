@@ -176,3 +176,63 @@ test('fixed240 cost reconciles actual payload and rejects crossed profile geomet
   proof.profile = '540p30';
   assert.throws(() => qualifyNativeVideoCost(proof, format));
 });
+test('initial verified bitrate acknowledgment establishes a new cost anchor before first completed window', () => {
+  const { proof, format } = fixture();
+  const configuration = '00000000-0000-4000-8000-000000000002';
+  for (let n = 61; n <= 70; n++) {
+    proof.compressed.push({
+      ...proof.compressed.at(-1),
+      sourcePTS: pts(n),
+      dequeuedAt: 100 + n / 30 + 0.02,
+    });
+    proof.encoded.push({
+      ...proof.encoded.at(-1),
+      sourcePTS: pts(n),
+      outputPTS: pts(n),
+      submittedAt: 100 + n / 30,
+      completedAt: 100 + n / 30 + 0.01,
+    });
+  }
+  for (let n = 10; n <= 70; n++)
+    Object.assign(proof.encoded[n], { configurationID: configuration, configuredBitRate: 350000 });
+  Object.assign(proof.intervals[0], {
+    configurationID: configuration,
+    configuredBitRate: 350000,
+    sourceStartExclusive: pts(10),
+    sourceEndInclusive: pts(70),
+    submissionStart: 100 + 10 / 30,
+    submissionEnd: 100 + 70 / 30,
+    observedAt: 100 + 70 / 30 + 0.02,
+  });
+  Object.assign(format, {
+    frames: 71,
+    lastFrame: 70,
+    startup: { observedAt: 100.02, encoderSessionID: session },
+  });
+  const initialReceipt = {
+    generation: '1',
+    encoderSessionID: session,
+    configurationID: configuration,
+    bitRate: 350000,
+    acceptedAt: 100.31,
+    lastSubmittedPTS: pts(9),
+  };
+  assert.equal(qualifyNativeVideoCost(proof, format, { initialReceipt }).intervalCount, 1);
+  for (const change of [
+    { generation: '2' },
+    { configurationID: session },
+    { encoderSessionID: configuration },
+    { bitRate: 400000 },
+    { lastSubmittedPTS: pts(8) },
+    { lastSubmittedPTS: pts(60) },
+    { acceptedAt: 99 },
+    { lastSubmittedPTS: { ...pts(9), flags: 3 } },
+  ])
+    assert.throws(() =>
+      qualifyNativeVideoCost(proof, format, { initialReceipt: { ...initialReceipt, ...change } }),
+    );
+  assert.throws(
+    () => qualifyNativeVideoCost(proof, format),
+    'Legacy anchor cannot silently accept reconfiguration',
+  );
+});
