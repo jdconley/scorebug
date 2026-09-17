@@ -136,6 +136,10 @@ struct PublishingClockObservation: Equatable, Sendable {
              let environment = ProcessInfo.processInfo.environment
              let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
              let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
+             if environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540", WorkerCadenceReportAudit.requested(environment: environment) {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeProfileTransitionPublisher(url: url, observations: observations, adaptive: true, sequence: .stallReset)
+             }
              if try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment) {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  let target = try VideoObservationFixture.publishingURL(url, environment: environment)

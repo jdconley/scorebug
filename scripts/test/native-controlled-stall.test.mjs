@@ -143,3 +143,19 @@ for (const [name, damage] of Object.entries({
     damage(x);
     assert.throws(() => qualifyNativeControlledStall(x));
   });
+
+test('reset540 fault mode requires the same explicit cadence prerequisites', () => {
+  assert.equal(
+    nativeControlledStall({
+      environment: { SCOREBUG_TEST_DECODER_STALL: 'reset540' },
+      cadenceReports: true,
+    }),
+    true,
+  );
+  assert.throws(() =>
+    nativeControlledStall({
+      environment: { SCOREBUG_TEST_DECODER_STALL: 'reset540' },
+      cadenceReports: false,
+    }),
+  );
+});

@@ -4,7 +4,7 @@ export function nativeControlledStall({ environment, cadenceReports }) {
   const flag = environment.SCOREBUG_TEST_DECODER_STALL;
   if (flag === undefined) return false;
   assert(
-    flag === '1' && cadenceReports,
+    ['1', 'reset540'].includes(flag) && cadenceReports,
     'Controlled decoder stall requires the explicit cadence fixture',
   );
   return true;
@@ -12,20 +12,6 @@ export function nativeControlledStall({ environment, cadenceReports }) {
 /** Phone-local timestamps plus the conservative worker sample bound. Node fault
  * timestamps prove the owned pause duration only; their epoch is never mixed in. */
 export function qualifyNativeControlledStall({ quality, audit, fault, scope }) {
-  assert(
-    fault.closed === true &&
-      fault.failed === false &&
-      finite(fault.pauseSentAt) &&
-      finite(fault.resumeSentAt),
-  );
-  const duration = fault.resumeSentAt - fault.pauseSentAt;
-  assert(duration >= 1800 && duration <= 2500, 'Unexpected owned pause duration');
-  assert(
-    fault.identity.guardian.ppid === fault.identity.worker.pid &&
-      fault.identity.decoder.ppid === fault.identity.guardian.pid,
-  );
-  assert(audit.closed === true && audit.overflow === false && audit.invalid === false);
-  assert(quality.formatVersion === 4 && quality.overflow === false && quality.events.length <= 512);
   const boot = quality.events.filter((e) => e.kind === 'bootstrap'),
     stalls = quality.events.filter((e) => e.kind === 'decoderStall');
   assert.equal(boot.length, 1);
@@ -46,11 +32,33 @@ export function qualifyNativeControlledStall({ quality, audit, fault, scope }) {
     !quality.events.some((e) => e.kind === 'applied' || e.kind === 'failed'),
     'Minimum hold must not recreate encoder or fail live',
   );
-  const event = stalls[0],
-    s = event.decoderStall;
+  const event = stalls[0];
   assert.equal(event.state, 'stalled');
   assert(event.reasons.includes('stalled') && event.reasons.includes('minimumProfileInsufficient'));
-  assert.equal(event.profileID, '240p30');
+  return {
+    minimumHoldDecisionQualified: true,
+    higherProfileResetWriteQualified: false,
+    ...qualifyNativeStallSignal({ quality, audit, fault, scope }, event),
+  };
+}
+export function qualifyNativeStallSignal({ quality, audit, fault, scope }, event) {
+  assert(
+    fault.closed === true &&
+      fault.failed === false &&
+      finite(fault.pauseSentAt) &&
+      finite(fault.resumeSentAt),
+  );
+  const duration = fault.resumeSentAt - fault.pauseSentAt;
+  assert(duration >= 1800 && duration <= 2500, 'Unexpected owned pause duration');
+  assert(
+    fault.identity.guardian.ppid === fault.identity.worker.pid &&
+      fault.identity.decoder.ppid === fault.identity.guardian.pid,
+  );
+  assert(audit.closed === true && audit.overflow === false && audit.invalid === false);
+  assert(quality.formatVersion === 4 && quality.overflow === false && quality.events.length <= 512);
+  const s = event.decoderStall;
+  assert.equal(event.state, 'stalled');
+  assert(event.reasons.includes('stalled'));
   assert.equal(event.revision, '0');
   assert.equal(s.revision, '0');
   assert.equal(event.window, undefined);
@@ -100,8 +108,6 @@ export function qualifyNativeControlledStall({ quality, audit, fault, scope }) {
   assert.equal(quality.events.at(-1).kind, 'stopped');
   assert.equal(quality.events.at(-1).closed, true);
   return {
-    minimumHoldDecisionQualified: true,
-    higherProfileResetWriteQualified: false,
     pauseMilliseconds: duration,
     admittedSampleAgeSeconds: sampleAge,
     lastProgressToDecisionUpperBoundSeconds: upperDelay,

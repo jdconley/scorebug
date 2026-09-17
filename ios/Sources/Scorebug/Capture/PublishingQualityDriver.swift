@@ -293,12 +293,16 @@ import ScorebugMedia
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
-        let minimumStall = environment["SCOREBUG_TEST_DECODER_STALL"] == "1"
+        let resetStall = environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540"
+        let minimumStall = (environment["SCOREBUG_TEST_DECODER_STALL"] == "1" || resetStall)
             && WorkerCadenceReportAudit.requested(environment: environment)
         guard environment["SCOREBUG_TEST_NATIVE_QUALITY"] == "1" || minimumStall,
               VideoObservationFixture.requested(environment: environment) else { return nil }
         let adaptive = try NativeProfileTransitionEvidence.adaptiveRequested(environment: environment)
-        let profiles: [QualityController.Profile] = minimumStall ? [
+        let profiles: [QualityController.Profile] = resetStall ? [
+            .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)
+        ] : minimumStall ? [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000)
         ] : adaptive ? [
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000),
@@ -306,7 +310,7 @@ import ScorebugMedia
         ] : [.init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)]
         let owner = try PublishingQualitySession(session: session,
             profiles: profiles, attemptID: attemptID,
-            initial: .init(profileID: minimumStall ? "240p30" : "1080p30", videoBitrate: minimumStall ? 350_000 : 6_000_000),
+            initial: .init(profileID: resetStall ? "540p30" : minimumStall ? "240p30" : "1080p30", videoBitrate: resetStall ? 1_500_000 : minimumStall ? 350_000 : 6_000_000),
             strategy: adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
             behavior: minimumStall ? .progressive : .legacy)
         return .init(owner: owner,

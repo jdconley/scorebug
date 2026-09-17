@@ -75,7 +75,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let decoderStall = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DECODER_STALL"] ?? ""
         if !decoderStall.isEmpty {
-            XCTAssertEqual(decoderStall, "1"); XCTAssertEqual(cadenceReports, "1")
+            XCTAssertTrue(["1", "reset540"].contains(decoderStall)); XCTAssertEqual(cadenceReports, "1")
             app.launchEnvironment["SCOREBUG_TEST_DECODER_STALL"] = decoderStall
         }
         app.launch()

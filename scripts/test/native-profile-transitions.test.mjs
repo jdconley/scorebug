@@ -415,3 +415,218 @@ test('minimum qualification rejects mismatched or incomplete proof', () => {
     );
   }
 });
+
+test('stall reset requires exactly two actual native phases 540p then minimum', () => {
+  const f = fixture(2);
+  f.format.formatVersion = 7;
+  f.format.sequence = 'stall540';
+  for (const [i, p] of f.format.phases.entries()) {
+    p.width = i ? 426 : 960;
+    p.height = i ? 240 : 540;
+  }
+  Object.assign(f.format.receipts[0], { profile: '240p30', width: 426, height: 240 });
+  f.format.compressedFrames = f.format.phases.flatMap((p, phase) =>
+    Array.from({ length: p.frames }, (_, n) => ({
+      sourcePTS: pts(phase * 900 + n),
+      observedAt: p.firstObservedAt + n / 30,
+      byteCount: 1000,
+      isSync: n % 60 === 0,
+    })),
+  );
+  const options = { sequence: 'stall540', requireFrameEvidence: true };
+  const result = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, options);
+  assert.equal(result.phases.length, 2);
+  assert.equal(result.receipts[0].profile, '240p30');
+  for (const damage of [
+    (x) => (x.format.phases[0].width = 1920),
+    (x) => (x.format.phases[1].height = 540),
+    (x) => (x.format.receipts[0].profile = '540p30'),
+    (x) => (x.format.compressedFrames[900].isSync = false),
+    (x) => x.format.phases.push({ ...x.format.phases[1] }),
+  ]) {
+    const bad = structuredClone(f);
+    damage(bad);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(bad.format, bad.snapshot, bad.liveIDs, options),
+    );
+  }
+  assert.throws(() => qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs));
+});
+
+async function resetProof() {
+  const { qualifyNativeStallReset } = await import('../native-stall-reset.mjs');
+  const f = fixture(2);
+  f.format.formatVersion = 7;
+  f.format.sequence = 'stall540';
+  f.format.phases.forEach((p, i) =>
+    Object.assign(p, { width: i ? 426 : 960, height: i ? 240 : 540 }),
+  );
+  Object.assign(f.format.receipts[0], {
+    profile: '240p30',
+    width: 426,
+    height: 240,
+    acknowledgedAt: 130.02,
+  });
+  f.format.compressedFrames = f.format.phases.flatMap((p, i) =>
+    Array.from({ length: p.frames }, (_, n) => ({
+      sourcePTS: pts(i * 900 + n),
+      observedAt: p.firstObservedAt + n / 30,
+      byteCount: 1000,
+      isSync: n % 60 === 0,
+    })),
+  );
+  const oldReceipt = {
+    generation: '2',
+    encoderSessionID: ids[0],
+    configurationID: ids[2],
+    bitRate: 1500000,
+    acceptedAt: 100.1,
+    lastSubmittedPTS: pts(5),
+  };
+  const newReceipt = {
+    ...oldReceipt,
+    encoderSessionID: ids[1],
+    configurationID: '44444444-4444-4444-8444-444444444444',
+    bitRate: 350000,
+    acceptedAt: 130.03,
+    lastSubmittedPTS: pts(900),
+  };
+  const signal = {
+    scopeID: 'decoder',
+    workerID: 'mac',
+    workerEpoch: 'epoch',
+    workerAttempt: 1,
+    readerID: 'reader',
+    publishingAttemptID: 'attempt',
+    lastFreshPTS: '100',
+    sequence: '4',
+    revision: '0',
+    observedAtLowerBound: 129.5,
+  };
+  const before = { profileID: '540p30', revision: '0', receipt: oldReceipt, acknowledgedAt: 100.2 };
+  const after = {
+    profileID: '240p30',
+    revision: '1',
+    receipt: newReceipt,
+    acknowledgedAt: 130.04,
+    profileReceipt: f.format.receipts[0],
+  };
+  const quality = {
+    formatVersion: 4,
+    overflow: false,
+    events: [
+      { ...before, kind: 'bootstrap' },
+      {
+        ...before,
+        kind: 'decoderStall',
+        state: 'stalled',
+        reasons: ['stalled'],
+        evaluatedAt: 129.7,
+        decoderStall: signal,
+      },
+      {
+        ...after,
+        kind: 'applied',
+        action: {
+          kind: 'reset',
+          profileID: '240p30',
+          bitRate: 350000,
+          fromRevision: '0',
+          validUntil: 130.2,
+        },
+        application: {
+          id: ids[2],
+          admittedAt: 129.71,
+          completionDeadline: 131.71,
+          attemptID: 'attempt',
+          fromRevision: '0',
+          windowSequence: '4',
+        },
+      },
+      { ...after, kind: 'stopped', closed: true },
+    ],
+  };
+  const row = {
+    expectedAttempt: 'attempt',
+    evaluatedUptime: 129.69,
+    sampleAgeSeconds: 0.19,
+    observedStall: true,
+    response: {
+      status: {
+        workerId: 'mac',
+        workerEpoch: 'epoch',
+        publication: { readerId: 'reader', publishingAttemptId: 'attempt' },
+        observation: {
+          attempt: 1,
+          decoderCadence: {
+            scopeID: 'decoder',
+            progress: { lastFreshPTS: 100, ageMs: 1100, stalled: true },
+          },
+        },
+      },
+    },
+  };
+  const resumed = structuredClone(row);
+  resumed.evaluatedUptime = 130.5;
+  resumed.observedStall = false;
+  resumed.response.status.observation.decoderCadence.progress = {
+    lastFreshPTS: 3100,
+    ageMs: 20,
+    stalled: false,
+  };
+  const audit = { closed: true, overflow: false, invalid: false, rows: [row, resumed] };
+  const fault = {
+    closed: true,
+    failed: false,
+    pauseSentAt: 1,
+    resumeSentAt: 1801,
+    identity: {
+      worker: { pid: 10 },
+      guardian: { pid: 11, ppid: 10 },
+      decoder: { pid: 12, ppid: 11 },
+    },
+  };
+  return {
+    verify: qualifyNativeStallReset,
+    input: {
+      quality,
+      audit,
+      fault,
+      scope: f.snapshot.scope,
+      format: f.format,
+      snapshot: f.snapshot,
+      liveIDs: f.liveIDs,
+    },
+  };
+}
+test('real reset proof binds raw stall, native write deadline and both media phases', async () => {
+  const { verify, input } = await resetProof();
+  const result = verify(input);
+  assert.equal(result.higherProfileResetWriteQualified, true);
+  assert(Math.abs(result.nativeApplicationSeconds - 0.33) < 1e-9);
+});
+for (const [name, damage] of Object.entries({
+  wrongOldEncoder: (x) => (x.quality.events[0].receipt.encoderSessionID = ids[2]),
+  wrongNewEncoder: (x) => (x.quality.events[2].receipt.encoderSessionID = ids[0]),
+  wrongProfileReceipt: (x) =>
+    (x.quality.events[2].profileReceipt = { ...x.quality.events[2].profileReceipt, width: 960 }),
+  beforeDecision: (x) => (x.quality.events[2].application.admittedAt = 129.6),
+  alreadyCompleted: (x) => (x.quality.events[2].application.admittedAt = 130.005),
+  futureReceiptPTS: (x) => (x.quality.events[2].receipt.lastSubmittedPTS = pts(60000)),
+  lateAck: (x) => (x.quality.events[2].acknowledgedAt = 132),
+  wrongGeneration: (x) => (x.quality.events[2].receipt.generation = '3'),
+  wrongRate: (x) => (x.quality.events[2].receipt.bitRate = 1500000),
+  wrongOrdinal: (x) => (x.quality.events[2].application.windowSequence = '3'),
+  wrongAttempt: (x) => (x.quality.events[2].application.attemptID = 'other'),
+  noReset: (x) => (x.quality.events[2].action.kind = 'decrease'),
+  oldReceiptAfterReset: (x) =>
+    (x.quality.events.at(-1).receipt = structuredClone(x.quality.events[0].receipt)),
+  stale: (x) => (x.quality.events[1].evaluatedAt = 129.8),
+  fabricatedWindow: (x) => (x.quality.events[1].window = {}),
+  secondWrite: (x) => x.quality.events.splice(3, 0, structuredClone(x.quality.events[2])),
+}))
+  test(`reset proof rejects ${name}`, async () => {
+    const { verify, input } = await resetProof();
+    damage(input);
+    assert.throws(() => verify(input));
+  });

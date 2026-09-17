@@ -80,6 +80,27 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
             XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
         }
     }
+    func testStallResetHasTwoBoundedObservedPhasesAndNoScheduledAdmission() throws {
+        let sequence = try XCTUnwrap(NativeProfileTransitionSequence(rawValue: "stall540"))
+        XCTAssertEqual(sequence.initialProfile, .sd540)
+        XCTAssertEqual(sequence.destinations, [.low240])
+        let proof = NativeProfileTransitionEvidence(scope: .init(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), adaptive: true, sequence: sequence)
+        record(proof, 0, .sd540); record(proof, 1, .low240)
+        XCTAssertEqual(try snapshot(proof)["formatVersion"] as? Int, 7)
+        XCTAssertEqual(try snapshot(proof)["sequence"] as? String, "stall540")
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, false)
+        record(proof, 2, .sd540)
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+        let env = ["SCOREBUG_TEST_PROFILE_TRANSITIONS": "stall540", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+        XCTAssertThrowsError(try NativeProfileTransitionEvidence.requestedSequence(environment: env), "Stall reset cannot invoke fixed schedule")
+    }
+    func testTransitionWrapperPassesThroughActualFirstFrameReceipt() {
+        let native = TransitionStartupPublisher()
+        let wrapper = NativeProfileTransitionPublisher(publisher: native, evidence: evidence(), adaptive: true)
+        XCTAssertEqual(wrapper.videoStartup, native.videoStartup)
+    }
     private func evidence() -> NativeProfileTransitionEvidence {
         .init(scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1))
@@ -281,4 +302,14 @@ private actor TransitionPublisher: MediaPublisher {
             width: profile.width, height: profile.height, rawVideoFramesDropped: 0,
             acknowledgedAt: ProcessInfo.processInfo.systemUptime)!
     }
+}
+
+private struct TransitionStartupPublisher: MediaPublisher {
+    let videoStartup: PublishingVideoStartup? = .init(profile: .sd540, width: 960, height: 540,
+        publishingGeneration: 1, encoderSessionID: UUID(), firstSourcePTS: .zero,
+        submittedAt: 1, completedAt: 1.1, observedAt: 1.2)
+    var isPublishing: Bool { get async { true } }
+    func start() async throws {}
+    func stop() async {}
+    func append(_ sample: CapturedMediaSample) async throws {}
 }

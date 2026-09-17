@@ -75,15 +75,21 @@ export function qualifyNativeProfileTransitions(
     !requirePacingEvidence || requireFrameEvidence,
     'Pacing requires current raw frame evidence',
   );
-  assert.ok(['1', 'low240'].includes(sequence), 'Unknown transition sequence');
+  assert.ok(['1', 'low240', 'stall540'].includes(sequence), 'Unknown transition sequence');
+  const stallReset = sequence === 'stall540';
+  assert.ok(!stallReset || !adaptive, 'Stall reset is one controlled downward transition');
   const minimum = sequence === 'low240';
   assert.ok(!minimum || !adaptive, 'Minimum sequence is a controlled experiment');
-  if (minimum) assert.equal(format.sequence, sequence);
+  if (minimum || stallReset) assert.equal(format.sequence, sequence);
   else assert.equal(format.sequence, undefined);
-  const hasFrameEvidence = format.formatVersion === (minimum ? 6 : adaptive ? 5 : 4);
+  const hasFrameEvidence =
+    format.formatVersion === (stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
   assert.ok(
     hasFrameEvidence ||
-      (!minimum && !requireFrameEvidence && format.formatVersion === (adaptive ? 3 : 2)),
+      (!minimum &&
+        !stallReset &&
+        !requireFrameEvidence &&
+        format.formatVersion === (adaptive ? 3 : 2)),
   );
   const compressedFrames = hasFrameEvidence
     ? qualifyNativeCompressedFrames(format, snapshot, { requirePacingEvidence, sequence })
@@ -103,7 +109,7 @@ export function qualifyNativeProfileTransitions(
     assert.ok(
       format.phases.length >= 3 && format.phases.length <= 17 && format.phases.length % 2 === 1,
     );
-  else assert.equal(format.phases.length, 3);
+  else assert.equal(format.phases.length, stallReset ? 2 : 3);
   assert.equal(format.receipts.length, format.phases.length - 1);
   assert.equal(format.encoderSessions.length, format.phases.length);
   const clock = (value) =>
@@ -130,8 +136,8 @@ export function qualifyNativeProfileTransitions(
     'Every encoded frame needs native format evidence',
   );
   const phases = format.phases.map((p, i) => {
-    assert.equal(p.width, i % 2 ? 960 : minimum ? 426 : 1920);
-    assert.equal(p.height, i % 2 ? 540 : minimum ? 240 : 1080);
+    assert.equal(p.width, stallReset ? (i === 0 ? 960 : 426) : i % 2 ? 960 : minimum ? 426 : 1920);
+    assert.equal(p.height, stallReset ? (i === 0 ? 540 : 240) : i % 2 ? 540 : minimum ? 240 : 1080);
     assert.ok(Number.isSafeInteger(p.frames) && p.frames > 0);
     const first = fixtureFrameID(p.firstSourcePTS),
       last = fixtureFrameID(p.lastSourcePTS);
@@ -227,7 +233,10 @@ export function qualifyNativeProfileTransitions(
   format.receipts.forEach((r, i) => {
     const before = phases[i],
       after = phases[i + 1];
-    assert.equal(r.profile, i % 2 === 0 ? '540p30' : minimum ? '240p30' : '1080p30');
+    assert.equal(
+      r.profile,
+      stallReset ? '240p30' : i % 2 === 0 ? '540p30' : minimum ? '240p30' : '1080p30',
+    );
     assert.equal(r.publishingGeneration, format.publishingGeneration);
     assert.equal(
       r.previousEncoderSessionID.toLowerCase(),
@@ -270,7 +279,7 @@ export function qualifyNativeProfileTransitions(
     if (i > 0) assert.ok(r.acknowledgedAt > format.receipts[i - 1].acknowledgedAt);
   });
   return {
-    ...(minimum ? { sequence } : {}),
+    ...(minimum || stallReset ? { sequence } : {}),
     ...(compressedFrames ? { compressedFrames } : {}),
     scope: format.scope,
     publishingGeneration: format.publishingGeneration,
@@ -284,8 +293,10 @@ export function qualifyNativeProfileTransitions(
       assert.ok(nativeCompletionGapSeconds >= 0 && compressedOutputGapSeconds >= 0);
       return { nativeCompletionGapSeconds, compressedOutputGapSeconds };
     }),
-    note: adaptive
-      ? 'Adaptive native formats and saved source correspondence; pressure decisions require separate policy replay, and receiver wall-clock continuity is not inferred.'
-      : 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
+    note: stallReset
+      ? 'One observed native reset; the scoped fault/controller qualification supplies causality, and receiver wall-clock continuity is not inferred.'
+      : adaptive
+        ? 'Adaptive native formats and saved source correspondence; pressure decisions require separate policy replay, and receiver wall-clock continuity is not inferred.'
+        : 'Fixed scheduled transitions; automatic adaptation and receiver wall-clock continuity remain separate gates.',
   };
 }

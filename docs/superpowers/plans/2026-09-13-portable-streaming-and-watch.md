@@ -1615,3 +1615,26 @@ Next qualify an actual higher-profile minimum reset write, short source/deadline
 measurements, candidate headroom, and full automatic recovery/reconnect. Physical
 phone/Watch and remote-worker gates remain. Production reporting and automatic
 adaptation defaults remain unchanged by the explicit simulator experiment.
+
+
+[Controlled native 540p-to-minimum reset](2026-09-17-native-stall-profile-reset.md)
+now passes through the actual progressive controller, native encoder and local
+SRT/proxy/RTMP path. In `native-app-1wOipN`, a 1.973-second owned decoder pause produced
+one reset decision within a conservative 1.311 seconds of last decoder progress.
+The verified native replacement completed in 462.511 ms after admission. Actual
+540p/240p frame phases, old/new encoder identities, both native receipts and first
+new-format downstream delivery reconcile independently. No native source frame was
+dropped during replacement.
+
+The independent 1080p archive retains all 3,670 frames; saved live media retains
+3,262 consecutive frames after acquisition. Both fully decode and retain every
+expected audio marker. The deliberate pause still interrupts real-time delivery;
+saved continuity is a separate claim. All 1,272 tooling, 348 Core and 252 native model
+tests pass, plus ARM64 simulator and unsigned iPhone/Watch Release builds. Evidence:
+`artifacts/qa/stall-reset-final-verification.json`.
+
+Next complete short expected-source/deadline reconciliation, actual candidate
+cost/headroom and bounded upward recovery, then minimum reconnect and longer automatic
+runs. Production minimum startup remains in place. Physical iPhone/Watch and remote
+CPU/GPU/cloud qualification remain outstanding; the test's deliberate 540p startup
+is isolated to its explicit DEBUG simulator mode.

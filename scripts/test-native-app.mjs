@@ -1,3 +1,4 @@
+import { qualifyNativeStallReset } from './native-stall-reset.mjs';
 import { nativeControlledStall, qualifyNativeControlledStall } from './native-controlled-stall.mjs';
 import { nativeCadenceReports, qualifyNativeCadenceReports } from './native-cadence-reports.mjs';
 import { qualifyNativeVideoCost } from './native-video-cost.mjs';
@@ -86,6 +87,7 @@ const cadenceReports = nativeCadenceReports({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const decoderStall = nativeControlledStall({ environment: process.env, cadenceReports });
+const stallReset = decoderStall && process.env.SCOREBUG_TEST_DECODER_STALL === 'reset540';
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
 const { requireQuality, requireConfirmation } = nativeQualityOptions({
   environment: process.env,
@@ -160,6 +162,7 @@ await writeFile(
       sourceCadencePacing,
       cadenceReports,
       decoderStall,
+      stallReset,
       streaming,
       requirePublication,
       requireProcessing,
@@ -524,7 +527,7 @@ try {
       `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
       `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
       `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
-      `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? '1' : ''}`,
+      `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? process.env.SCOREBUG_TEST_DECODER_STALL : ''}`,
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
@@ -633,10 +636,11 @@ try {
   let nativeVideoCostQualification,
     nativeFormatQualification,
     profileTransitionQualification,
+    profileTransitionSnapshot,
     bandwidthProbeQualification,
     receiverProbeQualification,
     nativeReceiverIntervalQualification;
-  if (['540p30', '360p30', '240p30'].includes(liveProfile)) {
+  if (!stallReset && ['540p30', '360p30', '240p30'].includes(liveProfile)) {
     const formatPath = join(artifact, 'native-publishing-format.json');
     await cp(
       join(container, 'Library/Application Support/Scorebug/QA/native-publishing-format.json'),
@@ -706,7 +710,7 @@ try {
       ),
     );
     liveSegments.sort((a, b) => a[0] - b[0]);
-    if (profileTransitions || adaptiveProfiles) {
+    if (profileTransitions || adaptiveProfiles || stallReset) {
       const path = join(artifact, 'native-profile-transitions.json');
       await cp(
         join(container, 'Library/Application Support/Scorebug/QA/native-profile-transitions.json'),
@@ -715,13 +719,14 @@ try {
       );
       const bytes = await readFile(path);
       assert.ok(bytes.length <= 8 * 1024 * 1024, 'Oversized native transition evidence');
+      profileTransitionSnapshot = JSON.parse(bytes.toString('utf8'));
       profileTransitionQualification = qualifyNativeProfileTransitions(
-        JSON.parse(bytes.toString('utf8')),
+        profileTransitionSnapshot,
         observationSnapshot,
         liveSegments.flat(),
         {
           adaptive: adaptiveProfiles,
-          sequence: profileTransitionSequence ?? '1',
+          sequence: stallReset ? 'stall540' : (profileTransitionSequence ?? '1'),
           requireFrameEvidence: true,
           requirePacingEvidence: sourceCadencePacing,
         },
@@ -839,7 +844,14 @@ try {
       });
     }
     if (decoderStall) {
-      const result = qualifyNativeControlledStall({
+      const result = (stallReset ? qualifyNativeStallReset : qualifyNativeControlledStall)({
+        ...(stallReset
+          ? {
+              format: profileTransitionSnapshot,
+              snapshot: observationSnapshot,
+              liveIDs: liveSegments.flat(),
+            }
+          : {}),
         quality: qualitySnapshot,
         audit: JSON.parse(await readFile(join(artifact, 'worker-cadence-reports.json'), 'utf8')),
         fault: JSON.parse(await readFile(join(artifact, 'owned-decoder-stall.json'), 'utf8')),
