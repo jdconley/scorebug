@@ -1937,3 +1937,25 @@ Next measure the default encoder's required buffering depth in a finite test-onl
 experiment with explicit raw-byte accounting, before revising any production
 resource bound. Complete candidate cost, automatic upward trials/recovery,
 long-session campaigns, physical phone/Watch routes and remote workers remain open.
+
+### 2026-09-17: candidate startup buffering depth measured
+
+[Buffer-depth diagnostic](2026-09-17-candidate-buffer-depth.md) completed five
+fresh native sessions with the shared 360p recipe and structured 1080p input. Both
+16-input and 20-input cases first produced output after the 14th submission and
+peaked at 43,606,080 unresolved raw bytes (about 41.6 MiB). Four-input, eight-input
+and repeated four-input controls produced no output during more than one second
+of native idle time, then drained every frame. All 52 inputs reconciled exactly.
+
+This supports revising the candidate resource model while keeping its ingress
+queue bounded: propose 16 total unresolved inputs plus a 64 MiB aggregate raw
+payload cap, with reservations released only on validated compressed dequeue.
+Production bounds remain unchanged in this diagnostic. The revised owner must
+still pass simultaneous archive/live/candidate testing before quality admission.
+The measurement establishes observed simulator behavior, not physical-device
+support or complete streaming cost.
+
+Verification passes 74 focused and 1,772 tooling tests, simulator build-for-testing,
+the native experiment and unchanged SDK provenance. Raw evidence is retained in
+`artifacts/qa/encoder-buffer-depth-oICaqc`; source and evidence hashes are recorded
+in `artifacts/qa/candidate-buffer-depth-final-verification.json`.
