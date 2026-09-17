@@ -147,6 +147,7 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             let candidateProfile = try NativeCandidateFixture.requested(environment: environment)
              let probeMode = try NativeBandwidthProbePublisher.requested(environment: environment)
              let cadencePacing = try NativeProfileTransitionEvidence.cadencePacingRequested(environment: environment)
              if environment["SCOREBUG_TEST_DECODER_STALL"] == "reset540", WorkerCadenceReportAudit.requested(environment: environment) {
@@ -176,6 +177,10 @@ struct PublishingClockObservation: Equatable, Sendable {
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope, mode: probeMode)
+             }
+             if let candidateProfile {
+                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return try NativeCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope, liveProfile: profile, candidate: candidateProfile)
              }
              return publisher
              #else
@@ -375,6 +380,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                     videoObservation = observations?.close()
                     throw error
                 }
+                #if DEBUG
+                if let candidate = publisher as? NativeCandidatePublisher {
+                    await candidate.setDiagnostics { [weak session] in NativeCandidatePublisher.Pressure(session?.snapshot) }
+                    try check(context, attempt)
+                }
+                #endif
                 publishing = (context, session, broadcast.generation, attempt, observations, publisher as? any PublishingProbeObserving)
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()

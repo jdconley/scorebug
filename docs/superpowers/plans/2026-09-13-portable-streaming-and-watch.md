@@ -883,7 +883,6 @@ failures without raw logs; shutdown review fixes and 339 worker/934 tooling test
 plus worker build pass. Next reproduce and repair reader resynchronization and
 reconnectable fixture recording before rerunning adaptive recovery qualification.
 
-
 The [bounded H.264 reader recovery](2026-09-16-ingest-h264-recovery.md) now
 reproduces and repairs the DTS-extractor termination caused by missing pictures.
 The integrated reader test preserves original timestamps and all test audio units,
@@ -905,7 +904,6 @@ resolve fresh recommendation admission versus bounded native execution, retain
 reconnectable destination work, and rerun adaptive pressure before production
 activation. Long soaks, physical phone/Watch and other-host gates remain open.
 
-
 The [quality application admission fix](2026-09-16-quality-application-admission.md)
 reproduces the prior native change failure and separates fresh-advice admission
 from a single-use two-second completion budget. Core (292), app-model (201), tooling
@@ -924,7 +922,6 @@ pressure response and verify actual media recovery; controller confirmation alon
 does not authorize production adaptation. Physical phone/Watch, longer soaks and
 other-host gates remain separate.
 
-
 The [rapid local pressure checkpoint](2026-09-16-rapid-local-pressure.md) shortens
 only downward local evidence to one second and independently verifies the new
 version-three contract. All 203 app-model / 959 tooling tests and the unsigned
@@ -939,7 +936,6 @@ The shorter decision window is verified, but is insufficient to protect delivery
 Next isolate earlier congestion detection using actual statistics sampling and
 transport thresholds, then backlog/keyframe recovery as indicated by evidence.
 Production adaptation, longer soaks, physical devices and remote hosts remain open.
-
 
 The [fresh transport statistics checkpoint](2026-09-16-fresh-transport-statistics.md)
 adds explicit native demand reads to the existing health loop while retaining the
@@ -956,7 +952,6 @@ SRT delivery delay and compare it with observed buildup and pressure thresholds;
 the source default is 120 ms but the runtime value was not retained. Keep any
 threshold and latency experiments separate. Production activation, device/host
 qualification and long soaks remain open.
-
 
 The [negotiated delay checkpoint](2026-09-16-negotiated-srt-delay.md) retains the
 actual native sender delivery delay on each timestamped transport sample. Model,
@@ -977,7 +972,6 @@ rate-control limitations remain relevant; do not replace the profile-transition
 stress test with a trivially passing bitrate request or relax media qualification.
 Production adaptation, long soaks, physical devices and other hosts remain open.
 
-
 The [faster downward pressure checkpoint](2026-09-16-fast-downward-pressure.md)
 adds an explicitly downward-only quarter-second core/app path and simulator RTT
 pressure bound to each sample's positive measured delivery delay. Version-four
@@ -994,7 +988,6 @@ non-increasing barcodes. The remaining anomalies cluster at the two downward
 geometry changes. Next investigate damaged access-unit/IDR recovery and transport
 recovery time together with the bounded receiver freshness budget. Keep production
 adaptation disabled and all device/host/soak requirements open.
-
 
 The [decoder damage diagnostics checkpoint](2026-09-16-decoder-damage-diagnostics.md)
 adds bounded missing-reference, invalid-slice and concealment categories, with
@@ -1013,7 +1006,6 @@ freshness headroom for a later transport experiment without changing any existin
 freshness/media gates. No production adaptation, physical-device or remote-host
 completion is claimed.
 
-
 The [input decoder threading checkpoint](2026-09-16-worker-decoder-threading.md)
 adds explicit automatic/slice input decoding while preserving automatic defaults.
 343 worker tests, 981 tooling tests, worker build, review and real software plus
@@ -1028,7 +1020,6 @@ zero decoder messages do not qualify delivery. Next use the measured freshness
 headroom for a separate publish-leg SRT recovery-delay experiment, keeping read-leg
 settings and every media/freshness gate unchanged. Production adaptation, physical
 devices, long soaks and other hosts remain unqualified.
-
 
 The [publishing recovery-delay checkpoint](2026-09-16-publish-recovery-delay.md)
 adds an optional bounded native publishing peer delay; unset defaults, read-leg
@@ -1046,7 +1037,6 @@ geometry changes; compare native receipts and source identities before increasin
 buffering again. Production adaptation, physical devices, long soaks and remote
 hosts remain unqualified.
 
-
 The [uplink queue timeline checkpoint](2026-09-16-uplink-queue-timeline.md)
 adds bounded payload-free 100-ms event bins and independent chronological/counter
 validation to the local test proxy. All 990 tooling tests and final review pass.
@@ -1062,7 +1052,6 @@ All 8165 archive frames and 135 audio markers remain intact. Live still fails at
 original/retransmitted/control packet pressure, then test bounded sender pacing.
 Do not enlarge queues, freshness limits, or declare the 400-ms setting reliable.
 Production adaptation and device/host/soak qualification remain open.
-
 
 The [relative sender-pacing checkpoint](2026-09-16-relative-sender-pacing.md)
 adds opt-in publish-only `maxbw=0` plus actual native pacing diagnostics; defaults
@@ -1080,20 +1069,17 @@ geometry changes before another transport-setting experiment. Prior simulator
 unsupported-property findings remain applicable; physical encoder behavior is
 still unproven. Production adaptation and device/host/soak requirements stay open.
 
-
 The [compressed-frame checkpoint](2026-09-16-compressed-frame-evidence.md) adds bounded actual pre-mux byte counts and native sync metadata, with independent phase/source/time reconciliation. All 160 SDK, 61 streaming, 211 app-model and 1014 tooling tests pass, along with the combined unsigned Apple Release build, exact SDK provenance verification and review.
 
 With unchanged settings, `native-app-98ZoEn` preserves all 8176 archive frames and 136 audio markers, but live still fails: 12-fps worst cadence, 171 absent identities and −108.1 ms end coverage. All 7799 compressed records reconcile. Individual frames are at most 47 KB; larger bursts are groups of frames released at encoder drain, 301–395 ms ahead of normal source cadence. Two long loss ranges resume at measured native sync points. The short upward trial produces 7.82 Mbps of video alone on the 4 Mbps link.
 
 Next test opt-in pre-mux source-cadence pacing with bounded ownership and joined cancellation/finish, while preserving every frame and timestamp. A recorded-data replay reduces batches but is not live qualification. Upward trials must separately account for measured profile cost and available capacity. Production adaptation remains disabled; device/Watch/host/soak requirements stay open.
 
-
 The [source-cadence pacing checkpoint](2026-09-16-source-cadence-pacing.md) adds an opt-in bounded scheduler to the existing native encoded-video consumer. It preserves the initial source clock across replacements, cancels stale waits, and retains a 16-frame/2 MiB-per-frame encoder queue only in this mode; ordinary defaults and transport queues stay unchanged. All 1458 SDK/streaming/app-model/tooling tests and the combined unsigned Apple Release build pass, with exact provenance and review.
 
 In `native-app-xJ7FLN`, all 7828 frames prove actual pacing, and the final ten frames of each phase span about 300 ms instead of 26–80 ms. All 8203 archive frames and 136 audio markers remain intact. Live still fails at 12.8-fps worst cadence, 167 absent identities, 37 repeated observations and −158.2 ms end coverage. The 7.85-Mbps upward trial still overloads the 4-Mbps link. Keep pacing opt-in and production adaptation disabled.
 
 Next establish fresh usable headroom against measured candidate-profile cost before upgrading. First qualify actual SRT bandwidth/ACK evidence against the known rate phases; use bounded probing if it cannot establish capacity. Neither a pacing ceiling nor requested bitrate is sufficient, and disabling all future upgrades would not satisfy the highest-sustainable-quality requirement. Device/Watch/host/soak qualification remains open.
-
 
 The [native bandwidth estimate checkpoint](2026-09-16-native-bandwidth-estimate.md)
 retains the existing actual SRT estimate in bounded diagnostic evidence without
@@ -1110,7 +1096,6 @@ then admit upgrades only with receiver-verified headroom against actual candidat
 cost. Do not inject the fixture rate into decisions or disable future upgrades
 permanently. Phone/Watch, remote-host and soak qualification remain open.
 
-
 The [bounded SRT probe checkpoint](2026-09-16-bounded-capacity-probe.md) implements
 and qualifies a local installed-libsrt synthetic-load ramp. It withdraws at an
 active 4.25 Mbps step on a 4 Mbps path, then delivers 5.989 Mbps against a 6 Mbps
@@ -1124,7 +1109,6 @@ obtain attempt-bound receiver byte evidence, and repeat all native archive,
 picture/cadence and A/V gates. Preserve the distinction between fast local
 pressure and the slower receiver-control feedback path. Production adaptation
 remains disabled; phone/Watch, remote hosts and soaks remain open.
-
 
 The [MPEG-TS padding checkpoint](2026-09-16-mpegts-padding-probe.md) now qualifies
 real finite H.264/AAC transport with disposable null padding on the same local
@@ -1144,7 +1128,6 @@ pressure/lease ownership and slower bounded receiver confirmation. Keep existing
 picture, cadence, A/V, local archive and measured-profile-cost gates. Production
 adaptation and physical phone/Watch, other-host and soak qualification remain open.
 
-
 The [native padding checkpoint](2026-09-16-native-padding-probe.md) adds a
 default-disabled same-connection probe to the Swift publisher SDK. It offers
 bounded nonblocking null padding only after media, with synchronized queue
@@ -1161,7 +1144,6 @@ pre-demux receiver accounting come next. Production adaptation stays disabled;
 native archive/live media, physical devices, other hosts and soaks still require
 their existing qualification gates.
 
-
 The [publisher probe adapter checkpoint](2026-09-16-publisher-probe-adapter.md)
 exposes the opt-in capability through the actual `SRTPublisher` and
 `SRTMediaPublisher` adapters. Exact UUID/generation handles scope renewal and
@@ -1176,7 +1158,6 @@ configuration. It does not qualify camera media or live cadence. Next wire the
 DEBUG fixture's bounded renewal/export ownership, then authenticated pre-demux
 receiver accounting and existing native simultaneous archive/live gates.
 Production adaptation and device/Watch/portable-host/soak qualification remain open.
-
 
 The [native probe fixture checkpoint](2026-09-16-native-probe-fixture.md) wires
 explicit DEBUG simulator `renew`/`expire` modes through the fixed540p publishing
@@ -1193,7 +1174,6 @@ accounting before capacity admission. The
 fixed profile is an isolation experiment; highest-sustainable live quality,
 production adaptation, phone/Watch, portable hosts and soaks remain open.
 
-
 Actual expired-lease run `native-app-f8Su6q` passes on iOS 17.5. Nine native probe
 messages (11,844 bytes) stop before the 300 ms deadline; publishing continues
 another 90.282 seconds. The independent archive preserves all 3,658 consecutive
@@ -1208,7 +1188,6 @@ receiver capacity. The one-message-per-media-opportunity probe underdelivers its
 requested rate. Next qualify sustained renewal and pressure, then obtain real
 receiver headroom against measured candidate cost. Highest-sustainable quality
 and device/Watch/host/soak gates remain open.
-
 
 The [native renewal/pressure qualification](2026-09-16-native-probe-renewal.md)
 now passes on unchanged runtime `857d4ab`. Passthrough run `native-app-BKvdTc`
@@ -1229,7 +1208,6 @@ attempt-bound receiver accounting and capacity admission against measured profil
 cost. Do not infer exact pressure threshold timing from the current reason-only
 snapshot. Production adaptation and phone/Watch/other-host/soak gates remain open.
 
-
 The [probe opportunity scheduler](2026-09-16-probe-opportunity-scheduling.md)
 removes the measured frame-rate bottleneck using one coalesced wake signal and
 one optional strict timer; the existing transport consumer still sends all media
@@ -1248,7 +1226,6 @@ and address that archive/source burst, then repeat pressure qualification before
 receiver capacity or adaptive upgrades. Physical devices, native Watch networking,
 remote hosts and long soaks remain open.
 
-
 The [synthetic source pacing repair](2026-09-16-fixture-catch-up-cadence.md)
 prevents overdue frame deadlines from flooding the archive after a stall, without
 changing queue limits or media identities. A deliberate 1.5-second callback stall
@@ -1265,7 +1242,6 @@ run does not reproduce the original source stall; the dedicated regression cover
 that defect. Authenticated receiver-attributed probe delivery and measured candidate
 cost remain next, before quality upgrades. Physical capture, Watch routes, other
 hosts and sustained soaks remain open.
-
 
 [Receiver-attributed probe accounting](2026-09-16-receiver-probe-accounting.md)
 now marks valid null packets and counts complete probe messages before relay
@@ -1287,7 +1263,6 @@ is a finite fixed-profile scenario and retains one attempt per connection; it do
 not authorize automatic upgrades. Phone/Watch, remote hosts and long soaks remain
 unqualified.
 
-
 [Authenticated receiver probe status](2026-09-16-receiver-probe-status.md) now
 carries separately sanitized measurements through the production API, after
 signed publisher verification and a post-I/O scope check. Shared iPhone/Watch
@@ -1307,7 +1282,6 @@ Next wire the production probe owner, causal receiver intervals and measured
 candidate cost, including bounded repeat/stage behavior. No automatic upgrades
 are enabled by this status contract. Physical-device, Watch networking, remote
 host and long-soak qualification remains open.
-
 
 [Native receiver intervals](2026-09-16-native-receiver-probe-intervals.md) now bind
 status to the actual local publishing probe and derive causal 1–5 second intervals.
@@ -1331,7 +1305,6 @@ Next implement measured candidate cost and bounded repeated/staged probe ownersh
 before qualified quality-increase admission. Production probing and automatic
 upgrades remain disabled. Physical-device/Watch networking, remote hosts and long
 soaks remain unqualified.
-
 
 [Measured native video payload cost](2026-09-16-measured-video-cost.md) now joins
 actual encoder identity/timing and compressed sample bytes in a bounded owner per
@@ -1359,7 +1332,6 @@ Automatic upgrades remain disabled until candidate cost, repeated/staged ownersh
 and real transition media continuity are qualified. Physical-device/Watch networking,
 remote hosts and long soaks remain open.
 
-
 [Fixed360 native qualification](2026-09-16-low-profile-qualification.md) adds a
 640×360/30 fps candidate with a requested 600 kbps rate to the explicit simulator
 fixture and portable worker. The independent archive remains 1080p. 79 streaming,
@@ -1377,7 +1349,6 @@ control/cheaper candidate qualification remains a prerequisite for low startup a
 reset-to-minimum. Automatic adaptation and production defaults remain unchanged.
 Evidence is frozen in `artifacts/qa/low360-final-verification.json`.
 
-
 [Native Mac rate-control diagnosis](2026-09-16-native-mac-rate-control.md) now runs
 the same isolated encoder workload on this Mac, with separate versioned evidence
 and before/after native hardware readbacks. Run `encoder-native-mac-QrOxha` preserves
@@ -1393,7 +1364,6 @@ old simulator runs replay unchanged. Independent arithmetic/session checks agree
 with the baseline and reject 10 damaged variants. The final evidence manifest is
 `artifacts/qa/mac-rate-final-verification.json`. Next isolate the exact callback
 failure and measure lower-resolution native costs before admitting a recovery tier.
-
 
 [Encoder pixel-format correction](2026-09-16-encoder-pixel-format.md) fixes the
 streaming codec's input attribute: use the raw image's media subtype (NV12/BGRA),
@@ -1411,7 +1381,6 @@ The setup defect is corrected; lower-bandwidth fallback and automatic adaptation
 remain unqualified. Source/evidence hashes and joined-owner outcomes are retained
 in `artifacts/qa/pixel-format-final-verification-v2.json`.
 
-
 [240p fallback candidate](2026-09-16-240p-qualification.md) adds an explicit
 426×240/30 fps native and portable-worker profile, requested at 350 kbps. Actual
 run `native-app-hB2BBX` preserves 6,424 consecutive archive frames and 6,049
@@ -1427,7 +1396,6 @@ tests, worker typechecking and both Apple builds pass. Independent verification
 rejects 11 damaged variants. Evidence is in `artifacts/qa/low240-final-verification.json`.
 Next test an explicit 3 Mbps uplink, then minimum-profile transitions and progressive
 health/policy integration. Automatic adaptation and production startup remain gated.
-
 
 [Fixed240 at 3 Mbps](2026-09-16-240p-3mbps.md) now passes in
 `native-app-2H0AUs`: 6,386 consecutive archive frames, 5,981 consecutive retained
@@ -1445,7 +1413,6 @@ variants. Every process owner joins; hashes are in
 minimum reset and progressive recovery policy. Physical-device and remote-host
 qualification remain open.
 
-
 [Controlled minimum-profile transitions](2026-09-16-minimum-profile-transitions.md)
 now pass on the iOS 17.5 simulator in `native-app-MLneuc`. Actual native encoder
 formats are 240p → 540p → 240p; 3,353 consecutive encoded frames become 3,318
@@ -1462,7 +1429,6 @@ with the final live frame saved. Sources/evidence are frozen in
 `artifacts/qa/minimum-transition-final-verification.json`. Next implement short
 health windows/watchdog, priority minimum reset and conservative recovery under
 the progressive streaming design, while preserving the receiver-continuity gate.
-
 
 [Decoder short-window measurements](2026-09-16-decoder-short-windows.md) now attach
 to the real FFmpeg decoded-PTS pipe. Constant-space one-/two-second windows and a
@@ -1482,7 +1448,6 @@ scoped freshness/reporting, expected-source/lateness reconciliation and direct
 minimum reset/recovery. Source/evidence hashes are in
 `artifacts/qa/decoder-cadence-final-verification.json`; no new archive, SRT, physical
 phone/Watch or remote-worker qualification is claimed by this observer experiment.
-
 
 [Authenticated decoder cadence reporting](2026-09-16-decoder-cadence-reporting.md)
 now carries optional one-/two-second snapshots from the actual pipeline sample
@@ -1504,7 +1469,6 @@ Next qualify short report/poll timing, expected-source/lateness reconciliation,
 and consumption by the priority minimum-reset/recovery controller. Production
 worker report cadence remains 1,000 ms; automatic quality behavior is unchanged.
 
-
 [Progressive minimum-reset policy](2026-09-16-progressive-reset-policy.md) now adds
 explicit progressive behavior to the controller and native quality-session adapter.
 Frame-floor/source-loss failures and failed trials target the lowest qualified
@@ -1525,7 +1489,6 @@ and qualify candidate cost/headroom plus real automatic transitions. Native rece
 failure currently retires publishing; minimum-profile reconnect must accompany
 activation. The existing driver continues using its legacy default until those gates
 are satisfied. No additional physical phone/Watch or remote worker result is claimed.
-
 
 [Minimum startup and first-frame evidence](2026-09-16-minimum-startup-evidence.md)
 now makes normal app connections configure 240p30 before the first live frame. Each
@@ -1554,7 +1517,6 @@ candidate cost/headroom and real automatic transitions remain before progressive
 production activation. Normal live publishing currently stays at the minimum until
 that automatic recovery path is qualified.
 
-
 [Fresh decoder-stall minimum reset](2026-09-17-decoder-stall-reset.md) now binds
 explicit worker no-progress observations to the current native publishing receipt
 and gives them priority in the progressive quality driver. Fresh, post-acknowledgment
@@ -1573,7 +1535,6 @@ fast-report response time, then short source/lateness measurements and candidate
 headroom before enabling progressive production adaptation. Existing local recording
 and fixed minimum startup continue independently.
 
-
 [Native fast-report timing](2026-09-17-native-cadence-report-timing.md) now has a
 bounded DEBUG simulator audit and an independent checker. Actual fixed240 run
 `native-app-ToYhHS` used 100 ms worker reporting and native polling. All 747 settled
@@ -1591,7 +1552,6 @@ is now qualified at this configuration. Controlled-stall/reset reaction timing,
 short expected-source/lateness reconciliation, candidate headroom, real automatic
 transitions and physical/remote qualification remain. Production adaptation and
 normal reporting defaults are unchanged.
-
 
 [Controlled native decoder stall](2026-09-17-native-controlled-decoder-stall.md)
 now exercises a real owned FFmpeg pause with the native progressive controller at
@@ -1616,7 +1576,6 @@ measurements, candidate headroom, and full automatic recovery/reconnect. Physica
 phone/Watch and remote-worker gates remain. Production reporting and automatic
 adaptation defaults remain unchanged by the explicit simulator experiment.
 
-
 [Controlled native 540p-to-minimum reset](2026-09-17-native-stall-profile-reset.md)
 now passes through the actual progressive controller, native encoder and local
 SRT/proxy/RTMP path. In `native-app-1wOipN`, a 1.973-second owned decoder pause produced
@@ -1639,7 +1598,6 @@ runs. Production minimum startup remains in place. Physical iPhone/Watch and rem
 CPU/GPU/cloud qualification remain outstanding; the test's deliberate 540p startup
 is isolated to its explicit DEBUG simulator mode.
 
-
 [Delivery deadline evidence](2026-09-17-delivery-deadline-evidence.md) now supplies a
 bounded worker arrival timeline and a conservative native classifier for on-time,
 late, missing and uncertain frames. Buffered catch-up cannot repair missed deadlines;
@@ -1660,7 +1618,6 @@ Measured full-history reporting at 10 Hz would cost about 1.16 Mbps before overh
 so it must use bounded deltas/coalescing. Production automatic adaptation remains
 disabled until those gates and candidate-headroom/recovery checks pass. Physical
 phone/Watch and remote CPU/GPU/cloud qualification remain outstanding.
-
 
 [Incremental delivery reporting](2026-09-17-incremental-delivery-reporting.md) now
 carries bounded arrival history through capability-negotiated worker reports and
@@ -1683,7 +1640,6 @@ HTTP reporting, not physical phone deadlines or relay attachment. Automatic qual
 recovery, candidate headroom, reconnect, physical Watch/phone and remote worker gates
 remain open.
 
-
 [Native incremental delivery consumer](2026-09-17-native-delivery-consumer.md) now
 reconstructs reports in Core and consumes them in the capture app. Native queries
 opt in with validated cursors, while scoring clients retain ordinary status requests.
@@ -1703,7 +1659,6 @@ Next complete native source/configuration windows and decoder PTS projection, th
 qualify deadline loss/floor decisions against actual simulator capture. Automatic
 recovery, candidate headroom, reconnect, physical devices and remote workers remain
 required; this consumer checkpoint enables no new quality decisions.
-
 
 [Delivery source windows](2026-09-17-delivery-source-windows.md) now prove complete
 one/two-second captured-source expectations and project every expected frame into
@@ -1781,7 +1736,6 @@ Driver activation, decision export and a new actual reset experiment are the nex
 steps; the injected native-operation test does not qualify physical encoder behavior
 or automatic recovery. Evidence: `artifacts/qa/deadline-reset-final-verification.json`.
 
-
 The same deadline-reset plan now has a verified driver checkpoint. Explicit
 simulator run `native-app-DcUNqI` disables the earlier stall watchdog and legacy
 recovery credit, then admits a zero-on-time-FPS one-second deadline failure during
@@ -1798,9 +1752,8 @@ iPhone/Watch Release builds. Reviews are approved; frozen evidence is recorded i
 deadline-triggered writes and controlled recovery/headroom. Minimum-hold behavior
 does not prove those gates; production adaptation remains disabled.
 
-
 [Deadline-triggered profile reset](2026-09-17-deadline-profile-reset.md) now passes an
-actual iPhone14/iOS17.5 simulator experiment (`native-app-2ocCqq`). After14 healthy
+actual iPhone 14/iOS 17.5 simulator experiment (`native-app-2ocCqq`). After14 healthy
 one-second540p windows and6 healthy two-second windows, an owned1.983-second decoder
 pause produced16 timely frames out of30. One deadline decision changed the native
 encoder from540p to240p, with the first new frame at0.476seconds and acknowledgment
@@ -1815,7 +1768,6 @@ Apple builds pass; reviews are approved. Frozen evidence:
 candidate cost/headroom and minimum-first upgrades/recovery; reconnect/soaks,
 physical phone/Watch and remote workers remain open. Production adaptation remains
 disabled until these gates are satisfied.
-
 
 [Staged probe wire foundation](2026-09-17-staged-probe-wire.md) adds an explicit
 versioned stage ordinal to optional null-packet measurements. The relay accepts
@@ -1832,7 +1784,6 @@ Evidence: `artifacts/qa/staged-probe-wire-final-verification.json`. Next carry s
 identity through authenticated status and current native ownership, join replacement
 owners, enforce cumulative sender limits, then qualify repeated native probes and
 fresh candidate cost. No new live-media or physical/remote qualification is claimed.
-
 
 [Staged probe status and ownership](2026-09-17-staged-probe-status.md) now carries v2
 identity through authenticated status and native matching. Stage changes retain
@@ -1851,7 +1802,6 @@ emit v1: joined repeated native owners, cumulative sender budgets and actual sta
 media qualification follow. Measured candidate cost, automatic upgrades/recovery,
 physical phone/Watch routes and remote deployment remain open.
 
-
 [Native staged probes](2026-09-17-native-staged-probes.md) now provide opt-in SDK
 start/replacement on one publication. Replacement retires the old native permit,
 joins its wake owner, carries every accepted message into the cumulative budget,
@@ -1868,7 +1818,6 @@ wire staged APIs through publisher adapters and the DEBUG scheduler, then qualif
 actual staged SRT with independent local recording. Measured candidate cost,
 automatic upgrades/recovery, long-session campaigns, physical phone/Watch and
 remote workers remain open; production adaptation is still disabled.
-
 
 [Staged publisher adapters and DEBUG scheduler](2026-09-17-staged-probe-publishers.md)
 now expose the native staged lifecycle to the app. Both adapters reject wrong stage,
@@ -1897,7 +1846,7 @@ budgets survive replacements. Impossible pacing bursts, lease-boundary
 acceptance and contradictory interval histories fail qualification. Staged runs
 select a separately pinned relay image; legacy image defaults remain intact.
 
-The full fixed540p iPhone14/iOS17.5 simulator run `native-app-PnVEYX` reconciled
+The full fixed540p iPhone 14/iOS 17.5 simulator run `native-app-PnVEYX` reconciled
 3,411,072 accepted/delivered payload bytes. It qualified 18 independently covered
 intervals (six per stage), explicitly excluding three polling-boundary intervals
 from qualified totals while validating their histories. The independent 1080p
@@ -1939,3 +1888,31 @@ spec/quality review. Frozen evidence:
 establishes completed media sends before requiring connection reuse; a controlled
 case separately verifies terminal cancellation during an entered send. No live
 transport behavior changed.
+
+### 2026-09-17: candidate sampling integrated; native buffering gate remains open
+
+[Candidate sampling](2026-09-17-candidate-sampling.md) now reuses raw video from
+the bounded publisher path after primary append, with a four-second finite-window
+owner, pressure/ownership cancellation and joined shutdown. Simulator opt-in
+exports bounded actual H.264 payload evidence. Independent verification checks
+identity, exact source coverage, codec output, timings, pressure and outstanding
+input occupancy. Review-driven regressions cover delayed primary startup and
+impossible encoder-concurrency evidence. Normal production adaptation is unchanged.
+
+Two iPhone 14/iOS 17.5 native trials (540p and 360p candidate, 240p live, 1080p archive)
+failed candidate qualification at the existing four-unresolved-input limit. Both
+trials drained all four admitted outputs and preserved their independent archive
+and live recordings with zero source-frame loss and matched audio markers. They
+are negative candidate trials, not measured spare bandwidth or positive candidate
+cost. The positive full-pipeline measurement gate remains open.
+
+Next diagnose native encoder buffering with the actual structured 1080p source,
+including a verified frame-delay setting shared by proposed live and candidate
+recipes. Preserve the hard resource bound and retain failed evidence. Complete
+cost admission, automatic upward trials/recovery, long-session campaigns, physical
+iPhone/Watch routes and portable remote workers remain pending.
+
+Verification passes 123 Streaming, 308 native model and 1,613 tooling tests, the
+unsigned phone/Watch Release build and SDK provenance. Both simulator workflows
+completed, while their independent candidate gates correctly failed. Frozen evidence:
+`artifacts/qa/candidate-sampling-final-verification.json`.

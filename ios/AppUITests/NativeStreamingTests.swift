@@ -66,6 +66,14 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
             app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
         }
+        let candidate = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""
+        if !candidate.isEmpty {
+            XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(candidate))
+            XCTAssertTrue(["240p30", "360p30", "540p30"].contains(liveProfile))
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && probe.isEmpty && uplinkPort.isEmpty)
+            XCTAssertTrue((90...600).contains(holdSeconds))
+            app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = candidate
+        }
         let cadenceReports = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CADENCE_REPORTS"] ?? ""
         if !cadenceReports.isEmpty {
             XCTAssertEqual(cadenceReports, "1"); XCTAssertEqual(liveProfile, "240p30")

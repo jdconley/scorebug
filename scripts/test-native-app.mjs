@@ -1,4 +1,8 @@
 import {
+  nativeCandidateProfile,
+  qualifyNativeCandidateMeasurement,
+} from './native-candidate-measurement.mjs';
+import {
   qualifyNativeDeadlineDecisions,
   qualifyNativeDeadlineReset,
 } from './native-deadline-decisions.mjs';
@@ -129,6 +133,14 @@ const adaptiveProfiles = nativeAdaptiveProfiles({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const bandwidthProbe = nativeBandwidthProbe({
+  environment: process.env,
+  streaming,
+  requireProcessing,
+  requirePublication,
+  holdSeconds: streamingOptions.holdSeconds,
+  liveProfile,
+});
+const candidateProfile = nativeCandidateProfile({
   environment: process.env,
   streaming,
   requireProcessing,
@@ -546,6 +558,7 @@ try {
       `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
       `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
       `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
+      `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
       `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
       `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
       `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
@@ -655,7 +668,8 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let nativeVideoCostQualification,
+  let candidateQualification,
+    nativeVideoCostQualification,
     nativeFormatQualification,
     profileTransitionQualification,
     profileTransitionSnapshot,
@@ -694,6 +708,25 @@ try {
               ?.receipt,
           }
         : {},
+    );
+  }
+  if (candidateProfile) {
+    const candidatePath = join(artifact, 'native-candidate-measurement.json');
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/native-candidate-measurement.json'),
+      candidatePath,
+      { errorOnExist: true, force: false },
+    );
+    const candidateBytes = await readFile(candidatePath);
+    assert.ok(candidateBytes.length <= 256 * 1024, 'Oversized candidate evidence');
+    candidateQualification = qualifyNativeCandidateMeasurement(
+      JSON.parse(candidateBytes.toString('utf8')),
+      {
+        scope: observationSnapshot.scope,
+        profile: candidateProfile,
+        liveProfile,
+        format: nativeFormatQualification,
+      },
     );
   }
   let videoObservation,
@@ -989,6 +1022,8 @@ try {
         liveProfile,
         nativeFormatQualification,
         nativeVideoCostQualification,
+        candidateProfile,
+        candidateQualification,
         profileTransitions,
         profileTransitionSequence,
         adaptiveProfiles,
