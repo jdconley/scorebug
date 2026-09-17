@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { replayCandidateTransportCost } from '../candidate-transport-cost.mjs';
 import {
   nativeCandidateProfile,
   qualifyNativeCandidateMeasurement,
@@ -319,4 +320,112 @@ test('v2 releases a prior raw reservation at an equal admission timestamp', () =
     frames[i].completedAt = frames[i].dequeuedAt - 0.001;
   }
   assert.equal(qualifyNativeCandidateMeasurement(p, expectedV2).maximumUnresolvedInputs, 1);
+});
+
+// v3 preserves video/resource gates and adds independently replayed full A/V cost.
+function fixtureV3() {
+  const p = fixtureV2();
+  p.formatVersion = 3;
+  const m = p.measurement,
+    e = m.encoding;
+  const time = (n) => ({ value: String(n), timescale: 48000, epoch: '0', flags: 1 });
+  const audio = Array.from({ length: 188 }, (_, i) => ({
+    sourcePTS: time(6876000 + i * 1024),
+    publishingGeneration: '1',
+    wasEncoded: true,
+    valid: true,
+    observedAt: 120 + (i * 1024) / 48000,
+    consumedAt: 120 + (i * 1024) / 48000 + 0.001,
+    byteCount: 100,
+    sampleRate: 48000,
+    channelCount: 2,
+    framesPerPacket: 1024,
+    audioObjectType: 2,
+  }));
+  const followingAudio = {
+    ...audio.at(-1),
+    sourcePTS: time(6876000 + 188 * 1024),
+    observedAt: 124.010666667,
+    consumedAt: 124.010666667,
+  };
+  const inputs = [
+    ...e.frames.map((f) => ({
+      media: 'video',
+      sourcePTS: f.sourcePTS,
+      decodePTS: null,
+      byteCount: f.byteCount,
+      isSync: f.isSync,
+      parameterSetBytes: f.isSync ? 34 : 0,
+      _at: f.dequeuedAt,
+    })),
+    ...audio.map((a) => ({
+      media: 'audio',
+      sourcePTS: a.sourcePTS,
+      decodePTS: null,
+      byteCount: a.byteCount,
+      isSync: true,
+      parameterSetBytes: 0,
+      _at: a.consumedAt,
+    })),
+  ]
+    .sort((a, b) => a._at - b._at)
+    .map(({ _at, ...input }) => input);
+  const { writes, programWrites, pcrCount, ...totals } = replayCandidateTransportCost(inputs);
+  m.transport = {
+    scope,
+    profile: m.profile,
+    id: m.id,
+    outcome: 'completed',
+    failure: null,
+    publishingGeneration: '1',
+    startedAt: 119.999,
+    closedAt: 124.001,
+    endedAt: 124.45,
+    rawInputCount: 121,
+    firstRawPTS: m.firstInputPTS,
+    lastRawPTS: m.lastInputPTS,
+    audio,
+    followingAudio,
+    maximumPendingCount: 1,
+    maximumPendingBytes: 100,
+    mux: {
+      ...totals,
+      inputs,
+      outcome: 'completed',
+      failure: null,
+      firstVideoPTS: m.firstInputPTS,
+      lastVideoPTS: m.lastInputPTS,
+      firstAudioPTS: audio[0].sourcePTS,
+      lastAudioPTS: audio.at(-1).sourcePTS,
+    },
+  };
+  return p;
+}
+const expectedV3 = {
+  ...expectedV2,
+  requiredFormatVersion: 3,
+  format: { ...expected.format, publishingGeneration: '1' },
+};
+test('v3 joins live AAC and native candidate frames with full MPEG-TS cost', () => {
+  const p = fixtureV3(),
+    r = qualifyNativeCandidateMeasurement(p, expectedV3);
+  assert.equal(r.bytes, 128000);
+  assert.equal(r.transport.transportBytes, p.measurement.transport.mux.transportBytes);
+  assert.equal(r.transport.audioInputCount, 188);
+  assert.ok(r.transport.applicationPayloadBitsPerSecond > r.payloadBitsPerSecond);
+});
+test('v3 requires full fresh transport evidence while historical v1/v2 remain video-only', () => {
+  for (const mutate of [
+    (p) => delete p.measurement.transport,
+    (p) => (p.measurement.transport.publishingGeneration = '2'),
+    (p) => p.measurement.transport.mux.transportBytes++,
+    (p) => (p.measurement.transport.audio[5].wasEncoded = false),
+    (p) => (p.resourceLimits.rawQueueCount = 5),
+  ]) {
+    const p = fixtureV3();
+    mutate(p);
+    assert.throws(() => qualifyNativeCandidateMeasurement(p, expectedV3));
+  }
+  assert.equal(qualifyNativeCandidateMeasurement(fixtureV2(), expectedV2).transport, undefined);
+  assert.equal(qualifyNativeCandidateMeasurement(fixture(), expected).transport, undefined);
 });

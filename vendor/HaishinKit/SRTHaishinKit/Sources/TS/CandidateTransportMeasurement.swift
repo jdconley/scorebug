@@ -5,8 +5,20 @@ import HaishinKit
 
 /// Finite off-network application-payload accounting using the publishing muxer.
 public final class CandidateTransportMeasurement: @unchecked Sendable {
+    public enum Media: String, Sendable { case video, audio }
+    /// Scalar receipt in actual accepted append order; retains no media buffers.
+    public struct Input: Sendable {
+        public let media: Media
+        public let sourcePTS: CMTime
+        public let decodePTS: CMTime
+        public let byteCount: Int
+        public let isSync: Bool
+        /// Includes one four-byte Annex-B prefix per format parameter set on sync video.
+        public let parameterSetBytes: Int
+    }
     public enum Outcome: String, Sendable { case completed, failed, cancelled }
     public struct Result: Sendable {
+        public let inputs: [Input]
         public let outcome: Outcome
         public let failure: String?
         public let videoInputCount: Int
@@ -28,6 +40,7 @@ public final class CandidateTransportMeasurement: @unchecked Sendable {
     private var videoCount = 0, audioCount = 0, videoBytes = 0, audioBytes = 0
     private var firstVideo: CMTime?, lastVideo: CMTime?, firstAudio: CMTime?, lastAudio: CMTime?
     private var terminal: Result?
+    private var inputs: [Input] = []
 
     public init() {
         let tally = TransportTally()
@@ -55,7 +68,7 @@ public final class CandidateTransportMeasurement: @unchecked Sendable {
                 return fail("invalidVideoTimestamp")
             }
             guard preflight(pts, bytes: bytes) else { return false }
-            guard validH264Format(format), validNALUnits(block, bytes: bytes, requireIDR: videoCount == 0) else {
+            guard let parameterBytes = h264ParameterSetBytes(format), validNALUnits(block, bytes: bytes, requireIDR: videoCount == 0) else {
                 return fail("invalidH264")
             }
             if let videoFormat, !CFEqual(videoFormat, format) { return fail("videoFormatChanged") }
@@ -68,6 +81,9 @@ public final class CandidateTransportMeasurement: @unchecked Sendable {
             guard checkWriter() else { return false }
             videoFormat = format; videoCount += 1; videoBytes += bytes
             firstVideo = firstVideo ?? pts; lastVideo = pts
+            let isSync = !(notSync as? Bool ?? false)
+            inputs.append(.init(media: .video, sourcePTS: pts, decodePTS: dts, byteCount: bytes,
+                                isSync: isSync, parameterSetBytes: isSync ? parameterBytes : 0))
             return true
         }
     }
@@ -100,6 +116,8 @@ public final class CandidateTransportMeasurement: @unchecked Sendable {
             guard checkWriter() else { return false }
             audioFormat = format; audioCount += 1; audioBytes += bytes
             firstAudio = firstAudio ?? pts; lastAudio = pts
+            inputs.append(.init(media: .audio, sourcePTS: pts, decodePTS: .invalid, byteCount: bytes,
+                                isSync: true, parameterSetBytes: 0))
             return true
         }
     }
@@ -142,33 +160,33 @@ public final class CandidateTransportMeasurement: @unchecked Sendable {
     }
     private func complete(_ outcome: Outcome, failure: String? = nil) -> Result {
         if let terminal { return terminal }
-        let result = Result(outcome: outcome, failure: failure, videoInputCount: videoCount, audioInputCount: audioCount,
+        let result = Result(inputs: inputs, outcome: outcome, failure: failure, videoInputCount: videoCount, audioInputCount: audioCount,
             videoInputBytes: videoBytes, audioInputBytes: audioBytes, firstVideoPTS: firstVideo, lastVideoPTS: lastVideo,
             firstAudioPTS: firstAudio, lastAudioPTS: lastAudio, transportBytes: tally.bytes, transportMessageCount: tally.messages)
         terminal = result
         writer.clear(); writer.failure.finish()
-        videoFormat = nil; audioFormat = nil
+        videoFormat = nil; audioFormat = nil; inputs.removeAll(keepingCapacity: false)
         return result
     }
 
     // Validate bounded format metadata and all AVCC lengths before the muxer
     // copies payloads. Its production converter expects exactly four bytes.
-    private func validH264Format(_ format: CMFormatDescription) -> Bool {
+    private func h264ParameterSetBytes(_ format: CMFormatDescription) -> Int? {
         var count = 0, headerLength: Int32 = 0
         guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0,
             parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count,
-            nalUnitHeaderLengthOut: &headerLength) == noErr, headerLength == 4, count >= 2, count <= 16 else { return false }
+            nalUnitHeaderLengthOut: &headerLength) == noErr, headerLength == 4, count >= 2, count <= 16 else { return nil }
         var total = 0, hasSPS = false, hasPPS = false
         for index in 0..<count {
             var pointer: UnsafePointer<UInt8>?, size = 0
             guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index,
                 parameterSetPointerOut: &pointer, parameterSetSizeOut: &size, parameterSetCountOut: nil,
-                nalUnitHeaderLengthOut: nil) == noErr, let pointer, size > 0, size <= 64 * 1024 - total else { return false }
+                nalUnitHeaderLengthOut: nil) == noErr, let pointer, size > 0, size <= 64 * 1024 - total else { return nil }
             total += size
             if pointer.pointee & 0x1f == 7 { hasSPS = true }
             if pointer.pointee & 0x1f == 8 { hasPPS = true }
         }
-        return hasSPS && hasPPS
+        return hasSPS && hasPPS ? total + count * 4 : nil
     }
     private func validNALUnits(_ block: CMBlockBuffer, bytes: Int, requireIDR: Bool) -> Bool {
         var offset = 0, hasVCL = false, hasIDR = false

@@ -726,7 +726,7 @@ try {
         profile: candidateProfile,
         liveProfile,
         format: nativeFormatQualification,
-        requiredFormatVersion: 2,
+        requiredFormatVersion: 3,
       },
     );
   }

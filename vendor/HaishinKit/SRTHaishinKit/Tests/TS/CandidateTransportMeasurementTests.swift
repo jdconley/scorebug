@@ -12,6 +12,7 @@ import VideoToolbox
         let output = writer.output
         writer.expectedMedias = [.video, .audio]
         var expectedVideoBytes = 0, expectedAudioBytes = 0
+        var expectedInputs: [(CandidateTransportMeasurement.Media, CMTime, Int, Bool, Int)] = []
         for (index, seconds) in [10.0, 10.5, 12.1, 13, 14].enumerated() {
             let a = audio(bytes: min(payloadBytes, 8184)), v = try video(seconds, bytes: payloadBytes, sync: index % 2 == 0)
             writer.audioFormat = a.format; writer.append(a, when: time(seconds))
@@ -19,6 +20,9 @@ import VideoToolbox
             #expect(measurement.appendAudio(a, when: time(seconds)))
             #expect(measurement.appendVideo(v))
             expectedAudioBytes += Int(a.byteLength); expectedVideoBytes += CMSampleBufferGetTotalSampleSize(v)
+            expectedInputs.append((.audio, time(seconds).makeTime(), Int(a.byteLength), true, 0))
+            expectedInputs.append((.video, v.presentationTimeStamp, CMSampleBufferGetTotalSampleSize(v), index % 2 == 0,
+                                   index % 2 == 0 ? 22 + 4 + 4 + 4 : 0))
         }
         writer.finishOutput()
         #expect(writer.error == nil)
@@ -27,6 +31,12 @@ import VideoToolbox
         let result = measurement.finish()
         #expect(result.outcome == .completed && result.failure == nil)
         #expect(result.videoInputCount == 5 && result.audioInputCount == 5)
+        #expect(result.inputs.count == expectedInputs.count)
+        for (actual, expected) in zip(result.inputs, expectedInputs) {
+            #expect(actual.media == expected.0 && actual.sourcePTS == expected.1)
+            #expect(actual.decodePTS == .invalid)
+            #expect(actual.byteCount == expected.2 && actual.isSync == expected.3 && actual.parameterSetBytes == expected.4)
+        }
         #expect(result.videoInputBytes == expectedVideoBytes && result.audioInputBytes == expectedAudioBytes)
         #expect(result.firstVideoPTS == CMTime(seconds: 10, preferredTimescale: 48_000))
         #expect(result.lastVideoPTS == CMTime(seconds: 14, preferredTimescale: 48_000))
@@ -43,6 +53,40 @@ import VideoToolbox
         #expect(pids.contains(TSWriter.defaultVideoPID) && pids.contains(TSWriter.defaultAudioPID))
         #expect(bytes.range(of: Data([0, 0, 0, 1, 103, 77, 64, 13])) != nil)
         #expect(bytes.range(of: Data([0xff, 0xf9])) != nil)
+    }
+
+    @Test func receiptsPreserveExplicitDecodeTimestamp() throws {
+        let measurement = CandidateTransportMeasurement()
+        let source = try video(10)
+        let dts = CMTime(value: 99, timescale: 10)
+        var timing = CMSampleTimingInfo(duration: source.duration, presentationTimeStamp: source.presentationTimeStamp, decodeTimeStamp: dts)
+        var copy: CMSampleBuffer?
+        #expect(CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: source,
+            sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &copy) == noErr)
+        let sample = try #require(copy)
+        #expect(measurement.appendVideo(sample))
+        #expect(measurement.appendAudio(audio(), when: time(10)))
+        let result = measurement.finish()
+        #expect(result.outcome == .completed && result.inputs.count == 2)
+        #expect(result.inputs.first?.sourcePTS == source.presentationTimeStamp)
+        #expect(result.inputs.first?.decodePTS == dts)
+        #expect(result.inputs.first?.parameterSetBytes == 34)
+    }
+
+    @Test func receiptsReachCombinedCountBoundAndStayFrozenAfterRejection() throws {
+        let measurement = CandidateTransportMeasurement()
+        #expect(measurement.appendVideo(try video(10)))
+        for index in 0..<512 {
+            try #require(measurement.appendAudio(audio(), when: time(10 + Double(index) / 128)))
+            if index > 0 && index <= 120 { try #require(measurement.appendVideo(try video(10 + Double(index) / 30))) }
+        }
+        #expect(!measurement.appendAudio(audio(), when: time(14)))
+        let result = measurement.finish()
+        #expect(result.inputs.count == 633)
+        #expect(result.inputs.filter { $0.media == .video }.count == 121)
+        #expect(result.inputs.filter { $0.media == .audio }.count == 512)
+        #expect(result.inputs.reduce(0) { $0 + $1.byteCount } == result.videoInputBytes + result.audioInputBytes)
+        #expect(measurement.cancel().inputs.count == 633)
     }
 
     @Test func synchronousSinkDiscardsWithoutOutputQueueAndPropagatesRejection() throws {

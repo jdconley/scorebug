@@ -8,6 +8,7 @@ import ScorebugMedia
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
+    public typealias CompressedAudioFrame = SRTStream.CompressedAudioFrame
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
     public let videoCost: PublishingVideoCostOwner?
     private nonisolated let startupEvidence: PublishingVideoStartupOwner
@@ -56,6 +57,7 @@ public actor SRTPublisher {
                 encoderConfigurationObserver: (@Sendable (EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+                compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
                 videoCost: PublishingVideoCostOwner? = nil) {
         let startupEvidence = PublishingVideoStartupOwner(profile: videoProfile)
@@ -93,7 +95,7 @@ public actor SRTPublisher {
                                    isSync: frame.isSync == true, dequeuedAt: frame.dequeuedAt)
                                cost?.observeCompressed(frame)
                                compressedVideoObserver?(frame)
-                           }, pacesEncodedVideo: pacesEncodedVideo,
+                           }, compressedAudioObserver: compressedAudioObserver, pacesEncodedVideo: pacesEncodedVideo,
                            allowsBandwidthProbes: allowsBandwidthProbes)
     }
     public func configure() async throws {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
+import { qualifyCandidateAVTransport } from './candidate-av-window.mjs';
 const rates = { '240p30': 350000, '360p30': 600000, '540p30': 1500000, '1080p30': 6000000 };
 export function nativeCandidateProfile({
   environment,
@@ -42,15 +43,15 @@ export function nativeCandidateProfile({
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const uuid = (s) =>
   typeof s === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(s);
-/** Measures actual pre-mux video payload only. Does not assert candidate pixel
- * quality, available network capacity, audio/mux costs or physical-device safety. */
+/** v1/v2 measure video only; v3 also replays complete A/V transport payload cost.
+ * Neither asserts decoded candidate quality, spare capacity or device safety. */
 export function qualifyNativeCandidateMeasurement(
   proof,
   { scope, profile, liveProfile, format, requiredFormatVersion = 1 },
 ) {
-  assert.ok([1, 2].includes(requiredFormatVersion));
+  assert.ok([1, 2, 3].includes(requiredFormatVersion));
   assert.equal(proof.formatVersion, requiredFormatVersion);
-  const resources = proof.formatVersion === 2;
+  const resources = proof.formatVersion >= 2;
   if (resources)
     assert.deepEqual(proof.resourceLimits, {
       rawQueueCount: 4,
@@ -222,6 +223,22 @@ export function qualifyNativeCandidateMeasurement(
       proof.maximumThermal >= Math.max(baseline.thermal, final.thermal),
   );
   return {
+    ...(proof.formatVersion === 3
+      ? {
+          transport: qualifyCandidateAVTransport(m.transport, {
+            scope,
+            profile,
+            id: m.id,
+            publishingGeneration: format.publishingGeneration,
+            frames: e.frames,
+            firstInputPTS: m.firstInputPTS,
+            lastInputPTS: m.lastInputPTS,
+            acceptedInputCount: m.acceptedInputCount,
+            startedAt: m.startedAt,
+            endedAt: m.endedAt,
+          }),
+        }
+      : {}),
     ...(resources ? { maximumUnresolvedInputs, maximumUnresolvedRawBytes } : {}),
     profile,
     liveProfile,

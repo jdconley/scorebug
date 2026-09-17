@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and fifteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
+files and sixteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -105,6 +105,11 @@ and supported channel configuration. Existing mux startup bounds remain
 256 packets, 8 MiB and two seconds. Finish/cancel are synchronous and terminal;
 no socket, task, timer or additional output queue is created.
 
+Each result also contains at most 633 scalar input receipts in accepted append
+order: media, source/decode timestamps, encoded byte count, sync flag and emitted
+parameter-set bytes (including four-byte prefixes on sync video). Audio receipts
+have invalid DTS, sync true and no parameter-set bytes. Receipts retain no buffers.
+
 Results separate encoded video/audio input bytes from actual MPEG-TS bytes,
 including ADTS, Annex-B headers, SPS/PPS, PES, PCR, program tables and packet
 padding. Message counts round each mux write up independently to 1,316-byte
@@ -119,6 +124,19 @@ forwarding. A healthy claim may finish if native failure arrives afterward;
 native cleanup remains joined.
 Aligning fresh audio/video windows and qualifying concurrent resource cost remain
 separate integration gates before any quality admission.
+
+The optional `SRTStream.compressedAudioObserver` copies at most 8,184 actual AAC
+bytes only after the live mux accepts a packet and remains healthy. Native AAC
+output, including final drain, is marked `wasEncoded`; direct compressed input
+is marked passthrough. The snapshot binds the publication generation, observation
+uptime, original host-clock tick, source PTS and AAC format. Its original host tick
+reconstructs the same mux PTS without a seconds roundtrip. Only one AAC-LC packet
+with 1,024 frames, a supported exact rate/channel configuration and valid packet
+metadata has `valid = true`; invalid snapshots have empty payload. The payload is
+an owned copy and cannot change when codec buffers are reused. Nil observers create
+no snapshot. The synchronous callback must remain bounded, with no I/O, waits or
+task creation. Existing actor/generation guards exclude output after stop; this
+observation does not alter publishing or enable quality upgrades.
 
 Verified live average-bitrate changes use `SRTStream.setVerifiedVideoBitRate` with
 an active publishing-generation token. They require a ready raw-video encoder,

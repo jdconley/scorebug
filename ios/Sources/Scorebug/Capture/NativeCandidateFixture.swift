@@ -30,6 +30,7 @@ enum NativeCandidateFixture {
             "acceptedInputCount": value.acceptedInputCount, "firstInputPTS": value.firstInputPTS.map(time) as Any? ?? NSNull(),
             "lastInputPTS": value.lastInputPTS.map(time) as Any? ?? NSNull(), "encoding": NSNull()]
         if let result = value.encoding {
+            object["transport"] = result.transport.map(transport) as Any? ?? NSNull()
             let e = result.encoding, s = e.settings
             object["encoding"] = ["id": e.id.uuidString, "outcome": e.outcome.rawValue,
                 "failure": e.failure as Any? ?? NSNull(), "nativeFailure": e.nativeFailure.map { String(describing: $0) } as Any? ?? NSNull(),
@@ -44,6 +45,41 @@ enum NativeCandidateFixture {
                     "dequeuedAt": f.dequeuedAt, "admittedAt": f.admittedAt, "rawByteCount": f.rawByteCount, "byteCount": f.byteCount, "width": f.width, "height": f.height, "isSync": f.isSync] }]
         }
         return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("null".utf8)
+    }
+
+    private static func audio(_ value: PublishingCandidateTransport.AudioReceipt) -> [String: Any] {
+        ["sourcePTS": time(value.sourcePTS), "publishingGeneration": String(value.publishingGeneration),
+         "wasEncoded": value.wasEncoded, "valid": value.valid, "observedAt": value.observedAt,
+         "consumedAt": value.consumedAt, "byteCount": value.byteCount, "sampleRate": value.sampleRate,
+         "channelCount": value.channelCount, "framesPerPacket": value.framesPerPacket,
+         "audioObjectType": value.audioObjectType]
+    }
+    private static func transport(_ value: PublishingCandidateTransport.Result) -> [String: Any] {
+        var object: [String: Any] = ["scope": scope(value.scope), "profile": value.profile.rawValue,
+            "id": value.id?.uuidString as Any? ?? NSNull(), "outcome": value.outcome.rawValue,
+            "failure": value.failure as Any? ?? NSNull(),
+            "publishingGeneration": value.publishingGeneration.map { String($0) } as Any? ?? NSNull(),
+            "startedAt": value.startedAt as Any? ?? NSNull(), "closedAt": value.closedAt as Any? ?? NSNull(),
+            "endedAt": value.endedAt, "rawInputCount": value.rawInputCount,
+            "firstRawPTS": value.firstRawPTS.map(time) as Any? ?? NSNull(),
+            "lastRawPTS": value.lastRawPTS.map(time) as Any? ?? NSNull(),
+            "audio": value.audio.map(audio), "followingAudio": value.followingAudio.map(audio) as Any? ?? NSNull(),
+            "maximumPendingCount": value.maximumPendingCount, "maximumPendingBytes": value.maximumPendingBytes,
+            "mux": NSNull()]
+        if let mux = value.mux {
+            object["mux"] = ["outcome": mux.outcome.rawValue, "failure": mux.failure as Any? ?? NSNull(),
+                "videoInputCount": mux.videoInputCount, "audioInputCount": mux.audioInputCount,
+                "videoInputBytes": mux.videoInputBytes, "audioInputBytes": mux.audioInputBytes,
+                "firstVideoPTS": mux.firstVideoPTS.map(time) as Any? ?? NSNull(),
+                "lastVideoPTS": mux.lastVideoPTS.map(time) as Any? ?? NSNull(),
+                "firstAudioPTS": mux.firstAudioPTS.map(time) as Any? ?? NSNull(),
+                "lastAudioPTS": mux.lastAudioPTS.map(time) as Any? ?? NSNull(),
+                "transportBytes": mux.transportBytes, "transportMessageCount": mux.transportMessageCount,
+                "inputs": mux.inputs.map { input in ["media": input.media.rawValue, "sourcePTS": time(input.sourcePTS),
+                    "decodePTS": input.decodePTS.isValid ? time(input.decodePTS) as Any : NSNull(),
+                    "byteCount": input.byteCount, "isSync": input.isSync, "parameterSetBytes": input.parameterSetBytes] }]
+        }
+        return object
     }
 }
 
@@ -101,10 +137,16 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private var primaryStartup: Task<Void, Error>?
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         candidate: PublishingVideoProfile) throws {
-        let owner = try PublishingCandidateMeasurement(scope: scope, profile: candidate)
+         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport) throws {
+        let owner = try PublishingCandidateMeasurement(scope: scope, profile: candidate, transport: transport)
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile; timing = Timing()
-        operations = .init(start: { try await owner.start() }, offer: { owner.offer($0) }, cancel: { owner.cancel(reason: $0) },
+        operations = .init(start: {
+            guard let startup = publisher.videoStartup, startup.profile == liveProfile,
+                  transport.arm(publishingGeneration: startup.publishingGeneration) else {
+                throw PublishingSessionError.invalidState
+            }
+            try await owner.start()
+        }, offer: { owner.offer($0) }, cancel: { owner.cancel(reason: $0) },
             result: { NativeCandidateFixture.data(await owner.result()) }, export: { await Self.persist($0) })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
@@ -209,7 +251,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         }
     }
     private func exportData() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 2, "isClosed": true,
+        try JSONSerialization.data(withJSONObject: ["formatVersion": 3, "isClosed": true,
             "resourceLimits": ["rawQueueCount": 4, "unresolvedInputCount": 16,
                 "unresolvedRawBytes": 64 * 1024 * 1024, "rawBytesPerInput": 16 * 1024 * 1024],
             "scope": NativeCandidateFixture.scope(scope), "liveProfile": liveProfile.rawValue,

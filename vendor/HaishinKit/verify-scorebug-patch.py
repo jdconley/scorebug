@@ -13,7 +13,8 @@ patch = (root / "scorebug.patch").read_bytes()
 added = ['HaishinKit/Sources/Codec/VideoCandidateEncoder.swift', 'HaishinKit/Sources/Codec/VerifiedVideoBitRate.swift', 'HaishinKit/Sources/Codec/VideoCodecInvalidation.swift', 'HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift', 'HaishinKit/Sources/Codec/VideoEncoderReplacement.swift', 'HaishinKit/Sources/Util/PublishingQueue.swift', 'SRTHaishinKit/Sources/SRT/CompressedVideoFrame.swift', 'SRTHaishinKit/Sources/SRT/SourceCadenceClock.swift', 'SRTHaishinKit/Sources/TS/TransportClock.swift', 'SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift', 'SRTHaishinKit/Sources/SRT/SRTNonblockingSend.swift', 'SRTHaishinKit/Sources/TS/TransportOutputAccounting.swift', 'SRTHaishinKit/Sources/SRT/SRTProbeWakeSchedule.swift', 'SRTHaishinKit/Sources/SRT/SRTProbeMessage.swift']
 actual_sources = {str(p.relative_to(root)) for name in ["HaishinKit/Sources", "SRTHaishinKit/Sources"]
                   for p in (root / name).rglob("*") if p.is_file()}
-added.append('SRTHaishinKit/Sources/TS/CandidateTransportMeasurement.swift')
+added.extend(['SRTHaishinKit/Sources/TS/CandidateTransportMeasurement.swift',
+              'SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift'])
 unlisted = actual_sources - set(manifest) - set(added)
 if unlisted:
     raise SystemExit(f"Source files missing from provenance inventory: {sorted(unlisted)}")

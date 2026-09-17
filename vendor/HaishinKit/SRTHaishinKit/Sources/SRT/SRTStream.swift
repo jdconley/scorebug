@@ -131,6 +131,7 @@ public actor SRTStream {
         probe.cancel(.cancelled)
         probeWakeTask?.cancel()
     }
+    private let compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)?
     private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
     /// Identity for an active publication, not proof that its encoder is ready.
     public var publishingGeneration: UInt64? {
@@ -363,12 +364,16 @@ public actor SRTStream {
     }
 
     /// Creates a new stream object.
+    /// - Parameter compressedAudioObserver: Synchronous copied AAC observation
+    ///   after mux acceptance, including final drain. The callback must remain
+    ///   bounded and perform no I/O, waits or task creation. Nil avoids snapshots.
     /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
     ///   notification for this stream, including final drain. Compressed passthrough
     ///   does not notify. The callback must remain bounded and perform no I/O or waits.
     public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+                compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
         self.allowsBandwidthProbes = allowsBandwidthProbes
         probeWakeRunner = { probe, accounting in
@@ -380,11 +385,13 @@ public actor SRTStream {
                                   encoderConfigurationObserver: encoderConfigurationObserver)
         self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
+        self.compressedAudioObserver = compressedAudioObserver
         Task { await connection.addStream(self) }
     }
 
     init(connection: SRTConnection, outgoing: sending OutgoingStream,
          compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
+         compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
          allowsBandwidthProbes: Bool = false,
          probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
@@ -396,6 +403,7 @@ public actor SRTStream {
         self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
         self.outgoing = outgoing; self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
+        self.compressedAudioObserver = compressedAudioObserver
         Task { await connection.addStream(self) }
     }
 
@@ -473,7 +481,7 @@ public actor SRTStream {
             audio: Task {
                 for await buffer in audioOutput {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    appendCompressedAudio(buffer.0, when: buffer.1)
+                    appendCompressedAudio(buffer.0, when: buffer.1, wasEncoded: true)
                 }
             },
             input: Task {
@@ -682,7 +690,7 @@ extension SRTStream: _Stream {
             outgoing.append(audioBuffer, when: when)
             outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
         case let audioBuffer as AVAudioCompressedBuffer:
-            appendCompressedAudio(audioBuffer, when: when)
+            appendCompressedAudio(audioBuffer, when: when, wasEncoded: false)
         default:
             break
         }
@@ -699,11 +707,13 @@ extension SRTStream: _Stream {
         writer.append(sampleBuffer)
     }
 
-    private func appendCompressedAudio(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+    private func appendCompressedAudio(_ audioBuffer: AVAudioBuffer, when: AVAudioTime, wasEncoded: Bool) {
         guard readyState == .publishing, publishingError == nil,
               let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
         writer.audioFormat = audioBuffer.format
         writer.append(audioBuffer, when: when)
+        guard writer.error == nil, publishingError == nil, let compressedAudioObserver else { return }
+        compressedAudioObserver(.init(buffer: audioBuffer, when: when, generation: generation, wasEncoded: wasEncoded))
     }
 
     public func dispatch(_ event: NetworkMonitorEvent) async {

@@ -18,6 +18,24 @@ final class PublishingCandidateMeasurementTests: XCTestCase {
               now: { clock.now }, deadlineWait: { await timer.wait() })
     }
 
+    func testRawCloseHookRunsImmediatelyAndCancellationRevokesAnAlreadyFinishingOwner() async throws {
+        let fake = MeasurementEncoder(), gate = MeasurementGate(), closed = MeasurementClosures()
+        fake.finishGate = gate
+        var operations = fake.operations
+        operations.rawClosed = closed.record
+        let candidate = PublishingCandidateMeasurement(scope: scope(), profile: .low240, operations: operations,
+            now: { 10 }, deadlineWait: { try? await Task.sleep(for: .seconds(5)) })
+        try await candidate.start()
+        for index in 0...96 { XCTAssertTrue(candidate.offer(try sample(index, scale: 24))) }
+        XCTAssertEqual(closed.reasons, [.completed])
+        await fake.waitForFinish()
+        candidate.cancel(reason: .pressure)
+        XCTAssertEqual(closed.reasons.last, .pressure)
+        gate.open()
+        let result = await candidate.result()
+        XCTAssertEqual(result.reason, .pressure)
+    }
+
     func testPrestartOfferDoesNotDamageStartAndCancellationIsTerminal() async throws {
         let candidate = measurement()
         XCTAssertFalse(candidate.offer(try sample(0)))
@@ -350,3 +368,10 @@ private final class MeasurementEncoder: @unchecked Sendable {
     }
 }
 private enum MeasurementFakeError: Error { case startup }
+
+private final class MeasurementClosures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [PublishingCandidateMeasurement.Reason] = []
+    func record(_ reason: PublishingCandidateMeasurement.Reason) { lock.withLock { values.append(reason) } }
+    var reasons: [PublishingCandidateMeasurement.Reason] { lock.withLock { values } }
+}

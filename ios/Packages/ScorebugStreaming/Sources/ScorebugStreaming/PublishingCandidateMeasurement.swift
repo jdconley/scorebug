@@ -26,17 +26,23 @@ public final class PublishingCandidateMeasurement: Sendable {
         let offer: @Sendable (CMSampleBuffer) -> Bool
         let finish: @Sendable () async -> PublishingCandidateEncoder.Result?
         let cancel: @Sendable () async -> PublishingCandidateEncoder.Result?
+        var rawClosed: @Sendable (Reason) -> Void = { _ in }
+        var requiresTransport: Bool = false
     }
     public let id: UUID
     public let scope: VideoFrameObservationScope
     public let profile: PublishingVideoProfile
     private let state: MeasurementState
     private let terminal: Task<Result, Never>
-    public convenience init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile) throws {
-        let encoder = try PublishingCandidateEncoder(scope: scope, profile: profile)
+    public convenience init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile,
+                            transport: PublishingCandidateTransport? = nil) throws {
+        let encoder = try PublishingCandidateEncoder(scope: scope, profile: profile, transport: transport)
         self.init(scope: scope, profile: profile, operations: .init(id: encoder.id,
             start: { try await encoder.start() }, offer: { encoder.offer($0) },
-            finish: { await encoder.finish() }, cancel: { await encoder.cancel() }))
+            finish: { await encoder.finish() }, cancel: { await encoder.cancel() },
+            rawClosed: { reason in
+                if reason == .completed { transport?.closeRawWindow() } else { transport?.cancel() }
+            }, requiresTransport: transport != nil))
     }
     init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile, operations: Operations,
          now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
@@ -161,6 +167,7 @@ private final class MeasurementState: @unchecked Sendable {
     private func close(_ next: Reason) {
         guard result == nil else { return }
         if reason == nil || reason == .completed { reason = next }
+        operations.rawClosed(reason ?? next)
         continuation.finish()
     }
     func cancel(_ reason: Reason) {
@@ -218,6 +225,25 @@ private final class MeasurementState: @unchecked Sendable {
                     && native?.frames.first.map({ CMTimeCompare($0.sourcePTS, firstPTS ?? .invalid) == 0 }) == true
                     && native?.frames.last.map({ CMTimeCompare($0.sourcePTS, lastPTS ?? .invalid) == 0 }) == true
                 if !matches { finalReason = .encoderFailed }
+                if operations.requiresTransport {
+                    let transport = encoding?.transport
+                    let mux = transport?.mux
+                    let inputs = mux?.inputs.filter { $0.media == .video } ?? []
+                    let frames = native?.frames ?? []
+                    let matchesTransport = transport?.outcome == .completed
+                        && transport?.scope == scope && transport?.profile == profile && transport?.id == id
+                        && transport?.rawInputCount == count
+                        && transport?.firstRawPTS.map({ CMTimeCompare($0, firstPTS ?? .invalid) == 0 }) == true
+                        && transport?.lastRawPTS.map({ CMTimeCompare($0, lastPTS ?? .invalid) == 0 }) == true
+                        && mux?.outcome == .completed && mux?.videoInputCount == count
+                        && mux?.audioInputCount == transport?.audio.count
+                        && inputs.count == frames.count && inputs.count == count
+                        && zip(inputs, frames).allSatisfy { input, frame in
+                            CMTimeCompare(input.sourcePTS, frame.sourcePTS) == 0
+                                && input.byteCount == frame.byteCount && input.isSync == frame.isSync
+                        }
+                    if !matchesTransport { finalReason = .encoderFailed }
+                }
             }
             let at = now()
             if !at.isFinite || at < (startedAt ?? 0) {

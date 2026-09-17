@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import ScorebugMedia
 @testable import ScorebugStreaming
 import XCTest
@@ -28,6 +29,50 @@ final class NativeCandidateFixtureTests: XCTestCase {
         let admitted = try XCTUnwrap(frame["admittedAt"] as? Double)
         XCTAssertGreaterThanOrEqual(admitted, before)
         XCTAssertLessThanOrEqual(admitted, after)
+    }
+
+    @MainActor func testSerializationPreservesCompleteAudioWindowAndOrderedMuxReceipts() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let transport = PublishingCandidateTransport(scope: scope, profile: .low360)
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low360, transport: transport)
+        XCTAssertTrue(transport.arm(publishingGeneration: 7))
+        try await candidate.start()
+        let sample = try candidateVideo(at: CMTime(value: 10, timescale: 1)).sampleBuffer
+        let before = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(candidate.offer(sample))
+        for index in 0...1 {
+            let host = AVAudioTime.hostTime(forSeconds: 10 + Double(index) * 1024 / 48000)
+            let audioPTS = CMTime(seconds: AVAudioTime.seconds(forHostTime: host), preferredTimescale: 1_000_000_000)
+            transport.observeAudio(PublishingCandidateTransport.AudioSnapshot(sourcePTS: audioPTS, hostTime: host,
+                publishingGeneration: 7, wasEncoded: true, valid: true, observedAt: ProcessInfo.processInfo.systemUptime,
+                sampleRate: 48000, channelCount: 2, framesPerPacket: 1024, audioObjectType: 2,
+                payload: Data([1, 2, 3, 4])))
+        }
+        let result = await candidate.finish()
+        XCTAssertEqual(result.transport?.outcome, .completed, result.transport?.failure ?? "")
+        let measurement = PublishingCandidateMeasurement.Result(id: candidate.id, scope: scope, profile: .low360,
+            reason: .completed, startedAt: before, endedAt: ProcessInfo.processInfo.systemUptime,
+            acceptedInputCount: 1, firstInputPTS: sample.presentationTimeStamp,
+            lastInputPTS: sample.presentationTimeStamp, encoding: result)
+        let data = NativeCandidateFixture.data(measurement)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let window = try XCTUnwrap(object["transport"] as? [String: Any])
+        XCTAssertEqual(window["id"] as? String, candidate.id.uuidString)
+        XCTAssertEqual(window["publishingGeneration"] as? String, "7")
+        XCTAssertEqual(window["outcome"] as? String, "completed")
+        let audio = try XCTUnwrap(window["audio"] as? [[String: Any]])
+        XCTAssertEqual(audio.count, 1)
+        XCTAssertEqual(audio.first?["byteCount"] as? Int, 4)
+        XCTAssertEqual(audio.first?["wasEncoded"] as? Bool, true)
+        XCTAssertNil(audio.first?["payload"])
+        XCTAssertNotNil(window["followingAudio"] as? [String: Any])
+        let mux = try XCTUnwrap(window["mux"] as? [String: Any])
+        let inputs = try XCTUnwrap(mux["inputs"] as? [[String: Any]])
+        XCTAssertEqual(inputs.count, 2)
+        XCTAssertEqual(Set(inputs.compactMap { $0["media"] as? String }), Set(["video", "audio"]))
+        XCTAssertGreaterThan(try XCTUnwrap(mux["transportBytes"] as? Int), 4)
+        XCTAssertLessThan(data.count, 256 * 1024)
     }
 
     func testFlagsRequireExclusiveHigherCandidateAndFullFixedProfileFixture() throws {
@@ -64,7 +109,7 @@ extension NativeCandidateFixtureTests {
         _ = await (one, two)
         XCTAssertEqual(fake.stops, 1); XCTAssertEqual(fake.exports, 1)
         XCTAssertEqual(fake.object?["invalidReason"] is NSNull, true)
-        XCTAssertEqual(fake.object?["formatVersion"] as? Int, 2)
+        XCTAssertEqual(fake.object?["formatVersion"] as? Int, 3)
         XCTAssertEqual(fake.object?["resourceLimits"] as? [String: Int],
             ["rawQueueCount": 4, "unresolvedInputCount": 16, "unresolvedRawBytes": 64 * 1024 * 1024,
              "rawBytesPerInput": 16 * 1024 * 1024])
@@ -224,12 +269,12 @@ private final class CandidateFixtureFake: MediaPublisher, @unchecked Sendable {
     var isPublishing: Bool { get async { true } }
     func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); finish() }
 }
-private func candidateVideo() throws -> CapturedMediaSample {
+private func candidateVideo(at pts: CMTime = .zero) throws -> CapturedMediaSample {
     var pixel: CVPixelBuffer?, format: CMVideoFormatDescription?, sample: CMSampleBuffer?
     XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixel), kCVReturnSuccess)
     let buffer = try XCTUnwrap(pixel)
     XCTAssertEqual(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer, formatDescriptionOut: &format), noErr)
-    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30), presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30), presentationTimeStamp: pts, decodeTimeStamp: .invalid)
     XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
         formatDescription: try XCTUnwrap(format), sampleTiming: &timing, sampleBufferOut: &sample), noErr)
     return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .video)

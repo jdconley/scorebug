@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -94,6 +95,74 @@ final class PublishingCandidateEncoderTests: XCTestCase {
             XCTAssertGreaterThan(frame.byteCount, 0)
             XCTAssertEqual(frame.encoderSessionID, result.encoding.encoderSessionID)
         }
+    }
+
+    @MainActor
+    func testOptionalTransportJoinsActualCandidateVideoWithCopiedLiveAAC() async throws {
+        let scope = scope(), transport = PublishingCandidateTransport(scope: scope, profile: .low240)
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)
+        XCTAssertTrue(transport.arm(publishingGeneration: 7))
+        try await candidate.start()
+        do {
+            for index in 0..<3 {
+                XCTAssertTrue(candidate.offer(try sample(pts: CMTime(value: 300 + Int64(index), timescale: 30))))
+            }
+            for index in 0...4 {
+                let host = AVAudioTime.hostTime(forSeconds: 10 + Double(index) * 1024 / 48000)
+                transport.observeAudio(PublishingCandidateTransport.AudioSnapshot(
+                    sourcePTS: CMTime(seconds: AVAudioTime.seconds(forHostTime: host), preferredTimescale: 1_000_000_000),
+                    hostTime: host, publishingGeneration: 7, wasEncoded: true, valid: true,
+                    observedAt: ProcessInfo.processInfo.systemUptime, sampleRate: 48000, channelCount: 2,
+                    framesPerPacket: 1024, audioObjectType: 2, payload: Data(repeating: 42, count: 4)))
+            }
+            let result = await candidate.finish()
+            XCTAssertEqual(result.encoding.outcome, .completed, result.encoding.failure ?? "")
+            let measured = try XCTUnwrap(result.transport)
+            XCTAssertEqual(measured.outcome, .completed, measured.failure ?? "")
+            XCTAssertEqual(measured.id, candidate.id)
+            XCTAssertEqual(measured.mux?.videoInputCount, 3)
+            XCTAssertEqual(measured.mux?.audioInputCount, 4)
+            XCTAssertEqual(measured.mux?.videoInputBytes, result.encoding.frames.reduce(0) { $0 + $1.byteCount })
+        } catch { _ = await candidate.cancel(); throw error }
+    }
+
+    @MainActor
+    func testOptionalTransportFailsClosedOnRawRejectionAndCancellation() async throws {
+        for reject in [false, true] {
+            let scope = scope(), transport = PublishingCandidateTransport(scope: scope, profile: .low240)
+            let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)
+            XCTAssertTrue(transport.arm(publishingGeneration: 7)); try await candidate.start()
+            if reject { XCTAssertFalse(candidate.offer(try sample(pts: .invalid))) }
+            let result = reject ? await candidate.finish() : await candidate.cancel()
+            XCTAssertNotNil(result.transport)
+            XCTAssertNotEqual(result.transport?.outcome, .completed)
+            XCTAssertNotEqual(result.encoding.outcome, .completed)
+        }
+    }
+
+    @MainActor
+    func testPreCancelledAdapterFinishJoinsNativeAndRevokesEnabledAudioWindow() async throws {
+        let scope = scope(), transport = PublishingCandidateTransport(scope: scope, profile: .low240)
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)
+        XCTAssertTrue(transport.arm(publishingGeneration: 7))
+        try await candidate.start()
+        do {
+            XCTAssertTrue(candidate.offer(try sample(pts: CMTime(value: 10, timescale: 1))))
+            // MainActor ensures this task starts only after cancellation. This
+            // verifies the joined public result, not native-blocked revocation
+            // timing (the adapter deliberately exposes no native session hook).
+            let finishing = Task { await candidate.finish() }
+            finishing.cancel()
+            let result = await finishing.value
+            XCTAssertEqual(result.encoding.outcome, .cancelled)
+            XCTAssertEqual(result.transport?.outcome, .cancelled)
+            XCTAssertEqual(result.encoding.acceptedInputCount, 1)
+            let repeated = await candidate.finish()
+            XCTAssertEqual(repeated.encoding.outcome, .cancelled)
+            XCTAssertEqual(repeated.encoding.outputCount, result.encoding.outputCount)
+            XCTAssertEqual(repeated.transport?.endedAt, result.transport?.endedAt)
+            XCTAssertFalse(candidate.offer(try sample(pts: CMTime(value: 301, timescale: 30))))
+        } catch { _ = await candidate.cancel(); throw error }
     }
 
     private func sample(pts: CMTime) throws -> CMSampleBuffer {

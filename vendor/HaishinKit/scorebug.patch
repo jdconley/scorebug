@@ -1336,7 +1336,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,337 @@
+@@ -8,6 +8,338 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1463,6 +1463,7 @@
 +        probe.cancel(.cancelled)
 +        probeWakeTask?.cancel()
 +    }
++    private let compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)?
 +    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
 +    /// Identity for an active publication, not proof that its encoder is ready.
 +    public var publishingGeneration: UInt64? {
@@ -1674,7 +1675,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +353,7 @@
+@@ -22,7 +354,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1683,17 +1684,21 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +363,39 @@
+@@ -32,8 +364,46 @@
      }
 
      /// Creates a new stream object.
 -    public init(connection: SRTConnection) {
++    /// - Parameter compressedAudioObserver: Synchronous copied AAC observation
++    ///   after mux acceptance, including final drain. The callback must remain
++    ///   bounded and perform no I/O, waits or task creation. Nil avoids snapshots.
 +    /// - Parameter encoderCompletionObserver: Immutable, synchronous native encoder
 +    ///   notification for this stream, including final drain. Compressed passthrough
 +    ///   does not notify. The callback must remain bounded and perform no I/O or waits.
 +    public init(connection: SRTConnection, encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
 +                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
 +                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
++                compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
 +                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
 +        probeWakeRunner = { probe, accounting in
@@ -1705,11 +1710,13 @@
 +                                  encoderConfigurationObserver: encoderConfigurationObserver)
          self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
++        self.compressedAudioObserver = compressedAudioObserver
 +        Task { await connection.addStream(self) }
 +    }
 +
 +    init(connection: SRTConnection, outgoing: sending OutgoingStream,
 +         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
++         compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
 +         pacesEncodedVideo: Bool = false,
 +         allowsBandwidthProbes: Bool = false,
 +         probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
@@ -1721,10 +1728,11 @@
 +        self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
 +        self.outgoing = outgoing; self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
++        self.compressedAudioObserver = compressedAudioObserver
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +407,7 @@
+@@ -45,7 +415,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1733,7 +1741,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +419,28 @@
+@@ -57,8 +427,28 @@
              }
              return
          }
@@ -1763,7 +1771,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +450,64 @@
+@@ -68,26 +458,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1810,7 +1818,7 @@
 +            audio: Task {
 +                for await buffer in audioOutput {
 +                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+                    appendCompressedAudio(buffer.0, when: buffer.1)
++                    appendCompressedAudio(buffer.0, when: buffer.1, wasEncoded: true)
 +                }
 +            },
 +            input: Task {
@@ -1848,7 +1856,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +536,90 @@
+@@ -116,16 +544,90 @@
          readyState = .playing
      }
 
@@ -1944,7 +1952,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +640,33 @@
+@@ -146,23 +648,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -1980,7 +1988,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +676,34 @@
+@@ -172,16 +684,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -1992,7 +2000,7 @@
          case let audioBuffer as AVAudioCompressedBuffer:
 -            writer.audioFormat = audioBuffer.format
 -            writer.append(audioBuffer, when: when)
-+            appendCompressedAudio(audioBuffer, when: when)
++            appendCompressedAudio(audioBuffer, when: when, wasEncoded: false)
          default:
              break
          }
@@ -2009,11 +2017,13 @@
 +        writer.append(sampleBuffer)
 +    }
 +
-+    private func appendCompressedAudio(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
++    private func appendCompressedAudio(_ audioBuffer: AVAudioBuffer, when: AVAudioTime, wasEncoded: Bool) {
 +        guard readyState == .publishing, publishingError == nil,
 +              let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
 +        writer.audioFormat = audioBuffer.format
 +        writer.append(audioBuffer, when: when)
++        guard writer.error == nil, publishingError == nil, let compressedAudioObserver else { return }
++        compressedAudioObserver(.init(buffer: audioBuffer, when: when, generation: generation, wasEncoded: wasEncoded))
      }
 
      public func dispatch(_ event: NetworkMonitorEvent) async {
@@ -3802,7 +3812,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/TS/CandidateTransportMeasurement.swift
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,225 @@
 +import AVFoundation
 +import CoreMedia
 +import Foundation
@@ -3810,8 +3820,20 @@
 +
 +/// Finite off-network application-payload accounting using the publishing muxer.
 +public final class CandidateTransportMeasurement: @unchecked Sendable {
++    public enum Media: String, Sendable { case video, audio }
++    /// Scalar receipt in actual accepted append order; retains no media buffers.
++    public struct Input: Sendable {
++        public let media: Media
++        public let sourcePTS: CMTime
++        public let decodePTS: CMTime
++        public let byteCount: Int
++        public let isSync: Bool
++        /// Includes one four-byte Annex-B prefix per format parameter set on sync video.
++        public let parameterSetBytes: Int
++    }
 +    public enum Outcome: String, Sendable { case completed, failed, cancelled }
 +    public struct Result: Sendable {
++        public let inputs: [Input]
 +        public let outcome: Outcome
 +        public let failure: String?
 +        public let videoInputCount: Int
@@ -3833,6 +3855,7 @@
 +    private var videoCount = 0, audioCount = 0, videoBytes = 0, audioBytes = 0
 +    private var firstVideo: CMTime?, lastVideo: CMTime?, firstAudio: CMTime?, lastAudio: CMTime?
 +    private var terminal: Result?
++    private var inputs: [Input] = []
 +
 +    public init() {
 +        let tally = TransportTally()
@@ -3860,7 +3883,7 @@
 +                return fail("invalidVideoTimestamp")
 +            }
 +            guard preflight(pts, bytes: bytes) else { return false }
-+            guard validH264Format(format), validNALUnits(block, bytes: bytes, requireIDR: videoCount == 0) else {
++            guard let parameterBytes = h264ParameterSetBytes(format), validNALUnits(block, bytes: bytes, requireIDR: videoCount == 0) else {
 +                return fail("invalidH264")
 +            }
 +            if let videoFormat, !CFEqual(videoFormat, format) { return fail("videoFormatChanged") }
@@ -3873,6 +3896,9 @@
 +            guard checkWriter() else { return false }
 +            videoFormat = format; videoCount += 1; videoBytes += bytes
 +            firstVideo = firstVideo ?? pts; lastVideo = pts
++            let isSync = !(notSync as? Bool ?? false)
++            inputs.append(.init(media: .video, sourcePTS: pts, decodePTS: dts, byteCount: bytes,
++                                isSync: isSync, parameterSetBytes: isSync ? parameterBytes : 0))
 +            return true
 +        }
 +    }
@@ -3905,6 +3931,8 @@
 +            guard checkWriter() else { return false }
 +            audioFormat = format; audioCount += 1; audioBytes += bytes
 +            firstAudio = firstAudio ?? pts; lastAudio = pts
++            inputs.append(.init(media: .audio, sourcePTS: pts, decodePTS: .invalid, byteCount: bytes,
++                                isSync: true, parameterSetBytes: 0))
 +            return true
 +        }
 +    }
@@ -3947,33 +3975,33 @@
 +    }
 +    private func complete(_ outcome: Outcome, failure: String? = nil) -> Result {
 +        if let terminal { return terminal }
-+        let result = Result(outcome: outcome, failure: failure, videoInputCount: videoCount, audioInputCount: audioCount,
++        let result = Result(inputs: inputs, outcome: outcome, failure: failure, videoInputCount: videoCount, audioInputCount: audioCount,
 +            videoInputBytes: videoBytes, audioInputBytes: audioBytes, firstVideoPTS: firstVideo, lastVideoPTS: lastVideo,
 +            firstAudioPTS: firstAudio, lastAudioPTS: lastAudio, transportBytes: tally.bytes, transportMessageCount: tally.messages)
 +        terminal = result
 +        writer.clear(); writer.failure.finish()
-+        videoFormat = nil; audioFormat = nil
++        videoFormat = nil; audioFormat = nil; inputs.removeAll(keepingCapacity: false)
 +        return result
 +    }
 +
 +    // Validate bounded format metadata and all AVCC lengths before the muxer
 +    // copies payloads. Its production converter expects exactly four bytes.
-+    private func validH264Format(_ format: CMFormatDescription) -> Bool {
++    private func h264ParameterSetBytes(_ format: CMFormatDescription) -> Int? {
 +        var count = 0, headerLength: Int32 = 0
 +        guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0,
 +            parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count,
-+            nalUnitHeaderLengthOut: &headerLength) == noErr, headerLength == 4, count >= 2, count <= 16 else { return false }
++            nalUnitHeaderLengthOut: &headerLength) == noErr, headerLength == 4, count >= 2, count <= 16 else { return nil }
 +        var total = 0, hasSPS = false, hasPPS = false
 +        for index in 0..<count {
 +            var pointer: UnsafePointer<UInt8>?, size = 0
 +            guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index,
 +                parameterSetPointerOut: &pointer, parameterSetSizeOut: &size, parameterSetCountOut: nil,
-+                nalUnitHeaderLengthOut: nil) == noErr, let pointer, size > 0, size <= 64 * 1024 - total else { return false }
++                nalUnitHeaderLengthOut: nil) == noErr, let pointer, size > 0, size <= 64 * 1024 - total else { return nil }
 +            total += size
 +            if pointer.pointee & 0x1f == 7 { hasSPS = true }
 +            if pointer.pointee & 0x1f == 8 { hasPPS = true }
 +        }
-+        return hasSPS && hasPPS
++        return hasSPS && hasPPS ? total + count * 4 : nil
 +    }
 +    private func validNALUnits(_ block: CMBlockBuffer, bytes: Int, requireIDR: Bool) -> Bool {
 +        var offset = 0, hasVCL = false, hasIDR = false
@@ -4008,5 +4036,58 @@
 +        guard !byteOverflow, !countOverflow else { rejected = true; return false }
 +        bytes = total; messages = count
 +        return true
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift
+@@ -0,0 +1,50 @@
++import AVFoundation
++import CoreMedia
++import Foundation
++import HaishinKit
++
++extension SRTStream {
++    /// A bounded, independently owned copy of an accepted live AAC packet.
++    /// This is encoder/mux input evidence, not transport-delivery evidence.
++    public struct CompressedAudioFrame: Sendable {
++        public let sourcePTS: CMTime
++        /// Original host-clock tick, preserving exact mux timestamp reconstruction.
++        public let hostTime: UInt64
++        public let publishingGeneration: UInt64
++        public let wasEncoded: Bool
++        public let observedAt: Double
++        public let valid: Bool
++        public let sampleRate: Double
++        public let channelCount: UInt32
++        public let framesPerPacket: UInt32
++        public let audioObjectType: UInt32
++        public let payload: Data
++        public var byteCount: Int { payload.count }
++
++        init(buffer: AVAudioCompressedBuffer, when: AVAudioTime, generation: UInt64,
++             wasEncoded: Bool, observedAt: Double = ProcessInfo.processInfo.systemUptime) {
++            let asbd = buffer.format.streamDescription.pointee
++            let pts = when.isHostTimeValid ? when.makeTime() : CMTime.invalid
++            sourcePTS = pts; hostTime = when.hostTime; publishingGeneration = generation
++            self.wasEncoded = wasEncoded; self.observedAt = observedAt
++            sampleRate = asbd.mSampleRate; channelCount = asbd.mChannelsPerFrame
++            framesPerPacket = asbd.mFramesPerPacket; audioObjectType = asbd.mFormatFlags
++            // Validate actual length and packet metadata before allocating or
++            // copying any payload from a potentially pooled codec buffer.
++            guard generation > 0, observedAt.isFinite, observedAt >= 0,
++                  pts.isNumeric, pts.timescale > 0, pts.epoch == 0, pts.value >= 0,
++                  buffer.byteLength > 0, buffer.byteLength <= 8184, buffer.byteLength <= buffer.byteCapacity,
++                  buffer.packetCount == 1, asbd.mFormatID == kAudioFormatMPEG4AAC,
++                  asbd.mFormatFlags == 2, asbd.mFramesPerPacket == 1024,
++                  [96_000.0, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350].contains(asbd.mSampleRate),
++                  (1...6).contains(asbd.mChannelsPerFrame) || asbd.mChannelsPerFrame == 8,
++                  let packet = buffer.packetDescriptions?.pointee, packet.mStartOffset == 0,
++                  packet.mDataByteSize == buffer.byteLength,
++                  packet.mVariableFramesInPacket == 0 || packet.mVariableFramesInPacket == 1024 else {
++                valid = false; payload = Data(); return
++            }
++            valid = true
++            payload = Data(bytes: buffer.data, count: Int(buffer.byteLength))
++        }
 +    }
 +}

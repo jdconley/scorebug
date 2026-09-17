@@ -2021,3 +2021,36 @@ fresh live AAC to the candidate's source window, export independently verifiable
 accounting, and test it alongside recording, live publishing and repeated fresh
 headroom probes. Production automatic upgrades remain disabled until that combined
 admission is qualified. Physical-device networking and remote workers remain open.
+
+
+### 2026-09-17: fresh candidate audio/video transport cost qualified
+
+[Fresh candidate A/V windows](2026-09-17-candidate-av-window.md) now pair actual
+live AAC packets with bounded off-network candidate H.264 and feed both through
+the production MPEG-TS muxer. The owner binds one publishing generation, source
+window and candidate identity; rejects stale or incomplete audio; caps pending
+payload; and joins cancellation and native completion. Version 3 scalar receipts
+allow independent exact replay of timestamp headers, program tables, packet
+padding and separately rounded SRT payload messages.
+
+Fresh 360p, 540p and 1080p simulator trials each reconciled 121 candidate frames
+over four seconds alongside independent 1080p recording and 240p live publishing.
+Actual combined application-payload costs were about 3.925, 3.867 and 7.145 Mbps
+for this structured source. All archive/live saved frame ranges were consecutive
+at approximately 30 fps with all expected audio markers, and candidate-window
+pressure counters stayed unchanged. Initial acquisition is accounted separately.
+The measurements include audio and mux packaging, but do not establish spare
+capacity, retransmission cost, decoded candidate quality or physical-device limits.
+
+Verification passes 266 SDK, 139 Streaming, 310 native model and 1,878 tooling
+tests; simulator and unsigned combined phone/Watch builds; both Watch
+architectures; SDK provenance and independent reviews. A native trial exposed a
+verifier assumption that no-reordering requires absent DTS. Regression tests now
+accept DTS exactly equal to PTS and still count its additional header bytes. The
+failed run remains frozen; all three qualifying trials are fresh. Evidence:
+`artifacts/qa/candidate-av-window-final-verification.json`.
+
+Next combine these fresh costs with repeated fresh headroom observations from the
+same publication, then qualify upward transitions and recovery. Production
+automatic upgrades remain disabled. Long sessions, physical phone/Watch networking
+and deployment on other proxy systems remain open.
