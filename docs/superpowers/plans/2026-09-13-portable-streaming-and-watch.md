@@ -1989,3 +1989,35 @@ Next combine fresh candidate video cost with audio/mux/transport cost and repeat
 fresh headroom observations, then enable and qualify upward trials and recovery.
 Normal production automatic upgrades remain disabled. Long-session campaigns,
 physical phone/Watch networking and portable remote workers remain open.
+
+### 2026-09-17: finite candidate audio/video mux accounting implemented
+
+[Candidate transport cost](2026-09-17-candidate-transport-cost.md) now provides a
+bounded off-network owner that feeds compressed H.264 and AAC-LC through the
+production MPEG-TS muxer. It counts actual mux bytes and separately rounded
+1,316-byte SRT payload chunks, including startup headers, program tables and
+padding. It creates no output queue, task or socket. Input counts, compressed
+bytes, source span, formats and packet structure have explicit limits.
+
+The candidate encoder can deliver validated compressed frames synchronously to
+this owner. Rejection fails only the optional measurement; cancellation and native
+cleanup remain joined. Review caught and regression tests reproduced a native
+failure-forwarding race and metadata-only initial-keyframe validation. The fixes
+check the native failure latch at consumption admission and require an initial
+IDR plus slice data in every video input.
+
+Final verification passes 34 focused tests, 259 SDK tests, 123 clean Streaming
+tests, 309 clean native model tests, and 1,795 tooling tests. Exact mux comparisons
+cover eight payload sizes; a real VideoToolbox encode feeds the public measurement
+hook. Clean simulator and unsigned combined phone/Watch Release builds pass, with
+arm64 phone and arm64_32/arm64 Watch binaries. All 162 upstream hashes and the
+maintained patch round trip verify; spec and quality reviews approve. All 3,562
+prior frozen evidence files are unchanged. Evidence manifest:
+`artifacts/qa/candidate-transport-cost-final-verification.json`.
+
+This qualifies the accounting primitive, not a fresh concurrent native A/V cost
+window, decoded audio quality, network delivery or spare capacity. Next connect
+fresh live AAC to the candidate's source window, export independently verifiable
+accounting, and test it alongside recording, live publishing and repeated fresh
+headroom probes. Production automatic upgrades remain disabled until that combined
+admission is qualified. Physical-device networking and remote workers remain open.

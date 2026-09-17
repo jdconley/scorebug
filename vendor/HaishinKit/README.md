@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and fourteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
+files and fifteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -90,6 +90,35 @@ measure video payload only; audio, mux, transport cost and available network
 capacity require separate qualification. This primitive does not alter a live
 publisher or an archive, and concurrent resource contention still needs validation
 before production quality increases are enabled.
+
+`CandidateTransportMeasurement` reuses the actual `TSWriter` through an internal
+synchronous sink that counts and discards each output write. It requires both
+compressed H.264 video and one-packet AAC-LC audio, fixed formats and increasing
+per-track timestamps. Limits are 121 video inputs, 512 audio inputs, 32 MiB of
+combined compressed input and 4.25 seconds across both tracks; each video input
+is at most 2 MiB and each AAC packet at most 8,184 bytes. Video starts with a
+sync-marked sample containing an IDR NAL header; every sample contains a VCL NAL
+header. Four-byte NAL lengths and at most 64 KiB of SPS/PPS metadata are validated.
+These checks do not decode slices or establish picture quality. AAC uses a
+standard representable sample rate, 1,024 frames per packet
+and supported channel configuration. Existing mux startup bounds remain
+256 packets, 8 MiB and two seconds. Finish/cancel are synchronous and terminal;
+no socket, task, timer or additional output queue is created.
+
+Results separate encoded video/audio input bytes from actual MPEG-TS bytes,
+including ADTS, Annex-B headers, SPS/PPS, PES, PCR, program tables and packet
+padding. Message counts round each mux write up independently to 1,316-byte
+payload chunks, matching socket application-payload submission. These are not
+delivery, IP/UDP/SRT control traffic, retransmission cost or headroom evidence.
+The optional `VideoCandidateEncoder.compressedOutputConsumer` receives only
+validated output synchronously, may reject the measurement, and must not mutate
+or retain samples or reenter the encoder. Cancellation serializes with an
+in-flight callback. The consumption claim synchronously checks the native failure
+latch, so an already latched failure prevents a new claim even before async error
+forwarding. A healthy claim may finish if native failure arrives afterward;
+native cleanup remains joined.
+Aligning fresh audio/video windows and qualifying concurrent resource cost remain
+separate integration gates before any quality admission.
 
 Verified live average-bitrate changes use `SRTStream.setVerifiedVideoBitRate` with
 an active publishing-generation token. They require a ready raw-video encoder,

@@ -29,6 +29,8 @@ final class TSWriter {
     }
     private let outputLimits: PublishingQueue<Data>.Limits
     private let maximumPayloadBytes: Int
+    /// Optional synchronous owner: consumes each write without retaining a queue.
+    private let outputSink: ((Data) -> Bool)?
     /// Specifies the exptected medias = [.video, .audio].
     var expectedMedias: Set<AVMediaType> = []
     /// Specifies the audio format.
@@ -117,9 +119,11 @@ final class TSWriter {
     /// Creates a new instance with segument duration.
     init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
          outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
-         maximumPayloadBytes: Int = 2 * 1024 * 1024) {
+         maximumPayloadBytes: Int = 2 * 1024 * 1024,
+         outputSink: ((Data) -> Bool)? = nil) {
         self.outputLimits = outputLimits
         self.maximumPayloadBytes = maximumPayloadBytes
+        self.outputSink = outputSink
         self.segmentDuration = segmentDuration
         self.startupLimits = startupLimits
     }
@@ -332,6 +336,11 @@ final class TSWriter {
 
     private func write(_ data: Data) {
         guard error == nil else { return }
+        if let outputSink {
+            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return }
+            if !outputSink(data) { fail(.outputQueueLimitExceeded) }
+            return
+        }
         if let outputQueue {
             if !outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) {
                 fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)

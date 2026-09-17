@@ -58,6 +58,29 @@ measurement and cannot terminate either the live publisher or local recording.
 Calling `finish` or `cancel` joins all candidate tasks and captured native completion;
 an admission deadline is not a hard timeout on a blocking native completion call.
 
+The optional candidate transport measurement reuses the same TS writer without a
+socket. It accepts at most 121 compressed video frames and 512 one-packet AAC-LC
+buffers, with a 32 MiB cumulative compressed-input cap and a 4.25-second combined
+source span. Video inputs are at most 2 MiB; AAC inputs are at most 8,184 bytes.
+AAC packets describe 1,024 frames at an exact supported sample rate. H.264 inputs
+start with an IDR keyframe and provide bounded parameter sets and complete four-byte
+NAL lengths, with video slice data in every input. Formats stay fixed and each
+track's timestamps increase. Existing mux startup
+limits still apply. A synchronous sink counts emitted MPEG-TS bytes and the number
+of 1,316-byte SRT payload chunks, rounding separately for each mux write, then
+discards the output. It adds no tasks or output queue. Finish requires both tracks;
+invalid input, overflow, mux failure and cancellation cannot produce success.
+
+These totals include actual mux packaging and padding, but exclude IP/UDP/SRT
+control traffic and retransmissions. They measure application payload, not network
+delivery or spare bandwidth. The optional candidate compressed-output consumer
+runs synchronously after validation, must not retain or mutate the sample or
+reenter the encoder, and may reject it to fail the optional measurement. Native
+failure is checked synchronously at the consumption claim; an already-claimed
+callback may finish if failure arrives afterward, while the overall result fails.
+A fresh aligned audio/video window and independent bandwidth evidence are still required
+before this primitive can support quality admission.
+
 The SRT publishing raw-video input uses the caller's positive frame bound, or a
 default of two when previously unbounded. Dropping a stale raw frame before encoding
 remains allowed. Compressed media is never silently discarded while a session is

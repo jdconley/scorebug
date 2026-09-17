@@ -2129,7 +2129,7 @@
 
  /// An object that represents writes MPEG-2 transport stream data.
  final class TSWriter {
-@@ -11,10 +12,23 @@
+@@ -11,10 +12,25 @@
      static let defaultSegmentDuration: Double = 2
      /// An asynchronous sequence for writing data.
      public var output: AsyncStream<Data> {
@@ -2154,10 +2154,12 @@
 +    }
 +    private let outputLimits: PublishingQueue<Data>.Limits
 +    private let maximumPayloadBytes: Int
++    /// Optional synchronous owner: consumes each write without retaining a queue.
++    private let outputSink: ((Data) -> Bool)?
      /// Specifies the exptected medias = [.video, .audio].
      var expectedMedias: Set<AVMediaType> = []
      /// Specifies the audio format.
-@@ -26,6 +40,7 @@
+@@ -26,6 +42,7 @@
              var data = ESSpecificData()
              data.streamType = audioFormat.formatDescription.streamType
              data.elementaryPID = Self.defaultAudioPID
@@ -2165,7 +2167,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              audioContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -40,6 +55,7 @@
+@@ -40,6 +57,7 @@
              var data = ESSpecificData()
              data.streamType = videoFormat.streamType
              data.elementaryPID = Self.defaultVideoPID
@@ -2173,7 +2175,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              videoContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -68,73 +84,189 @@
+@@ -68,73 +86,191 @@
          }
          return false
      }
@@ -2221,9 +2223,11 @@
 -    init(segmentDuration: Double = 2.0) {
 +    init(segmentDuration: Double = 2.0, startupLimits: StartupLimits = .init(),
 +         outputLimits: PublishingQueue<Data>.Limits = .init(count: 32, bytesPerItem: 2 * 1024 * 1024 + 64 * 1024),
-+         maximumPayloadBytes: Int = 2 * 1024 * 1024) {
++         maximumPayloadBytes: Int = 2 * 1024 * 1024,
++         outputSink: ((Data) -> Bool)? = nil) {
 +        self.outputLimits = outputLimits
 +        self.maximumPayloadBytes = maximumPayloadBytes
++        self.outputSink = outputSink
          self.segmentDuration = segmentDuration
 -    }
 -
@@ -2423,7 +2427,7 @@
      }
 
      /// Clears the writer object for new transport stream.
-@@ -147,17 +279,27 @@
+@@ -147,17 +283,27 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
@@ -2461,7 +2465,7 @@
 
          packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
 
-@@ -179,17 +321,22 @@
+@@ -179,17 +325,27 @@
          write(bytes)
      }
 
@@ -2481,6 +2485,11 @@
      private func write(_ data: Data) {
 -        continuation?.yield(data)
 +        guard error == nil else { return }
++        if let outputSink {
++            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return }
++            if !outputSink(data) { fail(.outputQueueLimitExceeded) }
++            return
++        }
 +        if let outputQueue {
 +            if !outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) {
 +                fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
@@ -2489,7 +2498,7 @@
      }
 
      private func writeProgram() {
-@@ -208,18 +355,17 @@
+@@ -208,18 +364,17 @@
          guard !expectedMedias.isEmpty else {
              return
          }
@@ -3433,7 +3442,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoCandidateEncoder.swift
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,357 @@
 +import AVFoundation
 +import Foundation
 +import VideoToolbox
@@ -3471,14 +3480,22 @@
 +    public let settings: VideoCodecSettings
 +    private let state: CandidateState
 +    private let owner: CandidateOwner
-+    public convenience init(settings: VideoCodecSettings, id: UUID = UUID()) throws {
-+        try self.init(settings: settings, id: id, sessionFactory: nil)
++    /// The optional consumer runs synchronously only for validated compressed
++    /// output. It must not mutate/retain the sample or reenter this encoder.
++    /// Cancellation serializes with an in-flight consumer. No new consumption
++    /// claim succeeds after a latched failure; a healthy claim may finish if a
++    /// native failure arrives afterward. Native cleanup remains joined.
++    public convenience init(settings: VideoCodecSettings, id: UUID = UUID(),
++                            compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)? = nil) throws {
++        try self.init(settings: settings, id: id, sessionFactory: nil,
++                      compressedOutputConsumer: compressedOutputConsumer)
 +    }
 +    init(settings: VideoCodecSettings, id: UUID = UUID(),
 +         sessionFactory: (@Sendable (VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?,
 +         now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
 +         deadlineWait: @escaping @Sendable () async -> Void = { try? await Task.sleep(for: .seconds(8)) },
-+         outputObserver: (@Sendable (Frame) -> Void)? = nil) throws {
++         outputObserver: (@Sendable (Frame) -> Void)? = nil,
++         compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)? = nil) throws {
 +        guard settings.format == .h264, settings.profileLevel.contains("H264"),
 +              [settings.videoSize.width, settings.videoSize.height].allSatisfy({
 +                  $0.isFinite && $0 >= 1 && $0 <= 4096 && $0.rounded() == $0
@@ -3490,7 +3507,8 @@
 +            throw CandidateStartupError.invalidSettings
 +        }
 +        self.settings = settings; self.id = id
-+        let state = CandidateState(id: id, settings: settings, now: now)
++        let state = CandidateState(id: id, settings: settings, now: now,
++                                   compressedOutputConsumer: compressedOutputConsumer)
 +        self.state = state
 +        owner = CandidateOwner(state: state, settings: settings, sessionFactory: sessionFactory,
 +                               deadlineWait: deadlineWait, outputObserver: outputObserver)
@@ -3549,9 +3567,12 @@
 +    private var inputFormat: CMFormatDescription?
 +    private var sessionID: UUID?
 +    private var terminal: VideoCandidateEncoder.Result?
++    private let compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)?
 +
-+    init(id: UUID, settings: VideoCodecSettings, now: @escaping @Sendable () -> Double) {
++    init(id: UUID, settings: VideoCodecSettings, now: @escaping @Sendable () -> Double,
++         compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)?) {
 +        self.id = id; self.settings = settings; self.now = now
++        self.compressedOutputConsumer = compressedOutputConsumer
 +        (input, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(4))
 +    }
 +    func begin() throws {
@@ -3653,7 +3674,7 @@
 +            sessionID = frame.encoderSessionID; records[index].callback = frame
 +        }
 +    }
-+    func output(_ sample: CMSampleBuffer) -> VideoCandidateEncoder.Frame? {
++    func output(_ sample: CMSampleBuffer, nativeFailure: () -> PublishingError?) -> VideoCandidateEncoder.Frame? {
 +        lock.withLock {
 +            outputCount += 1
 +            let pts = sample.presentationTimeStamp, at = now()
@@ -3683,6 +3704,17 @@
 +                width: dimensions.width, height: dimensions.height, isSync: sync)
 +            records[index].output = frame; unresolved -= 1
 +            outstandingRawBytes -= records[index].rawByteCount
++            // Claim under the state lock, reading the native latch synchronously
++            // rather than waiting for async error forwarding. Its lock is released
++            // before calling user code; failure after a healthy claim may race an
++            // in-flight consumer. The callback contract forbids encoder reentry.
++            if !cancelled, failure == nil, let compressedOutputConsumer {
++                if nativeFailure() != nil {
++                    reject("nativeFailure")
++                } else if !compressedOutputConsumer(sample) {
++                    reject("compressedOutputRejected")
++                }
++            }
 +            return frame
 +        }
 +    }
@@ -3738,7 +3770,7 @@
 +        }
 +        let outputTask = Task {
 +            for await sample in output {
-+                if let frame = state.output(sample) { outputObserver?(frame) }
++                if let frame = state.output(sample, nativeFailure: { failure.error }) { outputObserver?(frame) }
 +            }
 +        }
 +        let errorsTask = Task {
@@ -3766,5 +3798,215 @@
 +    func result() async -> VideoCandidateEncoder.Result {
 +        if let terminalTask { return await terminalTask.value }
 +        return state.complete(nativeFailure: nil)
++    }
++}
+--- /dev/null
++++ b/SRTHaishinKit/Sources/TS/CandidateTransportMeasurement.swift
+@@ -0,0 +1,207 @@
++import AVFoundation
++import CoreMedia
++import Foundation
++import HaishinKit
++
++/// Finite off-network application-payload accounting using the publishing muxer.
++public final class CandidateTransportMeasurement: @unchecked Sendable {
++    public enum Outcome: String, Sendable { case completed, failed, cancelled }
++    public struct Result: Sendable {
++        public let outcome: Outcome
++        public let failure: String?
++        public let videoInputCount: Int
++        public let audioInputCount: Int
++        public let videoInputBytes: Int
++        public let audioInputBytes: Int
++        public let firstVideoPTS: CMTime?
++        public let lastVideoPTS: CMTime?
++        public let firstAudioPTS: CMTime?
++        public let lastAudioPTS: CMTime?
++        public let transportBytes: Int
++        public let transportMessageCount: Int
++    }
++    private let lock = NSLock()
++    private let writer: TSWriter
++    private let tally: TransportTally
++    private var videoFormat: CMFormatDescription?
++    private var audioFormat: CMFormatDescription?
++    private var videoCount = 0, audioCount = 0, videoBytes = 0, audioBytes = 0
++    private var firstVideo: CMTime?, lastVideo: CMTime?, firstAudio: CMTime?, lastAudio: CMTime?
++    private var terminal: Result?
++
++    public init() {
++        let tally = TransportTally()
++        self.tally = tally
++        writer = TSWriter(outputSink: { tally.consume($0) })
++        writer.expectedMedias = [.video, .audio]
++    }
++
++    /// Borrows ready length-prefixed H.264 with four-byte NAL lengths. Neither
++    /// the sample nor its buffers may be mutated during this synchronous call.
++    @discardableResult public func appendVideo(_ sample: CMSampleBuffer) -> Bool {
++        lock.withLock {
++            guard terminal == nil else { return false }
++            guard videoCount < 121 else { return fail("videoCountLimit") }
++            guard CMSampleBufferDataIsReady(sample), CMSampleBufferGetNumSamples(sample) == 1,
++                  sample.imageBuffer == nil, let format = sample.formatDescription,
++                  CMFormatDescriptionGetMediaType(format) == kCMMediaType_Video,
++                  CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_H264,
++                  let block = sample.dataBuffer else { return fail("invalidVideo") }
++            let bytes = CMBlockBufferGetDataLength(block), pts = sample.presentationTimeStamp, dts = sample.decodeTimeStamp
++            guard bytes > 0, bytes <= 2 * 1024 * 1024, CMSampleBufferGetTotalSampleSize(sample) == bytes else {
++                return fail("videoByteLimit")
++            }
++            guard valid(pts), dts == .invalid || valid(dts), lastVideo.map({ CMTimeCompare($0, pts) < 0 }) ?? true else {
++                return fail("invalidVideoTimestamp")
++            }
++            guard preflight(pts, bytes: bytes) else { return false }
++            guard validH264Format(format), validNALUnits(block, bytes: bytes, requireIDR: videoCount == 0) else {
++                return fail("invalidH264")
++            }
++            if let videoFormat, !CFEqual(videoFormat, format) { return fail("videoFormatChanged") }
++            let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]]
++            let notSync = attachments?.first?[kCMSampleAttachmentKey_NotSync as String]
++            guard notSync == nil || notSync is Bool else { return fail("invalidSyncMetadata") }
++            guard videoCount != 0 || !(notSync as? Bool ?? false) else { return fail("missingInitialKeyframe") }
++            writer.videoFormat = format
++            writer.append(sample)
++            guard checkWriter() else { return false }
++            videoFormat = format; videoCount += 1; videoBytes += bytes
++            firstVideo = firstVideo ?? pts; lastVideo = pts
++            return true
++        }
++    }
++
++    /// Borrows exactly one AAC packet. Output is counted and discarded; no
++    /// socket, output stream, timer or per-input task is created.
++    @discardableResult public func appendAudio(_ buffer: AVAudioCompressedBuffer, when: AVAudioTime) -> Bool {
++        lock.withLock {
++            guard terminal == nil else { return false }
++            guard audioCount < 512 else { return fail("audioCountLimit") }
++            let bytes = Int(buffer.byteLength), format = buffer.format.formatDescription
++            let asbd = buffer.format.streamDescription.pointee
++            guard bytes > 0, bytes <= 8184, buffer.byteLength <= buffer.byteCapacity,
++                  buffer.packetCount == 1, asbd.mFormatID == kAudioFormatMPEG4AAC,
++                  asbd.mFormatFlags == 2, asbd.mFramesPerPacket == 1024,
++                  asbd.mSampleRate.isFinite, asbd.mSampleRate > 0,
++                  [96_000.0, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350].contains(asbd.mSampleRate),
++                  (1...6).contains(asbd.mChannelsPerFrame) || asbd.mChannelsPerFrame == 8,
++                  let packet = buffer.packetDescriptions?.pointee, packet.mStartOffset == 0,
++                  packet.mDataByteSize == buffer.byteLength,
++                  packet.mVariableFramesInPacket == 0 || packet.mVariableFramesInPacket == 1024,
++                  AudioSpecificConfig(formatDescription: format) != nil else { return fail("invalidAudio") }
++            guard when.isHostTimeValid else { return fail("invalidAudioTimestamp") }
++            let pts = when.makeTime()
++            guard valid(pts), lastAudio.map({ CMTimeCompare($0, pts) < 0 }) ?? true else { return fail("invalidAudioTimestamp") }
++            guard preflight(pts, bytes: bytes) else { return false }
++            if let audioFormat, !CFEqual(audioFormat, format) { return fail("audioFormatChanged") }
++            writer.audioFormat = buffer.format
++            writer.append(buffer, when: when)
++            guard checkWriter() else { return false }
++            audioFormat = format; audioCount += 1; audioBytes += bytes
++            firstAudio = firstAudio ?? pts; lastAudio = pts
++            return true
++        }
++    }
++
++    public func finish() -> Result {
++        lock.withLock {
++            if let terminal { return terminal }
++            writer.finishOutput()
++            if !checkWriter() { return terminal! }
++            guard videoCount > 0, audioCount > 0, writer.transportClock != nil, tally.bytes > 0 else {
++                return complete(.failed, failure: "incompleteTracks")
++            }
++            return complete(.completed)
++        }
++    }
++    public func cancel() -> Result {
++        lock.withLock { terminal ?? complete(.cancelled) }
++    }
++
++    private func valid(_ pts: CMTime) -> Bool {
++        pts.isNumeric && pts.timescale > 0 && pts.epoch == 0 && pts.value >= 0
++    }
++    private func preflight(_ pts: CMTime, bytes: Int) -> Bool {
++        guard bytes <= 32 * 1024 * 1024 - videoBytes - audioBytes else { return fail("compressedInputByteLimit") }
++        let low = [firstVideo, firstAudio].compactMap { $0 }.reduce(pts) { min($0, $1) }
++        let high = [lastVideo, lastAudio].compactMap { $0 }.reduce(pts) { max($0, $1) }
++        let span = CMTimeSubtract(high, low)
++        guard span.isNumeric, CMTimeCompare(span, CMTime(value: 17, timescale: 4)) <= 0 else { return fail("sourceSpanLimit") }
++        return true
++    }
++    private func checkWriter() -> Bool {
++        if tally.rejected { return fail("transportOutputRejected") }
++        if let error = writer.error { return fail("muxer:\(error)") }
++        if let error = writer.failure.error { return fail("muxer:\(error)") }
++        return true
++    }
++    private func fail(_ reason: String) -> Bool {
++        _ = complete(.failed, failure: reason)
++        return false
++    }
++    private func complete(_ outcome: Outcome, failure: String? = nil) -> Result {
++        if let terminal { return terminal }
++        let result = Result(outcome: outcome, failure: failure, videoInputCount: videoCount, audioInputCount: audioCount,
++            videoInputBytes: videoBytes, audioInputBytes: audioBytes, firstVideoPTS: firstVideo, lastVideoPTS: lastVideo,
++            firstAudioPTS: firstAudio, lastAudioPTS: lastAudio, transportBytes: tally.bytes, transportMessageCount: tally.messages)
++        terminal = result
++        writer.clear(); writer.failure.finish()
++        videoFormat = nil; audioFormat = nil
++        return result
++    }
++
++    // Validate bounded format metadata and all AVCC lengths before the muxer
++    // copies payloads. Its production converter expects exactly four bytes.
++    private func validH264Format(_ format: CMFormatDescription) -> Bool {
++        var count = 0, headerLength: Int32 = 0
++        guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0,
++            parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count,
++            nalUnitHeaderLengthOut: &headerLength) == noErr, headerLength == 4, count >= 2, count <= 16 else { return false }
++        var total = 0, hasSPS = false, hasPPS = false
++        for index in 0..<count {
++            var pointer: UnsafePointer<UInt8>?, size = 0
++            guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index,
++                parameterSetPointerOut: &pointer, parameterSetSizeOut: &size, parameterSetCountOut: nil,
++                nalUnitHeaderLengthOut: nil) == noErr, let pointer, size > 0, size <= 64 * 1024 - total else { return false }
++            total += size
++            if pointer.pointee & 0x1f == 7 { hasSPS = true }
++            if pointer.pointee & 0x1f == 8 { hasPPS = true }
++        }
++        return hasSPS && hasPPS
++    }
++    private func validNALUnits(_ block: CMBlockBuffer, bytes: Int, requireIDR: Bool) -> Bool {
++        var offset = 0, hasVCL = false, hasIDR = false
++        while offset < bytes {
++            guard bytes - offset >= 4 else { return false }
++            var encodedLength: UInt32 = 0
++            guard CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: 4, destination: &encodedLength) == noErr else { return false }
++            let length = Int(UInt32(bigEndian: encodedLength))
++            offset += 4
++            guard length > 0, length <= bytes - offset else { return false }
++            var header: UInt8 = 0
++            guard CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: 1, destination: &header) == noErr,
++                  header & 0x80 == 0, (1...23).contains(header & 0x1f) else { return false }
++            let type = header & 0x1f
++            if (1...5).contains(type) { hasVCL = true }
++            if type == 5 { hasIDR = true }
++            offset += length
++        }
++        return offset == bytes && hasVCL && (!requireIDR || hasIDR)
++    }
++}
++
++/// Access is serialized by the measurement lock, including the writer's sink.
++private final class TransportTally {
++    var bytes = 0, messages = 0
++    var rejected = false
++    func consume(_ data: Data) -> Bool {
++        guard !rejected, !data.isEmpty, data.count % 188 == 0 else { rejected = true; return false }
++        let (total, byteOverflow) = bytes.addingReportingOverflow(data.count)
++        let chunks = data.count / SRTSocket.payloadSize + (data.count % SRTSocket.payloadSize == 0 ? 0 : 1)
++        let (count, countOverflow) = messages.addingReportingOverflow(chunks)
++        guard !byteOverflow, !countOverflow else { rejected = true; return false }
++        bytes = total; messages = count
++        return true
 +    }
 +}

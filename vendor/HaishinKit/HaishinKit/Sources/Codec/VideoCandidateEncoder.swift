@@ -35,14 +35,22 @@ public final class VideoCandidateEncoder: @unchecked Sendable {
     public let settings: VideoCodecSettings
     private let state: CandidateState
     private let owner: CandidateOwner
-    public convenience init(settings: VideoCodecSettings, id: UUID = UUID()) throws {
-        try self.init(settings: settings, id: id, sessionFactory: nil)
+    /// The optional consumer runs synchronously only for validated compressed
+    /// output. It must not mutate/retain the sample or reenter this encoder.
+    /// Cancellation serializes with an in-flight consumer. No new consumption
+    /// claim succeeds after a latched failure; a healthy claim may finish if a
+    /// native failure arrives afterward. Native cleanup remains joined.
+    public convenience init(settings: VideoCodecSettings, id: UUID = UUID(),
+                            compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)? = nil) throws {
+        try self.init(settings: settings, id: id, sessionFactory: nil,
+                      compressedOutputConsumer: compressedOutputConsumer)
     }
     init(settings: VideoCodecSettings, id: UUID = UUID(),
          sessionFactory: (@Sendable (VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?,
          now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
          deadlineWait: @escaping @Sendable () async -> Void = { try? await Task.sleep(for: .seconds(8)) },
-         outputObserver: (@Sendable (Frame) -> Void)? = nil) throws {
+         outputObserver: (@Sendable (Frame) -> Void)? = nil,
+         compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)? = nil) throws {
         guard settings.format == .h264, settings.profileLevel.contains("H264"),
               [settings.videoSize.width, settings.videoSize.height].allSatisfy({
                   $0.isFinite && $0 >= 1 && $0 <= 4096 && $0.rounded() == $0
@@ -54,7 +62,8 @@ public final class VideoCandidateEncoder: @unchecked Sendable {
             throw CandidateStartupError.invalidSettings
         }
         self.settings = settings; self.id = id
-        let state = CandidateState(id: id, settings: settings, now: now)
+        let state = CandidateState(id: id, settings: settings, now: now,
+                                   compressedOutputConsumer: compressedOutputConsumer)
         self.state = state
         owner = CandidateOwner(state: state, settings: settings, sessionFactory: sessionFactory,
                                deadlineWait: deadlineWait, outputObserver: outputObserver)
@@ -113,9 +122,12 @@ private final class CandidateState: @unchecked Sendable {
     private var inputFormat: CMFormatDescription?
     private var sessionID: UUID?
     private var terminal: VideoCandidateEncoder.Result?
+    private let compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)?
 
-    init(id: UUID, settings: VideoCodecSettings, now: @escaping @Sendable () -> Double) {
+    init(id: UUID, settings: VideoCodecSettings, now: @escaping @Sendable () -> Double,
+         compressedOutputConsumer: (@Sendable (CMSampleBuffer) -> Bool)?) {
         self.id = id; self.settings = settings; self.now = now
+        self.compressedOutputConsumer = compressedOutputConsumer
         (input, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(4))
     }
     func begin() throws {
@@ -217,7 +229,7 @@ private final class CandidateState: @unchecked Sendable {
             sessionID = frame.encoderSessionID; records[index].callback = frame
         }
     }
-    func output(_ sample: CMSampleBuffer) -> VideoCandidateEncoder.Frame? {
+    func output(_ sample: CMSampleBuffer, nativeFailure: () -> PublishingError?) -> VideoCandidateEncoder.Frame? {
         lock.withLock {
             outputCount += 1
             let pts = sample.presentationTimeStamp, at = now()
@@ -247,6 +259,17 @@ private final class CandidateState: @unchecked Sendable {
                 width: dimensions.width, height: dimensions.height, isSync: sync)
             records[index].output = frame; unresolved -= 1
             outstandingRawBytes -= records[index].rawByteCount
+            // Claim under the state lock, reading the native latch synchronously
+            // rather than waiting for async error forwarding. Its lock is released
+            // before calling user code; failure after a healthy claim may race an
+            // in-flight consumer. The callback contract forbids encoder reentry.
+            if !cancelled, failure == nil, let compressedOutputConsumer {
+                if nativeFailure() != nil {
+                    reject("nativeFailure")
+                } else if !compressedOutputConsumer(sample) {
+                    reject("compressedOutputRejected")
+                }
+            }
             return frame
         }
     }
@@ -302,7 +325,7 @@ private actor CandidateOwner {
         }
         let outputTask = Task {
             for await sample in output {
-                if let frame = state.output(sample) { outputObserver?(frame) }
+                if let frame = state.output(sample, nativeFailure: { failure.error }) { outputObserver?(frame) }
             }
         }
         let errorsTask = Task {

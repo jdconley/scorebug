@@ -12,6 +12,7 @@ to YouTube.
 ## Current plan
 
 - [Architecture and requirements](docs/architecture.md)
+- [Encoding formats and streaming protocols](docs/streaming-formats-and-protocols.md)
 - [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 - [Local, simulator, phone, and watch validation](docs/local-testing.md)
 - [Native scoring API progress](docs/native-scoring-api.md)

@@ -242,6 +242,97 @@ import VideoToolbox
         #expect(await encoder.finish().outcome == .failed)
     }
 
+    @Test(arguments: [true, false])
+    func compressedConsumerReceivesValidatedOutputAndCanFailTheMeasurement(accept: Bool) async throws {
+        let session = CandidateSession(), consumed = CandidateOutputs()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session },
+            compressedOutputConsumer: { sample in
+                #expect(CMSampleBufferDataIsReady(sample) && CMSampleBufferGetTotalSampleSize(sample) == 8)
+                consumed.received(); return accept
+            })
+        try await encoder.start()
+        do {
+            for i in 0..<3 { try #require(encoder.offer(try raw(CMTime(value: Int64(i), timescale: 30)))) }
+            let result = await encoder.finish()
+            #expect(consumed.receivedCount == (accept ? 3 : 1))
+            #expect(result.outcome == (accept ? .completed : .failed))
+            if !accept { #expect(result.failure == "compressedOutputRejected") }
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
+    @Test(arguments: ["wrongDimensions", "notSync", "missingCallback", "callbackMismatch"])
+    func compressedConsumerNeverReceivesInvalidOutput(fault: String) async throws {
+        let session = CandidateSession(fault: fault), consumed = CandidateOutputs()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session },
+            compressedOutputConsumer: { _ in consumed.received(); return true })
+        try await encoder.start()
+        do {
+            try #require(encoder.offer(try raw(.zero)))
+            #expect(await encoder.finish().outcome == .failed)
+            #expect(consumed.receivedCount == 0)
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
+    @Test func compressedConsumerStopsOnCancellationButNativeCompletionStillJoins() async throws {
+        let gate = CandidateGate(), session = CandidateSession(gate: gate), consumed = CandidateOutputs()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session },
+            compressedOutputConsumer: { _ in consumed.received(); return true })
+        try await encoder.start()
+        do {
+            try #require(encoder.offer(try raw(.zero)))
+            let finishing = Task { await encoder.finish() }
+            try #require(await gate.waitForEntry())
+            finishing.cancel()
+            #expect(session.events == ["submit", "complete"])
+            gate.open()
+            #expect(await finishing.value.outcome == .cancelled)
+            #expect(consumed.receivedCount == 0)
+            #expect(session.events == ["submit", "complete", "invalidate"])
+        } catch { gate.open(); _ = await encoder.cancel(); throw error }
+    }
+
+    @Test func latchedNativeFailureBlocksConsumptionBeforeAsyncErrorForwarding() async throws {
+        let session = CandidateSession(), consumed = CandidateOutputs(), outputs = CandidateOutputs()
+        let nativeFailure = CandidateNativeFailure()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, codec in
+            nativeFailure.install(codec.failure); return session
+        }, now: { nativeFailure.now }, outputObserver: { _ in outputs.received() },
+            compressedOutputConsumer: { _ in consumed.received(); return true })
+        try await encoder.start()
+        do {
+            try #require(encoder.offer(try raw(.zero)))
+            try #require(await session.waitForSubmissions(1))
+            // The next clock read is inside state.output on the owner actor.
+            // Latch failure there while a valid compressed output is being
+            // processed: the same actor's async error-forward task cannot run
+            // before this synchronous consumption decision returns.
+            nativeFailure.arm()
+            try #require(session.releaseNext() == noErr)
+            try #require(await outputs.wait(for: 1))
+            #expect(consumed.receivedCount == 0)
+            let result = await encoder.finish()
+            #expect(result.outcome == .failed && result.nativeFailure == .codecFailed(status: -123))
+            #expect(session.events == ["submit", "complete", "invalidate"])
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
+    @Test func alreadyClaimedConsumerMayFinishWhenNativeFailureArrivesDuringItsCall() async throws {
+        let session = CandidateSession(), consumed = CandidateOutputs(), nativeFailure = CandidateNativeFailure()
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, codec in
+            nativeFailure.install(codec.failure); return session
+        }, compressedOutputConsumer: { _ in
+            nativeFailure.failNow(); consumed.received(); return true
+        })
+        try await encoder.start()
+        do {
+            try #require(encoder.offer(try raw(.zero)))
+            let result = await encoder.finish()
+            #expect(consumed.receivedCount == 1)
+            #expect(result.outcome == .failed && result.nativeFailure == .codecFailed(status: -123))
+            #expect(session.events == ["submit", "complete", "invalidate"])
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
     @Test func totalFrameLimitRemainsBoundedAfterEveryOutstandingCreditIsReleased() async throws {
         let session = CandidateSession(immediate: true), outputs = CandidateOutputs()
         let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session },
@@ -356,6 +447,7 @@ import VideoToolbox
 private final class CandidateOutputs: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    var receivedCount: Int { lock.withLock { count } }
     func received() { lock.withLock { count += 1 } }
     func wait(for target: Int) async -> Bool {
         for _ in 0..<1000 {
@@ -378,6 +470,20 @@ private final class CandidateClock: @unchecked Sendable {
     private var offset = 0.0
     var now: Double { lock.withLock { ProcessInfo.processInfo.systemUptime + offset } }
     func advance(_ delta: Double) { lock.withLock { offset += delta } }
+}
+
+private final class CandidateNativeFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: PublishingFailureLatch?
+    private var armed = false
+    func install(_ value: PublishingFailureLatch) { lock.withLock { failure = value } }
+    func arm() { lock.withLock { armed = true } }
+    func failNow() { lock.withLock { failure }?.fail(.codecFailed(status: -123)) }
+    var now: Double {
+        let shouldFail = lock.withLock { let value = armed; armed = false; return value }
+        if shouldFail { failNow() }
+        return ProcessInfo.processInfo.systemUptime
+    }
 }
 
 private final class CandidateGate: @unchecked Sendable {
