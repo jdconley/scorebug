@@ -29,6 +29,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var workerState: WorkerMediaState = .unknown
     @Published private(set) var workerDecodedVideoFreshness: WorkerDecodedVideoFreshness?
     private(set) var workerDecoderCadenceFreshness: WorkerDecoderCadenceFreshness?
+    private(set) var workerDecoderDeliveryFreshness: WorkerDecoderDeliveryFreshness?
+    private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
     @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness?
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
@@ -466,7 +468,9 @@ struct PublishingClockObservation: Equatable, Sendable {
             let requestStart = ContinuousClock.now
             let response: WorkerMediaStatusResponse
             do {
-                response = try await clientForSetup().workerStatus(credential: credential)
+                let deliveryRequest: DecoderDeliveryRequest? = publishing == nil ? nil :
+                    workerDeliveryTracker.cursor.map(DecoderDeliveryRequest.after) ?? .full
+                response = try await clientForSetup().workerStatus(credential: credential, delivery: deliveryRequest)
             } catch {
                 // A stopped attempt no longer owns either successes or failures.
                 guard observedEpoch == workerEpoch else { return }
@@ -492,6 +496,8 @@ struct PublishingClockObservation: Equatable, Sendable {
             if let publishing, localState == .publishing,
                publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
                current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
+                workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
+                    expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
                 workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
                     expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
                 if let history = publishing.observations?.sourceHistorySnapshot {
@@ -501,6 +507,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 } else { workerSourceTracker.clear(); workerSourceInterval = nil }
             } else {
                 workerDecoderCadenceFreshness = nil
+                workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
                 workerSourceTracker.clear()
                 workerSourceInterval = nil
             }
@@ -553,6 +560,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func pollLocalHealth(at instant: ContinuousClock.Instant = .now) {
+        workerDeliveryTracker.expire(at: instant)
+        workerDecoderDeliveryFreshness = workerDeliveryTracker.latest
         receiverProbeTracker.expire(at: instant)
         workerReceiverProbeInterval = receiverProbeTracker.latest
         if receiverProbeLeaseDeadline.map({ instant < $0 }) != true {
@@ -748,6 +757,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     private func clearWorker() {
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
         workerSourceTracker.clear(); workerSourceInterval = nil
+        if publishing == nil { workerDeliveryTracker.reset() } else { workerDeliveryTracker.unavailable() }
+        workerDecoderDeliveryFreshness = nil
         if publishing == nil { receiverProbeTracker.reset() }
         else { receiverProbeTracker.observe(nil, acceptedPayloadBytes: 0, senderActive: false) }
         receiverProbeLeaseDeadline = nil; workerReceiverProbeFreshness = nil; workerReceiverProbeInterval = nil

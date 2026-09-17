@@ -1682,3 +1682,24 @@ complete capture/configuration windows. The local experiment qualifies authentic
 HTTP reporting, not physical phone deadlines or relay attachment. Automatic quality
 recovery, candidate headroom, reconnect, physical Watch/phone and remote worker gates
 remain open.
+
+
+[Native incremental delivery consumer](2026-09-17-native-delivery-consumer.md) now
+reconstructs reports in Core and consumes them in the capture app. Native queries
+opt in with validated cursors, while scoring clients retain ordinary status requests.
+The tracker requires current publication/epoch/attempt ownership, forces a full base
+after binding changes, rejects retired contexts and prevents frozen-sample freshness
+from being restored by a later reply. Omission, expiry and detach clear availability.
+
+Swift and TypeScript both reconstruct the exact 161 real FFmpeg/HTTP packets and 478
+arrival tuples from the shared trace. Native HTTP/tracker replay uses explicit fixture
+publication identity and a generated full response after epoch change; it does not
+prove physical publication binding or capture-to-worker deadlines. Independent
+fixture/provenance reconstruction rejects five corruptions. All 372 Core, 253 native
+model, 7 protocol and 1,272 tooling tests pass, plus ARM64 simulator and unsigned
+combined iPhone/Watch Release builds. Evidence: `artifacts/qa/native-delivery-final-verification.json`.
+
+Next complete native source/configuration windows and decoder PTS projection, then
+qualify deadline loss/floor decisions against actual simulator capture. Automatic
+recovery, candidate headroom, reconnect, physical devices and remote workers remain
+required; this consumer checkpoint enables no new quality decisions.

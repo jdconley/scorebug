@@ -82,8 +82,18 @@ public struct MatchHTTPClient: MatchScoringClient {
         try await send(path: [credential.gameId, "media"], token: credential.token)
     }
 
-    public func workerStatus(credential: MatchCredential) async throws -> WorkerMediaStatusResponse {
-        try await send(path: [credential.gameId, "media", "status"], token: credential.token, requiresFreshResponse: true)
+    public func workerStatus(credential: MatchCredential, delivery: DecoderDeliveryRequest? = nil) async throws -> WorkerMediaStatusResponse {
+        var query: [URLQueryItem] = []
+        if let delivery {
+            query.append(.init(name: "decoderDelivery", value: "decoder-delivery-delta-v1"))
+            if case .after(let cursor) = delivery {
+                guard cursor.isValid else { throw MatchClientError.invalidIdentifier }
+                query.append(.init(name: "deliveryScope", value: cursor.scopeID))
+                query.append(.init(name: "deliveryAfter", value: String(cursor.lastOrdinal)))
+            }
+        }
+        return try await send(path: [credential.gameId, "media", "status"], token: credential.token,
+            requiresFreshResponse: true, query: query)
     }
 
     public func reportRecording(_ report: RecordingReport, credential: MatchCredential) async throws -> RecordingReportResponse {
@@ -144,7 +154,7 @@ public struct MatchHTTPClient: MatchScoringClient {
 
     private func send<Response: Decodable>(path: [String], method: String = "GET", token: String,
                                           body: Data? = nil, additionalStatuses: Set<Int> = [],
-                                          pairingRecoveryKey: String? = nil, requiresFreshResponse: Bool = false) async throws -> Response {
+                                          pairingRecoveryKey: String? = nil, requiresFreshResponse: Bool = false, query: [URLQueryItem] = []) async throws -> Response {
         var url = endpoint.url.appendingPathComponent("v1").appendingPathComponent("matches")
         // Identifiers follow the server's ASCII grammar, preventing a scoped path
         // from being redirected by a slash, percent escape, or dot segment.
@@ -155,6 +165,12 @@ public struct MatchHTTPClient: MatchScoringClient {
                 throw MatchClientError.invalidIdentifier
             }
             url.appendPathComponent(component)
+        }
+        if !query.isEmpty {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw MatchClientError.invalidIdentifier }
+            components.queryItems = query
+            guard let queried = components.url else { throw MatchClientError.invalidIdentifier }
+            url = queried
         }
         var request = URLRequest(url: url, timeoutInterval: 20)
         if requiresFreshResponse {

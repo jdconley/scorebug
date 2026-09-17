@@ -92,3 +92,18 @@ test('ordinary 30 fps reports send three new tuples, with bounded resynchronizat
   assert(Buffer.byteLength(JSON.stringify(d)) < 400);
   assert.equal(deliveryDelta(full(600), { scopeID, lastOrdinal: 256 }).arrivals.length, 256);
 });
+
+test('reconstructs the exact actual FFmpeg/HTTP packet trace shared with Swift', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const r = JSON.parse(
+    await readFile(new URL('../fixtures/decoder-delivery-replay-v1.json', import.meta.url), 'utf8'),
+  );
+  let h;
+  for (const p of r.packets) {
+    h = advanceDelivery(h, p);
+    assert.deepEqual(h.arrivals, r.sourceRows.slice(h.afterOrdinal, h.lastOrdinal));
+    assert.equal(h.coverageAtMs, h.afterOrdinal ? r.sourceRows[h.afterOrdinal - 1][1] : 0);
+  }
+  assert.equal(r.packets.length, 161);
+  assert.equal(h.lastOrdinal, 478);
+});

@@ -1752,6 +1752,46 @@ import XCTest
         await model.stopStreaming()
     }
 
+    func testDeliveryConsumerUsesCursorAndClearsOnOmissionExpiryAndDetach() async throws {
+        let server = CaptureTestServer(); var owner: VideoFrameObservationOwner?
+        let model = makeModel(server: server, observationFactory: { scope in
+            let value = try VideoFrameObservationOwner(scope: scope); owner = value; return value
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let observed = try XCTUnwrap(owner)
+        var response = workerAgeResponse()
+        response.status.workerEpoch = "22222222-2222-4222-8222-222222222222"
+        response.status.publication = .init(readerId:"33333333-3333-4333-8333-333333333333",
+            publisherId:"44444444-4444-4444-8444-444444444444", publishingAttemptId:observed.snapshot.scope.publishingAttemptID.uuidString.lowercased(),
+            clock:.init(convention:"mpegts-ingress-origin-90k-v1",originPTS:"10919"))
+        response.status.observation?.decodedVideo?.clock = "mpegts-pts-90k-v1"
+        response.status.decoderDeliveryAgeUpperBoundMs = 50
+        func packet(_ sampledAt: Int, delta: Bool = false) throws -> DecoderDeliveryPacket {
+            try JSONDecoder().decode(DecoderDeliveryPacket.self,from:Data("""
+            {"formatVersion":1,"scopeID":"11111111-1111-4111-8111-111111111111","sampledAtMs":\(sampledAt),"coverageAtMs":0,"afterOrdinal":\(delta ? 1 : 0),"lastOrdinal":1,"arrivals":\(delta ? "[]" : "[[0,1]]"),"invalidReason":null,"ended":false}
+            """.utf8))
+        }
+        response.status.observation?.decoderDelivery = try packet(10)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertEqual(model.workerDecoderDeliveryFreshness?.snapshot.lastOrdinal,1)
+        response.status.observation?.decoderDelivery = try packet(20,delta:true)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertEqual(model.workerDecoderDeliveryFreshness?.sampledAtMs,20)
+        let queries = await server.deliveryQueries
+        XCTAssertTrue(queries.last?.contains("deliveryAfter=1") == true)
+        response.status.observation?.decoderDelivery = nil
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNil(model.workerDecoderDeliveryFreshness); XCTAssertEqual(model.localState,.publishing)
+        response.status.observation?.decoderDelivery = try packet(30)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerDecoderDeliveryFreshness)
+        model.pollLocalHealth(at:.now + .seconds(6)); XCTAssertNil(model.workerDecoderDeliveryFreshness)
+        response.status.observation?.decoderDelivery = try packet(40)
+        await server.setStatusOverride(response); await model.pollControl()
+        XCTAssertNotNil(model.workerDecoderDeliveryFreshness)
+        await model.stopStreaming(); XCTAssertNil(model.workerDecoderDeliveryFreshness)
+    }
+
     private func workerAgeResponse(bound: Double? = 550) -> WorkerMediaStatusResponse {
         let window = DecodedVideoWindow(sequence: 7, durationMs: 5000, ageMs: 250, firstPTS: 0, lastPTS: 447000,
                                        freshFrames: 150, duplicateFrames: 0, reorderedFrames: 0, valid: true)
@@ -1874,6 +1914,7 @@ actor CaptureTestServer {
     var statusGate: FilmTestGate?
     var statusFailure = false
     var statusOverride: WorkerMediaStatusResponse?
+    var deliveryQueries: [String] = []
     func setStatusFailure(_ value: Bool) { statusFailure = value }
     func setStatusOverride(_ value: WorkerMediaStatusResponse?) { statusOverride = value }
     var joinGate: FilmTestGate?
@@ -1939,6 +1980,7 @@ actor CaptureTestServer {
             response["publishUrl"] = "srt://localhost:19000?streamid=\(streamID)" + (publishFailure == "proof" ? "invalid" : "")
             data = try JSONSerialization.data(withJSONObject: response)
         } else if path.hasSuffix("/status") {
+            deliveryQueries.append(request.url?.query ?? "")
             let failure = statusFailure
             let response = statusOverride ?? WorkerMediaStatusResponse(status: .init(gameId: "game-1", generation: broadcast.generation, workerId: "worker-1", state: .producingOutput, observation: nil, observedAt: time, expiresAt: time), serverTime: time)
             if let statusGate { await statusGate.enter() }
