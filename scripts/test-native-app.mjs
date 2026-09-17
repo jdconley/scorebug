@@ -4,7 +4,9 @@ import {
 } from './native-candidate-measurement.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
 import { nativeMeasuredTrial } from './native-measured-trial.mjs';
+import { nativeMeasuredRecovery } from './native-measured-recovery.mjs';
 import { measuredTrialArtifacts, qualifyMeasuredNativeTrial } from './measured-native-trial.mjs';
+import { qualifyMeasuredNativeRecovery } from './measured-native-recovery.mjs';
 import { qualifyCandidateProbeHeadroom } from './candidate-probe-headroom.mjs';
 import {
   qualifyNativeDeadlineDecisions,
@@ -166,6 +168,11 @@ const measuredTrial = nativeMeasuredTrial({
   holdSeconds: streamingOptions.holdSeconds,
   liveProfile,
 });
+const measuredRecovery = nativeMeasuredRecovery({
+  environment: process.env,
+  measuredTrial,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const workerOutputProfile = measuredTrial ? '360p30' : liveProfile;
 const deliveryLatencyBudget = fixtureDeliveryDeadline({
   environment: process.env,
@@ -221,6 +228,7 @@ await writeFile(
       liveProfile,
       workerOutputProfile,
       measuredTrial,
+      measuredRecovery,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -520,6 +528,7 @@ try {
       workerOutputProfile,
       cadenceReports,
       measuredTrial,
+      measuredRecovery,
       decoderStall,
       deadlineResets,
       decoderThreading,
@@ -716,7 +725,8 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let measuredTrialQualification,
+  let measuredRecoveryQualification,
+    measuredTrialQualification,
     candidateQualification,
     candidateHeadroomQualification,
     nativeVideoCostQualification,
@@ -1073,7 +1083,7 @@ try {
       JSON.stringify(workerReportAge, null, 2),
     );
     if (measuredTrial) {
-      measuredTrialQualification = qualifyMeasuredNativeTrial({
+      const measuredInput = {
         ...measuredRaw,
         expectedScope: {
           recordingID: states[0].id,
@@ -1083,10 +1093,23 @@ try {
         archiveIDs,
         liveIDs: liveSegments.flat(),
         completedWindowLimit: streamingOptions.completedWindowLimit,
-      });
+      };
+      const qualification = measuredRecovery
+        ? qualifyMeasuredNativeRecovery({
+            ...measuredInput,
+            fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
+          })
+        : qualifyMeasuredNativeTrial(measuredInput);
+      if (measuredRecovery) measuredRecoveryQualification = qualification;
+      else measuredTrialQualification = qualification;
       await writeFile(
-        join(artifact, 'measured-trial-qualification.json'),
-        JSON.stringify(measuredTrialQualification, null, 2),
+        join(
+          artifact,
+          measuredRecovery
+            ? 'measured-recovery-qualification.json'
+            : 'measured-trial-qualification.json',
+        ),
+        JSON.stringify(qualification, null, 2),
         { flag: 'wx' },
       );
     }
@@ -1136,7 +1159,9 @@ try {
         liveProfile,
         workerOutputProfile,
         measuredTrial,
+        measuredRecovery,
         measuredTrialQualification,
+        measuredRecoveryQualification,
         nativeFormatQualification,
         nativeVideoCostQualification,
         candidateProfile,
@@ -1170,9 +1195,11 @@ try {
       2,
     ),
   );
-  if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
+  if (measuredRecovery)
+    assert.equal(measuredRecoveryQualification?.measuredRecoveryQualified, true);
+  else if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
   console.log(
-    `${measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

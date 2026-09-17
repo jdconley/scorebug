@@ -29,9 +29,38 @@ function requireUninterruptedCadence(reports, sourceEvents, scope) {
   const first = sourceEvents[0],
     last = sourceEvents.at(-1);
   assert(first && last, 'Missing source decisions');
-  const start = first.window.start,
-    end = last.evaluatedAt,
-    source = first.source;
+  return qualifyMeasuredCadenceContinuity({
+    reports,
+    start: first.window.start,
+    end: last.evaluatedAt,
+    source: first.source,
+    scope,
+  });
+}
+/** Validate an explicit native-time interval, without awarding health duration.
+ * Recovery may retain only repeats of its independently proved consumed stall
+ * before the first credited healthy window. Default trial replay permits none.
+ */
+export function qualifyMeasuredCadenceContinuity({
+  reports,
+  start,
+  end,
+  source,
+  scope,
+  allowedStall,
+}) {
+  assert(finite(start) && finite(end) && end >= start);
+  assert(Array.isArray(reports) && reports.length > 0 && reports.length <= 2048);
+  if (allowedStall)
+    assert(
+      finite(allowedStall.start) &&
+        finite(allowedStall.end) &&
+        allowedStall.start >= start &&
+        allowedStall.end <= end &&
+        allowedStall.end > allowedStall.start &&
+        Number.isSafeInteger(allowedStall.lastFreshPTS) &&
+        allowedStall.lastFreshPTS >= 0,
+    );
   let previousTime = -1,
     cursor = start,
     decoderScope,
@@ -119,12 +148,19 @@ function requireUninterruptedCadence(reports, sourceEvents, scope) {
       'Intermediate decoder progress regressed',
     );
     lastProgress = progress.lastFreshPTS;
+    const repeatedStall =
+      allowedStall &&
+      report.evaluatedUptime >= allowedStall.start &&
+      report.evaluatedUptime < allowedStall.end &&
+      progress.lastFreshPTS === allowedStall.lastFreshPTS;
     assert(
-      finite(progress.ageMs) && progress.ageMs < 1000,
+      finite(progress.ageMs) &&
+        progress.ageMs <= Number.MAX_SAFE_INTEGER &&
+        (progress.ageMs < 1000 || repeatedStall),
       'Intermediate decoder stall invalidates probation',
     );
-    assert.equal(progress.stalled, false);
-    assert.equal(report.observedStall, false);
+    assert.equal(progress.stalled, progress.ageMs >= 1000);
+    assert.equal(report.observedStall, progress.stalled);
     assert(
       Number.isSafeInteger(status.decoderCadenceAgeUpperBoundMs) &&
         status.decoderCadenceAgeUpperBoundMs >= 0,
@@ -148,15 +184,18 @@ function requireUninterruptedCadence(reports, sourceEvents, scope) {
  * qualify delivery lanes, probe capacity, or production upgrade authorization.
  * Rejection/reset/local-pressure episodes are deliberately unsupported successes.
  */
-export function qualifyMeasuredTrialPolicy({
-  quality,
-  snapshot,
-  sourceIntervalQualification,
-  profileQualification,
-  lifecycleQualification,
-  candidateWitnessQualification,
-  cadenceReports,
-}) {
+function replayMeasuredTrialPolicy(
+  {
+    quality,
+    snapshot,
+    sourceIntervalQualification,
+    profileQualification,
+    lifecycleQualification,
+    candidateWitnessQualification,
+    cadenceReports,
+  },
+  confirmedPrefix = false,
+) {
   assert.equal(quality.formatVersion, 4);
   assert.equal(quality.overflow, false);
   assert.equal(quality.measuredSourceEvaluationEnabled, true);
@@ -183,8 +222,16 @@ export function qualifyMeasuredTrialPolicy({
       sourceIntervalQualification.intervals.length <= 512,
   );
   assert(Array.isArray(snapshot.sourceIntervals) && snapshot.sourceIntervals.length <= 512);
-  assert.equal(profileQualification.phases?.length, 2);
-  assert.equal(profileQualification.receipts?.length, 1);
+  if (confirmedPrefix) {
+    assert(
+      [2, 3].includes(profileQualification.phases?.length),
+      'Prefix requires full qualified native history',
+    );
+    assert.equal(profileQualification.receipts?.length, profileQualification.phases.length - 1);
+  } else {
+    assert.equal(profileQualification.phases?.length, 2);
+    assert.equal(profileQualification.receipts?.length, 1);
+  }
   const [initial, changed] = profileQualification.phases;
   assert.equal(initial.width, 426);
   assert.equal(initial.height, 240);
@@ -194,11 +241,20 @@ export function qualifyMeasuredTrialPolicy({
   const bootFrame = fixtureFrameID(boot.receipt.lastSubmittedPTS);
   assert(bootFrame >= initial.firstFrame && bootFrame <= initial.lastFrame);
   assert.deepEqual(lifecycleQualification.bootstrap, boot);
-  assert.equal(lifecycleQualification.applications?.length, 1);
+  assert.equal(
+    lifecycleQualification.applications?.length,
+    confirmedPrefix ? profileQualification.receipts.length : 1,
+  );
   const appliedRows = events.filter((e) => e.kind === 'applied'),
     candidates = events.filter((e) => e.kind === 'candidate');
-  assert.equal(appliedRows.length, 1, 'Exactly one measured trial application required');
-  assert.equal(candidates.length, 1, 'Exactly one measured candidate required');
+  assert.equal(
+    appliedRows.length,
+    confirmedPrefix ? lifecycleQualification.applications.length : 1,
+    'Native applications must match full history',
+  );
+  if (!confirmedPrefix)
+    assert.equal(candidates.length, 1, 'Exactly one measured candidate required');
+  assert(candidates.length > 0, 'Missing measured candidate');
   const applied = appliedRows[0],
     candidate = candidates[0],
     c = candidate.candidate,
@@ -275,11 +331,10 @@ export function qualifyMeasuredTrialPolicy({
       cadenceReports.rows.length > 0 &&
       cadenceReports.rows.length <= 2048,
   );
-  requireUninterruptedCadence(
-    cadenceReports.rows,
-    events.filter((row) => row.kind === 'evaluated'),
-    snapshot.scope,
-  );
+  const evaluatedRows = [];
+  let appliedCount = 0,
+    candidateCount = 0,
+    confirmedEventIndex;
   let now = boot.at,
     current = boot.receipt,
     revision = '0',
@@ -329,7 +384,8 @@ export function qualifyMeasuredTrialPolicy({
     lastSource = Number(s.sequence);
     return { source, proof };
   };
-  for (const row of events.slice(1)) {
+  for (let eventIndex = 1; eventIndex < events.length; eventIndex++) {
+    const row = events[eventIndex];
     assert(finite(row.at) && row.at >= now, 'Event clock reversal');
     now = row.at;
     assert(
@@ -337,6 +393,8 @@ export function qualifyMeasuredTrialPolicy({
       'Invalidated, reset, missing, or unsupported policy evidence',
     );
     if (row.kind === 'applied') {
+      appliedCount++;
+      assert.equal(appliedCount, 1, 'Duplicate trial application before confirmation');
       assert(
         !trial && !confirmation && baseline && recoveryStart !== undefined,
         'Trial lacks healthy baseline',
@@ -420,6 +478,8 @@ export function qualifyMeasuredTrialPolicy({
     assert.deepEqual(row.receipt, current);
     assert.equal(row.acknowledgedAt, ack);
     if (row.kind === 'candidate') {
+      candidateCount++;
+      assert.equal(candidateCount, 1, 'Duplicate candidate before confirmation');
       assert(row === candidate && revision === '1');
       continue;
     }
@@ -579,10 +639,28 @@ export function qualifyMeasuredTrialPolicy({
     lastEnd = w.end;
     lastOwner = owner(s);
     evaluated++;
+    evaluatedRows.push(row);
+    if (confirmedPrefix && confirmation) {
+      confirmedEventIndex = eventIndex;
+      break;
+    }
   }
-  assert.equal(stop.kind, 'stopped');
+  requireUninterruptedCadence(cadenceReports.rows, evaluatedRows, snapshot.scope);
+  if (!confirmedPrefix) assert.equal(stop.kind, 'stopped');
+  assert.equal(appliedCount, 1);
+  assert.equal(candidateCount, 1);
   assert(confirmation && !trial, 'Need completed healthy measured probation');
   return {
+    ...(confirmedPrefix
+      ? {
+          proofExtent: 'confirmed-prefix',
+          confirmedEventIndex,
+          confirmedAt: confirmation.confirmedAt,
+          confirmedEventAt: events[confirmedEventIndex].at,
+          nextEventIndex: confirmedEventIndex + 1,
+          rawEventCount: events.length,
+        }
+      : {}),
     evaluated,
     trials: 1,
     confirmed: 1,
@@ -592,7 +670,23 @@ export function qualifyMeasuredTrialPolicy({
     finalProfile: profile,
     finalBitRate: current.bitRate,
     upgradeAuthorized: false,
-    scope:
-      'Bounded laboratory measured policy replay; independent media/delivery/probe qualification remains required.',
+    scope: confirmedPrefix
+      ? 'Confirmed measured policy prefix only; suffix and recovery remain unqualified.'
+      : 'Bounded laboratory measured policy replay; independent media/delivery/probe qualification remains required.',
   };
+}
+
+/** Complete strict successful-trial route; later resets/invalidation still reject. */
+export function qualifyMeasuredTrialPolicy(input) {
+  return replayMeasuredTrialPolicy(input);
+}
+
+/** Prove only the first confirmed trial from the unchanged complete raw history.
+ * The caller must independently qualify the full two-/three-phase native history
+ * and lifecycle before supplying their structured results. Neither later native
+ * applications nor cadence after this boundary gain policy/recovery credit.
+ * No synthetic stop, truncated quality object, or filtered raw audit is created.
+ */
+export function qualifyMeasuredTrialConfirmedPrefix(input) {
+  return replayMeasuredTrialPolicy(input, true);
 }

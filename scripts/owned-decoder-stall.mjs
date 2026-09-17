@@ -49,11 +49,13 @@ async function inventory(workerPID) {
   }
   const ids = [workerPID, ...direct, ...nested];
   assert(ids.length <= 32, 'Unexpected worker process tree');
-  const { stdout } = await execute(
-    '/bin/ps',
-    ['-p', ids.join(','), '-o', 'pid=,ppid=,lstart=,comm='],
-    { timeout: 1500, maxBuffer: 65536 },
-  );
+  return readProcessRows(ids);
+}
+async function readProcessRows(ids, run = execute) {
+  const { stdout } = await run('/bin/ps', ['-p', ids.join(','), '-o', 'pid=,ppid=,lstart=,comm='], {
+    timeout: 1500,
+    maxBuffer: 65536,
+  });
   return stdout
     .trim()
     .split('\n')
@@ -65,20 +67,47 @@ async function inventory(workerPID) {
       return { pid: Number(m[1]), ppid: Number(m[2]), start: m[3], command: m[4] };
     });
 }
+/** Recheck only the three already-discovered identities in one scoped ps call.
+ * This never discovers or adopts a replacement process. */
+export async function revalidateDecoderIdentity(identity, { execute: run = execute } = {}) {
+  const ids = [identity.worker.pid, identity.guardian.pid, identity.decoder.pid];
+  assert(
+    ids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && new Set(ids).size === 3,
+    'Invalid known decoder identity',
+  );
+  const rows = await readProcessRows(ids, run);
+  assert(
+    rows.length === 3 && new Set(rows.map((row) => row.pid)).size === 3,
+    'Owned decoder identity changed before pause',
+  );
+  const current = resolveDecoderIdentity(rows, identity.worker.pid);
+  assert(isDeepStrictEqual(current, identity), 'Owned decoder identity changed before pause');
+  return current;
+}
 /** One fixture-owned fault; finally resumes before caller joins worker teardown.
  * Process arguments and media URLs are never queried or exported. */
 export async function runOwnedDecoderStall({
   worker,
   signal,
+  delayBeforePauseMs = 20000,
   save,
   observeBeforePause,
   observePaused,
   inventory: read = inventory,
+  revalidate = read === inventory
+    ? revalidateDecoderIdentity
+    : async (identity) =>
+        resolveDecoderIdentity(await read(identity.worker.pid), identity.worker.pid),
   signalProcess = (pid, kind) => process.kill(pid, kind),
   wait = (ms) => delay(ms, undefined, { signal }),
 }) {
+  assert(
+    delayBeforePauseMs === 20000 || delayBeforePauseMs === 70000,
+    'Owned decoder stall schedule must be exactly 20000 or 70000 milliseconds',
+  );
   const evidence = {
     formatVersion: 1,
+    delayBeforePauseMs,
     closed: false,
     failed: false,
     identity: null,
@@ -98,12 +127,21 @@ export async function runOwnedDecoderStall({
       'Owned worker exited',
     );
   try {
-    await wait(20000);
+    await wait(delayBeforePauseMs);
     alive();
     evidence.identity = resolveDecoderIdentity(await read(worker.pid), worker.pid);
     if (observeBeforePause) evidence.beforePauseSample = await sample(observeBeforePause);
+    signal?.throwIfAborted();
+    // The status sample can suspend while the owned decoder or its guardian exits.
+    // Recheck the discovered identities without repeating process-tree discovery.
+    const beforePauseIdentity = await revalidate(evidence.identity);
+    signal?.throwIfAborted();
     alive();
-    signalProcess(evidence.identity.decoder.pid, 'SIGSTOP');
+    assert(
+      isDeepStrictEqual(beforePauseIdentity, evidence.identity),
+      'Owned decoder identity changed before pause',
+    );
+    signalProcess(beforePauseIdentity.decoder.pid, 'SIGSTOP');
     paused = true;
     evidence.pauseSentAt = performance.now();
     await save(evidence);

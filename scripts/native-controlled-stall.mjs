@@ -41,7 +41,11 @@ export function qualifyNativeControlledStall({ quality, audit, fault, scope }) {
     ...qualifyNativeStallSignal({ quality, audit, fault, scope }, event),
   };
 }
-export function qualifyNativeStallSignal({ quality, audit, fault, scope }, event) {
+export function qualifyNativeStallSignal(
+  { quality, audit, fault, scope, expectedRevision = '0' },
+  event,
+) {
+  assert(['0', '1'].includes(expectedRevision), 'Unsupported stall revision');
   assert(
     fault.closed === true &&
       fault.failed === false &&
@@ -59,8 +63,8 @@ export function qualifyNativeStallSignal({ quality, audit, fault, scope }, event
   const s = event.decoderStall;
   assert.equal(event.state, 'stalled');
   assert(event.reasons.includes('stalled'));
-  assert.equal(event.revision, '0');
-  assert.equal(s.revision, '0');
+  assert.equal(event.revision, expectedRevision);
+  assert.equal(s.revision, expectedRevision);
   assert.equal(event.window, undefined);
   assert.equal(s.publishingAttemptID, scope.publishingAttemptID.toLowerCase());
   assert(
@@ -109,6 +113,7 @@ export function qualifyNativeStallSignal({ quality, audit, fault, scope }, event
   assert.equal(quality.events.at(-1).closed, true);
   return {
     pauseMilliseconds: duration,
+    triggerCadenceReportIndex: audit.rows.indexOf(raw),
     admittedSampleAgeSeconds: sampleAge,
     lastProgressToDecisionUpperBoundSeconds: upperDelay,
     nativeReceiptToDecisionSeconds: event.evaluatedAt - raw.evaluatedUptime,

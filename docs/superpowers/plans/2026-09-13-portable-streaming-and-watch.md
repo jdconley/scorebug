@@ -2259,3 +2259,28 @@ disabled. Next qualify controlled withdrawal/reset/recovery and longer adaptive
 sessions, then physical phone/Watch networking and other proxy hosts. Details are
 in [the combined verifier plan](2026-09-17-combined-measured-trial-verifier.md) and
 `artifacts/qa/combined-measured-trial-final-verification.json`. The goal remains active.
+
+### 2026-09-17: measured fault/recovery verifier and streamed-audio startup failure
+
+The local measured route now has a separate mandatory recovery verifier. It joins
+confirmed admission, exact owned decoder-pause evidence, either native delivery-loss
+or decoder-stall reset, native application receipts, and at least ten seconds of
+whole healthy source windows after resumed progress, covered independently by both
+delivery lanes. The original successful-trial gate remains strict. All 2,269 tool
+tests and final combined reviews pass.
+
+Unchanged run `native-app-mnaRRb` qualifies by independent retrospective recovery
+replay; its original harness exit remains 1. Earlier runs retain their failures:
+`native-app-PZGuFl` had a stale pre-pause observation, and `native-app-TPUMig` had a
+late control-polling gap. The fixture's scoped process revalidation fixed its own
+pre-pause delay without changing freshness limits. The cause of the separate
+control-maintenance delay remains unresolved.
+
+Fresh frozen-source run `native-app-4xzLz8` still fails the complete harness: its
+streamed output starts audio 429 ms after video, beyond the unchanged 100 ms budget.
+The independent local archive passed, with 3,609 consecutive 1080p frames and
+aligned audio/video start. Next diagnose streaming audio startup and obtain a full
+native recovery pass before repeated ramp-up, longer runs, physical devices and
+other proxy hosts. Production increases stay disabled; the goal remains active.
+See [the recovery plan](2026-09-17-measured-posttrial-recovery.md) and
+`artifacts/qa/measured-posttrial-recovery-final-verification.json`.

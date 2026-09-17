@@ -171,7 +171,15 @@ export function qualifyMeasuredNativeLifecycle({
     assert.equal(application.fromRevision, event.action.fromRevision);
     assert.equal(event.revision, String(BigInt(application.fromRevision) + 1n));
     assert.equal(application.candidateID, event.action.candidateID);
-    assert.equal(row.candidateMeasurementID, application.candidateID);
+    if (event.action.kind === 'reset') {
+      assert.equal(application.candidateID, null);
+      assert.equal(event.action.candidateID, null);
+      assert.ok(index > 0, 'Reset requires prior measured trial');
+      // The native fixture retains its closed historical measurement for audit.
+      // It does not make that measurement current authority for a reset.
+      if (row.candidateMeasurementID !== null)
+        sameID(row.candidateMeasurementID, applied[index - 1].application.candidateID);
+    } else assert.equal(row.candidateMeasurementID, application.candidateID);
     const terminal = row.terminalProbeRead;
     for (const at of [
       row.requestedAt,

@@ -81,7 +81,7 @@ function normalizeReceipt(receipt) {
     encoderSessionID: receipt.encoderSessionID.toLowerCase(),
   };
 }
-function ownedPause(fault) {
+export function ownedPause(fault) {
   assert(
     fault?.closed === true &&
       fault.failed === false &&
@@ -279,6 +279,14 @@ function qualifiedFailure(event, audit, reports, ages) {
   return { row, ageAtClassification, duration };
 }
 
+/** Recompute one raw deadline signal without imposing an isolated driver revision.
+ * This grants failure evidence only, never reset or recovery authority. */
+export function qualifyNativeDeliveryFailureSignal({ event, audit, reports, scope }) {
+  qualifyNativeDeliveryDeadlines({ audit, reports, scope, expectedLatencyBudget: 1.5 });
+  const result = qualifiedFailure(event, audit, reports, receiptAges(reports));
+  return { ...result, triggerDeliveryRowIndex: audit.rows.indexOf(result.row) };
+}
+
 /** Qualifies only the isolated, fixed-minimum deadline driver. Scalar synthetic
  * fixtures test the verifier; only actual exported artifacts qualify a native run.
  * Resumed decoder progress proves fixture cleanup, never automatic recovery. */
@@ -400,7 +408,7 @@ export function qualifyNativeDeadlineDecisions({ quality, audit, reports, fault,
 // This bridge compares each clock only to its own domain: Node request bounds
 // establish that the worker sample was fetched under SIGSTOP, while the raw
 // worker scope/PTS anchor binds it to the phone's independently fresh report.
-function qualifyOwnedPauseSample(fault, owner, association) {
+export function qualifyOwnedPauseSample(fault, owner, association) {
   function workerSample(sample) {
     assert(
       sample &&

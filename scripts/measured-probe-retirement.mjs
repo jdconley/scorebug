@@ -34,7 +34,11 @@ function sameObservation(a, b) {
  * still validates every native campaign snapshot and independently qualifies the
  * complete lifecycle, candidate admission, and measured policy. No raw event is
  * created here; terminal read provenance remains separate from probe events. */
-export function qualifyMeasuredProbeRetirement(proof, { lifecycle, quality } = {}) {
+export function qualifyMeasuredProbeRetirement(
+  proof,
+  { lifecycle, quality, recovery = false } = {},
+) {
+  check(typeof recovery === 'boolean', 'recovery context must be boolean');
   check(proof.result === 'operationFailed', 'requires raw operationFailed result');
   check(
     lifecycle?.formatVersion === 1 &&
@@ -49,8 +53,9 @@ export function qualifyMeasuredProbeRetirement(proof, { lifecycle, quality } = {
     'Measured probe retirement: lifecycle scope mismatch',
   );
   check(
-    Array.isArray(lifecycle.profileRequests) && lifecycle.profileRequests.length === 1,
-    'requires exactly one profile request',
+    Array.isArray(lifecycle.profileRequests) &&
+      lifecycle.profileRequests.length === (recovery ? 2 : 1),
+    'requires exactly the expected profile requests',
   );
   check(
     quality?.formatVersion === 4 &&
@@ -65,8 +70,8 @@ export function qualifyMeasuredProbeRetirement(proof, { lifecycle, quality } = {
   const candidates = quality.events.filter((e) => e.kind === 'candidate');
   const applications = quality.events.filter((e) => e.kind === 'applied');
   check(
-    candidates.length === 1 && applications.length === 1,
-    'requires one owned trial and application',
+    candidates.length === 1 && applications.length === (recovery ? 2 : 1),
+    'requires one owned trial and the expected applications',
   );
   const trial = candidates[0],
     applied = applications[0],
@@ -311,10 +316,127 @@ export function qualifyMeasuredProbeRetirement(proof, { lifecycle, quality } = {
       final.sample.lastAcceptedAt < current.leaseDeadline,
     'acceptance outside terminal read or lease',
   );
+  if (recovery)
+    qualifyLaterReset(lifecycle, quality, request, trial, applied, applications[1], final.sample);
   return {
     retirementKind: 'profile-request-terminal-read',
     profileRequestID: request.requestID,
     retirementRequestedAt: request.requestedAt,
     retiredObservedAt: terminal.completedAt,
   };
+}
+
+// This proves only that the second write cannot be mistaken for the first
+// probe's retirement. Failure causality, native reset media and recovered health
+// still require independent full-lifecycle and recovery qualification.
+function qualifyLaterReset(lifecycle, quality, firstRequest, trial, firstApplied, reset, final) {
+  const request = lifecycle.profileRequests[1],
+    app = reset.application,
+    action = reset.action;
+  check(
+    firstApplied.revision === '1' && firstApplied.application.fromRevision === '0',
+    'recovery requires the initial trial revision',
+  );
+  check(
+    reset.closed === false &&
+      reset.revision === '2' &&
+      reset.profileID === '240p30' &&
+      action?.kind === 'reset' &&
+      action.profileID === '240p30' &&
+      action.bitRate === 350000 &&
+      action.fromRevision === '1' &&
+      action.candidateID === null &&
+      app?.fromRevision === '1' &&
+      app.candidateID === null,
+    'requires an owned minimum-profile reset from revision one',
+  );
+  check(sameID(app.attemptID, lifecycle.scope.publishingAttemptID), 'foreign reset attempt');
+  const identities = [
+    firstRequest.requestID,
+    firstApplied.application.id,
+    request.requestID,
+    app.id,
+  ];
+  check(
+    identities.every(uuid) && new Set(identities.map((value) => value.toLowerCase())).size === 4,
+    'ambiguous reset identity',
+  );
+  // NativeCandidateFixture retains completedCandidateID after revocation. That
+  // dispatch metadata may name the old measurement, never a new candidate or
+  // authority for this reset; the actual recommendation/application are null.
+  check(
+    request.candidateMeasurementID === null ||
+      sameID(request.candidateMeasurementID, firstRequest.candidateMeasurementID),
+    'foreign historical reset candidate',
+  );
+  check(
+    request.targetProfile === '240p30' &&
+      request.outcome === 'completed' &&
+      request.failure === null,
+    'reset request failed or has wrong target',
+  );
+  check(
+    quality.events.indexOf(reset) > quality.events.indexOf(trial) &&
+      quality.events.indexOf(reset) > quality.events.indexOf(firstApplied),
+    'reset precedes the trial',
+  );
+  const terminal = request.terminalProbeRead,
+    receipt = request.receipt,
+    rate = reset.receipt;
+  check(terminal && receipt && rate, 'missing reset completion evidence');
+  for (const value of [
+    app.admittedAt,
+    app.completionDeadline,
+    action.validUntil,
+    request.requestedAt,
+    receipt.acknowledgedAt,
+    request.completedAt,
+    terminal.startedAt,
+    terminal.completedAt,
+    rate.acceptedAt,
+    reset.acknowledgedAt,
+    reset.at,
+  ])
+    check(time(value), 'invalid reset time');
+  check(
+    app.admittedAt >
+      Math.max(trial.at, firstApplied.at, firstRequest.terminalProbeRead.completedAt) &&
+      app.admittedAt <= action.validUntil &&
+      Math.abs(app.completionDeadline - app.admittedAt - 2) < 1e-6 &&
+      app.admittedAt <= request.requestedAt &&
+      request.requestedAt <= receipt.acknowledgedAt &&
+      receipt.acknowledgedAt <= request.completedAt &&
+      request.completedAt <= terminal.startedAt &&
+      terminal.startedAt <= terminal.completedAt &&
+      terminal.completedAt <= rate.acceptedAt &&
+      rate.acceptedAt <= reset.acknowledgedAt &&
+      reset.acknowledgedAt <= app.completionDeadline &&
+      reset.acknowledgedAt <= reset.at &&
+      reset.at <= lifecycle.closedAt,
+    'reset outside later owned application bounds',
+  );
+  check(
+    receipt.profile === '240p30' &&
+      receipt.width === 426 &&
+      receipt.height === 240 &&
+      receipt.publishingGeneration === firstRequest.receipt.publishingGeneration &&
+      sameID(receipt.previousEncoderSessionID, firstRequest.receipt.encoderSessionID) &&
+      uuid(receipt.encoderSessionID) &&
+      !sameID(receipt.encoderSessionID, receipt.previousEncoderSessionID),
+    'reset profile receipt ownership mismatch',
+  );
+  assert.deepEqual(
+    reset.profileReceipt,
+    receipt,
+    'Measured probe retirement: reset profile receipt mismatch',
+  );
+  check(
+    rate.bitRate === 350000 &&
+      rate.generation === receipt.publishingGeneration &&
+      sameID(rate.encoderSessionID, receipt.encoderSessionID) &&
+      uuid(rate.configurationID) &&
+      !sameID(rate.configurationID, firstApplied.receipt.configurationID),
+    'reset rate receipt ownership mismatch',
+  );
+  sameObservation(terminal.observation, final);
 }

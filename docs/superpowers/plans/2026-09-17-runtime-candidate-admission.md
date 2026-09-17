@@ -205,3 +205,18 @@ route only. Production increases, controlled measured failure/recovery, longer
 adaptive sessions and physical/remote performance remain unqualified. No old raw
 failure was edited or relabeled as a whole-run pass. Evidence is indexed by
 `artifacts/qa/combined-measured-trial-final-verification.json`.
+
+## Measured recovery verifier checkpoint
+
+[The measured recovery plan](2026-09-17-measured-posttrial-recovery.md) now implements
+independent confirmed-prefix, owned fault, native reset and sustained minimum
+recovery replay. Both native delivery-failure lanes and decoder-stall decisions
+are supported with unchanged deadlines and freshness limits. All 2,269 tool tests
+pass; unchanged C evidence qualifies retrospectively, while stale/gapped A/B
+artifacts remain negative. Original failed harness exits are preserved.
+
+A fresh complete recovery pass remains pending: `native-app-4xzLz8` failed streamed
+output audio startup coverage (429 ms lag). Its local archive passed. Investigate
+publisher/worker/recorder audio startup next, without relaxing A/V coverage, then
+continue repeated candidate campaigns and longer/physical/remote validation.
+Production increases remain disabled.

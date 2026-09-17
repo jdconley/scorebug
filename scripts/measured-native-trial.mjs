@@ -37,11 +37,13 @@ export const measuredTrialArtifacts = {
   deliveryAudit: ['delivery-deadlines.json', 32 * 1024 * 1024],
 };
 
-/** Compose independent raw evidence for one successful minimum-to-next native
- * laboratory trial. Full A/V decoding, archive durability and ingress checks
- * remain required by the calling harness. No production upgrade permission.
+/** Recompute shared raw native/admission evidence. This does not qualify policy
+ * success or recovery: a complete route-specific verifier must consume it.
+ * Full A/V decoding, archive durability and ingress checks remain required by
+ * the calling harness. No production upgrade permission is returned.
  */
-export function qualifyMeasuredNativeTrial(input) {
+export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) {
+  assert.equal(typeof recovery, 'boolean');
   const {
     snapshot,
     quality,
@@ -99,6 +101,7 @@ export function qualifyMeasuredNativeTrial(input) {
     sequence: 'measured240',
     requireFrameEvidence: true,
   });
+  assert.equal(profile.phases.length, recovery ? 3 : 2);
   const nativeLifecycle = qualifyMeasuredNativeLifecycle({
     lifecycle,
     quality,
@@ -136,9 +139,9 @@ export function qualifyMeasuredNativeTrial(input) {
       'Candidate must use actual baseline and decoded source frames',
     );
   }
-  assert.equal(nativeLifecycle.applications.length, 1);
+  assert.equal(nativeLifecycle.applications.length, recovery ? 2 : 1);
   assert(candidateProof.measurement.endedAt <= nativeLifecycle.applications[0].requestedAt);
-  const measuredRetirement = { lifecycle, quality };
+  const measuredRetirement = { lifecycle, quality, ...(recovery ? { recovery: true } : {}) };
   const probe = qualifyNativeBandwidthProbe(nativeProbe, {
     mode: 'staged',
     candidateHeadroom: true,
@@ -168,6 +171,48 @@ export function qualifyMeasuredNativeTrial(input) {
     nativeProof: nativeProbe,
   });
   assert.equal(witness.headroomQualified, true);
+  return {
+    scope: video.scope,
+    video,
+    clock,
+    attempt,
+    worker,
+    source,
+    processing,
+    reportAge,
+    cadence,
+    delivery,
+    profile,
+    nativeLifecycle,
+    candidate,
+    probe,
+    receiver,
+    intervals,
+    witness,
+  };
+}
+
+/** Full successful laboratory trial; recovery uses a separately required verifier. */
+export function qualifyMeasuredNativeTrial(input) {
+  const { quality, snapshot, cadenceReports, deliveryAudit } = input;
+  const {
+    video,
+    clock,
+    attempt,
+    worker,
+    source,
+    processing,
+    reportAge,
+    cadence,
+    delivery,
+    profile,
+    nativeLifecycle,
+    candidate,
+    probe,
+    receiver,
+    intervals,
+    witness,
+  } = qualifyMeasuredNativeEvidence(input);
   const policy = qualifyMeasuredTrialPolicy({
     quality,
     snapshot,
@@ -182,6 +227,51 @@ export function qualifyMeasuredNativeTrial(input) {
   // Overlapping one-/two-second lanes never contribute additive probation credit.
   assert.equal(delivery.unknownRows, 0, 'Incomplete delivery classification');
   assert.equal(delivery.observations.healthyRows, delivery.rowCount, 'Unhealthy measured delivery');
+  qualifyMeasuredDeliveryOwnership(input, { profile, nativeLifecycle, delivery });
+  for (const duration of [1, 2]) {
+    const rows = deliveryAudit.rows.filter(
+      (r) => r.appliedRevision === '1' && r.end - r.start === duration,
+    );
+    assert(rows.length >= 10, 'Insufficient independent delivery lane coverage');
+    let end = rows[0].start;
+    assert(end <= policy.probation.start, 'Delivery starts after probation');
+    for (const row of rows) {
+      assert.equal(row.start, end, 'Delivery coverage gap');
+      end = row.end;
+    }
+    assert(end >= policy.probation.end, 'Delivery does not cover probation');
+  }
+  return {
+    measuredTrialQualified: true,
+    productionUpgradeAuthorized: false,
+    scope: video.scope,
+    video,
+    clock,
+    attempt,
+    worker,
+    source,
+    processing,
+    reportAge,
+    cadence,
+    delivery,
+    profile,
+    nativeLifecycle,
+    candidate,
+    probe,
+    receiver,
+    intervals,
+    witness,
+    policy,
+  };
+}
+
+/** Join already reconstructed deadline rows to actual native configuration lives.
+ * Timeliness failures remain failures; this function grants no health duration.
+ */
+export function qualifyMeasuredDeliveryOwnership(input, { profile, nativeLifecycle, delivery }) {
+  const { archiveIDs, liveIDs, format, quality, deliveryAudit } = input;
+  const decodedFrames = new Set(liveIDs);
+  assert.equal(delivery.unknownRows, 0, 'Incomplete delivery classification');
   const archiveFrames = new Set(archiveIDs);
   const allNativeFrames = new Set(format.compressedFrames.map((f) => fixtureFrameID(f.sourcePTS)));
   const configurations = [
@@ -223,39 +313,41 @@ export function qualifyMeasuredNativeTrial(input) {
     assert.equal(row.acknowledgedAt, event.acknowledgedAt);
     assert(row.start >= event.acknowledgedAt);
   }
+  return { rows: deliveryAudit.rows.length, scope: profile.scope };
+}
+
+/** Each lane must independently cover the interval; overlap never adds credit. */
+export function qualifyMeasuredDeliveryCoverage(audit, { revision, start, end }) {
+  assert(Number.isFinite(start) && Number.isFinite(end) && end > start);
+  const lanes = [];
   for (const duration of [1, 2]) {
-    const rows = deliveryAudit.rows.filter(
-      (r) => r.appliedRevision === '1' && r.end - r.start === duration,
+    const rows = audit.rows.filter(
+      (r) =>
+        r.appliedRevision === revision &&
+        r.end - r.start === duration &&
+        r.end > start &&
+        r.start < end,
     );
-    assert(rows.length >= 10, 'Insufficient independent delivery lane coverage');
-    let end = rows[0].start;
-    assert(end <= policy.probation.start, 'Delivery starts after probation');
-    for (const row of rows) {
-      assert.equal(row.start, end, 'Delivery coverage gap');
-      end = row.end;
+    assert(rows.length > 0, 'Missing delivery coverage');
+    let cursor = start;
+    for (const [index, row] of rows.entries()) {
+      assert(
+        (index === 0 ? row.start <= cursor : row.start === cursor) && row.end > cursor,
+        'Gap or overlap in delivery coverage',
+      );
+      const result = row.result;
+      assert(
+        result &&
+          result.uncertainFrames === 0 &&
+          result.missingFrames === 0 &&
+          result.lateFrames === 0 &&
+          result.onTimeFPS >= 30,
+        'Unhealthy delivery coverage',
+      );
+      cursor = row.end;
     }
-    assert(end >= policy.probation.end, 'Delivery does not cover probation');
+    assert(cursor >= end, 'Insufficient delivery coverage');
+    lanes.push({ duration, rows: rows.length, start: rows[0].start, end: cursor });
   }
-  return {
-    measuredTrialQualified: true,
-    productionUpgradeAuthorized: false,
-    scope: video.scope,
-    video,
-    clock,
-    attempt,
-    worker,
-    source,
-    processing,
-    reportAge,
-    cadence,
-    delivery,
-    profile,
-    nativeLifecycle,
-    candidate,
-    probe,
-    receiver,
-    intervals,
-    witness,
-    policy,
-  };
+  return { start, end, coverageSeconds: end - start, lanes };
 }

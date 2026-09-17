@@ -140,3 +140,171 @@ test('active binding must use a lease present in the raw campaign', () => {
   candidate(f).candidateAdmission.binding.leaseDeadline += 0.00001;
   assert.throws(() => qualify(f));
 });
+
+// Synthetic later reset extends the raw scalar fixture; it does not qualify
+// failure causality or recovery, which require the parent's independent gates.
+function recoveryFixture() {
+  const f = fixture(),
+    first = request(f),
+    firstApplied = applied(f);
+  const admittedAt = firstApplied.at + 30;
+  const profileReceipt = {
+    ...structuredClone(first.receipt),
+    profile: '240p30',
+    width: 426,
+    height: 240,
+    acknowledgedAt: admittedAt + 0.2,
+    previousEncoderSessionID: first.receipt.encoderSessionID,
+    encoderSessionID: 'a0000000-0000-4000-8000-000000000001',
+  };
+  const reset = {
+    kind: 'applied',
+    closed: false,
+    at: admittedAt + 0.4,
+    revision: '2',
+    profileID: '240p30',
+    acknowledgedAt: admittedAt + 0.3,
+    action: {
+      kind: 'reset',
+      bitRate: 350000,
+      profileID: '240p30',
+      fromRevision: '1',
+      candidateID: null,
+      validUntil: admittedAt + 0.5,
+    },
+    application: {
+      id: 'a0000000-0000-4000-8000-000000000002',
+      attemptID: firstApplied.application.attemptID,
+      fromRevision: '1',
+      candidateID: null,
+      admittedAt,
+      completionDeadline: admittedAt + 2,
+      windowSequence: '15',
+    },
+    profileReceipt,
+    receipt: {
+      ...structuredClone(firstApplied.receipt),
+      bitRate: 350000,
+      acceptedAt: admittedAt + 0.25,
+      encoderSessionID: profileReceipt.encoderSessionID,
+      configurationID: 'a0000000-0000-4000-8000-000000000003',
+    },
+  };
+  const later = {
+    ...structuredClone(first),
+    requestID: 'a0000000-0000-4000-8000-000000000004',
+    requestedAt: admittedAt + 0.01,
+    completedAt: admittedAt + 0.21,
+    targetProfile: '240p30',
+    authorityPermitted: false,
+    probeAuthorityPermitted: false,
+    currentProbeActive: false,
+    receipt: structuredClone(profileReceipt),
+    terminalProbeRead: {
+      startedAt: admittedAt + 0.22,
+      completedAt: admittedAt + 0.23,
+      observation: structuredClone(first.terminalProbeRead.observation),
+    },
+  };
+  f.lifecycle.profileRequests.push(later);
+  f.quality.events.push(reset);
+  return f;
+}
+const qualifyRecovery = (f, recovery = true) =>
+  qualifyNativeBandwidthProbe(f.probe, {
+    ...options(f),
+    measuredRetirement: { ...options(f).measuredRetirement, recovery },
+  });
+const resetRequest = (f) => f.lifecycle.profileRequests[1];
+const resetApplied = (f) => f.quality.events.filter((e) => e.kind === 'applied')[1];
+
+test('explicit recovery context permits exactly one later owned reset without changing first retirement', () => {
+  const f = recoveryFixture(),
+    before = structuredClone(f);
+  assert.throws(() => qualify(f));
+  assert.throws(() => qualifyRecovery(f, false));
+  assert.deepEqual(qualifyRecovery(f), qualify(fixture()));
+  assert.deepEqual(f, before);
+  resetRequest(f).candidateMeasurementID = null;
+  assert.deepEqual(qualifyRecovery(f), qualify(fixture()));
+});
+
+test('recovery context must be boolean and cannot silently accept a missing reset', () => {
+  assert.throws(() => qualifyRecovery(fixture()));
+  for (const value of [null, 'true', 1, {}])
+    assert.throws(() => qualifyRecovery(recoveryFixture(), value));
+  assert.deepEqual(qualifyRecovery(fixture(), false), qualify(fixture()));
+});
+
+for (const [name, mutate] of Object.entries({
+  'extra request': (f) => f.lifecycle.profileRequests.push(structuredClone(resetRequest(f))),
+  'extra application': (f) => f.quality.events.push(structuredClone(resetApplied(f))),
+  'extra candidate': (f) => f.quality.events.push(structuredClone(candidate(f))),
+  'reset before trial request': (f) => f.lifecycle.profileRequests.reverse(),
+  'reset before trial application': (f) => f.quality.events.unshift(f.quality.events.pop()),
+  'reused request ID': (f) => (resetRequest(f).requestID = request(f).requestID),
+  'reused application ID': (f) => (resetApplied(f).application.id = applied(f).application.id),
+  'foreign reset attempt': (f) =>
+    (resetApplied(f).application.attemptID = resetRequest(f).requestID),
+  'foreign historical candidate': (f) =>
+    (resetRequest(f).candidateMeasurementID = resetRequest(f).requestID),
+  'candidate reset action': (f) =>
+    (resetApplied(f).action.candidateID = request(f).candidateMeasurementID),
+  'candidate reset application': (f) =>
+    (resetApplied(f).application.candidateID = request(f).candidateMeasurementID),
+  'reset substituted as trial': (f) => (resetApplied(f).action.kind = 'trial'),
+  'wrong reset target': (f) => (resetApplied(f).action.profileID = '360p30'),
+  'wrong reset revision': (f) => (resetApplied(f).revision = '3'),
+  'wrong reset from revision': (f) => (resetApplied(f).application.fromRevision = '0'),
+  'early reset admission': (f) => (resetApplied(f).application.admittedAt = applied(f).at - 0.001),
+  'early reset dispatch': (f) => (resetRequest(f).requestedAt = request(f).requestedAt),
+  'reset after closure': (f) => (resetApplied(f).at = f.lifecycle.closedAt + 0.001),
+  'missing reset terminal read': (f) => (resetRequest(f).terminalProbeRead = null),
+  'foreign reset terminal probe': (f) =>
+    (resetRequest(f).terminalProbeRead.observation.id = resetRequest(f).requestID),
+  'changed reset terminal counters': (f) =>
+    (resetRequest(f).terminalProbeRead.observation.acceptedPayloadBytes = '0'),
+  'changed reset terminal lease': (f) =>
+    (resetRequest(f).terminalProbeRead.observation.leaseDeadline += 0.1),
+  'changed reset terminal reason': (f) =>
+    (resetRequest(f).terminalProbeRead.observation.reason = 'closed'),
+  'early reset terminal read': (f) =>
+    (resetRequest(f).terminalProbeRead.startedAt = resetRequest(f).requestedAt),
+  'failed reset': (f) => (resetRequest(f).outcome = 'failed'),
+  'foreign reset receipt': (f) =>
+    (resetApplied(f).profileReceipt.encoderSessionID = resetRequest(f).requestID),
+  'wrong previous encoder': (f) => {
+    resetRequest(f).receipt.previousEncoderSessionID = resetRequest(f).requestID;
+    resetApplied(f).profileReceipt.previousEncoderSessionID = resetRequest(f).requestID;
+  },
+  'expired reset application': (f) =>
+    (resetApplied(f).acknowledgedAt = resetApplied(f).application.completionDeadline + 0.01),
+  'original retirement mismatch': (f) =>
+    (request(f).terminalProbeRead.observation.acceptedPayloadBytes = '0'),
+}))
+  test(`recovery context rejects ${name}`, () => {
+    const f = recoveryFixture();
+    mutate(f);
+    assert.throws(() => qualifyRecovery(f));
+  });
+
+test('receiver revalidation preserves the explicit recovery context', async () => {
+  const { qualifyNativeReceiverIntervals } = await import('../native-receiver-intervals.mjs');
+  const f = recoveryFixture();
+  const args = [
+    f.receiverIntervals,
+    f.receiverRecords,
+    f.probe.scope,
+    qualifyRecovery(f),
+    f.workerRecords,
+    f.probe,
+  ];
+  assert.throws(() =>
+    qualifyNativeReceiverIntervals(...args, { measuredRetirement: options(f).measuredRetirement }),
+  );
+  assert.ok(
+    qualifyNativeReceiverIntervals(...args, {
+      measuredRetirement: { ...options(f).measuredRetirement, recovery: true },
+    }).intervalCount > 0,
+  );
+});
