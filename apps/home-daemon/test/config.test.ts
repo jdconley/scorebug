@@ -75,3 +75,9 @@ it('supports the measured360 publishing candidate without changing the default',
   expect(videoProfiles['360p30']).toEqual({ width: 640, height: 360, fps: 30, bitrateKbps: 600 });
   expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
 });
+
+it('supports the experimental240 publishing candidate without changing the default', () => {
+  expect(loadConfig({ ...base, VIDEO_PROFILE: '240p30' }).VIDEO_PROFILE).toBe('240p30');
+  expect(videoProfiles['240p30']).toEqual({ width: 426, height: 240, fps: 30, bitrateKbps: 350 });
+  expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
+});

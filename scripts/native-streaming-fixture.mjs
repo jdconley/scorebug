@@ -43,7 +43,7 @@ export async function nativeStreamingFixture({
     publishPacing === undefined || publishPacing === 'relative',
     'Unsupported fixture publish pacing',
   );
-  assert.ok(['1080p30', '540p30', '360p30'].includes(liveProfile));
+  assert.ok(['1080p30', '540p30', '360p30', '240p30'].includes(liveProfile));
   assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(

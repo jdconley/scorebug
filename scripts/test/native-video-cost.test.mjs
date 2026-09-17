@@ -151,8 +151,27 @@ for (const side of ['newest', 'oldest'])
 
 test('fixed360 cost reconciles actual payload and rejects crossed profile geometry', () => {
   const { proof, format } = fixture();
-  proof.profile = '360p30'; format.width = 640; format.height = 360;
-  for (const row of [...proof.compressed, ...proof.intervals]) { row.width = 640; row.height = 360; }
+  proof.profile = '360p30';
+  format.width = 640;
+  format.height = 360;
+  for (const row of [...proof.compressed, ...proof.intervals]) {
+    row.width = 640;
+    row.height = 360;
+  }
+  assert.equal(qualifyNativeVideoCost(proof, format).maximumPayloadBitsPerSecond, 240000);
+  proof.profile = '540p30';
+  assert.throws(() => qualifyNativeVideoCost(proof, format));
+});
+
+test('fixed240 cost reconciles actual payload and rejects crossed profile geometry', () => {
+  const { proof, format } = fixture();
+  proof.profile = '240p30';
+  format.width = 426;
+  format.height = 240;
+  for (const row of [...proof.compressed, ...proof.intervals]) {
+    row.width = 426;
+    row.height = 240;
+  }
   assert.equal(qualifyNativeVideoCost(proof, format).maximumPayloadBitsPerSecond, 240000);
   proof.profile = '540p30';
   assert.throws(() => qualifyNativeVideoCost(proof, format));

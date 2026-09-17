@@ -99,15 +99,64 @@ test('fixed360 retains full fixture gates, archive geometry and exclusive route'
   assert.equal(nativeLiveProfile({ ...args, environment: env }), '360p30');
   assert.deepEqual(nativeMediaGeometry('360p30', false), nativeMediaGeometry('1080p30', false));
   assert.deepEqual(nativeMediaGeometry('360p30', true), {
-    width: 640, height: 360, barcodeY: 6, overlay: { width: 250, height: 40, y: 310 },
+    width: 640,
+    height: 360,
+    barcodeY: 6,
+    overlay: { width: 250, height: 40, y: 310 },
   });
   for (const patch of [{ requireProcessing: false }, { holdSeconds: 89 }, { streaming: false }])
     assert.throws(() => nativeLiveProfile({ ...args, ...patch, environment: env }));
   const { nativeUplinkOptions } = await import('../native-streaming-options.mjs');
-  const input = { ...args, environment: { ...env, SCOREBUG_TEST_UPLINK_PROFILE: 'rate4m' },
-    holdSeconds: 180, liveProfile: '360p30', requireQuality: false,
-    requireConfirmation: false, fixtureWorkload: 'motion-blocks16' };
+  const input = {
+    ...args,
+    environment: { ...env, SCOREBUG_TEST_UPLINK_PROFILE: 'rate4m' },
+    holdSeconds: 180,
+    liveProfile: '360p30',
+    requireQuality: false,
+    requireConfirmation: false,
+    fixtureWorkload: 'motion-blocks16',
+  };
   assert.equal(nativeUplinkOptions(input), 'rate4m');
-  for (const patch of [{ liveProfile: '540p30' }, { requireQuality: true }, { requirePublication: false }])
+  for (const patch of [
+    { liveProfile: '540p30' },
+    { requireQuality: true },
+    { requirePublication: false },
+  ])
+    assert.throws(() => nativeUplinkOptions({ ...input, ...patch }));
+});
+
+test('fixed240 uses actual even geometry and preserves archive and admission gates', async () => {
+  const env = { ...environment, SCOREBUG_TEST_LIVE_PROFILE: '240p30' };
+  assert.equal(nativeLiveProfile({ ...args, environment: env }), '240p30');
+  assert.deepEqual(nativeMediaGeometry('240p30', false), nativeMediaGeometry('1080p30', false));
+  assert.deepEqual(nativeMediaGeometry('240p30', true), {
+    width: 426,
+    height: 240,
+    barcodeY: 4,
+    overlay: { width: 166, height: 26, y: 206 },
+  });
+  for (const patch of [{ holdSeconds: 89 }, { streaming: false }, { requireProcessing: false }])
+    assert.throws(() => nativeLiveProfile({ ...args, ...patch, environment: env }));
+  for (const key of ['SCOREBUG_TEST_DIRECT_RTMP_RECORDER', 'SCOREBUG_TEST_MOTION_FIXTURE']) {
+    const invalid = { ...env };
+    delete invalid[key];
+    assert.throws(() => nativeLiveProfile({ ...args, environment: invalid }));
+  }
+  const { nativeUplinkOptions } = await import('../native-streaming-options.mjs');
+  const input = {
+    ...args,
+    environment: { ...env, SCOREBUG_TEST_UPLINK_PROFILE: 'rate4m' },
+    holdSeconds: 180,
+    liveProfile: '240p30',
+    requireQuality: false,
+    requireConfirmation: false,
+    fixtureWorkload: 'motion-blocks16',
+  };
+  assert.equal(nativeUplinkOptions(input), 'rate4m');
+  for (const patch of [
+    { liveProfile: '360p30' },
+    { requireQuality: true },
+    { requirePublication: false },
+  ])
     assert.throws(() => nativeUplinkOptions({ ...input, ...patch }));
 });

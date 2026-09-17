@@ -18,7 +18,7 @@ export function qualifyNativeVideoCost(proof, format) {
   assert.equal(proof.formatVersion, 1);
   assert.equal(proof.isClosed, true);
   assert.equal(proof.invalidReason, null);
-  assert.ok(['540p30', '360p30'].includes(proof.profile));
+  assert.ok(['540p30', '360p30', '240p30'].includes(proof.profile));
   const geometry = nativeMediaGeometry(proof.profile, true);
   assert.equal(format.width, geometry.width);
   assert.equal(format.height, geometry.height);

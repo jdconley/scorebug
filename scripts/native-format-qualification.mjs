@@ -3,7 +3,7 @@ import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 /** Actual pre-mux sample format, independent of the worker's resize operation. */
 export function qualifyNativeFormat(format, snapshot, profile) {
-  assert.ok(['540p30', '360p30'].includes(profile));
+  assert.ok(['540p30', '360p30', '240p30'].includes(profile));
   const geometry = nativeMediaGeometry(profile, true);
   assert.equal(format.formatVersion, 1);
   assert.equal(format.profile, profile);

@@ -1410,3 +1410,20 @@ unchanged per-frame byte counts, and low-latency average-only encoding still fai
 The setup defect is corrected; lower-bandwidth fallback and automatic adaptation
 remain unqualified. Source/evidence hashes and joined-owner outcomes are retained
 in `artifacts/qa/pixel-format-final-verification-v2.json`.
+
+
+[240p fallback candidate](2026-09-16-240p-qualification.md) adds an explicit
+426×240/30 fps native and portable-worker profile, requested at 350 kbps. Actual
+run `native-app-hB2BBX` preserves 6,424 consecutive archive frames and 6,049
+consecutive retained live frames, all audio markers, clean decodes and 29.6 fps
+minimum reported receiver cadence through the scheduled 4 Mbps phase. Native
+format evidence confirms 426×240 before the proxy can resize it.
+
+Measured video windows peak at 1.992 Mbps, down from the prior fixed360 run's
+3.547 Mbps; the constrained phase averages 2.246 Mbps of wire traffic. This is a
+useful cost reduction in separate finite trials, not achievement of 350 kbps or
+capacity proof. 80 streaming, 254 media, 231 model, 345 worker and 1,199 tooling
+tests, worker typechecking and both Apple builds pass. Independent verification
+rejects 11 damaged variants. Evidence is in `artifacts/qa/low240-final-verification.json`.
+Next test an explicit 3 Mbps uplink, then minimum-profile transitions and progressive
+health/policy integration. Automatic adaptation and production startup remain gated.

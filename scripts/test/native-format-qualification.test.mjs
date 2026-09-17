@@ -56,3 +56,10 @@ test('fixed360 requires actual native360 dimensions and exact profile identity',
   assert.throws(() => qualifyNativeFormat({ ...low, width: 960, height: 540 }, snapshot, '360p30'));
   assert.throws(() => qualifyNativeFormat(low, snapshot, '540p30'));
 });
+
+test('fixed240 requires actual native240 dimensions and exact profile identity', () => {
+  const low = { ...format, profile: '240p30', width: 426, height: 240 };
+  assert.equal(qualifyNativeFormat(low, snapshot, '240p30').width, 426);
+  assert.throws(() => qualifyNativeFormat({ ...low, width: 960, height: 540 }, snapshot, '240p30'));
+  assert.throws(() => qualifyNativeFormat(low, snapshot, '540p30'));
+});

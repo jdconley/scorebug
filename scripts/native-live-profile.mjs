@@ -9,7 +9,7 @@ export function nativeLiveProfile({
   const raw = environment.SCOREBUG_TEST_LIVE_PROFILE;
   if (raw === undefined) return '1080p30';
   assert.ok(
-    ['540p30', '360p30'].includes(raw) &&
+    ['540p30', '360p30', '240p30'].includes(raw) &&
       streaming &&
       requireProcessing &&
       requirePublication &&
@@ -25,12 +25,27 @@ export function nativeLiveProfile({
   return raw;
 }
 export function nativeMediaGeometry(profile, live) {
-  assert.ok(['1080p30', '540p30', '360p30'].includes(profile));
-  const scale = !live || profile === '1080p30' ? 1 : profile === '540p30' ? 0.5 : 1 / 3;
+  assert.ok(['1080p30', '540p30', '360p30', '240p30'].includes(profile));
+  const [width, height] =
+    !live || profile === '1080p30'
+      ? [1920, 1080]
+      : profile === '540p30'
+        ? [960, 540]
+        : profile === '360p30'
+          ? [640, 360]
+          : [426, 240];
+  // 426x240 is not an exact uniform scale of 1920x1080. Keep every crop
+  // coordinate integral and use the actual horizontal and vertical scales.
+  const scaleX = width / 1920,
+    scaleY = height / 1080;
   return {
-    width: 1920 * scale,
-    height: 1080 * scale,
-    barcodeY: Math.floor(20 * scale),
-    overlay: { width: 750 * scale, height: 120 * scale, y: 930 * scale },
+    width,
+    height,
+    barcodeY: Math.floor(20 * scaleY),
+    overlay: {
+      width: Math.floor(750 * scaleX),
+      height: Math.floor(120 * scaleY),
+      y: Math.floor(930 * scaleY),
+    },
   };
 }

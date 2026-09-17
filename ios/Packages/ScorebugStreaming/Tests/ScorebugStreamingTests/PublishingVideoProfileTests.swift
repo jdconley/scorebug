@@ -11,6 +11,15 @@ final class PublishingVideoProfileTests: XCTestCase {
         XCTAssertEqual(profile.settings.expectedFrameRate, 30)
     }
 
+    func testLow240CandidateHasIndependentRealTimeSettings() throws {
+        let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "240p30"))
+        XCTAssertEqual(profile.width, 426); XCTAssertEqual(profile.height, 240)
+        XCTAssertEqual(profile.bitRate, 350_000)
+        XCTAssertEqual(profile.settings.videoSize.width, 426)
+        XCTAssertEqual(profile.settings.videoSize.height, 240)
+        XCTAssertEqual(profile.settings.expectedFrameRate, 30)
+    }
+
     func testProfilesPreserveRateAndSizeWhileSharingRealTimeDefaults() {
         let full = PublishingVideoProfile.hd1080.settings
         let reduced = PublishingVideoProfile.sd540.settings

@@ -86,3 +86,12 @@ test('terminal observation cannot silently renew a lease', () => {
   const value = fixture(); value.events[2].sample.leaseDeadline = 10.5;
   assert.throws(() => qualify(value));
 });
+
+test('new lower fixed profiles do not inherit the fixed540 probe admission', () => {
+  for (const profile of ['360p30', '240p30']) {
+    const input = options();
+    input.liveProfile = profile;
+    input.environment.SCOREBUG_TEST_LIVE_PROFILE = profile;
+    assert.throws(() => nativeBandwidthProbe(input));
+  }
+});

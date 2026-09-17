@@ -30,7 +30,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let liveProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? ""
         if !liveProfile.isEmpty {
-            XCTAssertTrue(["540p30", "360p30"].contains(liveProfile)); XCTAssertTrue(qualityFlag.isEmpty)
+            XCTAssertTrue(["540p30", "360p30", "240p30"].contains(liveProfile)); XCTAssertTrue(qualityFlag.isEmpty)
             XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
             app.launchEnvironment["SCOREBUG_TEST_LIVE_PROFILE"] = liveProfile
         }
@@ -45,7 +45,7 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue(transitions.isEmpty)
             let parsed = try XCTUnwrap(Int(uplinkPort))
             XCTAssertEqual(String(parsed), uplinkPort); XCTAssertTrue((1...65535).contains(parsed))
-            XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30"].contains(liveProfile)); XCTAssertEqual(motionFlag, "blocks16")
+            XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30", "240p30"].contains(liveProfile)); XCTAssertEqual(motionFlag, "blocks16")
             app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = uplinkPort
         }
         let adaptive = ProcessInfo.processInfo.environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] ?? ""

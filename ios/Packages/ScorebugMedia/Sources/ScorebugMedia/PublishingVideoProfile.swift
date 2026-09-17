@@ -6,14 +6,15 @@ public enum PublishingVideoProfile: String, Sendable, CaseIterable {
     case hd1080 = "1080p30"
     case sd540 = "540p30"
     case low360 = "360p30"
+    case low240 = "240p30"
     public var width: Int {
-        switch self { case .hd1080: 1920; case .sd540: 960; case .low360: 640 }
+        switch self { case .hd1080: 1920; case .sd540: 960; case .low360: 640; case .low240: 426 }
     }
     public var height: Int {
-        switch self { case .hd1080: 1080; case .sd540: 540; case .low360: 360 }
+        switch self { case .hd1080: 1080; case .sd540: 540; case .low360: 360; case .low240: 240 }
     }
     public var bitRate: Int {
-        switch self { case .hd1080: 6_000_000; case .sd540: 1_500_000; case .low360: 600_000 }
+        switch self { case .hd1080: 6_000_000; case .sd540: 1_500_000; case .low360: 600_000; case .low240: 350_000 }
     }
 }
 
