@@ -1336,7 +1336,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,288 @@
+@@ -8,6 +8,337 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1378,7 +1378,8 @@
 +    public var bandwidthProbeSnapshot: SRTBandwidthProbeSnapshot? {
 +        bandwidthProbe?.snapshot(now: { ProcessInfo.processInfo.systemUptime })
 +    }
-+    public func beginBandwidthProbe(bitRate: Int, publishingGeneration expected: UInt64) async throws -> SRTBandwidthProbeSnapshot {
++    public func beginBandwidthProbe(bitRate: Int, publishingGeneration expected: UInt64,
++                                    staged: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
 +        try Task.checkCancellation()
 +        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
 +        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
@@ -1394,7 +1395,53 @@
 +              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
 +        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
 +        let at = ProcessInfo.processInfo.systemUptime
-+        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at)
++        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
++            stage: staged ? 1 : nil, campaignStartedAt: staged ? at : nil)
++        return installBandwidthProbe(probe, at: at)
++    }
++
++    /// Replace only the current staged identity. Revocation joins any native send
++    /// under the probe lock before its wake owner is cancelled and joined. Media
++    /// keeps its single transport consumer; queued old opportunities are inert.
++    public func replaceBandwidthProbe(id: UUID, publishingGeneration expected: UInt64,
++                                      stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
++        try Task.checkCancellation()
++        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
++        guard (1...2_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
++        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
++              let connection else { throw SRTBandwidthProbeError.notPublishing }
++        guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected,
++              previous.snapshot(now: { ProcessInfo.processInfo.systemUptime }).stage == stage else {
++            throw SRTBandwidthProbeError.obsolete
++        }
++        guard stage < 32 else { throw SRTBandwidthProbeError.invalidConfiguration }
++        guard !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
++        probeStarting = true
++        let configuration = probeConfigurationRevision
++        defer { probeStarting = false }
++        previous.cancel(.replaced)
++        let oldWake = probeWakeTask
++        oldWake?.cancel()
++        await oldWake?.value
++        try Task.checkCancellation()
++        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil,
++              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
++        let retired = previous.snapshot(now: { ProcessInfo.processInfo.systemUptime })
++        guard let origin = retired.campaignStartedAt, let accepted = retired.totalAcceptedPayloadBytes else {
++            throw SRTBandwidthProbeError.invalidConfiguration
++        }
++        let statistics = await connection.samplePerformanceData()
++        try Task.checkCancellation()
++        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil,
++              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
++        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
++        let at = ProcessInfo.processInfo.systemUptime
++        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
++            stage: stage + 1, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted)
++        return installBandwidthProbe(probe, at: at)
++    }
++
++    private func installBandwidthProbe(_ probe: SRTBandwidthProbe, at: Double) -> SRTBandwidthProbeSnapshot {
 +        bandwidthProbe = probe
 +        let accounting = writer.outputAccounting
 +        probeWakeTask = Task {
@@ -1412,7 +1459,9 @@
 +    public func cancelBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws {
 +        guard publishingGeneration == expected, let probe = bandwidthProbe,
 +              probe.id == id, probe.generation == expected else { throw SRTBandwidthProbeError.obsolete }
++        probeConfigurationRevision &+= 1
 +        probe.cancel(.cancelled)
++        probeWakeTask?.cancel()
 +    }
 +    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
 +    /// Identity for an active publication, not proof that its encoder is ready.
@@ -1625,7 +1674,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +304,7 @@
+@@ -22,7 +353,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1634,7 +1683,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +314,39 @@
+@@ -32,8 +363,39 @@
      }
 
      /// Creates a new stream object.
@@ -1675,7 +1724,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +358,7 @@
+@@ -45,7 +407,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1684,11 +1733,11 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +370,28 @@
+@@ -57,8 +419,28 @@
              }
              return
          }
-+        guard readyState == .idle, closeTask == nil, finishingGeneration == nil, videoReplacement == nil else { return }
++        guard readyState == .idle, closeTask == nil, finishingGeneration == nil, videoReplacement == nil, !probeStarting else { return }
 +        generation &+= 1
 +        sourceCadenceClock = SourceCadenceClock()
 +        bandwidthProbe = nil
@@ -1714,7 +1763,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +401,64 @@
+@@ -68,26 +450,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1799,7 +1848,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +487,90 @@
+@@ -116,16 +536,90 @@
          readyState = .playing
      }
 
@@ -1895,7 +1944,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +591,33 @@
+@@ -146,23 +640,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -1931,7 +1980,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +627,34 @@
+@@ -172,16 +676,34 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -3024,7 +3073,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,193 @@
 +import Foundation
 +
 +public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
@@ -3066,6 +3115,8 @@
 +    public let reason: Reason?
 +    public internal(set) var stage: UInt32? = nil
 +    public internal(set) var authority: SRTBandwidthProbeAuthority? = nil
++    public internal(set) var campaignStartedAt: Double? = nil
++    public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
 +}
 +
 +/// One publication-owned attempt. Revocation is synchronous across actor hops.
@@ -3078,6 +3129,9 @@
 +    private let lock = NSLock()
 +    private let bitRate: Int
 +    private let startedAt: Double
++    private let stage: UInt32?
++    private let campaignStartedAt: Double?
++    private let previouslyAcceptedPayloadBytes: UInt64
 +    private let retransmitted: UInt64
 +    private let dropped: Int32
 +    private var deadline: Double
@@ -3089,16 +3143,34 @@
 +    private var lastAcceptedAt: Double?
 +    private var reason: SRTBandwidthProbeSnapshot.Reason?
 +
-+    init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double) throws {
++    init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
++         stage: UInt32? = nil, campaignStartedAt: Double? = nil,
++         previouslyAcceptedPayloadBytes: UInt64 = 0) throws {
 +        guard (1...2_000_000).contains(bitRate), at.isFinite, at >= 0 else {
 +            throw SRTBandwidthProbeError.invalidConfiguration
++        }
++        if let stage {
++            guard generation > 0, (1...32).contains(stage),
++                  let campaignStartedAt, campaignStartedAt.isFinite, campaignStartedAt >= 0,
++                  campaignStartedAt <= at, at - campaignStartedAt < 60,
++                  previouslyAcceptedPayloadBytes % 1316 == 0,
++                  previouslyAcceptedPayloadBytes <= 16 * 1024 * 1024 - 1316,
++                  stage != 1 || (campaignStartedAt == at && previouslyAcceptedPayloadBytes == 0) else {
++                throw SRTBandwidthProbeError.invalidConfiguration
++            }
++        } else {
++            guard campaignStartedAt == nil, previouslyAcceptedPayloadBytes == 0 else {
++                throw SRTBandwidthProbeError.invalidConfiguration
++            }
 +        }
 +        guard let sampled = statistics.sampledAt, sampled.isFinite, sampled >= 0,
 +              sampled <= at, at - sampled <= 0.1, statistics.msRTT.isFinite,
 +              (0...50).contains(statistics.msRTT), (0...50).contains(statistics.msSndBuf),
 +              statistics.pktSndDropTotal >= 0 else { throw SRTBandwidthProbeError.unavailableStatistics }
 +        let id = UUID()
-+        self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation)
++        self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation, stage: stage)
++        self.stage = stage; self.campaignStartedAt = campaignStartedAt
++        self.previouslyAcceptedPayloadBytes = previouslyAcceptedPayloadBytes
 +        self.bitRate = bitRate; self.generation = generation; startedAt = at
 +        deadline = at + 0.3; lastTime = at; tokenAt = at; statisticsAt = sampled
 +        retransmitted = statistics.byteRetransTotal; dropped = statistics.pktSndDropTotal
@@ -3111,9 +3183,9 @@
 +        guard reason == nil else { return false }
 +        guard at.isFinite, at >= lastTime else { return stop(.invalidClock) }
 +        lastTime = at
-+        guard at - startedAt < 60 else { return stop(.timeLimit) }
++        guard at - (campaignStartedAt ?? startedAt) < 60 else { return stop(.timeLimit) }
 +        guard at < deadline else { return stop(.leaseExpired) }
-+        guard bytes + 1316 <= 16 * 1024 * 1024 else { return stop(.byteLimit) }
++        guard previouslyAcceptedPayloadBytes + bytes + 1316 <= 16 * 1024 * 1024 else { return stop(.byteLimit) }
 +        return true
 +    }
 +    private func eligible(_ at: Double) -> Bool {
@@ -3159,7 +3231,15 @@
 +                return stop(.transportPressure)
 +            }
 +            do {
-+                guard try send(SRTProbeMessage.encode(id: id, generation: generation, sequence: bytes / 1316, bitRate: bitRate)) else { return stop(.transportBackpressure) }
++                let message: Data
++                if let stage {
++                    message = try SRTProbeMessage.encodeStage(id: id, generation: generation,
++                        stage: stage, sequence: bytes / 1316, bitRate: bitRate)
++                } else {
++                    message = SRTProbeMessage.encode(id: id, generation: generation,
++                        sequence: bytes / 1316, bitRate: bitRate)
++                }
++                guard try send(message) else { return stop(.transportBackpressure) }
 +            } catch {
 +                if let restoration = error as? SRTNonblockingSend.RestorationFailure,
 +                   let completed = restoration.acceptedAt {
@@ -3182,7 +3262,8 @@
 +            _ = check(now())
 +            return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
 +                leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
-+                authority: authority)
++                stage: stage, authority: authority, campaignStartedAt: campaignStartedAt,
++                totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes)
 +        }
 +    }
 +}
@@ -3304,14 +3385,13 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTProbeMessage.swift
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,45 @@
 +import Foundation
 +
 +/// Versioned payload in valid null TS packets. Observe before demultiplexing;
 +/// this identifier is attribution, not authentication or receiver capacity.
 +enum SRTProbeMessage {
-+    /// Wire foundation only: the live probe still uses v1 until stage ownership,
-+    /// cumulative sender budgets and authenticated receiver matching are wired.
++    /// Explicit staged probes use this version; the default legacy path retains v1.
 +    static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
 +                            sequence: UInt64, bitRate: Int) throws -> Data {
 +        guard id != UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)), generation > 0,

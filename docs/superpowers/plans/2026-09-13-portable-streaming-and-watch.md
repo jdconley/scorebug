@@ -1850,3 +1850,21 @@ and 292 native model tests, workspace typechecking, plus simulator and unsigned 
 emit v1: joined repeated native owners, cumulative sender budgets and actual staged
 media qualification follow. Measured candidate cost, automatic upgrades/recovery,
 physical phone/Watch routes and remote deployment remain open.
+
+
+[Native staged probes](2026-09-17-native-staged-probes.md) now provide opt-in SDK
+start/replacement on one publication. Replacement retires the old native permit,
+joins its wake owner, carries every accepted message into the cumulative budget,
+and checks identity/configuration again after each suspension. Failed admission
+can be retried; old UUID/stage requests cannot replace a newer owner. V1 remains
+the default. Qualification campaigns retain 32-stage, 60-second and 16-MiB limits
+across replacement; these are not the final full-game recovery policy.
+
+Verification passes 397 Core, 224 SDK, 88 streaming and 292 native model tests, both
+Apple builds (including Watch arm64_32), patch provenance and spec/quality reviews.
+Mutations confirm the tests catch lost cumulative bytes and premature republishing.
+Frozen evidence: `artifacts/qa/native-staged-probe-final-verification.json`. Next
+wire staged APIs through publisher adapters and the DEBUG scheduler, then qualify
+actual staged SRT with independent local recording. Measured candidate cost,
+automatic upgrades/recovery, long-session campaigns, physical phone/Watch and
+remote workers remain open; production adaptation is still disabled.

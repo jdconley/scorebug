@@ -3,8 +3,7 @@ import Foundation
 /// Versioned payload in valid null TS packets. Observe before demultiplexing;
 /// this identifier is attribution, not authentication or receiver capacity.
 enum SRTProbeMessage {
-    /// Wire foundation only: the live probe still uses v1 until stage ownership,
-    /// cumulative sender budgets and authenticated receiver matching are wired.
+    /// Explicit staged probes use this version; the default legacy path retains v1.
     static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
                             sequence: UInt64, bitRate: Int) throws -> Data {
         guard id != UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)), generation > 0,

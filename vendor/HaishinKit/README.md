@@ -62,10 +62,8 @@ The internal `SRTProbeMessage.encodeStage` helper adds the `SBUGPRB2` wire
 foundation for repeated bandwidth measurements. Every null TS packet includes a
 1...32 stage ordinal after its existing UUID, generation, message sequence, rate
 and packet ordinal. Input validation precedes integer conversion. The legacy
-encoder and the live probe still emit `SBUGPRB1`; this helper does not enable new
-traffic or repeated native owners. Receiver matching must include stage plus UUID,
-and cumulative sender budgets, joined replacement and authenticated stage status
-remain required before use. See the
+encoder and default probe entry point still emit `SBUGPRB1`. Explicit staged
+native probes now use v2; receiver matching includes stage plus UUID. See the
 [staged wire plan](../../docs/superpowers/plans/2026-09-17-staged-probe-wire.md).
 
 The local deployment floor is iOS 17/macOS 13. The inherited libsrt binary still
@@ -179,7 +177,7 @@ these are distinct from encoder completion and post-pacing observation times.
 This experimental mode is not evidence of sustainable bitrate or receiver delivery.
 
 `SRTStream` accepts immutable `allowsBandwidthProbes: false` by default. When
-explicitly enabled, one generation/UUID-scoped attempt may submit seven-packet
+explicitly enabled, a generation/UUID-scoped attempt may submit seven-packet
 MPEG-TS null messages between media writes. Queue admission and the optional native
 write share synchronized accounting, so media queued during an actor hop wins.
 The socket temporarily uses nonblocking sends and restores its original mode.
@@ -206,7 +204,7 @@ subsequent passing pressure run. Physical recording reliability remains open.
 See [opportunity scheduling](../../docs/superpowers/plans/2026-09-16-probe-opportunity-scheduling.md).
 See [native probe validation](../../docs/superpowers/plans/2026-09-16-native-padding-probe.md).
 
-Each optional message now carries `SBUGPRB1`, its probe UUID, publishing generation,
+Each legacy optional message carries `SBUGPRB1`, its probe UUID, publishing generation,
 accepted-message sequence, requested rate and packet ordinal inside each null
 packet payload. Encoding occurs inside the existing synchronized offer; failed
 sends do not advance the accepted sequence. This marker is attribution, not a
@@ -220,5 +218,29 @@ Every terminal native probe path revokes it synchronously. `permits` checks exac
 UUID, generation and optional stage; it does not extend a lease or prove freshness,
 delivery or capacity. The streaming adapter retains this same authority, and app
 observations validate it after async reads and during local health polling. A copy
-of old scalar values cannot keep a cancelled owner current. Live probes still have
-no stage and emit v1 until joined replacement and cumulative sender budgets ship.
+of old scalar values cannot keep a cancelled owner current. The default entry point
+has no stage and emits v1.
+
+`beginBandwidthProbe(bitRate:publishingGeneration:staged: true)` explicitly starts a
+v2 qualification campaign at stage 1. `replaceBandwidthProbe(id:publishingGeneration:stage:bitRate:)`
+requires the exact current staged identity and chooses the next ordinal. It revokes
+the old permit under the native-send lock, then cancels and joins its wake owner.
+After joining and sampling fresh statistics it checks publication, cancellation and
+configuration again. Delayed old opportunities cannot send; a failed replacement
+leaves its current identity retired and available for an explicit retry. Old
+identities cannot replace a newer successful stage. Close, finish and configuration
+changes revoke the owner, and new publication waits for a pending probe admission
+to return.
+
+Every stage retains the first campaign start and prior accepted payload. The
+campaign stops admitting after 32 stages, 16 MiB cumulative payload or 60 seconds
+from the first stage; replacing or renewing never grants a fresh campaign budget.
+Per-stage sequences restart at zero. Snapshots expose optional `campaignStartedAt`
+and `totalAcceptedPayloadBytes` diagnostics, including accepted writes whose socket
+mode restoration failed. Legacy snapshots omit these fields.
+
+This opt-in SDK path has native lifecycle/wire/budget tests. Publisher adapters,
+the DEBUG repeated scheduler, real staged relay/media recording, measured candidate
+cost and automatic recovery still require integration and qualification. These
+finite campaign limits are not the final long-session recovery policy. See the
+[native staged probe plan](../../docs/superpowers/plans/2026-09-17-native-staged-probes.md).

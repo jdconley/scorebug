@@ -39,6 +39,8 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public let reason: Reason?
     public internal(set) var stage: UInt32? = nil
     public internal(set) var authority: SRTBandwidthProbeAuthority? = nil
+    public internal(set) var campaignStartedAt: Double? = nil
+    public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
 }
 
 /// One publication-owned attempt. Revocation is synchronous across actor hops.
@@ -51,6 +53,9 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     private let lock = NSLock()
     private let bitRate: Int
     private let startedAt: Double
+    private let stage: UInt32?
+    private let campaignStartedAt: Double?
+    private let previouslyAcceptedPayloadBytes: UInt64
     private let retransmitted: UInt64
     private let dropped: Int32
     private var deadline: Double
@@ -62,16 +67,34 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     private var lastAcceptedAt: Double?
     private var reason: SRTBandwidthProbeSnapshot.Reason?
 
-    init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double) throws {
+    init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
+         stage: UInt32? = nil, campaignStartedAt: Double? = nil,
+         previouslyAcceptedPayloadBytes: UInt64 = 0) throws {
         guard (1...2_000_000).contains(bitRate), at.isFinite, at >= 0 else {
             throw SRTBandwidthProbeError.invalidConfiguration
+        }
+        if let stage {
+            guard generation > 0, (1...32).contains(stage),
+                  let campaignStartedAt, campaignStartedAt.isFinite, campaignStartedAt >= 0,
+                  campaignStartedAt <= at, at - campaignStartedAt < 60,
+                  previouslyAcceptedPayloadBytes % 1316 == 0,
+                  previouslyAcceptedPayloadBytes <= 16 * 1024 * 1024 - 1316,
+                  stage != 1 || (campaignStartedAt == at && previouslyAcceptedPayloadBytes == 0) else {
+                throw SRTBandwidthProbeError.invalidConfiguration
+            }
+        } else {
+            guard campaignStartedAt == nil, previouslyAcceptedPayloadBytes == 0 else {
+                throw SRTBandwidthProbeError.invalidConfiguration
+            }
         }
         guard let sampled = statistics.sampledAt, sampled.isFinite, sampled >= 0,
               sampled <= at, at - sampled <= 0.1, statistics.msRTT.isFinite,
               (0...50).contains(statistics.msRTT), (0...50).contains(statistics.msSndBuf),
               statistics.pktSndDropTotal >= 0 else { throw SRTBandwidthProbeError.unavailableStatistics }
         let id = UUID()
-        self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation)
+        self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation, stage: stage)
+        self.stage = stage; self.campaignStartedAt = campaignStartedAt
+        self.previouslyAcceptedPayloadBytes = previouslyAcceptedPayloadBytes
         self.bitRate = bitRate; self.generation = generation; startedAt = at
         deadline = at + 0.3; lastTime = at; tokenAt = at; statisticsAt = sampled
         retransmitted = statistics.byteRetransTotal; dropped = statistics.pktSndDropTotal
@@ -84,9 +107,9 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         guard reason == nil else { return false }
         guard at.isFinite, at >= lastTime else { return stop(.invalidClock) }
         lastTime = at
-        guard at - startedAt < 60 else { return stop(.timeLimit) }
+        guard at - (campaignStartedAt ?? startedAt) < 60 else { return stop(.timeLimit) }
         guard at < deadline else { return stop(.leaseExpired) }
-        guard bytes + 1316 <= 16 * 1024 * 1024 else { return stop(.byteLimit) }
+        guard previouslyAcceptedPayloadBytes + bytes + 1316 <= 16 * 1024 * 1024 else { return stop(.byteLimit) }
         return true
     }
     private func eligible(_ at: Double) -> Bool {
@@ -132,7 +155,15 @@ final class SRTBandwidthProbe: @unchecked Sendable {
                 return stop(.transportPressure)
             }
             do {
-                guard try send(SRTProbeMessage.encode(id: id, generation: generation, sequence: bytes / 1316, bitRate: bitRate)) else { return stop(.transportBackpressure) }
+                let message: Data
+                if let stage {
+                    message = try SRTProbeMessage.encodeStage(id: id, generation: generation,
+                        stage: stage, sequence: bytes / 1316, bitRate: bitRate)
+                } else {
+                    message = SRTProbeMessage.encode(id: id, generation: generation,
+                        sequence: bytes / 1316, bitRate: bitRate)
+                }
+                guard try send(message) else { return stop(.transportBackpressure) }
             } catch {
                 if let restoration = error as? SRTNonblockingSend.RestorationFailure,
                    let completed = restoration.acceptedAt {
@@ -155,7 +186,8 @@ final class SRTBandwidthProbe: @unchecked Sendable {
             _ = check(now())
             return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
                 leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
-                authority: authority)
+                stage: stage, authority: authority, campaignStartedAt: campaignStartedAt,
+                totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes)
         }
     }
 }

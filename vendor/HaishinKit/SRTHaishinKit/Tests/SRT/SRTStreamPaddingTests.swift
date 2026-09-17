@@ -349,3 +349,306 @@ private final class StreamProbeWakeGate: @unchecked Sendable {
         lock.withLock { released = true; continuation?.resume(); continuation = nil }
     }
 }
+
+extension SRTStreamPaddingTests {
+    @Test func stagedReplacementPreservesAccountingAndRejectsRetiredIdentity() async throws {
+        let output = StagedPaddingBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true)
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        let authority = try #require(first.authority)
+        #expect(first.stage == 1 && first.campaignStartedAt == first.startedAt)
+        var end = ContinuousClock.now + .seconds(1)
+        while output.count(stage: 1) < 2 && ContinuousClock.now < end { await Task.yield() }
+        try #require(output.count(stage: 1) >= 2)
+        let second = try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        #expect(second.stage == 2 && second.id != first.id)
+        #expect(second.campaignStartedAt == first.campaignStartedAt)
+        #expect(second.acceptedPayloadBytes == 0)
+        #expect(second.totalAcceptedPayloadBytes == UInt64(output.count(stage: 1) * 1316))
+        #expect(!authority.permits(id: first.id, generation: generation, stage: 1))
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.replaceBandwidthProbe(id: second.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        end = ContinuousClock.now + .seconds(1)
+        while output.count(stage: 2) < 2 && ContinuousClock.now < end { await Task.yield() }
+        try #require(output.count(stage: 2) >= 2)
+        try await stream.cancelBandwidthProbe(id: second.id, publishingGeneration: generation)
+        let final = try #require(await stream.bandwidthProbeSnapshot)
+        #expect(final.totalAcceptedPayloadBytes == UInt64(output.total * 1316))
+        #expect(final.acceptedPayloadBytes == UInt64(output.count(stage: 2) * 1316))
+        #expect(output.stagesAreOrderedAndSequencesRestart)
+        await stream.finish(); await connection.close()
+        #expect(await stream.publishingError == nil)
+    }
+
+    @Test func replacementRevokesBeforeJoiningWakeAndCannotOverlapAnotherAdmission() async throws {
+        let gate = StreamProbeWakeGate(); defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { probe, _ in
+                if probe.snapshot(now: { ProcessInfo.processInfo.systemUptime }).stage == 1 { await gate.wait() }
+            })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        let replacement = Task { try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000) }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.bandwidthProbeSnapshot?.reason != .replaced && ContinuousClock.now < end { await Task.yield() }
+        #expect(await stream.bandwidthProbeSnapshot?.reason == .replaced)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        #expect(await stream.bandwidthProbeSnapshot?.id == first.id)
+        await #expect(throws: SRTBandwidthProbeError.alreadyStarted) {
+            try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        gate.release()
+        let second = try await replacement.value
+        #expect(second.stage == 2 && second.reason == nil)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test(arguments: ["cancel", "caller", "configuration", "finish", "close"])
+    func interruptedReplacementCannotAdmitAfterWakeJoin(action: String) async throws {
+        let gate = StreamProbeWakeGate(); defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in await gate.wait() })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        let replacing = Task { try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000) }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.bandwidthProbeSnapshot?.reason != .replaced && ContinuousClock.now < end { await Task.yield() }
+        try #require(await stream.bandwidthProbeSnapshot?.reason == .replaced)
+        var stopping: Task<Void, Never>?
+        switch action {
+        case "cancel": try await stream.cancelBandwidthProbe(id: first.id, publishingGeneration: generation)
+        case "caller": replacing.cancel()
+        case "configuration": try await stream.setVideoSettings(.init(bitRate: 1_000_000))
+        case "finish": stopping = Task { await stream.finish() }
+        default: stopping = Task { await stream.close() }
+        }
+        if stopping != nil {
+            end = ContinuousClock.now + .seconds(1)
+            while await stream.publishingGeneration != nil && ContinuousClock.now < end { await Task.yield() }
+            #expect(await stream.publishingGeneration == nil)
+        }
+        gate.release()
+        let result = await replacing.result
+        switch result {
+        case .success: Issue.record("Interrupted replacement admitted a new stage")
+        case .failure(let error):
+            if action == "caller" { #expect(error is CancellationError) }
+            else { #expect(error as? SRTBandwidthProbeError == .obsolete) }
+        }
+        await stopping?.value
+        #expect(await stream.bandwidthProbeSnapshot?.id == first.id)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        await stream.close(); await connection.close()
+    }
+
+    @Test func configurationChangeDuringReplacementStatisticsRejectsNewStage() async throws {
+        let gate = PaddingStatisticsGate(); defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: gate.read))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        gate.arm()
+        let replacing = Task { try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000) }
+        let end = ContinuousClock.now + .seconds(2)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        try await stream.setAudioSettings(.init(bitRate: 64_000))
+        gate.release()
+        await #expect(throws: SRTBandwidthProbeError.obsolete) { try await replacing.value }
+        #expect(await stream.bandwidthProbeSnapshot?.id == first.id)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func legacyProbeCannotEnterStagedCampaignAndInvalidRequestDoesNotRetireIt() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true)
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let legacy = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.replaceBandwidthProbe(id: legacy.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        #expect(legacy.authority?.permits(id: legacy.id, generation: generation, stage: nil) == true)
+        await stream.close(); await connection.close()
+    }
+
+    @Test(arguments: [false, true]) func closedStreamCannotRepublishUntilPendingProbeAdmissionReturns(replacement: Bool) async throws {
+        let gate = PaddingStatisticsGate(), output = StreamPaddingBytes(); defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: gate.read))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let mediaDeadline = ContinuousClock.now + .seconds(1)
+        while output.videoStarts < 1 && ContinuousClock.now < mediaDeadline { await Task.yield() }
+        try #require(output.videoStarts == 1)
+        let generation = try #require(await stream.publishingGeneration)
+        let first: SRTBandwidthProbeSnapshot?
+        if replacement { first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true) }
+        else { first = nil }
+        gate.arm()
+        let pending = Task {
+            if let first {
+                return try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+            }
+            return try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        }
+        let end = ContinuousClock.now + .seconds(2)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        await stream.close()
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration == nil, "Pending old probe admission must prevent republish")
+        gate.release()
+        await #expect(throws: SRTBandwidthProbeError.obsolete) { try await pending.value }
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration != nil)
+        #expect(await stream.bandwidthProbeSnapshot == nil)
+        await stream.close(); await connection.close()
+    }
+
+    @Test func failedReplacementCanRetryCurrentRetiredStageWithoutResettingCampaign() async throws {
+        let statistics = StagedProbeStatistics()
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: statistics.read))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        statistics.failNext()
+        await #expect(throws: SRTBandwidthProbeError.unavailableStatistics) {
+            try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        #expect(await stream.bandwidthProbeSnapshot?.id == first.id)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        let next = try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        #expect(next.stage == 2 && next.id != first.id)
+        #expect(next.campaignStartedAt == first.campaignStartedAt)
+        #expect(next.totalAcceptedPayloadBytes == first.totalAcceptedPayloadBytes)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func replacementJoinsNativeAcceptanceBeforeCopyingCumulativeBytes() async throws {
+        let gate = PaddingMediaGate(), progress = StreamProbeWakeGate(), output = StagedPaddingBytes()
+        defer { gate.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { data in
+            if data.count == 1316 && data[4..<12] == Data("SBUGPRB2".utf8) { gate.enter() }
+            output.append(data); return Int32(data.count)
+        }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true)
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        gate.arm()
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !gate.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(gate.entered)
+        let replacing = Task {
+            progress.didClose()
+            let next = try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+            progress.didClose()
+            return next
+        }
+        end = ContinuousClock.now + .seconds(1)
+        while progress.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(progress.closes == 1)
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(progress.closes == 1, "Replacement must join an in-flight native send")
+        gate.release()
+        let second = try await replacing.value
+        #expect(second.stage == 2 && second.acceptedPayloadBytes == 0)
+        #expect(second.totalAcceptedPayloadBytes == 1316)
+        #expect(output.count(stage: 1) == 1)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func stageLimitDoesNotResetWithinPublication() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(), allowsBandwidthProbes: true,
+            probeWakeRunner: { _, _ in })
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        let generation = try #require(await stream.publishingGeneration)
+        var current = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        for stage in UInt32(1)..<32 {
+            let next = try await stream.replaceBandwidthProbe(id: current.id, publishingGeneration: generation, stage: stage, bitRate: 500_000)
+            #expect(next.stage == stage + 1)
+            #expect(current.authority?.permits(id: current.id, generation: generation, stage: stage) == false)
+            current = next
+        }
+        await #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+            try await stream.replaceBandwidthProbe(id: current.id, publishingGeneration: generation, stage: 32, bitRate: 500_000)
+        }
+        await #expect(throws: SRTBandwidthProbeError.alreadyStarted) {
+            try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        }
+        #expect(await stream.bandwidthProbeSnapshot?.stage == 32)
+        await stream.finish(); await connection.close()
+    }
+}
+
+private final class StagedPaddingBytes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [(stage: UInt32, sequence: UInt64)] = []
+    func append(_ data: Data) {
+        guard data.count == 1316, data[4..<12] == Data("SBUGPRB2".utf8) else { return }
+        let stage = data[49..<53].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        let sequence = data[36..<44].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        lock.withLock { messages.append((stage, sequence)) }
+    }
+    func count(stage: UInt32) -> Int { lock.withLock { messages.filter { $0.stage == stage }.count } }
+    var total: Int { lock.withLock { messages.count } }
+    var stagesAreOrderedAndSequencesRestart: Bool { lock.withLock {
+        var stage: UInt32 = 0, next: UInt64 = 0
+        for message in messages {
+            if message.stage != stage {
+                guard message.stage > stage else { return false }
+                stage = message.stage; next = 0
+            }
+            guard message.sequence == next else { return false }
+            next += 1
+        }
+        return true
+    } }
+}
+
+private final class StagedProbeStatistics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextFails = false
+    func failNext() { lock.withLock { nextFails = true } }
+    func read(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+        let invalid = lock.withLock {
+            if clear == 0 && nextFails { nextFails = false; return true }
+            return false
+        }
+        mon.msRTT = invalid ? .nan : 2
+        return 0
+    }
+}
