@@ -105,3 +105,93 @@ test('failed evidence save still resumes the owned decoder', async () => {
     [12, 'SIGCONT'],
   ]);
 });
+
+test('paused sample is bracketed while the owned decoder is stopped', async () => {
+  const events = [],
+    value = {
+      context: { workerId: 'worker' },
+      decoderCadence: { progress: { lastFreshPTS: 90000 } },
+    };
+  const result = await runOwnedDecoderStall({
+    worker: { pid: 10, exitCode: null, signalCode: null },
+    inventory: async () => tree,
+    signalProcess: (_, sig) => events.push(sig),
+    wait: async () => {},
+    save: async () => {},
+    observePaused: async () => {
+      events.push('sample');
+      return value;
+    },
+  });
+  assert.deepEqual(events, ['SIGSTOP', 'sample', 'SIGCONT']);
+  assert.deepEqual(result.pausedSample.value, value);
+  assert(result.pausedSample.requestStartedAt >= result.pauseSentAt);
+  assert(result.pausedSample.receivedAt >= result.pausedSample.requestStartedAt);
+  assert(result.pausedSample.receivedAt <= result.resumeSentAt);
+});
+
+test('failed paused sample still resumes and joins the owned decoder', async () => {
+  const events = [],
+    saved = [];
+  await assert.rejects(
+    runOwnedDecoderStall({
+      worker: { pid: 10, exitCode: null, signalCode: null },
+      inventory: async () => tree,
+      signalProcess: (_, sig) => events.push(sig),
+      wait: async () => {},
+      save: async (value) => saved.push(structuredClone(value)),
+      observePaused: async () => {
+        throw new Error('sample timed out');
+      },
+    }),
+    /sample timed out/,
+  );
+  assert.deepEqual(events, ['SIGSTOP', 'SIGCONT']);
+  assert.equal(saved.at(-1).closed, true);
+  assert.equal(saved.at(-1).failed, true);
+});
+
+test('before-pause sample is bracketed before the signal and independent of paused sample', async () => {
+  const events = [];
+  const result = await runOwnedDecoderStall({
+    worker: { pid: 10, exitCode: null, signalCode: null },
+    inventory: async () => tree,
+    signalProcess: (_, sig) => events.push(sig),
+    wait: async () => {},
+    save: async () => {},
+    observeBeforePause: async () => {
+      events.push('before');
+      return { stage: 'before' };
+    },
+    observePaused: async () => {
+      events.push('paused');
+      return { stage: 'paused' };
+    },
+  });
+  assert.deepEqual(events, ['before', 'SIGSTOP', 'paused', 'SIGCONT']);
+  assert(result.beforePauseSample.requestStartedAt <= result.beforePauseSample.receivedAt);
+  assert(result.beforePauseSample.receivedAt <= result.pauseSentAt);
+  assert.equal(result.beforePauseSample.value.stage, 'before');
+  assert.equal(result.pausedSample.value.stage, 'paused');
+});
+
+test('failed pre-pause sample sends no signal and marks joined failure', async () => {
+  const events = [],
+    saved = [];
+  await assert.rejects(
+    runOwnedDecoderStall({
+      worker: { pid: 10, exitCode: null, signalCode: null },
+      inventory: async () => tree,
+      signalProcess: (_, sig) => events.push(sig),
+      wait: async () => {},
+      save: async (value) => saved.push(structuredClone(value)),
+      observeBeforePause: async () => {
+        throw new Error('before sample timed out');
+      },
+    }),
+    /before sample timed out/,
+  );
+  assert.deepEqual(events, []);
+  assert.equal(saved.at(-1).closed, true);
+  assert.equal(saved.at(-1).failed, true);
+});

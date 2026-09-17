@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { qualifyNativeDeliveryDeadlines } from './native-delivery-deadlines.mjs';
+import { qualifyNativeProfileTransitions } from './native-profile-transitions.mjs';
+import { fixtureFrameID } from './video-observation-qualification.mjs';
 
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const same = (a, b, message) => assert.deepEqual(a, b, message);
@@ -193,6 +195,90 @@ function associatedPause(row, reports, sampleAge) {
   return null;
 }
 
+function qualifiedFailure(event, audit, reports, ages) {
+  const d = event.deliveryFailure;
+  assert(
+    d && d.sequence !== undefined && event.window === undefined && event.decoderStall === undefined,
+    'Failure has fictitious window credit',
+  );
+  assert(
+    finite(d.classifiedAt) && finite(event.evaluatedAt) && event.evaluatedAt >= d.classifiedAt,
+    'Decision predates classification',
+  );
+  const matches = audit.rows.filter(
+    (r) =>
+      r.result !== null &&
+      r.evaluatedAt === d.classifiedAt &&
+      r.deliveryReceiptID === d.deliveryReceiptID &&
+      isDeepStrictEqual(r.context, d.context) &&
+      r.timeline.scopeID === d.scopeID &&
+      r.appliedRevision === d.revision &&
+      r.start === d.start &&
+      r.end === d.end,
+  );
+  assert.equal(matches.length, 1, 'Decision lacks exact independently qualified deadline row');
+  const row = matches[0];
+  // Admission authority is retired by any intervening unavailable or replaced
+  // owner/scope, even if a later report restores the original identity.
+  for (const intervening of reports.rows.filter(
+    (r) => r.evaluatedUptime > d.classifiedAt && r.evaluatedUptime <= event.evaluatedAt,
+  )) {
+    assert(
+      intervening.deliveryReceiptID !== null &&
+        isDeepStrictEqual(context(intervening), row.context) &&
+        intervening.response.status.observation?.decoderDelivery?.scopeID === d.scopeID,
+      'Deadline classification authority retired before decision',
+    );
+  }
+  assert(
+    uuid(d.publishingAttemptID) && d.publishingAttemptID.toLowerCase() === row.attemptID,
+    'Wrong signal publication attempt',
+  );
+  same(
+    normalizeReceipt(event.receipt),
+    qualityReceipt(row),
+    'Quality receipt differs from native deadline receipt',
+  );
+  assert(
+    row.profileID === event.profileID &&
+      row.videoBitrate === event.receipt.bitRate &&
+      d.revision === event.revision &&
+      row.acknowledgedAt === event.acknowledgedAt &&
+      row.start >= event.acknowledgedAt,
+    'Failure crosses applied truth',
+  );
+  if (row.classifiedAt !== undefined)
+    assert.equal(row.classifiedAt, d.classifiedAt, 'Audit classification mismatch');
+  for (const key of ['expectedFrames', 'onTimeFrames', 'lateFrames', 'missingFrames'])
+    same(d[key], row.result[key], `Failure ${key} mismatch`);
+  assert.equal(row.result.uncertainFrames, 0, 'Uncertain deadline cannot trigger');
+  const proof = ages.get(row.deliveryReceiptID),
+    ageAtClassification = Math.max(row.sampleAgeSeconds, proof.age + row.evaluatedAt - proof.at);
+  assert(
+    finite(d.observedAtLowerBound) &&
+      Math.abs(d.observedAtLowerBound - (row.evaluatedAt - row.sampleAgeSeconds)) <= 1e-9,
+    'Failure observation bound mismatch',
+  );
+  if (row.observedAtLowerBound !== undefined)
+    assert.equal(d.observedAtLowerBound, row.observedAtLowerBound, 'Audit observation mismatch');
+  assert(
+    d.end <= d.observedAtLowerBound &&
+      event.evaluatedAt - d.end <= 2 &&
+      event.evaluatedAt - d.observedAtLowerBound <= 0.25 &&
+      ageAtClassification + event.evaluatedAt - d.classifiedAt <= 0.25 &&
+      event.evaluatedAt < proof.expiresAt,
+    'Stale or expired failure at decision',
+  );
+  const duration = d.end - d.start;
+  assert(
+    duration === 1
+      ? d.onTimeFrames < 24
+      : (d.lateFrames + d.missingFrames) / d.expectedFrames > 0.05,
+    'Deadline threshold is not strictly crossed',
+  );
+  return { row, ageAtClassification, duration };
+}
+
 /** Qualifies only the isolated, fixed-minimum deadline driver. Scalar synthetic
  * fixtures test the verifier; only actual exported artifacts qualify a native run.
  * Resumed decoder progress proves fixture cleanup, never automatic recovery. */
@@ -219,7 +305,7 @@ export function qualifyNativeDeadlineDecisions({ quality, audit, reports, fault,
   assert.equal(boot[0].profileID, '240p30');
   assert.equal(boot[0].receipt?.bitRate, 350000);
   assert(finite(boot[0].acknowledgedAt), 'Invalid acknowledgment');
-  const receipt = normalizeReceipt(boot[0].receipt);
+  normalizeReceipt(boot[0].receipt);
   assert(
     events.at(-1).kind === 'stopped' && events.at(-1).closed === true,
     'Missing final closed stop',
@@ -280,84 +366,7 @@ export function qualifyNativeDeadlineDecisions({ quality, audit, reports, fault,
       continue;
     }
     const d = event.deliveryFailure;
-    assert(
-      d &&
-        scalarSequence !== undefined &&
-        event.window === undefined &&
-        event.decoderStall === undefined,
-      'Failure has fictitious window credit',
-    );
-    assert(
-      finite(d.classifiedAt) && finite(event.evaluatedAt) && event.evaluatedAt >= d.classifiedAt,
-      'Decision predates classification',
-    );
-    const matches = audit.rows.filter(
-      (r) =>
-        r.result !== null &&
-        r.evaluatedAt === d.classifiedAt &&
-        r.deliveryReceiptID === d.deliveryReceiptID &&
-        isDeepStrictEqual(r.context, d.context) &&
-        r.timeline.scopeID === d.scopeID &&
-        r.appliedRevision === d.revision &&
-        r.start === d.start &&
-        r.end === d.end,
-    );
-    assert.equal(matches.length, 1, 'Decision lacks exact independently qualified deadline row');
-    const row = matches[0];
-    // Admission authority is retired by any intervening unavailable or replaced
-    // owner/scope, even if a later report restores the original identity.
-    for (const intervening of reports.rows.filter(
-      (r) => r.evaluatedUptime > d.classifiedAt && r.evaluatedUptime <= event.evaluatedAt,
-    )) {
-      assert(
-        intervening.deliveryReceiptID !== null &&
-          isDeepStrictEqual(context(intervening), row.context) &&
-          intervening.response.status.observation?.decoderDelivery?.scopeID === d.scopeID,
-        'Deadline classification authority retired before decision',
-      );
-    }
-    assert(
-      uuid(d.publishingAttemptID) && d.publishingAttemptID.toLowerCase() === row.attemptID,
-      'Wrong signal publication attempt',
-    );
-    same(receipt, qualityReceipt(row), 'Quality receipt differs from native deadline receipt');
-    assert(
-      row.profileID === '240p30' &&
-        row.videoBitrate === 350000 &&
-        d.revision === '0' &&
-        row.acknowledgedAt === event.acknowledgedAt &&
-        row.start >= event.acknowledgedAt,
-      'Failure crosses applied truth',
-    );
-    if (row.classifiedAt !== undefined)
-      assert.equal(row.classifiedAt, d.classifiedAt, 'Audit classification mismatch');
-    for (const key of ['expectedFrames', 'onTimeFrames', 'lateFrames', 'missingFrames'])
-      same(d[key], row.result[key], `Failure ${key} mismatch`);
-    assert.equal(row.result.uncertainFrames, 0, 'Uncertain deadline cannot trigger');
-    const proof = ages.get(row.deliveryReceiptID),
-      ageAtClassification = Math.max(row.sampleAgeSeconds, proof.age + row.evaluatedAt - proof.at);
-    assert(
-      finite(d.observedAtLowerBound) &&
-        Math.abs(d.observedAtLowerBound - (row.evaluatedAt - row.sampleAgeSeconds)) <= 1e-9,
-      'Failure observation bound mismatch',
-    );
-    if (row.observedAtLowerBound !== undefined)
-      assert.equal(d.observedAtLowerBound, row.observedAtLowerBound, 'Audit observation mismatch');
-    assert(
-      d.end <= d.observedAtLowerBound &&
-        event.evaluatedAt - d.end <= 2 &&
-        event.evaluatedAt - d.observedAtLowerBound <= 0.25 &&
-        ageAtClassification + event.evaluatedAt - d.classifiedAt <= 0.25 &&
-        event.evaluatedAt < proof.expiresAt,
-      'Stale or expired failure at decision',
-    );
-    const duration = d.end - d.start;
-    assert(
-      duration === 1
-        ? d.onTimeFrames < 24
-        : (d.lateFrames + d.missingFrames) / d.expectedFrames > 0.05,
-      'Deadline threshold is not strictly crossed',
-    );
+    const { row, ageAtClassification, duration } = qualifiedFailure(event, audit, reports, ages);
     const reasons = [duration === 1 ? 'freshFrameFloor' : 'sourceLoss'];
     if (d.onTimeFrames === 0) reasons.push('stalled');
     reasons.push('minimumProfileInsufficient');
@@ -385,5 +394,371 @@ export function qualifyNativeDeadlineDecisions({ quality, audit, reports, fault,
     automaticAdaptationQualified: false,
     recoveryQualified: false,
     deadlineEvidence,
+  };
+}
+
+// This bridge compares each clock only to its own domain: Node request bounds
+// establish that the worker sample was fetched under SIGSTOP, while the raw
+// worker scope/PTS anchor binds it to the phone's independently fresh report.
+function qualifyOwnedPauseSample(fault, owner, association) {
+  function workerSample(sample) {
+    assert(
+      sample &&
+        finite(sample.requestStartedAt) &&
+        finite(sample.receivedAt) &&
+        sample.receivedAt >= sample.requestStartedAt,
+      'Invalid owned worker sample clock',
+    );
+    const elapsed = sample.receivedAt - sample.requestStartedAt,
+      value = sample.value;
+    assert(elapsed <= 250, 'Slow owned pause worker sample');
+    same(value?.context, owner, 'Owned pause worker context differs from resetting deadline');
+    assert(
+      Number.isSafeInteger(value.decoderCadenceAgeUpperBoundMs) &&
+        value.decoderCadenceAgeUpperBoundMs >= 0 &&
+        value.decoderCadenceAgeUpperBoundMs + elapsed <= 250,
+      'Stale owned pause worker sample',
+    );
+    const ttl = Math.max(
+      0,
+      Math.min(5000, Date.parse(value.expiresAt) - Date.parse(value.serverTime)),
+    );
+    assert(Number.isFinite(ttl) && elapsed < ttl, 'Expired owned pause worker sample');
+    const c = value.decoderCadence;
+    assert(
+      c?.formatVersion === 1 &&
+        uuid(c.scopeID) &&
+        c.invalidReason === null &&
+        c.ended === false &&
+        Number.isSafeInteger(c.progress?.lastFreshPTS) &&
+        c.progress.lastFreshPTS >= 0 &&
+        finite(c.progress.ageMs),
+      'Invalid owned pause cadence',
+    );
+    return { c, age: value.decoderCadenceAgeUpperBoundMs + elapsed, elapsed, ttl };
+  }
+  const before = fault.beforePauseSample,
+    sample = fault.pausedSample;
+  const pre = workerSample(before),
+    paused = workerSample(sample),
+    c = paused.c;
+  assert(
+    before.receivedAt <= fault.pauseSentAt &&
+      pre.c.progress.stalled === false &&
+      pre.c.progress.ageMs + pre.age + fault.pauseSentAt - before.receivedAt <= 250,
+    'Decoder progress not fresh immediately before owned pause',
+  );
+  assert(
+    pre.elapsed + fault.pauseSentAt - before.receivedAt < pre.ttl,
+    'Pre-pause worker status expired at pause',
+  );
+  assert(
+    sample.requestStartedAt >= fault.pauseSentAt && sample.receivedAt <= fault.resumeSentAt,
+    'Worker sample not bracketed by owned pause',
+  );
+  assert(
+    c.progress.ageMs >= 1000 && c.progress.stalled === true,
+    'Invalid owned pause cadence stall',
+  );
+  assert.equal(pre.c.scopeID, c.scopeID, 'Decoder scope changed during owned pause');
+  assert(
+    c.progress.lastFreshPTS >= pre.c.progress.lastFreshPTS,
+    'Decoder PTS regressed during owned pause',
+  );
+  assert(
+    c.progress.ageMs <= sample.receivedAt - fault.pauseSentAt + 250,
+    'Owned pause sample reflects preexisting decoder stall',
+  );
+  assert.equal(
+    c.scopeID,
+    association.decoderScopeID,
+    'Owned pause scope differs from native stall',
+  );
+  assert.equal(
+    String(c.progress.lastFreshPTS),
+    association.lastStalledPTS,
+    'Owned pause PTS differs from native stall',
+  );
+}
+
+/** Qualifies a single observed deadline-caused downward profile write. Healthy
+ * raw windows establish the pre-fault baseline, never recovery/controller credit. */
+export function qualifyNativeDeadlineReset({
+  quality,
+  audit,
+  reports,
+  fault,
+  scope,
+  format,
+  snapshot,
+  liveIDs,
+}) {
+  const deadlineEvidence = qualifyNativeDeliveryDeadlines({
+    audit,
+    reports,
+    scope,
+    expectedLatencyBudget: 1.5,
+  });
+  const transitions = qualifyNativeProfileTransitions(format, snapshot, liveIDs, {
+    sequence: 'stall540',
+    requireFrameEvidence: true,
+  });
+  same(scope, snapshot.scope, 'Wrong native transition scope');
+  assert(
+    quality?.formatVersion === 4 &&
+      quality.overflow === false &&
+      quality.deadlineFailuresEnabled === true &&
+      quality.decoderStallEnabled === false &&
+      Array.isArray(quality.events) &&
+      quality.events.length >= 4 &&
+      quality.events.length <= 512,
+    'Invalid isolated deadline quality envelope',
+  );
+  const events = quality.events,
+    boot = events[0],
+    writes = events.filter((e) => e.kind === 'applied');
+  assert(
+    boot.kind === 'bootstrap' && events.filter((e) => e.kind === 'bootstrap').length === 1,
+    'Missing initial bootstrap',
+  );
+  assert.equal(writes.length, 1, 'Exactly one native deadline application required');
+  const write = writes[0],
+    writeIndex = events.indexOf(write);
+  assert(
+    events.at(-1).kind === 'stopped' && events.at(-1).closed === true,
+    'Missing final closed stop',
+  );
+  assert.equal(boot.profileID, '540p30');
+  assert.equal(boot.receipt?.bitRate, 1500000);
+  assert.equal(boot.revision, '0');
+  const old = normalizeReceipt(boot.receipt),
+    next = normalizeReceipt(write.receipt),
+    profile = transitions.receipts[0];
+  assert.equal(old.encoderSessionID, format.encoderSessions[0].encoderSessionID.toLowerCase());
+  assert.equal(old.generation, format.publishingGeneration);
+  assert(
+    finite(old.acceptedAt) && old.acceptedAt >= format.phases[0].firstObservedAt,
+    'Bootstrap predates native format',
+  );
+  assert(
+    finite(boot.acknowledgedAt) && boot.acknowledgedAt >= old.acceptedAt,
+    'Invalid bootstrap acknowledgment',
+  );
+  assert(
+    fixtureFrameID(old.lastSubmittedPTS) >= transitions.phases[0].firstFrame &&
+      fixtureFrameID(old.lastSubmittedPTS) <= transitions.phases[0].lastFrame,
+    'Bootstrap source outside native phase',
+  );
+  same(write.profileReceipt, profile, 'Wrong native profile receipt');
+  assert.equal(next.encoderSessionID, profile.encoderSessionID.toLowerCase());
+  assert.equal(next.generation, old.generation);
+  assert.equal(next.bitRate, 350000);
+  assert.notEqual(next.configurationID, old.configurationID, 'Reset reused native configuration');
+  assert.notEqual(next.encoderSessionID, old.encoderSessionID, 'Reset reused encoder session');
+  assert(
+    fixtureFrameID(next.lastSubmittedPTS) >= fixtureFrameID(profile.firstNewSourcePTS) &&
+      fixtureFrameID(next.lastSubmittedPTS) <= transitions.phases[1].lastFrame,
+    'Reset source outside native phase',
+  );
+  assert(
+    finite(next.acceptedAt) && next.acceptedAt >= profile.acknowledgedAt,
+    'Configuration receipt predates profile acknowledgment',
+  );
+  const pauseMilliseconds = ownedPause(fault),
+    ages = receiptAges(reports),
+    lanes = new Map();
+  let lastSequence = 0n,
+    lastTime = -1,
+    count = 0,
+    resetDecision,
+    resetRow;
+  const associations = [];
+  for (const [index, event] of events.entries()) {
+    assert(
+      ['bootstrap', 'deliveryFailure', 'localPressure', 'rejected', 'applied', 'stopped'].includes(
+        event.kind,
+      ),
+      'Unknown event, watchdog or failed/skipped application',
+    );
+    assert(event.decoderStall === undefined, 'Watchdog evidence masks deadline reset');
+    assert(
+      event.state !== 'healthy' && !event.reasons?.includes('recoveryQualified'),
+      'Isolated fixture claims fictitious health or recovery',
+    );
+    assert(
+      event === events.at(-1) || (event.kind !== 'stopped' && event.closed !== true),
+      'Premature closed event',
+    );
+    const applied = index >= writeIndex,
+      expected = applied ? write : boot;
+    same(event.receipt, expected.receipt, 'Unexpected native receipt');
+    assert(
+      event.profileID === (applied ? '240p30' : '540p30') &&
+        event.revision === (applied ? '1' : '0') &&
+        event.acknowledgedAt === expected.acknowledgedAt,
+      'Event changed applied truth',
+    );
+    if (applied)
+      same(event.profileReceipt, profile, 'Unexpected profile receipt after acknowledgment');
+    else assert.equal(event.profileReceipt, undefined, 'Profile receipt before application');
+    assert.equal(event.recommendation, undefined, 'Unexpected unbound recommendation');
+    if (applied) same(event.application, write.application, 'Changed persisted native application');
+    else assert.equal(event.application, undefined, 'Application before native write');
+    if (event.evaluatedAt !== undefined) {
+      assert(
+        finite(event.evaluatedAt) &&
+          event.evaluatedAt >= lastTime &&
+          event.evaluatedAt >= event.acknowledgedAt,
+        'Decision time reversal or decision before acknowledgment',
+      );
+      assert(
+        applied || event.evaluatedAt < write.acknowledgedAt,
+        'Old revision decision after acknowledgment',
+      );
+      lastTime = event.evaluatedAt;
+    }
+    const scalarSequence = event.deliveryFailure?.sequence ?? event.window?.sequence;
+    if (scalarSequence !== undefined) {
+      const n = sequence(scalarSequence);
+      assert(n > lastSequence, 'Decision sequence is not globally increasing');
+      lastSequence = n;
+    }
+    if (event.window !== undefined)
+      assert.equal(event.window.revision, event.revision, 'Old revision controller window');
+    if (event.kind !== 'deliveryFailure') {
+      assert.equal(event.deliveryFailure, undefined, 'Failure attached to wrong event');
+      if (event !== write)
+        assert.equal(event.action, undefined, 'Non-failure triggered profile action');
+      continue;
+    }
+    const d = event.deliveryFailure;
+    const { row, duration, ageAtClassification } = qualifiedFailure(event, audit, reports, ages);
+    const reasons = [duration === 1 ? 'freshFrameFloor' : 'sourceLoss'];
+    if (d.onTimeFrames === 0) reasons.push('stalled');
+    if (applied) reasons.push('minimumProfileInsufficient');
+    same(event.reasons, reasons, 'Wrong deadline reasons');
+    assert.equal(
+      event.state,
+      d.onTimeFrames === 0 ? 'stalled' : 'degraded',
+      'Failure claims fictitious health',
+    );
+    const lane = `${event.revision}:${duration}`;
+    assert(d.start >= (lanes.get(lane) ?? -1), 'Overlapping failure lane');
+    lanes.set(lane, d.end);
+    const association = associatedPause(row, reports, ageAtClassification);
+    if (association) associations.push(association);
+    if (!applied) {
+      assert(!resetDecision, 'Multiple higher-profile reset decisions');
+      same(
+        event.action,
+        {
+          kind: 'reset',
+          profileID: '240p30',
+          bitRate: 350000,
+          fromRevision: '0',
+          validUntil: Math.min(d.end + 2, d.observedAtLowerBound + 0.25),
+        },
+        'Wrong deadline reset recommendation or expiry',
+      );
+      assert(association, 'Reset failure window not associated with owned decoder pause');
+      qualifyOwnedPauseSample(fault, row.context, association);
+      resetDecision = event;
+      resetRow = row;
+    } else assert.equal(event.action, undefined, 'Minimum hold carries an action');
+    count++;
+  }
+  assert(resetDecision, 'Missing higher-profile deadline reset decision');
+  const action = write.action,
+    application = write.application;
+  same(action, resetDecision.action, 'Applied action differs from deadline recommendation');
+  assert(
+    application && uuid(application.id) && uuid(application.attemptID),
+    'Invalid native application',
+  );
+  assert.equal(application.fromRevision, '0');
+  assert.equal(application.windowSequence, resetDecision.deliveryFailure.sequence);
+  assert.equal(application.attemptID.toLowerCase(), scope.publishingAttemptID.toLowerCase());
+  for (const value of [
+    application.admittedAt,
+    application.completionDeadline,
+    write.acknowledgedAt,
+  ])
+    assert(finite(value), 'Invalid application timing');
+  assert(
+    application.admittedAt >= resetDecision.evaluatedAt &&
+      application.admittedAt <= action.validUntil,
+    'Reset admission outside recommendation validity',
+  );
+  assert(
+    application.completionDeadline > application.admittedAt &&
+      application.completionDeadline <= application.admittedAt + 2,
+    'Invalid bounded native completion deadline',
+  );
+  assert(
+    profile.acknowledgedAt >= application.admittedAt &&
+      write.acknowledgedAt >= next.acceptedAt &&
+      write.acknowledgedAt <= application.completionDeadline,
+    'Native reset acknowledgment outside application',
+  );
+  assert(
+    format.phases[1].firstObservedAt >= application.admittedAt &&
+      format.encoderSessions[1].firstCompletedAt >= application.admittedAt,
+    'Native reset predates admission',
+  );
+  // Every classified row must retain the actual applied native identity, including
+  // healthy rows and old-revision classifications attempted after acknowledgment.
+  for (const row of audit.rows.filter((r) => r.result !== null)) {
+    const expected = row.evaluatedAt < write.acknowledgedAt ? boot : write;
+    same(
+      qualityReceipt(row),
+      normalizeReceipt(expected.receipt),
+      'Deadline audit changed applied receipt',
+    );
+    assert(
+      row.profileID === expected.profileID &&
+        row.appliedRevision === expected.revision &&
+        row.videoBitrate === expected.receipt.bitRate &&
+        row.acknowledgedAt === expected.acknowledgedAt,
+      'Deadline audit crosses applied truth',
+    );
+  }
+  const resetAssociation = associations.find((a) => a.stalledReportAt <= resetDecision.evaluatedAt);
+  const healthy = audit.rows.filter(
+    (row) =>
+      row.result !== null &&
+      row.phase === resetRow.phase &&
+      row.end <= resetRow.start &&
+      row.evaluatedAt < resetAssociation.stalledReportAt &&
+      isDeepStrictEqual(row.context, resetRow.context) &&
+      isDeepStrictEqual(row.receipt, resetRow.receipt) &&
+      row.appliedRevision === '0' &&
+      row.profileID === '540p30' &&
+      row.result.uncertainFrames === 0 &&
+      row.result.lateFrames === 0 &&
+      row.result.missingFrames === 0 &&
+      row.result.onTimeFPS >= 30,
+  );
+  const healthyHigherProfileOneSecondWindows = healthy.filter((r) => r.end - r.start === 1).length;
+  const healthyHigherProfileTwoSecondWindows = healthy.filter((r) => r.end - r.start === 2).length;
+  assert(
+    healthyHigherProfileOneSecondWindows >= 5 && healthyHigherProfileTwoSecondWindows >= 3,
+    'Insufficient healthy higher-profile deadline baseline before owned fault',
+  );
+  return {
+    higherProfileResetWriteQualified: true,
+    deadlineFailureDecisionCount: count,
+    ownedFaultAssociationQualified: true,
+    pauseMilliseconds,
+    faultAssociations: associations,
+    healthyHigherProfileOneSecondWindows,
+    healthyHigherProfileTwoSecondWindows,
+    automaticAdaptationQualified: false,
+    recoveryQualified: false,
+    nativeApplicationSeconds: write.acknowledgedAt - application.admittedAt,
+    decisionToFirstMinimumFrameSeconds:
+      format.phases[1].firstObservedAt - resetDecision.evaluatedAt,
+    decisionToAcknowledgmentSeconds: write.acknowledgedAt - resetDecision.evaluatedAt,
+    deadlineEvidence,
+    transitions,
   };
 }

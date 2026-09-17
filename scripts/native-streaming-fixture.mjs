@@ -31,10 +31,16 @@ export async function nativeStreamingFixture({
   liveProfile = '1080p30',
   cadenceReports = false,
   decoderStall = false,
+  deadlineResets = false,
   decoderThreading = 'automatic',
   publishPeerLatencyMs,
   publishPacing,
 }) {
+  assert.equal(typeof deadlineResets, 'boolean');
+  assert.ok(
+    !deadlineResets || (decoderStall && cadenceReports),
+    'Deadline reset fault requires cadence evidence',
+  );
   assert.ok(
     publishPeerLatencyMs === undefined ||
       (Number.isInteger(publishPeerLatencyMs) &&
@@ -301,7 +307,45 @@ export async function nativeStreamingFixture({
             assert.ok(result.ok, `Read fixture worker status: ${result.status}`);
             const { status } = await result.json();
             if (decoderStall && !faultTask && worker && status.state === 'producing_output') {
+              // Sample the same scoped decoder before and during the owned pause.
+              // Only scalar status is exported; request credentials stay in the closure.
+              const observeFault = deadlineResets
+                ? async () => {
+                    const response = await fetch(`${baseURL}/v1/matches/${matchID}/media/status`, {
+                      headers: { authorization: `Bearer ${created.credential.token}` },
+                      signal: AbortSignal.any([statusAbort.signal, AbortSignal.timeout(200)]),
+                    });
+                    assert.ok(response.ok, 'Read owned fault decoder status');
+                    const { status: sample, serverTime } = await response.json();
+                    assert(
+                      sample.state === 'producing_output' &&
+                        sample.gameId === matchID &&
+                        sample.generation === status.generation &&
+                        sample.workerId === status.workerId &&
+                        sample.workerEpoch === status.workerEpoch &&
+                        sample.publication &&
+                        sample.observation?.decoderCadence,
+                      'Owned fault decoder context changed',
+                    );
+                    return {
+                      context: {
+                        gameId: sample.gameId,
+                        generation: sample.generation,
+                        workerId: sample.workerId,
+                        workerEpoch: sample.workerEpoch,
+                        attempt: sample.observation.attempt,
+                        publication: sample.publication,
+                      },
+                      decoderCadence: sample.observation.decoderCadence,
+                      decoderCadenceAgeUpperBoundMs: sample.decoderCadenceAgeUpperBoundMs,
+                      serverTime,
+                      expiresAt: sample.expiresAt,
+                    };
+                  }
+                : undefined;
               faultTask = runOwnedDecoderStall({
+                observeBeforePause: observeFault,
+                observePaused: observeFault,
                 worker,
                 signal: statusAbort.signal,
                 save: (value) =>

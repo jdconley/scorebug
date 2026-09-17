@@ -558,3 +558,492 @@ test('intervening omission remains retired after a fresh same-owner report', () 
   renewed.response.status.observation.decoderDelivery.sampledAtMs += 1;
   assert.throws(() => qualify(f), /retired/);
 });
+
+// Full synthetic native format + independently reconstructable deadline packets.
+// These fixtures exercise proof composition; they never qualify a hardware run.
+function profileResetFixture() {
+  const f = fixture();
+  const pts = (n) => ({ value: String(7395 + n * 2), timescale: 60, epoch: '0', flags: 1 });
+  const configuration = { id: id(2), encoderSessionID: id(3), bitRate: 1500000 };
+  const receipt = { generation: '7', configuration, acceptedAt: 100.012, lastSubmittedPTS: pts(0) };
+  const boot = {
+    profileID: '540p30',
+    revision: '0',
+    acknowledgedAt: 100.02,
+    receipt: {
+      generation: '7',
+      configurationID: id(2),
+      encoderSessionID: id(3),
+      bitRate: 1500000,
+      acceptedAt: 100.012,
+      lastSubmittedPTS: pts(0),
+    },
+  };
+  const template = structuredClone(f.audit.rows[0]);
+  const context = template.context;
+  const clock = { generation: '7', sourceOrigin: pts(0) };
+  const allCapture = Array.from({ length: 1800 }, (_, n) => ({
+    sourcePTS: pts(n),
+    observedAt: 100 + n / 30,
+    encoding: null,
+  }));
+  const allArrivals = allCapture.flatMap((frame, n) =>
+    n >= 811 && n <= 818
+      ? []
+      : [
+          [
+            n * 3000,
+            (n > 810
+              ? Math.max(frame.observedAt + 0.1, 128.3 + (n - 819) * 0.001)
+              : frame.observedAt + 0.1) * 1000,
+          ],
+        ],
+  );
+  const makeReport = (evaluatedUptime, number, stalled = false) => {
+    const sampledAtMs = Math.round((evaluatedUptime - 0.04) * 1000);
+    const arrivals = allArrivals.filter((a) => a[1] <= sampledAtMs);
+    const afterOrdinal = Math.max(0, arrivals.length - 256);
+    const packet = {
+      formatVersion: 1,
+      scopeID: id(7),
+      sampledAtMs,
+      coverageAtMs: afterOrdinal ? arrivals[afterOrdinal - 1][1] : 0,
+      afterOrdinal,
+      lastOrdinal: arrivals.length,
+      arrivals: arrivals.slice(afterOrdinal),
+      invalidReason: null,
+      ended: false,
+    };
+    const report = structuredClone(f.reports.rows[1]);
+    Object.assign(report, {
+      receivedUptime: evaluatedUptime - 0.01,
+      evaluatedUptime,
+      deliveryReceiptID: id(number),
+      observedStall: stalled,
+    });
+    report.response.status.observation.decoderDelivery = packet;
+    report.response.status.observation.decoderCadence.progress = {
+      lastFreshPTS: stalled ? 810 * 3000 : arrivals.at(-1)[0],
+      ageMs: stalled ? 1050 : 100,
+      stalled,
+    };
+    return report;
+  };
+  const windows = [1, 2, 3, 4, 5].map((n) => [100 + n, 101 + n]);
+  windows.push([101, 103], [103, 105], [105, 107], [127, 128]);
+  windows.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  const reports = new Map();
+  f.audit.rows = windows.map(([start, end]) => {
+    const evaluatedAt = end + 1.6;
+    if (!reports.has(evaluatedAt))
+      reports.set(evaluatedAt, makeReport(evaluatedAt - 0.01, 30 + reports.size));
+    const report = reports.get(evaluatedAt),
+      packet = report.response.status.observation.decoderDelivery;
+    const capture = allCapture.filter((r) => r.observedAt + 0.002 <= evaluatedAt);
+    const encoded = capture.map((r) => ({
+      ...structuredClone(r),
+      observedAt: r.observedAt + 0.002,
+      encoding: {
+        encoderSessionID: id(3),
+        configuration: structuredClone(configuration),
+        submittedAt: r.observedAt + 0.001,
+        completedAt: r.observedAt + 0.002,
+      },
+    }));
+    const frames = capture
+      .filter((r) => r.observedAt >= start && r.observedAt < end)
+      .map((r) => ({
+        pts: String(((Number(r.sourcePTS.value) - 7395) / 2) * 3000),
+        sourcePTS: r.sourcePTS,
+        capturedAt: r.observedAt,
+        wasEncoded: true,
+      }));
+    const missingFrames = start === 127 ? 8 : 0,
+      expectedFrames = frames.length;
+    return {
+      ...structuredClone(template),
+      start,
+      end,
+      evaluatedAt,
+      videoBitrate: 1500000,
+      profileID: '540p30',
+      acknowledgedAt: boot.acknowledgedAt,
+      receipt: structuredClone(receipt),
+      deliveryReceiptID: report.deliveryReceiptID,
+      clock: structuredClone(clock),
+      history: { ...structuredClone(template.history), capture, encoded },
+      diagnostics: {
+        ...structuredClone(template.diagnostics),
+        clock: structuredClone(clock),
+        receipt: structuredClone(receipt),
+      },
+      timeline: deliverySnapshot(packet),
+      anchorSourcePTS: pts(packet.arrivals.at(-1)[0] / 3000),
+      frames,
+      result: {
+        expectedFrames,
+        onTimeFrames: expectedFrames - missingFrames,
+        lateFrames: 0,
+        missingFrames,
+        uncertainFrames: 0,
+        onTimeFPS: (expectedFrames - missingFrames) / (end - start),
+        failureFraction: missingFrames / expectedFrames,
+      },
+    };
+  });
+  f.reports.rows = [...reports.values(), makeReport(128.19, 60, true)].sort(
+    (a, b) => a.evaluatedUptime - b.evaluatedUptime,
+  );
+  const paused = f.reports.rows.find((r) => r.observedStall);
+  f.fault.pausedSample = {
+    requestStartedAt: 101800,
+    receivedAt: 101850,
+    value: {
+      context: structuredClone(context),
+      decoderCadence: structuredClone(paused.response.status.observation.decoderCadence),
+      decoderCadenceAgeUpperBoundMs: 20,
+      serverTime: paused.response.serverTime,
+      expiresAt: paused.response.status.expiresAt,
+    },
+  };
+  f.fault.beforePauseSample = structuredClone(f.fault.pausedSample);
+  Object.assign(f.fault.beforePauseSample, { requestStartedAt: 99900, receivedAt: 99950 });
+  f.fault.beforePauseSample.value.decoderCadence.progress = {
+    lastFreshPTS: 810 * 3000,
+    ageMs: 50,
+    stalled: false,
+  };
+  const row = f.audit.rows.at(-1);
+  const action = {
+    kind: 'reset',
+    profileID: '240p30',
+    bitRate: 350000,
+    fromRevision: '0',
+    validUntil: 129.8,
+  };
+  const profileReceipt = {
+    profile: '240p30',
+    publishingGeneration: '7',
+    previousEncoderSessionID: id(3),
+    encoderSessionID: id(20),
+    lastOldSourcePTS: pts(899),
+    firstNewSourcePTS: pts(900),
+    width: 426,
+    height: 240,
+    rawVideoFramesDropped: '0',
+    acknowledgedAt: 130.02,
+  };
+  const after = {
+    profileID: '240p30',
+    revision: '1',
+    acknowledgedAt: 130.04,
+    profileReceipt,
+    receipt: {
+      generation: '7',
+      configurationID: id(21),
+      encoderSessionID: id(20),
+      bitRate: 350000,
+      acceptedAt: 130.03,
+      lastSubmittedPTS: pts(900),
+    },
+  };
+  f.quality.events = [
+    { ...structuredClone(boot), kind: 'bootstrap' },
+    {
+      ...structuredClone(boot),
+      kind: 'deliveryFailure',
+      evaluatedAt: 129.62,
+      state: 'degraded',
+      reasons: ['freshFrameFloor'],
+      action: structuredClone(action),
+      deliveryFailure: {
+        ...failure(f),
+        classifiedAt: row.evaluatedAt,
+        deliveryReceiptID: row.deliveryReceiptID,
+        context: structuredClone(context),
+        start: row.start,
+        end: row.end,
+        observedAtLowerBound: 129.55,
+      },
+    },
+    {
+      ...structuredClone(after),
+      kind: 'applied',
+      action: structuredClone(action),
+      application: {
+        id: id(22),
+        admittedAt: 129.63,
+        completionDeadline: 131.63,
+        attemptID: id(1),
+        fromRevision: '0',
+        windowSequence: '1',
+      },
+    },
+    { ...structuredClone(after), kind: 'stopped', closed: true },
+  ];
+  f.quality.events.at(-1).application = structuredClone(f.quality.events[2].application);
+  const phases = [0, 1].map((n) => ({
+    width: n ? 426 : 960,
+    height: n ? 240 : 540,
+    frames: 900,
+    firstSourcePTS: pts(n * 900),
+    lastSourcePTS: pts(n * 900 + 899),
+    maximumSourceGapSeconds: 1 / 30,
+    firstObservedAt: 100.01 + n * 30,
+    lastObservedAt: 100.01 + n * 30 + 899 / 30,
+    maximumObservationGapSeconds: 1 / 30,
+  }));
+  f.format = {
+    formatVersion: 7,
+    sequence: 'stall540',
+    scope: structuredClone(f.scope),
+    isClosed: true,
+    invalid: false,
+    frames: 1800,
+    publishingGeneration: '7',
+    phases,
+    receipts: [profileReceipt],
+    encoderSessions: phases.map((p, n) => ({
+      encoderSessionID: id(n ? 20 : 3),
+      frames: 900,
+      firstSourcePTS: p.firstSourcePTS,
+      lastSourcePTS: p.lastSourcePTS,
+      firstCompletedAt: 100 + n * 30,
+      lastCompletedAt: 100 + n * 30 + 899 / 30,
+      maximumCompletionGapSeconds: 1 / 30,
+      maximumEncodeLatencySeconds: 0.2,
+    })),
+    compressedFrames: phases.flatMap((p, n) =>
+      Array.from({ length: 900 }, (_, i) => ({
+        sourcePTS: pts(n * 900 + i),
+        observedAt: p.firstObservedAt + i / 30,
+        byteCount: 1000,
+        isSync: i % 60 === 0,
+      })),
+    ),
+  };
+  f.snapshot = {
+    scope: structuredClone(f.scope),
+    isClosed: true,
+    monotonicAnchor: 99,
+    captureDetachedAt: 161,
+    omittedCompletedWindowCount: '0',
+    publishingClockObservation: { publishingGeneration: '7' },
+    completed: [
+      { encodedVideo: { callbackCount: '1800', firstSourcePTS: pts(0), lastSourcePTS: pts(1799) } },
+    ],
+    current: { encodedVideo: { callbackCount: '0' } },
+  };
+  f.liveIDs = Array.from({ length: 1770 }, (_, n) => n + 30);
+  return f;
+}
+let qualifyReset;
+test('qualifies exactly one deadline-caused native 540p to 240p reset after healthy baseline', async () => {
+  const module = await import('../native-deadline-decisions.mjs');
+  assert.equal(
+    typeof module.qualifyNativeDeadlineReset,
+    'function',
+    'independent reset verifier must exist',
+  );
+  qualifyReset = module.qualifyNativeDeadlineReset;
+  const result = qualifyReset(profileResetFixture());
+  assert.equal(result.higherProfileResetWriteQualified, true);
+  assert.equal(result.ownedFaultAssociationQualified, true);
+  assert.equal(result.deadlineFailureDecisionCount, 1);
+  assert.equal(result.healthyHigherProfileOneSecondWindows, 5);
+  assert.equal(result.healthyHigherProfileTwoSecondWindows, 3);
+  assert.equal(result.automaticAdaptationQualified, false);
+  assert.equal(result.recoveryQualified, false);
+});
+for (const [name, damage] of Object.entries({
+  changedPersistedApplication: (f) => (f.quality.events.at(-1).application.id = id(90)),
+  applicationBeforeWrite: (f) =>
+    (f.quality.events[1].application = structuredClone(f.quality.events[2].application)),
+  pausedSamplePreexistingStall: (f) =>
+    (f.fault.pausedSample.value.decoderCadence.progress.ageMs = 3000),
+  wrongAction: (f) => (f.quality.events[2].action.kind = 'decrease'),
+  wrongRecommendation: (f) => (f.quality.events[1].action.bitRate = 500000),
+  wrongExpiry: (f) => (f.quality.events[2].action.validUntil += 1),
+  jointlyWrongExpiry: (f) =>
+    f.quality.events.filter((e) => e.action).forEach((e) => (e.action.validUntil += 1)),
+  lateAdmission: (f) => (f.quality.events[2].application.admittedAt = 129.81),
+  beforeDecision: (f) => (f.quality.events[2].application.admittedAt = 129.61),
+  wrongAttempt: (f) => (f.quality.events[2].application.attemptID = id(90)),
+  wrongSequence: (f) => (f.quality.events[2].application.windowSequence = '2'),
+  wrongFromRevision: (f) => (f.quality.events[2].application.fromRevision = '1'),
+  wrongRevision: (f) => (f.quality.events[2].revision = '2'),
+  sameConfiguration: (f) => (f.quality.events[2].receipt.configurationID = id(2)),
+  sameEncoder: (f) => (f.quality.events[2].receipt.encoderSessionID = id(3)),
+  wrongNativeReceipt: (f) => (f.quality.events[2].profileReceipt.width = 960),
+  wrongOldReceipt: (f) => (f.quality.events[0].receipt.configurationID = id(90)),
+  missingFormat: (f) => delete f.format,
+  missingRawFrames: (f) => delete f.format.compressedFrames,
+  extraApplication: (f) => f.quality.events.splice(3, 0, structuredClone(f.quality.events[2])),
+  oldReceiptPostAck: (f) =>
+    (f.quality.events[3].receipt = structuredClone(f.quality.events[0].receipt)),
+  oldDecisionPostAck: (f) => f.quality.events.splice(3, 0, structuredClone(f.quality.events[1])),
+  decisionAfterAck: (f) => (f.quality.events[1].evaluatedAt = 130.05),
+  lateCompletion: (f) => (f.quality.events[2].acknowledgedAt = 132),
+  wideCompletionDeadline: (f) => (f.quality.events[2].application.completionDeadline = 132),
+  enabledWatchdog: (f) => (f.quality.decoderStallEnabled = true),
+  falseHealthyCredit: (f) => (f.quality.events[1].state = 'healthy'),
+  failedWrite: (f) => (f.quality.events[2].kind = 'failed'),
+  skippedWrite: (f) => (f.quality.events[2].kind = 'skipped'),
+  noBaseline: (f) => (f.audit.rows = f.audit.rows.slice(-1)),
+  insufficientOneSecondBaseline: (f) =>
+    f.audit.rows.splice(
+      f.audit.rows.findIndex((r) => r.end - r.start === 1),
+      1,
+    ),
+  insufficientTwoSecondBaseline: (f) =>
+    f.audit.rows.splice(
+      f.audit.rows.findIndex((r) => r.end - r.start === 2),
+      1,
+    ),
+  noBeforePauseSample: (f) => delete f.fault.beforePauseSample,
+  alreadyStalledBeforePause: (f) =>
+    (f.fault.beforePauseSample.value.decoderCadence.progress.stalled = true),
+  staleBeforePauseProgress: (f) =>
+    (f.fault.beforePauseSample.value.decoderCadence.progress.ageMs = 131),
+  futureBeforePausePTS: (f) =>
+    (f.fault.beforePauseSample.value.decoderCadence.progress.lastFreshPTS += 3000),
+  differentBeforePauseScope: (f) =>
+    (f.fault.beforePauseSample.value.decoderCadence.scopeID = id(90)),
+  differentBeforePauseOwner: (f) => (f.fault.beforePauseSample.value.context.workerId = 'other'),
+  beforeSampleAfterPause: (f) => (f.fault.beforePauseSample.receivedAt = 100001),
+  beforeSampleExpiredAtPause: (f) =>
+    (f.fault.beforePauseSample.value.expiresAt = '2040-01-01T00:00:01.100Z'),
+  noPausedSample: (f) => delete f.fault.pausedSample,
+  pausedSampleBeforePause: (f) => (f.fault.pausedSample.requestStartedAt = 99999),
+  pausedSampleAfterResume: (f) => (f.fault.pausedSample.receivedAt = 101901),
+  pausedSampleTimeReversal: (f) => (f.fault.pausedSample.receivedAt = 101799),
+  pausedSampleWrongContext: (f) => (f.fault.pausedSample.value.context.workerId = 'unrelated'),
+  pausedSampleWrongPTS: (f) =>
+    (f.fault.pausedSample.value.decoderCadence.progress.lastFreshPTS += 3000),
+  pausedSampleWrongScope: (f) => (f.fault.pausedSample.value.decoderCadence.scopeID = id(90)),
+  pausedSampleStale: (f) => (f.fault.pausedSample.value.decoderCadenceAgeUpperBoundMs = 201),
+  pausedSampleNegativeAge: (f) => (f.fault.pausedSample.value.decoderCadenceAgeUpperBoundMs = -1),
+  pausedSampleNoStall: (f) => (f.fault.pausedSample.value.decoderCadence.progress.stalled = false),
+  pausedSampleTooYoung: (f) => (f.fault.pausedSample.value.decoderCadence.progress.ageMs = 999),
+  pausedSampleInvalid: (f) => (f.fault.pausedSample.value.decoderCadence.invalidReason = 'reset'),
+  pausedSampleEnded: (f) => (f.fault.pausedSample.value.decoderCadence.ended = true),
+  pausedSampleExpired: (f) => (f.fault.pausedSample.value.expiresAt = '2040-01-01T00:00:01.050Z'),
+  pausedSampleInvalidDate: (f) => (f.fault.pausedSample.value.serverTime = 'invalid'),
+  noFaultAssociation: (f) =>
+    (f.reports.rows.find(
+      (r) => r.observedStall,
+    ).response.status.observation.decoderCadence.progress.lastFreshPTS = 9999999),
+}))
+  test(`reset rejects ${name}`, () => {
+    assert.equal(typeof qualifyReset, 'function');
+    const f = profileResetFixture();
+    damage(f);
+    assert.throws(() => qualifyReset(f));
+  });
+
+test('permits a post-reset minimum hold only with current acknowledged native evidence', () => {
+  const f = profileResetFixture(),
+    write = f.quality.events[2];
+  const row = structuredClone(f.audit.rows.at(-1)),
+    report = structuredClone(f.reports.rows.at(-1));
+  const shiftPTS = (pts) => ({ ...pts, value: String(BigInt(pts.value) + 1200n) });
+  const configuration = {
+    id: write.receipt.configurationID,
+    encoderSessionID: write.receipt.encoderSessionID,
+    bitRate: 350000,
+  };
+  const receipt = {
+    generation: '7',
+    configuration,
+    acceptedAt: write.receipt.acceptedAt,
+    lastSubmittedPTS: write.receipt.lastSubmittedPTS,
+  };
+  Object.assign(row, {
+    phase: 2,
+    start: 147,
+    end: 148,
+    evaluatedAt: 149.6,
+    appliedRevision: '1',
+    profileID: '240p30',
+    videoBitrate: 350000,
+    acknowledgedAt: write.acknowledgedAt,
+    receipt,
+    deliveryReceiptID: id(70),
+  });
+  row.history.scope.appliedProfileRevision =
+    row.clockScope.appliedProfileRevision =
+    row.diagnostics.ingressScope.appliedProfileRevision =
+      '1';
+  row.diagnostics.receipt = structuredClone(receipt);
+  for (const frame of [...row.history.capture, ...row.history.encoded]) {
+    frame.sourcePTS = shiftPTS(frame.sourcePTS);
+    frame.observedAt += 20;
+    if (frame.encoding) {
+      Object.assign(frame.encoding, {
+        configuration: structuredClone(configuration),
+        encoderSessionID: configuration.encoderSessionID,
+        submittedAt: frame.encoding.submittedAt + 20,
+        completedAt: frame.encoding.completedAt + 20,
+      });
+    }
+  }
+  row.frames.forEach((frame) => {
+    frame.pts = String(BigInt(frame.pts) + 1800000n);
+    frame.sourcePTS = shiftPTS(frame.sourcePTS);
+    frame.capturedAt += 20;
+  });
+  row.anchorSourcePTS = shiftPTS(row.anchorSourcePTS);
+  report.receivedUptime += 20;
+  report.evaluatedUptime += 20;
+  report.deliveryReceiptID = id(70);
+  const packet = report.response.status.observation.decoderDelivery;
+  packet.sampledAtMs += 20000;
+  packet.coverageAtMs += 20000;
+  packet.afterOrdinal += 600;
+  packet.lastOrdinal += 600;
+  packet.arrivals.forEach((r) => {
+    r[0] += 1800000;
+    r[1] += 20000;
+  });
+  report.response.status.observation.decoderCadence.progress.lastFreshPTS += 1800000;
+  row.timeline = deliverySnapshot(packet);
+  f.audit.rows.push(row);
+  f.reports.rows.push(report);
+  const decision = {
+    ...structuredClone(write),
+    kind: 'deliveryFailure',
+    evaluatedAt: 149.62,
+    state: 'degraded',
+    reasons: ['freshFrameFloor', 'minimumProfileInsufficient'],
+    deliveryFailure: {
+      ...structuredClone(failure(f)),
+      sequence: '2',
+      revision: '1',
+      classifiedAt: row.evaluatedAt,
+      start: row.start,
+      end: row.end,
+      deliveryReceiptID: row.deliveryReceiptID,
+      observedAtLowerBound: 149.55,
+    },
+  };
+  delete decision.action;
+  f.quality.events.splice(3, 0, decision);
+  assert.equal(qualifyReset(f).deadlineFailureDecisionCount, 2);
+  decision.action = structuredClone(write.action);
+  assert.throws(() => qualifyReset(f), /Minimum hold/);
+});
+for (const kind of ['evaluated', 'transition'])
+  test(`reset rejects fictitious legacy ${kind} credit`, () => {
+    const f = profileResetFixture();
+    f.quality.events.splice(1, 0, {
+      ...structuredClone(f.quality.events[0]),
+      kind,
+      state: 'degraded',
+      evaluatedAt: 110,
+      window: { sequence: '1', revision: '0' },
+    });
+    f.quality.events[2].deliveryFailure.sequence = '2';
+    f.quality.events[3].application.windowSequence = '2';
+    f.quality.events.at(-1).application.windowSequence = '2';
+    assert.throws(() => qualifyReset(f), /Unknown event/);
+  });

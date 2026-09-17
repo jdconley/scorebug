@@ -66,6 +66,58 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertNil(row["window"])
         XCTAssertEqual((row["action"] as? [String: Any])?["bitRate"] as? Int, 350_000)
     }
+    @MainActor func testDriverDeadlineChangesProfileAndAcknowledgesOneMinimumReset() async throws {
+        bitRate = 1_500_000
+        let native = DeadlineProfileNative(configuration: configuration)
+        let owner = try PublishingQualitySession(operations: native.operations, profiles: [
+            .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)
+        ], attemptID: session, initial: .init(profileID: "540p30", videoBitrate: bitRate),
+            behavior: .progressive, uptime: { native.now })
+        try await owner.bootstrap()
+        var input: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: Set(60..<90), late: [], revision: 0, profileID: "540p30",
+            submittedBoundary: .zero, withAuthority: true, captureInput: { input = $0 }, deliveryInstant: .now)
+        let current = try XCTUnwrap(input)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, deliveryAudit: try .init(latencyBudget: 1.5, maximumSampleAge: 0.25),
+            enableDeliveryFailures: true, export: { exported = $0 })
+        driver.deliveryInputProvider = { current }
+        native.setNow(1.5)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        native.setNow(4.75)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        let state = await owner.snapshot
+        XCTAssertEqual(native.calls, ["rate:1500000", "profile:240p30", "rate:350000"])
+        XCTAssertFalse(state.isClosed)
+        XCTAssertEqual(state.applied?.profileID, "240p30")
+        XCTAssertEqual(state.applied?.videoBitrate, 350_000)
+        XCTAssertEqual(state.revision, 1)
+        XCTAssertEqual(state.profileReceipt?.encoderSessionID, native.newEncoder)
+        XCTAssertEqual(state.receipt?.configuration.encoderSessionID, native.newEncoder)
+        XCTAssertEqual(state.lastDeliveryFailure?.appliedRevision, 0)
+        XCTAssertEqual(state.lastDeliveryFailure?.missingFrames, 30)
+        XCTAssertNil(state.lastWindow)
+        // The old source/configuration cannot cause another transition after acknowledgment.
+        await driver.tick(encoderReady: true, source: nil, diagnostics: current.diagnostics)?.value
+        XCTAssertEqual(native.calls.count, 3)
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        let failure = try XCTUnwrap(events.first { $0["kind"] as? String == "deliveryFailure" })
+        let applied = try XCTUnwrap(events.first { $0["kind"] as? String == "applied" })
+        XCTAssertEqual(events.filter { $0["kind"] as? String == "applied" }.count, 1)
+        XCTAssertEqual(failure["profileID"] as? String, "540p30")
+        XCTAssertEqual(failure["revision"] as? String, "0")
+        XCTAssertEqual((failure["action"] as? [String: Any])?["kind"] as? String, "reset")
+        XCTAssertEqual(applied["profileID"] as? String, "240p30")
+        XCTAssertEqual(applied["revision"] as? String, "1")
+        XCTAssertEqual((applied["application"] as? [String: Any])?["windowSequence"] as? String,
+            (failure["deliveryFailure"] as? [String: Any])?["sequence"] as? String)
+        XCTAssertNotNil(applied["profileReceipt"])
+        XCTAssertNil(failure["window"])
+    }
     @MainActor func testDriverDeadlineDefaultRetiredAndStaleEvidenceCannotWrite() async throws {
         for fault in ["disabled", "retired", "stale"] {
             bitRate = 700_000
@@ -530,5 +582,38 @@ private final class DeadlineNative: @unchecked Sendable {
         if rejectWrite { rejectWrite = false; throw WriteFailure.injected }
         let config = rate == initial.bitRate ? initial : VideoEncodingConfiguration(id: UUID(), encoderSessionID: initial.encoderSessionID, bitRate: rate)!
         return PublishingBitRateChange(publishingGeneration: 1, configuration: config, acceptedAt: time, lastSubmittedSourcePTS: .zero)!
+    } }
+}
+
+/// Injected profile receipts test driver/owner ordering, not physical encoder behavior.
+private final class DeadlineProfileNative: @unchecked Sendable {
+    private let lock = NSLock()
+    private let initial: VideoEncodingConfiguration
+    let newEncoder = UUID()
+    private var switched = false, time = 0.0
+    private var history: [String] = []
+    init(configuration: VideoEncodingConfiguration) { initial = configuration }
+    var now: Double { lock.withLock { time } }
+    var calls: [String] { lock.withLock { history } }
+    func setNow(_ value: Double) { lock.withLock { time = value } }
+    var operations: PublishingQualitySession.Operations {
+        .init(setBitRate: { rate, _ in self.write(rate) }, stop: {}, videoStartup: {
+            .init(profile: .sd540, width: 960, height: 540, publishingGeneration: 1,
+                encoderSessionID: self.initial.encoderSessionID, firstSourcePTS: .zero,
+                submittedAt: 0, completedAt: 0, observedAt: 0)
+        }, setProfile: { profile, _ in self.change(profile) })
+    }
+    private func write(_ rate: Int) -> PublishingBitRateChange { lock.withLock {
+        history.append("rate:\(rate)")
+        let config = switched ? VideoEncodingConfiguration(id: UUID(), encoderSessionID: newEncoder, bitRate: rate)! : initial
+        return .init(publishingGeneration: 1, configuration: config, acceptedAt: time,
+            lastSubmittedSourcePTS: switched ? .init(value: 143, timescale: 30) : .zero)!
+    } }
+    private func change(_ profile: PublishingVideoProfile) -> PublishingVideoProfileChange { lock.withLock {
+        history.append("profile:\(profile.rawValue)"); switched = true
+        return .init(profile: profile, publishingGeneration: 1, previousEncoderSessionID: initial.encoderSessionID,
+            encoderSessionID: newEncoder, lastOldSourcePTS: .init(value: 142, timescale: 30),
+            firstNewSourcePTS: .init(value: 143, timescale: 30), width: profile.width, height: profile.height,
+            rawVideoFramesDropped: 0, acknowledgedAt: time)!
     } }
 }

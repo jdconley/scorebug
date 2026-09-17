@@ -1797,3 +1797,21 @@ iPhone/Watch Release builds. Reviews are approved; frozen evidence is recorded i
 `artifacts/qa/deadline-driver-final-verification.json`. Next qualify higher-profile
 deadline-triggered writes and controlled recovery/headroom. Minimum-hold behavior
 does not prove those gates; production adaptation remains disabled.
+
+
+[Deadline-triggered profile reset](2026-09-17-deadline-profile-reset.md) now passes an
+actual iPhone14/iOS17.5 simulator experiment (`native-app-2ocCqq`). After14 healthy
+one-second540p windows and6 healthy two-second windows, an owned1.983-second decoder
+pause produced16 timely frames out of30. One deadline decision changed the native
+encoder from540p to240p, with the first new frame at0.476seconds and acknowledgment
+at0.477seconds after the decision. Fresh before-pause and stalled in-pause scoped
+PTS samples bind the fault to that decision without mixing Node and phone clocks.
+The receiver decoded the first new-format source frame and complete tail.
+
+The independent1080p archive finishes with3686 fully decoded frames, no source loss
+and61/61 audio markers. All1442 tooling,385 Core and287 native model tests and both
+Apple builds pass; reviews are approved. Frozen evidence:
+`artifacts/qa/deadline-profile-final-verification.json`. Next qualify measured
+candidate cost/headroom and minimum-first upgrades/recovery; reconnect/soaks,
+physical phone/Watch and remote workers remain open. Production adaptation remains
+disabled until these gates are satisfied.

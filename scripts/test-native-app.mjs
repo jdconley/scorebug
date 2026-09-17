@@ -1,4 +1,7 @@
-import { qualifyNativeDeadlineDecisions } from './native-deadline-decisions.mjs';
+import {
+  qualifyNativeDeadlineDecisions,
+  qualifyNativeDeadlineReset,
+} from './native-deadline-decisions.mjs';
 import { qualifyNativeDeliveryDeadlines } from './native-delivery-deadlines.mjs';
 import { qualifyNativeStallReset } from './native-stall-reset.mjs';
 import { nativeControlledStall, qualifyNativeControlledStall } from './native-controlled-stall.mjs';
@@ -94,10 +97,6 @@ const decoderStall = nativeControlledStall({ environment: process.env, cadenceRe
 const deliveryLatencyBudget = fixtureDeliveryDeadline({ environment: process.env, decoderStall });
 const deadlineResets = fixtureDeadlineResets({ environment: process.env, decoderStall });
 const stallReset = decoderStall && process.env.SCOREBUG_TEST_DECODER_STALL === 'reset540';
-assert(
-  !(deadlineResets && stallReset),
-  'Higher-profile deadline decisions require a separate qualification',
-);
 const qualityFlag = process.env.SCOREBUG_TEST_NATIVE_QUALITY;
 const { requireQuality, requireConfirmation } = nativeQualityOptions({
   environment: process.env,
@@ -476,6 +475,7 @@ try {
       liveProfile,
       cadenceReports,
       decoderStall,
+      deadlineResets,
       decoderThreading,
       publishPeerLatencyMs,
       publishPacing,
@@ -866,7 +866,14 @@ try {
     }
     if (decoderStall) {
       if (deadlineResets) {
-        const result = qualifyNativeDeadlineDecisions({
+        const result = (stallReset ? qualifyNativeDeadlineReset : qualifyNativeDeadlineDecisions)({
+          ...(stallReset
+            ? {
+                format: profileTransitionSnapshot,
+                snapshot: observationSnapshot,
+                liveIDs: liveSegments.flat(),
+              }
+            : {}),
           quality: qualitySnapshot,
           audit: JSON.parse(await readFile(join(artifact, 'delivery-deadlines.json'), 'utf8')),
           reports: JSON.parse(

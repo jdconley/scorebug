@@ -71,6 +71,8 @@ export async function runOwnedDecoderStall({
   worker,
   signal,
   save,
+  observeBeforePause,
+  observePaused,
   inventory: read = inventory,
   signalProcess = (pid, kind) => process.kill(pid, kind),
   wait = (ms) => delay(ms, undefined, { signal }),
@@ -83,6 +85,11 @@ export async function runOwnedDecoderStall({
     pauseSentAt: null,
     resumeSentAt: null,
   };
+  const sample = async (observe) => {
+    const requestStartedAt = performance.now();
+    const value = await observe();
+    return { requestStartedAt, receivedAt: performance.now(), value };
+  };
   let paused = false,
     failure;
   const alive = () =>
@@ -94,12 +101,14 @@ export async function runOwnedDecoderStall({
     await wait(20000);
     alive();
     evidence.identity = resolveDecoderIdentity(await read(worker.pid), worker.pid);
+    if (observeBeforePause) evidence.beforePauseSample = await sample(observeBeforePause);
     alive();
     signalProcess(evidence.identity.decoder.pid, 'SIGSTOP');
     paused = true;
     evidence.pauseSentAt = performance.now();
     await save(evidence);
     await wait(1800);
+    if (observePaused) evidence.pausedSample = await sample(observePaused);
   } catch (error) {
     failure = error;
   } finally {
