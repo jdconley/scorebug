@@ -1,6 +1,6 @@
 /** Relay pre-demux read accounting, not viewer delivery or available capacity.
  * Target-rate ceilings are 2 Mbps for legacy v1 and 12 Mbps for staged v2;
- * both retain the same 16 MiB connection payload budget.
+ * v3 repeats bounded 16 MiB campaigns with publication-wide accounting.
  * Integer strings preserve UInt64 identity on JS and watchOS arm64_32. */
 type ReceiverProbeFields = {
   id: string;
@@ -24,8 +24,27 @@ type ReceiverProbeFields = {
 };
 export type ReceiverProbeSnapshot = ReceiverProbeFields &
   (
-    | { convention: 'mpegts-null-probe-v1'; stage?: never; totalDeliveredPayloadBytes?: never }
-    | { convention: 'mpegts-null-probe-v2'; stage: number; totalDeliveredPayloadBytes: string }
+    | {
+        convention: 'mpegts-null-probe-v1';
+        stage?: never;
+        totalDeliveredPayloadBytes?: never;
+        campaign?: never;
+        campaignDeliveredPayloadBytes?: never;
+      }
+    | {
+        convention: 'mpegts-null-probe-v2';
+        stage: number;
+        totalDeliveredPayloadBytes: string;
+        campaign?: never;
+        campaignDeliveredPayloadBytes?: never;
+      }
+    | {
+        convention: 'mpegts-null-probe-v3';
+        stage: number;
+        totalDeliveredPayloadBytes: string;
+        campaign: string;
+        campaignDeliveredPayloadBytes: string;
+      }
   );
 /** Server-owned, attached atomically with the enclosing status.publication.
  * Age bounds snapshot creation, not last delivery; changing counters are not identity. */

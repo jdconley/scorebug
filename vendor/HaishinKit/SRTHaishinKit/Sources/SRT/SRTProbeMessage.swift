@@ -3,6 +3,23 @@ import Foundation
 /// Versioned payload in valid null TS packets. Observe before demultiplexing;
 /// this identifier is attribution, not authentication or receiver capacity.
 enum SRTProbeMessage {
+    /// Repeatable staged probes bind every packet to a publication campaign.
+    static func encodeCampaign(id: UUID, generation: UInt64, campaign: UInt32, stage: UInt32,
+                               sequence: UInt64, bitRate: Int) throws -> Data {
+        guard campaign > 0 else { throw SRTBandwidthProbeError.invalidConfiguration }
+        var data = try encodeStage(id: id, generation: generation, stage: stage,
+                                   sequence: sequence, bitRate: bitRate)
+        var networkCampaign = campaign.bigEndian
+        withUnsafeBytes(of: &networkCampaign) { bytes in
+            for part in 0..<7 {
+                let at = part * 188
+                data[at + 11] = 0x33 // SBUGPRB3
+                data.replaceSubrange(at + 53..<at + 57, with: bytes)
+            }
+        }
+        return data
+    }
+
     /// Explicit staged probes use this version; the default legacy path retains v1.
     static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
                             sequence: UInt64, bitRate: Int) throws -> Data {

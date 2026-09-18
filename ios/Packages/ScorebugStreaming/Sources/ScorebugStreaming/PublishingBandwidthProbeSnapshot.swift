@@ -18,6 +18,7 @@ public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
     public let lastAcceptedAt: Double?
     public let reason: Reason?
     public internal(set) var stage: UInt32? = nil
+    public internal(set) var campaign: UInt32? = nil
     public internal(set) var authority: Authority? = nil
     public internal(set) var campaignStartedAt: Double? = nil
     public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
@@ -28,12 +29,13 @@ extension PublishingBandwidthProbeSnapshot {
         self.init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
             acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt, reason: value.reason,
-            stage: value.stage, authority: value.authority, campaignStartedAt: value.campaignStartedAt,
+            stage: value.stage, campaign: value.campaign, authority: value.authority, campaignStartedAt: value.campaignStartedAt,
             totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes)
     }
 
-    func isValidStart(staged: Bool, bitRate: Int) -> Bool {
-        guard self.bitRate == bitRate else { return false }
+    func isValidStart(staged: Bool, bitRate: Int, repeatable: Bool = false) -> Bool {
+        guard self.bitRate == bitRate, !repeatable || staged,
+              campaign == (repeatable ? UInt32(1) : nil) else { return false }
         if !staged { return stage == nil && campaignStartedAt == nil && totalAcceptedPayloadBytes == nil }
         return stage == 1 && hasValidCampaignAccounting && campaignStartedAt == startedAt
             && acceptedPayloadBytes == 0 && totalAcceptedPayloadBytes == 0
@@ -41,10 +43,10 @@ extension PublishingBandwidthProbeSnapshot {
 
     func isValidRenewal(of prior: Self) -> Bool {
         guard id == prior.id, publishingGeneration == prior.publishingGeneration,
-              bitRate == prior.bitRate, startedAt == prior.startedAt, stage == prior.stage,
+              bitRate == prior.bitRate, startedAt == prior.startedAt, stage == prior.stage, campaign == prior.campaign,
               campaignStartedAt == prior.campaignStartedAt,
               acceptedPayloadBytes >= prior.acceptedPayloadBytes else { return false }
-        if stage == nil { return campaignStartedAt == nil && totalAcceptedPayloadBytes == nil }
+        if stage == nil { return campaign == nil && campaignStartedAt == nil && totalAcceptedPayloadBytes == nil }
         guard hasValidCampaignAccounting, prior.hasValidCampaignAccounting,
               let total = totalAcceptedPayloadBytes, let previousTotal = prior.totalAcceptedPayloadBytes,
               total >= previousTotal else { return false }
@@ -53,7 +55,7 @@ extension PublishingBandwidthProbeSnapshot {
 
     func isValidReplacement(of prior: Self, bitRate: Int) -> Bool {
         guard let previousStage = prior.stage, previousStage < 32,
-              stage == previousStage + 1, id != prior.id,
+              stage == previousStage + 1, campaign == prior.campaign, id != prior.id,
               publishingGeneration == prior.publishingGeneration, self.bitRate == bitRate,
               campaignStartedAt == prior.campaignStartedAt, startedAt >= prior.startedAt,
               acceptedPayloadBytes == 0, hasValidCampaignAccounting, prior.hasValidCampaignAccounting,
@@ -66,8 +68,11 @@ extension PublishingBandwidthProbeSnapshot {
     /// A new campaign must carry neither the old traffic budget nor stale time.
     func isValidRestart(of prior: Self, bitRate: Int, requestedAt: Double, observedAt: Double) -> Bool {
         guard (1...12_000_000).contains(bitRate), prior.hasValidCampaignAccounting, id != prior.id,
+              let previousCampaign = prior.campaign, previousCampaign > 0, previousCampaign < UInt32.max,
+              campaign == previousCampaign + 1,
               publishingGeneration == prior.publishingGeneration,
-              isValidStart(staged: true, bitRate: bitRate), reason == nil, lastAcceptedAt == nil,
+              self.bitRate == bitRate, stage == 1, hasValidCampaignAccounting, campaignStartedAt == startedAt,
+              acceptedPayloadBytes == 0, totalAcceptedPayloadBytes == 0, reason == nil, lastAcceptedAt == nil,
               requestedAt.isFinite, observedAt.isFinite, requestedAt >= 0, observedAt >= requestedAt,
               startedAt > prior.startedAt, startedAt >= requestedAt, startedAt <= observedAt,
               leaseDeadline > startedAt, leaseDeadline <= startedAt + 0.3 else { return false }
@@ -75,7 +80,7 @@ extension PublishingBandwidthProbeSnapshot {
     }
 
     private var hasValidCampaignAccounting: Bool {
-        guard publishingGeneration > 0, let stage, (1...32).contains(stage), let campaignStartedAt,
+        guard campaign == nil || campaign! > 0, publishingGeneration > 0, let stage, (1...32).contains(stage), let campaignStartedAt,
               campaignStartedAt.isFinite, campaignStartedAt >= 0, startedAt.isFinite,
               campaignStartedAt <= startedAt, startedAt - campaignStartedAt < 60,
               leaseDeadline.isFinite, leaseDeadline >= startedAt,

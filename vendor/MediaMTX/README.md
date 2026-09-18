@@ -45,15 +45,16 @@ the qualification fixture's read query is only a unique test marker.
 Build on an ARM64 or AMD64 Docker host from the repository root:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-hd-v2 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:campaign-probe-v3 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
-Current cumulative source must use the fresh `staged-probe-hd-v2` tag. Preserve the
-previously qualified `staged-probe-v2`, `receiver-probe-v1` and `recovery-v1` images.
+Current cumulative source must use the fresh `campaign-probe-v3` tag. Preserve the
+previously qualified `staged-probe-hd-v2`, `staged-probe-v2`, `receiver-probe-v1`
+and `recovery-v1` images.
 
 The HD probe build accepts staged `SBUGPRB2` target rates up to 12 Mbps while
-legacy `SBUGPRB1` retains its 2 Mbps ceiling. The connection-wide 16 MiB payload
+legacy `SBUGPRB1` retains its 2 Mbps ceiling. For these legacy wire versions, the connection-wide 16 MiB payload
 cap and all identity, sequence and partial-message checks remain unchanged.
 Accepting a rate field does not establish achieved throughput or spare capacity.
 
@@ -207,3 +208,52 @@ The complete iPhone 14/iOS 17.5 simulator run `native-app-PnVEYX` reconciled all
 The independent 1080p archive and 540p live output decoded without source loss;
 all expected audio markers survived. This finite result does not qualify spare
 capacity, automatic quality increases, physical devices or remote deployments.
+
+
+## Campaign probe wire foundation
+
+The cumulative `campaign-probe-v3` build adds explicit `SBUGPRB3` accounting while
+preserving v1/v2 behavior. Its seven 188-byte null packets keep the v2 layout
+through byte 52 except for the version marker. Bytes 49–52 contain stage 1...32;
+bytes 53–56 contain campaign 1...UInt32.max, both unsigned big-endian integers.
+Bytes 57–187 remain `0xff`. Offered rates remain 1...12,000,000 bits/s for v3.
+The marker carries no authentication or capacity authority.
+
+The first observed campaign and stage may be any positive valid values. A
+replacement requires a higher campaign (with any valid stage), or a higher stage
+in the same campaign, a changed current UUID, unchanged publishing generation,
+sequence/ordinal zero and a complete preceding message. Gaps allow campaigns or
+stages that emitted no bytes. A historical UUID may return at a later tuple;
+only the current tuple/UUID is retained. Old tuples, same-tuple ID/rate changes,
+mixed versions, incomplete replacements and malformed packets permanently
+invalidate proof while leaving delivered media bytes and read errors unchanged.
+
+The 16 MiB budget spans all stages in one campaign. A new campaign resets its
+budget and current-stage counters; a new stage resets only stage counters and
+stage delivery timestamps. The publication total and elapsed observer clock
+never reset. A complete 1316-byte message is reserved before accepting ordinal
+zero, so a remainder smaller than one message cannot become pending evidence.
+Checked UInt64 accounting bounds the publication total by campaign × 16 MiB,
+whose largest value is exactly 72,057,594,021,150,720 bytes.
+
+Private publisher snapshots use `mpegts-null-probe-v3`, numeric `stage`, and
+canonical decimal strings for `campaign`, `campaignDeliveredPayloadBytes` and
+publication-wide `totalDeliveredPayloadBytes`. Existing message/byte/sequence
+and first/last timestamp fields describe the current stage. Invalid early v3
+snapshots still declare the v3 fields with zero counters. V1/v2 snapshots omit
+the campaign fields. Storage remains one partial packet plus constant scalar
+state, with no retired campaign/stage/UUID collection.
+
+Focused source tests (after applying the cumulative patch to the pinned archive):
+
+```sh
+go test ./internal/servers/srt -run TestProbeReader -count=1
+```
+
+The fixed cross-language vector uses campaign UInt32.max, stage 31, UUID
+`01020304-0506-4708-890a-0b0c0d0e0f10`, generation `0x0102030405060708`, sequence
+zero and 12 Mbps. Its 1316-byte SHA-256 is
+`cf9b15b536c40fe65844f463057ac7c190cc580ef3fe45d9f4ea6f5e03a51b2a`.
+This source foundation does not select v3 for production publishing, change
+regular deployment images, or qualify spare capacity, adaptive quality,
+physical devices or remote deployments.

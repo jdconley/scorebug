@@ -68,6 +68,7 @@ import Testing
         let probe = try makeProbe(stage: 2, campaign: 9, previous: 1316 * 5)
         let original = probe.snapshot(now: { 10 })
         let authority = try #require(original.authority)
+        #expect(original.campaign == nil)
         #expect(original.stage == 2)
         #expect(original.campaignStartedAt == 9)
         #expect(original.totalAcceptedPayloadBytes == 1316 * 5)
@@ -217,11 +218,68 @@ import Testing
         }))
         #expect(legacyMessage == SRTProbeMessage.encode(id: probe.id, generation: 0, sequence: 0, bitRate: 1_000_000))
         let snapshot = probe.snapshot(now: { 10.02 })
+        #expect(snapshot.campaign == nil)
         #expect(snapshot.stage == nil)
         #expect(snapshot.campaignStartedAt == nil)
         #expect(snapshot.totalAcceptedPayloadBytes == nil)
         #expect(snapshot.acceptedPayloadBytes == 1316)
         #expect(snapshot.authority?.permits(id: snapshot.id, generation: 0, stage: nil) == true)
+    }
+
+    @Test func repeatableOwnerEmitsCampaignAndPreservesCampaignAccounting() throws {
+        let probe = try SRTBandwidthProbe(bitRate: 12_000_000, generation: 1, statistics: stats(10), at: 10,
+            stage: 2, campaign: 7, campaignStartedAt: 9, previouslyAcceptedPayloadBytes: 2632)
+        #expect(probe.renew(now: { 10.01 }))
+        var message: Data?
+        #expect(try probe.offer(statistics: stats(10.02), now: { 10.02 }, send: { message = $0; return true }))
+        #expect(message == (try SRTProbeMessage.encodeCampaign(id: probe.id, generation: 1,
+            campaign: 7, stage: 2, sequence: 0, bitRate: 12_000_000)))
+        let snapshot = probe.snapshot(now: { 10.02 })
+        #expect(snapshot.campaign == 7 && snapshot.stage == 2)
+        #expect(snapshot.campaignStartedAt == 9 && snapshot.totalAcceptedPayloadBytes == 3948)
+        #expect(snapshot.acceptedPayloadBytes == 1316)
+        #expect(try probe.nextCampaign() == 8)
+    }
+
+    @Test func repeatableCampaignRetainsFiniteByteAndTimeBudgets() throws {
+        let lastWholeMessage = UInt64(16 * 1024 * 1024 / 1316) * 1316
+        let byteLimited = try SRTBandwidthProbe(bitRate: 12_000_000, generation: 1, statistics: stats(10), at: 10,
+            stage: 32, campaign: 3, campaignStartedAt: 9, previouslyAcceptedPayloadBytes: lastWholeMessage - 1316)
+        #expect(try byteLimited.offer(statistics: stats(10.02), now: { 10.02 }, send: { _ in true }))
+        #expect(byteLimited.snapshot(now: { 10.02 }).reason == .byteLimit)
+        #expect(byteLimited.snapshot(now: { 10.02 }).totalAcceptedPayloadBytes == lastWholeMessage)
+        #expect(!byteLimited.renew(now: { 10.02 }))
+        let timeLimited = try SRTBandwidthProbe(bitRate: 12_000_000, generation: 1, statistics: stats(69.95), at: 69.95,
+            stage: 2, campaign: 3, campaignStartedAt: 10, previouslyAcceptedPayloadBytes: 1316)
+        #expect(timeLimited.renew(now: { 69.97 }))
+        #expect(!timeLimited.isEligible(now: { 70 }))
+        #expect(timeLimited.snapshot(now: { 70 }).reason == .timeLimit)
+        #expect(timeLimited.snapshot(now: { 70 }).campaign == 3)
+    }
+
+    @Test func campaignRequiresNonzeroOrdinalAndStage() {
+        let configurations: [(UInt32?, UInt32?)] = [(nil, 1), (1, 0)]
+        for (stage, campaign) in configurations {
+            #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+                try SRTBandwidthProbe(bitRate: 1_000_000, generation: 1, statistics: stats(10), at: 10,
+                    stage: stage, campaign: campaign, campaignStartedAt: stage == nil ? nil : 10)
+            }
+        }
+    }
+
+    @Test func checkedCampaignSuccessorRejectsOverflowWithoutMutatingOwner() throws {
+        let probe = try SRTBandwidthProbe(bitRate: 1_000_000, generation: 1, statistics: stats(10), at: 10,
+            stage: 1, campaign: .max, campaignStartedAt: 10)
+        let before = probe.snapshot(now: { 10 })
+        #expect(throws: SRTBandwidthProbeError.invalidConfiguration) { try probe.nextCampaign() }
+        #expect(probe.snapshot(now: { 10 }) == before)
+        #expect(before.authority?.permits(id: before.id, generation: 1, stage: 1) == true)
+        probe.cancel(.cancelled)
+        let retired = probe.snapshot(now: { 10 })
+        #expect(throws: SRTBandwidthProbeError.invalidConfiguration) { try probe.nextCampaign() }
+        #expect(probe.snapshot(now: { 10 }) == retired)
+        let legacy = try makeProbe()
+        #expect(throws: SRTBandwidthProbeError.obsolete) { try legacy.nextCampaign() }
     }
 
     private enum Failure: Error { case injected }

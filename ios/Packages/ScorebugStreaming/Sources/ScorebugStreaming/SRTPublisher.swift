@@ -228,7 +228,8 @@ public actor SRTPublisher {
         return receipt
     }
 
-    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
+    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !repeatable || staged else { throw PublishingBandwidthProbeError.obsolete }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
@@ -236,8 +237,8 @@ public actor SRTPublisher {
         return try await runProbeOperation(generation: generation, revision: revision) {
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.beginBandwidthProbe(
-                    bitRate: bitRate, publishingGeneration: generation, staged: staged))
-                guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate) else {
+                    bitRate: bitRate, publishingGeneration: generation, staged: staged, repeatable: repeatable))
+                guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable) else {
                     try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }
@@ -286,14 +287,14 @@ public actor SRTPublisher {
         }
     }
 
-    /// Begin fresh staged measurements after the exact native owner is terminal.
-    /// Current v2 receivers reject stage resets; receiver-backed scheduling must
-    /// wait for campaign-aware wire support. This method is not called by the app.
+    /// Begin fresh measurements after the exact v3 native owner is terminal.
+    /// Requires repeatable opt-in from the first probe and a campaign-aware receiver.
     public func restartBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
                                       bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
+        guard let campaign = prior.campaign, campaign > 0, campaign < UInt32.max else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision

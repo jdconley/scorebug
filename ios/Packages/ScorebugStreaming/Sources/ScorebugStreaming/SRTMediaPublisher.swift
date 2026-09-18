@@ -61,7 +61,8 @@ public actor SRTMediaPublisher: MediaPublisher {
             probeSnapshot: { await adapter.bandwidthProbeSnapshot() },
             beginStagedProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true) },
             replaceProbe: { try await adapter.replaceBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) },
-            restartProbe: { try await adapter.restartBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) })
+            restartProbe: { try await adapter.restartBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) },
+            beginRepeatableProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true, repeatable: true) })
     }
 
     struct Operations: Sendable {
@@ -82,6 +83,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var beginStagedProbe: @Sendable (Int) async throws -> PublishingBandwidthProbeSnapshot = { _ in throw PublishingBandwidthProbeError.disabled }
         var replaceProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
         var restartProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
+        var beginRepeatableProbe: @Sendable (Int) async throws -> PublishingBandwidthProbeSnapshot = { _ in throw PublishingBandwidthProbeError.disabled }
     }
     init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
@@ -211,14 +213,18 @@ public actor SRTMediaPublisher: MediaPublisher {
         }
     }
 
-    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
+    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !repeatable || staged else { throw PublishingBandwidthProbeError.obsolete }
         guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
         return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
-            let value = try await (staged ? self.operations.beginStagedProbe(bitRate) : self.operations.beginProbe(bitRate))
-            guard value.isValidStart(staged: staged, bitRate: bitRate) else {
+            let value: PublishingBandwidthProbeSnapshot
+            if repeatable { value = try await self.operations.beginRepeatableProbe(bitRate) }
+            else if staged { value = try await self.operations.beginStagedProbe(bitRate) }
+            else { value = try await self.operations.beginProbe(bitRate) }
+            guard value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable) else {
                 await self.operations.cancelProbe(value.id, value.publishingGeneration)
                 throw PublishingBandwidthProbeError.obsolete
             }
@@ -262,14 +268,14 @@ public actor SRTMediaPublisher: MediaPublisher {
         } }
     }
 
-    /// Begin fresh staged measurements after the exact native owner is terminal.
-    /// Current v2 receivers reject stage resets; receiver-backed scheduling must
-    /// wait for campaign-aware wire support. This method is not called by the app.
+    /// Begin fresh measurements after the exact v3 native owner is terminal.
+    /// Requires repeatable opt-in from the first probe and a campaign-aware receiver.
     public func restartBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
                                       bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
         guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
         guard let prior = probeIdentity, prior.id == id, prior.publishingGeneration == publishingGeneration,
               prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
+        guard let campaign = prior.campaign, campaign > 0, campaign < UInt32.max else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision

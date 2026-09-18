@@ -21,6 +21,34 @@ final class WorkerReceiverProbeTests: XCTestCase {
         .init(response: response, expected: expected ?? expectation(), receivedAt: at, requestDuration: duration)
     }
 
+    func testV3GoldenValidatesAndRoundTripsWithoutLosingCampaign() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "receiver-probe-status-v3", withExtension: "json", subdirectory: "Fixtures"))
+        let bytes = try Data(contentsOf: url)
+        let response = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: bytes)
+        XCTAssertNotNil(response.status.receiverProbe?.snapshot.validated)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: JSONEncoder().encode(response)) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: bytes) as? NSDictionary)
+    }
+
+    func testV3FieldsCannotBeSilentlyStrippedFromLegacySnapshots() throws {
+        for version in [1, 2] {
+            var original = try XCTUnwrap(fixture().status.receiverProbe?.snapshot)
+            if version == 2 {
+                original.convention = "mpegts-null-probe-v2"
+                original.stage = 3
+                original.totalDeliveredPayloadBytes = "5264"
+            }
+            for key in ["campaign", "campaignDeliveredPayloadBytes"] {
+                for value: Any in [NSNull(), "2", 2, []] {
+                    var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+                    object[key] = value
+                    let decoded = try? JSONDecoder().decode(ReceiverProbeSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
+                    XCTAssertNil(decoded?.validated, "v\(version) \(key) \(value)")
+                }
+            }
+        }
+    }
+
     func testRateCeilingDependsOnWireVersionAndStillRequiresBoundedStage() throws {
         var snapshot = try XCTUnwrap(fixture().status.receiverProbe?.snapshot)
         snapshot.bitRate = 2_000_000

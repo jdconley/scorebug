@@ -47,9 +47,10 @@ public actor SRTStream {
         bandwidthProbe?.snapshot(now: { ProcessInfo.processInfo.systemUptime })
     }
     public func beginBandwidthProbe(bitRate: Int, publishingGeneration expected: UInt64,
-                                    staged: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
+                                    staged: Bool = false, repeatable: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
+        guard !repeatable || staged else { throw SRTBandwidthProbeError.invalidConfiguration }
         let maximumBitRate = staged ? 12_000_000 : 2_000_000
         guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
@@ -65,7 +66,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: staged ? 1 : nil, campaignStartedAt: staged ? at : nil)
+            stage: staged ? 1 : nil, campaign: repeatable ? 1 : nil, campaignStartedAt: staged ? at : nil)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -106,15 +107,15 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: stage + 1, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted)
+            stage: stage + 1, campaign: retired.campaign, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted)
         return installBandwidthProbe(probe, at: at)
     }
 
     /// Start a fresh campaign only from the current terminal staged identity.
     /// The retired attempt remains available for an explicit retry if admission
     /// fails. Its authority is never revived, and no campaign accounting carries.
-    /// Current v2 receivers do not support resetting a campaign to stage 1.
-    /// Receiver-backed callers require campaign-aware wire and receiver support.
+    /// Only an explicitly repeatable v3 owner can advance its campaign ordinal.
+    /// Legacy v1/v2 probes cannot restart within the same publication.
     public func restartBandwidthProbe(id: UUID, publishingGeneration expected: UInt64,
                                       stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
@@ -127,6 +128,7 @@ public actor SRTStream {
         }
         let retired = previous.snapshot(now: { ProcessInfo.processInfo.systemUptime })
         guard retired.stage == stage, retired.reason != nil else { throw SRTBandwidthProbeError.obsolete }
+        let campaign = try previous.nextCampaign()
         guard !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
         probeStarting = true
         let configuration = probeConfigurationRevision
@@ -148,7 +150,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: 1, campaignStartedAt: at)
+            stage: 1, campaign: campaign, campaignStartedAt: at)
         return installBandwidthProbe(probe, at: at)
     }
 

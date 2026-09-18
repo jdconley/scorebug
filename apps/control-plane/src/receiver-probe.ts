@@ -40,6 +40,8 @@ const snapshot = z.discriminatedUnion('convention', [
     convention: z.literal('mpegts-null-probe-v1'),
     stage: z.never().optional(),
     totalDeliveredPayloadBytes: z.never().optional(),
+    campaign: z.never().optional(),
+    campaignDeliveredPayloadBytes: z.never().optional(),
   }),
   z.object({
     ...fields,
@@ -47,6 +49,17 @@ const snapshot = z.discriminatedUnion('convention', [
     bitRate: z.number().int().min(1).max(12_000_000),
     stage: z.number().int().min(1).max(32),
     totalDeliveredPayloadBytes: integer(16n * 1024n * 1024n),
+    campaign: z.never().optional(),
+    campaignDeliveredPayloadBytes: z.never().optional(),
+  }),
+  z.object({
+    ...fields,
+    convention: z.literal('mpegts-null-probe-v3'),
+    bitRate: z.number().int().min(1).max(12_000_000),
+    stage: z.number().int().min(1).max(32),
+    campaign: integer(4_294_967_295n).refine((s) => s !== '0'),
+    campaignDeliveredPayloadBytes: integer(16n * 1024n * 1024n),
+    totalDeliveredPayloadBytes: integer(4_294_967_295n * 16n * 1024n * 1024n),
   }),
 ]);
 /** Optional diagnostic parsing must not make ordinary publication unavailable. */
@@ -61,12 +74,25 @@ export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | unde
   )
     return undefined;
   const total =
-    p.convention === 'mpegts-null-probe-v2'
+    p.convention !== 'mpegts-null-probe-v1'
       ? BigInt(p.totalDeliveredPayloadBytes)
       : messages * 1316n;
   if (total % 1316n !== 0n || total < messages * 1316n) return undefined;
   // The relay reserves one whole message before accepting even its first packet.
-  if (p.pendingPackets > 0 && total + 1316n > 16n * 1024n * 1024n) return undefined;
+  const cap = 16n * 1024n * 1024n;
+  const campaignTotal =
+    p.convention === 'mpegts-null-probe-v3' ? BigInt(p.campaignDeliveredPayloadBytes) : total;
+  if (p.convention === 'mpegts-null-probe-v3') {
+    if (
+      campaignTotal % 1316n !== 0n ||
+      campaignTotal < messages * 1316n ||
+      campaignTotal > total ||
+      total - campaignTotal > (BigInt(p.campaign) - 1n) * cap ||
+      (p.stage === 1 && campaignTotal !== messages * 1316n)
+    )
+      return undefined;
+  }
+  if (p.pendingPackets > 0 && campaignTotal + 1316n > cap) return undefined;
   if (messages === 0n) {
     if (p.firstDeliveredAtNanoseconds !== undefined || p.lastDeliveredAtNanoseconds !== undefined)
       return undefined;
@@ -88,6 +114,8 @@ export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | unde
     invalidReason,
     stage,
     totalDeliveredPayloadBytes,
+    campaign,
+    campaignDeliveredPayloadBytes,
     ...required
   } = p;
   const result = {
@@ -96,6 +124,15 @@ export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | unde
     ...(lastDeliveredAtNanoseconds === undefined ? {} : { lastDeliveredAtNanoseconds }),
     ...(invalidReason === undefined ? {} : { invalidReason }),
   };
+  if (p.convention === 'mpegts-null-probe-v3')
+    return {
+      ...result,
+      convention: p.convention,
+      stage: p.stage,
+      campaign: p.campaign,
+      campaignDeliveredPayloadBytes: p.campaignDeliveredPayloadBytes,
+      totalDeliveredPayloadBytes: p.totalDeliveredPayloadBytes,
+    };
   return p.convention === 'mpegts-null-probe-v2'
     ? {
         ...result,

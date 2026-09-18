@@ -13,6 +13,7 @@ struct NativeBandwidthProbeSample: Sendable {
     let lastAcceptedAt: Double?
     var reason: String?
     var stage: Int? = nil
+    var campaign: UInt32? = nil
     var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?) -> Bool)? = nil
     var campaignStartedAt: Double? = nil
     var totalAcceptedPayloadBytes: UInt64? = nil
@@ -21,6 +22,7 @@ struct NativeBandwidthProbeSample: Sendable {
          "startedAt": startedAt, "leaseDeadline": leaseDeadline, "acceptedPayloadBytes": String(acceptedPayloadBytes),
          "lastAcceptedAt": lastAcceptedAt as Any? ?? NSNull(), "reason": reason as Any? ?? NSNull()]
         if let stage { object["stage"] = stage }
+        if let campaign { object["campaign"] = String(campaign) }
         if let campaignStartedAt { object["campaignStartedAt"] = campaignStartedAt }
         if let totalAcceptedPayloadBytes { object["totalAcceptedPayloadBytes"] = String(totalAcceptedPayloadBytes) }
         return object
@@ -31,7 +33,7 @@ extension NativeBandwidthProbeSample {
         self.init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
             lastAcceptedAt: value.lastAcceptedAt, reason: value.reason?.rawValue,
-            stage: value.stage.flatMap(Int.init(exactly:)), permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner,
+            stage: value.stage.flatMap(Int.init(exactly:)), campaign: value.campaign, permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner,
             campaignStartedAt: value.campaignStartedAt, totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes)
     }
 }
@@ -115,7 +117,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         guard let value = await operations.snapshot() else { return nil }
         return .init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
-            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason, stage: value.stage,
+            lastAcceptedAt: value.lastAcceptedAt, reason: value.reason, stage: value.stage, campaign: value.campaign,
             permitsCurrentOwner: value.permitsCurrentOwner)
     }
     func append(_ sample: CapturedMediaSample) async throws { try await publisher.append(sample) }

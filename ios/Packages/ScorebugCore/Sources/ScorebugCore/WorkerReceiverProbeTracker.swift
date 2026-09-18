@@ -37,11 +37,13 @@ public struct WorkerReceiverProbeTracker: Sendable {
     public private(set) var latestPair: WorkerReceiverProbeIntervalPair?
     public private(set) var isQuarantined = false
     private struct Scope: Equatable, Sendable {
+        let convention: String
         let expected: WorkerReceiverProbeExpectation
         let epoch: String
         let attempt: Int
         let publication: WorkerPublication
         init(_ e: WorkerReceiverProbeFreshness) {
+            convention = e.snapshot.convention
             expected = e.expected; epoch = e.workerEpoch; attempt = e.workerAttempt; publication = e.publication
         }
         func matchesPublication(_ other: Self) -> Bool {
@@ -74,17 +76,24 @@ public struct WorkerReceiverProbeTracker: Sendable {
         }
         guard !isQuarantined else { return nil }
         if let scope {
+            guard scope.convention == nextScope.convention else { quarantine(); return nil }
             switch (scope.expected.stage, nextScope.expected.stage) {
             case (nil, nil): break
             case let (oldStage?, newStage?):
-                guard newStage >= oldStage,
-                      newStage != oldStage || scope.expected == nextScope.expected,
-                      newStage == oldStage || scope.expected.probeId != nextScope.expected.probeId else {
+                // UInt32 ordinals remain unsigned on arm64_32 Watch. Legacy
+                // staged evidence uses one implicit campaign for ordering only.
+                let oldCampaign = scope.expected.campaign ?? 0
+                let newCampaign = nextScope.expected.campaign ?? 0
+                let sameTuple = oldCampaign == newCampaign && oldStage == newStage
+                let forward = newCampaign > oldCampaign || (newCampaign == oldCampaign && newStage > oldStage)
+                guard sameTuple || forward,
+                      !sameTuple || scope.expected == nextScope.expected,
+                      sameTuple || scope.expected.probeId != nextScope.expected.probeId else {
                     quarantine(); return nil
                 }
-                if newStage > oldStage {
-                    // A local stage replacement breaks coverage, never clock or
-                    // cumulative history. No history array is needed (at most 32 stages).
+                if forward {
+                    // Every boundary discards coverage, while publication clock
+                    // and counter history remain in the bounded previous sample.
                     suspend(); previousAccepted = nil
                 }
             default: quarantine(); return nil
@@ -114,7 +123,27 @@ public struct WorkerReceiverProbeTracker: Sendable {
             guard evidence.requestStartedAt >= previous.receivedAt, observed >= oldObserved else {
                 quarantine(); return nil
             }
-            if p.stage != old.stage {
+            let campaignChanged = p.campaign != old.campaign
+            let boundary = campaignChanged || p.stage != old.stage
+            if let campaignText = p.campaignDeliveredPayloadBytes,
+               let oldCampaignText = old.campaignDeliveredPayloadBytes {
+                let campaignBytes = UInt64(campaignText)!, oldCampaignBytes = UInt64(oldCampaignText)!
+                let total = UInt64(p.totalDeliveredPayloadBytes!)!, oldTotal = UInt64(old.totalDeliveredPayloadBytes!)!
+                let reservation: UInt64 = old.pendingPackets > 0 ? 1316 : 0
+                if campaignChanged {
+                    // Unpolled earlier stages in the new campaign count in full.
+                    guard total >= oldTotal + reservation + campaignBytes else { quarantine(); return nil }
+                } else {
+                    guard total >= oldTotal, campaignBytes >= oldCampaignBytes,
+                          total - oldTotal == campaignBytes - oldCampaignBytes else { quarantine(); return nil }
+                    if boundary {
+                        guard campaignBytes >= oldCampaignBytes + reservation + messages * 1316 else {
+                            quarantine(); return nil
+                        }
+                    }
+                }
+            }
+            if boundary {
                 // Prior pending packets reserve a whole message even if their
                 // completion was not observed before replacing the probe.
                 let required = UInt64(old.totalDeliveredPayloadBytes!)! +

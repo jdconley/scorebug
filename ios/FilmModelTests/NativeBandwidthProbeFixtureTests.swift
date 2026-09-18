@@ -4,6 +4,30 @@ import ScorebugMedia
 import XCTest
 
 final class NativeBandwidthProbeFixtureTests: XCTestCase {
+    func testProbeObservationCarriesCampaignWithoutNarrowing() async throws {
+        let id = UUID()
+        let sample = NativeBandwidthProbeSample(id: id, publishingGeneration: 7, bitRate: 500_000,
+            startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil,
+            reason: nil, stage: 1, campaign: UInt32.max, permitsCurrentOwner: { _, _, _ in true })
+        XCTAssertEqual(sample.object["campaign"] as? String, "4294967295")
+        let fixture = ProbeFixtureOperations()
+        var operations = await fixture.operations()
+        // Snapshot closures are fixed values; retain the other fixture operations.
+        operations = .init(clock: operations.clock, begin: operations.begin, renew: operations.renew,
+            cancel: operations.cancel, snapshot: { sample }, export: operations.export)
+        let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .renew,
+            operations: operations, timing: .init(delay: .zero))
+        let observed = await publisher.probeObservation()
+        var observation = try XCTUnwrap(observed)
+        XCTAssertEqual(observation.campaign, UInt32.max)
+        XCTAssertTrue(observation.isActive(at: 10.1))
+        observation.campaign = 0
+        XCTAssertFalse(observation.isActive(at: 10.1))
+        observation.campaign = 1
+        observation.stage = nil
+        XCTAssertFalse(observation.isActive(at: 10.1))
+    }
+
     func testFlagsRequireExclusiveFixedProfileAndRejectMalformedValues() throws {
         let valid = ["SCOREBUG_TEST_BANDWIDTH_PROBE": "renew", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
             "SCOREBUG_TEST_LIVE_PROFILE": "540p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",

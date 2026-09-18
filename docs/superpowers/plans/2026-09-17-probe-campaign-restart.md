@@ -88,3 +88,12 @@ Spec and quality reviews approved. Prior evidence remains frozen; the final
 source/test/raw-artifact inventory is
 `artifacts/qa/probe-campaign-restart-final-verification.json`.
 The next required implementation is campaign-aware wire and receiver support.
+
+
+## Campaign wire follow-up
+
+The [campaign-aware wire checkpoint](2026-09-17-probe-campaign-wire.md) now adds
+v3 from explicit repeatable begin, requires it for restart, and carries campaign
+identity through relay/API/native accounting. V2 restart is rejected. Its new
+relay image passes a finite three-campaign SRT/media loopback. Fresh candidate
+ownership, recovery scheduling and repeated native ramp qualification remain next.

@@ -33,6 +33,7 @@ public struct WorkerReceiverProbeFreshness: Sendable {
               validated.generation == expected.publishingGeneration,
               report.snapshot.bitRate == expected.bitRate,
               report.snapshot.stage == expected.stage,
+              report.snapshot.campaign.flatMap(UInt32.init) == expected.campaign,
               report.ageUpperBoundMs.isFinite, report.ageUpperBoundMs >= 0,
               report.ageUpperBoundMs.rounded(.towardZero) == report.ageUpperBoundMs,
               report.ageUpperBoundMs <= Double(Self.maximumSafeInteger) else { return nil }

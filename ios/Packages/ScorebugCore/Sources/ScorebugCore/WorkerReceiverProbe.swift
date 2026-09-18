@@ -17,12 +17,15 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
     public var invalidReason: String?
     public var stage: Int?
     public var totalDeliveredPayloadBytes: String?
+    public var campaign: String?
+    public var campaignDeliveredPayloadBytes: String?
 
     public init(convention: String, id: String, publishingGeneration: String, bitRate: Int,
                 deliveredMessages: String, deliveredPayloadBytes: String, nextSequence: String,
                 pendingPackets: Int, observedAtNanoseconds: String,
                 firstDeliveredAtNanoseconds: String? = nil, lastDeliveredAtNanoseconds: String? = nil,
-                invalidReason: String? = nil, stage: Int? = nil, totalDeliveredPayloadBytes: String? = nil) {
+                invalidReason: String? = nil, stage: Int? = nil, totalDeliveredPayloadBytes: String? = nil,
+                campaign: String? = nil, campaignDeliveredPayloadBytes: String? = nil) {
         self.convention = convention; self.id = id; self.publishingGeneration = publishingGeneration
         self.bitRate = bitRate; self.deliveredMessages = deliveredMessages
         self.deliveredPayloadBytes = deliveredPayloadBytes; self.nextSequence = nextSequence
@@ -30,10 +33,11 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
         self.firstDeliveredAtNanoseconds = firstDeliveredAtNanoseconds
         self.lastDeliveredAtNanoseconds = lastDeliveredAtNanoseconds; self.invalidReason = invalidReason
         self.stage = stage; self.totalDeliveredPayloadBytes = totalDeliveredPayloadBytes
+        self.campaign = campaign; self.campaignDeliveredPayloadBytes = campaignDeliveredPayloadBytes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case convention, id, publishingGeneration, bitRate, deliveredMessages, deliveredPayloadBytes, nextSequence, pendingPackets, observedAtNanoseconds, firstDeliveredAtNanoseconds, lastDeliveredAtNanoseconds, invalidReason, stage, totalDeliveredPayloadBytes
+        case convention, id, publishingGeneration, bitRate, deliveredMessages, deliveredPayloadBytes, nextSequence, pendingPackets, observedAtNanoseconds, firstDeliveredAtNanoseconds, lastDeliveredAtNanoseconds, invalidReason, stage, totalDeliveredPayloadBytes, campaign, campaignDeliveredPayloadBytes
     }
 
     public init(from decoder: Decoder) throws {
@@ -53,6 +57,8 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
         invalidReason = container.contains(.invalidReason) ? try container.decode(String.self, forKey: .invalidReason) : nil
         stage = container.contains(.stage) ? try container.decode(Int.self, forKey: .stage) : nil
         totalDeliveredPayloadBytes = container.contains(.totalDeliveredPayloadBytes) ? try container.decode(String.self, forKey: .totalDeliveredPayloadBytes) : nil
+        campaign = container.contains(.campaign) ? try container.decode(String.self, forKey: .campaign) : nil
+        campaignDeliveredPayloadBytes = container.contains(.campaignDeliveredPayloadBytes) ? try container.decode(String.self, forKey: .campaignDeliveredPayloadBytes) : nil
     }
 
     private static func integer(_ value: String, maximum: UInt64 = .max) -> UInt64? {
@@ -65,7 +71,8 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
 
     /// Mirrors the bounded authenticated API envelope, independently of decoding.
     var validated: (generation: UInt64, observed: UInt64, last: UInt64?)? {
-        let maximumBitRate = convention == "mpegts-null-probe-v2" ? 12_000_000 : 2_000_000
+        let maximumBitRate = convention == "mpegts-null-probe-v2" || convention == "mpegts-null-probe-v3" ? 12_000_000 : 2_000_000
+        let campaignCap: UInt64 = 16 * 1024 * 1024
         guard invalidReason == nil,
               WorkerPublication.isCanonicalUUID(id), id != "00000000-0000-0000-0000-000000000000",
               let generation = Self.integer(publishingGeneration), generation > 0,
@@ -75,18 +82,34 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
               bytes == messages * 1316, nextSequence == deliveredMessages,
               let observed = Self.integer(observedAtNanoseconds, maximum: 86_400_000_000_000) else { return nil }
         let total: UInt64
+        let publicationCap: UInt64
         switch convention {
         case "mpegts-null-probe-v1":
-            guard stage == nil, totalDeliveredPayloadBytes == nil else { return nil }
-            total = bytes
+            guard stage == nil, totalDeliveredPayloadBytes == nil,
+                  campaign == nil, campaignDeliveredPayloadBytes == nil else { return nil }
+            total = bytes; publicationCap = campaignCap
         case "mpegts-null-probe-v2":
-            guard let stage, (1...32).contains(stage), let text = totalDeliveredPayloadBytes,
+            guard campaign == nil, campaignDeliveredPayloadBytes == nil,
+                  let stage, (1...32).contains(stage), let text = totalDeliveredPayloadBytes,
                   let cumulative = Self.integer(text, maximum: 16 * 1024 * 1024),
                   cumulative % 1316 == 0, cumulative >= bytes else { return nil }
-            total = cumulative
+            total = cumulative; publicationCap = campaignCap
+        case "mpegts-null-probe-v3":
+            guard let stage, (1...32).contains(stage),
+                  let campaign, let ordinal = Self.integer(campaign, maximum: UInt64(UInt32.max)), ordinal > 0,
+                  let campaignDeliveredPayloadBytes,
+                  let campaignBytes = Self.integer(campaignDeliveredPayloadBytes, maximum: campaignCap),
+                  campaignBytes % 1316 == 0, campaignBytes >= bytes,
+                  stage != 1 || campaignBytes == bytes,
+                  let totalDeliveredPayloadBytes,
+                  let cumulative = Self.integer(totalDeliveredPayloadBytes, maximum: ordinal * campaignCap),
+                  cumulative % 1316 == 0, cumulative >= campaignBytes,
+                  cumulative - campaignBytes <= (ordinal - 1) * campaignCap,
+                  pendingPackets == 0 || campaignBytes + 1316 <= campaignCap else { return nil }
+            total = cumulative; publicationCap = ordinal * campaignCap
         default: return nil
         }
-        guard pendingPackets == 0 || total + 1316 <= 16 * 1024 * 1024 else { return nil }
+        guard pendingPackets == 0 || total + 1316 <= publicationCap else { return nil }
         if messages == 0 {
             guard firstDeliveredAtNanoseconds == nil, lastDeliveredAtNanoseconds == nil else { return nil }
             return (generation, observed, nil)
@@ -118,11 +141,13 @@ public struct WorkerReceiverProbeExpectation: Equatable, Sendable {
     public var publishingGeneration: UInt64
     public var bitRate: Int
     public var stage: Int?
+    public var campaign: UInt32?
 
     public init(gameId: String, generation: Int, workerId: String, publishingAttemptId: String,
-                probeId: String, publishingGeneration: UInt64, bitRate: Int, stage: Int? = nil) {
+                probeId: String, publishingGeneration: UInt64, bitRate: Int, stage: Int? = nil, campaign: UInt32? = nil) {
         self.gameId = gameId; self.generation = generation; self.workerId = workerId
         self.publishingAttemptId = publishingAttemptId; self.probeId = probeId
         self.publishingGeneration = publishingGeneration; self.bitRate = bitRate; self.stage = stage
+        self.campaign = campaign
     }
 }

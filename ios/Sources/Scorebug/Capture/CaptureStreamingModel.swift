@@ -820,7 +820,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         let expected = WorkerReceiverProbeExpectation(gameId: response.status.gameId, generation: publishing.generation,
             workerId: worker, publishingAttemptId: publishing.attempt.uuidString.lowercased(),
             probeId: probe.id.uuidString.lowercased(), publishingGeneration: probe.publishingGeneration,
-            bitRate: probe.bitRate, stage: probe.stage)
+            bitRate: probe.bitRate, stage: probe.stage, campaign: probe.campaign)
         let evidence = WorkerReceiverProbeFreshness(response: response, expected: expected,
             receivedAt: receivedAt, requestDuration: requestDuration)
         workerReceiverProbeInterval = receiverProbeTracker.observe(evidence, acceptedPayloadBytes: probe.acceptedPayloadBytes,

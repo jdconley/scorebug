@@ -700,7 +700,7 @@ private final class StagedPaddingBytes: @unchecked Sendable {
     private let lock = NSLock()
     private var messages: [(stage: UInt32, sequence: UInt64)] = []
     func append(_ data: Data) {
-        guard data.count == 1316, data[4..<12] == Data("SBUGPRB2".utf8) else { return }
+        guard data.count == 1316, [Data("SBUGPRB2".utf8), Data("SBUGPRB3".utf8)].contains(data[4..<12]) else { return }
         let stage = data[49..<53].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
         let sequence = data[36..<44].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
         lock.withLock { messages.append((stage, sequence)) }
@@ -736,6 +736,46 @@ private final class StagedProbeStatistics: @unchecked Sendable {
 }
 
 extension SRTStreamPaddingTests {
+    @Test func repeatableRequiresStagedAndPreservesCampaignUntilRestart() async throws {
+        let (stream, connection, generation) = try await restartFixture()
+        await #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+            try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, repeatable: true)
+        }
+        #expect(await stream.bandwidthProbeSnapshot == nil)
+        var current = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        #expect(current.campaign == 1)
+        let renewed = try await stream.renewBandwidthProbe(id: current.id, publishingGeneration: generation)
+        #expect(renewed.campaign == 1 && renewed.id == current.id)
+        for expectedCampaign: UInt32 in [1, 2, 3] {
+            let previous = current
+            current = try await stream.replaceBandwidthProbe(id: current.id,
+                publishingGeneration: generation, stage: 1, bitRate: 500_000)
+            #expect(current.campaign == expectedCampaign && current.stage == 2)
+            #expect(current.campaignStartedAt == previous.campaignStartedAt)
+            #expect(current.totalAcceptedPayloadBytes == previous.totalAcceptedPayloadBytes)
+            #expect(current.id != previous.id)
+            try await stream.cancelBandwidthProbe(id: current.id, publishingGeneration: generation)
+            current = try await stream.restartBandwidthProbe(id: current.id,
+                publishingGeneration: generation, stage: 2, bitRate: 1_000_000)
+            #expect(current.campaign == expectedCampaign + 1 && current.stage == 1)
+            #expect(current.totalAcceptedPayloadBytes == 0 && current.campaignStartedAt == current.startedAt)
+        }
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func terminalLegacyV2CannotRestartIntoAnotherStageOne() async throws {
+        let (stream, connection, generation) = try await restartFixture()
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        try await stream.cancelBandwidthProbe(id: first.id, publishingGeneration: generation)
+        let retired = try #require(await stream.bandwidthProbeSnapshot)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.restartBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 1_000_000)
+        }
+        #expect(await stream.bandwidthProbeSnapshot == retired)
+        await stream.finish(); await connection.close()
+    }
+
     @Test func restartBeginsFreshCampaignAndAccountingWithoutRepublishing() async throws {
         let output = StagedPaddingBytes()
         let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: probeStatistics))
@@ -743,7 +783,7 @@ extension SRTStreamPaddingTests {
         await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
         await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
         let generation = try #require(await stream.publishingGeneration)
-        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true, repeatable: true)
         let end = ContinuousClock.now + .seconds(1)
         while output.total < 2 && ContinuousClock.now < end { await Task.yield() }
         try #require(output.total >= 2)
@@ -751,6 +791,7 @@ extension SRTStreamPaddingTests {
         let retired = try #require(await stream.bandwidthProbeSnapshot)
         try #require((retired.totalAcceptedPayloadBytes ?? 0) > 0)
         let next = try await stream.restartBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 12_000_000)
+        #expect(first.campaign == 1 && next.campaign == 2)
         #expect(next.id != first.id && next.stage == 1 && next.reason == nil)
         #expect(next.publishingGeneration == generation && next.bitRate == 12_000_000)
         #expect(next.startedAt > first.startedAt && next.campaignStartedAt == next.startedAt)
@@ -766,7 +807,7 @@ extension SRTStreamPaddingTests {
 
     @Test(arguments: [false, true]) func restartRejectsActiveAndLegacyProbe(staged: Bool) async throws {
         let (stream, connection, generation) = try await restartFixture()
-        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: staged)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: staged, repeatable: staged)
         await #expect(throws: SRTBandwidthProbeError.obsolete) {
             try await stream.restartBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 1_000_000)
         }
@@ -782,7 +823,7 @@ extension SRTStreamPaddingTests {
 
     @Test func restartValidatesIdentityGenerationStageRateAndEnabledState() async throws {
         let (stream, connection, generation) = try await restartFixture()
-        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true, repeatable: true)
         try await stream.cancelBandwidthProbe(id: first.id, publishingGeneration: generation)
         for rate in [0, -1, 12_000_001, Int.max] {
             await #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
@@ -819,7 +860,7 @@ extension SRTStreamPaddingTests {
             probe.cancel(.leaseExpired)
             await withTaskCancellationHandler { await gate.wait() } onCancel: { gate.didClose() }
         })
-        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true, repeatable: true)
         var end = ContinuousClock.now + .seconds(1)
         while !gate.entered && ContinuousClock.now < end { await Task.yield() }
         try #require(gate.entered)
@@ -852,7 +893,7 @@ extension SRTStreamPaddingTests {
     func restartRevalidatesAfterStatisticsSuspension(action: String) async throws {
         let gate = PaddingStatisticsGate(); defer { gate.release() }
         let (stream, connection, generation) = try await restartFixture(statisticsReader: gate.read)
-        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true, repeatable: true)
         try await stream.cancelBandwidthProbe(id: first.id, publishingGeneration: generation)
         gate.arm()
         let pending = Task { try await stream.restartBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 1_000_000) }
@@ -879,7 +920,7 @@ extension SRTStreamPaddingTests {
     @Test func restartRetriesFailedStatisticsUsingRetiredIdentity() async throws {
         let statistics = StagedProbeStatistics()
         let (stream, connection, generation) = try await restartFixture(statisticsReader: statistics.read)
-        var last = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        var last = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true, repeatable: true)
         for stage in UInt32(1)..<32 {
             last = try await stream.replaceBandwidthProbe(id: last.id, publishingGeneration: generation, stage: stage, bitRate: 1)
         }
@@ -891,6 +932,7 @@ extension SRTStreamPaddingTests {
         #expect(await stream.bandwidthProbeSnapshot?.id == last.id)
         #expect(last.authority?.permits(id: last.id, generation: generation, stage: 32) == false)
         let next = try await stream.restartBandwidthProbe(id: last.id, publishingGeneration: generation, stage: 32, bitRate: 1)
+        #expect(last.campaign == 1 && next.campaign == 2)
         #expect(next.id != last.id && next.stage == 1 && next.reason == nil)
         #expect(next.campaignStartedAt == next.startedAt && next.startedAt > last.startedAt)
         #expect(next.totalAcceptedPayloadBytes == 0)

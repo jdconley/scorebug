@@ -38,6 +38,7 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public let lastAcceptedAt: Double?
     public let reason: Reason?
     public internal(set) var stage: UInt32? = nil
+    public internal(set) var campaign: UInt32? = nil
     public internal(set) var authority: SRTBandwidthProbeAuthority? = nil
     public internal(set) var campaignStartedAt: Double? = nil
     public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
@@ -54,6 +55,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     private let bitRate: Int
     private let startedAt: Double
     private let stage: UInt32?
+    private let campaign: UInt32?
     private let campaignStartedAt: Double?
     private let previouslyAcceptedPayloadBytes: UInt64
     private let retransmitted: UInt64
@@ -68,11 +70,14 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     private var reason: SRTBandwidthProbeSnapshot.Reason?
 
     init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
-         stage: UInt32? = nil, campaignStartedAt: Double? = nil,
+         stage: UInt32? = nil, campaign: UInt32? = nil, campaignStartedAt: Double? = nil,
          previouslyAcceptedPayloadBytes: UInt64 = 0) throws {
         let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
         guard (1...maximumBitRate).contains(bitRate), at.isFinite, at >= 0 else {
             throw SRTBandwidthProbeError.invalidConfiguration
+        }
+        if let campaign {
+            guard campaign > 0, stage != nil else { throw SRTBandwidthProbeError.invalidConfiguration }
         }
         if let stage {
             guard generation > 0, (1...32).contains(stage),
@@ -94,11 +99,20 @@ final class SRTBandwidthProbe: @unchecked Sendable {
               statistics.pktSndDropTotal >= 0 else { throw SRTBandwidthProbeError.unavailableStatistics }
         let id = UUID()
         self.id = id; authority = SRTBandwidthProbeAuthority(id: id, generation: generation, stage: stage)
-        self.stage = stage; self.campaignStartedAt = campaignStartedAt
+        self.stage = stage; self.campaign = campaign; self.campaignStartedAt = campaignStartedAt
         self.previouslyAcceptedPayloadBytes = previouslyAcceptedPayloadBytes
         self.bitRate = bitRate; self.generation = generation; startedAt = at
         deadline = at + 0.3; lastTime = at; tokenAt = at; statisticsAt = sampled
         retransmitted = statistics.byteRetransTotal; dropped = statistics.pktSndDropTotal
+    }
+
+    /// Only the native owner supplies the current ordinal; restart checks this
+    /// before cancelling wake work or beginning a new admission. Never wraps.
+    func nextCampaign() throws -> UInt32 {
+        guard let campaign else { throw SRTBandwidthProbeError.obsolete }
+        let (next, overflow) = campaign.addingReportingOverflow(1)
+        guard !overflow else { throw SRTBandwidthProbeError.invalidConfiguration }
+        return next
     }
 
     @discardableResult private func stop(_ next: SRTBandwidthProbeSnapshot.Reason) -> Bool {
@@ -160,7 +174,10 @@ final class SRTBandwidthProbe: @unchecked Sendable {
             }
             do {
                 let message: Data
-                if let stage {
+                if let stage, let campaign {
+                    message = try SRTProbeMessage.encodeCampaign(id: id, generation: generation,
+                        campaign: campaign, stage: stage, sequence: bytes / 1316, bitRate: bitRate)
+                } else if let stage {
                     message = try SRTProbeMessage.encodeStage(id: id, generation: generation,
                         stage: stage, sequence: bytes / 1316, bitRate: bitRate)
                 } else {
@@ -190,7 +207,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
             _ = check(now())
             return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
                 leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
-                stage: stage, authority: authority, campaignStartedAt: campaignStartedAt,
+                stage: stage, campaign: campaign, authority: authority, campaignStartedAt: campaignStartedAt,
                 totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes)
         }
     }

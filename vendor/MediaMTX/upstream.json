@@ -23,7 +23,7 @@
     "internal/defs/path.go": "000e20711cfb62dfdc914f5fe42240d888c812e5fde24079384e4a4571f4406f",
     "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1"
   },
-  "patchSHA256": "963871bd3ca386d5634613929e92744aa2d396d073f6d6dce36f805f17da8cd3",
+  "patchSHA256": "0527758e3cca89b922ba5f380e43ab8299c7efbc1e9f51994ee6e28eb63200f4",
   "addedFiles": [
     "internal/core/path_reader_source_test.go",
     "internal/protocols/mpegts/from_stream_recovery_test.go",
@@ -34,6 +34,7 @@
     "internal/servers/srt/conn_clock_origin_test.go",
     "internal/servers/srt/conn_reader_source_test.go",
     "internal/servers/srt/probe_reader.go",
+    "internal/servers/srt/probe_reader_campaign_test.go",
     "internal/servers/srt/probe_reader_test.go"
   ]
 }
