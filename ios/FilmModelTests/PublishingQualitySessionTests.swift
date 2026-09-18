@@ -647,6 +647,134 @@ private final class ProfileQualityNative: @unchecked Sendable {
 }
 
 final class PublishingMeasuredCandidateSessionTests: XCTestCase {
+    func testMeasurementReadinessBindsAuthenticatedSourceAndVerifiedCurrentReceiptWithoutWrites() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let state = await f.owner.snapshot
+        let context = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        let value = try XCTUnwrap(context)
+        XCTAssertEqual(value.readiness.attemptID, f.attempt)
+        XCTAssertEqual(value.readiness.appliedRevision, 0)
+        XCTAssertEqual(value.readiness.baseline.profileID, "240p30")
+        XCTAssertEqual(value.readiness.settings.profileID, "360p30")
+        XCTAssertEqual(value.readiness.validUntil, 117)
+        XCTAssertEqual(value.applied.receipt.configuration, state.receipt?.configuration)
+        XCTAssertEqual(value.applied.acknowledgedAt, state.acknowledgedAt)
+        XCTAssertEqual(value.scope, diagnostics.ingress?.scope)
+        XCTAssertEqual(value.clock, diagnostics.clock)
+        let again = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertEqual(again?.readiness, value.readiness)
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        XCTAssertNotNil(decision.recommendation, "Readiness reads must not consume admission or health")
+        let pending = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(pending, "Do not start competing work while advice is pending")
+        await f.owner.stop()
+        let stopped = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(stopped)
+    }
+    func testMeasurementContextAfterFallbackUsesAcknowledgedEncoderInsteadOfStartupEncoder() async throws {
+        let f = try await CandidateQualityFixture.make(initialProfile: .low360, unhealthySource: true)
+        let startup = try XCTUnwrap(f.native.operations.videoStartup())
+        let advice = try XCTUnwrap(f.sourceAdvice)
+        try await f.owner.apply(advice)
+        let state = await f.owner.snapshot
+        XCTAssertEqual(state.applied?.profileID, "240p30")
+        XCTAssertNotEqual(state.receipt?.configuration.encoderSessionID, startup.encoderSessionID)
+        f.native.setNow(121.1)
+        let health = try await f.freshSource(start: 116, sequence: 3)
+        _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant)
+        let context = await f.owner.candidateMeasurementContext(diagnostics: health.1)
+        let value = try XCTUnwrap(context)
+        XCTAssertEqual(value.applied.revision, 1)
+        XCTAssertEqual(value.applied.receipt.configuration, state.receipt?.configuration)
+        XCTAssertEqual(value.readiness.settings.profileID, "360p30")
+        XCTAssertNotEqual(value.applied.receipt.configuration.encoderSessionID, startup.encoderSessionID)
+        XCTAssertEqual(f.native.calls, ["rate:600000", "profile:240p30", "rate:350000"])
+        await f.owner.stop()
+    }
+    func testMeasurementQueryRejectsCancellationAndSuspendedNativeApplication() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let cancelledGate = QualityWriteGate()
+        let cancelled = Task {
+            await cancelledGate.wait()
+            return await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        }
+        cancelled.cancel(); cancelledGate.release()
+        let cancelledResult = await cancelled.value
+        XCTAssertNil(cancelledResult)
+        let gate = QualityWriteGate()
+        f.native.installProfileGate(gate)
+        defer { gate.release() }
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let advice = try XCTUnwrap(decision.recommendation)
+        let applying = Task { try await f.owner.apply(advice) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !gate.entered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertTrue(gate.entered)
+        let duringWrite = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(duringWrite)
+        gate.release(); try await applying.value
+        await f.owner.stop()
+    }
+    func testChangedRecordingScopeRestartsRecoveryCreditFromItsOwnSource() async throws {
+        let f = try await CandidateQualityFixture.make()
+        f.native.setNow(120.1)
+        let health = try await f.freshSource(start: 115, sequence: 3, recordingID: "replacement")
+        _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant)
+        let context = await f.owner.candidateMeasurementContext(diagnostics: health.1)
+        let value = try XCTUnwrap(context)
+        XCTAssertEqual(value.scope.recordingID, "replacement")
+        XCTAssertEqual(value.readiness.healthySince, 115, "Do not carry the earlier recording's recovery credit")
+        await f.owner.stop()
+    }
+    func testMeasurementReadinessCannotUseUnboundHealthOrChangedNativeOwner() async throws {
+        let unbound = try await CandidateQualityFixture.make(sourceHealth: false)
+        let absent = await unbound.owner.candidateMeasurementContext(diagnostics: try unbound.diagnostics())
+        XCTAssertNil(absent)
+        await unbound.owner.stop()
+        let f = try await CandidateQualityFixture.make()
+        let original = try XCTUnwrap(f.sourceDiagnostics)
+        for fault in ["receipt", "clock", "origin", "recording", "revision", "match", "generation", "attempt", "closed", "missingIngress", "notPublishing"] {
+            var diagnostic = original
+            if fault == "receipt" {
+                f.native.replaceReceipt(); diagnostic.receipt = f.native.receipt
+            } else if fault == "clock" {
+                diagnostic.clock = .init(sourceOrigin: .zero, publishingGeneration: 8)
+            } else if fault == "origin" {
+                diagnostic.clock = .init(sourceOrigin: .init(value: 1, timescale: 30), publishingGeneration: 7)
+            } else if fault == "notPublishing" { diagnostic.isPublishing = false }
+            else if fault == "missingIngress" { diagnostic.ingress = nil }
+            else {
+                let old = try XCTUnwrap(original.ingress).scope
+                let scope = VideoFrameObservationScope(recordingID: fault == "recording" ? "other" : old.recordingID,
+                    matchID: fault == "match" ? "other" : old.matchID,
+                    broadcastGeneration: fault == "generation" ? old.broadcastGeneration + 1 : old.broadcastGeneration,
+                    publishingAttemptID: fault == "attempt" ? UUID() : old.publishingAttemptID,
+                    appliedProfileRevision: fault == "revision" ? old.appliedProfileRevision + 1 : old.appliedProfileRevision)
+                var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
+                diagnostic.ingress = fault == "closed" ? ingress.close(at: f.native.now) : ingress.poll(at: f.native.now)
+            }
+            let result = await f.owner.candidateMeasurementContext(diagnostics: diagnostic)
+            XCTAssertNil(result, fault)
+        }
+        for time in [117.0001, 114, Double.nan, Double.infinity, 1e12 + 1] {
+            f.native.setNow(time)
+            let result = await f.owner.candidateMeasurementContext(diagnostics: original)
+            XCTAssertNil(result)
+        }
+        f.native.setNow(115.1)
+        let restored = await f.owner.candidateMeasurementContext(diagnostics: original)
+        XCTAssertNotNil(restored, "A read-only rejected clock must not advance or poison policy")
+        await f.owner.stop()
+    }
     func testCandidateNoOpAndStaleAuthorityPreservePendingDownwardAdvice() async throws {
         for revoked in [false, true] {
             let f = try await CandidateQualityFixture.make(initialProfile: .low360, unhealthySource: true)
@@ -885,9 +1013,18 @@ struct CandidateQualityFixture: Sendable {
     private var admissionMeasurementScope: VideoFrameObservationScope {
         .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1)
     }
+    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording") async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
+        let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
+        let state = await owner.snapshot
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: try XCTUnwrap(state.revision),
+            settings: try XCTUnwrap(state.applied), receipt: try XCTUnwrap(state.receipt), acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
+        return try Self.source(native: native, template: template, applied: applied, start: start, sequence: sequence, recordingID: recordingID)
+    }
     private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
-                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
-        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match", broadcastGeneration: 2,
+                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording") throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+        let scope = VideoFrameObservationScope(recordingID: recordingID, matchID: "match", broadcastGeneration: 2,
             publishingAttemptID: applied.attemptID, appliedProfileRevision: 1)
         var history = try VideoSourceHistory(scope: scope, capacity: 1024)
         for index in 0...150 {
@@ -920,7 +1057,7 @@ struct CandidateQualityFixture: Sendable {
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
         ingress.updateOccupancy(items: unhealthy ? 4 : 0, bytes: unhealthy ? 40 : 0, phase: .admitting, at: 100)
         var thermal = PublishingThermalTracker(), transport = PublishingTransportStatisticsTracker()
-        for index in 100...115 {
+        for index in 100...Int(max(115, native.now.rounded(.down))) {
             let time = Double(index)
             thermal.observe(.init(state: .nominal, sampledAt: time))
             transport.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(index * 1000),
@@ -1026,6 +1163,8 @@ final class CandidateQualityNative: @unchecked Sendable {
     private var history: [String] = []
     private var current: PublishingBitRateChange?
     private var onProfile: (@Sendable () -> Void)?
+    private var profileGate: QualityWriteGate?
+    fileprivate func installProfileGate(_ value: QualityWriteGate) { lock.withLock { profileGate = value } }
     var now: Double { lock.withLock { time } }
     var instant: ContinuousClock.Instant { anchor + .seconds(now - 100) }
     var receipt: PublishingBitRateChange? { lock.withLock { current } }
@@ -1053,6 +1192,8 @@ final class CandidateQualityNative: @unchecked Sendable {
                   publishingGeneration: 7, encoderSessionID: self.firstEncoder,
                   firstSourcePTS: .zero, submittedAt: 99, completedAt: 99.5, observedAt: 100)
         }, setProfile: { profile, _ in
+            let gate = self.lock.withLock { self.profileGate }
+            await gate?.wait()
             let (action, previous, encoder, ordinal) = self.lock.withLock {
                 self.history.append("profile:\(profile.rawValue)")
                 let previous = self.activeEncoder ?? self.firstEncoder, encoder = UUID()

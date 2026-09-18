@@ -45,6 +45,19 @@ public struct QualityController: Sendable {
         /// authorize recovery. Ordinary health windows accumulate credit only.
         case measuredCandidateTrials
     }
+    /// Advisory snapshot for scheduling fresh candidate measurements. This is
+    /// neither an admission nor permission to apply settings; final candidate
+    /// evidence must independently pass `evaluateCandidate` and probation.
+    public struct CandidateMeasurementReadiness: Equatable, Sendable {
+        public let attemptID: UUID
+        public let appliedRevision: UInt64
+        public let baseline: Settings
+        public let settings: Settings
+        public let healthSequence: UInt64
+        public let healthySince: Double
+        public let healthyThrough: Double
+        public let validUntil: Double
+    }
     /// Actual candidate transport cost and delivered probe padding, qualified
     /// independently by the caller and bound to one publication and exact target.
     public struct CandidateAdmission: Sendable {
@@ -275,6 +288,25 @@ public struct QualityController: Sendable {
     }
     private var upwardApplicationInFlight: Bool {
         application.map { $0.recommendation.kind == .trial || $0.recommendation.kind == .increase } ?? false
+    }
+
+    /// Read existing recovery readiness without advancing time, accumulating
+    /// health, consuming evidence, or changing outstanding native work.
+    public func candidateMeasurementReadiness(at now: Double) -> CandidateMeasurementReadiness? {
+        guard recoveryStrategy == .measuredCandidateTrials, behavior == .progressive,
+              now.isFinite, now >= lastNow, now <= 1e12,
+              application == nil, trial == nil, pending == nil, !minimumResetRequired,
+              let health = latestStrongHealth, let receiver = health.receiver,
+              health.end <= now, now - health.end <= 2,
+              receiver.observedAt <= now, now - receiver.observedAt <= 2,
+              let recoveryStart, health.end - recoveryStart >= requiredHealthyDuration,
+              now >= trialCooldownUntil,
+              let index = profiles.firstIndex(where: { $0.id == applied.profileID }),
+              let settings = higherSettings(profileIndex: index) else { return nil }
+        return .init(attemptID: attemptID, appliedRevision: appliedRevision,
+                     baseline: applied, settings: settings, healthSequence: health.sequence,
+                     healthySince: recoveryStart, healthyThrough: health.end,
+                     validUntil: min(health.end + 2, receiver.observedAt + 2))
     }
 
     /// Consume independently qualified candidate evidence without re-consuming a

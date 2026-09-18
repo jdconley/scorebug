@@ -22,6 +22,14 @@ actor PublishingQualitySession {
         let isClosed: Bool
         let isBusy: Bool
     }
+    /// Advisory work request only. Re-read after suspension; it cannot authorize
+    /// a quality increase or keep measurement authority alive after invalidation.
+    struct CandidateMeasurementContext: Sendable {
+        let readiness: QualityController.CandidateMeasurementReadiness
+        let applied: PublishingQualityTelemetry.Applied
+        let scope: VideoFrameObservationScope
+        let clock: PublishingTransportClock
+    }
     struct Operations: Sendable {
         let setBitRate: @Sendable (Int, Double) async throws -> PublishingBitRateChange
         let stop: @Sendable () async -> Void
@@ -63,6 +71,8 @@ actor PublishingQualitySession {
     private var lastNow: Double
     private var lastPolicySequence: UInt64 = 0
     private struct SourceScope: Equatable {
+        let observationScope: VideoFrameObservationScope
+        let clock: PublishingTransportClock
         let gameID: String
         let generation: Int
         let workerId: String
@@ -71,6 +81,7 @@ actor PublishingQualitySession {
         let publication: WorkerPublication
         let processingScope: String?
         init(_ source: WorkerSourceIntervalObservation) {
+            observationScope = source.interval.scope; clock = source.nativeClock
             gameID = source.interval.scope.matchID; generation = source.interval.scope.broadcastGeneration
             workerId = source.workerId; epoch = source.workerEpoch; attempt = source.workerAttempt
             publication = source.publication; processingScope = source.processing?.scopeID
@@ -123,6 +134,35 @@ actor PublishingQualitySession {
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
         lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, lastDeliveryFailure: lastDeliveryFailure,
         evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
+
+    /// Derive scheduling readiness from the current policy and acknowledged
+    /// encoder, never from the immutable first-frame startup receipt. This query
+    /// neither changes policy state nor performs native work.
+    func candidateMeasurementContext(diagnostics: PublishingQualityTelemetry.Diagnostics) -> CandidateMeasurementContext? {
+        guard !closed, !busy, !Task.isCancelled, operations.isPublishing(),
+              let policy, let receipt, let acknowledgedAt, let source = candidateHealthSource else { return nil }
+        let now = uptime()
+        guard now.isFinite, now >= lastNow, now <= 1e12,
+              let readiness = policy.candidateMeasurementReadiness(at: now),
+              diagnostics.isPublishing, let current = diagnostics.receipt,
+              current.publishingGeneration == receipt.publishingGeneration,
+              current.configuration == receipt.configuration,
+              current.acceptedAt == receipt.acceptedAt,
+              current.lastSubmittedSourcePTS == receipt.lastSubmittedSourcePTS,
+              let clock = diagnostics.clock, clock == source.clock,
+              clock.publishingGeneration == receipt.publishingGeneration,
+              let ingress = diagnostics.ingress, !ingress.isClosed,
+              ingress.scope == source.observationScope,
+              ingress.scope.publishingAttemptID == attemptID,
+              ingress.scope.matchID == source.gameID,
+              ingress.scope.broadcastGeneration == source.generation,
+              source.publication.publishingAttemptId == attemptID.uuidString.lowercased(),
+              receipt.configuration.bitRate == readiness.baseline.videoBitrate,
+              acknowledgedAt.isFinite, acknowledgedAt >= receipt.acceptedAt, acknowledgedAt <= now else { return nil }
+        return .init(readiness: readiness,
+            applied: .init(attemptID: attemptID, revision: readiness.appliedRevision, settings: readiness.baseline,
+                receipt: receipt, acknowledgedAt: acknowledgedAt), scope: ingress.scope, clock: clock)
+    }
 
     /// Call only after the native encoder exists. No initial setting is claimed
     /// from configuration intent alone, and repeated bootstrap never dispatches.
