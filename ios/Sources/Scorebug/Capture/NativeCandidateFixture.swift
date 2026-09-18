@@ -8,7 +8,9 @@ import ScorebugStreaming
 enum NativeCandidateHeadroomFixture {
     static func requested(environment: [String: String]) throws -> Bool {
         guard let flag = environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] else { return false }
-        guard flag == "1", environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "staged",
+        guard flag == "1", ["staged", "repeated"].contains(environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""),
+              environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] != "repeated" ||
+                (environment["SCOREBUG_TEST_MEASURED_TRIAL"] == "1" && environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] == "360p30"),
               ["360p30", "540p30", "1080p30"].contains(environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""),
               environment["SCOREBUG_TEST_LIVE_PROFILE"] == "240p30",
               try VideoObservationFixture.liveProfile(environment: environment) == .low240,
@@ -175,11 +177,20 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         var poll: Duration = .milliseconds(100)
         var maximumPolls: Int = 50
         var maximumProbeWaitPolls: Int = 250
+        var maximumCampaignWaitPolls: Int = 1800
     }
     private let publisher: any MediaPublisher
     private let scope: VideoFrameObservationScope
     private let liveProfile: PublishingVideoProfile
-    private let operations: Operations
+    private var operations: Operations
+    private let repeated: Bool
+    private let repeatOperations: (@Sendable () -> Operations)?
+    private var candidateEpoch = UUID()
+    private var measurementCampaign: UInt32 = 1
+    private var operationsRetired = false
+    private var currentMeasurementContext: PublishingQualitySession.CandidateMeasurementContext?
+    private var previousMeasurementContext: PublishingQualitySession.CandidateMeasurementContext?
+    private var closedCampaigns: [[String: Any]] = []
     private let timing: Timing
     private let candidateHeadroom: Bool
     private let requiresMeasurementReadiness: Bool
@@ -211,7 +222,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private var frozenMeasurementExport: Data?
     private var measurement: Data?
     private var candidateCost: PublishingCandidateCost?
-    private let candidateAuthority = CandidateAuthority()
+    private var candidateAuthority = CandidateAuthority()
     private var work: Task<Void, Never>?, shutdown: Task<Void, Never>?
     private var primaryStartup: Task<Void, Error>?
     private let lifecycle: NativeCandidateLifecycleAudit?
@@ -223,35 +234,41 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private var bitRateWrites: [UUID: Task<PublishingBitRateChange, Error>] = [:]
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         candidate: PublishingVideoProfile, campaignOwner: PublishingCandidateCampaignOwner, candidateHeadroom: Bool = false, requiresMeasurementReadiness: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
+         candidate: PublishingVideoProfile, campaignOwner: PublishingCandidateCampaignOwner, candidateHeadroom: Bool = false, requiresMeasurementReadiness: Bool = false, repeated: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
          joinedStop: (@Sendable () async -> Void)? = nil) {
         let reader = NativeCandidateContextReader()
         self.measurementContext = reader
-        let attempt = requiresMeasurementReadiness
-            ? NativeCandidateAttempt(owner: campaignOwner, scope: scope, candidate: candidate,
-                contextProvider: { await reader.read() })
-            : NativeCandidateAttempt(owner: campaignOwner, publisher: publisher,
-                scope: scope, liveProfile: liveProfile, candidate: candidate)
+        let make: @Sendable () -> Operations = {
+            let attempt = requiresMeasurementReadiness
+                ? NativeCandidateAttempt(owner: campaignOwner, scope: scope, candidate: candidate,
+                    contextProvider: { await reader.read() })
+                : NativeCandidateAttempt(owner: campaignOwner, publisher: publisher,
+                    scope: scope, liveProfile: liveProfile, candidate: candidate)
+            return .init(start: { try await attempt.start() },
+                offer: { attempt.offer($0) }, cancel: { attempt.cancel($0) },
+                result: { await attempt.result().map(NativeCandidateFixture.data) ?? Data("null".utf8) },
+                export: { await Self.persist($0) },
+                typedResult: { await attempt.result().flatMap(PublishingCandidateCost.init) },
+                retire: { await attempt.retire() })
+        }
+        self.repeated = repeated; self.repeatOperations = repeated ? make : nil
         self.requiresMeasurementReadiness = requiresMeasurementReadiness
         self.measurementProfile = candidate
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile; timing = Timing()
         self.candidateHeadroom = candidateHeadroom
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
         candidateStop = { await campaignOwner.stop() }
-        operations = .init(start: { try await attempt.start() },
-            offer: { attempt.offer($0) }, cancel: { attempt.cancel($0) },
-            result: { await attempt.result().map(NativeCandidateFixture.data) ?? Data("null".utf8) },
-            export: { await Self.persist($0) },
-            typedResult: { await attempt.result().flatMap(PublishingCandidateCost.init) },
-            retire: { await attempt.retire() })
+        operations = make()
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         operations: Operations, timing: Timing, candidateHeadroom: Bool = false, requiresMeasurementReadiness: Bool = false, measurementProfile: PublishingVideoProfile? = nil, lifecycle: NativeCandidateLifecycleAudit? = nil,
+         operations: Operations, timing: Timing, candidateHeadroom: Bool = false, requiresMeasurementReadiness: Bool = false, measurementProfile: PublishingVideoProfile? = nil, repeated: Bool = false,
+         repeatOperations: (@Sendable () -> Operations)? = nil, lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
          joinedStop: (@Sendable () async -> Void)? = nil) {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
+        self.repeated = repeated; self.repeatOperations = repeatOperations
         self.requiresMeasurementReadiness = requiresMeasurementReadiness; self.measurementProfile = measurementProfile
         self.measurementContext = NativeCandidateContextReader()
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
@@ -259,9 +276,14 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func setDiagnostics(_ read: @escaping @Sendable () -> Pressure?) { diagnostics = read }
-    @discardableResult func setMeasurementContextProvider(_ read: @escaping @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?) -> Bool {
-        guard requiresMeasurementReadiness, !stopped else { return false }
-        return measurementContext.install(read)
+    @discardableResult func setMeasurementContextProvider(_ read: @escaping @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?) async -> Bool {
+        guard requiresMeasurementReadiness, !stopped, measurementContext.install(read) else { return false }
+        if repeated, let probe = publisher as? NativeBandwidthProbePublisher {
+            guard await probe.setMeasurementContextProvider(read), !stopped else {
+                measurementContext.close(); return false
+            }
+        }
+        return !stopped
     }
     func start() async throws {
         guard !starting, !started, !stopped else { throw PublishingSessionError.invalidState }
@@ -279,16 +301,17 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         work = Task { await run() }
     }
     func append(_ sample: CapturedMediaSample) async throws {
-        let wasSampling = sampling
+        let wasSampling = sampling, epoch = candidateEpoch
         do { try await publisher.append(sample) }
-        catch { revoke(.pressure); throw error }
-        guard wasSampling, sampling, !stopped, sample.kind == .video else { return }
+        catch { if epoch == candidateEpoch { revoke(.pressure) }; throw error }
+        guard epoch == candidateEpoch, wasSampling, sampling, !stopped, sample.kind == .video else { return }
         guard await refreshProbe(requiresSampling: true), sampling, !stopped, checkPressure() else { return }
         _ = operations.offer(sample)
     }
     var isPublishing: Bool { get async {
+        let epoch = candidateEpoch
         let healthy = await publisher.isPublishing
-        if !healthy { revoke(.pressure) }
+        if epoch == candidateEpoch, !healthy { revoke(.pressure) }
         return healthy
     } }
     func transportClock() async -> PublishingTransportClock? { await publisher.transportClock() }
@@ -385,6 +408,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func revoke(_ reason: PublishingCandidateMeasurement.Reason) {
+        // A fallback can finish while waiting for the next campaign. There is no
+        // allocated candidate to invalidate then; fresh readiness checks its result.
+        if repeated, !candidateOperationsStarted, reason == .ownerChanged { return }
         candidateAuthority.revoke()
         sampling = false
         candidateCost = nil
@@ -404,13 +430,13 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             for write in bitRates { _ = try? await write.value }
             await pending?.value
             if measurement == nil { measurement = await operations.result() }
-            await operations.retire()
+            await retireCurrentOperations()
             await candidateStop?()
             // Measured mode exports the diagnostic frozen at measurement join;
             // later application retirement belongs only to lifecycle evidence.
             if lifecycle != nil, frozenMeasurementExport == nil { frozenMeasurementExport = try? exportData() }
-            let data = lifecycle == nil ? try? exportData() : frozenMeasurementExport
-            if let data, data.count <= 256 * 1024 { await operations.export(data) }
+            let data = repeated ? try? repeatedExportData() : (lifecycle == nil ? try? exportData() : frozenMeasurementExport)
+            if let data, data.count <= (repeated ? 512 : 256) * 1024 { await operations.export(data) }
             await joinedStop?()
             await lifecycle?.closeAndExport()
         }
@@ -455,8 +481,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     }
     private func waitForFinalProbe() async throws {
         guard candidateHeadroom else { return }
-        let deadline = ProcessInfo.processInfo.systemUptime + 25
-        for _ in 0..<timing.maximumProbeWaitPolls {
+        let deadline = ProcessInfo.processInfo.systemUptime + (repeated ? 180 : 25)
+        let maximumPolls = repeated ? timing.maximumCampaignWaitPolls : timing.maximumProbeWaitPolls
+        for _ in 0..<maximumPolls {
             try Task.checkCancellation()
             guard !stopped, invalidReason == nil else { throw CancellationError() }
             let value = await probeObservation()
@@ -464,6 +491,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             let now = ProcessInfo.processInfo.systemUptime
             guard !stopped, invalidReason == nil, now < deadline else { break }
             if let value, value.stage == 3, value.bitRate == 12_000_000,
+               !repeated || value.campaign == measurementCampaign,
                publisher.videoStartup?.publishingGeneration == value.publishingGeneration,
                value.isActive(at: now), now - value.startedAt >= 0.5 {
                 if requiresMeasurementReadiness {
@@ -474,10 +502,16 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                           context.scope == scope,
                           context.readiness.settings.profileID == measurementProfile.rawValue,
                           context.readiness.settings.videoBitrate == measurementProfile.bitRate,
-                          context.applied.receipt.publishingGeneration == value.publishingGeneration else {
+                          context.applied.receipt.publishingGeneration == value.publishingGeneration,
+                          previousMeasurementContext.map({ previous in
+                              context.scope == previous.scope && context.clock == previous.clock &&
+                              context.readiness.settings == previous.readiness.settings &&
+                              context.applied.revision > previous.applied.revision
+                          }) ?? true else {
                         try await Task.sleep(for: timing.poll)
                         continue
                     }
+                    currentMeasurementContext = context
                 }
                 // Readiness can suspend. It cannot renew the earlier probe lease
                 // or restore authority that was revoked during that suspension.
@@ -497,9 +531,11 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     }
     private func refreshProbe(requiresSampling: Bool = false, recordDiagnostic: Bool = true) async -> Bool {
         guard candidateHeadroom else { return true }
+        let epoch = candidateEpoch
         for _ in 0..<3 {
             let revision = acceptedProbeRevision
             let value = await probeObservation()
+            guard epoch == candidateEpoch else { return false }
             // The native read can suspend past measurement completion or stop. A late
             // raw-input read must neither reopen admission nor replace joined evidence.
             guard !requiresSampling || (sampling && !stopped) else { return false }
@@ -535,21 +571,81 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         if sampling { revoke(.deadline) }
     }
     private func run() async {
+        guard repeated else { await runCampaign(delay: timing.delay); return }
+        guard requiresMeasurementReadiness, repeatOperations != nil,
+              (1...1800).contains(timing.maximumCampaignWaitPolls) else {
+            revoke(.startupFailed); return
+        }
+        for ordinal in UInt32(1)...2 {
+            guard !stopped, !Task.isCancelled else { break }
+            if ordinal > 1 {
+                guard let make = repeatOperations else { break }
+                candidateEpoch = UUID(); operations = make(); operationsRetired = false
+                candidateOperationsStarted = false; measurementCampaign = ordinal
+                pinnedProbe = nil; currentProbe = nil; acceptedProbeRevision = 0
+                probeBoundAt = nil; probeCompletedAt = nil; initialProbe = nil; finalProbe = nil
+                invalidReason = nil; baseline = nil; finalPressure = nil; polls = 0; maximumThermal = -1
+                frozenMeasurementExport = nil; measurement = nil; candidateCost = nil
+                currentMeasurementContext = nil
+                // Keep completedCandidateID until a new result joins: a fallback
+                // during recovery still belongs to the previous candidate trial.
+            }
+            await runCampaign(delay: ordinal == 1 ? timing.delay : .zero)
+            // Preserve the completed sample while final admission is possible.
+            // Profile application revokes synchronously; otherwise its two-second
+            // evidence lifetime bounds this wait.
+            while !stopped, !Task.isCancelled, invalidReason == nil, candidateCost != nil,
+                  let completedAt = probeCompletedAt,
+                  ProcessInfo.processInfo.systemUptime <= completedAt + 2 {
+                do { try await Task.sleep(for: timing.poll) } catch { break }
+            }
+            candidateAuthority.revoke(); sampling = false; candidateCost = nil
+            await retireCurrentOperations()
+            let data = frozenMeasurementExport ?? (try? exportData())
+            if let data, let object = try? JSONSerialization.jsonObject(with: data) {
+                closedCampaigns.append(["campaign": String(ordinal),
+                    "appliedRevision": currentMeasurementContext.map { String($0.applied.revision) } as Any? ?? NSNull(),
+                    "started": candidateOperationsStarted, "measurement": object])
+            }
+            previousMeasurementContext = currentMeasurementContext
+            guard candidateOperationsStarted, currentMeasurementContext != nil else { break }
+        }
+    }
+    private func retireCurrentOperations() async {
+        guard !operationsRetired else { return }
+        await operations.retire()
+        operationsRetired = true
+    }
+    private func repeatedExportData() throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["formatVersion": 4, "isClosed": true,
+            "scope": NativeCandidateFixture.scope(scope), "maximumCampaigns": 2,
+            "campaigns": closedCampaigns], options: [.sortedKeys])
+    }
+    private func runCampaign(delay: Duration) async {
         defer {
-            if lifecycle != nil, measurement != nil { frozenMeasurementExport = try? exportData() }
+            if (lifecycle != nil || repeated), measurement != nil { frozenMeasurementExport = try? exportData() }
         }
         do {
             guard !requiresMeasurementReadiness || (candidateHeadroom && measurementProfile != nil),
                   timing.delay >= .zero, timing.poll > .zero, (1...50).contains(timing.maximumPolls),
                   (1...250).contains(timing.maximumProbeWaitPolls) else { throw PublishingSessionError.invalidState }
-            try await Task.sleep(for: timing.delay)
+            try await Task.sleep(for: delay)
             try Task.checkCancellation()
             try await waitForFinalProbe()
             guard !stopped, invalidReason == nil, let value = diagnostics?(), value.valid else { revoke(.pressure); throw CancellationError() }
             baseline = value; finalPressure = value; maximumThermal = value.thermal
+            candidateAuthority = CandidateAuthority()
             candidateOperationsStarted = true
             try await operations.start()
             try Task.checkCancellation()
+            if repeated {
+                let current = await measurementContext.read()
+                try Task.checkCancellation()
+                guard let bound = currentMeasurementContext, let current,
+                      NativeCandidateAttempt.sameConfiguration(bound, current) else {
+                    revoke(.ownerChanged); throw CancellationError()
+                }
+            }
             guard !stopped, invalidReason == nil, await refreshProbe(), checkPressure() else { throw CancellationError() }
             sampling = true
             let monitor = Task { await self.monitor() }

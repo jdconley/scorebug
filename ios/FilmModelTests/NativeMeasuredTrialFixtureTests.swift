@@ -23,6 +23,20 @@ final class NativeMeasuredTrialFixtureTests: XCTestCase {
         }
     }
 
+    func testRepeatedRouteRequiresMeasuredTrialAndExactCandidateTarget() throws {
+        var environment = valid; environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = "repeated"
+        XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+        XCTAssertEqual(try NativeBandwidthProbePublisher.requested(environment: environment), .repeated)
+        XCTAssertEqual(try NativeCandidateFixture.requested(environment: environment), .low360)
+        for key in ["SCOREBUG_TEST_MEASURED_TRIAL", "SCOREBUG_TEST_CANDIDATE_HEADROOM"] {
+            var missing = environment; missing.removeValue(forKey: key)
+            XCTAssertThrowsError(try NativeBandwidthProbePublisher.requested(environment: missing))
+        }
+        environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = "540p30"
+        XCTAssertThrowsError(try NativeBandwidthProbePublisher.requested(environment: environment))
+        XCTAssertThrowsError(try NativeCandidateFixture.requested(environment: environment))
+    }
+
     func testMeasuredRouteRejectsMissingPrerequisitesAndOtherControllers() throws {
         for key in valid.keys where key != "SCOREBUG_TEST_MEASURED_TRIAL" {
             var environment = valid; environment.removeValue(forKey: key)

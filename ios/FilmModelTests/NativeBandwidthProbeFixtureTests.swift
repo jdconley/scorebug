@@ -399,3 +399,346 @@ private final class ProbeFixtureClock: @unchecked Sendable {
     func read() -> Double { lock.withLock { now } }
     func advance(_ interval: Double) { lock.withLock { now += interval } }
 }
+
+@MainActor
+extension NativeBandwidthProbeFixtureTests {
+    func testRepeatedRequiresFreshProviderAndInstallsOnlyOnce() async throws {
+        let fake = RepeatedProbeOperations()
+        let publisher = repeatedPublisher(fake, scope: scope())
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.begins, 0)
+        XCTAssertEqual(try fake.object()["formatVersion"] as? Int, 3)
+        XCTAssertEqual(try fake.object()["result"] as? String, "readinessUnavailable")
+        let afterStop = await publisher.setMeasurementContextProvider { nil }
+        XCTAssertFalse(afterStop)
+        let other = repeatedPublisher(RepeatedProbeOperations(), scope: scope())
+        let installed = await other.setMeasurementContextProvider { nil }
+        let replaced = await other.setMeasurementContextProvider { nil }
+        XCTAssertTrue(installed); XCTAssertFalse(replaced)
+        await other.stop()
+    }
+
+    func testRepeatedTwoCampaignsRequireNewRevisionAndKeepSeparateEvidence() async throws {
+        let (f, first, next) = try await repeatedContexts()
+        let fake = RepeatedProbeOperations()
+        let reads = RepeatedProbeCounter()
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider {
+            guard fake.firstCampaignJoined else { return first }
+            let count = reads.increment()
+            if count == 1 { return nil }
+            if count == 2 { return first }
+            return next
+        }
+        try await publisher.start(); await publisher.waitForProbe()
+        XCTAssertEqual(fake.begins, 1); XCTAssertEqual(fake.restarts, 1)
+        XCTAssertGreaterThanOrEqual(reads.value, 4, "restart must reread readiness after allocation")
+        XCTAssertEqual(fake.exports, 0)
+        await publisher.stop()
+        let object = try fake.object()
+        XCTAssertEqual(object["formatVersion"] as? Int, 3)
+        XCTAssertEqual(object["isClosed"] as? Bool, true)
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        let campaigns = try XCTUnwrap(object["campaigns"] as? [[String: Any]])
+        XCTAssertEqual(campaigns.count, 2)
+        let starts = try campaigns.map { campaign -> [String: Any] in
+            let events = try XCTUnwrap(campaign["events"] as? [[String: Any]])
+            XCTAssertLessThanOrEqual(events.count, 607)
+            XCTAssertEqual((events.last?["sample"] as? [String: Any])?["reason"] as? String, "cancelled")
+            return try XCTUnwrap(events.first?["sample"] as? [String: Any])
+        }
+        XCTAssertEqual(starts.compactMap { $0["campaign"] as? String }, ["1", "2"])
+        XCTAssertEqual(starts.compactMap { $0["stage"] as? Int }, [1, 1])
+        XCTAssertEqual(starts.compactMap { $0["totalAcceptedPayloadBytes"] as? String }, ["0", "0"])
+        XCTAssertNotEqual(starts[0]["id"] as? String, starts[1]["id"] as? String)
+        XCTAssertLessThan(try XCTUnwrap(starts[0]["campaignStartedAt"] as? Double),
+                          try XCTUnwrap(starts[1]["campaignStartedAt"] as? Double))
+        XCTAssertTrue(fake.restartSawJoinedTerminal)
+        await f.owner.stop()
+    }
+
+    func testRepeatedNeverRestartsFromTimerOrSameRevision() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations()
+        let publisher = repeatedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.begins, 1); XCTAssertEqual(fake.restarts, 0)
+        XCTAssertEqual((try fake.object()["campaigns"] as? [Any])?.count, 1)
+        await f.owner.stop()
+    }
+
+    func testRepeatedStopDuringRecoveryPreservesJoinedCampaignStatus() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let first = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(), waiting = RepeatedProbeCounter()
+        let recoveryGate = RepeatedProbeGate(blocked: true)
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider {
+            guard fake.firstCampaignJoined else { return first }
+            _ = waiting.increment()
+            await recoveryGate.wait()
+            return nil
+        }
+        try await publisher.start()
+        await repeatedWait { waiting.value > 0 }
+        let stop = Task { await publisher.stop() }
+        await repeatedWait { fake.hasStopped }
+        recoveryGate.open()
+        await stop.value
+        let object = try fake.object()
+        XCTAssertEqual(object["result"] as? String, "cancelled")
+        let campaigns = try XCTUnwrap(object["campaigns"] as? [[String: Any]])
+        XCTAssertEqual(campaigns.count, 1)
+        XCTAssertEqual(campaigns.first?["status"] as? String, "completed")
+        XCTAssertEqual(campaigns.first?["isJoined"] as? Bool, true)
+        await f.owner.stop()
+    }
+
+    func testRepeatedWaitsPastTemporarilyDifferentRecoveryTarget() async throws {
+        let (f, first, next) = try await repeatedContexts()
+        let higherFixture = try await CandidateQualityFixture.make(initialProfile: .low360)
+        let higher = try XCTUnwrap(awaitContext: await higherFixture.owner.candidateMeasurementContext(
+            diagnostics: try XCTUnwrap(higherFixture.sourceDiagnostics)))
+        XCTAssertEqual(higher.scope, first.scope)
+        XCTAssertEqual(higher.clock, first.clock)
+        XCTAssertEqual(higher.readiness.settings.profileID, "540p30")
+        let fake = RepeatedProbeOperations(), reads = RepeatedProbeCounter()
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider {
+            guard fake.firstCampaignJoined else { return first }
+            return reads.increment() == 1 ? higher : next
+        }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertGreaterThanOrEqual(reads.value, 3, "ineligible targets must wait for eligible readiness then revalidate allocation")
+        XCTAssertEqual(fake.restarts, 1)
+        XCTAssertEqual((try fake.object()["campaigns"] as? [Any])?.count, 2)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+        await f.owner.stop(); await higherFixture.owner.stop()
+    }
+
+    func testRepeatedRejectsChangedTransportClockBeforeRestart() async throws {
+        let (f, first, next) = try await repeatedContexts()
+        let changed = PublishingQualitySession.CandidateMeasurementContext(readiness: next.readiness,
+            applied: next.applied, scope: next.scope,
+            clock: try XCTUnwrap(PublishingTransportClock(sourceOrigin: CMTime(value: 1, timescale: 30), publishingGeneration: 7)))
+        let fake = RepeatedProbeOperations()
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider { fake.firstCampaignJoined ? changed : first }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.restarts, 0)
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, true)
+        await f.owner.stop()
+    }
+
+    func testRepeatedProfileCancellationKeepsTerminalEvidenceThenWaitsForRecovery() async throws {
+        let (f, first, next) = try await repeatedContexts()
+        let fake = RepeatedProbeOperations(terminalOnStageThree: true)
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider { fake.firstCampaignJoined ? next : first }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.restarts, 1)
+        XCTAssertTrue(fake.restartSawJoinedTerminal)
+        let campaigns = try XCTUnwrap(try fake.object()["campaigns"] as? [[String: Any]])
+        XCTAssertEqual(campaigns.count, 2)
+        XCTAssertEqual(campaigns.first?["status"] as? String, "withdrawn")
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+        await f.owner.stop()
+    }
+
+    func testRepeatedRestartRevalidatesContextAndJoinsRejectedAllocation() async throws {
+        let (f, first, next) = try await repeatedContexts()
+        let fake = RepeatedProbeOperations()
+        let publisher = repeatedPublisher(fake, scope: first.scope)
+        _ = await publisher.setMeasurementContextProvider {
+            if fake.restarts > 0 { return nil }
+            return fake.firstCampaignJoined ? next : first
+        }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.restarts, 1)
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(fake.cancellations.last, fake.currentID)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, true)
+        await f.owner.stop()
+    }
+
+    func testRepeatedStopJoinsLateBeginAndTerminalSnapshotBeforeExport() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(blockBegin: true, blockTerminal: true)
+        let publisher = repeatedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start()
+        await repeatedWait { fake.begins == 1 }
+        let finished = RepeatedProbeCounter()
+        let stop = Task { await publisher.stop(); _ = finished.increment() }
+        await repeatedWait { !fake.cancellations.isEmpty }
+        XCTAssertEqual(fake.exports, 0); XCTAssertEqual(finished.value, 0)
+        fake.terminalGate.open()
+        await stop.value
+        XCTAssertEqual(fake.exports, 1); XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["result"] as? String, "cancelled")
+        await f.owner.stop()
+    }
+
+    func testRepeatedRejectsCampaignMismatchAndJoinsExactOwner() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(mismatchCampaign: true)
+        let publisher = repeatedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.restarts, 0)
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, true)
+        await f.owner.stop()
+    }
+
+    private func repeatedPublisher(_ fake: RepeatedProbeOperations, scope: VideoFrameObservationScope) -> NativeBandwidthProbePublisher {
+        NativeBandwidthProbePublisher(publisher: fake, scope: scope, mode: .repeated,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .zero, maximumPolls: 12, stagePolls: 1,
+                now: fake.now), candidateHeadroom: true)
+    }
+    private func repeatedContexts() async throws -> (CandidateQualityFixture, PublishingQualitySession.CandidateMeasurementContext,
+                                                     PublishingQualitySession.CandidateMeasurementContext) {
+        let f = try await CandidateQualityFixture.make()
+        let first = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        f.native.setNow(116)
+        try await f.owner.noteUnavailableCadence(diagnostics: try f.diagnostics())
+        let reset = try await f.owner.checkTrialDeadline()
+        try await f.owner.apply(XCTUnwrap(reset))
+        var last: PublishingQualitySession.CandidateMeasurementContext?
+        for (start, sequence) in [(117.0, Int64(3)), (122.0, Int64(4))] {
+            f.native.setNow(start + 5.1)
+            let health = try await f.freshSource(start: start, sequence: sequence)
+            _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            last = await f.owner.candidateMeasurementContext(diagnostics: health.1)
+        }
+        let next = try XCTUnwrap(last)
+        XCTAssertEqual(first.scope, next.scope)
+        XCTAssertGreaterThan(next.applied.revision, first.applied.revision)
+        return (f, first, next)
+    }
+    private func repeatedWait(_ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !condition(), ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(condition())
+    }
+}
+
+private final class RepeatedProbeGate: Sendable {
+    private let stream: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+    init(blocked: Bool) { (stream, continuation) = AsyncStream.makeStream(); if !blocked { continuation.finish() } }
+    func open() { continuation.finish() }
+    func wait() async { await Task.detached { for await _ in self.stream {} }.value }
+}
+private final class RepeatedProbeCounter: @unchecked Sendable {
+    private let lock = NSLock(); private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() -> Int { lock.withLock { count += 1; return count } }
+}
+private final class RepeatedProbeOperations: MediaPublisher, @unchecked Sendable {
+    private let lock = NSLock()
+    let beginGate: RepeatedProbeGate, terminalGate: RepeatedProbeGate
+    private let mismatchCampaign: Bool, terminalOnStageThree: Bool
+    private var time = 115.1, stopped = false, beginCount = 0, restartCount = 0
+    private var value: NativeBandwidthProbeSample?, cancelled: [UUID] = [], exported: [Data] = []
+    private var joined = Set<UUID>(), firstJoined = false, restartJoined = false
+    init(blockBegin: Bool = false, blockTerminal: Bool = false, mismatchCampaign: Bool = false, terminalOnStageThree: Bool = false) {
+        beginGate = .init(blocked: blockBegin); terminalGate = .init(blocked: blockTerminal)
+        self.mismatchCampaign = mismatchCampaign; self.terminalOnStageThree = terminalOnStageThree
+    }
+    var hasStopped: Bool { lock.withLock { stopped } }
+    var begins: Int { lock.withLock { beginCount } }
+    var restarts: Int { lock.withLock { restartCount } }
+    var exports: Int { lock.withLock { exported.count } }
+    var firstCampaignJoined: Bool { lock.withLock { firstJoined } }
+    var restartSawJoinedTerminal: Bool { lock.withLock { restartJoined } }
+    var cancellations: [UUID] { lock.withLock { cancelled } }
+    var currentID: UUID? { lock.withLock { value?.id } }
+    var lastOwnerJoined: Bool { lock.withLock { value.map { joined.contains($0.id) } ?? false } }
+    func now() -> Double { lock.withLock { time } }
+    func start() async throws {}
+    func append(_ sample: CapturedMediaSample) async throws {}
+    var isPublishing: Bool { get async { lock.withLock { !stopped } } }
+    func stop() async { lock.withLock { stopped = true }; beginGate.open() }
+    var operations: NativeBandwidthProbePublisher.Operations {
+        .init(clock: { PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 7) },
+            begin: { throw Failure.unexpected }, renew: { id, generation in self.renew(id, generation) },
+            cancel: { id, generation in self.cancel(id, generation) }, snapshot: { await self.snapshot() },
+            export: { data in self.lock.withLock { self.exported.append(data) } },
+            replace: { id, generation, stage, rate in self.replace(id, generation, stage, rate) },
+            beginRepeatable: { await self.begin() },
+            restart: { id, generation, stage, rate in self.restart(id, generation, stage, rate) })
+    }
+    private func allocation(stage: Int, rate: Int, campaign: UInt32, origin: Double?, total: UInt64) -> NativeBandwidthProbeSample {
+        time += 0.01
+        return .init(id: UUID(), publishingGeneration: 7, bitRate: rate, startedAt: time, leaseDeadline: time + 0.3,
+            acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil, stage: stage, campaign: campaign,
+            permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: origin ?? time, totalAcceptedPayloadBytes: total)
+    }
+    func begin() async -> NativeBandwidthProbeSample {
+        lock.withLock { beginCount += 1 }
+        await beginGate.wait()
+        return lock.withLock { let sample = allocation(stage: 1, rate: 500_000, campaign: 1, origin: nil, total: 0); value = sample; return sample }
+    }
+    func renew(_ id: UUID, _ generation: UInt64) -> NativeBandwidthProbeSample {
+        lock.withLock {
+            let old = value!; XCTAssertEqual(id, old.id); XCTAssertEqual(generation, 7)
+            time += 0.01
+            let sample = NativeBandwidthProbeSample(id: old.id, publishingGeneration: 7, bitRate: old.bitRate,
+                startedAt: old.startedAt, leaseDeadline: time + 0.3, acceptedPayloadBytes: old.acceptedPayloadBytes + 1316,
+                lastAcceptedAt: time, reason: terminalOnStageThree && old.stage == 3 ? "cancelled" : nil,
+                stage: old.stage, campaign: mismatchCampaign ? 2 : old.campaign,
+                permitsCurrentOwner: old.permitsCurrentOwner, campaignStartedAt: old.campaignStartedAt,
+                totalAcceptedPayloadBytes: old.totalAcceptedPayloadBytes! + 1316)
+            value = sample; return sample
+        }
+    }
+    func cancel(_ id: UUID, _ generation: UInt64) {
+        lock.withLock { XCTAssertEqual(id, value?.id); XCTAssertEqual(generation, 7); cancelled.append(id); value?.reason = "cancelled" }
+    }
+    func snapshot() async -> NativeBandwidthProbeSample? {
+        if lock.withLock({ value?.reason != nil }) { await terminalGate.wait() }
+        return lock.withLock {
+            if let sample = value, sample.reason != nil {
+                joined.insert(sample.id)
+                if sample.campaign == 1 && sample.stage == 3 { firstJoined = true }
+            }
+            return value
+        }
+    }
+    func replace(_ id: UUID, _ generation: UInt64, _ stage: Int, _ rate: Int) -> NativeBandwidthProbeSample {
+        lock.withLock {
+            let old = value!; XCTAssertEqual(id, old.id); XCTAssertEqual(generation, 7); XCTAssertEqual(stage, old.stage)
+            XCTAssertTrue(joined.contains(id)); XCTAssertEqual(old.reason, "cancelled")
+            let sample = allocation(stage: stage + 1, rate: rate, campaign: old.campaign!, origin: old.campaignStartedAt, total: old.totalAcceptedPayloadBytes!)
+            value = sample; return sample
+        }
+    }
+    func restart(_ id: UUID, _ generation: UInt64, _ stage: Int, _ rate: Int) -> NativeBandwidthProbeSample {
+        lock.withLock {
+            let old = value!; XCTAssertEqual(id, old.id); XCTAssertEqual(generation, 7); XCTAssertEqual(stage, old.stage)
+            restartCount += 1; restartJoined = joined.contains(id) && old.reason != nil
+            let sample = allocation(stage: 1, rate: rate, campaign: 2, origin: nil, total: 0)
+            value = sample; return sample
+        }
+    }
+    func object() throws -> [String: Any] {
+        let data = try XCTUnwrap(lock.withLock { exported.last })
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+    private enum Failure: Error { case unexpected }
+}
+
+private func XCTUnwrap<T>(awaitContext value: T?, file: StaticString = #filePath, line: UInt = #line) throws -> T {
+    try XCTUnwrap(value, file: file, line: line)
+}

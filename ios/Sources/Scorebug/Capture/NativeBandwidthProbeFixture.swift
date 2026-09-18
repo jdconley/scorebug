@@ -41,7 +41,7 @@ extension NativeBandwidthProbeSample {
 /// DEBUG-only optional traffic owner. PublishingSession still owns media admission;
 /// recording never waits for this task. Shutdown joins work before exporting proof.
 actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
-    enum Mode: String, Sendable { case renew, expire, staged }
+    enum Mode: String, Sendable { case renew, expire, staged, repeated }
     struct Timing: Sendable {
         var delay: Duration = .seconds(20)
         var poll: Duration = .milliseconds(100)
@@ -58,6 +58,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         let export: @Sendable (Data) async -> Void
         var beginStaged: @Sendable () async throws -> NativeBandwidthProbeSample = { throw PublishingBandwidthProbeError.disabled }
         var replace: @Sendable (UUID, UInt64, Int, Int) async throws -> NativeBandwidthProbeSample = { _,_,_,_ in throw PublishingBandwidthProbeError.disabled }
+        var beginRepeatable: @Sendable () async throws -> NativeBandwidthProbeSample = { throw PublishingBandwidthProbeError.disabled }
+        var restart: @Sendable (UUID, UInt64, Int, Int) async throws -> NativeBandwidthProbeSample = { _,_,_,_ in throw PublishingBandwidthProbeError.disabled }
     }
     private let publisher: any MediaPublisher
     private let scope: VideoFrameObservationScope
@@ -79,6 +81,32 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         }
     }
     private var events: [Event] = []
+    private let measurementContext = NativeCandidateContextReader()
+    private struct Campaign {
+        let ordinal: UInt32
+        let context: PublishingQualitySession.CandidateMeasurementContext
+        var events: [Event] = []
+        var status = "started"
+        var joined = false
+        var finished = false
+        var object: [String: Any] {
+            ["campaign": String(ordinal), "status": status, "isJoined": joined,
+             "context": ["appliedRevision": String(context.applied.revision),
+                "publishingGeneration": String(context.clock.publishingGeneration),
+                "targetProfile": context.readiness.settings.profileID,
+                "targetBitRate": context.readiness.settings.videoBitrate,
+                "baselineProfile": context.applied.settings.profileID,
+                "baselineBitRate": context.applied.settings.videoBitrate,
+                "encoderSessionID": context.applied.receipt.configuration.encoderSessionID.uuidString,
+                "configurationID": context.applied.receipt.configuration.id.uuidString,
+                "acknowledgedAt": context.applied.acknowledgedAt,
+                "healthySince": context.readiness.healthySince,
+                "healthyThrough": context.readiness.healthyThrough,
+                "healthSequence": String(context.readiness.healthSequence)],
+             "events": events.map(\.object)]
+        }
+    }
+    private var campaigns: [Campaign] = []
     private var work: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
 
@@ -96,12 +124,21 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
                 guard let ordinal = UInt32(exactly: stage) else { throw PublishingBandwidthProbeError.obsolete }
                 return NativeBandwidthProbeSample(try await publisher.replaceBandwidthProbe(id: id,
                     publishingGeneration: generation, stage: ordinal, bitRate: rate))
+            }, beginRepeatable: {
+                NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 500_000, staged: true, repeatable: true))
+            }, restart: { id, generation, stage, rate in
+                guard let ordinal = UInt32(exactly: stage) else { throw PublishingBandwidthProbeError.obsolete }
+                return NativeBandwidthProbeSample(try await publisher.restartBandwidthProbe(id: id,
+                    publishingGeneration: generation, stage: ordinal, bitRate: rate))
             })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, mode: Mode,
          operations: Operations, timing: Timing, candidateHeadroom: Bool = false) {
         self.publisher = publisher; self.scope = scope; self.mode = mode
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
+    }
+    @discardableResult func setMeasurementContextProvider(_ read: @escaping NativeCandidateContextReader.Provider) -> Bool {
+        measurementContext.install(read)
     }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func start() async throws {
@@ -129,19 +166,22 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
 
     func stop() async {
         stopped = true
+        measurementContext.close()
         work?.cancel()
         if let shutdown { await shutdown.value; return }
         let pending = work
         let finish = Task {
             await publisher.stop() // Release any native operation blocked during admission.
             await pending?.value
-            if let value = await operations.snapshot() { _ = record(value, phase: "final") }
-            else if mode == .staged, handle != nil || !events.isEmpty {
-                invalid = true
-                if result == "completed" || result == "withdrawn" { result = "invalidEvidence" }
+            if mode != .repeated {
+                if let value = await operations.snapshot() { _ = record(value, phase: "final") }
+                else if mode == .staged, handle != nil || !events.isEmpty {
+                    invalid = true
+                    if result == "completed" || result == "withdrawn" { result = "invalidEvidence" }
+                }
             }
             closed = true
-            if let data = try? data(), !candidateHeadroom || data.count <= 256 * 1024 { await operations.export(data) }
+            if let data = try? data(), !candidateHeadroom || data.count <= (mode == .repeated ? 512 : 256) * 1024 { await operations.export(data) }
         }
         shutdown = finish
         await finish.value
@@ -151,8 +191,9 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private func run() async {
         do {
             guard timing.delay >= .zero, timing.poll >= .zero, (1...600).contains(timing.maximumPolls),
-                  !candidateHeadroom || mode == .staged,
-                  mode != .staged || ((1...200).contains(timing.stagePolls) && timing.stagePolls * 3 <= timing.maximumPolls) else {
+                  !candidateHeadroom || mode == .staged || mode == .repeated,
+                  mode != .repeated || candidateHeadroom,
+                  (mode != .staged && mode != .repeated) || ((1...200).contains(timing.stagePolls) && timing.stagePolls * 3 <= timing.maximumPolls) else {
                 throw FixtureError.invalidEvidence
             }
             try await Task.sleep(for: timing.delay)
@@ -166,7 +207,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             }
             try Task.checkCancellation()
             guard generation != nil else { result = "clockUnavailable"; return }
-            if mode == .staged { try await runStaged() }
+            if mode == .repeated { try await runRepeated() }
+            else if mode == .staged { try await runStaged() }
             else {
                 let value = try await operations.begin()
                 handle = value
@@ -194,9 +236,203 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             else if error is FixtureError { invalid = true; result = "invalidEvidence" }
             else { result = "operationFailed" }
         }
+        if mode == .repeated {
+            if !campaigns.isEmpty {
+                if !campaigns[campaigns.count - 1].finished,
+                   result == "cancelled" || result == "invalidEvidence" || result == "operationFailed" {
+                    campaigns[campaigns.count - 1].status = result
+                }
+                await joinRepeatedOwner(phase: "final")
+            }
+            return
+        }
         if let handle, mode != .staged || handle.reason == nil {
             await operations.cancel(handle.id, handle.publishingGeneration)
         }
+    }
+
+    /// Each campaign has its own bounded proof. A timer only polls current
+    /// readiness; it can never authorize the second native allocation.
+    private func runRepeated() async throws {
+        for ordinal in UInt32(1)...UInt32(2) {
+            let previousRevision = campaigns.last?.context.applied.revision
+            guard let context = try await repeatedReadiness(after: previousRevision) else {
+                result = "readinessUnavailable"
+                return
+            }
+            let previous = handle
+            if ordinal == 2 {
+                guard campaigns.last?.joined == true, let previous, previous.reason != nil,
+                      previous.campaign == 1 else { throw FixtureError.invalidEvidence }
+            }
+            campaigns.append(.init(ordinal: ordinal, context: context))
+            handle = nil
+            let value: NativeBandwidthProbeSample
+            if let previous, ordinal == 2 {
+                guard let stage = previous.stage else { throw FixtureError.invalidEvidence }
+                value = try await operations.restart(previous.id, previous.publishingGeneration, stage, 500_000)
+            } else { value = try await operations.beginRepeatable() }
+            // Own every returned allocation before any cancellation or context check.
+            handle = value
+            guard recordRepeated(value, phase: "began") else { throw FixtureError.invalidEvidence }
+            if let previous, ordinal == 2 {
+                guard value.id != previous.id, value.startedAt > (previous.campaignStartedAt ?? .infinity),
+                      value.startedAt >= (campaigns[campaigns.count - 2].events.last?.at ?? .infinity) else {
+                    throw FixtureError.invalidEvidence
+                }
+            }
+            try Task.checkCancellation()
+            let after = await measurementContext.read()
+            try Task.checkCancellation()
+            guard let after, validRepeatedContext(after), NativeCandidateAttempt.sameConfiguration(context, after) else {
+                throw FixtureError.invalidEvidence
+            }
+            try await runRepeatedStages(value)
+            await joinRepeatedOwner(phase: "final")
+            guard !invalid, campaigns.last?.joined == true else { throw FixtureError.invalidEvidence }
+            campaigns[campaigns.count - 1].finished = true
+            try Task.checkCancellation()
+        }
+        result = "completed"
+    }
+
+    private func validRepeatedContext(_ context: PublishingQualitySession.CandidateMeasurementContext,
+                                      candidate: PublishingVideoProfile = .low360) -> Bool {
+        NativeCandidateAttempt.valid(context, scope: scope, candidate: candidate)
+            && context.clock.publishingGeneration == generation
+            && (campaigns.first.map { context.clock == $0.context.clock } ?? true)
+    }
+    private func repeatedReadiness(after revision: UInt64?) async throws -> PublishingQualitySession.CandidateMeasurementContext? {
+        let deadline = timing.now() + 60
+        for _ in 0..<timing.maximumPolls {
+            try Task.checkCancellation()
+            let context = await measurementContext.read()
+            try Task.checkCancellation()
+            if let context {
+                guard let candidate = PublishingVideoProfile(rawValue: context.readiness.settings.profileID),
+                      validRepeatedContext(context, candidate: candidate) else { throw FixtureError.invalidEvidence }
+                // A confirmed 360p trial may offer a 540p target before a later
+                // fallback restores the original 360p recovery opportunity.
+                if candidate == .low360, revision.map({ context.applied.revision > $0 }) ?? true { return context }
+            }
+            guard timing.now() < deadline else { break }
+            try await Task.sleep(for: timing.poll)
+        }
+        return nil
+    }
+
+    private func runRepeatedStages(_ initial: NativeBandwidthProbeSample) async throws {
+        var current = initial
+        campaigns[campaigns.count - 1].status = "completed"
+        for index in 0..<3 {
+            if current.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return }
+            let deadline = current.startedAt + 8
+            for _ in 0..<timing.stagePolls {
+                if timing.now() >= deadline { break }
+                try await Task.sleep(for: timing.poll)
+                try Task.checkCancellation()
+                if timing.now() >= deadline { break }
+                let renewed: NativeBandwidthProbeSample
+                do { renewed = try await operations.renew(current.id, current.publishingGeneration) }
+                catch {
+                    // Profile application may withdraw stage three while renew
+                    // is suspended. Its exact terminal snapshot remains proof.
+                    try Task.checkCancellation()
+                    guard let terminal = await operations.snapshot(), terminal.reason != nil,
+                          terminal.id == current.id, terminal.publishingGeneration == current.publishingGeneration,
+                          recordRepeated(terminal, phase: "observed") else { throw error }
+                    handle = terminal
+                    campaigns[campaigns.count - 1].status = "withdrawn"
+                    return
+                }
+                try Task.checkCancellation()
+                guard recordRepeated(renewed, phase: "renewed") else { throw FixtureError.invalidEvidence }
+                current = renewed; handle = renewed
+                if renewed.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return }
+            }
+            await joinRepeatedOwner(phase: "retired")
+            guard !invalid, campaigns.last?.joined == true, let retired = handle else { throw FixtureError.invalidEvidence }
+            try Task.checkCancellation()
+            if retired.reason != "cancelled" { campaigns[campaigns.count - 1].status = "withdrawn"; return }
+            if index == 2 { return }
+            guard let stage = retired.stage else { throw FixtureError.invalidEvidence }
+            let replacement = try await operations.replace(retired.id, retired.publishingGeneration, stage, stagedBitRates[index + 1])
+            handle = replacement
+            campaigns[campaigns.count - 1].joined = false
+            guard recordRepeated(replacement, phase: "replaced") else { throw FixtureError.invalidEvidence }
+            try Task.checkCancellation()
+            current = replacement
+        }
+    }
+
+    private func joinRepeatedOwner(phase: String) async {
+        guard !campaigns.isEmpty, !campaigns[campaigns.count - 1].joined, let owned = handle else { return }
+        let requestedAt = timing.now()
+        await operations.cancel(owned.id, owned.publishingGeneration)
+        // Do not check task cancellation until native cancellation and snapshot
+        // have both joined, including a late begin or rejected restart.
+        guard let terminal = await operations.snapshot(), terminal.id == owned.id,
+              terminal.publishingGeneration == owned.publishingGeneration, terminal.reason != nil else {
+            invalid = true; result = "invalidEvidence"
+            campaigns[campaigns.count - 1].status = "invalidEvidence"
+            return
+        }
+        handle = terminal
+        campaigns[campaigns.count - 1].joined = true
+        if !recordRepeated(terminal, phase: phase, retirementRequestedAt: phase == "retired" ? requestedAt : nil) {
+            invalid = true; result = "invalidEvidence"
+            campaigns[campaigns.count - 1].status = "invalidEvidence"
+        }
+    }
+
+    @discardableResult private func recordRepeated(_ value: NativeBandwidthProbeSample, phase: String,
+                                                    retirementRequestedAt: Double? = nil) -> Bool {
+        guard !campaigns.isEmpty else { invalid = true; return false }
+        let index = campaigns.count - 1, campaign = campaigns[index], now = timing.now()
+        guard !closed, campaign.events.count < 607, value.campaign == campaign.ordinal,
+              now.isFinite, value.startedAt.isFinite, value.startedAt >= 0, value.startedAt <= now,
+              value.leaseDeadline.isFinite, value.leaseDeadline > value.startedAt,
+              value.publishingGeneration == generation,
+              let stage = value.stage, (1...3).contains(stage), value.bitRate == stagedBitRates[stage - 1],
+              let origin = value.campaignStartedAt, origin.isFinite, origin >= 0, origin <= value.startedAt,
+              value.startedAt - origin < 60, value.leaseDeadline <= origin + 60.3,
+              let total = value.totalAcceptedPayloadBytes, total <= 16 * 1024 * 1024, total % 1316 == 0,
+              total >= value.acceptedPayloadBytes, value.acceptedPayloadBytes % 1316 == 0,
+              (value.acceptedPayloadBytes == 0) == (value.lastAcceptedAt == nil),
+              value.lastAcceptedAt.map({ $0.isFinite && $0 >= value.startedAt && $0 <= now && $0 <= value.leaseDeadline && $0 < origin + 60 }) ?? true else {
+            invalid = true; return false
+        }
+        if phase == "retired" {
+            guard let retirementRequestedAt, retirementRequestedAt.isFinite,
+                  retirementRequestedAt >= (campaign.events.last?.at ?? value.startedAt), retirementRequestedAt <= now,
+                  value.reason != nil else { invalid = true; return false }
+        } else if retirementRequestedAt != nil { invalid = true; return false }
+        if let prior = campaign.events.last {
+            guard now >= prior.at else { invalid = true; return false }
+            if value.stage != prior.sample.stage {
+                guard phase == "replaced", value.stage == prior.sample.stage.map({ $0 + 1 }),
+                      value.id != prior.sample.id, prior.sample.reason == "cancelled", value.startedAt >= prior.at,
+                      value.campaignStartedAt == prior.sample.campaignStartedAt, value.acceptedPayloadBytes == 0,
+                      total == prior.sample.totalAcceptedPayloadBytes else { invalid = true; return false }
+            } else {
+                guard phase != "replaced", value.id == prior.sample.id, value.startedAt == prior.sample.startedAt,
+                      value.acceptedPayloadBytes >= prior.sample.acceptedPayloadBytes,
+                      value.leaseDeadline >= prior.sample.leaseDeadline,
+                      prior.sample.reason == nil || (value.reason == prior.sample.reason && value.acceptedPayloadBytes == prior.sample.acceptedPayloadBytes),
+                      prior.sample.lastAcceptedAt.map({ old in value.lastAcceptedAt.map { $0 >= old } ?? false }) ?? true,
+                      value.campaignStartedAt == prior.sample.campaignStartedAt,
+                      let oldTotal = prior.sample.totalAcceptedPayloadBytes, total >= oldTotal,
+                      total - oldTotal == value.acceptedPayloadBytes - prior.sample.acceptedPayloadBytes else {
+                    invalid = true; return false
+                }
+            }
+        } else {
+            guard phase == "began", stage == 1, origin == value.startedAt, value.acceptedPayloadBytes == 0, total == 0 else {
+                invalid = true; return false
+            }
+        }
+        campaigns[index].events.append(.init(phase: phase, at: now, sample: value, retirementRequestedAt: retirementRequestedAt))
+        return true
     }
 
     private var stagedBitRates: [Int] { candidateHeadroom ? [500_000, 2_000_000, 12_000_000] : [500_000, 1_000_000, 2_000_000] }
@@ -306,7 +542,16 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         return true
     }
     private func data() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": mode == .staged ? 2 : 1, "isClosed": closed, "invalid": invalid,
+        if mode == .repeated {
+            return try JSONSerialization.data(withJSONObject: ["formatVersion": 3, "isClosed": closed,
+                "invalid": invalid, "mode": mode.rawValue, "result": result,
+                "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
+                    "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
+                    "appliedProfileRevision": String(scope.appliedProfileRevision)],
+                "publishingGeneration": generation.map(String.init) as Any? ?? NSNull(),
+                "campaigns": campaigns.map(\.object)], options: [.sortedKeys])
+        }
+        return try JSONSerialization.data(withJSONObject: ["formatVersion": mode == .staged ? 2 : 1, "isClosed": closed, "invalid": invalid,
             "mode": mode.rawValue, "result": result,
             "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
@@ -315,9 +560,17 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             "events": events.map(\.object)], options: [.sortedKeys])
     }
     static func requested(environment: [String: String]) throws -> Mode? {
-        if try NativeCandidateHeadroomFixture.requested(environment: environment) { return .staged }
+        if try NativeCandidateHeadroomFixture.requested(environment: environment) {
+            if environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated" {
+                guard environment["SCOREBUG_TEST_MEASURED_TRIAL"] == "1" else {
+                    throw VideoObservationFixture.UplinkError.invalidFixtureRoute
+                }
+                return .repeated
+            }
+            return .staged
+        }
         guard let flag = environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], !flag.isEmpty else { return nil }
-        guard let mode = Mode(rawValue: flag), try VideoObservationFixture.liveProfile(environment: environment) == .sd540,
+        guard let mode = Mode(rawValue: flag), mode != .repeated, try VideoObservationFixture.liveProfile(environment: environment) == .sd540,
               ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING"].allSatisfy({ (environment[$0] ?? "").isEmpty }) else {
             throw VideoObservationFixture.UplinkError.invalidFixtureRoute

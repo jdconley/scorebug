@@ -1020,22 +1020,24 @@ struct CandidateQualityFixture: Sendable {
         let state = await owner.snapshot
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: try XCTUnwrap(state.revision),
             settings: try XCTUnwrap(state.applied), receipt: try XCTUnwrap(state.receipt), acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
-        return try Self.source(native: native, template: template, applied: applied, start: start, sequence: sequence, recordingID: recordingID)
+        let afterReceipt = applied.receipt.lastSubmittedSourcePTS.map { Int64((CMTimeGetSeconds($0) * 30).rounded(.up)) + 1 } ?? 300
+        let firstFrame = max(300 + Int64(max(0, start - 110) * 30), afterReceipt)
+        return try Self.source(native: native, template: template, applied: applied, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame)
     }
     private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
-                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording") throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
         let scope = VideoFrameObservationScope(recordingID: recordingID, matchID: "match", broadcastGeneration: 2,
             publishingAttemptID: applied.attemptID, appliedProfileRevision: 1)
         var history = try VideoSourceHistory(scope: scope, capacity: 1024)
         for index in 0...150 {
-            let time = start + Double(index) / 30, pts = CMTime(value: Int64(300 + index), timescale: 30)
+            let time = start + Double(index) / 30, pts = CMTime(value: firstFrame + Int64(index), timescale: 30)
             history.observe(.captureVideo, sourcePTS: pts, at: time)
             let encoding = VideoEncodingObservation(encoderSessionID: applied.receipt.configuration.encoderSessionID,
                 configuration: applied.receipt.configuration, submittedAt: time, completedAt: time + 0.01)!
             history.observe(.encodedVideo, sourcePTS: pts, at: time + 0.01, encoding: encoding)
         }
         let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 7)!
-        let previous: Int64 = 819000, first: Int64 = 822000, last: Int64 = 1269000
+        let previous = firstFrame * 3000 - 81000, first = previous + 3000, last = previous + 450000
         let interval = try XCTUnwrap(PublishingSourceInterval.match(history: history.snapshot, clock: clock,
             relayOriginPTS: 90000, previousDecodedPTS: previous, firstDecodedPTS: first, lastDecodedPTS: last, decodedFrames: 150))
         var response = template

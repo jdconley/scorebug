@@ -928,6 +928,102 @@ extension NativeCandidateFixtureTests {
         }
     }
 
+    func testRepeatedCandidateJoinsOldSlotAndRejectsLateInputBeforeFreshCampaign() async throws {
+        let (f, initial, recovered) = try await repeatedCandidateContexts()
+        let first = CandidateFixtureFake(), second = CandidateFixtureFake()
+        first.setProbe(stage: 3); first.setCampaign(1)
+        let contexts = RepeatedCandidateContextBox(initial), gate = AsyncStream<Void>.makeStream()
+        var operations = first.operations
+        operations.retire = {
+            first.markJoinedStop()
+            let stream = gate.stream
+            await Task.detached { for await _ in stream {} }.value
+        }
+        let wrapper = NativeCandidatePublisher(publisher: first, scope: initial.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .milliseconds(10)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { second.operations })
+        await wrapper.setDiagnostics { first.pressure }
+        _ = await wrapper.setMeasurementContextProvider { contexts.read() }
+        try await wrapper.start(); await wait { first.waiting }
+        first.blockAppend = true
+        first.blockHealthRead()
+        let staleHealth = Task { await wrapper.isPublishing }
+        await wait { first.healthReadEntered }
+        let late = Task { try await wrapper.append(candidateVideo()) }
+        await wait { first.events.contains("primary") }
+        first.finish(); await wait { first.joinedStops == 1 }
+        first.setProbe(stage: 3); first.setCampaign(2)
+        contexts.set(recovered)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(second.events.contains("candidateStart"), "new native allocation preceded retirement join")
+        gate.continuation.finish()
+        await wait { second.waiting }
+        first.releaseAppend(); try await late.value
+        first.releaseHealthRead(); _ = await staleHealth.value
+        XCTAssertFalse(second.reasons.contains(.pressure), "old health read revoked the next campaign")
+        XCTAssertFalse(second.events.contains("candidate"), "old append crossed campaign boundary")
+        second.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        let proof = try XCTUnwrap(second.object)
+        XCTAssertEqual(proof["formatVersion"] as? Int, 4)
+        let campaigns = try XCTUnwrap(proof["campaigns"] as? [[String: Any]])
+        XCTAssertEqual(campaigns.count, 2)
+        XCTAssertEqual(campaigns.map { $0["campaign"] as? String }, ["1", "2"])
+        XCTAssertEqual(campaigns.map { $0["appliedRevision"] as? String }, ["0", "2"])
+        let ids = campaigns.map { (($0["measurement"] as? [String: Any])?["probeBinding"] as? [String: Any])?["initial"] as? [String: Any] }
+        XCTAssertNotEqual(ids[0]?["id"] as? String, ids[1]?["id"] as? String)
+        XCTAssertEqual(first.joinedStops, 1)
+        XCTAssertEqual(second.events.filter { $0 == "candidateStart" }.count, 1)
+        await f.owner.stop()
+    }
+
+    func testRepeatedCandidateDoesNotReuseCampaignOrRecoveryRevisionAndStopJoinsWait() async throws {
+        let (f, initial, _) = try await repeatedCandidateContexts()
+        let first = CandidateFixtureFake(), second = CandidateFixtureFake()
+        first.setProbe(stage: 3); first.setCampaign(1)
+        var operations = first.operations
+        operations.retire = { first.markJoinedStop() }
+        let wrapper = NativeCandidatePublisher(publisher: first, scope: initial.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .milliseconds(10)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { second.operations })
+        await wrapper.setDiagnostics { first.pressure }
+        _ = await wrapper.setMeasurementContextProvider { initial }
+        try await wrapper.start(); await wait { first.waiting }
+        first.finish(); await wait { first.joinedStops == 1 }
+        first.setProbe(stage: 3); first.setCampaign(2)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(second.events.contains("candidateStart"), "same recovery revision restarted candidate")
+        second.finish()
+        await wrapper.stop()
+        XCTAssertFalse(second.events.contains("candidateStart"))
+        await f.owner.stop()
+    }
+
+    private func repeatedCandidateContexts() async throws -> (CandidateQualityFixture,
+        PublishingQualitySession.CandidateMeasurementContext, PublishingQualitySession.CandidateMeasurementContext) {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let initial = try XCTUnwrap(value)
+        let trial = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(trial.recommendation))
+        f.native.setNow(116)
+        try await f.owner.noteUnavailableCadence(diagnostics: try f.diagnostics())
+        let reset = try await f.owner.checkTrialDeadline()
+        try await f.owner.apply(XCTUnwrap(reset))
+        var last: PublishingQualitySession.CandidateMeasurementContext?
+        for (start, sequence) in [(117.0, Int64(3)), (122.0, Int64(4))] {
+            f.native.setNow(start + 5.1)
+            let health = try await f.freshSource(start: start, sequence: sequence)
+            _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            last = await f.owner.candidateMeasurementContext(diagnostics: health.1)
+        }
+        return (f, initial, try XCTUnwrap(last))
+    }
+
     private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10), lifecycle: NativeCandidateLifecycleAudit? = nil, profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil, joinedStop: (@Sendable () async -> Void)? = nil) -> NativeCandidatePublisher {
         .init(publisher: fake, scope: fake.scope, liveProfile: .low240,
             operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom, lifecycle: lifecycle, profileReceipt: profileReceipt, joinedStop: joinedStop)
@@ -1112,7 +1208,16 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
         if blockAppend { for await _ in appendGate.stream {} }
         if failAppend { throw PublishingSessionError.appendFailed }
     }
-    var isPublishing: Bool { get async { true } }
+    private let healthGate = AsyncStream<Void>.makeStream()
+    private var healthBlocked = false, healthEntered = false
+    func blockHealthRead() { lock.withLock { healthBlocked = true } }
+    var healthReadEntered: Bool { lock.withLock { healthEntered } }
+    func releaseHealthRead() { healthGate.continuation.finish() }
+    var isPublishing: Bool { get async {
+        let block = lock.withLock { if healthBlocked { healthEntered = true }; return healthBlocked }
+        if block { let stream = healthGate.stream; await Task.detached { for await _ in stream {} }.value }
+        return !block
+    } }
     func setVideoBitRate(_ value: Int) async throws -> PublishingBitRateChange {
         lock.withLock { storedEvents.append("bitRate") }
         if blockBitRateWrite { for await _ in bitRateGate.stream {} }
@@ -1123,7 +1228,7 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
         else { throw PublishingSessionError.bitRateUpdateFailed }
         return receipt
     }
-    func stop() async { lock.withLock { storedStops += 1 }; releaseAppend(); releaseCandidateStart(); if !holdProbeAcrossStop { releaseProbeRead() }; if !holdBitRateAcrossStop { releaseBitRateWrite() }; finish() }
+    func stop() async { lock.withLock { storedStops += 1 }; releaseHealthRead(); releaseAppend(); releaseCandidateStart(); if !holdProbeAcrossStop { releaseProbeRead() }; if !holdBitRateAcrossStop { releaseBitRateWrite() }; finish() }
 }
 /// Complete typed native evidence with accelerated wall-clock submission. The
 /// source still covers four seconds, and the validator uses the shorter duration.
@@ -1194,4 +1299,12 @@ private final class CandidateContextGate: @unchecked Sendable {
         return context
     }
     func release() { gate.continuation.finish() }
+}
+
+private final class RepeatedCandidateContextBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: PublishingQualitySession.CandidateMeasurementContext?
+    init(_ value: PublishingQualitySession.CandidateMeasurementContext) { self.value = value }
+    func read() -> PublishingQualitySession.CandidateMeasurementContext? { lock.withLock { value } }
+    func set(_ value: PublishingQualitySession.CandidateMeasurementContext?) { lock.withLock { self.value = value } }
 }

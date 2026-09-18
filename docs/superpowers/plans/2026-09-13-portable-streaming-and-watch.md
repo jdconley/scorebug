@@ -2284,3 +2284,26 @@ native recovery pass before repeated ramp-up, longer runs, physical devices and
 other proxy hosts. Production increases stay disabled; the goal remains active.
 See [the recovery plan](2026-09-17-measured-posttrial-recovery.md) and
 `artifacts/qa/measured-posttrial-recovery-final-verification.json`.
+
+
+### 2026-09-17: fresh candidate startup and repeated native scheduling
+
+The subsequent full native run `native-app-ceM4Yc` passed the complete single-cycle
+streaming/scoring/export harness: 240p→360p, controlled decoder stall, fallback,
+and approximately 15 seconds of reconstructed healthy recovery. The independent
+1080p archive contained 3,675 consecutive frames and all 61 audio markers; acquired
+360p live output contained 3,299 consecutive source frames and all 55 expected
+markers, both at 30 fps. Production automatic upgrades remained disabled.
+
+The next native DEBUG checkpoint adds two bounded probe/candidate campaigns,
+current recovery readiness at a newer applied revision, joined retirement before
+reuse, and protection against delayed callbacks crossing campaign boundaries.
+All 438 FilmModel, 458 Core and 2,304 tools tests and the unsigned iPhone/Watch
+Release build passed. The single-cycle harness rejects repeated mode until its
+independent replay supports both campaigns. No repeated native run is qualified
+by these component tests.
+
+Next implement the versioned two-cycle verifier and two controlled faults, then
+run and independently decode the full repeated stream and archive. Physical
+phone/Watch networking and portable proxy hosts remain later gates. See the
+[repeated native campaign plan](2026-09-17-repeated-native-campaigns.md).

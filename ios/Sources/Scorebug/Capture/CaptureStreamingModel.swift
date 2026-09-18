@@ -237,7 +237,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                  guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
                      candidate: candidateProfile, campaignOwner: campaignOwner, candidateHeadroom: candidateHeadroom,
-                     requiresMeasurementReadiness: measuredTrial,
+                     requiresMeasurementReadiness: measuredTrial, repeated: probeMode == .repeated,
                      lifecycle: measuredTrial ? NativeCandidateLifecycleAudit(scope: observations.snapshot.scope) : nil,
                      profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
                      joinedStop: transitions.map { evidence in {
@@ -755,7 +755,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
         if let prior = receiverProbeOwner {
             let sameOwner = prior.id == value.id && prior.publishingGeneration == value.publishingGeneration &&
-                prior.stage == value.stage && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
+                prior.stage == value.stage && prior.campaign == value.campaign && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
             if sameOwner {
                 guard value.acceptedPayloadBytes >= prior.acceptedPayloadBytes,
                       value.leaseDeadline >= prior.leaseDeadline,
@@ -809,7 +809,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         // This observes a real native lease even before candidate completion.
         // Receiver report timestamps remain anchored to the original response.
         guard acceptProbeObservation(nativeProbe, sequence: refreshSequence) != nil else { return nil }
-        guard state.revision == 0, let settings = state.applied, let receipt = state.receipt,
+        guard let revision = state.revision, let settings = state.applied, let receipt = state.receipt,
               let acknowledgedAt = state.acknowledgedAt,
               let boundAuthority = candidateAuthority else { return nil }
         let candidateSequence = nextProbeReadSequence()
@@ -821,7 +821,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         guard candidate.measurement.scope == publishing?.observations?.snapshot.scope,
               let pair = receiverProbeTracker.latestPair, let authority = candidateAuthority,
               authority.permits(pair.newer.end), authority.permits(pair.older.end) else { return nil }
-        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0,
+        let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: revision,
             settings: settings, receipt: receipt, acknowledgedAt: acknowledgedAt)
         let id = candidate.measurement.id, permitsCandidate = candidate.permitsCurrentCandidate
         return .laboratoryIPv4(measurement: candidate.measurement, applied: applied,

@@ -57,6 +57,12 @@ import XCTest
     }
 
     func testMeasuredProviderUsesNewerPairAfterAwaitAndReturnedAdmissionRevokesOnStop() async throws {
+        try await checkMeasuredProvider(revision: 0)
+    }
+    func testMeasuredProviderBindsLaterRevisionAndV3CampaignWithoutReusingInitialRevision() async throws {
+        try await checkMeasuredProvider(revision: 2)
+    }
+    private func checkMeasuredProvider(revision: UInt64) async throws {
         var session: PublishingSession?
         let (model, server, publisher, initial) = try await receiverProbeModel { value, _ in session = value; return nil }
         let live = try XCTUnwrap(session)
@@ -65,12 +71,14 @@ import XCTest
         let original = await publisher.probeValue()
         var probe = try XCTUnwrap(original)
         probe.stage = 3; probe.bitRate = 12_000_000
+        if revision > 0 { probe.campaign = 2 }
         probe.startedAt = start - 1; probe.leaseDeadline = start + 0.25
         probe.acceptedPayloadBytes = 1316; probe.lastAcceptedAt = start - 0.01
         let binding = probe
         await publisher.setRenewProbeLeaseOnRead(true)
         var response = initial
-        response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+        response.status.receiverProbe?.snapshot.convention = revision == 0 ? "mpegts-null-probe-v2" : "mpegts-null-probe-v3"
+        if revision > 0 { response.status.receiverProbe?.snapshot.campaign = "2" }
         response.status.receiverProbe?.snapshot.stage = 3
         response.status.receiverProbe?.snapshot.bitRate = 12_000_000
         response.status.receiverProbe?.ageUpperBoundMs = 1
@@ -85,6 +93,7 @@ import XCTest
             response.status.receiverProbe?.snapshot.nextSequence = String(messages)
             response.status.receiverProbe?.snapshot.deliveredPayloadBytes = String(messages * 1316)
             response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String(messages * 1316)
+            if revision > 0 { response.status.receiverProbe?.snapshot.campaignDeliveredPayloadBytes = String(messages * 1316) }
             probe.leaseDeadline = deliveredAt + 0.3
             probe.acceptedPayloadBytes = UInt64(messages * 1316)
             probe.lastAcceptedAt = deliveredAt
@@ -118,7 +127,7 @@ import XCTest
         }
         try await report(at: 1.65, messages: 100, delayBeforeStatus: true)
         try await report(at: 3.15, messages: 1150)
-        let state = candidateState(model, receipt: receipt)
+        let state = candidateState(model, receipt: receipt, revision: revision)
         let measurement = PublishingCandidateAdmission.Measurement(id: UUID(), scope: try XCTUnwrap(model.videoObservation?.scope),
             profile: .low360, publishingGeneration: 1, startedAt: start, endedAt: start + 4.02,
             firstInputAt: start, lastInputAt: start + 4, sourceDuration: 4, submissionDuration: 4,
@@ -131,11 +140,18 @@ import XCTest
                     boundAt: start - 0.01, completedAt: start + 4.03, permitsCurrentCandidate: { $0 == measurement.id })
             }
         }
-        await gate.waitUntilEntered()
+        guard await gate.waitUntilEntered(timeout: .seconds(1)) else {
+            await gate.release(); _ = await pending.value
+            XCTFail("Current revision never reached the candidate reader")
+            await model.stopStreaming(); return
+        }
         try await report(at: 4.35, messages: 2250)
         await gate.release()
         let result = await pending.value
         let admission = try XCTUnwrap(result)
+        XCTAssertEqual(admission.value.appliedRevision, revision)
+        XCTAssertEqual(admission.applied.revision, revision)
+        XCTAssertEqual(admission.probe.campaign, revision == 0 ? nil : 2)
         XCTAssertEqual(admission.receiver.snapshot.deliveredMessages, "2250")
         XCTAssertTrue(admission.permits(applied: admission.applied, at: ProcessInfo.processInfo.systemUptime, instant: .now))
         model.captureChanged(nil)
@@ -220,10 +236,10 @@ import XCTest
         await model.stopStreaming()
     }
 
-    private func candidateState(_ model: CaptureStreamingModel, receipt: PublishingBitRateChange? = nil) -> PublishingQualitySession.Snapshot {
+    private func candidateState(_ model: CaptureStreamingModel, receipt: PublishingBitRateChange? = nil, revision: UInt64 = 0) -> PublishingQualitySession.Snapshot {
         .init(attemptID: model.videoObservation!.scope.publishingAttemptID,
             applied: receipt == nil ? nil : .init(profileID: "240p30", videoBitrate: 350_000),
-            revision: receipt == nil ? nil : 0, receipt: receipt, profileReceipt: nil, application: nil,
+            revision: receipt == nil ? nil : revision, receipt: receipt, profileReceipt: nil, application: nil,
             acknowledgedAt: receipt?.acceptedAt, lastWindow: nil, lastDecoderStall: nil, lastDeliveryFailure: nil,
             evaluatedAt: nil, isClosed: false, isBusy: false)
     }

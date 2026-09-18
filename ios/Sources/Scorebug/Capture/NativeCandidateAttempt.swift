@@ -61,7 +61,7 @@ final class NativeCandidateAttempt: @unchecked Sendable {
         result: { await owner.result(id: $0) }, retire: { await owner.retire(id: $0, reason: $1) }),
         scope: scope, candidate: candidate, contextProvider: contextProvider)
     }
-    private static func valid(_ context: PublishingQualitySession.CandidateMeasurementContext,
+    static func valid(_ context: PublishingQualitySession.CandidateMeasurementContext,
                               scope: VideoFrameObservationScope, candidate: PublishingVideoProfile) -> Bool {
         let readiness = context.readiness, applied = context.applied
         return context.scope == scope && readiness.attemptID == scope.publishingAttemptID
@@ -71,7 +71,7 @@ final class NativeCandidateAttempt: @unchecked Sendable {
             && context.clock.publishingGeneration == applied.receipt.publishingGeneration
             && applied.acknowledgedAt.isFinite && applied.acknowledgedAt >= applied.receipt.acceptedAt
     }
-    private static func sameConfiguration(_ before: PublishingQualitySession.CandidateMeasurementContext,
+    static func sameConfiguration(_ before: PublishingQualitySession.CandidateMeasurementContext,
                                           _ after: PublishingQualitySession.CandidateMeasurementContext) -> Bool {
         let old = before.readiness, new = after.readiness
         let oldApplied = before.applied, newApplied = after.applied
