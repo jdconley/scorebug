@@ -2381,3 +2381,22 @@ fault and recovery cycles and add causally triggered faults to the repeated
 simulator harness. Production automatic upgrades remain disabled. See the
 [repeated verification plan](2026-09-17-repeated-native-verification.md) and
 `artifacts/qa/repeated-campaign-admission-*` evidence.
+
+
+### 2026-09-17: repeated fault causality and shared raw media replay
+
+Both controlled pauses now retain their original confirmation, candidate,
+trial/reset revisions, native media phase and decoder process ownership. The
+second cycle must show new decoder progress, and each resumed observation must
+remain inside its own campaign. Candidate and confirmation receipts are tied
+directly to the actual trial so mutually consistent but foreign evidence cannot
+qualify a fault. Existing single-cycle raw media checks are shared without
+changing their qualification requirements.
+
+All 2,903 tool tests passed, including 60 new repeated-fault cases. All 269,285
+frozen evidence files remain unchanged. Runtime sources are unchanged; no new
+native build or full repeated A/V run is claimed. The global policy and healthy
+recovery replay, second-campaign readiness join and causal two-fault native
+harness remain pending. Production automatic upgrades remain disabled. See the
+[repeated verification plan](2026-09-17-repeated-native-verification.md) and
+`artifacts/qa/repeated-policy-replay-*` evidence.

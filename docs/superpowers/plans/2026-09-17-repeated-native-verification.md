@@ -328,3 +328,46 @@ A failing-first final-candidate-to-later-interval regression is preserved in
 approved the final correction; the focused checkpoint passes 187 tests.
 Task 4 is complete. The complete repeated policy, faults, recovery and native
 harness are still pending, and production upgrades remain disabled.
+
+## Task 5: fault causality and shared media replay
+
+The next checkpoint implements the explicit two-fault boundary separately from
+health credit. The raw v2 envelope has `mode: repeated`, `closed: true`,
+`failed: false`, the original publication scope and exactly two `campaigns`.
+Each campaign records the original candidate ID, trial revision, global
+confirmation event index, owned process identities and before/paused samples.
+No fixed timer is accepted as proof that the corresponding trial was confirmed.
+The repeated route keeps the full global quality and cadence histories and
+matches trial revisions 1/3 to immediate reset revisions 2/4, native phases 1/3
+and independently qualified source frames. Fault qualification grants no
+recovery, full repeated-policy or production permission.
+
+The parent extracts `qualifyMeasuredNativeMedia` from the existing measured
+composition without changing its raw video, publication, worker, source,
+processing, cadence or deadline checks. The single-cycle routes immediately use
+that shared replay. The eventual repeated composition must also call it before
+using structured media results; admission component fixtures cannot stand in for
+complete source/cadence/delivery evidence.
+
+The full policy replay still needs one global cursor through all source windows,
+trial confirmations, failure/reset decisions and recovery, followed by readiness
+joins and both healthy delivery lanes. A useful full-policy fixture can preserve
+the existing native phase times: first reset transition 159–161, followed by
+whole healthy windows 161–166 and 166–171, then a fresh 171–172 window before
+campaign 2 starts at 173. Its native readiness context must be updated to match
+that actual policy health history. This avoids assuming that a ten-second
+recovery must begin at the next five-second grid boundary. The current compact
+fault fixture is only a causality component contract, not this full-policy proof.
+
+
+The fault checkpoint now rejects confirmation/fault pairs that agree with each
+other but differ from the original applied trial. Candidate and confirmation
+application, encoder receipt, profile receipt, acknowledgement, revision and
+profile must match that actual trial, and the candidate must follow its applied
+event. Five failing-first regressions cover this substitution and ordering gap.
+The complete tooling suite passes 2,903 tests, including 60 new repeated-fault
+cases; the focused new and legacy fault/stall suite passes 152 tests. No runtime
+source changed and no new native build or repeated A/V run is claimed. Task 5
+remains open until the global policy/recovery replay and readiness joins exist.
+Evidence: `artifacts/qa/repeated-policy-replay-*` and
+`artifacts/qa/repeated-policy-fault-*`.

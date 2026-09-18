@@ -1,7 +1,10 @@
 import { qualifiedDeliverySampleBounds } from './native-delivery-deadlines.mjs';
 import assert from 'node:assert/strict';
 import { basename } from 'node:path';
-import { qualifyNativeStallSignal } from './native-controlled-stall.mjs';
+import {
+  qualifyNativeStallSignal,
+  qualifyRepeatedNativeStallSignal,
+} from './native-controlled-stall.mjs';
 import {
   ownedPause,
   qualifyOwnedPauseSample,
@@ -59,7 +62,14 @@ function freshCadence(row, owner, at = row.evaluatedUptime) {
   assert(at < row.receivedUptime + ttl - row.requestSeconds, 'Expired causal decoder cadence');
   return c;
 }
-function deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, scope }) {
+function deliveryFaultSignal({
+  trigger,
+  deliveryAudit,
+  cadenceReports,
+  fault,
+  scope,
+  trialRevision,
+}) {
   const qualified = qualifyNativeDeliveryFailureSignal({
     event: trigger,
     audit: deliveryAudit,
@@ -68,7 +78,7 @@ function deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, sc
   });
   const { row, duration, triggerDeliveryRowIndex } = qualified,
     d = trigger.deliveryFailure;
-  assert.equal(trigger.revision, '1');
+  assert.equal(trigger.revision, trialRevision);
   assert(duration === 1 || duration === 2, 'Unsupported delivery failure lane');
   const reasons = [duration === 1 ? 'freshFrameFloor' : 'sourceLoss'];
   if (d.onTimeFrames === 0) reasons.push('stalled');
@@ -150,22 +160,46 @@ function deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, sc
 /** Retrospective owned decoder-stall causality only. Source/native qualifications
  * are independently replayed by the composition; this joins their exact facts.
  * Node times never share an epoch with native capture/decision uptime. */
-export function qualifyMeasuredRecoveryFault({
-  fault,
-  quality,
-  cadenceReports,
-  deliveryAudit,
-  scope,
-  prefix,
-  snapshot,
-  format,
-  sourceIntervalQualification,
-  profileQualification,
-  archiveIDs,
-  liveIDs,
-}) {
-  assert.equal(fault?.formatVersion, 1);
-  assert.equal(fault.delayBeforePauseMs, 70000, 'Wrong measured recovery pause schedule');
+export function qualifyMeasuredRecoveryFault(input) {
+  assert.equal(input.fault?.formatVersion, 1);
+  assert.equal(input.fault.delayBeforePauseMs, 70000, 'Wrong measured recovery pause schedule');
+  return replayMeasuredRecoveryFault(input, {
+    trialRevision: '1',
+    resetRevision: '2',
+    trialPhaseIndex: 1,
+  });
+}
+/** Internal repeated component boundary. Caller selects original global indices
+ * after validating the complete repeated envelope and both campaign identities. */
+export function qualifyRepeatedMeasuredRecoveryFaultCampaign(input, context) {
+  assert(['1', '2'].includes(context.campaign), 'Unknown repeated fault campaign');
+  const index = Number(context.campaign) - 1;
+  assert.equal(context.trialRevision, String(index * 2 + 1));
+  assert.equal(context.resetRevision, String(index * 2 + 2));
+  assert.equal(context.trialPhaseIndex, index * 2 + 1);
+  assert.equal(input.fault.campaign, context.campaign);
+  assert.equal(input.fault.trialRevision, context.trialRevision);
+  return replayMeasuredRecoveryFault(input, context);
+}
+function replayMeasuredRecoveryFault(
+  {
+    fault,
+    quality,
+    cadenceReports,
+    deliveryAudit,
+    scope,
+    prefix,
+    snapshot,
+    format,
+    sourceIntervalQualification,
+    profileQualification,
+    archiveIDs,
+    liveIDs,
+  },
+  cycleContext,
+) {
+  const { trialRevision, resetRevision, trialPhaseIndex } = cycleContext;
+  const repeated = cycleContext.campaign !== undefined;
   ownedPause(fault);
   for (const [kind, p] of Object.entries(fault.identity)) {
     assert(['worker', 'guardian', 'decoder'].includes(kind), 'Unexpected process identity');
@@ -196,7 +230,7 @@ export function qualifyMeasuredRecoveryFault({
       prefix.confirmed === 1 &&
       confirmed?.kind === 'evaluated' &&
       confirmed.reasons?.includes('trialConfirmed') &&
-      confirmed.revision === '1' &&
+      confirmed.revision === trialRevision &&
       confirmed.profileID === '360p30' &&
       confirmed.evaluatedAt === prefix.confirmedAt &&
       confirmed.at === prefix.confirmedEventAt,
@@ -205,8 +239,12 @@ export function qualifyMeasuredRecoveryFault({
   const triggers = events
     .map((e, i) => ({ e, i }))
     .filter(({ e }) => ['decoderStall', 'deliveryFailure'].includes(e.kind));
-  assert.equal(triggers.length, 1, 'Recovery requires exactly one supported failure');
-  const { e: trigger, i: triggerEventIndex } = triggers[0];
+  assert.equal(triggers.length, repeated ? 2 : 1, 'Recovery requires exact supported failures');
+  const selectedTrigger = repeated
+    ? triggers.find(({ i }) => i === cycleContext.triggerEventIndex)
+    : triggers[0];
+  assert(selectedTrigger, 'Missing original campaign trigger');
+  const { e: trigger, i: triggerEventIndex } = selectedTrigger;
   assert(
     triggerEventIndex > prefix.confirmedEventIndex && trigger.evaluatedAt > prefix.confirmedAt,
     'Stall precedes confirmation',
@@ -240,9 +278,9 @@ export function qualifyMeasuredRecoveryFault({
   );
   const signal =
     trigger.kind === 'deliveryFailure'
-      ? deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, scope })
-      : qualifyNativeStallSignal(
-          { quality, audit: cadenceReports, fault, scope, expectedRevision: '1' },
+      ? deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, scope, trialRevision })
+      : (repeated ? qualifyRepeatedNativeStallSignal : qualifyNativeStallSignal)(
+          { quality, audit: cadenceReports, fault, scope, expectedRevision: trialRevision },
           trigger,
         );
   const decision = trigger.deliveryFailure ?? trigger.decoderStall;
@@ -259,6 +297,21 @@ export function qualifyMeasuredRecoveryFault({
       owner.publication.publishingAttemptId === scope.publishingAttemptID.toLowerCase(),
     'Native stall report belongs to another publication',
   );
+  if (repeated) {
+    const resumedAt = trigger.evaluatedAt + signal.decisionToObservedRecoverySeconds;
+    const resumedIndex = cadenceReports.rows.findIndex(
+      (r) => Math.abs(r.evaluatedUptime - resumedAt) < 1e-8,
+    );
+    assert(resumedIndex > signal.triggerCadenceReportIndex, 'Missing campaign resumed progress');
+    const resumed = freshCadence(cadenceReports.rows[resumedIndex], owner);
+    assert(
+      resumed.scopeID === signal.decoderScopeID &&
+        resumed.progress.stalled === false &&
+        resumed.progress.lastFreshPTS > Number(signal.lastStalledPTS),
+      'Invalid campaign resumed progress',
+    );
+    signal.resumedCadenceReportIndex = resumedIndex;
+  }
   const serverAge = report.response.status.decoderCadenceAgeUpperBoundMs / 1000,
     age = serverAge + report.requestSeconds + report.residenceSeconds,
     delay = trigger.evaluatedAt - report.evaluatedUptime;
@@ -343,7 +396,7 @@ export function qualifyMeasuredRecoveryFault({
     'Pre-pause source capture does not prove after confirmation',
   );
   const frame = start + Number(delta / 3000n),
-    phase = profileQualification.phases[1];
+    phase = profileQualification.phases[trialPhaseIndex];
   assert(
     Number.isSafeInteger(frame) &&
       frame > start &&
@@ -364,7 +417,9 @@ export function qualifyMeasuredRecoveryFault({
     .filter(({ r }) => fixtureFrameID(r.sourcePTS) === frame);
   assert.equal(frames.length, 1, 'Pre-pause source absent from exact native frames');
   const native = frames[0],
-    phaseStart = profileQualification.phases[0].nativeFrames;
+    phaseStart = profileQualification.phases
+      .slice(0, trialPhaseIndex)
+      .reduce((n, phase) => n + phase.nativeFrames, 0);
   assert(
     native.index >= phaseStart &&
       native.index < phaseStart + phase.nativeFrames &&
@@ -373,7 +428,7 @@ export function qualifyMeasuredRecoveryFault({
     'Pre-pause native frame belongs to another phase or time',
   );
   assert.equal(
-    format.encoderSessions[1].encoderSessionID,
+    format.encoderSessions[trialPhaseIndex].encoderSessionID,
     phase.encoderSessionID,
     'Native phase encoder differs',
   );
@@ -381,8 +436,12 @@ export function qualifyMeasuredRecoveryFault({
   const resets = events
     .map((e, i) => ({ e, i }))
     .filter(({ e }) => e.kind === 'applied' && e.action?.kind === 'reset');
-  assert.equal(resets.length, 1, 'Stall requires exactly one reset application');
-  const { e: reset, i: resetEventIndex } = resets[0],
+  assert.equal(resets.length, repeated ? 2 : 1, 'Stall requires exact reset applications');
+  const selectedReset = repeated
+    ? resets.find(({ i }) => i === cycleContext.resetEventIndex)
+    : resets[0];
+  assert(selectedReset, 'Missing original campaign reset');
+  const { e: reset, i: resetEventIndex } = selectedReset,
     application = reset.application;
   assert.equal(resetEventIndex, triggerEventIndex + 1, 'Reset is not the immediate causal action');
   same(
@@ -391,7 +450,7 @@ export function qualifyMeasuredRecoveryFault({
       kind: 'reset',
       profileID: '240p30',
       bitRate: 350000,
-      fromRevision: '1',
+      fromRevision: trialRevision,
       candidateID: null,
       validUntil:
         trigger.kind === 'deliveryFailure'
@@ -404,7 +463,7 @@ export function qualifyMeasuredRecoveryFault({
     same(trigger.action, reset.action, 'Applied action differs from deadline recommendation');
   assert(
     application?.windowSequence === decision.sequence &&
-      application.fromRevision === '1' &&
+      application.fromRevision === trialRevision &&
       application.candidateID === null &&
       application.attemptID === scope.publishingAttemptID &&
       typeof application.id === 'string' &&
@@ -422,11 +481,11 @@ export function qualifyMeasuredRecoveryFault({
     'Reset admission or completion outside causal deadline',
   );
   assert(
-    reset.revision === '2' &&
+    reset.revision === resetRevision &&
       reset.profileID === '240p30' &&
       reset.receipt.bitRate === 350000 &&
       reset.closed === false,
-    'Reset did not apply minimum revision 2',
+    'Reset did not apply its original minimum revision',
   );
   return {
     ...signal,

@@ -38,23 +38,12 @@ export const measuredTrialArtifacts = {
   deliveryAudit: ['delivery-deadlines.json', 32 * 1024 * 1024],
 };
 
-/** Recompute shared raw native/admission evidence. This does not qualify policy
- * success or recovery: a complete route-specific verifier must consume it.
- * Full A/V decoding, archive durability and ingress checks remain required by
- * the calling harness. No production upgrade permission is returned.
- */
-export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) {
-  assert.equal(typeof recovery, 'boolean');
+/** Shared raw capture/receiver/worker/delivery replay for measured routes.
+ * This grants no candidate, policy, recovery, or production permission. Each
+ * route must still qualify its original media phases and admission timeline. */
+export function qualifyMeasuredNativeMedia(input) {
   const {
     snapshot,
-    quality,
-    format,
-    startupFormat,
-    lifecycle,
-    candidateProof,
-    nativeProbe,
-    receiverIntervals,
-    receiverRecords,
     workerRecords,
     decodedEvidence,
     processingEvidence,
@@ -98,6 +87,42 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
     scope: video.scope,
     expectedLatencyBudget: 1.5,
   });
+  return {
+    scope: video.scope,
+    video,
+    clock,
+    attempt,
+    worker,
+    source,
+    processing,
+    reportAge,
+    cadence,
+    delivery,
+  };
+}
+
+/** Recompute shared raw native/admission evidence. This does not qualify policy
+ * success or recovery: a complete route-specific verifier must consume it.
+ * Full A/V decoding, archive durability and ingress checks remain required by
+ * the calling harness. No production upgrade permission is returned.
+ */
+export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) {
+  assert.equal(typeof recovery, 'boolean');
+  const {
+    snapshot,
+    quality,
+    format,
+    startupFormat,
+    lifecycle,
+    candidateProof,
+    nativeProbe,
+    receiverIntervals,
+    receiverRecords,
+    workerRecords,
+    liveIDs,
+  } = input;
+  const { video, clock, attempt, worker, source, processing, reportAge, cadence, delivery } =
+    qualifyMeasuredNativeMedia(input);
   const profile = qualifyNativeProfileTransitions(format, snapshot, liveIDs, {
     sequence: 'measured240',
     requireFrameEvidence: true,

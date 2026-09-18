@@ -46,6 +46,14 @@ export function qualifyNativeStallSignal(
   event,
 ) {
   assert(['0', '1'].includes(expectedRevision), 'Unsupported stall revision');
+  return replayNativeStallSignal({ quality, audit, fault, scope, expectedRevision }, event);
+}
+/** Explicit repeated fault route. Original revisions are never rebased. */
+export function qualifyRepeatedNativeStallSignal(input, event) {
+  assert(['1', '3'].includes(input.expectedRevision), 'Unsupported repeated stall revision');
+  return replayNativeStallSignal(input, event);
+}
+function replayNativeStallSignal({ quality, audit, fault, scope, expectedRevision }, event) {
   assert(
     fault.closed === true &&
       fault.failed === false &&
