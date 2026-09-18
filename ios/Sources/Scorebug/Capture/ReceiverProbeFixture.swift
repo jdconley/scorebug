@@ -13,7 +13,19 @@ struct ReceiverProbeFixtureHistory {
         invalid = invalid || quarantined
         guard let interval else { return }
         let end = interval.end
-        let key = "\(end.workerEpoch)/\(end.workerAttempt)/\(end.publication.readerId)/\(end.snapshot.id)/\(end.snapshot.stage.map(String.init) ?? "legacy")/\(end.snapshot.observedAtNanoseconds)"
+        // A delayed interval cannot be relabeled with the next native owner,
+        // including when the old row would otherwise be deduplicated.
+        let campaign = accepted.campaign.map(String.init)
+        guard interval.start.id == accepted.id.uuidString.lowercased(),
+              end.snapshot.id == interval.start.id,
+              interval.start.stage == accepted.stage, end.snapshot.stage == accepted.stage,
+              interval.start.campaign == campaign, end.snapshot.campaign == campaign,
+              interval.start.publishingGeneration == String(accepted.publishingGeneration),
+              end.snapshot.publishingGeneration == String(accepted.publishingGeneration),
+              interval.start.bitRate == accepted.bitRate, end.snapshot.bitRate == accepted.bitRate else {
+            invalid = true; return
+        }
+        let key = "\(end.workerEpoch)/\(end.workerAttempt)/\(end.publication.readerId)/\(end.snapshot.id)/\(end.snapshot.campaign ?? "legacy")/\(end.snapshot.stage.map(String.init) ?? "legacy")/\(end.snapshot.observedAtNanoseconds)"
         guard !keys.contains(key) else { return }
         guard rows.count < 128 else { invalid = true; return }
         guard let age = end.snapshotAgeUpperBound(at: instant), let deliveryAge = end.lastDeliveryAgeUpperBound(at: instant),
@@ -42,6 +54,7 @@ struct ReceiverProbeFixtureHistory {
                 "nativeProbeId": accepted.id.uuidString.lowercased(), "nativePublishingGeneration": String(accepted.publishingGeneration),
             ])
             if let stage = accepted.stage { rows[rows.count - 1]["nativeProbeStage"] = stage }
+            if let campaign { rows[rows.count - 1]["nativeProbeCampaign"] = campaign }
             keys.insert(key)
         } catch { invalid = true }
     }

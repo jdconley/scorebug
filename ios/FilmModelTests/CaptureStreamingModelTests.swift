@@ -486,14 +486,17 @@ import XCTest
         try await checkReceiverIntervalSerialization(stage: nil)
         try await checkReceiverIntervalSerialization(stage: 3)
     }
-    private func checkReceiverIntervalSerialization(stage: Int?) async throws {
+    func testReceiverIntervalFixturePreservesCampaignAndRejectsCrossedNativeOwnership() async throws {
+        try await checkReceiverIntervalSerialization(stage: 3, campaign: 2)
+    }
+    private func checkReceiverIntervalSerialization(stage: Int?, campaign: UInt32? = nil) async throws {
         let (model, _, publisher, initial) = try await receiverProbeModel()
         let nativeValue = await publisher.probeValue()
-        var native = try XCTUnwrap(nativeValue); native.stage = stage
+        var native = try XCTUnwrap(nativeValue); native.stage = stage; native.campaign = campaign
         let scope = try XCTUnwrap(model.videoObservation?.scope)
         let expected = WorkerReceiverProbeExpectation(gameId: "game-1", generation: 1, workerId: "worker-1",
             publishingAttemptId: scope.publishingAttemptID.uuidString.lowercased(), probeId: native.id.uuidString.lowercased(),
-            publishingGeneration: 1, bitRate: 1_000_000, stage: stage)
+            publishingGeneration: 1, bitRate: 1_000_000, stage: stage, campaign: campaign)
         var tracker = WorkerReceiverProbeTracker(), history = ReceiverProbeFixtureHistory()
         let anchor = ContinuousClock.now
         var end: WorkerReceiverProbeInterval?
@@ -505,9 +508,13 @@ import XCTest
             response.status.receiverProbe?.snapshot.deliveredPayloadBytes = String(n * 2632)
             response.status.receiverProbe?.snapshot.nextSequence = String(n * 2)
             if let stage {
-                response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+                response.status.receiverProbe?.snapshot.convention = campaign == nil ? "mpegts-null-probe-v2" : "mpegts-null-probe-v3"
                 response.status.receiverProbe?.snapshot.stage = stage
                 response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = String((n + 1) * 2632)
+                if let campaign {
+                    response.status.receiverProbe?.snapshot.campaign = String(campaign)
+                    response.status.receiverProbe?.snapshot.campaignDeliveredPayloadBytes = String(n * 2632)
+                }
             }
             let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response, expected: expected,
                 receivedAt: anchor + .seconds(n), requestDuration: .zero))
@@ -525,6 +532,25 @@ import XCTest
         let rows = try XCTUnwrap(json["intervals"] as? [[String: Any]])
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows.first?["nativeProbeStage"] as? Int, stage)
+        XCTAssertEqual(rows.first?["nativeProbeCampaign"] as? String, campaign.map(String.init))
+        XCTAssertEqual((rows.first?["start"] as? [String: Any])?["campaign"] as? String, campaign.map(String.init))
+        XCTAssertEqual((rows.first?["end"] as? [String: Any])?["campaign"] as? String, campaign.map(String.init))
+        if campaign != nil {
+            for fault in ["campaign", "missingCampaign", "id", "stage", "generation", "rate"] {
+                var wrong = accepted, damaged = history
+                switch fault {
+                case "campaign": wrong.campaign = 3
+                case "missingCampaign": wrong.campaign = nil
+                case "id": wrong.id = UUID()
+                case "stage": wrong.stage = 2
+                case "generation": wrong.publishingGeneration = 2
+                default: wrong.bitRate = 2_000_000
+                }
+                damaged.record(interval, accepted: wrong, at: anchor + .seconds(2.1), timing: timing, quarantined: false)
+                let result = try XCTUnwrap(JSONSerialization.jsonObject(with: damaged.data(scope: scope)) as? [String: Any])
+                XCTAssertEqual(result["invalid"] as? Bool, true, fault)
+            }
+        }
         XCTAssertEqual((rows.first?["end"] as? [String: Any])?["stage"] as? Int, stage)
         XCTAssertEqual((rows.first?["end"] as? [String: Any])?["totalDeliveredPayloadBytes"] as? String, stage == nil ? nil : "7896")
         XCTAssertEqual(rows.first?["serverAgeUpperBoundMs"] as? Double, 10)

@@ -2328,3 +2328,20 @@ replay the complete policy and fault/recovery timeline, and add the two owned
 faults to the native harness. The harness continues to reject repeated mode until
 that combined gate exists. See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
 and `artifacts/qa/repeated-native-verification-*` evidence. The full goal remains active.
+
+### 2026-09-17: repeated candidate and receiver evidence ownership
+
+The repeated receiver replay now reconciles all six probe stages against raw
+native acceptance, with separate campaign counters and continuous publication
+totals. Both candidate A/V measurements are independently checked against their
+real baseline frames and original campaign/revision, native lease and pacing
+history. Native interval exports preserve campaign identity and reject crossed
+owners before deduplication.
+
+All 440 FilmModel and 2,565 tool tests passed, along with the arm64 simulator and
+unsigned iPhone/Watch Release builds. These checks cover the new evidence
+boundaries; they do not qualify a complete repeated ramp. Remaining work is the
+interval/admission/lifecycle joins, full policy and fault/recovery replay, and
+the two-fault native harness. Production automatic upgrades remain disabled.
+See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
+and `artifacts/qa/repeated-native-binding-*` evidence.

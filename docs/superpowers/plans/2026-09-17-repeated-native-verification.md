@@ -67,3 +67,67 @@ Production upgrade permission remains disabled.
 
 Independent specification and code-quality reviews approved tasks 1–3 with no
 remaining actionable findings. The unsigned iPhone/Watch Release build also passed.
+
+
+## Task 4 execution boundaries
+
+Use two bounded implementation workers alongside parent integration: one owns
+independent repeated receiver reconciliation; one owns candidate envelope replay.
+The parent owns explicit Swift native-campaign export and the later admission/
+lifecycle/policy joins. Each new public replay function consumes raw versioned
+proof, revalidates its native dependencies, retains original scope/campaign/revision,
+and returns false qualification flags until the complete combined gate succeeds.
+
+`qualifyRepeatedReceiverProbeEvidence(records, scope, nativeProof)` belongs in
+`scripts/repeated-receiver-probe-evidence.mjs`. It replays native acceptance itself,
+requires authenticated publication ownership and a single receiver clock offset,
+reconciles all six stages and exact per-campaign/publication totals, and reserves
+pending messages. It must reject missing/crossed stages or publications and cannot
+turn delivered padding into spare capacity.
+
+`qualifyRepeatedNativeCandidateMeasurements(proof, {scope, nativeProbe, format,
+snapshot, liveIDs})` belongs in `scripts/repeated-native-candidate-measurement.mjs`.
+It validates the original v4 two-campaign envelope, replays the v3 probe and v9
+five-phase media, applies the existing full v3 candidate A/V validator to each
+actual baseline phase, and checks distinct measurement/encoder identities,
+chronology, campaign/revision and exact source-frame correspondence. Native probe
+binding is checked against the matching third stage; admission-time receiver
+headroom and recovery causality remain for the combined gate.
+
+The Swift interval export adds nativeProbeCampaign only when the accepted native
+probe has a campaign. Legacy evidence stays unchanged; v3 endpoints and accepted
+native campaign must agree. Add failing-first tests that exercise the real tracker
+and preserve both valid campaign metadata and rejection of crossed ownership.
+
+## Candidate and receiver boundary checkpoint
+
+The two repeated replay modules now consume their original versioned raw proofs.
+Receiver reconciliation accounts for all six stages, per-campaign byte resets and
+continuous publication totals, pending-message reservations, one publication and
+a common receiver clock offset. Candidate replay validates both complete A/V
+measurements against their actual native and decoded baseline frames, independent
+encoder identities, original revisions, joined prior ownership, and the matching
+third-stage native probe. Interpolated native observations must satisfy both
+lifetime pacing and the one-message allowance in both directions against every
+native checkpoint and between binding endpoints. Stable acceptance counts and
+timestamps remain valid across lease renewals.
+
+The Swift diagnostic export now preserves nativeProbeCampaign and rejects a
+receiver interval whose endpoints disagree with the accepted native owner, even
+when that row would otherwise be deduplicated. Regression coverage includes
+crossed campaign, missing campaign, ID, stage, generation and bitrate.
+
+All 440 FilmModel and 2,565 tool tests passed. The arm64 simulator and unsigned
+iPhone/Watch Release builds passed. Failing-first evidence and subsequent checks
+are preserved under `artifacts/qa/repeated-native-binding-*`.
+
+Independent specification and code-quality reviews approved this checkpoint.
+Review regressions cover the reciprocal pacing gap and unchanged-count timestamp
+consistency. All 269,138 previously frozen evidence files remain unchanged.
+
+Task 4 remains open: the interval replay, candidate admission witness, exact
+profile request and native retirement/lifecycle joins still need explicit
+repeated-campaign support. Full policy/fault/recovery replay and the two-fault
+harness follow those joins. The new component outputs explicitly grant no
+receiver capacity or policy/upgrade permission. No full repeated native A/V run
+has been performed, and production automatic upgrades remain disabled.
