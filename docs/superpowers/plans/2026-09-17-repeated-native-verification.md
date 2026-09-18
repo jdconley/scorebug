@@ -131,3 +131,70 @@ repeated-campaign support. Full policy/fault/recovery replay and the two-fault
 harness follow those joins. The new component outputs explicitly grant no
 receiver capacity or policy/upgrade permission. No full repeated native A/V run
 has been performed, and production automatic upgrades remain disabled.
+
+## Native lifecycle and retirement joins
+
+Before interval/admission replay can use the third stage's load, independently
+bind its retirement to the corresponding native profile request. A bounded probe
+worker owns `qualifyRepeatedProbeRetirements(nativeProof, {lifecycle, quality})`
+and its mutation tests; the parent owns the shared five-phase fixture and explicit
+repeated lifecycle replay. Preserve the raw campaign exports and global quality
+event list. Require exactly two trials and two resets, original revisions 0–4,
+distinct candidate/application/request identities, and the real receipt chain.
+
+Extend `qualifyMeasuredNativeLifecycle` with an explicit `sequence` option whose
+default remains measured240. For repeated240, independently replay the raw v9
+media with decoded frame IDs, require four native profile requests and five
+bitrate requests, preserve all existing startup/timing checks, and reject skipped
+revisions, overlapping applications, stale reset candidate ownership, or a second
+trial before the first reset. This output proves receipt correspondence only.
+
+The retirement verifier consumes raw v3 native probes and the original lifecycle
+and quality exports. Each trial must synchronously own the active matching
+campaign before its exact profile request, and its terminal read must match the
+joined cancelled native owner. Repeated probe final events may precede the
+lifecycle terminal read because the native wrapper awaits the profile receipt
+first; validate causal request/read bounds without reusing the legacy stop-time
+ordering. Include rejection tests for cross-campaign substitution, acceptance
+after withdrawal, impossible intermediate pacing, stale authority, and resets
+masquerading as trial retirement. Keep admission, recovery, policy and production
+permission false until the combined gate succeeds.
+
+## Native lifecycle and retirement checkpoint
+
+The explicit repeated240 lifecycle path now independently replays raw v9 media
+and decoded IDs, matches all four profile writes and five bitrate writes, and
+retains original revisions and global quality event indices. It rejects skipped
+revisions, reused measurement/configuration identities, reordered or overlapping
+applications, and resets that incorrectly retain active trial authority. Legacy
+measured240 remains the default route.
+
+`qualifyRepeatedProbeRetirements` binds both raw v3 campaigns to their exact trial
+requests and joined terminal observations, including the later reset's historical
+owner. Campaign 1's baseline matches the actual bootstrap receipt; campaign 2's
+baseline matches the first reset. Receipt comparison preserves raw UUID spelling
+and compares identity semantically because admission exports use lowercase while
+native audit/quality exports use uppercase UUIDs.
+
+The admission observation is cached: a valid same-owner renewal may occur before
+or after profile dispatch. Replay keeps that cached lease live at dispatch and
+validates subsequent native lease/pacing evidence through the observed cancellation,
+profile receipt and terminal-read bounds. It does not invent an exact cancellation
+instant or require the probe's raw final event to follow the lifecycle read.
+
+All 2,711 tool tests passed, including 146 new lifecycle/retirement tests and the
+existing single-cycle regressions. Earlier raw evidence remains unchanged across
+269,193 frozen files. Failing-first regressions and checks are preserved under
+`artifacts/qa/repeated-native-lifecycle-*`. These changes affect verification and
+test fixtures; no new full native A/V run has been performed.
+
+Independent specification and code-quality reviews approved the frozen changes
+with no remaining actionable findings. Runtime source hashes match the preceding
+verified commit; this checkpoint reran the affected tool suite, not native builds.
+
+Task 4 still requires receiver interval replay and the complete candidate
+admission witness for each original campaign/revision. The retirement summaries
+now supply the actual third-stage profile request boundary for those interval
+checks. Subsequent policy/fault/recovery replay and the two-fault harness remain
+required. Component results grant no capacity, admission, recovery, policy or
+production upgrade permission.

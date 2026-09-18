@@ -2345,3 +2345,19 @@ interval/admission/lifecycle joins, full policy and fault/recovery replay, and
 the two-fault native harness. Production automatic upgrades remain disabled.
 See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
 and `artifacts/qa/repeated-native-binding-*` evidence.
+
+### 2026-09-17: repeated native lifecycle and probe retirement
+
+Repeated lifecycle replay now matches all four native profile changes and five
+bitrate writes to the original revision/receipt chain, independently replaying
+the five media phases. Both probe campaigns are tied to their actual trial
+requests and joined cancellations, with the correct startup/reset baseline.
+The checks handle native UUID formatting differences and valid probe renewals
+after the admission snapshot while rejecting stale or crossed authority.
+
+All 2,711 tool tests passed; 269,193 prior evidence files remain unchanged.
+Receiver interval and full candidate admission replay remain next, followed by
+complete policy/fault/recovery replay and the two-fault native run. No complete
+repeated A/V qualification or production automatic upgrade permission is claimed.
+See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
+and `artifacts/qa/repeated-native-lifecycle-*` evidence.

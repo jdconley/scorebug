@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
+import { qualifyNativeProfileTransitions } from './native-profile-transitions.mjs';
 
 const time = (n) => assert.ok(Number.isFinite(n) && n >= 0 && n <= 1e12);
 const uuid = (s) => {
@@ -17,7 +18,9 @@ const normalizeRate = (r) => ({
 });
 
 /** Startup and native application correspondence, not policy or capacity permission.
- * profileQualification comes from the complete measured native-frame validator.
+ * Legacy profileQualification comes from the measured native-frame validator.
+ * Explicit repeated240 calls replay raw media/decoded IDs again and compare any
+ * supplied summary, retaining the original global quality event indices.
  * The invalid aggregate fixed-format proof remains unchanged and is never qualified.
  */
 export function qualifyMeasuredNativeLifecycle({
@@ -27,8 +30,24 @@ export function qualifyMeasuredNativeLifecycle({
   snapshot,
   startupFormat: fixed,
   profileQualification,
+  sequence = 'measured240',
+  liveIDs,
 }) {
-  assert.equal(profileQualification.sequence, 'measured240');
+  assert.ok(
+    ['measured240', 'repeated240'].includes(sequence),
+    'Unknown measured lifecycle sequence',
+  );
+  const repeated = sequence === 'repeated240';
+  assert.equal(format.sequence, sequence);
+  if (repeated) {
+    const replay = qualifyNativeProfileTransitions(format, snapshot, liveIDs, {
+      sequence,
+      requireFrameEvidence: true,
+    });
+    if (profileQualification !== undefined) assert.deepEqual(profileQualification, replay);
+    profileQualification = replay;
+  }
+  assert.equal(profileQualification.sequence, sequence);
   assert.deepEqual(profileQualification.scope, snapshot.scope);
   assert.deepEqual(profileQualification.receipts, format.receipts);
   assert.equal(audit.formatVersion, 1);
@@ -49,6 +68,25 @@ export function qualifyMeasuredNativeLifecycle({
   };
   assert.equal(quality.overflow, false);
   assert.ok(Array.isArray(quality.events) && quality.events.length <= 512);
+  if (repeated) {
+    assert.equal(quality.formatVersion, 4);
+    assert.equal(quality.measuredSourceEvaluationEnabled, true);
+    for (const [index, event] of quality.events.entries()) {
+      time(event.at);
+      if (index > 0)
+        assert.ok(event.at >= quality.events[index - 1].at, 'Quality timeline regressed');
+    }
+    assert.equal(
+      audit.profileRequests.length,
+      4,
+      'Repeated lifecycle requires four profile writes',
+    );
+    assert.equal(
+      audit.bitRateRequests.length,
+      5,
+      'Repeated lifecycle requires five bitrate writes',
+    );
+  }
   const boot = quality.events.filter((e) => e.kind === 'bootstrap');
   assert.equal(boot.length, 1);
   assert.equal(quality.events[0], boot[0]);
@@ -129,6 +167,7 @@ export function qualifyMeasuredNativeLifecycle({
     assert.ok(!ids.has(key));
     ids.add(key);
   };
+  const configurations = new Set();
   for (const row of audit.bitRateRequests) {
     unique(row.requestID);
     assert.equal(row.outcome, 'completed');
@@ -141,11 +180,17 @@ export function qualifyMeasuredNativeLifecycle({
     assert.equal(row.targetBitRate, row.receipt.bitRate);
     assert.equal(row.receipt.publishingGeneration, format.publishingGeneration);
     uuid(row.receipt.configurationID);
+    if (repeated) {
+      const id = uuid(row.receipt.configurationID);
+      assert.ok(!configurations.has(id), 'Reused native bitrate configuration');
+      configurations.add(id);
+    }
     uuid(row.receipt.encoderSessionID);
     fixtureFrameID(row.receipt.lastSubmittedSourcePTS);
   }
   const initialRates = audit.bitRateRequests.filter((r) => r.profileRequestID === null);
   assert.equal(initialRates.length, 1);
+  if (repeated) assert.equal(initialRates[0], audit.bitRateRequests[0]);
   assert.deepEqual(normalizeRate(initialRates[0].receipt), bootstrap.receipt);
   boundedTime(bootstrap.acknowledgedAt);
   boundedTime(bootstrap.at);
@@ -156,10 +201,55 @@ export function qualifyMeasuredNativeLifecycle({
   const applied = quality.events.filter((e) => e.kind === 'applied');
   assert.equal(applied.length, audit.profileRequests.length);
   assert.equal(format.receipts.length, applied.length);
+  const candidates = quality.events.filter((e) => e.kind === 'candidate');
+  if (repeated) assert.equal(candidates.length, 2, 'Repeated lifecycle requires two owned trials');
+  const candidateIDs = new Set();
   const applications = audit.profileRequests.map((row, index) => {
     unique(row.requestID);
     const event = applied[index],
       application = event.application;
+    if (repeated) {
+      const trial = index % 2 === 0;
+      assert.equal(event.closed, false);
+      assert.equal(event.action.kind, trial ? 'trial' : 'reset');
+      assert.equal(event.profileID, trial ? '360p30' : '240p30');
+      assert.equal(event.action.bitRate, trial ? 600000 : 350000);
+      assert.equal(application.fromRevision, String(index), 'Skipped original applied revision');
+      assert.equal(event.revision, String(index + 1));
+      const prior = index === 0 ? bootstrap : applied[index - 1];
+      assert.ok(
+        prior.at <= application.admittedAt,
+        'Native applications overlap prior acknowledgment',
+      );
+      assert.ok(row.requestedAt < event.action.validUntil, 'Native request after action expiry');
+      if (trial) {
+        const candidate = candidates[index / 2];
+        const id = uuid(application.candidateID);
+        assert.ok(!candidateIDs.has(id), 'Reused candidate across repeated trials');
+        candidateIDs.add(id);
+        assert.equal(candidate.closed, false);
+        assert.equal(candidate.revision, event.revision);
+        assert.equal(candidate.profileID, event.profileID);
+        for (const key of ['action', 'application', 'profileReceipt', 'receipt'])
+          assert.deepEqual(
+            candidate[key],
+            event[key],
+            `Candidate ${key} differs from applied event`,
+          );
+        sameID(candidate.candidate.id, application.candidateID);
+        assert.equal(candidate.candidate.appliedRevision, application.fromRevision);
+        boundedTime(candidate.at);
+        boundedTime(candidate.evaluatedAt);
+        assert.ok(candidate.evaluatedAt <= application.admittedAt);
+        const candidateIndex = quality.events.indexOf(candidate);
+        assert.ok(candidateIndex > quality.events.indexOf(event));
+        assert.ok(candidateIndex < quality.events.indexOf(applied[index + 1]));
+      } else {
+        assert.equal(row.authorityPermitted, false);
+        assert.equal(row.probeAuthorityPermitted, false);
+        assert.equal(row.currentProbeActive, false);
+      }
+    }
     unique(application.id);
     assert.equal(row.outcome, 'completed');
     assert.equal(row.failure, null);
@@ -206,6 +296,8 @@ export function qualifyMeasuredNativeLifecycle({
     const rates = audit.bitRateRequests.filter((r) => r.profileRequestID === row.requestID);
     assert.equal(rates.length, 1);
     const rate = rates[0];
+    if (repeated)
+      assert.equal(rate, audit.bitRateRequests[index + 1], 'Native bitrate writes reordered');
     assert.ok(terminal.completedAt <= rate.requestedAt && rate.completedAt <= event.acknowledgedAt);
     assert.ok(
       event.acknowledgedAt <= application.completionDeadline && event.acknowledgedAt <= event.at,
@@ -220,6 +312,13 @@ export function qualifyMeasuredNativeLifecycle({
       assert.equal(row.currentProbeActive, true);
     }
     return {
+      ...(repeated
+        ? {
+            fromRevision: application.fromRevision,
+            revision: event.revision,
+            qualityEventIndex: quality.events.indexOf(event),
+          }
+        : {}),
       requestID: row.requestID,
       applicationID: application.id,
       candidateID: application.candidateID,
@@ -233,6 +332,7 @@ export function qualifyMeasuredNativeLifecycle({
   });
   assert.equal(audit.bitRateRequests.length, applied.length + 1);
   return {
+    ...(repeated ? { sequence, repeatedPolicyQualified: false, recoveryQualified: false } : {}),
     scope: audit.scope,
     startup,
     bootstrap,
