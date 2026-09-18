@@ -45,6 +45,10 @@ function ticks(source, origin) {
 }
 function envelope(value, maximum, label) {
   assert(
+    value?.deliveryTiming === undefined || value.deliveryTiming === 'request-uptime-v1',
+    'Unknown delivery timing mode',
+  );
+  assert(
     value?.formatVersion === 1 &&
       value.closed === true &&
       value.overflow === false &&
@@ -128,6 +132,8 @@ function binding(status, scope, expectedAttempt) {
 // Reconstruct the bounded wire history independently of the native exported snapshot.
 function reconstructReports(reports, scope) {
   envelope(reports, 2048, 'report audit');
+  const anchored = reports.deliveryTiming === 'request-uptime-v1';
+  let acceptedRequestTiming;
   let priorTime = -1,
     priorReceived = -1,
     history,
@@ -163,6 +169,32 @@ function reconstructReports(reports, scope) {
       status && status.gameId === scope.matchID && status.generation === scope.broadcastGeneration,
       'Wrong raw report scope',
     );
+    let requestTiming;
+    if (anchored) {
+      requestTiming = row.timing;
+      assert(
+        requestTiming &&
+          finite(requestTiming.statusRequestStartedUptime) &&
+          finite(requestTiming.responseReceivedUptime) &&
+          requestTiming.statusRequestStartedUptime <= requestTiming.responseReceivedUptime &&
+          requestTiming.responseReceivedUptime === row.receivedUptime,
+        'Invalid request uptime bracket',
+      );
+      // Native uptime endpoints surround the separately sampled ContinuousClock
+      // endpoints. Permit subtraction roundoff only, never the freshness tolerance.
+      const rounding = 2 * Number.EPSILON * Math.max(1, requestTiming.responseReceivedUptime);
+      assert(
+        requestTiming.responseReceivedUptime -
+          requestTiming.statusRequestStartedUptime +
+          rounding >=
+          row.requestSeconds,
+        'Request uptime bracket does not contain measured duration',
+      );
+    } else
+      assert(
+        !Object.hasOwn(row, 'deliverySampleTimeBounds'),
+        'Legacy report carries timing bounds',
+      );
     const item = { row, proof: null };
     result.push(item);
     let nextOwner, packet, nextHistory, ttl;
@@ -202,6 +234,8 @@ function reconstructReports(reports, scope) {
         row.deliveryReceiptID === null && row.deliverySampleAgeSeconds === null,
         `Native receipt claims unusable report: ${error.message}`,
       );
+      if (anchored)
+        same(row.deliverySampleTimeBounds, null, 'Unusable report carries sample bounds');
       priorProof = undefined;
       needsFull = true;
       continue;
@@ -210,6 +244,8 @@ function reconstructReports(reports, scope) {
     history = nextHistory;
     if (row.deliveryReceiptID === null) {
       assert.equal(row.deliverySampleAgeSeconds, null, 'Age without delivery receipt');
+      if (anchored)
+        same(row.deliverySampleTimeBounds, null, 'Unusable report carries sample bounds');
       priorProof = undefined;
       needsFull = true;
       continue;
@@ -240,9 +276,37 @@ function reconstructReports(reports, scope) {
         Math.abs(row.deliverySampleAgeSeconds - expected) <= AGE_TOLERANCE,
       'Report delivery age does not reconcile',
     );
+    let sampleTimeBounds;
+    if (anchored) {
+      assert(
+        !acceptedRequestTiming ||
+          (requestTiming.statusRequestStartedUptime >=
+            acceptedRequestTiming.statusRequestStartedUptime &&
+            requestTiming.responseReceivedUptime >= acceptedRequestTiming.responseReceivedUptime),
+        'Accepted request timing regressed',
+      );
+      sampleTimeBounds =
+        previousSample === packet.sampledAtMs
+          ? priorProof.sampleTimeBounds
+          : {
+              lower: Math.max(
+                0,
+                requestTiming.statusRequestStartedUptime -
+                  status.decoderDeliveryAgeUpperBoundMs / 1000,
+              ),
+              upper: requestTiming.responseReceivedUptime,
+            };
+      same(
+        row.deliverySampleTimeBounds,
+        sampleTimeBounds,
+        'Report sample bounds differ from request history',
+      );
+      acceptedRequestTiming = requestTiming;
+    }
     // Carry the independently reconstructed bound, so a sampling tolerance cannot
     // be repeatedly subtracted on a long sequence of frozen reports.
     item.proof = {
+      sampleTimeBounds,
       context: nextOwner,
       snapshot: deliverySnapshot(nextHistory),
       age: expected,
@@ -428,15 +492,21 @@ function sourceFrames(row, scope) {
   return frames;
 }
 
+// Call only after qualifyNativeDeliveryDeadlines has reconciled this row with raw reports.
+export function qualifiedDeliverySampleBounds(row, age) {
+  return row.sampleTimeBounds ?? { lower: row.evaluatedAt - age, upper: row.evaluatedAt };
+}
+
 function classify(row, frames, budget, age) {
-  const t = row.timeline;
+  const t = row.timeline,
+    sample = qualifiedDeliverySampleBounds(row, age);
   assert(
     t.invalidReason == null && t.ended === false && t.arrivals.length > 0,
     'Unavailable decoder timeline',
   );
   assert(
-    row.evaluatedAt - t.coverageAgeMs / 1000 < frames[0].capturedAt &&
-      row.evaluatedAt - age > frames.at(-1).capturedAt + budget,
+    sample.upper - t.coverageAgeMs / 1000 < frames[0].capturedAt &&
+      sample.lower > frames.at(-1).capturedAt + budget,
     'Incomplete deadline history coverage',
   );
   const first = new Map();
@@ -456,8 +526,8 @@ function classify(row, frames, budget, age) {
       continue;
     }
     assert(frame.wasEncoded, 'Decoded arrival for locally unencoded capture');
-    const upper = row.evaluatedAt - arrivalAge,
-      lower = upper - age,
+    const upper = sample.upper - arrivalAge,
+      lower = row.sampleTimeBounds ? sample.lower - arrivalAge : upper - age,
       deadline = frame.capturedAt + budget;
     assert(upper >= frame.capturedAt, 'Impossible arrival before capture');
     if (upper <= deadline) counts.onTimeFrames++;
@@ -501,6 +571,8 @@ export function qualifyNativeDeliveryDeadlines({
     audit.latencyBudget === expectedLatencyBudget && audit.maximumSampleAge === 0.25,
     'Unexpected experiment deadline budgets',
   );
+  same(audit.deliveryTiming, reports.deliveryTiming, 'Delivery timing modes differ');
+  const anchored = audit.deliveryTiming === 'request-uptime-v1';
   const reconstructed = reconstructReports(reports, scope),
     lanes = new Map(),
     phases = new Map();
@@ -524,6 +596,8 @@ export function qualifyNativeDeliveryDeadlines({
     previousTime = -1,
     previousPhase = 0;
   for (const row of audit.rows) {
+    if (!anchored)
+      assert(!Object.hasOwn(row, 'sampleTimeBounds'), 'Legacy deadline carries timing bounds');
     assert(
       Array.isArray(row.history?.capture) &&
         row.history.capture.length <= 8192 &&
@@ -592,6 +666,22 @@ export function qualifyNativeDeliveryDeadlines({
       report?.proof && report.row.deliveryReceiptID === row.deliveryReceiptID,
       'Deadline row does not own current report receipt',
     );
+    if (anchored) {
+      same(
+        row.sampleTimeBounds,
+        report.proof.sampleTimeBounds,
+        'Deadline sample bounds differ from report',
+      );
+      assert(
+        row.sampleTimeBounds &&
+          finite(row.sampleTimeBounds.lower) &&
+          finite(row.sampleTimeBounds.upper) &&
+          row.sampleTimeBounds.lower <= row.sampleTimeBounds.upper &&
+          row.sampleTimeBounds.upper <= row.evaluatedAt &&
+          row.evaluatedAt - row.sampleTimeBounds.lower <= audit.maximumSampleAge,
+        'Deadline sample bounds are future or stale',
+      );
+    }
     same(row.context, report.proof.context, 'Deadline context differs from authenticated report');
     same(
       { ...row.timeline, invalidReason: row.timeline?.invalidReason ?? null },

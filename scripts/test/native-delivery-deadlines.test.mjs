@@ -164,6 +164,97 @@ function fixture() {
   };
 }
 let qualify;
+function anchoredFixture() {
+  const f = fixture(),
+    row = f.audit.rows[0],
+    report = f.reports.rows[0];
+  f.audit.deliveryTiming = f.reports.deliveryTiming = 'request-uptime-v1';
+  report.timing = { statusRequestStartedUptime: 12.47, responseReceivedUptime: 12.48 };
+  report.deliverySampleTimeBounds = { lower: 12.47 - 0.02, upper: 12.48 };
+  row.sampleTimeBounds = structuredClone(report.deliverySampleTimeBounds);
+  const packet = report.response.status.observation.decoderDelivery;
+  packet.arrivals.find((a) => a[0] === 99000)[1] -= 20;
+  packet.arrivals.sort((a, b) => a[1] - b[1]);
+  row.timeline = deliverySnapshot(packet);
+  row.evaluatedAt = 12.58;
+  row.sampleAgeSeconds = 0.13;
+  row.result = {
+    expectedFrames: 30,
+    onTimeFrames: 28,
+    lateFrames: 1,
+    missingFrames: 1,
+    uncertainFrames: 0,
+    onTimeFPS: 28,
+    failureFraction: 2 / 30,
+  };
+  return f;
+}
+test('fixed request bracket preserves timing despite local classification delay', async () => {
+  const { qualifyNativeDeliveryDeadlines: check } =
+    await import('../native-delivery-deadlines.mjs');
+  assert.equal(check(anchoredFixture()).counts.onTimeFrames, 28);
+});
+for (const [name, mutate] of [
+  ['missing report mode', (f) => delete f.reports.deliveryTiming],
+  ['unknown mode', (f) => (f.audit.deliveryTiming = f.reports.deliveryTiming = 'unknown')],
+  [
+    'shortened request bracket',
+    (f) => {
+      const r = f.reports.rows[0];
+      r.timing.statusRequestStartedUptime = r.receivedUptime;
+      r.deliverySampleTimeBounds.lower = r.receivedUptime - 0.02;
+      f.audit.rows[0].sampleTimeBounds = structuredClone(r.deliverySampleTimeBounds);
+    },
+  ],
+  ['missing request timing', (f) => delete f.reports.rows[0].timing],
+  ['forged report lower', (f) => (f.reports.rows[0].deliverySampleTimeBounds.lower += 0.01)],
+  ['forged report upper', (f) => (f.reports.rows[0].deliverySampleTimeBounds.upper -= 0.01)],
+  ['changed classification bound', (f) => (f.audit.rows[0].sampleTimeBounds.upper -= 0.01)],
+  ['missing classification bound', (f) => delete f.audit.rows[0].sampleTimeBounds],
+  [
+    'reversed request bracket',
+    (f) => (f.reports.rows[0].timing.statusRequestStartedUptime = 12.49),
+  ],
+  ['misbound response receipt', (f) => (f.reports.rows[0].timing.responseReceivedUptime = 12.49)],
+  [
+    'stale anchored sample',
+    (f) => {
+      f.audit.rows[0].evaluatedAt += 0.2;
+      f.audit.rows[0].sampleAgeSeconds += 0.2;
+    },
+  ],
+])
+  test(`request timing replay rejects ${name}`, async () => {
+    const { qualifyNativeDeliveryDeadlines: check } =
+      await import('../native-delivery-deadlines.mjs');
+    const f = anchoredFixture();
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+test('frozen worker samples retain their first request bracket', async () => {
+  const { qualifyNativeDeliveryDeadlines: check } =
+    await import('../native-delivery-deadlines.mjs');
+  const f = anchoredFixture(),
+    second = structuredClone(f.reports.rows[0]);
+  second.receivedUptime += 0.01;
+  second.evaluatedUptime += 0.01;
+  second.timing.statusRequestStartedUptime += 0.01;
+  second.timing.responseReceivedUptime += 0.01;
+  second.deliverySampleAgeSeconds = 0.05;
+  second.deliveryReceiptID = id(9);
+  f.reports.rows.push(second);
+  f.audit.rows[0].deliveryReceiptID = id(9);
+  assert.equal(check(f).counts.onTimeFrames, 28);
+  second.deliverySampleTimeBounds.upper += 0.01;
+  assert.throws(() => check(f));
+});
+test('legacy mode cannot carry unverified new timing bounds', async () => {
+  const { qualifyNativeDeliveryDeadlines: check } =
+    await import('../native-delivery-deadlines.mjs');
+  const f = fixture();
+  f.audit.rows[0].sampleTimeBounds = { lower: 12.45, upper: 12.48 };
+  assert.throws(() => check(f));
+});
 test('independent verifier exists and reconciles Swift-shaped scalar evidence', async () => {
   const module = await import('../native-delivery-deadlines.mjs').catch(() => null);
   assert.equal(

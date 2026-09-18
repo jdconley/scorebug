@@ -18,10 +18,11 @@ final class DeliveryDeadlineTests: XCTestCase {
             }, invalidReason: nil, ended: false)
     }
     private func evaluate(_ value: DecoderDeliverySnapshot, frames: [DeliveryDeadlineFrame]? = nil,
-                          now: Double = 104, age: Double = 0.2, duration: Double = 2) throws -> DeliveryDeadlineResult {
+                          now: Double = 104, age: Double = 0.2, duration: Double = 2,
+                          maximumAge: Double = 0.25, bounds: DeliverySampleTimeBounds? = nil) throws -> DeliveryDeadlineResult {
         try DeliveryDeadlineClassifier.classify(timeline: value, expectedScopeID: scope,
             frames: frames ?? expected(), windowStart: 100, windowEnd: 100 + duration,
-            evaluatedAt: now, sampleAgeUpperBound: age, maximumSampleAge: 0.25, latencyBudget: 1.5)
+            evaluatedAt: now, sampleAgeUpperBound: age, maximumSampleAge: maximumAge, latencyBudget: 1.5, sampleTimeBounds: bounds)
     }
     func testSharedGoldenTimelineMatchesNativeDeadlineArithmetic() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "decoder-delivery-v1", withExtension: "json", subdirectory: "Fixtures"))
@@ -115,4 +116,63 @@ final class DeliveryDeadlineTests: XCTestCase {
         var frames = expected();frames[1] = frames[0]
         XCTAssertThrowsError(try evaluate(clean, frames: frames))
     }
+    func testAnchoredClassificationDoesNotDriftWhileFresh() throws {
+        let value = timeline(expected(), delay: { $0 == 0 ? 1.4 : 0.5 })
+        let bounds = try XCTUnwrap(DeliverySampleTimeBounds(lower: 103.8, upper: 104))
+        let atReceipt = try evaluate(value, maximumAge: 0.5, bounds: bounds)
+        let afterDelay = try evaluate(value, now: 104.2, age: 0.4, maximumAge: 0.5, bounds: bounds)
+        XCTAssertEqual(atReceipt.onTimeFrames, 60)
+        XCTAssertEqual(afterDelay.onTimeFrames, 60)
+        XCTAssertEqual(afterDelay.uncertainFrames, 0)
+        XCTAssertEqual(try evaluate(value, now: 104.2, age: 0.4, maximumAge: 0.5).uncertainFrames, 1,
+                       "Omitting the anchor preserves legacy widening")
+    }
+    func testAnchoredIntervalRetainsRealUncertainty() throws {
+        let value = timeline(expected(), delay: { $0 == 0 ? 1.6 : 0.5 })
+        let bounds = try XCTUnwrap(DeliverySampleTimeBounds(lower: 103.8, upper: 104))
+        for now in [104.0, 104.2] {
+            let result = try evaluate(value, now: now, age: now - 103.8, maximumAge: 0.5, bounds: bounds)
+            XCTAssertEqual(result.uncertainFrames, 1)
+            XCTAssertNil(result.onTimeFPS)
+        }
+    }
+    func testAnchoredSampleStillExpiresAndRejectsFutureBounds() throws {
+        let value = timeline(expected())
+        let bounds = try XCTUnwrap(DeliverySampleTimeBounds(lower: 103.8, upper: 104))
+        for (now, age, anchor) in [(104.4, 0.1, bounds),
+                                    (104.0, 0.1, DeliverySampleTimeBounds(lower: 103.9, upper: 104.1)!),
+                                    (104.0, 0.6, bounds)] {
+            XCTAssertThrowsError(try evaluate(value, now: now, age: age, maximumAge: 0.5, bounds: anchor)) {
+                XCTAssertEqual($0 as? DeliveryDeadlineClassifier.Failure, .invalidEvidence)
+            }
+        }
+    }
+    func testAnchoredCoverageAndMaturityRemainStrict() throws {
+        let frames = expected(1)
+        var value = timeline(frames, now: 103, delay: { _ in nil })
+        let covered = try XCTUnwrap(DeliverySampleTimeBounds(lower: 102, upper: 103))
+        value.coverageAgeMs = 3000
+        XCTAssertThrowsError(try evaluate(value, frames: frames, now: 104, age: 2, duration: 1,
+                                          maximumAge: 5, bounds: covered)) {
+            XCTAssertEqual($0 as? DeliveryDeadlineClassifier.Failure, .incompleteCoverage)
+        }
+        value.coverageAgeMs = 3001
+        XCTAssertEqual(try evaluate(value, frames: frames, now: 104, age: 2, duration: 1,
+                                    maximumAge: 5, bounds: covered).missingFrames, 1)
+        let immature = try XCTUnwrap(DeliverySampleTimeBounds(lower: 101.5, upper: 103))
+        XCTAssertThrowsError(try evaluate(value, frames: frames, now: 104, age: 2.5, duration: 1,
+                                          maximumAge: 5, bounds: immature)) {
+            XCTAssertEqual($0 as? DeliveryDeadlineClassifier.Failure, .incompleteCoverage)
+        }
+    }
+    func testAnchoredArrivalBeforeCaptureRemainsImpossible() throws {
+        let frames = expected(1)
+        let value = timeline(frames, now: 103, delay: { _ in -0.1 })
+        let bounds = try XCTUnwrap(DeliverySampleTimeBounds(lower: 102.9, upper: 103))
+        XCTAssertThrowsError(try evaluate(value, frames: frames, now: 103.2, age: 0.3, duration: 1,
+                                          maximumAge: 0.5, bounds: bounds)) {
+            XCTAssertEqual($0 as? DeliveryDeadlineClassifier.Failure, .impossibleArrival)
+        }
+    }
+
 }

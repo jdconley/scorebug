@@ -1,3 +1,4 @@
+import { qualifiedDeliverySampleBounds } from './native-delivery-deadlines.mjs';
 import assert from 'node:assert/strict';
 import { basename } from 'node:path';
 import { qualifyNativeStallSignal } from './native-controlled-stall.mjs';
@@ -86,6 +87,7 @@ function deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, sc
   const owner = row.context,
     c = freshCadence(report, owner, trigger.evaluatedAt),
     lastPTS = BigInt(c.progress.lastFreshPTS);
+  const sample = qualifiedDeliverySampleBounds(row, qualified.ageAtClassification);
   const arrivals = new Map();
   for (const a of row.timeline.arrivals)
     if (!arrivals.has(String(a.pts))) arrivals.set(String(a.pts), a.ageMs / 1000);
@@ -96,9 +98,12 @@ function deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, sc
       return (
         delta > 0n &&
         delta < 180000n &&
-        f.capturedAt + 1.5 < row.evaluatedAt - qualified.ageAtClassification &&
+        f.capturedAt + 1.5 < sample.lower &&
         (age === undefined ||
-          row.evaluatedAt - age - qualified.ageAtClassification > f.capturedAt + 1.5)
+          (row.sampleTimeBounds
+            ? sample.lower - age
+            : row.evaluatedAt - age - qualified.ageAtClassification) >
+            f.capturedAt + 1.5)
       );
     }),
     'Deadline failure lacks matured source beyond paused decoder anchor',

@@ -15,6 +15,7 @@ public struct WorkerDecoderDeliveryFreshness: Sendable {
     public let context: Context
     public let snapshot: DecoderDeliverySnapshot
     public let sampledAtMs: Double
+    public let sampleTimeBounds: DeliverySampleTimeBounds?
     fileprivate let receivedAt: ContinuousClock.Instant
     fileprivate let ageAtReceipt: Duration
     fileprivate let statusFreshness: WorkerStatusFreshness
@@ -36,6 +37,7 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
     private var retired: [WorkerDecoderDeliveryFreshness.Context] = []
     private var publishingAttemptID: UUID?
     private var lastReceivedAt: ContinuousClock.Instant?
+    private var lastRequestTiming: DeliveryRequestTiming?
     private var needsFull = true
     private var exhausted = false
     public init() {}
@@ -50,7 +52,7 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
     }
     @discardableResult public mutating func observe(response: WorkerMediaStatusResponse,
         expectedPublishingAttemptID: UUID, receivedAt: ContinuousClock.Instant,
-        requestDuration: Duration) -> WorkerDecoderDeliveryFreshness? {
+        requestDuration: Duration, requestTiming: DeliveryRequestTiming? = nil) -> WorkerDecoderDeliveryFreshness? {
         if publishingAttemptID != expectedPublishingAttemptID { reset(); publishingAttemptID = expectedPublishingAttemptID }
         let priorProof = latest
         latest = nil
@@ -63,6 +65,20 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
               let observation = status.observation, observation.decodedVideo?.clock == "mpegts-pts-90k-v1",
               let workerId = status.workerId, let workerEpoch = status.workerEpoch,
               let packet = observation.decoderDelivery, packet.isValid else { unavailable(); return nil }
+        if let requestTiming {
+            let duration = requestDuration.components
+            let durationSeconds = Double(duration.seconds) + Double(duration.attoseconds) / 1e18
+            // The uptime reads enclose the ContinuousClock reads; allow only
+            // floating-point subtraction roundoff when comparing their spans.
+            let roundoff = 2 * Double.ulpOfOne * max(1, requestTiming.receivedAt)
+            guard durationSeconds <= requestTiming.receivedAt - requestTiming.startedAt + roundoff else {
+                unavailable(); return nil
+            }
+            if let previousTiming = lastRequestTiming {
+                guard requestTiming.startedAt >= previousTiming.startedAt,
+                      requestTiming.receivedAt >= previousTiming.receivedAt else { unavailable(); return nil }
+            }
+        }
         lastReceivedAt = receivedAt
         let binding = WorkerDecoderDeliveryFreshness.Context(gameId: status.gameId, generation: status.generation,
             workerId: workerId, workerEpoch: workerEpoch, attempt: observation.attempt, publication: publication)
@@ -85,13 +101,20 @@ public struct WorkerDecoderDeliveryTracker: Sendable {
         let base = Duration.milliseconds(Int64(serverAge)), maximum = WorkerDecoderDeliveryFreshness.maximumAge
         guard requestDuration <= maximum - base else { unavailable(); return nil }
         var age = base + requestDuration
+        var sampleTimeBounds = requestTiming.flatMap {
+            DeliverySampleTimeBounds(lower: max(0, $0.startedAt - serverAge / 1000), upper: $0.receivedAt)
+        }
         if previousSample == packet.sampledAtMs {
-            guard let priorProof, priorProof.context == binding,
+            guard let priorProof, priorProof.context == binding, priorProof.snapshot.scopeID == snapshot.scopeID,
                   let previousAge = priorProof.sampleAgeUpperBound(at: receivedAt) else { unavailable(); return nil }
             age = max(age, previousAge)
+            // A frozen sample cannot acquire or widen an anchor on a later receipt.
+            sampleTimeBounds = priorProof.sampleTimeBounds
         }
         let value = WorkerDecoderDeliveryFreshness(receiptID: UUID(), context: binding, snapshot: snapshot,
-            sampledAtMs: packet.sampledAtMs, receivedAt: receivedAt, ageAtReceipt: age, statusFreshness: freshness)
+            sampledAtMs: packet.sampledAtMs, sampleTimeBounds: sampleTimeBounds,
+            receivedAt: receivedAt, ageAtReceipt: age, statusFreshness: freshness)
+        if let requestTiming { lastRequestTiming = requestTiming }
         latest = value; needsFull = false
         return value
     }

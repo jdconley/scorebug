@@ -422,6 +422,8 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
                           expiresAt: String = "2040-01-01T00:00:05Z",
                           audit: PublishingDeliveryMonitor.Audit? = nil,
                           captureInput: ((PublishingDeliveryMonitor.Input) -> Void)? = nil,
+                          captureResponse: ((WorkerMediaStatusResponse) -> Void)? = nil,
+                          requestTiming: DeliveryRequestTiming? = nil, localDelay: Double = 0,
                           deliveryInstant: ContinuousClock.Instant? = nil) throws -> PublishingDeliveryObservation {
         let instant = deliveryInstant ?? self.instant
         let h = try history(missing: missing)
@@ -461,9 +463,10 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             workerEpoch: workerEpoch, publication: publication),
             serverTime: "2040-01-01T00:00:00Z")
         response.status.decoderDeliveryAgeUpperBoundMs = ageMs
+        captureResponse?(response)
         var tracker = WorkerDecoderDeliveryTracker()
         let delivery = try XCTUnwrap(tracker.observe(response: response, expectedPublishingAttemptID: session,
-            receivedAt: instant, requestDuration: .zero))
+            receivedAt: instant, requestDuration: .zero, requestTiming: requestTiming))
         let authority = withAuthority ? PublishingDeliveryAuthority(delivery: delivery) : nil
         switch fault {
         case 0: diagnostics.isPublishing = false
@@ -487,8 +490,8 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         return try PublishingDeliveryObservation.classify(history: h,
             clock: .init(scope: scope, transportClock: clock, isClosed: fault == 6),
             applied: applied, diagnostics: diagnostics, delivery: delivery,
-            windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : 4.5,
-            instant: fault == 7 ? instant + .seconds(6) : instant,
+            windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : 4.5 + localDelay,
+            instant: fault == 7 ? instant + .seconds(6) : instant + .seconds(localDelay),
             maximumSampleAge: 0.25, latencyBudget: deadline, authority: authority)
     }
     func testAuthenticatedAdapterClassifiesLocalLossAndLateFramesSeparately() throws {
@@ -500,6 +503,38 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertEqual(value.result.onTimeFrames, 58)
         XCTAssertEqual(value.result.onTimeFPS, 29)
         XCTAssertEqual(value.appliedRevision, 7)
+    }
+    func testReceiptAnchorPreservesArrivalProofAcrossLocalDelayButNotExpiry() throws {
+        let timing = try XCTUnwrap(DeliveryRequestTiming(startedAt: 4.48, receivedAt: 4.5))
+        let anchored = try classify(missing: [], late: [], latency: 0.9, requestTiming: timing, localDelay: 0.2)
+        XCTAssertEqual(anchored.result.onTimeFrames, 60)
+        XCTAssertEqual(anchored.result.uncertainFrames, 0)
+        let legacy = try classify(missing: [], late: [], latency: 0.9, localDelay: 0.2)
+        XCTAssertEqual(legacy.result.uncertainFrames, 60)
+        XCTAssertThrowsError(try classify(requestTiming: timing, localDelay: 0.3))
+    }
+    func testAnchoredAuditsExportExactReceiptBoundsAndRequireTimingMode() throws {
+        let timing = try XCTUnwrap(DeliveryRequestTiming(startedAt: 4.48, receivedAt: 4.5))
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25, usesRequestTiming: true)
+        var response: WorkerMediaStatusResponse?
+        let observation = try classify(audit: audit, captureResponse: { response = $0 }, requestTiming: timing)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(object["deliveryTiming"] as? String, "request-uptime-v1")
+        let rows = try XCTUnwrap(object["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.last?["sampleTimeBounds"] as? [String: Double], ["lower": 4.48, "upper": 4.5])
+        var reports = WorkerCadenceReportAudit(usesRequestTiming: true)
+        reports.record(response: try XCTUnwrap(response), expectedAttempt: session, helper: nil,
+            delivery: observation.delivery, receivedAt: instant, requestDuration: .zero,
+            receivedUptime: 4.5, instant: instant, evaluatedUptime: 4.5,
+            timing: .init(controlStartedUptime: 4.47, statusRequestStartedUptime: 4.48,
+                responseReceivedUptime: 4.5, probeReadStartedUptime: 4.5, probeReadFinishedUptime: 4.5, auditEvaluatedUptime: 4.5))
+        let exported = try XCTUnwrap(JSONSerialization.jsonObject(with: reports.data()) as? [String: Any])
+        XCTAssertEqual(exported["deliveryTiming"] as? String, "request-uptime-v1")
+        XCTAssertEqual((exported["rows"] as? [[String: Any]])?.first?["deliverySampleTimeBounds"] as? [String: Double], ["lower": 4.48, "upper": 4.5])
+        let missing = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25, usesRequestTiming: true)
+        _ = try classify(audit: missing)
+        let rejected = try XCTUnwrap(JSONSerialization.jsonObject(with: missing.data()) as? [String: Any])
+        XCTAssertTrue((rejected["rows"] as? [[String: Any]])?.allSatisfy { $0["result"] is NSNull } == true)
     }
     func testUncertainArrivalNeverBecomesAHealthyDeadlineWindow() throws {
         let value = try classify(missing: [], late: [], latency: 0.55, ageMs: 100, deadline: 0.5)

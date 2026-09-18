@@ -94,13 +94,15 @@ enum PublishingDeliveryMonitor {
             let acknowledgedAt: Double
             let authorityID: ObjectIdentifier?
         }
+        private let usesRequestTiming: Bool
         private var schedule: Schedule
         private var key: Key?
         private var phase = 0
         private var rows: [[String: Any]] = []
         private var closed = false
         private var overflow = false
-        init(latencyBudget: Double, maximumSampleAge: Double) throws {
+        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false) throws {
+            self.usesRequestTiming = usesRequestTiming
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
         }
         @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
@@ -135,7 +137,11 @@ enum PublishingDeliveryMonitor {
                         "ingressScope": Self.optional(input.diagnostics.ingress.map { Self.scope($0.scope) }),
                         "ingressClosed": input.diagnostics.ingress?.isClosed ?? true],
                     "result": NSNull(), "reason": NSNull()]
+                if usesRequestTiming {
+                    row["sampleTimeBounds"] = Self.optional(input.delivery.sampleTimeBounds.map { ["lower": $0.lower, "upper": $0.upper] })
+                }
                 do {
+                    guard usesRequestTiming == (input.delivery.sampleTimeBounds != nil) else { throw PublishingDeliveryObservation.Failure.freshness }
                     let observation = try PublishingDeliveryObservation.classify(history: input.history, clock: input.clock,
                         applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
                         windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
@@ -162,9 +168,11 @@ enum PublishingDeliveryMonitor {
         }
         func close() { closed = true }
         func data() throws -> Data {
-            try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "closed": closed, "overflow": overflow,
+            var fields: [String: Any] = ["formatVersion": 1, "closed": closed, "overflow": overflow,
                 "invalid": schedule.invalid, "latencyBudget": schedule.latencyBudget,
-                "maximumSampleAge": schedule.maximumSampleAge, "rows": rows], options: [.sortedKeys])
+                "maximumSampleAge": schedule.maximumSampleAge, "rows": rows]
+            if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
+            return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
         }
         private static func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
         private static func seconds(_ value: Duration) -> Double {

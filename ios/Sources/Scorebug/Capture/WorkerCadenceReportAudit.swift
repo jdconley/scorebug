@@ -32,6 +32,8 @@ struct WorkerCadenceReportAudit {
                 "postProbeProcessingSeconds": auditEvaluatedUptime - probeReadFinishedUptime]
         }
     }
+    private let usesRequestTiming: Bool
+    init(usesRequestTiming: Bool = false) { self.usesRequestTiming = usesRequestTiming }
     private var rows: [[String: Any]] = []
     private var closed = false
     private var overflow = false
@@ -59,7 +61,8 @@ struct WorkerCadenceReportAudit {
               let data = try? JSONEncoder().encode(response),
               let raw = try? JSONSerialization.jsonObject(with: data) else { invalid = true; return }
         let fields = timing?.fields(receivedUptime: receivedUptime, evaluatedUptime: evaluatedUptime)
-        guard timing == nil || fields != nil else { invalid = true; return }
+        guard (timing == nil || fields != nil), (!usesRequestTiming || fields != nil),
+              usesRequestTiming || delivery?.sampleTimeBounds == nil else { invalid = true; return }
         var row: [String: Any] = ["response": raw, "expectedAttempt": expectedAttempt.uuidString.lowercased(),
             "receivedUptime": receivedUptime, "evaluatedUptime": evaluatedUptime,
             "requestSeconds": Self.seconds(requestDuration),
@@ -68,13 +71,18 @@ struct WorkerCadenceReportAudit {
             "deliverySampleAgeSeconds": delivery?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "sampleAgeSeconds": helper?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "observedStall": helper?.observedStall(maximumSampleAge: .milliseconds(250), at: instant) as Any? ?? NSNull()]
+        if usesRequestTiming {
+            row["deliverySampleTimeBounds"] = delivery?.sampleTimeBounds.map { ["lower": $0.lower, "upper": $0.upper] } as Any? ?? NSNull()
+        }
         if let fields { row["timing"] = fields }
         rows.append(row)
     }
     mutating func close() { closed = true }
     func data() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "closed": closed,
-            "overflow": overflow, "invalid": invalid, "rows": rows], options: [.sortedKeys])
+        var fields: [String: Any] = ["formatVersion": 1, "closed": closed,
+            "overflow": overflow, "invalid": invalid, "rows": rows]
+        if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
+        return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
     }
     static func persist(_ data: Data) async {
         await Task.detached {

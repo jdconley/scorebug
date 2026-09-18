@@ -481,7 +481,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                         diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery, authority: self.deliveryAuthority)
                 }
                 #if DEBUG
-                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit()
+                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true)
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
                     else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }
@@ -616,8 +616,12 @@ struct PublishingClockObservation: Equatable, Sendable {
             if let publishing, localState == .publishing,
                publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
                current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
-                workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
-                    expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
+                if let timing = DeliveryRequestTiming(startedAt: requestStartedAtUptime, receivedAt: responseReceivedAtUptime) {
+                    workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
+                        expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration, requestTiming: timing)
+                } else {
+                    workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
+                }
                 workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
                     expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
                 if let history = publishing.observations?.sourceHistorySnapshot {

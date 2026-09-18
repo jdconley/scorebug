@@ -9,7 +9,8 @@ public enum DeliveryDeadlineClassifier {
     public static func classify(timeline: DecoderDeliverySnapshot, expectedScopeID: String,
                                 frames: [DeliveryDeadlineFrame], windowStart: Double, windowEnd: Double,
                                 evaluatedAt: Double, sampleAgeUpperBound: Double,
-                                maximumSampleAge: Double, latencyBudget: Double) throws -> DeliveryDeadlineResult {
+                                maximumSampleAge: Double, latencyBudget: Double,
+                                sampleTimeBounds: DeliverySampleTimeBounds? = nil) throws -> DeliveryDeadlineResult {
         func finite(_ n: Double) -> Bool { n.isFinite && (0...1e12).contains(n) }
         func age(_ n: Double) -> Bool { n.isFinite && n >= 0 && n <= Double(maximum) }
         func pts(_ n: Int64) -> Bool { (-maximum...maximum).contains(n) }
@@ -24,6 +25,10 @@ public enum DeliveryDeadlineClassifier {
               sampleAgeUpperBound <= maximumSampleAge, sampleAgeUpperBound <= evaluatedAt,
               latencyBudget.isFinite, latencyBudget > 0, latencyBudget <= 10,
               !frames.isEmpty, frames.count <= 240 else { throw Failure.invalidEvidence }
+        if let sampleTimeBounds {
+            guard sampleTimeBounds.upper <= evaluatedAt,
+                  evaluatedAt - sampleTimeBounds.lower <= maximumSampleAge else { throw Failure.invalidEvidence }
+        }
         var previousCapture: Double?, sourceIDs = Set<Int64>()
         for frame in frames {
             guard pts(frame.pts), finite(frame.capturedAt), frame.capturedAt >= windowStart,
@@ -31,8 +36,9 @@ public enum DeliveryDeadlineClassifier {
                   sourceIDs.insert(frame.pts).inserted else { throw Failure.invalidEvidence }
             previousCapture = frame.capturedAt
         }
-        let sampleLower = evaluatedAt - sampleAgeUpperBound
-        guard evaluatedAt - timeline.coverageAgeMs / 1000 < frames[0].capturedAt,
+        let sampleLower = sampleTimeBounds?.lower ?? evaluatedAt - sampleAgeUpperBound
+        let sampleUpper = sampleTimeBounds?.upper ?? evaluatedAt
+        guard sampleUpper - timeline.coverageAgeMs / 1000 < frames[0].capturedAt,
               sampleLower > frames.last!.capturedAt + latencyBudget else { throw Failure.incompleteCoverage }
         var firstArrivals: [Int64: Double] = [:]
         var previousAge = timeline.coverageAgeMs
@@ -46,7 +52,8 @@ public enum DeliveryDeadlineClassifier {
         var onTime = 0, late = 0, missing = 0, uncertain = 0
         for frame in frames {
             guard let arrivalAge = firstArrivals[frame.pts] else { missing += 1; continue }
-            let upper = evaluatedAt - arrivalAge, lower = upper - sampleAgeUpperBound
+            let upper = sampleUpper - arrivalAge
+            let lower = sampleTimeBounds.map { $0.lower - arrivalAge } ?? upper - sampleAgeUpperBound
             guard upper >= frame.capturedAt else { throw Failure.impossibleArrival }
             let deadline = frame.capturedAt + latencyBudget
             if upper <= deadline { onTime += 1 }

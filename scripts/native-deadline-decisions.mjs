@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
-import { qualifyNativeDeliveryDeadlines } from './native-delivery-deadlines.mjs';
+import {
+  qualifyNativeDeliveryDeadlines,
+  qualifiedDeliverySampleBounds,
+} from './native-delivery-deadlines.mjs';
 import { qualifyNativeProfileTransitions } from './native-profile-transitions.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 
@@ -142,12 +145,17 @@ function cadence(row) {
   return expected <= 0.25 ? c : null;
 }
 function associatedPause(row, reports, sampleAge) {
+  const sample = qualifiedDeliverySampleBounds(row, sampleAge);
   const arrivals = new Map();
   for (const a of row.timeline.arrivals)
     if (!arrivals.has(String(a.pts))) arrivals.set(String(a.pts), a.ageMs / 1000);
   const failed = row.frames.filter((f) => {
     const age = arrivals.get(f.pts);
-    return age === undefined || row.evaluatedAt - age - sampleAge > f.capturedAt + 1.5;
+    return (
+      age === undefined ||
+      (row.sampleTimeBounds ? sample.lower - age : row.evaluatedAt - age - sampleAge) >
+        f.capturedAt + 1.5
+    );
   });
   for (const report of reports.rows) {
     const c = cadence(report);

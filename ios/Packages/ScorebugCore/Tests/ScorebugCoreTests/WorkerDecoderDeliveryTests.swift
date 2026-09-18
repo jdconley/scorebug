@@ -126,4 +126,91 @@ final class WorkerDecoderDeliveryTests: XCTestCase {
         XCTAssertEqual(decoded.status.state, .producingOutput); XCTAssertNil(decoded.status.observation?.decoderDelivery)
         XCTAssertNil(decoded.status.decoderDeliveryAgeUpperBoundMs)
     }
+    func testRequestTimingAnchorsSampleAndClampsToClockOrigin() throws {
+        let now = ContinuousClock.now
+        for start in [100.0, 0.02] {
+            var tracker = WorkerDecoderDeliveryTracker()
+            let timing = try XCTUnwrap(DeliveryRequestTiming(startedAt: start, receivedAt: start + 0.2))
+            let proof = try XCTUnwrap(tracker.observe(response: fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: .milliseconds(200), requestTiming: timing))
+            let bounds = try XCTUnwrap(proof.sampleTimeBounds)
+            XCTAssertEqual(bounds.lower, max(0, start - 0.05), accuracy: 1e-9)
+            XCTAssertEqual(bounds.upper, start + 0.2)
+            XCTAssertEqual(proof.sampleAgeUpperBound(at: now), .milliseconds(250))
+        }
+    }
+    func testFrozenSampleRetainsExactAnchorIncludingNilAndGetsNewReceipt() throws {
+        let now = ContinuousClock.now
+        for anchored in [false, true] {
+            var tracker = WorkerDecoderDeliveryTracker()
+            let initialTiming = anchored ? DeliveryRequestTiming(startedAt: 100, receivedAt: 100.2) : nil
+            let first = try XCTUnwrap(tracker.observe(response: fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: .milliseconds(200), requestTiming: initialTiming))
+            var frozen = try fixture(); frozen.status.decoderDeliveryAgeUpperBoundMs = 0
+            let repeated = try XCTUnwrap(tracker.observe(response: frozen, expectedPublishingAttemptID: expected,
+                receivedAt: now + .seconds(1), requestDuration: .milliseconds(200),
+                requestTiming: DeliveryRequestTiming(startedAt: 101, receivedAt: 101.2)))
+            XCTAssertEqual(repeated.sampleTimeBounds, first.sampleTimeBounds)
+            XCTAssertNotEqual(repeated.receiptID, first.receiptID)
+            XCTAssertEqual(repeated.sampleAgeUpperBound(at: now + .seconds(1)), .milliseconds(1250))
+            let omittedTiming = try XCTUnwrap(tracker.observe(response: frozen, expectedPublishingAttemptID: expected,
+                receivedAt: now + .seconds(2), requestDuration: .zero))
+            XCTAssertEqual(omittedTiming.sampleTimeBounds, first.sampleTimeBounds)
+            XCTAssertNotEqual(omittedTiming.receiptID, repeated.receiptID)
+            let freshWithoutTiming = try XCTUnwrap(tracker.observe(response: fixture(6), expectedPublishingAttemptID: expected,
+                receivedAt: now + .seconds(2), requestDuration: .zero))
+            XCTAssertNil(freshWithoutTiming.sampleTimeBounds)
+        }
+    }
+    func testRequestClockReversalIsRejectedAcrossOmissionAndUnavailable() throws {
+        let now = ContinuousClock.now
+        for timing in [DeliveryRequestTiming(startedAt: 99.9, receivedAt: 101)!,
+                       DeliveryRequestTiming(startedAt: 100.1, receivedAt: 100.15)!] {
+            var tracker = WorkerDecoderDeliveryTracker()
+            XCTAssertNotNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: .milliseconds(200),
+                requestTiming: DeliveryRequestTiming(startedAt: 100, receivedAt: 100.2)))
+            XCTAssertNotNil(tracker.observe(response: try fixture(6), expectedPublishingAttemptID: expected,
+                receivedAt: now + .milliseconds(100), requestDuration: .zero))
+            tracker.unavailable()
+            XCTAssertNil(tracker.observe(response: try fixture(9), expectedPublishingAttemptID: expected,
+                receivedAt: now + .milliseconds(200), requestDuration: .zero, requestTiming: timing))
+            XCTAssertNil(tracker.latest); XCTAssertNil(tracker.cursor)
+            XCTAssertNotNil(tracker.observe(response: try fixture(12), expectedPublishingAttemptID: expected,
+                receivedAt: now + .milliseconds(300), requestDuration: .zero,
+                requestTiming: DeliveryRequestTiming(startedAt: 101, receivedAt: 101.2)))
+            tracker.reset()
+            XCTAssertNotNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: .zero, requestTiming: timing))
+        }
+    }
+
+    func testRequestTimingMustEncloseSeparatelyMeasuredRequestDuration() throws {
+        let now = ContinuousClock.now
+        for (start, receipt) in [(10.0, 10.0), (10.0, 10.199), (10.0, 10.199999)] {
+            var tracker = WorkerDecoderDeliveryTracker()
+            let timing = try XCTUnwrap(DeliveryRequestTiming(startedAt: start, receivedAt: receipt))
+            XCTAssertNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: .milliseconds(200), requestTiming: timing),
+                "The uptime bracket must enclose the full ContinuousClock request duration")
+            XCTAssertNil(tracker.latest)
+        }
+    }
+    func testPairedRequestTimingAcceptsEnclosureAndSubtractionRoundoff() throws {
+        let now = ContinuousClock.now
+        let cases: [(Double, Double, Duration)] = [
+            (10, 10, .zero), (10, 10.25, .milliseconds(250)),
+            (10, 10.3, .milliseconds(200)), (10, 10.2, .milliseconds(200)),
+            (10, 11.2, .seconds(1) + .milliseconds(200)),
+            (1e12 - 0.2, 1e12, .milliseconds(200))
+        ]
+        for (start, receipt, duration) in cases {
+            var tracker = WorkerDecoderDeliveryTracker()
+            let timing = try XCTUnwrap(DeliveryRequestTiming(startedAt: start, receivedAt: receipt))
+            XCTAssertNotNil(tracker.observe(response: try fixture(), expectedPublishingAttemptID: expected,
+                receivedAt: now, requestDuration: duration, requestTiming: timing),
+                "Exact durations and subtraction-level representation error remain valid")
+        }
+    }
+
 }

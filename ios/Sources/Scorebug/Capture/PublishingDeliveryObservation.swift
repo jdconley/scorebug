@@ -72,7 +72,7 @@ struct PublishingDeliveryObservation: Sendable {
             expectedScopeID: delivery.snapshot.scopeID,
             frames: source.frames.map { .init(pts: $0.decodedPTS, capturedAt: $0.capturedAt) },
             windowStart: windowStart, windowEnd: windowEnd, evaluatedAt: now,
-            sampleAgeUpperBound: seconds, maximumSampleAge: maximumSampleAge, latencyBudget: latencyBudget)
+            sampleAgeUpperBound: seconds, maximumSampleAge: maximumSampleAge, latencyBudget: latencyBudget, sampleTimeBounds: delivery.sampleTimeBounds)
         return .init(source: source, delivery: delivery, appliedRevision: applied.revision, result: result,
             classifiedAt: now, observedAtLowerBound: now - seconds, authority: authority)
     }
