@@ -22,6 +22,106 @@ import Testing
         await connection.close()
     }
 
+    @Test func muxObserverWaitsForBothTracksAndReportsAcceptedSourceAndTransportTimes() async throws {
+        let writer = TSWriter()
+        let output = writer.output
+        var observed: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { observed.append($0) }
+        writer.expectedMedias = [.audio, .video]
+        let a = audio()
+        writer.audioFormat = a.format
+        let firstAudio = time(10)
+        writer.append(a, when: firstAudio)
+        writer.append(a, when: time(10.125))
+        #expect(observed.isEmpty, "Startup buffering is not output admission")
+        let v = try video(10.5, dts: CMTime(value: 41, timescale: 4))
+        writer.videoFormat = v.formatDescription
+        writer.append(v)
+        #expect(writer.error == nil)
+        #expect(observed.map { $0.media.rawValue } == ["audio", "audio", "video"])
+        let first = try #require(observed.first), last = try #require(observed.last)
+        let clock = try #require(writer.transportClock)
+        #expect(first.sourcePTS == firstAudio.makeTime())
+        #expect(first.sourceDTS == .invalid)
+        #expect(first.transportPTS == UInt64(try #require(clock.presentationTimestamp(for: first.sourcePTS))))
+        #expect(first.transportDTS == nil)
+        #expect(last.sourcePTS == v.presentationTimeStamp)
+        #expect(last.sourceDTS == v.decodeTimeStamp)
+        #expect(last.transportPTS == UInt64(try #require(clock.presentationTimestamp(for: v.presentationTimeStamp))))
+        #expect(last.transportDTS == UInt64(try #require(clock.presentationTimestamp(for: v.decodeTimeStamp))))
+        #expect(observed.allSatisfy { $0.observedAt.isFinite && $0.observedAt >= 0 })
+        writer.finishOutput()
+        let emitted = await packets(output).filter {
+            $0.payloadUnitStartIndicator && [TSWriter.defaultAudioPID, TSWriter.defaultVideoPID].contains($0.pid)
+        }
+        #expect(emitted.map { UInt64(pts($0)) } == observed.map { $0.transportPTS })
+    }
+
+    @Test(arguments: ["absent", "rejectedSink", "fullQueue", "oversizedOutput"])
+    func muxObserverNeverReportsUnacceptedOutput(mode: String) throws {
+        var writes = 0
+        let writer = TSWriter(outputLimits: .init(count: mode == "fullQueue" ? 1 : 32,
+            bytesPerItem: mode == "oversizedOutput" ? 1 : 4096),
+            outputSink: mode == "rejectedSink" ? { _ in writes += 1; return writes == 1 } : nil)
+        var observed: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { observed.append($0) }
+        let output = mode == "fullQueue" || mode == "oversizedOutput" ? writer.output : nil
+        writer.expectedMedias = [.video]
+        let v = try video(10)
+        writer.videoFormat = v.formatDescription
+        writer.append(v)
+        #expect(observed.isEmpty)
+        #expect(mode == "absent" ? writer.error == nil : writer.error != nil)
+        withExtendedLifetime(output) {}
+    }
+
+    @Test func muxObserverFollowsSuccessfulSinkWritesAndClearRetiresOldObserver() throws {
+        var writes = 0, callsAtWrite: [Int] = []
+        let writer = TSWriter(outputSink: { _ in writes += 1; return true })
+        writer.muxedPacketObserver = { _ in callsAtWrite.append(writes) }
+        writer.expectedMedias = [.video]
+        let first = try video(10)
+        writer.videoFormat = first.formatDescription
+        writer.append(first)
+        #expect(callsAtWrite == [2], "PAT/PMT is not a PES observation")
+        writer.clear()
+        writer.expectedMedias = [.video]
+        let second = try video(100)
+        writer.videoFormat = second.formatDescription
+        writer.append(second)
+        #expect(callsAtWrite == [2])
+        var secondRows: [TSWriter.MuxedPacketFrame] = []
+        writer.muxedPacketObserver = { secondRows.append($0) }
+        writer.append(try video(100.5))
+        #expect(secondRows.map { $0.transportPTS } == [54_000])
+    }
+
+    @Test func streamMuxObserverCapturesEachPublishingGenerationThroughFinalDrain() async throws {
+        let observed = StartupMuxFrames()
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, muxedPacketObserver: observed.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.audio, .video]); await stream.publish()
+        let firstGeneration = try #require(await stream.publishingGeneration)
+        await stream.append(audio(), when: time(10))
+        #expect(observed.rows.isEmpty)
+        await stream.append(try video(10.25))
+        await stream.finish()
+        #expect(observed.rows.count == 2)
+        #expect(observed.rows.allSatisfy { $0.publishingGeneration == firstGeneration })
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let secondGeneration = try #require(await stream.publishingGeneration)
+        #expect(secondGeneration != firstGeneration)
+        await stream.append(try video(100))
+        await stream.finish()
+        #expect(observed.rows.count == 3)
+        #expect(observed.rows.last?.publishingGeneration == secondGeneration)
+        #expect(observed.rows.last?.transportPTS == 9_000)
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
     private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {
         var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
@@ -428,4 +528,11 @@ private final class PassthroughTransport: @unchecked Sendable {
     private var stored = 0
     var count: Int { lock.withLock { stored } }
     func append(_ data: Data) { lock.withLock { stored += data.count } }
+}
+
+private final class StartupMuxFrames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [SRTStream.MuxedPacketFrame] = []
+    var rows: [SRTStream.MuxedPacketFrame] { lock.withLock { stored } }
+    func record(_ frame: SRTStream.MuxedPacketFrame) { lock.withLock { stored.append(frame) } }
 }

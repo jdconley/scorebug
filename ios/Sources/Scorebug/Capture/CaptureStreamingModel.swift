@@ -217,11 +217,15 @@ struct PublishingClockObservation: Equatable, Sendable {
              if let candidateProfile {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  let window = PublishingCandidateTransport(scope: observations.snapshot.scope, profile: candidateProfile)
-                 candidateTransport = window; audioObserver = { window.observeAudio($0) }
-             } else { candidateTransport = nil; audioObserver = nil }
+                 candidateTransport = window
+             } else { candidateTransport = nil }
+             if proof != nil || candidateTransport != nil {
+                 audioObserver = { frame in proof?.observeAudio(frame); candidateTransport?.observeAudio(frame) }
+             } else { audioObserver = nil }
              let publisher = SRTMediaPublisher(url: target, observations: observations,
                  encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame); transitions?.observeEncoder(frame) } }, videoProfile: profile,
                  compressedVideoObserver: observer, compressedAudioObserver: audioObserver,
+                 muxedPacketObserver: proof.map { proof in { frame in proof.observeMux(frame) } },
                  didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
              proof?.observeStartup(from: publisher)
              let primary: any MediaPublisher

@@ -132,6 +132,20 @@ public actor SRTStream {
         probe.cancel(.cancelled)
         probeWakeTask?.cancel()
     }
+    /// Scalar evidence that a PES reached the local mux output queue/sink.
+    /// Transport timestamps are unwrapped 90 kHz integers, not wire-modulo values.
+    /// This does not prove a socket write or receiver delivery.
+    public struct MuxedPacketFrame: Sendable {
+        public enum Media: String, Sendable { case audio, video }
+        public let publishingGeneration: UInt64
+        public let media: Media
+        public let sourcePTS: CMTime
+        public let sourceDTS: CMTime
+        public let transportPTS: UInt64
+        public let transportDTS: UInt64?
+        public let observedAt: Double
+    }
+    private let muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)?
     private let compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)?
     private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
     /// Identity for an active publication, not proof that its encoder is ready.
@@ -365,6 +379,9 @@ public actor SRTStream {
     }
 
     /// Creates a new stream object.
+    /// - Parameter muxedPacketObserver: Synchronous scalar PES output admission,
+    ///   including buffered startup and final drain. Must do bounded work without
+    ///   I/O, waits, task creation or stream reentry. Nil avoids frame construction.
     /// - Parameter compressedAudioObserver: Synchronous copied AAC observation
     ///   after mux acceptance, including final drain. The callback must remain
     ///   bounded and perform no I/O, waits or task creation. Nil avoids snapshots.
@@ -375,6 +392,7 @@ public actor SRTStream {
                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
+                muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
         self.allowsBandwidthProbes = allowsBandwidthProbes
         probeWakeRunner = { probe, accounting in
@@ -387,12 +405,14 @@ public actor SRTStream {
         self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
         self.compressedAudioObserver = compressedAudioObserver
+        self.muxedPacketObserver = muxedPacketObserver
         Task { await connection.addStream(self) }
     }
 
     init(connection: SRTConnection, outgoing: sending OutgoingStream,
          compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
          compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
+         muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
          allowsBandwidthProbes: Bool = false,
          probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
@@ -405,6 +425,7 @@ public actor SRTStream {
         self.outgoing = outgoing; self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
         self.compressedAudioObserver = compressedAudioObserver
+        self.muxedPacketObserver = muxedPacketObserver
         Task { await connection.addStream(self) }
     }
 
@@ -436,6 +457,15 @@ public actor SRTStream {
         let session = generation
         failure = PublishingFailureLatch()
         writer.failure = failure
+        if let observer = muxedPacketObserver {
+            // Capture only the immutable callback and generation, never this actor.
+            writer.muxedPacketObserver = { frame in
+                observer(.init(publishingGeneration: session, media: frame.media,
+                    sourcePTS: frame.sourcePTS, sourceDTS: frame.sourceDTS,
+                    transportPTS: frame.transportPTS, transportDTS: frame.transportDTS,
+                    observedAt: frame.observedAt))
+            }
+        }
         outgoing.setPublishingFailure(failure)
         // Raw video may skip stale frames before compression; compressed queues fail.
         if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }

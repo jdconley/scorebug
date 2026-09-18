@@ -9,6 +9,7 @@ import ScorebugMedia
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
     public typealias CompressedAudioFrame = SRTStream.CompressedAudioFrame
+    public typealias MuxedPacketFrame = SRTStream.MuxedPacketFrame
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
     public let videoCost: PublishingVideoCostOwner?
     private nonisolated let startupEvidence: PublishingVideoStartupOwner
@@ -58,6 +59,7 @@ public actor SRTPublisher {
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
+                muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
                 videoCost: PublishingVideoCostOwner? = nil) {
         let startupEvidence = PublishingVideoStartupOwner(profile: videoProfile)
@@ -95,7 +97,8 @@ public actor SRTPublisher {
                                    isSync: frame.isSync == true, dequeuedAt: frame.dequeuedAt)
                                cost?.observeCompressed(frame)
                                compressedVideoObserver?(frame)
-                           }, compressedAudioObserver: compressedAudioObserver, pacesEncodedVideo: pacesEncodedVideo,
+                           }, compressedAudioObserver: compressedAudioObserver,
+                           muxedPacketObserver: muxedPacketObserver, pacesEncodedVideo: pacesEncodedVideo,
                            allowsBandwidthProbes: allowsBandwidthProbes)
     }
     public func configure() async throws {

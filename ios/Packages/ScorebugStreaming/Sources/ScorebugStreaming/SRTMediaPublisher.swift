@@ -31,11 +31,13 @@ public actor SRTMediaPublisher: MediaPublisher {
                 videoProfile: PublishingVideoProfile = .hd1080,
                 compressedVideoObserver: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)? = nil,
                 compressedAudioObserver: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)? = nil,
+                muxedPacketObserver: (@Sendable (SRTPublisher.MuxedPacketFrame) -> Void)? = nil,
                 didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false,
                 allowsBandwidthProbes: Bool = false, videoCost: PublishingVideoCostOwner? = nil) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
             compressedVideoObserver: compressedVideoObserver, compressedAudioObserver: compressedAudioObserver,
+            muxedPacketObserver: muxedPacketObserver,
             pacesEncodedVideo: pacesEncodedVideo,
             allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost)
         self.videoCost = adapter.videoCost

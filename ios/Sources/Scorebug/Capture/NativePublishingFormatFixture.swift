@@ -4,7 +4,7 @@ import Foundation
 import ScorebugMedia
 import ScorebugStreaming
 
-/// One publishing attempt owns constant-size pre-mux format evidence. No sample
+/// One publishing attempt owns bounded codec and local mux evidence. No sample
 /// buffers are retained. Persistence runs only after the adapter joins its stop.
 final class NativePublishingFormatFixture: @unchecked Sendable {
     private let lock = NSLock()
@@ -26,9 +26,77 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     private var height: Int32?
     private var first: CMTime?
     private var last: CMTime?
+    private var audioRows: [[String: Any]] = []
+    private var audioFrames = 0
+    private var audioInvalid = false
+    private var audioGeneration: UInt64?
+    private var lastAudioPTS: CMTime?
+    private var muxRows: [String: [[String: Any]]] = ["audio": [], "video": []]
+    private var muxFrames = 0
+    private var muxInvalid = false
+    private var muxGeneration: UInt64?
     init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile) {
         self.scope = scope; self.profile = profile
         videoCost = PublishingVideoCostOwner(scope: scope)
+    }
+    func recordAudio(generation: UInt64, pts: CMTime, hostTime: UInt64, observedAt: Double,
+                     sampleRate: Double, channels: UInt32, framesPerPacket: UInt32,
+                     audioObjectType: UInt32, bytes: Int, wasEncoded: Bool, valid: Bool) {
+        lock.withLock {
+            guard audioFrames < 25_000 else { audioInvalid = true; return }
+            audioFrames += 1
+            if audioRows.count < 8 {
+                audioRows.append(["sourcePTS": Self.time(pts), "hostTime": String(hostTime),
+                    "publishingGeneration": String(generation), "observedAt": Self.finite(observedAt),
+                    "sampleRate": Self.finite(sampleRate), "channelCount": channels,
+                    "framesPerPacket": framesPerPacket, "audioObjectType": audioObjectType,
+                    "bytes": bytes, "wasEncoded": wasEncoded, "valid": valid])
+            }
+            guard valid, wasEncoded, generation > 0, Self.validTime(pts), pts.value >= 0,
+                  observedAt.isFinite, observedAt >= 0, sampleRate.isFinite, sampleRate > 0,
+                  (1...6).contains(channels) || channels == 8,
+                  framesPerPacket == 1024, audioObjectType == 2, (1...8184).contains(bytes) else {
+                audioInvalid = true; return
+            }
+            if let previous = audioGeneration, previous != generation { audioInvalid = true }
+            if let previous = lastAudioPTS, CMTimeCompare(pts, previous) <= 0 { audioInvalid = true }
+            if audioGeneration == nil { audioGeneration = generation }
+            lastAudioPTS = pts
+        }
+    }
+    func observeAudio(_ frame: SRTPublisher.CompressedAudioFrame) {
+        recordAudio(generation: frame.publishingGeneration, pts: frame.sourcePTS, hostTime: frame.hostTime,
+            observedAt: frame.observedAt, sampleRate: frame.sampleRate, channels: frame.channelCount,
+            framesPerPacket: frame.framesPerPacket, audioObjectType: frame.audioObjectType,
+            bytes: frame.byteCount, wasEncoded: frame.wasEncoded, valid: frame.valid)
+    }
+    func recordMux(generation: UInt64, media: String, pts: CMTime, dts: CMTime,
+                   transportPTS: UInt64, transportDTS: UInt64?, observedAt: Double) {
+        lock.withLock {
+            guard muxFrames < 25_000 else { muxInvalid = true; return }
+            muxFrames += 1
+            guard muxRows[media] != nil else { muxInvalid = true; return }
+            if muxRows[media]!.count < 8 {
+                muxRows[media]!.append(["sourcePTS": Self.time(pts), "sourceDTS": Self.time(dts),
+                    "publishingGeneration": String(generation), "ordinal": muxFrames,
+                    "transportPTS": String(transportPTS), "transportDTS": transportDTS.map(String.init) as Any? ?? NSNull(),
+                    "observedAt": Self.finite(observedAt)])
+            }
+            guard generation > 0, Self.validTime(pts), dts == .invalid || Self.validTime(dts),
+                  observedAt.isFinite, observedAt >= 0,
+                  (9000...UInt64(Int64.max)).contains(transportPTS),
+                  dts.isValid == (transportDTS != nil),
+                  transportDTS.map({ (9000...UInt64(Int64.max)).contains($0) }) ?? true else {
+                muxInvalid = true; return
+            }
+            if let previous = muxGeneration, previous != generation { muxInvalid = true }
+            if muxGeneration == nil { muxGeneration = generation }
+        }
+    }
+    func observeMux(_ frame: SRTPublisher.MuxedPacketFrame) {
+        recordMux(generation: frame.publishingGeneration, media: frame.media.rawValue,
+            pts: frame.sourcePTS, dts: frame.sourceDTS, transportPTS: frame.transportPTS,
+            transportDTS: frame.transportDTS, observedAt: frame.observedAt)
     }
     func observeEncoding(_ frame: SRTPublisher.EncoderFrame) {
         lock.withLock {
@@ -81,6 +149,11 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
             ["formatVersion": 1, "isClosed": true, "profile": profile.rawValue,
              "startup": startupJSON as Any? ?? NSNull(),
              "firstEncoding": firstEncoding as Any? ?? NSNull(), "firstCompressed": firstCompressed as Any? ?? NSNull(),
+             "audioStartup": ["frames": audioFrames, "first": audioRows,
+                 "invalid": audioInvalid || (audioGeneration != nil && generation != nil && audioGeneration != generation)],
+             "muxStartup": ["frames": muxFrames, "audio": muxRows["audio"]!, "video": muxRows["video"]!,
+                 "invalid": muxInvalid || (muxGeneration != nil && generation != nil && muxGeneration != generation)
+                    || (muxGeneration != nil && audioGeneration != nil && muxGeneration != audioGeneration)],
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                        "broadcastGeneration": scope.broadcastGeneration,
                        "publishingAttemptID": scope.publishingAttemptID.uuidString,
@@ -125,6 +198,10 @@ final class NativePublishingFormatFixture: @unchecked Sendable {
     }
     private static func time(_ value: CMTime) -> [String: Any] {
         ["value": String(value.value), "timescale": value.timescale, "epoch": String(value.epoch), "flags": value.flags.rawValue]
+    }
+    private static func finite(_ value: Double) -> Any { value.isFinite ? value as Any : NSNull() }
+    private static func validTime(_ value: CMTime) -> Bool {
+        value.isNumeric && value.timescale > 0 && value.epoch == 0
     }
 }
 #endif

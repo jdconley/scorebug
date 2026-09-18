@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { qualifyNativeFormat } from '../native-format-qualification.mjs';
+import * as formatEvidence from '../native-format-qualification.mjs';
+import { measuredTrialArtifacts } from '../measured-native-trial.mjs';
 const pts = (n) => ({ value: String(7395 + 2 * n), timescale: 60, epoch: '0', flags: 1 });
 const scope = {
   recordingID: 'owned',
@@ -32,6 +34,53 @@ const format = {
   firstSourcePTS: pts(1),
   lastSourcePTS: pts(10),
 };
+test('bounded format reader admits populated phone startup metadata for both harness routes', () => {
+  const audio = Array.from({ length: 8 }, (_, i) => ({
+    sourcePTS: pts(i),
+    hostTime: String(123000000000 + i * 1024),
+    publishingGeneration: '2',
+    observedAt: 1339000.12345,
+    sampleRate: 48000,
+    channelCount: 2,
+    framesPerPacket: 1024,
+    audioObjectType: 2,
+    bytes: 200,
+    wasEncoded: true,
+    valid: true,
+  }));
+  const mux = Array.from({ length: 8 }, (_, i) => ({
+    sourcePTS: pts(i),
+    sourceDTS: pts(i),
+    publishingGeneration: '2',
+    ordinal: i + 1,
+    transportPTS: String(9000 + i * 3000),
+    transportDTS: String(9000 + i * 3000),
+    observedAt: 1339000.12345,
+  }));
+  const populated = {
+    ...format,
+    audioStartup: { frames: 100, invalid: false, first: audio },
+    muxStartup: { frames: 200, invalid: false, audio: mux, video: mux },
+  };
+  const bytes = Buffer.from(JSON.stringify(populated));
+  assert.ok(bytes.length > 4096);
+  assert.ok(bytes.length <= measuredTrialArtifacts.startupFormat[1]);
+  assert.deepEqual(formatEvidence.parseNativeFormatEvidence(bytes), populated);
+  assert.equal(
+    qualifyNativeFormat(formatEvidence.parseNativeFormatEvidence(bytes), snapshot, '540p30').frames,
+    10,
+  );
+});
+test('format reader rejects bytes beyond the shared bounded allowance before JSON parsing', () => {
+  assert.equal(
+    measuredTrialArtifacts.startupFormat[1],
+    formatEvidence.nativeFormatEvidenceMaximumBytes,
+  );
+  assert.throws(
+    () => formatEvidence.parseNativeFormatEvidence(Buffer.alloc(32769)),
+    /Oversized native format evidence/,
+  );
+});
 test('requires every actual pre-mux frame and its scope, not worker-scaled dimensions', () => {
   assert.equal(qualifyNativeFormat(format, snapshot, '540p30').frames, 10);
   for (const patch of [

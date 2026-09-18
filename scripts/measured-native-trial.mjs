@@ -16,6 +16,7 @@ import { qualifyReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { qualifyNativeReceiverIntervals } from './native-receiver-intervals.mjs';
 import { qualifyMeasuredCandidateWitness } from './measured-candidate-witness.mjs';
 import { qualifyMeasuredTrialPolicy } from './measured-trial-policy.mjs';
+import { nativeFormatEvidenceMaximumBytes } from './native-format-qualification.mjs';
 
 // The harness checks these bounds before parsing. Callers of the pure replay
 // must likewise supply bounded raw artifacts, never qualification summaries.
@@ -23,7 +24,7 @@ export const measuredTrialArtifacts = {
   snapshot: ['video-observation.json', 8 * 1024 * 1024],
   quality: ['quality-control.json', 8 * 1024 * 1024],
   format: ['native-profile-transitions.json', 8 * 1024 * 1024],
-  startupFormat: ['native-publishing-format.json', 4096],
+  startupFormat: ['native-publishing-format.json', nativeFormatEvidenceMaximumBytes],
   lifecycle: ['native-candidate-lifecycle.json', 512 * 1024],
   candidateProof: ['native-candidate-measurement.json', 256 * 1024],
   nativeProbe: ['native-bandwidth-probe.json', 512 * 1024],

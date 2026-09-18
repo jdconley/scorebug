@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
+// Existing video startup plus first 8 AAC and 8 mux records per media.
+// This bounds diagnostic JSON only; no media/quality allowance changes.
+export const nativeFormatEvidenceMaximumBytes = 32 * 1024;
+export function parseNativeFormatEvidence(bytes) {
+  assert.ok(bytes.length <= nativeFormatEvidenceMaximumBytes, 'Oversized native format evidence');
+  return JSON.parse(bytes.toString('utf8'));
+}
 /** Actual pre-mux sample format, independent of the worker's resize operation. */
 export function qualifyNativeFormat(format, snapshot, profile, { requireStartup = false } = {}) {
   assert.ok(['540p30', '360p30', '240p30'].includes(profile));

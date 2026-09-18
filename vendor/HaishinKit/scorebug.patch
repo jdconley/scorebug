@@ -1336,7 +1336,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,339 @@
+@@ -8,6 +8,353 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1464,6 +1464,20 @@
 +        probe.cancel(.cancelled)
 +        probeWakeTask?.cancel()
 +    }
++    /// Scalar evidence that a PES reached the local mux output queue/sink.
++    /// Transport timestamps are unwrapped 90 kHz integers, not wire-modulo values.
++    /// This does not prove a socket write or receiver delivery.
++    public struct MuxedPacketFrame: Sendable {
++        public enum Media: String, Sendable { case audio, video }
++        public let publishingGeneration: UInt64
++        public let media: Media
++        public let sourcePTS: CMTime
++        public let sourceDTS: CMTime
++        public let transportPTS: UInt64
++        public let transportDTS: UInt64?
++        public let observedAt: Double
++    }
++    private let muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)?
 +    private let compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)?
 +    private let compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)?
 +    /// Identity for an active publication, not proof that its encoder is ready.
@@ -1676,7 +1690,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +355,7 @@
+@@ -22,7 +369,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1685,11 +1699,14 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +365,46 @@
+@@ -32,8 +379,53 @@
      }
 
      /// Creates a new stream object.
 -    public init(connection: SRTConnection) {
++    /// - Parameter muxedPacketObserver: Synchronous scalar PES output admission,
++    ///   including buffered startup and final drain. Must do bounded work without
++    ///   I/O, waits, task creation or stream reentry. Nil avoids frame construction.
 +    /// - Parameter compressedAudioObserver: Synchronous copied AAC observation
 +    ///   after mux acceptance, including final drain. The callback must remain
 +    ///   bounded and perform no I/O, waits or task creation. Nil avoids snapshots.
@@ -1700,6 +1717,7 @@
 +                encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
 +                compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
 +                compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
++                muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
 +                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
 +        probeWakeRunner = { probe, accounting in
@@ -1712,12 +1730,14 @@
          self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
 +        self.compressedAudioObserver = compressedAudioObserver
++        self.muxedPacketObserver = muxedPacketObserver
 +        Task { await connection.addStream(self) }
 +    }
 +
 +    init(connection: SRTConnection, outgoing: sending OutgoingStream,
 +         compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
 +         compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
++         muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
 +         pacesEncodedVideo: Bool = false,
 +         allowsBandwidthProbes: Bool = false,
 +         probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
@@ -1730,10 +1750,11 @@
 +        self.outgoing = outgoing; self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
 +        self.compressedAudioObserver = compressedAudioObserver
++        self.muxedPacketObserver = muxedPacketObserver
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +416,7 @@
+@@ -45,7 +437,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1742,7 +1763,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +428,28 @@
+@@ -57,8 +449,37 @@
              }
              return
          }
@@ -1754,6 +1775,15 @@
 +        let session = generation
 +        failure = PublishingFailureLatch()
 +        writer.failure = failure
++        if let observer = muxedPacketObserver {
++            // Capture only the immutable callback and generation, never this actor.
++            writer.muxedPacketObserver = { frame in
++                observer(.init(publishingGeneration: session, media: frame.media,
++                    sourcePTS: frame.sourcePTS, sourceDTS: frame.sourceDTS,
++                    transportPTS: frame.transportPTS, transportDTS: frame.transportDTS,
++                    observedAt: frame.observedAt))
++            }
++        }
 +        outgoing.setPublishingFailure(failure)
 +        // Raw video may skip stale frames before compression; compressed queues fail.
 +        if outgoing.videoInputBufferCounts <= 0 { outgoing.videoInputBufferCounts = 2 }
@@ -1772,7 +1802,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +459,64 @@
+@@ -68,26 +489,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1857,7 +1887,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +545,90 @@
+@@ -116,16 +575,90 @@
          readyState = .playing
      }
 
@@ -1953,7 +1983,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +649,33 @@
+@@ -146,23 +679,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -1989,7 +2019,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +685,36 @@
+@@ -172,16 +715,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -2186,7 +2216,7 @@
              pmt.elementaryStreamSpecificData.append(data)
              videoContinuityCounter = 0
              writeProgramIfNeeded()
-@@ -68,73 +86,191 @@
+@@ -68,77 +86,216 @@
          }
          return false
      }
@@ -2208,6 +2238,17 @@
 +        var byteCount = 8 * 1024 * 1024
 +        var mediaSpan: Double = 2
 +    }
++
++    /// One PES accepted by the local output boundary, never network delivery.
++    struct MuxedPacketFrame: Sendable {
++        let media: SRTStream.MuxedPacketFrame.Media
++        let sourcePTS: CMTime
++        let sourceDTS: CMTime
++        let transportPTS: UInt64
++        let transportDTS: UInt64?
++        let observedAt: Double
++    }
++    var muxedPacketObserver: ((MuxedPacketFrame) -> Void)?
 +
 +    private(set) var error: SRTStream.MuxerError?
 +    private let startupLimits: StartupLimits
@@ -2255,20 +2296,6 @@
 -            audioTimeStamp = when.makeTime()
 -            if pcrPID == TSWriter.defaultAudioPID {
 -                clockTimeStamp = audioTimeStamp
--            }
--        }
--        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
--            pes.streamID = 192
--            writePacketizedElementaryStream(
--                TSWriter.defaultAudioPID,
--                PES: pes,
--                timeStamp: when.makeTime(),
--                randomAccessIndicator: true
--            )
--        }
--    }
--
--    /// Appends a buffer.
 +        guard error == nil, let audioBuffer = audioBuffer as? AVAudioCompressedBuffer else { return }
 +        guard when.isHostTimeValid else { fail(.invalidTimestamp); return }
 +        let timestamp = when.makeTime()
@@ -2289,32 +2316,7 @@
 +    }
 +
 +    /// Appends a compressed video buffer.
-     func append(_ sampleBuffer: CMSampleBuffer) {
--        guard canWriteFor else {
--            return
--        }
--        switch sampleBuffer.formatDescription?.mediaType {
--        case .video:
--            if videoTimeStamp == .invalid {
--                videoTimeStamp = sampleBuffer.presentationTimeStamp
--                if pcrPID == Self.defaultVideoPID {
--                    clockTimeStamp = videoTimeStamp
--                }
--            }
--            if var pes = PacketizedElementaryStream(sampleBuffer, timeStamp: videoTimeStamp) {
--                let timestamp = sampleBuffer.decodeTimeStamp == .invalid ?
--                    sampleBuffer.presentationTimeStamp : sampleBuffer.decodeTimeStamp
--                pes.streamID = 224
--                writePacketizedElementaryStream(
--                    Self.defaultVideoPID,
--                    PES: pes,
--                    timeStamp: timestamp,
--                    randomAccessIndicator: !sampleBuffer.isNotSync
--                )
--            }
--        default:
--            break
--        }
++    func append(_ sampleBuffer: CMSampleBuffer) {
 +        guard error == nil, sampleBuffer.formatDescription?.mediaType == .video else { return }
 +        let pts = sampleBuffer.presentationTimeStamp
 +        let dts = sampleBuffer.decodeTimeStamp
@@ -2345,8 +2347,46 @@
 +            guard (high - low).seconds <= startupLimits.mediaSpan else {
 +                fail(.startupTimeLimitExceeded)
 +                return false
-+            }
-+        }
+             }
+         }
+-        if var pes = PacketizedElementaryStream(audioBuffer, when: when, timeStamp: audioTimeStamp) {
+-            pes.streamID = 192
+-            writePacketizedElementaryStream(
+-                TSWriter.defaultAudioPID,
+-                PES: pes,
+-                timeStamp: when.makeTime(),
+-                randomAccessIndicator: true
+-            )
+-        }
+-    }
+-
+-    /// Appends a buffer.
+-    func append(_ sampleBuffer: CMSampleBuffer) {
+-        guard canWriteFor else {
+-            return
+-        }
+-        switch sampleBuffer.formatDescription?.mediaType {
+-        case .video:
+-            if videoTimeStamp == .invalid {
+-                videoTimeStamp = sampleBuffer.presentationTimeStamp
+-                if pcrPID == Self.defaultVideoPID {
+-                    clockTimeStamp = videoTimeStamp
+-                }
+-            }
+-            if var pes = PacketizedElementaryStream(sampleBuffer, timeStamp: videoTimeStamp) {
+-                let timestamp = sampleBuffer.decodeTimeStamp == .invalid ?
+-                    sampleBuffer.presentationTimeStamp : sampleBuffer.decodeTimeStamp
+-                pes.streamID = 224
+-                writePacketizedElementaryStream(
+-                    Self.defaultVideoPID,
+-                    PES: pes,
+-                    timeStamp: timestamp,
+-                    randomAccessIndicator: !sampleBuffer.isNotSync
+-                )
+-            }
+-        default:
+-            break
+-        }
 +        guard let clock = transportClock ?? TransportClock(origin: min(pts, time)),
 +              clock.presentationTimestamp(for: pts) != nil,
 +              clock.presentationTimestamp(for: time) != nil else {
@@ -2413,8 +2453,17 @@
 +        var pes = packet.pes
 +        pes.optionalPESHeader = header
 +        pes.streamID = packet.media == .audio ? 192 : 224
-+        writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
++        let accepted = writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
 +            PES: pes, clockTicks: ticks, randomAccessIndicator: packet.randomAccess)
++        if accepted, let muxedPacketObserver,
++           let pts = clock.presentationTimestamp(for: packet.presentationTime) {
++            let dts = packet.decodeTime.isValid
++                ? clock.presentationTimestamp(for: packet.decodeTime).map(UInt64.init) : nil
++            muxedPacketObserver(.init(media: packet.media == .audio ? .audio : .video,
++                sourcePTS: packet.presentationTime, sourceDTS: packet.decodeTime,
++                transportPTS: UInt64(pts), transportDTS: dts,
++                observedAt: ProcessInfo.processInfo.systemUptime))
++        }
 +    }
 +
 +    private func fail(_ failure: SRTStream.MuxerError) {
@@ -2438,7 +2487,12 @@
      }
 
      /// Clears the writer object for new transport stream.
-@@ -147,17 +283,27 @@
+     func clear() {
++        muxedPacketObserver = nil
+         audioFormat = nil
+         audioContinuityCounter = 0
+         videoFormat = nil
+@@ -147,17 +304,27 @@
          pat.programs.removeAll()
          pat.programs = [1: Self.defaultPMTPID]
          pmt = TSProgramMap()
@@ -2470,19 +2524,25 @@
 +        failure = PublishingFailureLatch()
 +    }
 +
-+    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) {
++    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) -> Bool {
 +        let packets: [TSPacket] = split(PID, PES: PES, clockTicks: clockTicks)
 +        rotateFileHandle(clockTicks)
 
          packets[0].adaptationField?.randomAccessIndicator = randomAccessIndicator
 
-@@ -179,17 +325,27 @@
-         write(bytes)
-     }
+@@ -176,20 +343,33 @@
+             bytes.append(packet.data)
+         }
 
+-        write(bytes)
+-    }
+-
 -    private func rotateFileHandle(_ timestamp: CMTime) {
 -        let duration = timestamp.seconds - rotatedTimeStamp.seconds
 -        guard segmentDuration < duration else {
++        return write(bytes)
++    }
++
 +    private func rotateFileHandle(_ ticks: UInt64) {
 +        guard ticks >= rotatedClockTicks,
 +              segmentDuration < Double(ticks - rotatedClockTicks) / Double(TransportClock.timescale) else {
@@ -2490,26 +2550,32 @@
          }
          writeProgramIfNeeded()
 -        rotatedTimeStamp = timestamp
-+        rotatedClockTicks = ticks
-     }
-
-     private func write(_ data: Data) {
+-    }
+-
+-    private func write(_ data: Data) {
 -        continuation?.yield(data)
-+        guard error == nil else { return }
++        rotatedClockTicks = ticks
++    }
++
++    @discardableResult private func write(_ data: Data) -> Bool {
++        guard error == nil else { return false }
 +        if let outputSink {
-+            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return }
-+            if !outputSink(data) { fail(.outputQueueLimitExceeded) }
-+            return
++            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return false }
++            guard outputSink(data) else { fail(.outputQueueLimitExceeded); return false }
++            return true
 +        }
 +        if let outputQueue {
-+            if !outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) {
++            guard outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) else {
 +                fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
++                return false
 +            }
++            return true
 +        }
++        return false
      }
 
      private func writeProgram() {
-@@ -208,18 +364,17 @@
+@@ -208,18 +388,17 @@
          guard !expectedMedias.isEmpty else {
              return
          }

@@ -26,7 +26,7 @@ import {
   qualifyNativeProfileTransitions,
 } from './native-profile-transitions.mjs';
 import { nativeLiveProfile, nativeMediaGeometry } from './native-live-profile.mjs';
-import { qualifyNativeFormat } from './native-format-qualification.mjs';
+import { qualifyNativeFormat, parseNativeFormatEvidence } from './native-format-qualification.mjs';
 import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -744,9 +744,8 @@ try {
       { errorOnExist: true, force: false },
     );
     const formatBytes = await readFile(formatPath);
-    assert.ok(formatBytes.length <= 4096, 'Oversized native format evidence');
     nativeFormatQualification = qualifyNativeFormat(
-      JSON.parse(formatBytes.toString('utf8')),
+      parseNativeFormatEvidence(formatBytes),
       observationSnapshot,
       liveProfile,
       { requireStartup: true },

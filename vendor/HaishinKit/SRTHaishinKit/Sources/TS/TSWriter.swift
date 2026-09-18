@@ -102,6 +102,17 @@ final class TSWriter {
         var mediaSpan: Double = 2
     }
 
+    /// One PES accepted by the local output boundary, never network delivery.
+    struct MuxedPacketFrame: Sendable {
+        let media: SRTStream.MuxedPacketFrame.Media
+        let sourcePTS: CMTime
+        let sourceDTS: CMTime
+        let transportPTS: UInt64
+        let transportDTS: UInt64?
+        let observedAt: Double
+    }
+    var muxedPacketObserver: ((MuxedPacketFrame) -> Void)?
+
     private(set) var error: SRTStream.MuxerError?
     private let startupLimits: StartupLimits
     private var pending: [PendingPacket] = []
@@ -249,8 +260,17 @@ final class TSWriter {
         var pes = packet.pes
         pes.optionalPESHeader = header
         pes.streamID = packet.media == .audio ? 192 : 224
-        writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
+        let accepted = writePacketizedElementaryStream(packet.media == .audio ? Self.defaultAudioPID : Self.defaultVideoPID,
             PES: pes, clockTicks: ticks, randomAccessIndicator: packet.randomAccess)
+        if accepted, let muxedPacketObserver,
+           let pts = clock.presentationTimestamp(for: packet.presentationTime) {
+            let dts = packet.decodeTime.isValid
+                ? clock.presentationTimestamp(for: packet.decodeTime).map(UInt64.init) : nil
+            muxedPacketObserver(.init(media: packet.media == .audio ? .audio : .video,
+                sourcePTS: packet.presentationTime, sourceDTS: packet.decodeTime,
+                transportPTS: UInt64(pts), transportDTS: dts,
+                observedAt: ProcessInfo.processInfo.systemUptime))
+        }
     }
 
     private func fail(_ failure: SRTStream.MuxerError) {
@@ -275,6 +295,7 @@ final class TSWriter {
 
     /// Clears the writer object for new transport stream.
     func clear() {
+        muxedPacketObserver = nil
         audioFormat = nil
         audioContinuityCounter = 0
         videoFormat = nil
@@ -301,7 +322,7 @@ final class TSWriter {
         failure = PublishingFailureLatch()
     }
 
-    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) {
+    private func writePacketizedElementaryStream(_ PID: UInt16, PES: PacketizedElementaryStream, clockTicks: UInt64, randomAccessIndicator: Bool) -> Bool {
         let packets: [TSPacket] = split(PID, PES: PES, clockTicks: clockTicks)
         rotateFileHandle(clockTicks)
 
@@ -322,7 +343,7 @@ final class TSWriter {
             bytes.append(packet.data)
         }
 
-        write(bytes)
+        return write(bytes)
     }
 
     private func rotateFileHandle(_ ticks: UInt64) {
@@ -334,18 +355,21 @@ final class TSWriter {
         rotatedClockTicks = ticks
     }
 
-    private func write(_ data: Data) {
-        guard error == nil else { return }
+    @discardableResult private func write(_ data: Data) -> Bool {
+        guard error == nil else { return false }
         if let outputSink {
-            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return }
-            if !outputSink(data) { fail(.outputQueueLimitExceeded) }
-            return
+            guard data.count <= outputLimits.bytesPerItem else { fail(.outputByteLimitExceeded); return false }
+            guard outputSink(data) else { fail(.outputQueueLimitExceeded); return false }
+            return true
         }
         if let outputQueue {
-            if !outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) {
+            guard outputAccounting.enqueue({ outputQueue.yield(data, byteCount: data.count) }) else {
                 fail(data.count > outputLimits.bytesPerItem ? .outputByteLimitExceeded : .outputQueueLimitExceeded)
+                return false
             }
+            return true
         }
+        return false
     }
 
     private func writeProgram() {
