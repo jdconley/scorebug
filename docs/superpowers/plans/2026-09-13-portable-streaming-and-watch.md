@@ -2361,3 +2361,23 @@ complete policy/fault/recovery replay and the two-fault native run. No complete
 repeated A/V qualification or production automatic upgrade permission is claimed.
 See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
 and `artifacts/qa/repeated-native-lifecycle-*` evidence.
+
+
+### 2026-09-17: repeated receiver intervals and complete admissions
+
+Both ramp-up admissions now replay their own raw candidate A/V cost, native
+acceptance, receiver intervals, worker ownership and actual profile requests.
+The second admission retains its original reset baseline and revision, with
+fresh captured receiver evidence and 25% measured padding headroom. Cross-proof
+checks reject impossible accepted-data bursts and backward progress where the
+recorded read order is known. Unselected rows may invalidate evidence but cannot
+replace the captured admission pair.
+
+All 2,843 tool tests passed, including 132 new cases; independent specification
+and quality reviews approved the admission boundary. All 269,231 frozen evidence
+files remain unchanged. Runtime sources are unchanged, so no new native build
+or full A/V run is claimed at this checkpoint. Next replay both complete policy,
+fault and recovery cycles and add causally triggered faults to the repeated
+simulator harness. Production automatic upgrades remain disabled. See the
+[repeated verification plan](2026-09-17-repeated-native-verification.md) and
+`artifacts/qa/repeated-campaign-admission-*` evidence.

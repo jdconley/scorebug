@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { qualifyRepeatedNativeBandwidthProbe } from './repeated-native-bandwidth-probe.mjs';
 
 const time = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const close = (a, b, tolerance = 1e-6) => {
@@ -34,6 +35,7 @@ function sameProbe(a, b) {
   sameUUID(a.id, b.id);
   for (const key of [
     'publishingGeneration',
+    'campaign',
     'stage',
     'bitRate',
     'startedAt',
@@ -50,15 +52,97 @@ function sameProbe(a, b) {
  * nativeProof must also have passed qualifyNativeBandwidthProbe. This proves only
  * the admission-time witness/load relation, not media health, application or upgrade.
  */
-export function qualifyMeasuredCandidateWitness({
-  witness: w,
-  candidateProof,
-  candidate,
-  bootstrap,
-  intervals,
-  intervalQualification,
-  nativeProof,
-}) {
+export function qualifyMeasuredCandidateWitness(args) {
+  assert.equal(args.nativeProof.formatVersion, 2, 'Legacy witness requires v2 native proof');
+  for (const probe of [
+    args.witness.binding,
+    args.witness.probe,
+    args.candidateProof.probeBinding.initial,
+  ])
+    assert.ok(!Object.hasOwn(probe, 'campaign'), 'Legacy witness cannot carry campaign authority');
+  return replayCandidateWitness(args);
+}
+
+/** Replay one captured admission from the original repeated timeline. The
+ * complete admission gate supplies independently qualified media and coverage.
+ * No revision, event index or native envelope is rewritten for legacy replay. */
+export function qualifyRepeatedCandidateWitness(args) {
+  const { nativeProof, candidate, campaign, quality, witness, intervalQualification } = args;
+  qualifyRepeatedNativeBandwidthProbe(nativeProof, {
+    scope: nativeProof.scope,
+    publishingGeneration: nativeProof.publishingGeneration,
+  });
+  assert.ok(['1', '2'].includes(campaign));
+  assert.equal(intervalQualification.mode, 'repeated');
+  const index = Number(campaign) - 1,
+    revision = String(index * 2);
+  const owner = nativeProof.campaigns[index];
+  assert.equal(candidate.campaign, campaign);
+  assert.equal(candidate.appliedRevision, revision);
+  assert.equal(candidate.baselinePhaseIndex, index * 2);
+  assert.equal(owner.context.appliedRevision, revision);
+  assert.equal(quality.formatVersion, 4);
+  assert.equal(quality.overflow, false);
+  assert.ok(
+    Array.isArray(quality.events) && quality.events.length > 0 && quality.events.length <= 512,
+  );
+  const indexed = quality.events.map((event, eventIndex) => ({ event, eventIndex }));
+  const bootstraps = indexed.filter(({ event }) => event.kind === 'bootstrap');
+  const applications = indexed.filter(({ event }) => event.kind === 'applied');
+  const decisions = indexed.filter(({ event }) => event.kind === 'candidate');
+  assert.equal(bootstraps.length, 1);
+  assert.equal(bootstraps[0].eventIndex, 0);
+  assert.equal(applications.length, 4);
+  assert.equal(decisions.length, 2);
+  for (const [i, { event }] of applications.entries()) {
+    assert.equal(event.revision, String(i + 1));
+    assert.equal(event.action.fromRevision, String(i));
+    assert.equal(event.action.kind, i % 2 === 0 ? 'trial' : 'reset');
+  }
+  const { event: baseline, eventIndex: baselineEventIndex } =
+    index === 0 ? bootstraps[0] : applications[1];
+  const { event: decision, eventIndex: qualityEventIndex } = decisions[index];
+  assert.ok(
+    baselineEventIndex < applications[index * 2].eventIndex &&
+      applications[index * 2].eventIndex < qualityEventIndex,
+  );
+  assert.equal(baseline.revision, revision);
+  assert.equal(baseline.profileID, '240p30');
+  assert.equal(baseline.acknowledgedAt, owner.context.acknowledgedAt);
+  sameUUID(baseline.receipt.configurationID, owner.context.configurationID);
+  sameUUID(baseline.receipt.encoderSessionID, owner.context.encoderSessionID);
+  sameUUID(baseline.receipt.encoderSessionID, candidate.baselineEncoderSessionID);
+  assert.equal(baseline.receipt.generation, owner.context.publishingGeneration);
+  assert.equal(baseline.receipt.bitRate, owner.context.baselineBitRate);
+  assert.deepEqual(decision.candidateAdmission, witness);
+  sameUUID(decision.candidate.id, candidate.id);
+  assert.equal(decision.candidate.appliedRevision, revision);
+  for (const probe of [witness.binding, witness.probe, args.candidateProof.probeBinding.initial])
+    assert.equal(probe.campaign, campaign);
+  return {
+    ...replayCandidateWitness(
+      { ...args, bootstrap: baseline },
+      { campaign, revision, events: owner.events },
+    ),
+    campaign,
+    appliedRevision: revision,
+    baselineEventIndex,
+    qualityEventIndex,
+  };
+}
+
+function replayCandidateWitness(
+  {
+    witness: w,
+    candidateProof,
+    candidate,
+    bootstrap,
+    intervals,
+    intervalQualification,
+    nativeProof,
+  },
+  repeated,
+) {
   assert.equal(w.formatVersion, 1);
   assert.equal(w.convention, 'measured-candidate-ipv4-v1');
   const m = w.measurement,
@@ -143,10 +227,10 @@ export function qualifyMeasuredCandidateWitness({
       now - m.endedAt <= 2,
   );
 
-  assert.equal(bootstrap.kind, 'bootstrap');
-  assert.equal(bootstrap.revision, '0');
+  assert.equal(bootstrap.kind, repeated?.campaign === '2' ? 'applied' : 'bootstrap');
+  assert.equal(bootstrap.revision, repeated?.revision ?? '0');
   assert.equal(bootstrap.profileID, '240p30');
-  assert.equal(a.revision, '0');
+  assert.equal(a.revision, repeated?.revision ?? '0');
   assert.equal(a.profileID, '240p30');
   assert.equal(a.videoBitrate, 350000);
   assert.equal(a.receipt.bitRate, a.videoBitrate);
@@ -169,15 +253,13 @@ export function qualifyMeasuredCandidateWitness({
   assert.equal(probe.stage, 3);
   assert.equal(probe.bitRate, 12000000);
   assert.ok(probe.startedAt + 0.5 <= w.boundAt && w.boundAt <= m.startedAt);
-  assert.ok(
-    Array.isArray(nativeProof.events) &&
-      nativeProof.events.length > 0 &&
-      nativeProof.events.length <= 2000,
-  );
-  const events = nativeProof.events.filter((e) => e.sample.stage === 3);
+  const nativeEvents = repeated?.events ?? nativeProof.events;
+  assert.ok(Array.isArray(nativeEvents) && nativeEvents.length > 0 && nativeEvents.length <= 2000);
+  const events = nativeEvents.filter((e) => e.sample.stage === 3);
   assert.ok(events.length > 0);
   for (const e of events) {
     sameUUID(e.sample.id, probe.id);
+    assert.equal(e.sample.campaign, repeated?.campaign);
     assert.equal(e.sample.publishingGeneration, m.publishingGeneration);
     assert.equal(e.sample.startedAt, probe.startedAt);
     assert.equal(e.sample.bitRate, 12000000);
@@ -257,9 +339,11 @@ export function qualifyMeasuredCandidateWitness({
       publishingGeneration: m.publishingGeneration,
       probeId: uuid(probe.id),
       stage: 3,
+      ...(repeated ? { campaign: repeated.campaign } : {}),
       bitRate: 12000000,
     });
     assert.equal(r.nativeProbeStage, 3);
+    assert.equal(r.nativeProbeCampaign, repeated?.campaign);
     sameUUID(r.nativeProbeId, probe.id);
     assert.equal(r.nativePublishingGeneration, m.publishingGeneration);
     assert.equal(r.nativeStartedAt, probe.startedAt);
@@ -294,6 +378,8 @@ export function qualifyMeasuredCandidateWitness({
       close(projected[1], offset[1] + seconds(p.observedAtNanoseconds));
       sameUUID(p.id, probe.id);
       assert.equal(p.stage, 3);
+      assert.equal(p.campaign, repeated?.campaign);
+      assert.equal(p.convention, repeated ? 'mpegts-null-probe-v3' : 'mpegts-null-probe-v2');
       assert.equal(p.bitRate, 12000000);
       assert.equal(p.publishingGeneration, m.publishingGeneration);
     }

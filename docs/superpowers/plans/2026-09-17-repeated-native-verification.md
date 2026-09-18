@@ -19,7 +19,7 @@ Use bounded version-aware verification instead of cloning or rewriting old artif
 - [x] Native probe replay: add `qualifyRepeatedNativeBandwidthProbe` in `scripts/repeated-native-bandwidth-probe.mjs`, consuming raw v3 two-campaign exports. Verify ordered stage identities, cumulative/local byte deltas, pacing, lease bounds, terminal joins, campaign separation, readiness metadata and bounded events. Return summaries that explicitly retain campaign identity and do not claim capacity or repeated policy success. Add `scripts/test/repeated-native-bandwidth-probe.test.mjs` with a valid two-campaign fixture and mutations for reused IDs, crossed campaign, stale revision, malformed context, counter reset/carry-over, unjoined/overlapping ownership, nonmonotonic times and excess budgets. Run the test before implementation to establish RED, then after implementation for GREEN.
 - [x] Receiver v3 replay foundation: extend raw validation/progress in `scripts/receiver-probe-evidence.mjs` for `mpegts-null-probe-v3`, retaining v1/v2 behavior. Require bounded positive campaign and campaign-delivered counters, same-campaign continuity, fresh restart identity, and nonregressing publication totals. Add failing-first mutation tests in `scripts/test/receiver-probe-evidence.test.mjs` or a separate v3 test file. Do not enable the repeated harness merely because wire reports validate.
 - [x] Native media phases: add explicit repeated sequence support to `scripts/native-profile-transitions.mjs`, requiring exactly 240/360/240/360/240 with original receipts, frame continuity and decoded transition evidence. Add failing-first tests for missing/reordered phases, receipt chain breaks and changed dimensions.
-- [ ] Combined campaign admission: extend receiver interval and candidate-witness replay with original campaign and applied revision; join each candidate proof to the corresponding real baseline phase and exact native profile request. Test cross-campaign substitution, stale measurement and receiver-counter carry-over.
+- [x] Combined campaign admission: extend receiver interval and candidate-witness replay with original campaign and applied revision; join each candidate proof to the corresponding real baseline phase and exact native profile request. Test cross-campaign substitution, stale measurement and receiver-counter carry-over.
 - [ ] Policy/fault replay: qualify each confirmed trial, each exact decoder fault, each reset and recovery, preserving the global event timeline. Verify second-campaign readiness occurs after first recovery and that no ignored events or missing cadence coverage can manufacture healthy duration. Add malicious mutations and preserve existing single-cycle checks.
 - [ ] Harness: add explicit repeated options, two causally triggered owned decoder pauses after the respective confirmed trial, bounded 180-second hold and new raw fault envelope. Keep legacy routes unchanged. Require the complete repeated verifier plus all existing archive/scoring/A/V gates before a pass.
 - [ ] Run `pnpm test:tools`; obtain independent spec/quality review, then build and run the full native simulator fixture on frozen sources. Preserve raw outputs and failures, decode archive/live media, and compare every cycle. Fix observed failures with failing-first regressions; never relax thresholds to obtain a pass.
@@ -198,3 +198,133 @@ now supply the actual third-stage profile request boundary for those interval
 checks. Subsequent policy/fault/recovery replay and the two-fault harness remain
 required. Component results grant no capacity, admission, recovery, policy or
 production upgrade permission.
+
+## Receiver intervals and complete campaign admission
+
+A bounded receiver worker owns explicit repeated interval replay and a shared
+raw receiver fixture. The parent owns repeated witness replay and the combined
+admission gate. `qualifyRepeatedNativeReceiverIntervals({intervals, records,
+scope, nativeProbe, workerRecords, lifecycle, quality})` consumes raw envelopes,
+replays native/receiver/retirement dependencies, and preserves global interval
+indices. It validates all six stages, exact campaign/publication accounting,
+native leases and pacing, conservative freshness, a stable receiver clock and
+worker, and independent before/after polling brackets. Edge rows without complete
+independent brackets remain checked but cannot contribute covered load.
+
+Add an explicit repeated witness route in `measured-candidate-witness.mjs`, with
+original campaign and global quality context. Keep the legacy entry closed to
+v3/campaign metadata. Share arithmetic and timing checks without rewriting later
+campaigns as bootstrap/revision 0. The repeated route must match the original
+baseline event (bootstrap or first reset), third-stage campaign/ID, exact covered
+interval pair, captured admission clock and current native observation. Preserve
+global row/event indices; later rows cannot improve a historical witness.
+
+The combined repeated admission gate consumes raw candidate, probe, media,
+lifecycle, quality, receiver and worker exports and calls those independent
+replays itself. Require both actual candidate witnesses, 25% delivered padding
+headroom, exact native trial request/receipt ownership and decision deadlines.
+This completes the admission portion only; health confirmation, both faults,
+recovery and the complete repeated native harness remain separate required gates.
+
+
+## 2026-09-17: receiver intervals and admission implementation
+
+The explicit repeated receiver route now replays raw native, receiver,
+retirement and worker evidence. All six original stages require independent
+coverage; unbracketed edge rows stay validated but contribute no load. Global
+interval indices, campaign/publication totals and original retirement cutoffs
+are retained. App-to-receiver and collector-to-receiver clocks each have one
+consistent bound across both campaigns. Worker coverage cannot be borrowed from
+another worker attempt.
+
+`qualifyRepeatedCandidateWitness` shares the legacy arithmetic checks while
+using the original bootstrap/reset baseline and campaign-specific native history.
+It validates the captured pair without retrospective selection or revision
+rewriting. The legacy entry rejects repeated envelopes and campaign metadata.
+`qualifyRepeatedNativeAdmissions` replays all raw dependencies and joins both
+witnesses to their actual native trial requests, exact scalar measurements,
+deadlines, encoder receipts and 25% delivered padding headroom. Both campaigns
+must pass; media health, recovery, full policy and upgrade flags remain false.
+
+Fresh `pnpm test:tools` passed 2,843 tests (132 added). The combined suite includes
+valid complete admissions, stale/crossed ownership, missing raw evidence,
+scalar/deadline mutations and independently reconstructed insufficient headroom
+in either campaign. Initial failures and subsequent fixes are retained under
+`artifacts/qa/repeated-campaign-admission-*`. A test mutation initially added a
+non-schema frame field; it was corrected to remove an actual decoded frame.
+The runtime source tree is unchanged, so this checkpoint does not require a new
+native build. Independent specification and quality reviews approved this admission checkpoint;
+all 269,231 previously frozen evidence files remain unchanged. Full policy/fault/recovery replay and the repeated
+native harness remain next; no full repeated stream has been qualified.
+
+### Admission review correction
+
+Specification review found that independently plausible native observations
+could contradict one another between raw checkpoints. The combined gate now
+reconciles candidate initial/final observations, the captured admission probe,
+and every interval's matching native observation, including unselected rows.
+It uses the same one-message token allowance and unchanged-count timestamp rule
+as interval replay. A cached admission probe does not gain a fabricated exact
+read timestamp from `clock.after`. Failing-first regressions reproduced ten
+messages accepted in ten microseconds and unchanged counts with different
+acceptance timestamps; both are now rejected, while a valid bounded interpolation
+continues to pass. Specification re-review approved with 185 focused tests.
+
+### Task 5 implementation boundary
+
+Use an explicit `qualifyRepeatedMeasuredNativeRecovery` raw-input entry. Extract
+only the generic video/publication/source/processing/report-age/cadence/delivery
+replay from `qualifyMeasuredNativeEvidence`, then compose it with repeated raw
+admission and five-phase lifecycle evidence. Keep the legacy route closed to
+repeated exports. `qualifyMeasuredDeliveryOwnership` already follows arbitrary
+original revisions; delivery coverage must name trial revisions 1/3 and recovery
+revisions 2/4.
+
+The repeated policy replay must consume one original global event timeline and
+retain event/source/policy cursors, applied receipt/revision, source boundaries,
+owner, probation and recovery state. Explicit phase/event ranges may share
+invariant helpers; do not fabricate bootstrap records, slice away bridge events,
+or reset global sequences. Require two confirmations, two owned faults, two
+immediate matching resets, shared source/delivery recovery and one final stop.
+Preserve ten-second probation within acknowledgement plus 22.5 seconds,
+500-ms maximum cadence gaps and 250-ms decision freshness. Each controlled
+fault occurs after confirmation, which clears the controller's failure count;
+therefore each recovery requires ten seconds, rather than assuming the second
+must require twenty seconds.
+
+Use an explicit v2 raw fault envelope with two campaign-labelled pause records,
+original confirmation index/candidate/trial revision, process identity and
+before/paused samples. Reuse process/sample validation; make trial/reset revisions
+and native phase indexes explicit without weakening the legacy stall route.
+The second probe readiness must follow independently reconstructed first recovery
+and match its actual configuration, health sequence and acknowledgement. Native
+readiness duration alone is not health credit.
+
+Create a new full-policy fixture retaining the admission fixture as a component
+case. Its present second campaign at uptime 173 is intentionally not evidence of
+full recovery after the reset at 160; move the second campaign and all dependent
+bindings consistently when constructing the full timeline. Test skipped bridge
+events, reset global sequences, reused health/fault/PTS, early second readiness,
+cadence gaps, duplicate confirmation, extra resets and foreign-revision delivery.
+For Task 6, native quality JSON is currently written at stop, so causal live fault
+injection needs a bounded confirmation checkpoint referencing the original event
+and candidate. A fixed pause delay is insufficient for the repeated harness.
+
+
+Quality review additionally established a real causal ordering: the native
+candidate snapshot refreshes its current probe after freezing the completed
+measurement diagnostic. Symmetric pacing alone allowed that current probe to
+regress below the candidate's final accepted count. A failing-first combined
+regression reproduced the issue. The gate now enforces nonregressing count,
+last-acceptance time and lease from final measurement to admission, without
+inventing an exact read timestamp. The focused checkpoint passes 186 tests.
+
+
+The final ordering check also compares candidate/admission snapshot upper bounds
+with actual interval read brackets. Only provably ordered reads receive
+nonregression floors; overlapping or unknown reads retain symmetric pacing.
+A failing-first final-candidate-to-later-interval regression is preserved in
+`repeated-campaign-admission-read-order-*`. Specification and quality reviews
+approved the final correction; the focused checkpoint passes 187 tests.
+Task 4 is complete. The complete repeated policy, faults, recovery and native
+harness are still pending, and production upgrades remain disabled.
