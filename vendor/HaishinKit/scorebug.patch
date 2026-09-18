@@ -1336,7 +1336,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -8,6 +8,353 @@
+@@ -8,6 +8,395 @@
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
      static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
@@ -1439,6 +1439,48 @@
 +        let at = ProcessInfo.processInfo.systemUptime
 +        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
 +            stage: stage + 1, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted)
++        return installBandwidthProbe(probe, at: at)
++    }
++
++    /// Start a fresh campaign only from the current terminal staged identity.
++    /// The retired attempt remains available for an explicit retry if admission
++    /// fails. Its authority is never revived, and no campaign accounting carries.
++    /// Current v2 receivers do not support resetting a campaign to stage 1.
++    /// Receiver-backed callers require campaign-aware wire and receiver support.
++    public func restartBandwidthProbe(id: UUID, publishingGeneration expected: UInt64,
++                                      stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
++        try Task.checkCancellation()
++        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
++        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
++        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
++              let connection else { throw SRTBandwidthProbeError.notPublishing }
++        guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected else {
++            throw SRTBandwidthProbeError.obsolete
++        }
++        let retired = previous.snapshot(now: { ProcessInfo.processInfo.systemUptime })
++        guard retired.stage == stage, retired.reason != nil else { throw SRTBandwidthProbeError.obsolete }
++        guard !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
++        probeStarting = true
++        let configuration = probeConfigurationRevision
++        defer { probeStarting = false }
++        let oldWake = probeWakeTask
++        oldWake?.cancel()
++        await oldWake?.value
++        try Task.checkCancellation()
++        guard publishingGeneration == expected, writer.transportClock != nil, bandwidthProbe === previous,
++              videoReplacement == nil, probeConfigurationRevision == configuration else {
++            throw SRTBandwidthProbeError.obsolete
++        }
++        let statistics = await connection.samplePerformanceData()
++        try Task.checkCancellation()
++        guard publishingGeneration == expected, writer.transportClock != nil, bandwidthProbe === previous,
++              videoReplacement == nil, probeConfigurationRevision == configuration else {
++            throw SRTBandwidthProbeError.obsolete
++        }
++        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
++        let at = ProcessInfo.processInfo.systemUptime
++        let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
++            stage: 1, campaignStartedAt: at)
 +        return installBandwidthProbe(probe, at: at)
 +    }
 +
@@ -1690,7 +1732,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +369,7 @@
+@@ -22,7 +411,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1699,7 +1741,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +379,53 @@
+@@ -32,8 +421,53 @@
      }
 
      /// Creates a new stream object.
@@ -1754,7 +1796,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +437,7 @@
+@@ -45,7 +479,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1763,7 +1805,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +449,37 @@
+@@ -57,8 +491,37 @@
              }
              return
          }
@@ -1802,7 +1844,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +489,64 @@
+@@ -68,26 +531,64 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1887,7 +1929,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +575,90 @@
+@@ -116,16 +617,90 @@
          readyState = .playing
      }
 
@@ -1983,7 +2025,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +679,33 @@
+@@ -146,23 +721,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2019,7 +2061,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +715,36 @@
+@@ -172,16 +757,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {

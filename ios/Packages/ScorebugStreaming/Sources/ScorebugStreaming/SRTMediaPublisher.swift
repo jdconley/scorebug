@@ -60,7 +60,8 @@ public actor SRTMediaPublisher: MediaPublisher {
             cancelProbe: { await adapter.cancelBandwidthProbe(id: $0, publishingGeneration: $1) },
             probeSnapshot: { await adapter.bandwidthProbeSnapshot() },
             beginStagedProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true) },
-            replaceProbe: { try await adapter.replaceBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) })
+            replaceProbe: { try await adapter.replaceBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) },
+            restartProbe: { try await adapter.restartBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) })
     }
 
     struct Operations: Sendable {
@@ -80,6 +81,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var probeSnapshot: @Sendable () async -> PublishingBandwidthProbeSnapshot? = { nil }
         var beginStagedProbe: @Sendable (Int) async throws -> PublishingBandwidthProbeSnapshot = { _ in throw PublishingBandwidthProbeError.disabled }
         var replaceProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
+        var restartProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
     }
     init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
@@ -253,6 +255,29 @@ public actor SRTMediaPublisher: MediaPublisher {
         return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
             let value = try await self.operations.replaceProbe(id, publishingGeneration, stage, bitRate)
             guard value.isValidReplacement(of: prior, bitRate: bitRate) else {
+                await self.operations.cancelProbe(value.id, value.publishingGeneration)
+                throw PublishingBandwidthProbeError.obsolete
+            }
+            return value
+        } }
+    }
+
+    /// Begin fresh staged measurements after the exact native owner is terminal.
+    /// Current v2 receivers reject stage resets; receiver-backed scheduling must
+    /// wait for campaign-aware wire support. This method is not called by the app.
+    public func restartBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
+                                      bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
+        guard let prior = probeIdentity, prior.id == id, prior.publishingGeneration == publishingGeneration,
+              prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        let revision = probeRevision
+        return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
+            let requestedAt = ProcessInfo.processInfo.systemUptime
+            let value = try await self.operations.restartProbe(id, publishingGeneration, stage, bitRate)
+            guard value.isValidRestart(of: prior, bitRate: bitRate,
+                    requestedAt: requestedAt, observedAt: ProcessInfo.processInfo.systemUptime) else {
                 await self.operations.cancelProbe(value.id, value.publishingGeneration)
                 throw PublishingBandwidthProbeError.obsolete
             }

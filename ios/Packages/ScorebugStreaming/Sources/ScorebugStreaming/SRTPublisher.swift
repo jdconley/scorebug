@@ -286,6 +286,32 @@ public actor SRTPublisher {
         }
     }
 
+    /// Begin fresh staged measurements after the exact native owner is terminal.
+    /// Current v2 receivers reject stage resets; receiver-backed scheduling must
+    /// wait for campaign-aware wire support. This method is not called by the app.
+    public func restartBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
+                                      bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
+        guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
+              prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        let revision = probeRevision
+        return try await runProbeOperation(generation: generation, revision: revision) {
+            try await self.performProbeOperation(generation: generation, revision: revision) {
+                let requestedAt = ProcessInfo.processInfo.systemUptime
+                let value = PublishingBandwidthProbeSnapshot(try await self.stream.restartBandwidthProbe(
+                    id: id, publishingGeneration: generation, stage: stage, bitRate: bitRate))
+                guard value.isValidRestart(of: prior, bitRate: bitRate,
+                    requestedAt: requestedAt, observedAt: ProcessInfo.processInfo.systemUptime) else {
+                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
+                    throw PublishingBandwidthProbeError.obsolete
+                }
+                return value
+            }
+        }
+    }
+
     public func cancelBandwidthProbe(id: UUID, publishingGeneration: UInt64) async {
         guard probeIdentity?.id == id, probeIdentity?.publishingGeneration == publishingGeneration else { return }
         probeRevision &+= 1

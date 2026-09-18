@@ -63,6 +63,17 @@ extension PublishingBandwidthProbeSnapshot {
         return total >= previousTotal && total <= 16 * 1024 * 1024 - 1316
     }
 
+    /// A new campaign must carry neither the old traffic budget nor stale time.
+    func isValidRestart(of prior: Self, bitRate: Int, requestedAt: Double, observedAt: Double) -> Bool {
+        guard (1...12_000_000).contains(bitRate), prior.hasValidCampaignAccounting, id != prior.id,
+              publishingGeneration == prior.publishingGeneration,
+              isValidStart(staged: true, bitRate: bitRate), reason == nil, lastAcceptedAt == nil,
+              requestedAt.isFinite, observedAt.isFinite, requestedAt >= 0, observedAt >= requestedAt,
+              startedAt > prior.startedAt, startedAt >= requestedAt, startedAt <= observedAt,
+              leaseDeadline > startedAt, leaseDeadline <= startedAt + 0.3 else { return false }
+        return true
+    }
+
     private var hasValidCampaignAccounting: Bool {
         guard publishingGeneration > 0, let stage, (1...32).contains(stage), let campaignStartedAt,
               campaignStartedAt.isFinite, campaignStartedAt >= 0, startedAt.isFinite,
