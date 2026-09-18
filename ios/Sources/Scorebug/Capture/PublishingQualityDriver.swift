@@ -41,6 +41,12 @@ import ScorebugMedia
         self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
+    func candidateMeasurementContext(diagnostics: PublishingQualityTelemetry.Diagnostics) async -> PublishingQualitySession.CandidateMeasurementContext? {
+        guard !isClosed, !Task.isCancelled else { return nil }
+        let context = await owner.candidateMeasurementContext(diagnostics: diagnostics)
+        guard !isClosed, !Task.isCancelled else { return nil }
+        return context
+    }
     @discardableResult func tick(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics) -> Task<Void, Never>? {
         guard !isClosed else { return nil }
         if let task { return task }

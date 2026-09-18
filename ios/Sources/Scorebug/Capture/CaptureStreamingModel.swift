@@ -237,6 +237,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                  guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
                      candidate: candidateProfile, campaignOwner: campaignOwner, candidateHeadroom: candidateHeadroom,
+                     requiresMeasurementReadiness: measuredTrial,
                      lifecycle: measuredTrial ? NativeCandidateLifecycleAudit(scope: observations.snapshot.scope) : nil,
                      profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
                      joinedStop: transitions.map { evidence in {
@@ -457,6 +458,15 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try await session.start()
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
+                #if DEBUG
+                if let candidate = publisher as? NativeCandidatePublisher, let driver = qualityDriver {
+                    await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
+                        guard let self, let session, let driver else { return nil }
+                        return await self.candidateMeasurementContext(session: session, attempt: attempt, driver: driver)
+                    }
+                    try check(context, attempt)
+                }
+                #endif
                 if let readCandidate = measuredCandidateFactory(publisher) {
                     qualityDriver?.candidateInputProvider = { [weak self] state in
                         await self?.measuredCandidateInput(state, readCandidate: readCandidate)
@@ -760,6 +770,25 @@ struct PublishingClockObservation: Equatable, Sendable {
         receiverProbeLeaseDeadline = instant + .seconds(value.leaseDeadline - now)
         return value
     }
+
+    #if DEBUG
+    private func candidateMeasurementContext(session: PublishingSession, attempt: UUID,
+                                             driver: PublishingQualityDriver) async -> PublishingQualitySession.CandidateMeasurementContext? {
+        guard let original = publishing else { return nil }
+        func ownsCurrent() -> Bool {
+            guard let live = publishing else { return false }
+            return !Task.isCancelled && qualityDriver === driver && live.session === session &&
+                live.attempt == attempt && diagnosticAttemptID == attempt && localState == .publishing &&
+                activeRecordingID == original.context.id && current?.tap === original.context.tap &&
+                live.context.tap === original.context.tap && session.snapshot.state == .publishing &&
+                session.snapshot.failure == nil
+        }
+        guard ownsCurrent() else { return nil }
+        let context = await driver.candidateMeasurementContext(diagnostics: .init(snapshot: session.snapshot))
+        guard ownsCurrent() else { return nil }
+        return context
+    }
+    #endif
 
     func measuredCandidateInput(_ state: PublishingQualitySession.Snapshot,
                                 readCandidate: MeasuredCandidateReader) async -> PublishingCandidateAdmission? {

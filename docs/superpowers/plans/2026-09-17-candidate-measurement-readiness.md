@@ -125,3 +125,81 @@ fresh authority, preserving separate bounded diagnostics for each campaign. The
 existing one-campaign native fixture remains the baseline, not proof of repetition.
 Production upgrades remain disabled. Physical devices and other proxy hosts remain
 part of the full goal after repeated-cycle qualification.
+
+## Checked native startup integration
+
+The next step uses the real existing measured simulator route before introducing
+repetition. Add a checked NativeCandidateAttempt factory whose begin operation
+receives the current CandidateMeasurementContext, starts the paired owner with its
+acknowledged publishing generation, then rereads the provider. Scope, clock,
+receipt, acknowledgment, policy attempt/revision, baseline/target and recovery start
+must match; a later fresh health sequence may advance. If cancellation, missing
+readiness or changed ownership occurs after allocation, synchronously cancel that
+exact id and await its retirement before throwing. Legacy diagnostic routes retain
+their existing startup-based factory. No quality-setting operation is added.
+
+Use a one-install NativeCandidateContextReader with synchronous close and no cached
+context. It copies the provider under a short lock, awaits outside the lock and
+checks closure after return. The actual measured NativeCandidatePublisher owns the
+reader, uses it while waiting for the final probe stage, and closes it before stop.
+Readiness delay must not turn an earlier probe snapshot into current authority:
+after awaiting readiness, recheck time and the probe's live authority before pinning.
+
+CaptureStreamingModel installs the provider after creating PublishingQualityDriver.
+The provider checks the active recording/session/attempt and driver before and after
+awaiting the quality owner's query. Driver stop and cancellation return nil. The
+existing measured flag explicitly selects the checked constructor; missing provider
+fails closed rather than falling back to startup metadata.
+
+- [x] Bounded NativeCandidateAttempt implementer: test first for missing/changed
+  contexts before and after begin, forwarding current context to begin, newer healthy
+  sequence on the same configuration, and cancellation/changed-owner retirement joins.
+  Add reader tests for one install, missing provider, close during await and no cache.
+  Parent owns RED/GREEN and all heavy checks.
+- [x] Parent: wire reader into measured NativeCandidatePublisher, expose guarded
+  query forwarding on PublishingQualityDriver, install current provider in capture.
+  Add targeted routing/driver tests and keep nonmeasured diagnostic routes unchanged.
+- [x] Independent review, complete affected regressions, Release build and a fresh
+  full native measured recovery pass. Preserve prior raw media and failed runs.
+- [ ] Then implement the versioned repeating v3 campaign scheduler and repeated
+  native-cycle verifier from the remaining tasks above.
+
+## Checked startup checkpoint
+
+The actual measured simulator route now installs a current capture-owned provider,
+waits for fresh readiness, and checks the same configuration and recovery start
+again after native allocation. Missing or changed context retires the exact newly
+allocated owner before startup returns. Stop closes the one-install reader before
+awaiting teardown. The final probe snapshot must still have live authority and an
+unexpired lease after waiting for readiness. Legacy diagnostic startup is unchanged.
+
+Verification: 76 focused tests, all 424 FilmModel tests, all 458 Core tests, and the
+combined unsigned iPhone/Watch Release build pass. Independent specification and
+code-quality reviews approved. Direct replacement-session/driver integration
+coverage remains a nonblocking test gap; component tests cover cancellation and
+closure, and the full simulator run verifies the real provider wiring. Two earlier
+full test runs were interrupted and retained: new test fakes needed their captured
+lease to actually expire and their result stream explicitly finished on rejection.
+These were test-harness corrections; production freshness limits were unchanged.
+
+Fresh full native evidence is `artifacts/qa/native-app-ceM4Yc` (original harness
+exit 0, with unchanged runtime source hashes). iPhone 14/iOS 17.5 simulator,
+240p startup and a measured 360p candidate, controlled decoder stall, 90-second
+hold, direct RTMP recorder, local archive and native scoring/export all pass.
+The 1080p archive has 3,675 consecutive frames from 0 through 3,674 at 30 fps,
+zero source loss and all 61 audio markers. The 360p live recording has 3,299
+consecutive frames from 192 through 3,490 at 30 fps, zero saved source loss and
+55 matched expected markers, with about 65 ms A/V offset. Archive terminal is
+finished with no queue drops/rejections and valid diagnostic timing.
+
+The independent replay qualifies the measured upgrade, controlled fault, fallback
+and 14.9986 seconds of shared healthy recovery. It reconstructs all 140 delivery
+rows from 1,111 reports, with no unknown or uncertain rows. Two rows fell below
+24 fps during the fault; all post-reset rows have zero late/missing frames. This
+uses the existing 1.5-second deadline and 250 ms report freshness. It establishes
+one recovery cycle; repeatedRampUpQualified, networkLossRecoveryQualified and
+productionUpgradeAuthorized remain false.
+
+Next: implement the versioned repeated v3 probe/candidate coordinator, preserving
+per-campaign evidence and fresh authority; require two complete native cycles.
+Physical phone/Watch and additional proxy-host qualification remain outstanding.

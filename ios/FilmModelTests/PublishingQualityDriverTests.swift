@@ -5,6 +5,37 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testMeasurementContextForwardsCurrentOwnerWithoutApplyingQuality() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil)
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let context = await driver.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertEqual(context?.readiness.attemptID, f.attempt)
+        XCTAssertEqual(context?.applied.receipt.configuration, f.native.receipt?.configuration)
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        var invalid = diagnostics; invalid.isPublishing = false
+        let absent = await driver.candidateMeasurementContext(diagnostics: invalid)
+        XCTAssertNil(absent)
+        driver.cancel()
+        let closed = await driver.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(closed)
+        await driver.stop()
+    }
+
+    func testCancelledMeasurementQueryDoesNotReturnReadiness() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil)
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let query = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await driver.candidateMeasurementContext(diagnostics: diagnostics)
+        }
+        let context = await query.value
+        XCTAssertNil(context)
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        await driver.stop()
+    }
+
     func testCandidateWaitsForFreshOverlappingSourceWithoutConsumingIdentity() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true, priorHealthEnd: 110)
         var data: Data?, calls = 0

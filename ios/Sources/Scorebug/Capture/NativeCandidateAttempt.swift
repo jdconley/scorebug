@@ -7,7 +7,7 @@ import ScorebugStreaming
 /// an id. Cancellation and retirement always join that exact task and owner.
 final class NativeCandidateAttempt: @unchecked Sendable {
     struct Operations: Sendable {
-        let begin: @Sendable () async throws -> UUID
+        let begin: @Sendable (PublishingQualitySession.CandidateMeasurementContext?) async throws -> UUID
         let offer: @Sendable (CapturedMediaSample, UUID) -> Bool
         let cancel: @Sendable (UUID, PublishingCandidateMeasurement.Reason) -> Void
         let result: @Sendable (UUID) async -> PublishingCandidateMeasurement.Result?
@@ -22,10 +22,74 @@ final class NativeCandidateAttempt: @unchecked Sendable {
     private var cancellationSent = false
 
     init(operations: Operations) { self.operations = operations }
+    convenience init(operations: Operations, scope: VideoFrameObservationScope,
+                     candidate: PublishingVideoProfile,
+                     contextProvider: @escaping @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?) {
+        self.init(operations: .init(begin: { _ in
+            try Task.checkCancellation()
+            let before = await contextProvider()
+            try Task.checkCancellation()
+            guard let before, Self.valid(before, scope: scope, candidate: candidate) else {
+                throw PublishingSessionError.invalidState
+            }
+            let id = try await operations.begin(before)
+            do {
+                try Task.checkCancellation()
+                let after = await contextProvider()
+                try Task.checkCancellation()
+                guard let after, Self.valid(after, scope: scope, candidate: candidate),
+                      Self.sameConfiguration(before, after) else { throw PublishingSessionError.invalidState }
+                return id
+            } catch {
+                // Failed begin cannot return its UUID to the outer attempt. Keep
+                // this exact allocation owned until native retirement completes.
+                let reason: PublishingCandidateMeasurement.Reason = Task.isCancelled ? .cancelled : .ownerChanged
+                operations.cancel(id, reason)
+                await operations.retire(id, reason)
+                throw error
+            }
+        }, offer: operations.offer, cancel: operations.cancel, result: operations.result, retire: operations.retire))
+    }
+    convenience init(owner: PublishingCandidateCampaignOwner, scope: VideoFrameObservationScope,
+                     candidate: PublishingVideoProfile,
+                     contextProvider: @escaping @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?) {
+        self.init(operations: .init(begin: { context in
+            guard let context else { throw PublishingSessionError.invalidState }
+            return try await owner.begin(scope: scope, profile: candidate,
+                publishingGeneration: context.applied.receipt.publishingGeneration).id
+        }, offer: { owner.offer($0, id: $1) }, cancel: { owner.cancel(id: $0, reason: $1) },
+        result: { await owner.result(id: $0) }, retire: { await owner.retire(id: $0, reason: $1) }),
+        scope: scope, candidate: candidate, contextProvider: contextProvider)
+    }
+    private static func valid(_ context: PublishingQualitySession.CandidateMeasurementContext,
+                              scope: VideoFrameObservationScope, candidate: PublishingVideoProfile) -> Bool {
+        let readiness = context.readiness, applied = context.applied
+        return context.scope == scope && readiness.attemptID == scope.publishingAttemptID
+            && readiness.settings.profileID == candidate.rawValue && readiness.settings.videoBitrate == candidate.bitRate
+            && applied.attemptID == readiness.attemptID && applied.revision == readiness.appliedRevision
+            && applied.settings == readiness.baseline && applied.settings.videoBitrate == applied.receipt.configuration.bitRate
+            && context.clock.publishingGeneration == applied.receipt.publishingGeneration
+            && applied.acknowledgedAt.isFinite && applied.acknowledgedAt >= applied.receipt.acceptedAt
+    }
+    private static func sameConfiguration(_ before: PublishingQualitySession.CandidateMeasurementContext,
+                                          _ after: PublishingQualitySession.CandidateMeasurementContext) -> Bool {
+        let old = before.readiness, new = after.readiness
+        let oldApplied = before.applied, newApplied = after.applied
+        let oldReceipt = oldApplied.receipt, newReceipt = newApplied.receipt
+        return before.scope == after.scope && before.clock == after.clock
+            && old.attemptID == new.attemptID && old.appliedRevision == new.appliedRevision
+            && old.baseline == new.baseline && old.settings == new.settings && old.healthySince == new.healthySince
+            && new.healthSequence >= old.healthSequence && new.healthyThrough >= old.healthyThrough
+            && oldApplied.attemptID == newApplied.attemptID && oldApplied.revision == newApplied.revision
+            && oldApplied.settings == newApplied.settings && oldApplied.acknowledgedAt == newApplied.acknowledgedAt
+            && oldReceipt.publishingGeneration == newReceipt.publishingGeneration
+            && oldReceipt.configuration == newReceipt.configuration && oldReceipt.acceptedAt == newReceipt.acceptedAt
+            && oldReceipt.lastSubmittedSourcePTS == newReceipt.lastSubmittedSourcePTS
+    }
     convenience init(owner: PublishingCandidateCampaignOwner, publisher: any MediaPublisher,
                      scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
                      candidate: PublishingVideoProfile) {
-        self.init(operations: .init(begin: {
+        self.init(operations: .init(begin: { _ in
             guard let startup = publisher.videoStartup, startup.profile == liveProfile else {
                 throw PublishingSessionError.invalidState
             }
@@ -38,7 +102,7 @@ final class NativeCandidateAttempt: @unchecked Sendable {
         let task = try lock.withLock {
             guard startup == nil, cancellation == nil else { throw PublishingSessionError.invalidState }
             let begin = operations.begin
-            let task = Task { try await begin() }
+            let task = Task { try await begin(nil) }
             startup = task
             return task
         }
@@ -95,6 +159,31 @@ final class NativeCandidateAttempt: @unchecked Sendable {
             return task
         }
         await task.value
+    }
+}
+
+/// Capture owns the lifetime; installing once binds a provider without retaining
+/// an advisory context across asynchronous native startup.
+final class NativeCandidateContextReader: @unchecked Sendable {
+    typealias Provider = @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?
+    private let lock = NSLock()
+    private var provider: Provider?
+    private var closed = false
+
+    @discardableResult func install(_ provider: @escaping Provider) -> Bool {
+        lock.withLock {
+            guard !closed, self.provider == nil else { return false }
+            self.provider = provider
+            return true
+        }
+    }
+    func read() async -> PublishingQualitySession.CandidateMeasurementContext? {
+        guard let provider = lock.withLock({ closed ? nil : provider }) else { return nil }
+        let context = await provider()
+        return lock.withLock { closed ? nil : context }
+    }
+    func close() {
+        lock.withLock { closed = true; provider = nil }
     }
 }
 #endif

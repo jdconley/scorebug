@@ -866,6 +866,68 @@ extension NativeCandidateFixtureTests {
         }
     }
 
+    func testMeasuredRouteWaitsForReadinessAndClosesProviderOnStop() async throws {
+        let fake = CandidateFixtureFake()
+        fake.setProbe(stage: 3)
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(10)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start()
+        await wait { fake.probeReads >= 2 }
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        let installed = await wrapper.setMeasurementContextProvider { nil }
+        let replaced = await wrapper.setMeasurementContextProvider { nil }
+        XCTAssertTrue(installed); XCTAssertFalse(replaced)
+        await wrapper.stop()
+        let afterStop = await wrapper.setMeasurementContextProvider { nil }
+        XCTAssertFalse(afterStop)
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+    }
+
+    func testMeasuredRouteRechecksProbeAfterSuspendedReadiness() async throws {
+        for expired in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            let context = try XCTUnwrap(value)
+            let fake = CandidateFixtureFake(); fake.setProbe(stage: 3)
+            if expired { fake.updateProbeLease(after: 0.05) }
+            let provider = CandidateContextGate(context)
+            let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+                operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(10), maximumProbeWaitPolls: 2),
+                candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360)
+            await wrapper.setDiagnostics { fake.pressure }
+            _ = await wrapper.setMeasurementContextProvider { await provider.read() }
+            try await wrapper.start(); await wait { provider.waiting }
+            if expired { try await Task.sleep(for: .milliseconds(60)) } else { fake.mutateProbe(4) }
+            provider.release(); fake.finish()
+            await wrapper.waitForMeasurement()
+            XCTAssertFalse(fake.events.contains("candidateStart"))
+            await wrapper.stop(); await f.owner.stop()
+        }
+    }
+
+    func testMeasuredRouteStartsWithMatchingReadinessAndRejectsForeignScope() async throws {
+        for matching in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            let context = try XCTUnwrap(value)
+            let fake = CandidateFixtureFake(); fake.setProbe(stage: 3)
+            let wrapper = NativeCandidatePublisher(publisher: fake, scope: matching ? context.scope : fake.scope,
+                liveProfile: .low240, operations: fake.operations,
+                timing: .init(delay: .zero, poll: .milliseconds(10), maximumProbeWaitPolls: 2),
+                candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360)
+            await wrapper.setDiagnostics { fake.pressure }
+            _ = await wrapper.setMeasurementContextProvider { context }
+            try await wrapper.start()
+            if matching { await wait { fake.waiting } }
+            fake.finish()
+            await wrapper.waitForMeasurement()
+            XCTAssertEqual(fake.events.contains("candidateStart"), matching)
+            await wrapper.stop(); await f.owner.stop()
+        }
+    }
+
     private func makeCandidate(_ fake: CandidateFixtureFake, delay: Duration = .zero, candidateHeadroom: Bool = false, probeWaitPolls: Int = 250, poll: Duration = .milliseconds(10), lifecycle: NativeCandidateLifecycleAudit? = nil, profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil, joinedStop: (@Sendable () async -> Void)? = nil) -> NativeCandidatePublisher {
         .init(publisher: fake, scope: fake.scope, liveProfile: .low240,
             operations: fake.operations, timing: .init(delay: delay, poll: poll, maximumPolls: 50, maximumProbeWaitPolls: probeWaitPolls), candidateHeadroom: candidateHeadroom, lifecycle: lifecycle, profileReceipt: profileReceipt, joinedStop: joinedStop)
@@ -1116,4 +1178,20 @@ private func candidateVideo(at pts: CMTime = .zero) throws -> CapturedMediaSampl
     XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
         formatDescription: try XCTUnwrap(format), sampleTiming: &timing, sampleBufferOut: &sample), noErr)
     return try CapturedMediaSample(sampleBuffer: XCTUnwrap(sample), kind: .video)
+}
+
+private final class CandidateContextGate: @unchecked Sendable {
+    private let context: PublishingQualitySession.CandidateMeasurementContext
+    private let gate = AsyncStream<Void>.makeStream()
+    private let lock = NSLock()
+    private var entered = false
+    init(_ context: PublishingQualitySession.CandidateMeasurementContext) { self.context = context }
+    var waiting: Bool { lock.withLock { entered } }
+    func read() async -> PublishingQualitySession.CandidateMeasurementContext? {
+        lock.withLock { entered = true }
+        let stream = gate.stream
+        await Task.detached { for await _ in stream {} }.value
+        return context
+    }
+    func release() { gate.continuation.finish() }
 }
