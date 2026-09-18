@@ -134,14 +134,17 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         let result: @Sendable () async -> Data
         let export: @Sendable (Data) async -> Void
         let typedResult: @Sendable () async -> PublishingCandidateCost?
+        var retire: @Sendable () async -> Void
         init(start: @escaping @Sendable () async throws -> Void,
              offer: @escaping @Sendable (CapturedMediaSample) -> Bool,
              cancel: @escaping @Sendable (PublishingCandidateMeasurement.Reason) -> Void,
              result: @escaping @Sendable () async -> Data,
              export: @escaping @Sendable (Data) async -> Void,
-             typedResult: @escaping @Sendable () async -> PublishingCandidateCost? = { nil }) {
+             typedResult: @escaping @Sendable () async -> PublishingCandidateCost? = { nil },
+             retire: @escaping @Sendable () async -> Void = {}) {
             self.start = start; self.offer = offer; self.cancel = cancel
             self.result = result; self.export = export; self.typedResult = typedResult
+            self.retire = retire
         }
     }
     struct CandidateSnapshot: Sendable {
@@ -190,7 +193,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             var object = NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
                 bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
                 acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
-                reason: value.reason, stage: value.stage).object
+                reason: value.reason, stage: value.stage, campaign: value.campaign).object
             object["observedAt"] = observedAt
             return object
         }
@@ -211,27 +214,27 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private let lifecycle: NativeCandidateLifecycleAudit?
     private let profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)?
     private let joinedStop: (@Sendable () async -> Void)?
+    private let candidateStop: (@Sendable () async -> Void)?
     private var completedCandidateID: UUID?
     private var profileWrites: [UUID: Task<PublishingVideoProfileChange, Error>] = [:]
     private var bitRateWrites: [UUID: Task<PublishingBitRateChange, Error>] = [:]
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
-         candidate: PublishingVideoProfile, transport: PublishingCandidateTransport, candidateHeadroom: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
+         candidate: PublishingVideoProfile, campaignOwner: PublishingCandidateCampaignOwner, candidateHeadroom: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
-         joinedStop: (@Sendable () async -> Void)? = nil) throws {
-        let owner = try PublishingCandidateMeasurement(scope: scope, profile: candidate, transport: transport)
+         joinedStop: (@Sendable () async -> Void)? = nil) {
+        let attempt = NativeCandidateAttempt(owner: campaignOwner, publisher: publisher,
+            scope: scope, liveProfile: liveProfile, candidate: candidate)
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile; timing = Timing()
         self.candidateHeadroom = candidateHeadroom
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
-        operations = .init(start: {
-            guard let startup = publisher.videoStartup, startup.profile == liveProfile,
-                  transport.arm(publishingGeneration: startup.publishingGeneration) else {
-                throw PublishingSessionError.invalidState
-            }
-            try await owner.start()
-        }, offer: { owner.offer($0) }, cancel: { owner.cancel(reason: $0) },
-            result: { NativeCandidateFixture.data(await owner.result()) }, export: { await Self.persist($0) },
-            typedResult: { PublishingCandidateCost(await owner.result()) })
+        candidateStop = { await campaignOwner.stop() }
+        operations = .init(start: { try await attempt.start() },
+            offer: { attempt.offer($0) }, cancel: { attempt.cancel($0) },
+            result: { await attempt.result().map(NativeCandidateFixture.data) ?? Data("null".utf8) },
+            export: { await Self.persist($0) },
+            typedResult: { await attempt.result().flatMap(PublishingCandidateCost.init) },
+            retire: { await attempt.retire() })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, liveProfile: PublishingVideoProfile,
          operations: Operations, timing: Timing, candidateHeadroom: Bool = false, lifecycle: NativeCandidateLifecycleAudit? = nil,
@@ -240,6 +243,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
+        candidateStop = nil
     }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func setDiagnostics(_ read: @escaping @Sendable () -> Pressure?) { diagnostics = read }
@@ -384,6 +388,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             for write in bitRates { _ = try? await write.value }
             await pending?.value
             if measurement == nil { measurement = await operations.result() }
+            await operations.retire()
+            await candidateStop?()
             // Measured mode exports the diagnostic frozen at measurement join;
             // later application retirement belongs only to lifecycle evidence.
             if lifecycle != nil, frozenMeasurementExport == nil { frozenMeasurementExport = try? exportData() }
@@ -470,7 +476,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             if recordDiagnostic, let value { finalProbe = .init(value: value, observedAt: now) }
             guard let pinnedProbe, let value,
                   value.id == pinnedProbe.id, value.publishingGeneration == pinnedProbe.publishingGeneration,
-                  value.stage == pinnedProbe.stage, value.bitRate == pinnedProbe.bitRate,
+                  value.stage == pinnedProbe.stage, value.campaign == pinnedProbe.campaign, value.bitRate == pinnedProbe.bitRate,
                   value.startedAt == pinnedProbe.startedAt, value.isActive(at: now),
                   value.acceptedPayloadBytes >= (currentProbe?.acceptedPayloadBytes ?? 0),
                   value.leaseDeadline >= (currentProbe?.leaseDeadline ?? 0) else {

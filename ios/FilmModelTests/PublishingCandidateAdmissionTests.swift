@@ -29,7 +29,7 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
                 currentReceipt: { receipt }, candidateIsCurrent: candidateIsCurrent)
         }
     }
-    private func fixture(_ fault: Fault? = nil) throws -> Fixture {
+    private func fixture(_ fault: Fault? = nil, campaign: UInt32? = nil) throws -> Fixture {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
@@ -43,12 +43,13 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
             p.publishingGeneration = "7"; p.convention = "mpegts-null-probe-v2"; p.stage = 3; p.bitRate = 12_000_000
             p.deliveredMessages = String(messages); p.deliveredPayloadBytes = String(messages * 1316)
             p.totalDeliveredPayloadBytes = p.deliveredPayloadBytes; p.nextSequence = p.deliveredMessages
+            if let campaign { p.convention = "mpegts-null-probe-v3"; p.campaign = String(campaign); p.campaignDeliveredPayloadBytes = p.deliveredPayloadBytes }
             p.pendingPackets = 0; p.observedAtNanoseconds = String(Int64(time * 1e9))
             p.firstDeliveredAtNanoseconds = String(Int64((endpoint - 4.5) * 1e9)); p.lastDeliveredAtNanoseconds = String(Int64((time - 0.01) * 1e9))
             response.status.receiverProbe = .init(snapshot: p, ageUpperBoundMs: 10)
             let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response,
                 expected: .init(gameId: "match", generation: 2, workerId: "mac", publishingAttemptId: attempt.uuidString.lowercased(),
-                    probeId: probeID.uuidString.lowercased(), publishingGeneration: 7, bitRate: 12_000_000, stage: 3),
+                    probeId: probeID.uuidString.lowercased(), publishingGeneration: 7, bitRate: 12_000_000, stage: 3, campaign: campaign),
                 receivedAt: anchor + .seconds(time), requestDuration: .milliseconds(10)))
             tracker.observe(evidence, acceptedPayloadBytes: UInt64(messages * 1316), senderActive: true, at: anchor + .seconds(time))
         }
@@ -71,11 +72,11 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
             sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400)
         let binding = PublishingProbeObservation(id: probeID, publishingGeneration: 7, bitRate: 12_000_000,
             startedAt: 109, leaseDeadline: 109.9, acceptedPayloadBytes: 131600, lastAcceptedAt: 109.59,
-            reason: nil, stage: 3, permitsCurrentOwner: { _, _, _ in true })
+            reason: nil, stage: 3, campaign: campaign, permitsCurrentOwner: { _, _, _ in true })
         let probe = PublishingProbeObservation(id: fault == .wrongProbe ? UUID() : probeID, publishingGeneration: 7,
             bitRate: fault == .wrongRate ? 2_000_000 : 12_000_000, startedAt: 109,
             leaseDeadline: fault == .expiredLease ? 115 : 115.3, acceptedPayloadBytes: 6_000 * 1316,
-            lastAcceptedAt: 115.09, reason: nil, stage: fault == .wrongStage ? 2 : 3,
+            lastAcceptedAt: 115.09, reason: nil, stage: fault == .wrongStage ? 2 : 3, campaign: campaign,
             permitsCurrentOwner: { _, _, _ in fault != .revokedProbe })
         var f = Fixture(measurement: measurement, applied: applied, binding: binding,
             boundAt: fault == .lateBinding ? 111 : 109.6,
@@ -86,6 +87,39 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         // A changed policy revision has no effect until rechecking an existing admission.
         if fault == .wrongRevision { f.applied.revision = 1 }
         return f
+    }
+    func testCampaignAdmissionRequiresExactBindingCurrentAndReceiverIdentity() throws {
+        for ordinal: UInt32? in [nil, 1, UInt32.max] {
+            let valid = try fixture(campaign: ordinal)
+            XCTAssertNotNil(valid.admit())
+            for other: UInt32? in [nil, 1, 2, UInt32.max] where other != ordinal {
+                var changedBinding = valid; changedBinding.binding.campaign = other
+                XCTAssertNil(changedBinding.admit(), "changed binding campaign")
+                var changedCurrent = valid; changedCurrent.probe.campaign = other
+                XCTAssertNil(changedCurrent.admit(), "changed current campaign")
+                var changedBoth = valid
+                changedBoth.binding.campaign = other; changedBoth.probe.campaign = other
+                XCTAssertNil(changedBoth.admit(), "campaign differs from receiver")
+            }
+        }
+    }
+    func testCampaignAuditRetainsFullWidthIdentityAndLegacyOmitsIt() throws {
+        for ordinal: UInt32? in [nil, UInt32.max] {
+            let admission = try XCTUnwrap(try fixture(campaign: ordinal).admit())
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: admission.auditData()) as? [String: Any])
+            for field in ["binding", "probe"] {
+                let probe = try XCTUnwrap(object[field] as? [String: Any])
+                XCTAssertEqual(probe["campaign"] as? String, ordinal.map(String.init))
+                if ordinal == nil { XCTAssertNil(probe["campaign"]) }
+            }
+            let intervals = try XCTUnwrap(object["intervals"] as? [[String: Any]])
+            for interval in intervals {
+                let end = try XCTUnwrap(interval["end"] as? [String: Any])
+                let expected = try XCTUnwrap(end["expected"] as? [String: Any])
+                XCTAssertEqual(expected["campaign"] as? String, ordinal.map(String.init))
+                if ordinal == nil { XCTAssertNil(expected["campaign"]) }
+            }
+        }
     }
     func testCurrentPairProducesActualAccountedCostAndShortLease() throws {
         let f = try fixture(), admission = try XCTUnwrap(f.admit())

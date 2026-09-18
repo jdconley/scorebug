@@ -41,6 +41,88 @@ const qualify = (f) => {
   return qualifyMeasuredRecoveryPolicy(f);
 };
 const post = (f) => f.quality.events.filter((e) => e.kind === 'evaluated' && e.revision === '2');
+function precedingSameStall(f) {
+  const index = f.cadenceReports.rows.findLastIndex(
+    (r) => r.evaluatedUptime <= f.quality.events[16].evaluatedAt,
+  );
+  const row = f.cadenceReports.rows[index - 1];
+  row.observedStall = true;
+  row.response.status.observation.decoderCadence.progress.stalled = true;
+  row.response.status.observation.decoderCadence.progress.ageMs = 1001;
+  return row;
+}
+test('recovery includes a fresh same-pause stall report immediately before the consumed report', () => {
+  const f = fixture(),
+    row = precedingSameStall(f);
+  const result = qualify(f);
+  assert.equal(result.recoveryPolicyQualified, true);
+  assert.equal(result.cadenceAllowedStallStart, row.evaluatedUptime);
+  assert.equal(result.sharedCoverage.start, post(f)[1].window.start);
+});
+test('multiple adjacent matching stall reports retain one pause allowance', () => {
+  const f = fixture(),
+    last = precedingSameStall(f);
+  const row = f.cadenceReports.rows[f.cadenceReports.rows.indexOf(last) - 1];
+  row.observedStall = true;
+  Object.assign(row.response.status.observation.decoderCadence.progress, {
+    stalled: true,
+    ageMs: 1001,
+  });
+  assert.equal(qualify(f).cadenceAllowedStallStart, row.evaluatedUptime);
+});
+test('matching stall reports cannot bridge missing cadence coverage', () => {
+  const f = fixture(),
+    row = precedingSameStall(f);
+  f.cadenceReports.rows.splice(f.cadenceReports.rows.indexOf(row) - 6, 6);
+  assert.throws(() => qualify(f));
+});
+for (const [name, mutate] of [
+  [
+    'different progress',
+    (r) => r.response.status.observation.decoderCadence.progress.lastFreshPTS--,
+  ],
+  [
+    'different decoder scope',
+    (r) =>
+      (r.response.status.observation.decoderCadence.scopeID =
+        '00000000-0000-4000-8000-000000000001'),
+  ],
+  [
+    'different publication',
+    (r) => (r.response.status.publication.readerId = '00000000-0000-4000-8000-000000000001'),
+  ],
+  ['unavailable cadence', (r) => (r.observedStall = null)],
+  ['expired cadence', (r) => (r.response.status.expiresAt = r.response.serverTime)],
+  [
+    'stale cadence',
+    (r) => {
+      r.response.status.decoderCadenceAgeUpperBoundMs = 251;
+      r.sampleAgeSeconds = 0.251 + r.requestSeconds + r.residenceSeconds;
+    },
+  ],
+  [
+    'reaction budget exceeded',
+    (r) => (r.response.status.observation.decoderCadence.progress.ageMs = 1501),
+  ],
+])
+  test(`preceding stall rejects ${name}`, () => {
+    const f = fixture();
+    mutate(precedingSameStall(f));
+    assert.throws(() => qualify(f));
+  });
+test('a separated earlier stall cannot share the consumed pause allowance', () => {
+  const f = fixture();
+  const index = f.cadenceReports.rows.findLastIndex(
+    (r) => r.evaluatedUptime <= f.quality.events[16].evaluatedAt,
+  );
+  const row = f.cadenceReports.rows[index - 2];
+  row.observedStall = true;
+  Object.assign(row.response.status.observation.decoderCadence.progress, {
+    stalled: true,
+    ageMs: 1001,
+  });
+  assert.throws(() => qualify(f));
+});
 test('replays actual reset suffix and grants only whole windows covered by both healthy delivery lanes', () => {
   const f = fixture(),
     before = JSON.stringify(f),
@@ -363,6 +445,9 @@ test('actual C full suffix uses independent common proofs, confirmed prefix and 
   const r = qualify(f);
   assert.equal(r.recoveryPolicyQualified, true);
   assert.equal(r.productionUpgradeAuthorized, false);
+  const triggerReport = f.cadenceReports.rows[f.faultQualification.triggerCadenceReportIndex];
+  assert.equal(triggerReport.observedStall, false);
+  assert.equal(r.cadenceAllowedStallStart, triggerReport.evaluatedUptime);
   assert(r.sharedCoverage.coverageSeconds >= 10);
   assert.equal(r.healthyWindows.length, 5);
   assert.equal(r.sharedCoverage.start, post(f)[1].window.start);

@@ -153,6 +153,46 @@ extension NativeCandidateFixtureTests {
             XCTAssertFalse(snapshot.permitsCurrentCandidate(snapshot.cost.id))
         }
     }
+    func testCampaignSnapshotExportAndLifecycleKeepFullIdentity() async throws {
+        let fake = CandidateFixtureFake()
+        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+        let wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10), lifecycle: audit)
+        fake.produceTypedCost = true; fake.allowProfileWrite = true; fake.setProbe(stage: 3)
+        fake.setCampaign(UInt32.max)
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement()
+        let observed = await wrapper.candidateSnapshot()
+        let snapshot = try XCTUnwrap(observed)
+        XCTAssertEqual(snapshot.binding.campaign, UInt32.max)
+        _ = try await wrapper.setVideoProfile(.low360)
+        await wrapper.stop()
+        let exported = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+        for key in ["initial", "final"] {
+            let probe = try XCTUnwrap(exported[key] as? [String: Any])
+            XCTAssertEqual(probe["campaign"] as? String, "4294967295")
+        }
+        let rows = try XCTUnwrap(fake.lifecycleObject?["profileRequests"] as? [[String: Any]])
+        let binding = try XCTUnwrap(rows.first?["probeBinding"] as? [String: Any])
+        let probe = try XCTUnwrap(binding["observation"] as? [String: Any])
+        XCTAssertEqual(probe["campaign"] as? String, "4294967295")
+    }
+    func testChangedCampaignRevokesJoinedCandidateEvenWhenOtherIdentityIsUnchanged() async throws {
+        for other: UInt32? in [nil, 2, UInt32.max] {
+            let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
+            fake.produceTypedCost = true; fake.setProbe(stage: 3); fake.setCampaign(1)
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.finish(); await wrapper.waitForMeasurement()
+            let initial = await wrapper.candidateSnapshot()
+            let old = try XCTUnwrap(initial)
+            fake.setCampaign(other)
+            let changed = await wrapper.candidateSnapshot()
+            XCTAssertNil(changed)
+            XCTAssertFalse(old.permitsCurrentCandidate(old.cost.id))
+            await wrapper.stop()
+        }
+    }
     func testTypedSnapshotRequiresJoinAndPreservesPinnedAndFreshProbeEvidence() async throws {
         let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
         fake.produceTypedCost = true; fake.setProbe(stage: 3)
@@ -609,6 +649,29 @@ extension NativeCandidateFixtureTests {
             XCTAssertEqual(fake.events.contains("candidateStart"), sampling)
         }
     }
+    func testStopJoinsCandidateSlotRetirementBeforeExport() async throws {
+        let fake = CandidateFixtureFake()
+        let gate = AsyncStream<Void>.makeStream()
+        var operations = fake.operations
+        operations.retire = {
+            fake.markJoinedStop()
+            for await _ in gate.stream {}
+        }
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .milliseconds(10), maximumPolls: 50))
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement()
+        let first = Task { await wrapper.stop() }
+        await wait { fake.joinedStops == 1 }
+        let second = Task { await wrapper.stop() }
+        XCTAssertEqual(fake.exports, 0)
+        gate.continuation.finish()
+        await first.value; await second.value
+        XCTAssertEqual(fake.exports, 1)
+        XCTAssertEqual(fake.joinedStops, 1)
+    }
+
     func testStopJoinsSuspendedNativeProfileWriteBeforeExport() async throws {
         let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake)
         fake.allowProfileWrite = true; fake.blockProfileWrite = true
@@ -895,6 +958,7 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
     func releaseProbeRead() { probeReadGate.continuation.finish() }
     var probeReadIsBlocked: Bool { lock.withLock { storedProbeReadIsBlocked } }
     var probeReads: Int { lock.withLock { storedProbeReads } }
+    func setCampaign(_ value: UInt32?) { lock.withLock { probe?.campaign = value } }
     func setProbe(stage: Int, age: Double = 1) {
         lock.withLock {
             let now = ProcessInfo.processInfo.systemUptime

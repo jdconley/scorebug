@@ -212,15 +212,14 @@ struct PublishingClockObservation: Equatable, Sendable {
                  didStop = { proof.persist() }
              }
              else { observer = nil; didStop = nil }
-             let candidateTransport: PublishingCandidateTransport?
+             let campaignOwner: PublishingCandidateCampaignOwner?
              let audioObserver: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
-             if let candidateProfile {
-                 guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-                 let window = PublishingCandidateTransport(scope: observations.snapshot.scope, profile: candidateProfile)
-                 candidateTransport = window
-             } else { candidateTransport = nil }
-             if proof != nil || candidateTransport != nil {
-                 audioObserver = { frame in proof?.observeAudio(frame); candidateTransport?.observeAudio(frame) }
+             if candidateProfile != nil {
+                 guard observations != nil else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 campaignOwner = PublishingCandidateCampaignOwner()
+             } else { campaignOwner = nil }
+             if proof != nil || campaignOwner != nil {
+                 audioObserver = { frame in proof?.observeAudio(frame); campaignOwner?.observeAudio(frame) }
              } else { audioObserver = nil }
              let publisher = SRTMediaPublisher(url: target, observations: observations,
                  encoderConfigurationObserver: proof.map { proof in { frame in proof.observeEncoding(frame); transitions?.observeEncoder(frame) } }, videoProfile: profile,
@@ -235,9 +234,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                      mode: probeMode, candidateHeadroom: candidateHeadroom)
              } else { primary = publisher }
              if let candidateProfile {
-                 guard let observations, let candidateTransport else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
-                 return try NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
-                     candidate: candidateProfile, transport: candidateTransport, candidateHeadroom: candidateHeadroom,
+                 guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeCandidatePublisher(publisher: primary, scope: observations.snapshot.scope, liveProfile: profile,
+                     candidate: candidateProfile, campaignOwner: campaignOwner, candidateHeadroom: candidateHeadroom,
                      lifecycle: measuredTrial ? NativeCandidateLifecycleAudit(scope: observations.snapshot.scope) : nil,
                      profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
                      joinedStop: transitions.map { evidence in {

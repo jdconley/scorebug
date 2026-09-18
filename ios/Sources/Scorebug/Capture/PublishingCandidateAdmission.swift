@@ -113,10 +113,10 @@ struct PublishingCandidateAdmission: Sendable {
               candidateIsCurrent(), authority.permits(receiver), authority.permits(pair.older.end),
               pair.older.end.snapshot == pair.newer.start,
               binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
-              binding.stage == probe.stage, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
+              binding.stage == probe.stage, binding.campaign == probe.campaign, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
               binding.startedAt + 0.5 <= boundAt, boundAt <= m.startedAt, binding.isActive(at: boundAt),
               probe.id.uuidString.lowercased() == expected.probeId, probe.publishingGeneration == expected.publishingGeneration,
-              probe.stage == expected.stage, probe.bitRate == expected.bitRate, probe.stage != nil,
+              probe.stage == expected.stage, probe.campaign == expected.campaign, probe.bitRate == expected.bitRate, probe.stage != nil,
               probe.acceptedPayloadBytes >= binding.acceptedPayloadBytes, probe.leaseDeadline >= binding.leaseDeadline,
               probe.isActive(at: now), probe.leaseDeadline - now <= 0.300001,
               let receiverBytes = UInt64(receiver.snapshot.deliveredPayloadBytes), receiverBytes <= probe.acceptedPayloadBytes,
@@ -205,19 +205,23 @@ extension PublishingCandidateAdmission {
             ["value": String(pts.value), "timescale": pts.timescale, "epoch": String(pts.epoch), "flags": pts.flags.rawValue]
         }
         func probeObject(_ p: PublishingProbeObservation) -> [String: Any] {
-            ["id": p.id.uuidString.lowercased(), "publishingGeneration": String(p.publishingGeneration),
+            var object: [String: Any] = ["id": p.id.uuidString.lowercased(), "publishingGeneration": String(p.publishingGeneration),
              "stage": optional(p.stage), "bitRate": p.bitRate, "startedAt": p.startedAt,
              "leaseDeadline": p.leaseDeadline, "acceptedPayloadBytes": String(p.acceptedPayloadBytes),
              "lastAcceptedAt": optional(p.lastAcceptedAt), "reason": optional(p.reason)]
+            if let campaign = p.campaign { object["campaign"] = String(campaign) }
+            return object
         }
         func interval(_ i: WorkerReceiverProbeInterval) throws -> [String: Any] {
             let end = i.end, e = end.expected, duration = i.duration.components
+            var expected: [String: Any] = ["gameId": e.gameId, "generation": e.generation, "workerId": e.workerId,
+                "publishingAttemptId": e.publishingAttemptId, "publishingGeneration": String(e.publishingGeneration),
+                "probeId": e.probeId, "stage": optional(e.stage), "bitRate": e.bitRate]
+            if let campaign = e.campaign { expected["campaign"] = String(campaign) }
             return ["start": try object(i.start),
                 "end": ["snapshot": try object(end.snapshot), "publication": try object(end.publication),
                     "workerEpoch": end.workerEpoch, "workerAttempt": end.workerAttempt,
-                    "expected": ["gameId": e.gameId, "generation": e.generation, "workerId": e.workerId,
-                        "publishingAttemptId": e.publishingAttemptId, "publishingGeneration": String(e.publishingGeneration),
-                        "probeId": e.probeId, "stage": optional(e.stage), "bitRate": e.bitRate],
+                    "expected": expected,
                     "serverAgeUpperBoundMs": end.serverAgeUpperBoundMs,
                     "receivedAtUptimeBounds": point(end.receivedAt),
                     "requestStartedAtUptimeBounds": point(end.requestStartedAt),

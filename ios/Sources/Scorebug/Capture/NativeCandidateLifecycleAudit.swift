@@ -111,7 +111,7 @@ final class NativeCandidateLifecycleAudit: @unchecked Sendable {
         NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
             bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
             acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
-            reason: value.reason, stage: value.stage).object
+            reason: value.reason, stage: value.stage, campaign: value.campaign).object
     }
     private static func profileReceipt(_ value: PublishingVideoProfileChange) -> [String: Any] {
         ["profile": value.profile.rawValue, "publishingGeneration": String(value.publishingGeneration),

@@ -562,6 +562,42 @@ export function qualifyMeasuredRecoveryPolicy({
   );
   for (const row of deliveryAudit.rows.filter((row) => row.appliedRevision === '2'))
     assert(row.evaluatedAt <= cadenceCheckedThrough);
+  // The control task may consume a second fresh report of the same owned pause.
+  // Preserve that causal trigger; include only adjacent preceding reports of its
+  // identical stalled progress in the allowance, never in healthy recovery credit.
+  let cadenceAllowedStallStart = triggerReport.evaluatedUptime;
+  if (triggerReport.observedStall === true) {
+    const scopeID = triggerReport.response.status.observation.decoderCadence.scopeID;
+    for (let index = cadenceReports.rows.indexOf(triggerReport) - 1; index >= 0; index--) {
+      const row = cadenceReports.rows[index],
+        status = row.response?.status;
+      const cadence = status?.observation?.decoderCadence,
+        progress = cadence?.progress;
+      if (
+        row.observedStall !== true ||
+        progress?.stalled !== true ||
+        progress.lastFreshPTS !== lastStalledPTS ||
+        cadence.scopeID !== scopeID
+      )
+        break;
+      assert(row.evaluatedUptime >= prefix.confirmedAt, 'Owned stall precedes confirmation');
+      const upperReaction =
+        progress.ageMs / 1000 + row.sampleAgeSeconds + trigger.evaluatedAt - row.evaluatedUptime;
+      assert(
+        finite(upperReaction) && upperReaction <= 1.5,
+        'Earlier stall report exceeds reaction budget',
+      );
+      const ttl = Math.max(
+        0,
+        Math.min(5, (Date.parse(status.expiresAt) - Date.parse(row.response.serverTime)) / 1000),
+      );
+      assert(
+        row.evaluatedUptime < row.receivedUptime + ttl - row.requestSeconds,
+        'Expired earlier stall report',
+      );
+      cadenceAllowedStallStart = row.evaluatedUptime;
+    }
+  }
   qualifyMeasuredCadenceContinuity({
     reports: cadenceReports.rows,
     start: prefixReport.evaluatedUptime,
@@ -569,7 +605,7 @@ export function qualifyMeasuredRecoveryPolicy({
     source: confirmed.source,
     scope: snapshot.scope,
     allowedStall: {
-      start: triggerReport.evaluatedUptime,
+      start: cadenceAllowedStallStart,
       end: sharedCoverage.start,
       lastFreshPTS: lastStalledPTS,
     },
@@ -584,6 +620,7 @@ export function qualifyMeasuredRecoveryPolicy({
     healthyWindows,
     resumedAt,
     cadenceCheckedThrough,
+    cadenceAllowedStallStart,
     sharedCoverage,
     deliveryLanes: lanes,
     delivery,
