@@ -203,7 +203,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
              let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
              let transitions = measuredTrial ? observations.map {
-                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: .measured)
+                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: probeMode == .repeated ? .repeatedMeasured : .measured)
              } : nil
              let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
              let didStop: (@Sendable () -> Void)?

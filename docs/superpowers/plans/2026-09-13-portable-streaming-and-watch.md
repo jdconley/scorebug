@@ -2307,3 +2307,24 @@ Next implement the versioned two-cycle verifier and two controlled faults, then
 run and independently decode the full repeated stream and archive. Physical
 phone/Watch networking and portable proxy hosts remain later gates. See the
 [repeated native campaign plan](2026-09-17-repeated-native-campaigns.md).
+
+
+### 2026-09-17: repeated native evidence replay foundations
+
+The independent native probe replay now validates two original v3 campaigns with
+separate budgets and joined terminal ownership. Raw receiver validation preserves
+v3 campaign counters and publication totals across restarts. A new explicit v9
+native media export and replay cover all five 240/360/240/360/240 phases with exact
+encoder receipts and decoded boundary frames. These component results grant no
+capacity, policy or production upgrade permission.
+
+All 439 FilmModel and 2,459 tool tests passed, as did the arm64 simulator and
+unsigned iPhone/Watch Release builds. Generic Intel simulator linking failed
+because the bundled SRT archive lacks the required x86_64 symbols; that original
+failure remains recorded. No full repeated A/V run has been performed.
+
+Next join both original candidate measurements/revisions with receiver intervals,
+replay the complete policy and fault/recovery timeline, and add the two owned
+faults to the native harness. The harness continues to reject repeated mode until
+that combined gate exists. See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
+and `artifacts/qa/repeated-native-verification-*` evidence. The full goal remains active.

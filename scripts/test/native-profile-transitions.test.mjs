@@ -813,3 +813,65 @@ test('measured sequence cannot invoke scheduled transition CLI route', () => {
     }),
   );
 });
+
+function repeatedMeasuredFixture() {
+  const f = measuredFixture(5);
+  f.format.formatVersion = 9;
+  f.format.sequence = 'repeated240';
+  f.format.phases.forEach((phase, i) => {
+    phase.width = i % 2 ? 640 : 426;
+    phase.height = i % 2 ? 360 : 240;
+  });
+  f.format.receipts.forEach((receipt, i) => {
+    receipt.profile = i % 2 ? '240p30' : '360p30';
+    receipt.width = f.format.phases[i + 1].width;
+    receipt.height = f.format.phases[i + 1].height;
+  });
+  return f;
+}
+const repeatedMeasuredOptions = { sequence: 'repeated240', requireFrameEvidence: true };
+test('repeated measured media proves all five original phases without policy permission', () => {
+  const f = repeatedMeasuredFixture();
+  const result = qualifyNativeProfileTransitions(
+    f.format,
+    f.snapshot,
+    f.liveIDs,
+    repeatedMeasuredOptions,
+  );
+  assert.deepEqual(
+    result.phases.map((p) => p.height),
+    [240, 360, 240, 360, 240],
+  );
+  assert.equal(result.compressedFrames.frames, 4500);
+  assert.equal(result.trialConfirmed, false);
+  assert.equal(result.upgradeAuthorized, false);
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, measuredOptions),
+  );
+  assert.throws(() =>
+    qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
+      ...repeatedMeasuredOptions,
+      adaptive: true,
+    }),
+  );
+});
+for (const [name, damage] of [
+  ['old version', (f) => (f.format.formatVersion = 8)],
+  ['old sequence', (f) => (f.format.sequence = 'measured240')],
+  ['missing final phase', (f) => f.format.phases.pop()],
+  ['sixth phase', (f) => f.format.phases.push({ ...f.format.phases.at(-1) })],
+  ['second upgrade dimensions', (f) => (f.format.phases[3].width = 426)],
+  ['second upgrade receipt', (f) => (f.format.receipts[2].profile = '240p30')],
+  ['reset receipt ownership', (f) => (f.format.receipts[3].previousEncoderSessionID = ids[0])],
+  ['reused encoder', (f) => (f.format.encoderSessions[3].encoderSessionID = ids[1])],
+  ['missing second sync', (f) => (f.format.compressedFrames[2700].isSync = false)],
+  ['missing second decoded boundary', (f) => f.liveIDs.splice(f.liveIDs.indexOf(2700), 1)],
+  ['missing final decoded tail', (f) => f.liveIDs.pop()],
+])
+  test(`repeated measured media rejects ${name}`, () => {
+    const f = repeatedMeasuredFixture();
+    damage(f);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, repeatedMeasuredOptions),
+    );
+  });

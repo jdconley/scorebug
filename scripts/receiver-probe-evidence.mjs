@@ -17,8 +17,13 @@ function integer(value, max = 18446744073709551615n) {
 }
 export function validateReceiverProbeSnapshot(p) {
   assert.ok(p && typeof p === 'object');
-  const staged = p.convention === 'mpegts-null-probe-v2';
+  const repeated = p.convention === 'mpegts-null-probe-v3';
+  const staged = repeated || p.convention === 'mpegts-null-probe-v2';
   assert.ok(staged || p.convention === 'mpegts-null-probe-v1');
+  if (!repeated) {
+    assert.equal(p.campaign, undefined);
+    assert.equal(p.campaignDeliveredPayloadBytes, undefined);
+  }
   if (staged) assert.ok(Number.isInteger(p.stage) && p.stage >= 1 && p.stage <= 32);
   else {
     assert.equal(p.stage, undefined);
@@ -35,10 +40,20 @@ export function validateReceiverProbeSnapshot(p) {
   assert.equal(integer(p.nextSequence), messages);
   assert.ok(Number.isInteger(p.pendingPackets) && p.pendingPackets >= 0 && p.pendingPackets <= 6);
   if (staged) {
-    const total = integer(p.totalDeliveredPayloadBytes, 16n * 1024n * 1024n);
+    const cap = 16n * 1024n * 1024n;
+    const total = integer(p.totalDeliveredPayloadBytes, repeated ? 4294967295n * cap : cap);
     assert.equal(total % 1316n, 0n);
     assert.ok(total >= messages * 1316n);
-    assert.ok(total + (p.pendingPackets ? 1316n : 0n) <= 16n * 1024n * 1024n);
+    const campaignTotal = repeated ? integer(p.campaignDeliveredPayloadBytes, cap) : total;
+    if (repeated) {
+      const campaign = integer(p.campaign, 4294967295n);
+      assert.ok(campaign > 0n);
+      assert.equal(campaignTotal % 1316n, 0n);
+      assert.ok(campaignTotal >= messages * 1316n && campaignTotal <= total);
+      assert.ok(total - campaignTotal <= (campaign - 1n) * cap);
+      if (p.stage === 1) assert.equal(campaignTotal, messages * 1316n);
+    }
+    assert.ok(campaignTotal + (p.pendingPackets ? 1316n : 0n) <= cap);
   }
   const at = integer(p.observedAtNanoseconds, 86400000000000n);
   if (messages > 0n) {
@@ -54,6 +69,8 @@ export function validateReceiverProbeSnapshot(p) {
     [
       'convention',
       'stage',
+      'campaign',
+      'campaignDeliveredPayloadBytes',
       'totalDeliveredPayloadBytes',
       'id',
       'publishingGeneration',
@@ -70,14 +87,59 @@ export function validateReceiverProbeSnapshot(p) {
       .map((k) => [k, p[k]]),
   );
 }
-/** Same-stage history, usable with independently polled and app interval samples. */
+/** Validated snapshot history: same-stage for v1/v2, ordered campaign/stage for v3. */
 export function assertReceiverProbeProgress(p, previous) {
   assert.equal(p.convention, previous.convention);
-  for (const key of ['id', 'publishingGeneration', 'bitRate', 'stage'])
-    assert.equal(p[key], previous[key]);
+  assert.equal(p.publishingGeneration, previous.publishingGeneration);
   assert.ok(BigInt(p.observedAtNanoseconds) >= BigInt(previous.observedAtNanoseconds));
   if (p.observedAtNanoseconds === previous.observedAtNanoseconds)
     assert.deepEqual(p, previous, 'Conflicting snapshots at the same receiver instant');
+  if (p.convention === 'mpegts-null-probe-v3') {
+    const campaign = BigInt(p.campaign),
+      oldCampaign = BigInt(previous.campaign);
+    const campaignBytes = BigInt(p.campaignDeliveredPayloadBytes);
+    const oldCampaignBytes = BigInt(previous.campaignDeliveredPayloadBytes);
+    const total = BigInt(p.totalDeliveredPayloadBytes);
+    const oldTotal = BigInt(previous.totalDeliveredPayloadBytes);
+    const boundary = campaign !== oldCampaign || p.stage !== previous.stage;
+    assert.ok(campaign >= oldCampaign, 'Receiver campaign regressed');
+    assert.ok(total >= oldTotal, 'Receiver publication total regressed');
+    if (campaign === oldCampaign) {
+      assert.ok(p.stage >= previous.stage, 'Receiver stage regressed');
+      assert.ok(campaignBytes >= oldCampaignBytes, 'Receiver campaign total regressed');
+      assert.equal(total - oldTotal, campaignBytes - oldCampaignBytes);
+    }
+    if (boundary) {
+      assert.notEqual(p.id, previous.id, 'Receiver restart must replace the current identity');
+      const reservation = previous.pendingPackets > 0 ? 1316n : 0n;
+      if (campaign !== oldCampaign) {
+        // A later poll can include earlier stages of the new campaign. None of
+        // those bytes may replace previous publication bytes or its reservation.
+        const priorCarry = total - campaignBytes - oldTotal;
+        assert.ok(priorCarry >= reservation, 'Receiver restart lost prior campaign bytes');
+        assert.ok(
+          priorCarry <= (campaign - oldCampaign) * 16n * 1024n * 1024n - oldCampaignBytes,
+          'Receiver restart exceeded intervening campaign budgets',
+        );
+      } else {
+        assert.ok(
+          campaignBytes >= oldCampaignBytes + reservation + BigInt(p.deliveredPayloadBytes),
+          'Receiver stage restart lost prior delivered or pending bytes',
+        );
+      }
+      if (p.firstDeliveredAtNanoseconds !== undefined)
+        assert.ok(
+          BigInt(p.firstDeliveredAtNanoseconds) >= BigInt(previous.observedAtNanoseconds),
+          'First receiver delivery predates restart observation',
+        );
+      return;
+    }
+    assert.equal(
+      campaignBytes - oldCampaignBytes,
+      BigInt(p.deliveredPayloadBytes) - BigInt(previous.deliveredPayloadBytes),
+    );
+  }
+  for (const key of ['id', 'bitRate', 'stage']) assert.equal(p[key], previous[key]);
   if (p.convention === 'mpegts-null-probe-v2')
     assert.equal(
       BigInt(p.totalDeliveredPayloadBytes) - BigInt(previous.totalDeliveredPayloadBytes),

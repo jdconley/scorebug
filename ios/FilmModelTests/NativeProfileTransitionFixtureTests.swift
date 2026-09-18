@@ -115,6 +115,27 @@ final class NativeProfileTransitionFixtureTests: XCTestCase {
             broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), adaptive: true, sequence: sequence)
         XCTAssertEqual(try snapshot(conflicting)["invalid"] as? Bool, true)
     }
+    func testRepeatedMeasuredSequenceRetainsFivePhasesAndRejectsSixthAndScheduledRoute() throws {
+        let sequence = try XCTUnwrap(NativeProfileTransitionSequence(rawValue: "repeated240"))
+        XCTAssertEqual(sequence.initialProfile, .low240)
+        XCTAssertEqual(sequence.destinations, [.low360, .low240, .low360, .low240])
+        let scope = VideoFrameObservationScope(recordingID: "r", matchID: "m",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 0)
+        let proof = NativeProfileTransitionEvidence(scope: scope, sequence: sequence)
+        for n in 0..<5 { record(proof, n, n.isMultiple(of: 2) ? .low240 : .low360) }
+        let object = try snapshot(proof)
+        XCTAssertEqual(object["formatVersion"] as? Int, 9)
+        XCTAssertEqual(object["sequence"] as? String, "repeated240")
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        XCTAssertEqual((object["phases"] as? [Any])?.count, 5)
+        record(proof, 5, .low360)
+        XCTAssertEqual(try snapshot(proof)["invalid"] as? Bool, true)
+        let conflicting = NativeProfileTransitionEvidence(scope: scope, adaptive: true, sequence: sequence)
+        XCTAssertEqual(try snapshot(conflicting)["invalid"] as? Bool, true)
+        let environment = ["SCOREBUG_TEST_PROFILE_TRANSITIONS": "repeated240", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180"]
+        XCTAssertThrowsError(try NativeProfileTransitionEvidence.requestedSequence(environment: environment))
+    }
     func testTransitionWrapperPassesThroughActualFirstFrameReceipt() {
         let native = TransitionStartupPublisher()
         let wrapper = NativeProfileTransitionPublisher(publisher: native, evidence: evidence(), adaptive: true)

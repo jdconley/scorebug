@@ -76,10 +76,11 @@ export function qualifyNativeProfileTransitions(
     'Pacing requires current raw frame evidence',
   );
   assert.ok(
-    ['1', 'low240', 'stall540', 'measured240'].includes(sequence),
+    ['1', 'low240', 'stall540', 'measured240', 'repeated240'].includes(sequence),
     'Unknown transition sequence',
   );
-  const measured = sequence === 'measured240';
+  const repeated = sequence === 'repeated240';
+  const measured = sequence === 'measured240' || repeated;
   assert.ok(!measured || !adaptive, 'Measured trial has its own bounded sequence');
   const stallReset = sequence === 'stall540';
   assert.ok(!stallReset || !adaptive, 'Stall reset is one controlled downward transition');
@@ -88,7 +89,8 @@ export function qualifyNativeProfileTransitions(
   if (minimum || stallReset || measured) assert.equal(format.sequence, sequence);
   else assert.equal(format.sequence, undefined);
   const hasFrameEvidence =
-    format.formatVersion === (measured ? 8 : stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
+    format.formatVersion ===
+    (repeated ? 9 : measured ? 8 : stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
   assert.ok(
     hasFrameEvidence ||
       (!minimum &&
@@ -115,6 +117,7 @@ export function qualifyNativeProfileTransitions(
     assert.ok(
       format.phases.length >= 3 && format.phases.length <= 17 && format.phases.length % 2 === 1,
     );
+  else if (repeated) assert.equal(format.phases.length, 5);
   else if (measured) assert.ok(format.phases.length >= 1 && format.phases.length <= 3);
   else assert.equal(format.phases.length, stallReset ? 2 : 3);
   assert.equal(format.receipts.length, format.phases.length - 1);
@@ -146,7 +149,7 @@ export function qualifyNativeProfileTransitions(
     assert.equal(
       p.width,
       measured
-        ? i === 1
+        ? i % 2 === 1
           ? 640
           : 426
         : stallReset
@@ -162,7 +165,7 @@ export function qualifyNativeProfileTransitions(
     assert.equal(
       p.height,
       measured
-        ? i === 1
+        ? i % 2 === 1
           ? 360
           : 240
         : stallReset
@@ -287,7 +290,7 @@ export function qualifyNativeProfileTransitions(
     assert.equal(
       r.profile,
       measured
-        ? i === 0
+        ? i % 2 === 0
           ? '360p30'
           : '240p30'
         : stallReset
