@@ -1,3 +1,4 @@
+import { assertRecoveryProbeHistory } from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 import { candidateHeadroomStageRates } from './native-candidate-headroom.mjs';
 
@@ -30,7 +31,11 @@ const bytes = (value) => {
  * metadata here: the complete health, reset, candidate, and profile evidence
  * must be independently joined by the combined verifier before policy success.
  * Native totalAcceptedPayloadBytes is campaign-local, including at restart. */
-export function qualifyRepeatedNativeBandwidthProbe(proof, { scope, publishingGeneration } = {}) {
+export function qualifyRepeatedNativeBandwidthProbe(
+  proof,
+  { scope, publishingGeneration, policy = 'local-zero-loss-v1' } = {},
+) {
+  check(policy === 'local-zero-loss-v1', 'historical repeated replay requires local-zero-loss-v1');
   check(
     proof?.formatVersion === 3 && proof.mode === 'repeated',
     'requires explicit v3 repeated export',
@@ -39,6 +44,7 @@ export function qualifyRepeatedNativeBandwidthProbe(proof, { scope, publishingGe
     proof.isClosed === true && proof.invalid === false && proof.result === 'completed',
     'requires closed completed valid proof',
   );
+  check(!Object.hasOwn(proof, 'policy'), 'historical repeated proof contains recovery policy');
   check(!Object.hasOwn(proof, 'events'), 'unexpected unowned top-level events');
   assert.deepEqual(proof.scope, scope, 'Repeated native probe: publication scope mismatch');
   check(uuid(scope?.publishingAttemptID), 'invalid publication attempt');
@@ -88,6 +94,7 @@ export function qualifyRepeatedNativeBandwidthProbe(proof, { scope, publishingGe
         campaign.events.length <= 607,
       'event count outside bounds',
     );
+    assertRecoveryProbeHistory(campaign.events);
     const origin = campaign.events[0]?.sample?.startedAt;
     check(
       time(origin) && context.healthyThrough <= origin && origin - context.healthyThrough <= 2,

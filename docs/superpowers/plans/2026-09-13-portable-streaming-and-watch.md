@@ -24,6 +24,15 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The native test fixture and host replay now have a distinct recovery-policy proof
+format. It verifies both raw SRT budgets and their relationship to accepted traffic;
+older proof formats reject mixed policy metadata. Review exposed and tests reproduced
+a missing byte-growth/preflight join, which is now fixed. App-model tests pass532
+and tooling passes3782.
+Automatic profile-change retirement and the remaining host joins are still pending,
+so the recovery route is not yet enabled. See the
+[latest integration checkpoint](2026-09-24-recovery-policy-app-integration.md).
+
 Recovery-policy evidence now reaches app ownership, candidate pinning/admission and
 exported diagnostics. Changing policy revokes old receiver authority. Frozen recovery
 admissions have a distinct format, and a new independent raw-SRT replay helper checks

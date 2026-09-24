@@ -72,6 +72,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private let publisher: any MediaPublisher
     private let scope: VideoFrameObservationScope
     private let mode: Mode
+    private let policy: PublishingProbeObservation.Policy
     private let operations: Operations
     private let timing: Timing
     private let candidateHeadroom: Bool
@@ -118,8 +119,9 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private var work: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
 
-    init(publisher: SRTMediaPublisher, scope: VideoFrameObservationScope, mode: Mode, candidateHeadroom: Bool = false) {
-        self.publisher = publisher; self.scope = scope; self.mode = mode; timing = Timing()
+    init(publisher: SRTMediaPublisher, scope: VideoFrameObservationScope, mode: Mode, candidateHeadroom: Bool = false,
+         policy: PublishingProbeObservation.Policy = .localZeroLoss) {
+        self.publisher = publisher; self.scope = scope; self.mode = mode; self.policy = policy; timing = Timing()
         self.candidateHeadroom = candidateHeadroom
         operations = .init(clock: { await publisher.transportClock() },
             begin: { NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 1_000_000)) },
@@ -127,7 +129,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             cancel: { await publisher.cancelBandwidthProbe(id: $0, publishingGeneration: $1) },
             snapshot: { await publisher.bandwidthProbeSnapshot().map(NativeBandwidthProbeSample.init) },
             export: { await Self.persist($0) },
-            beginStaged: { NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 500_000, staged: true)) },
+            beginStaged: { NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 500_000, staged: true, policy: policy)) },
             replace: { id, generation, stage, rate in
                 guard let ordinal = UInt32(exactly: stage) else { throw PublishingBandwidthProbeError.obsolete }
                 return NativeBandwidthProbeSample(try await publisher.replaceBandwidthProbe(id: id,
@@ -141,9 +143,10 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, mode: Mode,
-         operations: Operations, timing: Timing, candidateHeadroom: Bool = false) {
+         operations: Operations, timing: Timing, candidateHeadroom: Bool = false,
+         policy: PublishingProbeObservation.Policy = .localZeroLoss) {
         self.publisher = publisher; self.scope = scope; self.mode = mode
-        self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
+        self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom; self.policy = policy
     }
     @discardableResult func setMeasurementContextProvider(_ read: @escaping NativeCandidateContextReader.Provider) -> Bool {
         measurementContext.install(read)
@@ -151,6 +154,9 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func start() async throws {
         guard !starting, !started, !stopped else { throw FixtureError.lifecycle }
+        guard policy == .localZeroLoss || (mode == .staged && candidateHeadroom) else {
+            throw FixtureError.invalidEvidence
+        }
         starting = true
         defer { starting = false }
         try await publisher.start()
@@ -464,7 +470,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
                                                     retirementRequestedAt: Double? = nil) -> Bool {
         guard !campaigns.isEmpty else { invalid = true; return false }
         let index = campaigns.count - 1, campaign = campaigns[index], now = timing.now()
-        guard !closed, campaign.events.count < 607, value.campaign == campaign.ordinal,
+        guard validPolicyEvidence(value, at: now), !closed, campaign.events.count < 607, value.campaign == campaign.ordinal,
               now.isFinite, value.startedAt.isFinite, value.startedAt >= 0, value.startedAt <= now,
               value.leaseDeadline.isFinite, value.leaseDeadline > value.startedAt,
               value.publishingGeneration == generation,
@@ -558,7 +564,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     @discardableResult private func record(_ value: NativeBandwidthProbeSample, phase: String,
                                            retirementRequestedAt: Double? = nil) -> Bool {
         let now = timing.now()
-        guard !closed, events.count < (mode == .staged ? 607 : 602), now.isFinite, value.startedAt.isFinite,
+        guard validPolicyEvidence(value, at: now), !closed, events.count < (mode == .staged ? 607 : 602), now.isFinite, value.startedAt.isFinite,
               value.startedAt >= 0, value.startedAt <= now, value.leaseDeadline.isFinite,
               value.leaseDeadline > value.startedAt, value.leaseDeadline <= value.startedAt + 60.3,
               value.publishingGeneration == generation,
@@ -617,6 +623,13 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         events.append(.init(phase: phase, at: now, sample: value, retirementRequestedAt: retirementRequestedAt))
         return true
     }
+    private func validPolicyEvidence(_ value: NativeBandwidthProbeSample, at now: Double) -> Bool {
+        guard value.policy == policy else { return false }
+        if policy == .localZeroLoss { return value.recoveryObservation == nil }
+        guard mode == .staged, candidateHeadroom, let raw = value.recoveryObservation,
+              raw.isValid, raw.checkedAt >= value.startedAt, raw.checkedAt <= now else { return false }
+        return true
+    }
     private func data() throws -> Data {
         if mode == .repeated {
             return try JSONSerialization.data(withJSONObject: ["formatVersion": 3, "isClosed": closed,
@@ -627,13 +640,15 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
                 "publishingGeneration": generation.map(String.init) as Any? ?? NSNull(),
                 "campaigns": campaigns.map(\.object)], options: [.sortedKeys])
         }
-        return try JSONSerialization.data(withJSONObject: ["formatVersion": mode == .staged ? 2 : 1, "isClosed": closed, "invalid": invalid,
+        var object: [String: Any] = ["formatVersion": policy == .recoveryBudget ? 4 : mode == .staged ? 2 : 1, "isClosed": closed, "invalid": invalid,
             "mode": mode.rawValue, "result": result,
             "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],
             "publishingGeneration": generation.map(String.init) as Any? ?? NSNull(),
-            "events": events.map(\.object)], options: [.sortedKeys])
+            "events": events.map(\.object)]
+        if policy == .recoveryBudget { object["policy"] = policy.rawValue }
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
     static func requested(environment: [String: String]) throws -> Mode? {
         if try NativeCandidateHeadroomFixture.requested(environment: environment) {

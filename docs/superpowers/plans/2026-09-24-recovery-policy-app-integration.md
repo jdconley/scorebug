@@ -125,3 +125,44 @@ complete route selection and the new impaired-match run. No runtime route curren
 selects the new app policy. This checkpoint is foundational verification, not a new
 network qualification or production adaptation pass. No simulator runtime was
 installed and private footage was not modified or uploaded.
+
+## Native proof format checkpoint
+
+The native fixture now accepts an explicit policy argument, defaulting to legacy.
+Recovery starts are restricted to staged candidate-headroom mode and rejected
+before publisher startup in unsupported modes. Its staged start passes the policy
+to the real native adapter; every recorded sample must match the selected policy
+and carry valid original preflight evidence. Recovery exports format4 with an
+explicit root policy; historical1/2/3 formats retain their prior meanings.
+
+The host native-proof qualifier accepts format4 only with explicit recovery policy
+and the staged candidate-headroom schedule. It independently replays all raw
+observations and preserves the existing token, acceptance, lease, retirement and
+campaign gates. Historical single/staged/repeated qualifiers reject recovery
+metadata; repeated replay also rejects explicitly requested unsupported policies.
+This new gate still certifies local acceptance only, never receiver capacity.
+
+Review found a missing join between otherwise valid raw checks and sent-byte
+progress: a forged proof could repeat the initial raw check while accepting more
+traffic. Four new mutants reproduced the gap before the fix. The qualifier now
+requires admission-time evidence for empty stages, unchanged raw evidence when
+acceptance is unchanged, and later preflight checks after prior completion when
+acceptance advances. Preflight must precede its acceptance and already have
+sufficient total token-pacing credit. These conditions apply to this qualifier's
+active/cancelled snapshots; unsuccessful-send terminal reasons remain rejected.
+Follow-up review found the gap closed with no new findings.
+
+Focused native fixture41 and host proof230 checks pass; the full app suite passes
+532 tests. Native/Streaming runtime code is unchanged from the preceding321/179
+passes apart from the DEBUG fixture's explicit policy selection. Full tooling
+passes3782 tests; verification is recorded in `repeated-live-checkpoint-recovery-native-proof-tools-full`.
+Red/green app proof-format logs, repeated-policy rejection logs and all four
+acceptance-mutant failures are preserved under `artifacts/qa/recovery-*`.
+
+**Next:** implement the recovery-aware automatic profile-change retirement join,
+quality format and admission/candidate/lifecycle host joins. The recovery native
+qualifier currently explicitly rejects `measuredRetirement`; it must not be removed
+until that join has matching raw-policy coverage. App environment selection remains
+legacy, so no new real-match run or production adaptation pass is claimed. Existing
+repeated/outage formats and pressure policy remain unchanged. Then freeze the full
+source and prepared input and run the actual400ms/slice impaired-match experiment.

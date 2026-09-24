@@ -371,3 +371,26 @@ test('delayed observation uses native renewal instant for its token budget', () 
   events[11].observedAt = events[12].sample.lastAcceptedAt + 0.005;
   assert.equal(qualify(proof).campaigns[0].stages[0].acceptedPayloadBytes, 5 * 1316);
 });
+
+for (const key of ['policy', 'recoveryObservation'])
+  test(`historical repeated proof rejects new ${key} metadata`, () => {
+    const proof = fixture();
+    proof.campaigns[0].events[1].sample[key] = null;
+    assert.throws(() => qualify(proof));
+  });
+test('historical repeated proof rejects recovery root policy', () => {
+  const proof = fixture();
+  proof.policy = 'recovery-budget-v1';
+  assert.throws(() => qualify(proof));
+});
+
+test('historical repeated qualifier rejects an explicitly requested unsupported policy', () => {
+  for (const policy of ['recovery-budget-v1', 'future-v1', null])
+    assert.throws(() =>
+      implementation.qualifyRepeatedNativeBandwidthProbe(fixture(), {
+        scope,
+        publishingGeneration: '7',
+        policy,
+      }),
+    );
+});

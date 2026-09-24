@@ -103,3 +103,10 @@ test('legacy probe options and single-campaign replay reject repeated mode', () 
   const proof = { ...fixture(), formatVersion: 3, mode: 'repeated', campaigns: [] };
   assert.throws(() => qualify(proof, 'repeated'));
 });
+
+for (const key of ['policy', 'recoveryObservation'])
+  test(`legacy unstaged proof rejects new ${key} metadata`, () => {
+    const proof = fixture();
+    proof.events[1].sample[key] = null;
+    assert.throws(() => qualify(proof));
+  });

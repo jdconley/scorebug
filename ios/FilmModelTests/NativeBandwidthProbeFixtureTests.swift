@@ -2,8 +2,68 @@ import CoreMedia
 import Foundation
 import ScorebugMedia
 import XCTest
+@testable import SRTHaishinKit
 
 final class NativeBandwidthProbeFixtureTests: XCTestCase {
+    func testRecoveryPolicyExportsExplicitStagedProofAndRejectsMixedRawEvidence() async throws {
+        for fault in ["none", "missing", "wrongPolicy", "oldCheck", "futureCheck", "stale", "delay", "rtt", "backlog"] {
+            let fixture = StagedProbeFixtureOperations()
+            let original = await fixture.operations()
+            let decorate: @Sendable (NativeBandwidthProbeSample) -> NativeBandwidthProbeSample = { original in
+                var value = original
+                let at = value.lastAcceptedAt ?? value.startedAt
+                let corrupt = value.acceptedPayloadBytes > 0
+                value.policy = corrupt && fault == "wrongPolicy" ? .localZeroLoss : .recoveryBudget
+                value.recoveryObservation = corrupt && fault == "missing" ? nil : .init(
+                    checkedAt: corrupt && fault == "oldCheck" ? value.startedAt - 1 : corrupt && fault == "futureCheck" ? at + 10 : at,
+                    sampledAt: corrupt && fault == "stale" ? at - 0.2 : at,
+                    elapsedMilliseconds: 1000, sentBytes: 10000, retransmittedBytes: 100,
+                    droppedPackets: 0, rttMilliseconds: corrupt && fault == "rtt" ? 101 : 65,
+                    senderBufferMilliseconds: corrupt && fault == "backlog" ? 201 : 67,
+                    senderDeliveryDelayMilliseconds: corrupt && fault == "delay" ? 0 : 400)
+                return value
+            }
+            let operations = NativeBandwidthProbePublisher.Operations(clock: original.clock, begin: original.begin,
+                renew: { decorate(try await original.renew($0, $1)) }, cancel: original.cancel,
+                snapshot: { await original.snapshot().map(decorate) }, export: original.export,
+                beginStaged: { decorate(try await original.beginStaged()) },
+                replace: { decorate(try await original.replace($0, $1, $2, $3)) })
+            let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: .staged,
+                operations: operations, timing: .init(delay: .zero, poll: .zero, stagePolls: 1),
+                candidateHeadroom: true, policy: .recoveryBudget)
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            let object = try await fixture.exportedObject()
+            XCTAssertEqual(object["formatVersion"] as? Int, 4)
+            XCTAssertEqual(object["policy"] as? String, "recovery-budget-v1")
+            XCTAssertEqual(object["invalid"] as? Bool, fault != "none", fault)
+            if fault == "none" {
+                XCTAssertEqual(object["result"] as? String, "completed")
+                let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+                XCTAssertEqual(events.count, 10)
+                for event in events {
+                    let sample = try XCTUnwrap(event["sample"] as? [String: Any])
+                    XCTAssertEqual(sample["policy"] as? String, "recovery-budget-v1")
+                    XCTAssertNotNil(sample["recoveryObservation"] as? [String: Any])
+                }
+            }
+        }
+    }
+
+    func testRecoveryPolicyRejectsUnsupportedModesBeforeStartingPublisher() async throws {
+        for (mode, headroom) in [(NativeBandwidthProbePublisher.Mode.renew, false), (.expire, false), (.repeated, true), (.staged, false)] {
+            let fixture = ProbeFixtureOperations()
+            let publisher = NativeBandwidthProbePublisher(publisher: fixture, scope: scope(), mode: mode,
+                operations: await fixture.operations(), timing: .init(delay: .zero, poll: .zero, maximumPolls: 1),
+                candidateHeadroom: headroom, policy: .recoveryBudget)
+            do { try await publisher.start(); XCTFail("Unsupported recovery mode started") }
+            catch { }
+            await publisher.stop()
+            let counts = await fixture.counts()
+            XCTAssertEqual(counts.start, 0)
+            XCTAssertEqual(counts.renew, 0)
+        }
+    }
+
     func testProbeObservationCarriesCampaignWithoutNarrowing() async throws {
         let id = UUID()
         let sample = NativeBandwidthProbeSample(id: id, publishingGeneration: 7, bitRate: 500_000,
@@ -138,9 +198,9 @@ private actor ProbeFixtureOperations: MediaPublisher {
     private let expire: Bool, gateBegin: Bool
     private var waiter: CheckedContinuation<Void, Never>?
     private var sample: NativeBandwidthProbeSample?
-    private var renews = 0, cancels = 0, exports: [Data] = []
+    private var starts = 0, renews = 0, cancels = 0, exports: [Data] = []
     init(expire: Bool = false, gateBegin: Bool = false, fault: Fault? = nil) { self.expire = expire; self.gateBegin = gateBegin; self.fault = fault }
-    func start() async throws {}
+    func start() async throws { starts += 1 }
     func append(_ sample: CapturedMediaSample) async throws {}
     var isPublishing: Bool { !stopped }
     func stop() async { stopped = true; waiter?.resume(); waiter = nil }
@@ -174,7 +234,7 @@ private actor ProbeFixtureOperations: MediaPublisher {
         return sample
     }
     func export(_ data: Data) { exports.append(data) }
-    func counts() -> (renew: Int, cancel: Int, export: Int) { (renews, cancels, exports.count) }
+    func counts() -> (start: Int, renew: Int, cancel: Int, export: Int) { (starts, renews, cancels, exports.count) }
     func exportedObject() throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exports.last)) as? [String: Any])
     }

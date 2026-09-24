@@ -1,3 +1,7 @@
+import {
+  assertRecoveryProbeObservation,
+  assertRecoveryProbeHistory,
+} from './recovery-probe-observation.mjs';
 import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import assert from 'node:assert/strict';
 import { qualifyMeasuredProbeRetirement } from './measured-probe-retirement.mjs';
@@ -92,8 +96,24 @@ function time(value) {
 /** Validates local native acceptance/lease evidence, never receiver capacity. */
 export function qualifyNativeBandwidthProbe(
   proof,
-  { mode, scope, publishingGeneration, candidateHeadroom = false, measuredRetirement },
+  {
+    mode,
+    scope,
+    publishingGeneration,
+    candidateHeadroom = false,
+    measuredRetirement,
+    policy = 'local-zero-loss-v1',
+  },
 ) {
+  assert.ok(['local-zero-loss-v1', 'recovery-budget-v1'].includes(policy), 'Unknown probe policy');
+  if (policy === 'recovery-budget-v1') {
+    assert.ok(
+      mode === 'staged' && candidateHeadroom,
+      'Recovery proof requires staged candidate headroom',
+    );
+    assert.equal(proof.policy, policy);
+    assert.equal(measuredRetirement, undefined, 'Recovery retirement replay is not yet supported');
+  } else assert.ok(!Object.hasOwn(proof, 'policy'), 'Legacy proof contains recovery policy');
   assert.equal(typeof candidateHeadroom, 'boolean');
   assert.ok(!candidateHeadroom || mode === 'staged');
   assert.ok(
@@ -106,6 +126,7 @@ export function qualifyNativeBandwidthProbe(
       publishingGeneration,
       candidateHeadroom,
       measuredRetirement,
+      policy,
     });
   assert.ok(['renew', 'expire'].includes(mode));
   assert.equal(proof.formatVersion, 1);
@@ -136,6 +157,7 @@ export function qualifyNativeBandwidthProbe(
             : 'observed',
     );
     const value = event.sample;
+    assertRecoveryProbeObservation(value, { observedAt: event.observedAt, policy });
     time(event.observedAt);
     time(value.startedAt);
     time(value.leaseDeadline);
@@ -212,7 +234,7 @@ export function qualifyNativeBandwidthProbe(
 
 function qualifyStagedNativeBandwidthProbe(
   proof,
-  { scope, publishingGeneration, candidateHeadroom, measuredRetirement },
+  { scope, publishingGeneration, candidateHeadroom, measuredRetirement, policy },
 ) {
   const check = (condition, message) => assert.ok(condition, `Staged probe: ${message}`);
   const finiteTime = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -229,8 +251,8 @@ function qualifyStagedNativeBandwidthProbe(
     return count;
   };
   check(
-    proof?.formatVersion === 2 && proof.mode === 'staged',
-    'requires explicit version 2 and staged mode',
+    proof?.formatVersion === (policy === 'recovery-budget-v1' ? 4 : 2) && proof.mode === 'staged',
+    'requires explicit policy version and staged mode',
   );
   check(
     proof.isClosed === true &&
@@ -252,6 +274,8 @@ function qualifyStagedNativeBandwidthProbe(
     Array.isArray(proof.events) && proof.events.length >= 10 && proof.events.length <= 607,
     'event count outside bounds',
   );
+
+  assertRecoveryProbeHistory(proof.events, { policy });
 
   const retirement =
     measuredRetirement === undefined
@@ -342,6 +366,32 @@ function qualifyStagedNativeBandwidthProbe(
             (value.lastAcceptedAt - value.startedAt) * bitRate + 1,
           'acceptance exceeds paced accounting budget',
         );
+      }
+      if (policy === 'recovery-budget-v1') {
+        const raw = value.recoveryObservation;
+        if (accepted === 0n)
+          check(raw.checkedAt === value.startedAt, 'empty stage must retain its admission check');
+        else {
+          check(raw.checkedAt <= value.lastAcceptedAt, 'successful preflight follows acceptance');
+          check(
+            Number(accepted / 1316n) * 1360 * 8 <= (raw.checkedAt - value.startedAt) * bitRate + 1,
+            'preflight has insufficient pacing credit for acceptance',
+          );
+        }
+        if (prior) {
+          if (accepted === priorBytes)
+            assert.deepEqual(
+              raw,
+              prior.recoveryObservation,
+              'Staged probe: successful check changed without acceptance',
+            );
+          else
+            check(
+              raw.checkedAt > prior.recoveryObservation.checkedAt &&
+                raw.checkedAt >= (prior.lastAcceptedAt ?? prior.startedAt),
+              'new acceptance requires a later preflight after prior completion',
+            );
+        }
       }
       check(
         value.reason === (retired ? 'cancelled' : null),
@@ -469,6 +519,7 @@ function qualifyStagedNativeBandwidthProbe(
   );
   return {
     mode: 'staged',
+    ...(policy === 'recovery-budget-v1' ? { policy } : {}),
     ...(candidateHeadroom ? { schedule: 'candidate-headroom-v1' } : {}),
     publishingGeneration,
     acceptedPayloadBytes: Number(cumulative),

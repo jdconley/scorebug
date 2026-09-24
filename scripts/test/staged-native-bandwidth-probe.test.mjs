@@ -589,3 +589,118 @@ for (const key of ['stage', 'campaignStartedAt', 'totalAcceptedPayloadBytes']) {
     assert.throws(() => qualifyNativeBandwidthProbe(value, options), /v1.*metadata/);
   });
 }
+
+function recoveryFixture() {
+  const proof = fixture();
+  proof.formatVersion = 4;
+  proof.policy = 'recovery-budget-v1';
+  for (const { sample } of proof.events) {
+    sample.bitRate = [500000, 2000000, 12000000][sample.stage - 1];
+    sample.policy = proof.policy;
+    const at = sample.lastAcceptedAt ?? sample.startedAt;
+    sample.recoveryObservation = {
+      checkedAt: at,
+      sampledAt: at,
+      elapsedMilliseconds: String(Math.round(at * 1000)),
+      sentBytes: String(Math.round(at * 100000)),
+      retransmittedBytes: String(Math.round(at * 1000)),
+      droppedPackets: 0,
+      rttMilliseconds: 65,
+      senderBufferMilliseconds: 67,
+      senderDeliveryDelayMilliseconds: 400,
+    };
+  }
+  return proof;
+}
+const qualifyRecovery = (proof, extra = {}) =>
+  qualifyNativeBandwidthProbe(proof, {
+    mode: 'staged',
+    scope,
+    publishingGeneration: '7',
+    candidateHeadroom: true,
+    policy: 'recovery-budget-v1',
+    ...extra,
+  });
+test('recovery staged proof requires explicit version and independent raw checks', () => {
+  const proof = recoveryFixture(),
+    before = structuredClone(proof);
+  const result = qualifyRecovery(proof);
+  assert.equal(result.policy, 'recovery-budget-v1');
+  assert.equal(result.receiverCapacityQualified, false);
+  assert.equal(result.stages.length, 3);
+  assert.deepEqual(proof, before);
+  assert.throws(() =>
+    qualifyNativeBandwidthProbe(proof, {
+      mode: 'staged',
+      scope,
+      publishingGeneration: '7',
+      candidateHeadroom: true,
+    }),
+  );
+  assert.throws(() => qualifyRecovery(proof, { candidateHeadroom: false }));
+  assert.throws(() => qualifyRecovery(proof, { policy: 'future-v1' }));
+  assert.throws(() =>
+    qualifyNativeBandwidthProbe(fixture(), {
+      mode: 'staged',
+      scope,
+      publishingGeneration: '7',
+      policy: 'future-v1',
+    }),
+  );
+});
+for (const [name, mutate] of Object.entries({
+  oldFormat: (p) => (p.formatVersion = 2),
+  wrongRootPolicy: (p) => (p.policy = 'local-zero-loss-v1'),
+  missingRootPolicy: (p) => delete p.policy,
+  missingRaw: (p) => delete p.events[1].sample.recoveryObservation,
+  wrongPolicy: (p) => (p.events[1].sample.policy = 'local-zero-loss-v1'),
+  stale: (p) => (p.events[1].sample.recoveryObservation.sampledAt -= 0.2),
+  senderDrop: (p) => (p.events[1].sample.recoveryObservation.droppedPackets = 1),
+  retryRegression: (p) => (p.events[1].sample.recoveryObservation.retransmittedBytes = '0'),
+  futureCheck: (p) =>
+    (p.events[1].sample.recoveryObservation.checkedAt = p.events[1].observedAt + 1),
+  changedCachedGauge: (p) => (p.events[3].sample.recoveryObservation.rttMilliseconds += 1),
+}))
+  test(`recovery staged proof rejects ${name}`, () => {
+    const proof = recoveryFixture();
+    mutate(proof);
+    assert.throws(() => qualifyRecovery(proof));
+  });
+for (const key of ['policy', 'recoveryObservation'])
+  test(`legacy staged proof rejects new ${key} metadata`, () => {
+    const proof = fixture();
+    proof.events[1].sample[key] = null;
+    assert.throws(() => qualify(proof));
+  });
+test('legacy staged proof rejects a recovery root policy', () => {
+  const proof = fixture();
+  proof.policy = 'recovery-budget-v1';
+  assert.throws(() => qualify(proof));
+});
+
+for (const [name, mutate] of Object.entries({
+  frozenInitialCheck: (proof) => {
+    for (const stage of [1, 2, 3]) {
+      const events = stageEvents(proof, stage),
+        initial = structuredClone(events[0].sample.recoveryObservation);
+      for (const event of events) event.sample.recoveryObservation = structuredClone(initial);
+    }
+  },
+  checkAfterAcceptance: (proof) => {
+    for (const { sample } of proof.events)
+      if (sample.lastAcceptedAt !== null)
+        sample.recoveryObservation.checkedAt = sample.lastAcceptedAt + 0.001;
+  },
+  successfulCheckWithoutAcceptance: (proof) => {
+    for (const event of proof.events)
+      if (event.phase === 'retired' || event.phase === 'final')
+        event.sample.recoveryObservation.checkedAt += 0.001;
+  },
+  initialCheckAfterStart: (proof) =>
+    (proof.events[0].sample.recoveryObservation.checkedAt += 0.0001),
+}))
+  test(`recovery staged proof binds accepted traffic to native checks: ${name}`, () => {
+    const proof = recoveryFixture();
+    mutate(proof);
+    assert.throws(() => qualifyRecovery(proof));
+  });
