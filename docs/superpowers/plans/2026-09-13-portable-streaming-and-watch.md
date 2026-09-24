@@ -154,9 +154,18 @@ the correction both fail before setup with Watch ACX43/missing-companion state;
 neither creates a pairing or scoring command. This correction does not resolve
 that simulator failure. See the [retry checkpoint](2026-09-24-watch-notice-retry.md).
 
-**Next local work:** qualify longer representative-content runs through the measured
-CPU proxy path. The current short-run probe retains only 512 encoder observations;
-design bounded long-run evidence before extending its input duration. Keep sustained
+**Two-minute real-footage check:** the first 1080p CPU-proxy run preserves all
+3,600 identified frames in both archive and live, with zero queue loss and continuous
+audio timestamps. Full A/V decoding, duration/cadence and clean/overlay visual
+checks pass. The whole campaign nevertheless fails its sampled audio-correlation
+gate and stops before 4K. A separately reviewed fractional-delay diagnostic raises
+those correlations from 0.933–0.960 to 0.9986–0.9988 with the same 31-microsecond
+alignment correction at all three points. Keep the original failure. All 1,178
+source/runner/input/executable hashes remain unchanged; owned ports release.
+
+**Next local work:** implement and test the fractional audio-alignment estimator,
+then run a fresh 1080p case before the two-minute 4K case. See the
+[long replay contract and evidence](2026-09-24-long-match-replay.md). Keep sustained
 4K and the failing co-located hardware-proxy route unqualified. Actual Watch
 connectivity needs a new diagnostic before another simulator attempt; physical
 phone/watch and separate-host GPU tests remain required.

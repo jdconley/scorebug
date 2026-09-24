@@ -1,5 +1,12 @@
 # Representative volleyball footage
 
+Latest: the [two-minute replay checkpoint](superpowers/plans/2026-09-24-long-match-replay.md)
+adds independently identified 120-second excerpts from both originals. The first
+1080p native/CPU case retains every frame in archive and live, but the campaign
+fails its sampled audio-correlation gate and stops before 4K. A separate fractional
+alignment diagnostic explains the low correlations; a tested estimator and a fresh
+passing campaign remain required. The original failure is retained.
+
 The user supplied two private recordings in Downloads for local testing. The
 originals are read-only test inputs and are not committed or uploaded. Metadata,
 SHA-256 fingerprints, derived excerpts, commands, logs and results are saved in
