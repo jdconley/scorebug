@@ -155,7 +155,7 @@ async function collectConnectivityFailure() {
   // Registration/activation state only: exclude general application-context
   // payload logging, and additionally strip bearer/high-entropy data before disk.
   const predicate =
-    'subsystem == "com.apple.wcd" AND (eventMessage CONTAINS[c] "SessionState" OR eventMessage CONTAINS[c] "activation" OR eventMessage CONTAINS[c] "install" OR eventMessage CONTAINS "7018")';
+    'subsystem == "live.scorebug.connectivity" OR (subsystem == "com.apple.wcd" AND (eventMessage CONTAINS[c] "SessionState" OR eventMessage CONTAINS[c] "activation" OR eventMessage CONTAINS[c] "install" OR eventMessage CONTAINS "7018"))';
   let devices = [];
   try {
     const listed = JSON.parse(

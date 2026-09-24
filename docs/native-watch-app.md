@@ -1,5 +1,12 @@
 # Native Watch app and companion setup
 
+Latest paired-simulator evidence: the [bounded connectivity diagnostic](superpowers/plans/2026-09-24-watch-connectivity-diagnostics.md)
+shows successful activation but repeated local setup-context rejection with
+WC7018 (companion app not installed), even after reachability becomes true. The
+paired workflow remains failed; the retry loop is running. Phone application trace
+rows were not retained, and the Watch prefix explicitly overflows. Direct native
+scoring evidence below does not establish actual paired setup or physical routes.
+
 `ios/Project.yml` generates a watchOS 10 **ScorebugWatch** app and embeds it in the
 native iPhone app. Its only project package dependency is ScorebugCore. The phone
 has Film, Score, Watch, and Recordings tabs. There is no browser scorer.

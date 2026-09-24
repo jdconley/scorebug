@@ -9,6 +9,7 @@ final class CompanionWatchScoringTests: XCTestCase {
         let app = XCUIApplication()
         // Explicitly defeat any inherited debug fixture from another test lane.
         app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = "1"
         app.launch()
         tap(app, "watch.joinOffered", timeout: 180)
         value(app.staticTexts["watch.phase"], "paired")

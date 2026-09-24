@@ -16,6 +16,7 @@ targets:
     sources:
       - path: Sources/ScorebugWatch/WatchScoringModel.swift
       - path: Sources/WatchSupport/WatchRelaySessionGate.swift
+      - path: Sources/WatchSupport/WatchConnectivityDiagnostic.swift
       - path: WatchModelTests
     settings:
       base:

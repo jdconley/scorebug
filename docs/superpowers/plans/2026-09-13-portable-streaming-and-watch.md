@@ -154,6 +154,17 @@ the correction both fail before setup with Watch ACX43/missing-companion state;
 neither creates a pairing or scoring command. This correction does not resolve
 that simulator failure. See the [retry checkpoint](2026-09-24-watch-notice-retry.md).
 
+**Watch failure boundary now observed:** the new bounded, opt-in debug trace shows
+successful Watch session activation followed by repeated setup-notice publication
+rejections, WC7018 (`companionAppNotInstalled`), even after reachability becomes true.
+Fresh `paired-watch-gKwDrj` still fails setup; ACX43 remains. Its 129-row Watch trace
+includes the explicit overflow marker; phone application rows were not retained.
+No pairings or scoring commands occur, both owned simulators are deleted, and all
+1,176 source hashes stay unchanged. All 58 Watch model/gate/diagnostic and 3,481
+tooling tests pass; both simulator builds and unsigned phone/Watch Release pass.
+Release binaries exclude the opt-in key and logging subsystem. See the
+[diagnostic evidence and next experiment](2026-09-24-watch-connectivity-diagnostics.md).
+
 **Two-minute real-footage checks now pass:** fresh 1080p and 4K CPU-proxy replays
 retain all 3,600 identified frames in both clean archive and live, with zero queue
 loss, continuous audio timestamps and full A/V decoding. Reviewed fractional
@@ -167,8 +178,8 @@ scheduled bitrate changes; it does not qualify full-match reliability, automatic
 adaptation, physical capture, HDR60 or relay/viewer latency.
 
 **Next local work:** longer in-game content coverage under a new declared duration
-contract, plus a Watch companion activation/context diagnostic before another
-paired simulator attempt. See the
+contract, plus a bounded Watch immediate-message diagnostic to test whether
+reported reachability supplies a usable route despite context-publication rejection. See the
 [long replay contract and evidence](2026-09-24-long-match-replay.md). Keep game-length
 4K and the failing co-located hardware-proxy route unqualified. Physical phone/watch
 and separate-host GPU tests remain required.
