@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { nativeUplinkOptions } from '../native-streaming-options.mjs';
 import assert from 'node:assert/strict';
 import { nativeFileFixtureOptions } from '../native-file-fixture.mjs';
 import { nativeLiveProfile } from '../native-live-profile.mjs';
@@ -113,4 +114,87 @@ test('repeated file mode cannot be selected partially or with a different hold',
     { SCOREBUG_TEST_STREAM_HOLD_SECONDS: '090' },
   ])
     assert.throws(() => nativeFileFixtureOptions(options({ ...valid(), ...patch })));
+});
+
+for (const profile of ['passthrough', 'loss0p2-delay30'])
+  test(`complete staged file route composes with ${profile} link`, () => {
+    const env = {
+      ...valid(),
+      SCOREBUG_TEST_UPLINK_PROFILE: profile,
+      ...(profile === 'loss0p2-delay30' ? { SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '400' } : {}),
+    };
+    qualify(env);
+    const args = {
+      ...options(env),
+      fixtureWorkload: 'real-file',
+      requireQuality: false,
+      requireConfirmation: false,
+    };
+    assert.equal(nativeUplinkOptions(args), profile);
+    for (const latency of ['', '120', '399', '401', '0400'])
+      assert.throws(() => qualify({ ...env, SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: latency }));
+    if (profile === 'loss0p2-delay30')
+      assert.throws(() => qualify({ ...env, SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: undefined }));
+    for (const patch of [
+      { requireQuality: true },
+      { requireConfirmation: true },
+      { fixtureWorkload: 'motion-blocks16' },
+      { liveProfile: '360p30' },
+      { holdSeconds: 89 },
+      { streaming: false },
+      { requireProcessing: false },
+      { requirePublication: false },
+    ])
+      assert.throws(() => nativeUplinkOptions({ ...args, ...patch }));
+    for (const patch of [
+      { SCOREBUG_TEST_MEASURED_RECOVERY: 'decoder-stall' },
+      {
+        SCOREBUG_TEST_BANDWIDTH_PROBE: 'repeated',
+        SCOREBUG_TEST_MEASURED_RECOVERY: 'repeated',
+        SCOREBUG_TEST_STREAM_HOLD_SECONDS: '180',
+      },
+      { SCOREBUG_TEST_MEASURED_TRIAL: undefined },
+      { SCOREBUG_TEST_FILE_INPUT: undefined },
+      { SCOREBUG_TEST_UPLINK_PROXY_PORT: '1234' },
+    ]) {
+      const environment = { ...env, ...patch };
+      assert.throws(() => qualify(environment));
+      assert.throws(() => nativeUplinkOptions({ ...args, environment }));
+    }
+  });
+
+test('only the complete impaired file route accepts explicit slice decoding', () => {
+  const env = {
+    ...valid(),
+    SCOREBUG_TEST_UPLINK_PROFILE: 'loss0p2-delay30',
+    SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '400',
+    SCOREBUG_TEST_DECODER_THREADING: 'slice',
+  };
+  qualify(env);
+  assert.equal(
+    nativeUplinkOptions({
+      ...options(env),
+      fixtureWorkload: 'real-file',
+      requireQuality: false,
+      requireConfirmation: false,
+    }),
+    'loss0p2-delay30',
+  );
+  for (const mode of ['', 'automatic', 'frame', 'Slice', '1'])
+    assert.throws(() => qualify({ ...env, SCOREBUG_TEST_DECODER_THREADING: mode }));
+  for (const profile of [undefined, 'passthrough'])
+    assert.throws(() =>
+      qualify({
+        ...env,
+        SCOREBUG_TEST_UPLINK_PROFILE: profile,
+        SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: undefined,
+      }),
+    );
+  for (const patch of [
+    { SCOREBUG_TEST_BANDWIDTH_PROBE: undefined },
+    { SCOREBUG_TEST_MEASURED_TRIAL: undefined },
+    { SCOREBUG_TEST_MEASURED_RECOVERY: 'decoder-stall' },
+    { SCOREBUG_TEST_DIRECT_RTMP_RECORDER: undefined },
+  ])
+    assert.throws(() => qualify({ ...env, ...patch }));
 });

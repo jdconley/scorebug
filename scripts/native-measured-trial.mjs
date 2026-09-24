@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
 
 /** An isolated simulator route, never a production upgrade switch. */
@@ -35,6 +36,8 @@ export function nativeMeasuredTrial({
       environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS === '1500' &&
       environment.SCOREBUG_TEST_CANDIDATE_PROFILE === '360p30' &&
       nativeCandidateHeadroom(environment) &&
+      (environment.SCOREBUG_TEST_UPLINK_PROFILE === undefined ||
+        nativeMeasuredFileSource(environment)) &&
       [
         'SCOREBUG_TEST_NATIVE_QUALITY',
         'SCOREBUG_TEST_NATIVE_CONFIRMATION',
@@ -42,7 +45,6 @@ export function nativeMeasuredTrial({
         'SCOREBUG_TEST_PROFILE_TRANSITIONS',
         'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
         'SCOREBUG_TEST_UPLINK_PROXY_PORT',
-        'SCOREBUG_TEST_UPLINK_PROFILE',
         'SCOREBUG_TEST_DECODER_STALL',
         'SCOREBUG_TEST_CADENCE_REPORTS',
         'SCOREBUG_TEST_DEADLINE_RESETS',

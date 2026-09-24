@@ -48,11 +48,20 @@ final class NativeStreamingTests: XCTestCase {
             app.launchEnvironment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] = transitions
         }
         let uplinkPort = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? ""
+        let uplinkProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""
+        if !uplinkProfile.isEmpty { XCTAssertFalse(uplinkPort.isEmpty) }
         if !uplinkPort.isEmpty {
             XCTAssertTrue(transitions.isEmpty)
             let parsed = try XCTUnwrap(Int(uplinkPort))
             XCTAssertEqual(String(parsed), uplinkPort); XCTAssertTrue((1...65535).contains(parsed))
-            XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30", "240p30"].contains(liveProfile)); XCTAssertEqual(motionFlag, "blocks16")
+            XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30", "240p30"].contains(liveProfile))
+            if fileFlag == "1" {
+                XCTAssertTrue(motionFlag.isEmpty)
+                XCTAssertTrue(["passthrough", "loss0p2-delay30"].contains(uplinkProfile))
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"], "1")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], "staged")
+                app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROFILE"] = uplinkProfile
+            } else { XCTAssertEqual(motionFlag, "blocks16"); XCTAssertTrue(uplinkProfile.isEmpty) }
             app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = uplinkPort
         }
         let adaptive = ProcessInfo.processInfo.environment["SCOREBUG_TEST_ADAPTIVE_PROFILES"] ?? ""
@@ -76,9 +85,10 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue((90...600).contains(holdSeconds))
             XCTAssertTrue((fileFlag == "1" && motionFlag.isEmpty) || (fileFlag.isEmpty && motionFlag == "blocks16"))
             for key in ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
-                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL"] {
+                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_DECODER_STALL"] {
                 XCTAssertTrue((ProcessInfo.processInfo.environment[key] ?? "").isEmpty)
             }
+            XCTAssertTrue(uplinkPort.isEmpty || (fileFlag == "1" && !uplinkProfile.isEmpty))
             app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] = candidateHeadroom
         }
         let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
@@ -97,7 +107,8 @@ final class NativeStreamingTests: XCTestCase {
         if !candidate.isEmpty {
             XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(candidate))
             XCTAssertTrue(["240p30", "360p30", "540p30"].contains(liveProfile))
-            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && (probe.isEmpty || candidateHeadroom == "1") && uplinkPort.isEmpty)
+            XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && (probe.isEmpty || candidateHeadroom == "1") &&
+                (uplinkPort.isEmpty || (fileFlag == "1" && candidateHeadroom == "1" && !uplinkProfile.isEmpty)))
             XCTAssertTrue((90...600).contains(holdSeconds))
             app.launchEnvironment["SCOREBUG_TEST_CANDIDATE_PROFILE"] = candidate
         }

@@ -16,6 +16,26 @@ enum VideoObservationFixture {
 
     enum UplinkError: Error { case invalidFixtureRoute }
 
+    /// Leaf predicate: never calls other fixture selectors or changes production routing.
+    static func measuredFileUplink(environment: [String: String]) -> Bool {
+        guard environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", requested(environment: environment),
+              (environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? "").isEmpty,
+              environment["SCOREBUG_TEST_MEASURED_TRIAL"] == "1",
+              environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] == "1",
+              environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] == "360p30",
+              environment["SCOREBUG_TEST_LIVE_PROFILE"] == "240p30",
+              environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "staged",
+              environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] == "1",
+              environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == "1500",
+              (environment["SCOREBUG_TEST_MEASURED_RECOVERY"] ?? "").isEmpty,
+              ["passthrough", "loss0p2-delay30"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""),
+              let rawPort = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], let port = Int(rawPort),
+              String(port) == rawPort, (1...65535).contains(port),
+              let rawHold = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"], let hold = Int(rawHold),
+              String(hold) == rawHold, (90...600).contains(hold) else { return false }
+        return true
+    }
+
     static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
         guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else {
             return requested(environment: environment) ? .hd1080 : .minimumStartup
@@ -24,10 +44,12 @@ enum VideoObservationFixture {
         let motionFlag = environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? ""
         if !fileFlag.isEmpty {
             guard fileFlag == "1", motionFlag.isEmpty,
+                  (["SCOREBUG_TEST_UPLINK_PROFILE", "SCOREBUG_TEST_UPLINK_PROXY_PORT"].allSatisfy({ (environment[$0] ?? "").isEmpty })
+                   || measuredFileUplink(environment: environment)),
                   ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION",
                    "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
                    "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_MEASURED_RECOVERY",
-                   "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_UPLINK_PROFILE", "SCOREBUG_TEST_DECODER_STALL",
+                   "SCOREBUG_TEST_DECODER_STALL",
                    "SCOREBUG_TEST_CADENCE_REPORTS", "SCOREBUG_TEST_DEADLINE_RESETS",
                    "SCOREBUG_TEST_DECODER_THREADING", "SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS",
                    "SCOREBUG_TEST_PUBLISH_PACING", "SCOREBUG_FIXTURE_FAIL_AFTER"]
@@ -64,6 +86,10 @@ enum VideoObservationFixture {
     /// Pure fixture transformation; the runtime caller is DEBUG simulator only.
     /// Preserve query encoding exactly, including stream identity and credentials.
     static func publishingURL(_ original: URL, environment: [String: String]) throws -> URL {
+        if !(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "").isEmpty {
+            guard measuredFileUplink(environment: environment) else { throw UplinkError.invalidFixtureRoute }
+            _ = try liveProfile(environment: environment)
+        }
         guard let raw = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], !raw.isEmpty else { return original }
         let reduced = try liveProfile(environment: environment) != .hd1080
         guard requested(environment: environment),
@@ -74,6 +100,10 @@ enum VideoObservationFixture {
               let originalPort = components.port, (1...65535).contains(originalPort),
               components.user == nil, components.password == nil, components.fragment == nil
         else { throw UplinkError.invalidFixtureRoute }
+        if environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "loss0p2-delay30" {
+            let recovery = (components.queryItems ?? []).filter { $0.name == "peerlatency" }
+            guard recovery.count == 1, recovery.first?.value == "400" else { throw UplinkError.invalidFixtureRoute }
+        }
         let query = components.percentEncodedQuery
         components.port = port
         guard components.percentEncodedQuery == query, let routed = components.url else {

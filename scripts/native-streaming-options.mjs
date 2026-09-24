@@ -1,3 +1,5 @@
+import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
+import { measuredUplinkProfiles } from './native-measured-uplink.mjs';
 import assert from 'node:assert/strict';
 
 export function fixtureWorkerReportInterval({
@@ -112,6 +114,26 @@ export function nativeUplinkOptions({
   );
   const profile = environment.SCOREBUG_TEST_UPLINK_PROFILE;
   if (profile === undefined) return null;
+  if (environment.SCOREBUG_TEST_FILE_INPUT !== undefined) {
+    assert(
+      measuredUplinkProfiles.includes(profile) &&
+        nativeMeasuredFileSource(environment) &&
+        streaming === true &&
+        requireQuality === false &&
+        requireConfirmation === false &&
+        requireProcessing === true &&
+        requirePublication === true &&
+        fixtureWorkload === 'real-file' &&
+        liveProfile === '240p30' &&
+        String(holdSeconds) === environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS &&
+        Number.isSafeInteger(holdSeconds) &&
+        holdSeconds >= 90 &&
+        holdSeconds <= 600,
+      'Measured uplink requires complete staged file route',
+    );
+    return profile;
+  }
+
   assert.ok(
     ['passthrough', 'rate4m', 'rate3m'].includes(profile),
     'Unsupported native uplink profile',

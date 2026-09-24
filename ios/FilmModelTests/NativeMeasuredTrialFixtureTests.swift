@@ -9,6 +9,46 @@ final class NativeMeasuredTrialFixtureTests: XCTestCase {
         "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
     ] }
 
+    func testMeasuredFileLinkRequiresCompleteProfileAndGeneratedPort() throws {
+        for profile in ["passthrough", "loss0p2-delay30"] {
+            var environment = valid
+            environment.removeValue(forKey: "SCOREBUG_TEST_MOTION_FIXTURE")
+            environment["SCOREBUG_TEST_FILE_CAPTURE"] = "1"
+            environment["SCOREBUG_TEST_UPLINK_PROFILE"] = profile
+            environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = "12345"
+            XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+            XCTAssertEqual(try NativeCandidateFixture.requested(environment: environment), .low360)
+            XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: environment), .low240)
+            let query = profile == "loss0p2-delay30" ? "streamid=publish%3Alive&peerlatency=400" : "streamid=publish%3Alive&latency=120"
+            let original = URL(string: "srt://127.0.0.1:9999?\(query)")!
+            XCTAssertEqual(try VideoObservationFixture.publishingURL(original, environment: environment).absoluteString,
+                           "srt://127.0.0.1:12345?\(query)")
+            if profile == "loss0p2-delay30" {
+                for suffix in ["", "&peerlatency=120", "&peerlatency=0400", "&peerlatency=400&peerlatency=400"] {
+                    let badURL = URL(string: "srt://127.0.0.1:9999?streamid=publish%3Alive\(suffix)")!
+                    XCTAssertThrowsError(try VideoObservationFixture.publishingURL(badURL, environment: environment))
+                }
+            }
+            for (key, values) in [
+                "SCOREBUG_TEST_UPLINK_PROFILE": ["", "rate4m", "loss1"],
+                "SCOREBUG_TEST_UPLINK_PROXY_PORT": ["", "0", "012345", "65536", "host"],
+                "SCOREBUG_TEST_BANDWIDTH_PROBE": ["repeated", "renew"],
+                "SCOREBUG_TEST_FILE_CAPTURE": ["", "0"],
+                "SCOREBUG_TEST_MOTION_FIXTURE": ["blocks16"],
+                "SCOREBUG_TEST_CANDIDATE_PROFILE": ["540p30"],
+                "SCOREBUG_TEST_MEASURED_TRIAL": ["0"],
+                "SCOREBUG_TEST_MEASURED_RECOVERY": ["decoder-stall"],
+                "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["089", "89", "601"]
+            ] {
+                for value in values {
+                    var bad = environment; bad[key] = value
+                    XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: bad), "\(key)=\(value)")
+                    XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: bad), "\(key)=\(value)")
+                }
+            }
+        }
+    }
+
     func testFileMeasuredRouteRetainsFullAdmissionAndExactRepeatedSelection() throws {
         for probe in ["staged", "repeated"] {
             var environment = valid

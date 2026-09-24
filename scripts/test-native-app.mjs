@@ -1,3 +1,4 @@
+import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
   nativeFileFixtureOptions,
   qualifyNativeFileFixture,
@@ -840,6 +841,7 @@ try {
     `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
     `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
     `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
+    `SCOREBUG_TEST_UPLINK_PROFILE=${fileFixture && measuredTrial ? (uplinkProfile ?? '') : ''}`,
   ];
   if (fileFixture) {
     await run('xcrun', ['simctl', 'boot', simulator], 'file-boot');
@@ -992,7 +994,11 @@ try {
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
   const uplinkQualification = uplinkProfile
-    ? (uplinkProfile === 'passthrough' ? qualifyNativeUplinkProxy : qualifyNativeUplinkSchedule)(
+    ? (uplinkProfile === 'loss0p2-delay30'
+        ? qualifyMeasuredUplink
+        : uplinkProfile === 'passthrough'
+          ? qualifyNativeUplinkProxy
+          : qualifyNativeUplinkSchedule)(
         JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'), 'utf8')),
         uplinkProfile,
       )

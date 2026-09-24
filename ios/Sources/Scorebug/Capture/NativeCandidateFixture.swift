@@ -14,9 +14,10 @@ enum NativeCandidateHeadroomFixture {
               ["360p30", "540p30", "1080p30"].contains(environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""),
               environment["SCOREBUG_TEST_LIVE_PROFILE"] == "240p30",
               try VideoObservationFixture.liveProfile(environment: environment) == .low240,
+              ((environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? "").isEmpty || VideoObservationFixture.measuredFileUplink(environment: environment)),
               ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
                "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING",
-               "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL"].allSatisfy({ (environment[$0] ?? "").isEmpty })
+               "SCOREBUG_TEST_DECODER_STALL"].allSatisfy({ (environment[$0] ?? "").isEmpty })
         else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
         return true
     }

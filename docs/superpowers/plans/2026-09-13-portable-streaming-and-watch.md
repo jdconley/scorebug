@@ -24,6 +24,17 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The newest real-match **network impairment check is not yet qualified**. A local
+link with 30ms delay each way and 0.2% datagram removal exposed insufficient SRT
+recovery latency, decoder buffering and loopback-only probe assumptions. With an
+explicit 400ms SRT budget and slice decoding, all 157 observed deadline windows
+now deliver 30fps within 1.5s; archive/live frame continuity also passes. Quality
+increases remain blocked by the probe's 50ms RTT/buffer limits, no-retransmission gate and short
+retransmission-pressure windows. Production stays at the minimum. The
+[measured-network plan](2026-09-24-measured-network-link.md) records all three
+failed full qualifications, passing component evidence, cleanup and the next
+network-aware admission work. No removed simulator runtime was reinstalled.
+
 The **30-minute 1080p and 4K real-match CPU-proxy replays both pass**: each clean
 archive and stream retains all 54,000 frames, continuous audio and stable sampled
 A/V alignment. Both native senders report zero archive rejection or live queue

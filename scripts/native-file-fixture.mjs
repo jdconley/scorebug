@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { measuredUplinkProfiles } from './native-measured-uplink.mjs';
 import { createReadStream, constants } from 'node:fs';
 import { copyFile, lstat, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -34,16 +35,24 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     'SCOREBUG_TEST_PROFILE_TRANSITIONS',
     'SCOREBUG_TEST_ADAPTIVE_PROFILES',
     'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
-    'SCOREBUG_TEST_UPLINK_PROFILE',
     'SCOREBUG_TEST_UPLINK_PROXY_PORT',
     'SCOREBUG_TEST_DECODER_STALL',
     'SCOREBUG_TEST_CADENCE_REPORTS',
     'SCOREBUG_TEST_DEADLINE_RESETS',
-    'SCOREBUG_TEST_DECODER_THREADING',
-    'SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS',
     'SCOREBUG_TEST_PUBLISH_PACING',
   ])
     assert.equal(environment[key], undefined, `File baseline conflicts with ${key}`);
+  assert(
+    environment.SCOREBUG_TEST_DECODER_THREADING === undefined ||
+      (environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' &&
+        environment.SCOREBUG_TEST_DECODER_THREADING === 'slice'),
+    'Explicit slice decoding requires the impaired measured file route',
+  );
+  assert.equal(
+    environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS,
+    environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' ? '400' : undefined,
+    'Delayed measured link requires explicit400ms SRT peer recovery budget',
+  );
   const measured = environment.SCOREBUG_TEST_MEASURED_TRIAL !== undefined;
   if (measured) {
     for (const [key, value] of Object.entries({
@@ -57,12 +66,25 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
       assert.equal(environment[key], value, `Measured file route requires ${key}=${value}`);
     const probe = environment.SCOREBUG_TEST_BANDWIDTH_PROBE;
     const recovery = environment.SCOREBUG_TEST_MEASURED_RECOVERY;
+    if (environment.SCOREBUG_TEST_UPLINK_PROFILE !== undefined)
+      assert(
+        measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE) &&
+          probe === 'staged' &&
+          recovery === undefined &&
+          holdSeconds >= 90,
+        'Measured file uplink requires staged probe without another fault mode',
+      );
     assert(
       (probe === 'staged' && (recovery === undefined || recovery === 'decoder-stall')) ||
         (probe === 'repeated' && recovery === 'repeated' && holdSeconds === 180),
       'Measured file route requires a complete staged or repeated recovery selection',
     );
   } else {
+    assert.equal(
+      environment.SCOREBUG_TEST_UPLINK_PROFILE,
+      undefined,
+      'File uplink requires complete measured route',
+    );
     for (const key of [
       'SCOREBUG_TEST_CANDIDATE_PROFILE',
       'SCOREBUG_TEST_CANDIDATE_HEADROOM',

@@ -1,3 +1,4 @@
+import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
 import { nativeRelayImageTag } from './native-relay-image.mjs';
 import { fixtureWorkerReportInterval } from './native-streaming-options.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
@@ -84,9 +85,22 @@ export async function nativeStreamingFixture({
   assert.ok(['automatic', 'slice'].includes(decoderThreading), 'Unsupported decoder threading');
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
-    uplinkProfile === null || ['passthrough', 'rate4m', 'rate3m'].includes(uplinkProfile),
+    uplinkProfile === null ||
+      ['passthrough', 'rate4m', 'rate3m', 'loss0p2-delay30'].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
+  if (uplinkProfile === 'loss0p2-delay30')
+    assert(
+      measuredTrial &&
+        candidateHeadroom &&
+        requirePublication &&
+        requireReceiverProbe &&
+        stagedReceiverProbe &&
+        !measuredRecovery &&
+        !repeatedRecovery &&
+        liveProfile === '240p30',
+      'Impaired measured link requires complete staged trial without another fault',
+    );
   if (uplinkProfile === 'rate3m')
     assert.ok(
       liveProfile === '240p30' && requirePublication && !requireReceiverProbe,
@@ -264,6 +278,7 @@ export async function nativeStreamingFixture({
         receiverPort: ingestPort,
         forward: { recordTimeline: true },
         reverse: { recordTimeline: true },
+        ...(uplinkProfile === 'loss0p2-delay30' ? measuredUplinkConfiguration(uplinkProfile) : {}),
         ...(['rate4m', 'rate3m'].includes(uplinkProfile)
           ? {
               forwardRateSchedule: [
