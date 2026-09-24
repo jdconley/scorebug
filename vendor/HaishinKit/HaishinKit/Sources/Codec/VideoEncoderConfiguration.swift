@@ -38,6 +38,28 @@ public struct VideoEncoderSubmission: Sendable {
     public let startedAt: Double
     public let returnedAt: Double
     public let status: Int32
+    /// Cached selection queried once after preparing this encoder session.
+    /// Not a fresh per-frame measurement, utilization, or throughput guarantee.
+    public let selectionQueriedAfterPreparation: VideoEncoderHardwareSelection?
+}
+
+/// Observational only. Unavailable evidence is never inferred to mean software.
+public enum VideoEncoderHardwareSelection: Equatable, Sendable {
+    case hardware, software
+    case readFailed(status: Int32)
+    case missingValue, invalidType, notQueriedOnPlatform
+
+    static func read(from session: any VTSessionConvertible) -> Self {
+        #if os(macOS)
+        let result = session.copyOption(.usingHardwareAcceleratedVideoEncoder)
+        guard result.status == noErr else { return .readFailed(status: result.status) }
+        guard let value = result.value else { return .missingValue }
+        guard CFGetTypeID(value) == CFBooleanGetTypeID() else { return .invalidType }
+        return CFBooleanGetValue(unsafeBitCast(value, to: CFBoolean.self)) ? .hardware : .software
+        #else
+        return .notQueriedOnPlatform
+        #endif
+    }
 }
 
 /// Must remain bounded and synchronous; never wait, perform I/O or create tasks.

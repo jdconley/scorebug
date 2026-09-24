@@ -138,6 +138,7 @@ final class VideoCodec {
     private var continuation: PublishingQueue<CMSampleBuffer>?
     private let invalidation = VideoCodecInvalidation()
     private var sessionMode: VTSessionMode?
+    private var hardwareSelection: (revision: UUID, value: VideoEncoderHardwareSelection)?
     private var presentationTimeStamp: CMTime?
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
@@ -151,6 +152,7 @@ final class VideoCodec {
     }
     private(set) var session: (any VTSessionConvertible)? {
         didSet {
+            hardwareSelection = nil
             oldValue?.invalidate()
         }
     }
@@ -167,6 +169,12 @@ final class VideoCodec {
             invalidation.installed(observed.revision)
         }
         guard invalidation.isCurrent(observed.revision), let session else { return nil }
+        if sessionMode == .compression, encoderSubmissionObserver != nil, hardwareSelection == nil {
+            let selection = VideoEncoderHardwareSelection.read(from: session)
+            // A notification may supersede this revision during the native read.
+            guard invalidation.isCurrent(observed.revision) else { return nil }
+            hardwareSelection = (observed.revision, selection)
+        }
         return (session, observed.revision)
     }
 
@@ -182,7 +190,8 @@ final class VideoCodec {
             let operation = VideoSubmission(revision: revision, sample: sample, session: session,
                 output: continuation, failure: failure, configuration: recordedBitRateChange?.configuration,
                 completionObserver: encoderCompletionObserver, configurationObserver: encoderConfigurationObserver,
-                submissionObserver: encoderSubmissionObserver)
+                submissionObserver: encoderSubmissionObserver,
+                hardwareSelection: hardwareSelection.flatMap { $0.revision == revision ? $0.value : nil })
             preparedSubmission = operation
             return operation
         } catch {

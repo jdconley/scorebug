@@ -59,7 +59,8 @@ private final class EncoderEvidence: @unchecked Sendable {
         let (records, exceeded, calls, callsExceeded) = lock.withLock { (frames, overflow, submissions, submissionOverflow) }
         return ["submissionOverflow": callsExceeded, "submissionCalls": calls.map { call in
             ["sourcePTS": timeEvidence(call.sourcePTS), "encoderSessionID": call.encoderSessionID.uuidString,
-             "startedAt": call.startedAt, "returnedAt": call.returnedAt, "status": call.status] as [String: Any]
+             "startedAt": call.startedAt, "returnedAt": call.returnedAt, "status": call.status,
+             "selectionQueriedAfterPreparation": encoderHardwareSelectionEvidence(call.selectionQueriedAfterPreparation) as Any? ?? NSNull()] as [String: Any]
         }, "overflow": exceeded, "frames": records.map { frame in
             ["sourcePTS": timeEvidence(frame.sourcePTS), "outputPTS": timeEvidence(frame.outputPTS),
              "encoderSessionID": frame.encoderSessionID.uuidString,

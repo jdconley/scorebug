@@ -58,6 +58,16 @@ DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
   swift test --package-path vendor/HaishinKit
 ```
 
+When a compression submission observer is explicitly enabled, the codec reads
+macOS VideoToolbox's actual hardware-selection property once after preparing each
+encoder session. `VideoEncoderSubmission.selectionQueriedAfterPreparation` carries
+that cached result with the original encoder-session UUID. Hardware, software,
+native read failure, missing value, invalid native type and intentional platform
+omission remain distinct. All outcomes are nonfatal diagnostics. Disabled observers
+and decompression cause no property read; other platforms report `notQueriedOnPlatform`.
+The result is not per-frame hardware utilization, achieved capacity or streaming
+health. Bitrate updates retain it; session replacement clears and requeries it.
+
 The internal `SRTProbeMessage.encodeStage` helper adds the `SBUGPRB2` wire
 foundation for repeated bandwidth measurements. Every null TS packet includes a
 1...32 stage ordinal after its existing UUID, generation, message sequence, rate

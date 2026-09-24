@@ -14,13 +14,23 @@ import VideoToolbox
         var writeStatus: OSStatus = noErr
         var convertStatus: OSStatus = noErr
         var convertEnteredAt = 0.0, convertReturnedAt = 0.0
+        var hardwareReads = 0
+        var hardwareStatus: OSStatus = noErr
+        var hardwareValue: CFTypeRef? = kCFBooleanTrue
+        var onHardwareRead: (() -> Void)?
         func setOption(_ option: VTSessionOption) -> OSStatus {
             writes += 1; options[option.key.rawValue] = option.value; onWrite?()
             return writeStatus
         }
         func setOptions(_ options: Set<VTSessionOption>) -> OSStatus { noErr }
         func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) {
-            (noErr, options[key.rawValue])
+            #if os(macOS)
+            if key == .usingHardwareAcceleratedVideoEncoder {
+                hardwareReads += 1; onHardwareRead?()
+                return (hardwareStatus, hardwareValue)
+            }
+            #endif
+            return (noErr, options[key.rawValue])
         }
         func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
             conversions += 1
@@ -32,6 +42,118 @@ import VideoToolbox
         func completeFrames() -> OSStatus { noErr }
         func invalidate() { invalidations += 1 }
     }
+    #if os(macOS)
+    @Test func hardwareSelectionUsesExactNativeBooleanAndPreservesUnavailableOutcomes() throws {
+        let cases: [(OSStatus, CFTypeRef?, VideoEncoderHardwareSelection)] = [
+            (noErr, kCFBooleanTrue, .hardware), (noErr, kCFBooleanFalse, .software),
+            (noErr, NSNumber(value: true), .hardware),
+            (noErr, NSNumber(value: 1), .invalidType), (noErr, NSNumber(value: 0), .invalidType),
+            (noErr, "true" as CFString, .invalidType), (noErr, nil, .missingValue),
+            (-123, nil, .readFailed(status: -123)), (-456, kCFBooleanTrue, .readFailed(status: -456)),
+        ]
+        for (status, value, expected) in cases {
+            let session = Session(), observations = SubmissionCallRows()
+            session.hardwareStatus = status; session.hardwareValue = value
+            let codec = VideoCodec(encoderSubmissionObserver: observations.record, sessionFactory: { _, _ in session })
+            _ = codec.outputStream; codec.startRunning()
+            codec.append(try frame(0)); codec.append(try frame(1))
+            #expect(session.hardwareReads == 1)
+            #expect(observations.rows.count == 2)
+            #expect(observations.rows.allSatisfy { $0.selectionQueriedAfterPreparation == expected })
+            #expect(codec.failure.error == nil && session.conversions == 2)
+            codec.stopRunning()
+        }
+    }
+    @Test func selectionRetainsSessionOwnershipAcrossBitrateReplacementAndLateSubmission() throws {
+        let first = Session(), second = Session(), rows = SubmissionCallRows()
+        second.hardwareValue = kCFBooleanFalse
+        var creations = 0
+        let codec = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in
+            creations += 1; return creations == 1 ? first : second
+        })
+        _ = codec.outputStream; codec.startRunning(); codec.append(try frame(0))
+        let firstID = try #require(rows.rows.first?.encoderSessionID)
+        _ = try codec.setVerifiedBitRate(3_000_000)
+        codec.append(try frame(1))
+        #expect(first.hardwareReads == 1)
+        let pending = try #require(codec.prepareSubmission(frame(2)))
+        codec.requestSessionInvalidation()
+        #expect(pending.run())
+        #expect(!codec.commitSubmission(pending, succeeded: true))
+        codec.append(try frame(3))
+        #expect(first.hardwareReads == 1 && second.hardwareReads == 1)
+        #expect(rows.rows.prefix(3).allSatisfy { $0.encoderSessionID == firstID && $0.selectionQueriedAfterPreparation == .hardware })
+        #expect(rows.rows.last?.encoderSessionID != firstID)
+        #expect(rows.rows.last?.selectionQueriedAfterPreparation == .software)
+        codec.stopRunning(); codec.startRunning(); _ = codec.outputStream
+        codec.append(try frame(0))
+        #expect(second.hardwareReads == 2)
+        #expect(rows.rows.last?.encoderSessionID != rows.rows[3].encoderSessionID)
+        codec.stopRunning()
+    }
+    @Test func selectionInvalidatedDuringReadCannotBeSubmittedOrLeakToNewSession() throws {
+        let first = Session(), second = Session(), rows = SubmissionCallRows()
+        second.hardwareValue = kCFBooleanFalse
+        var creations = 0
+        let codec = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in
+            creations += 1; return creations == 1 ? first : second
+        })
+        first.onHardwareRead = { codec.requestSessionInvalidation() }
+        _ = codec.outputStream; codec.startRunning(); codec.append(try frame(0))
+        #expect(first.hardwareReads == 1 && first.conversions == 0 && rows.rows.isEmpty)
+        codec.append(try frame(1))
+        #expect(first.invalidations == 1 && second.hardwareReads == 1)
+        #expect(rows.rows.count == 1 && rows.rows[0].selectionQueriedAfterPreparation == .software)
+        codec.stopRunning()
+    }
+    @Test func explicitReplacementQueriesItsOwnPreparedSession() throws {
+        let first = Session(), second = Session(), rows = SubmissionCallRows()
+        second.hardwareStatus = -123
+        var creations = 0
+        let codec = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in
+            creations += 1; return creations == 1 ? first : second
+        })
+        _ = codec.outputStream; codec.startRunning(); codec.append(try frame(0))
+        let previous = try #require(rows.rows.first)
+        let replacement = try codec.prepareReplacement(.default)
+        replacement.drain(); try codec.commitReplacement(replacement)
+        codec.append(try frame(1)); codec.append(try frame(2))
+        #expect(first.hardwareReads == 1 && second.hardwareReads == 1)
+        #expect(rows.rows[1].encoderSessionID != previous.encoderSessionID)
+        #expect(rows.rows.suffix(2).allSatisfy { $0.selectionQueriedAfterPreparation == .readFailed(status: -123) })
+        #expect(codec.failure.error == nil)
+        codec.stopRunning()
+    }
+    @Test func stopDuringSelectionReadCannotResurrectPreparedSession() throws {
+        let session = Session(), rows = SubmissionCallRows()
+        let codec = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in session })
+        session.onHardwareRead = { codec.stopRunning() }
+        _ = codec.outputStream; codec.startRunning(); codec.append(try frame(0))
+        #expect(session.hardwareReads == 1 && session.conversions == 0)
+        #expect(rows.rows.isEmpty && !codec.isRunning)
+        #expect(codec.session == nil)
+    }
+    #endif
+    @Test func noSelectionQueryWithoutObserverOrForDecompression() throws {
+        let session = Session(), codec = try ready(session)
+        codec.append(try frame(1)); codec.stopRunning()
+        #expect(session.hardwareReads == 0)
+        let other = Session(), rows = SubmissionCallRows()
+        let decoder = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in other })
+        _ = decoder.outputStream; decoder.startRunning(); decoder.append(try compressedFrame())
+        #expect(other.hardwareReads == 0 && rows.rows.isEmpty)
+        decoder.stopRunning()
+    }
+    #if !os(macOS)
+    @Test func platformOmissionDoesNotQueryOrPreventSubmission() throws {
+        let session = Session(), rows = SubmissionCallRows()
+        let codec = VideoCodec(encoderSubmissionObserver: rows.record, sessionFactory: { _, _ in session })
+        _ = codec.outputStream; codec.startRunning(); codec.append(try frame(0))
+        #expect(session.hardwareReads == 0)
+        #expect(rows.rows.first?.selectionQueriedAfterPreparation == .notQueriedOnPlatform)
+        codec.stopRunning()
+    }
+    #endif
     @Test(arguments: [Int32(0), Int32(-1234)])
     func submissionCallObserverBracketsReturnAndPreservesFailure(status: Int32) throws {
         let session = Session(), observations = SubmissionCallRows()

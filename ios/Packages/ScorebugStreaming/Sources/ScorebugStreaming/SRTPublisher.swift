@@ -22,6 +22,7 @@ public actor SRTPublisher {
     }
     private let healthObserver: (@Sendable (HealthSnapshot) -> Void)?
     public typealias EncoderSubmission = VideoEncoderSubmission
+    public typealias EncoderHardwareSelection = VideoEncoderHardwareSelection
     public typealias TransportSendObservation = SRTStream.TransportSendObservation
     public typealias CompressedAudioFrame = SRTStream.CompressedAudioFrame
     public typealias MuxedPacketFrame = SRTStream.MuxedPacketFrame

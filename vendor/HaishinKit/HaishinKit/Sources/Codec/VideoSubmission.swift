@@ -13,15 +13,18 @@ package final class VideoSubmission: @unchecked Sendable {
     let completionObserver: VideoEncoderCompletionObserver?
     let configurationObserver: VideoEncoderConfigurationObserver?
     let submissionObserver: VideoEncoderSubmissionObserver?
+    let hardwareSelection: VideoEncoderHardwareSelection?
 
     init(revision: UUID, sample: CMSampleBuffer, session: any VTSessionConvertible,
          output: PublishingQueue<CMSampleBuffer>, failure: PublishingFailureLatch,
          configuration: VideoEncoderConfiguration?, completionObserver: VideoEncoderCompletionObserver?,
-         configurationObserver: VideoEncoderConfigurationObserver?, submissionObserver: VideoEncoderSubmissionObserver?) {
+         configurationObserver: VideoEncoderConfigurationObserver?, submissionObserver: VideoEncoderSubmissionObserver?,
+         hardwareSelection: VideoEncoderHardwareSelection?) {
         self.revision = revision; self.sample = sample; self.session = session
         self.output = output; self.failure = failure; self.configuration = configuration
         self.completionObserver = completionObserver; self.configurationObserver = configurationObserver
         self.submissionObserver = submissionObserver
+        self.hardwareSelection = hardwareSelection
     }
 
     package func run() -> Bool {
@@ -42,7 +45,8 @@ package final class VideoSubmission: @unchecked Sendable {
         var status: OSStatus = noErr
         defer {
             submissionObserver?(.init(sourcePTS: sample.presentationTimeStamp, encoderSessionID: revision,
-                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
+                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status,
+                selectionQueriedAfterPreparation: hardwareSelection))
         }
         do {
             try session.convert(sample, continuation: output, encoderCompletionObserver: completion)

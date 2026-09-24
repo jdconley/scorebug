@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,229 @@
+@@ -8,72 +8,238 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -274,6 +274,7 @@
 +    private var continuation: PublishingQueue<CMSampleBuffer>?
 +    private let invalidation = VideoCodecInvalidation()
 +    private var sessionMode: VTSessionMode?
++    private var hardwareSelection: (revision: UUID, value: VideoEncoderHardwareSelection)?
 +    private var presentationTimeStamp: CMTime?
      private(set) var isRunning = false
      private(set) var inputFormat: CMFormatDescription? {
@@ -288,6 +289,7 @@
      }
      private(set) var session: (any VTSessionConvertible)? {
          didSet {
++            hardwareSelection = nil
              oldValue?.invalidate()
 -            invalidateSession = false
          }
@@ -305,6 +307,12 @@
 +            invalidation.installed(observed.revision)
 +        }
 +        guard invalidation.isCurrent(observed.revision), let session else { return nil }
++        if sessionMode == .compression, encoderSubmissionObserver != nil, hardwareSelection == nil {
++            let selection = VideoEncoderHardwareSelection.read(from: session)
++            // A notification may supersede this revision during the native read.
++            guard invalidation.isCurrent(observed.revision) else { return nil }
++            hardwareSelection = (observed.revision, selection)
++        }
 +        return (session, observed.revision)
 +    }
 +
@@ -320,7 +328,8 @@
 +            let operation = VideoSubmission(revision: revision, sample: sample, session: session,
 +                output: continuation, failure: failure, configuration: recordedBitRateChange?.configuration,
 +                completionObserver: encoderCompletionObserver, configurationObserver: encoderConfigurationObserver,
-+                submissionObserver: encoderSubmissionObserver)
++                submissionObserver: encoderSubmissionObserver,
++                hardwareSelection: hardwareSelection.flatMap { $0.revision == revision ? $0.value : nil })
 +            preparedSubmission = operation
 +            return operation
 +        } catch {
@@ -392,7 +401,7 @@
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -82,7 +239,7 @@
+@@ -82,7 +248,7 @@
              var attributes: [NSString: AnyObject] = [:]
              if let inputFormat {
                  // Specify the pixel format of the uncompressed video.
@@ -401,7 +410,7 @@
              }
              return attributes.isEmpty ? nil : attributes
          case .decompression:
-@@ -97,19 +254,24 @@
+@@ -97,19 +263,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -429,7 +438,7 @@
      }
 
      @objc
-@@ -122,7 +284,7 @@
+@@ -122,7 +293,7 @@
          }
          switch type {
          case .ended:
@@ -438,7 +447,7 @@
          default:
              break
          }
-@@ -151,6 +313,7 @@
+@@ -151,6 +322,7 @@
          )
          #endif
          startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
@@ -446,7 +455,7 @@
          isRunning = true
      }
 
-@@ -159,11 +322,15 @@
+@@ -159,11 +331,15 @@
              return
          }
          isRunning = false
@@ -464,7 +473,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +339,18 @@
+@@ -172,3 +348,18 @@
          #endif
      }
  }
@@ -3207,7 +3216,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,66 @@
 +import CoreMedia
 +import Foundation
 +
@@ -3248,6 +3257,28 @@
 +    public let startedAt: Double
 +    public let returnedAt: Double
 +    public let status: Int32
++    /// Cached selection queried once after preparing this encoder session.
++    /// Not a fresh per-frame measurement, utilization, or throughput guarantee.
++    public let selectionQueriedAfterPreparation: VideoEncoderHardwareSelection?
++}
++
++/// Observational only. Unavailable evidence is never inferred to mean software.
++public enum VideoEncoderHardwareSelection: Equatable, Sendable {
++    case hardware, software
++    case readFailed(status: Int32)
++    case missingValue, invalidType, notQueriedOnPlatform
++
++    static func read(from session: any VTSessionConvertible) -> Self {
++        #if os(macOS)
++        let result = session.copyOption(.usingHardwareAcceleratedVideoEncoder)
++        guard result.status == noErr else { return .readFailed(status: result.status) }
++        guard let value = result.value else { return .missingValue }
++        guard CFGetTypeID(value) == CFBooleanGetTypeID() else { return .invalidType }
++        return CFBooleanGetValue(unsafeBitCast(value, to: CFBoolean.self)) ? .hardware : .software
++        #else
++        return .notQueriedOnPlatform
++        #endif
++    }
 +}
 +
 +/// Must remain bounded and synchronous; never wait, perform I/O or create tasks.
@@ -4475,7 +4506,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoSubmission.swift
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,61 @@
 +import AVFoundation
 +import Foundation
 +
@@ -4491,15 +4522,18 @@
 +    let completionObserver: VideoEncoderCompletionObserver?
 +    let configurationObserver: VideoEncoderConfigurationObserver?
 +    let submissionObserver: VideoEncoderSubmissionObserver?
++    let hardwareSelection: VideoEncoderHardwareSelection?
 +
 +    init(revision: UUID, sample: CMSampleBuffer, session: any VTSessionConvertible,
 +         output: PublishingQueue<CMSampleBuffer>, failure: PublishingFailureLatch,
 +         configuration: VideoEncoderConfiguration?, completionObserver: VideoEncoderCompletionObserver?,
-+         configurationObserver: VideoEncoderConfigurationObserver?, submissionObserver: VideoEncoderSubmissionObserver?) {
++         configurationObserver: VideoEncoderConfigurationObserver?, submissionObserver: VideoEncoderSubmissionObserver?,
++         hardwareSelection: VideoEncoderHardwareSelection?) {
 +        self.revision = revision; self.sample = sample; self.session = session
 +        self.output = output; self.failure = failure; self.configuration = configuration
 +        self.completionObserver = completionObserver; self.configurationObserver = configurationObserver
 +        self.submissionObserver = submissionObserver
++        self.hardwareSelection = hardwareSelection
 +    }
 +
 +    package func run() -> Bool {
@@ -4520,7 +4554,8 @@
 +        var status: OSStatus = noErr
 +        defer {
 +            submissionObserver?(.init(sourcePTS: sample.presentationTimeStamp, encoderSessionID: revision,
-+                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
++                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status,
++                selectionQueriedAfterPreparation: hardwareSelection))
 +        }
 +        do {
 +            try session.convert(sample, continuation: output, encoderCompletionObserver: completion)
