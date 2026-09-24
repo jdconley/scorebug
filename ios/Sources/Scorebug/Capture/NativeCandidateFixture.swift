@@ -204,12 +204,18 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private struct ProbeSnapshot {
         let value: PublishingProbeObservation
         let observedAt: Double
-        var object: [String: Any] {
+        let readStartedAt: Double
+        let readFinishedAt: Double
+        func object(includingReadInterval: Bool) -> [String: Any] {
             var object = NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
                 bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
                 acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
                 reason: value.reason, stage: value.stage, campaign: value.campaign).object
             object["observedAt"] = observedAt
+            if includingReadInterval {
+                object["readStartedAt"] = readStartedAt
+                object["readFinishedAt"] = readFinishedAt
+            }
             return object
         }
     }
@@ -494,13 +500,15 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             guard !stopped, invalidReason == nil else { throw CancellationError() }
             var event = NativeCandidateWaitTrace.Event(kind: .poll, campaign: measurementCampaign,
                 at: ProcessInfo.processInfo.systemUptime, outcome: .cancelled)
-            event.queryStartedAt = event.at
             defer {
                 if event.outcome == .cancelled { event.at = ProcessInfo.processInfo.systemUptime }
                 waitTrace?.record(event)
             }
+            let readStartedAt = ProcessInfo.processInfo.systemUptime
             let value = await probeObservation()
-            event.probeReturnedAt = ProcessInfo.processInfo.systemUptime
+            let readFinishedAt = ProcessInfo.processInfo.systemUptime
+            event.queryStartedAt = readStartedAt
+            event.probeReturnedAt = readFinishedAt
             event.probe = value.map(NativeCandidateWaitTrace.Probe.init)
             try Task.checkCancellation()
             let now = ProcessInfo.processInfo.systemUptime
@@ -548,7 +556,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                     continue
                 }
                 pinnedProbe = value; currentProbe = value; probeBoundAt = boundAt
-                initialProbe = .init(value: value, observedAt: boundAt)
+                initialProbe = .init(value: value, observedAt: boundAt,
+                    readStartedAt: readStartedAt, readFinishedAt: readFinishedAt)
                 event.at = boundAt; event.outcome = .bound
                 return
             }
@@ -563,7 +572,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         let epoch = candidateEpoch
         for _ in 0..<3 {
             let revision = acceptedProbeRevision
+            let readStartedAt = ProcessInfo.processInfo.systemUptime
             let value = await probeObservation()
+            let readFinishedAt = ProcessInfo.processInfo.systemUptime
             guard epoch == candidateEpoch else { return false }
             // The native read can suspend past measurement completion or stop. A late
             // raw-input read must neither reopen admission nor replace joined evidence.
@@ -574,7 +585,10 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             // give cached evidence a new observation time. Retries stay bounded.
             if acceptedProbeRevision != revision { continue }
             let now = ProcessInfo.processInfo.systemUptime
-            if recordDiagnostic, let value { finalProbe = .init(value: value, observedAt: now) }
+            if recordDiagnostic, let value {
+                finalProbe = .init(value: value, observedAt: now,
+                    readStartedAt: readStartedAt, readFinishedAt: readFinishedAt)
+            }
             guard let pinnedProbe, let value,
                   value.id == pinnedProbe.id, value.publishingGeneration == pinnedProbe.publishingGeneration,
                   value.stage == pinnedProbe.stage, value.campaign == pinnedProbe.campaign, value.bitRate == pinnedProbe.bitRate,
@@ -646,7 +660,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         operationsRetired = true
     }
     private func repeatedExportData() throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["formatVersion": 4, "isClosed": true,
+        try JSONSerialization.data(withJSONObject: ["formatVersion": 5, "isClosed": true,
             "scope": NativeCandidateFixture.scope(scope), "maximumCampaigns": 2,
             "campaigns": closedCampaigns], options: [.sortedKeys])
     }
@@ -741,7 +755,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         if candidateHeadroom {
             object["probeBinding"] = ["boundAt": probeBoundAt as Any? ?? NSNull(),
                 "completedAt": probeCompletedAt as Any? ?? NSNull(),
-                "initial": initialProbe?.object as Any? ?? NSNull(), "final": finalProbe?.object as Any? ?? NSNull()]
+                "initial": initialProbe.map { $0.object(includingReadInterval: repeated) } as Any? ?? NSNull(),
+                "final": finalProbe.map { $0.object(includingReadInterval: repeated) } as Any? ?? NSNull()]
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { qualifyRepeatedNativeBandwidthProbe } from './repeated-native-bandwidth-probe.mjs';
+import {
+  qualifyNativeProbeReadInterval,
+  assertNativeProbeStateOrder,
+} from './native-probe-read-interval.mjs';
 
 const check = (condition, message) => assert.ok(condition, `Repeated probe retirement: ${message}`);
 const time = (value) =>
@@ -69,7 +73,7 @@ function reconcileSamples(a, b) {
   );
 }
 
-function validateActive(value, at, stage, events) {
+function validateActive(value, at, stage, events, read) {
   check(value && time(at), 'missing active observation');
   for (const key of ['id', 'campaign', 'stage', 'bitRate', 'publishingGeneration', 'startedAt'])
     check(
@@ -100,13 +104,15 @@ function validateActive(value, at, stage, events) {
       value.lastAcceptedAt >= (renewal.sample.lastAcceptedAt ?? value.startedAt),
     'active observation precedes its native lease renewal',
   );
+  if (read) qualifyNativeProbeReadInterval(value, { ...read, usedAt: at, events });
   for (const event of events) {
     reconcileSamples(value, event.sample);
     if (event.observedAt <= at)
       check(
         event.sample.reason === null &&
-          count(event.sample.acceptedPayloadBytes) <= accepted &&
-          event.sample.leaseDeadline <= value.leaseDeadline,
+          (read ||
+            (count(event.sample.acceptedPayloadBytes) <= accepted &&
+              event.sample.leaseDeadline <= value.leaseDeadline)),
         'active observation follows native withdrawal or regresses history',
       );
   }
@@ -115,7 +121,13 @@ function validateActive(value, at, stage, events) {
 /** Replays causal native cancellation for two original trial requests. This
  * scalar boundary does not qualify candidate cost, receiver headroom, decoded
  * health, recovery, trial confirmation, or production upgrade permission. */
-export function qualifyRepeatedProbeRetirements(proof, { lifecycle, quality } = {}) {
+export function qualifyRepeatedProbeRetirements(
+  proof,
+  { lifecycle, quality, candidateProof } = {},
+) {
+  if (candidateProof !== undefined)
+    check([4, 5].includes(candidateProof?.formatVersion), 'unknown candidate envelope');
+  const bracketed = candidateProof?.formatVersion === 5;
   check(
     lifecycle?.formatVersion === 1 &&
       lifecycle.isClosed === true &&
@@ -134,6 +146,20 @@ export function qualifyRepeatedProbeRetirements(proof, { lifecycle, quality } = 
     scope: lifecycle.scope,
     publishingGeneration: proof?.publishingGeneration,
   });
+  if (bracketed) {
+    check(
+      candidateProof.isClosed === true &&
+        candidateProof.maximumCampaigns === 2 &&
+        Array.isArray(candidateProof.campaigns) &&
+        candidateProof.campaigns.length === 2,
+      'missing closed v5 candidate envelope',
+    );
+    assert.deepEqual(
+      candidateProof.scope,
+      lifecycle.scope,
+      'Candidate read interval publication mismatch',
+    );
+  }
   check(
     quality?.formatVersion === 4 &&
       quality.overflow === false &&
@@ -423,8 +449,59 @@ export function qualifyRepeatedProbeRetirements(proof, { lifecycle, quality } = 
         binding.observation.leaseDeadline <= current.leaseDeadline,
       'request lacks a valid cached native lease through dispatch',
     );
-    validateActive(binding.observation, binding.boundAt, stage, events);
-    validateActive(current, candidate.evaluatedAt, stage, events);
+    let initialRead, currentRead;
+    if (bracketed) {
+      const row = candidateProof.campaigns[index],
+        p = row?.measurement,
+        m = p?.measurement,
+        b = p?.probeBinding;
+      check(
+        row?.campaign === campaign.campaign &&
+          row.appliedRevision === campaign.context.appliedRevision &&
+          row.started === true &&
+          p?.formatVersion === 3 &&
+          p.isClosed === true &&
+          p.invalidReason === null &&
+          sameID(m?.id, candidate.id),
+        'candidate read interval identity mismatch',
+      );
+      assert.deepEqual(
+        p.scope,
+        lifecycle.scope,
+        'Candidate measurement read interval scope mismatch',
+      );
+      check(
+        b &&
+          b.initial &&
+          b.final &&
+          b.boundAt === binding.boundAt &&
+          b.completedAt === binding.candidateCompletedAt &&
+          m.startedAt === candidate.measuredStart &&
+          m.endedAt === candidate.measuredEnd &&
+          b.initial.observedAt === b.boundAt &&
+          time(p.closedAt) &&
+          b.completedAt <= p.closedAt &&
+          time(b.final.observedAt) &&
+          m.endedAt <= b.final.readStartedAt &&
+          b.final.observedAt <= b.completedAt,
+        'candidate read interval chronology mismatch',
+      );
+      sameObservation(b.initial, binding.observation);
+      validateActive(b.final, b.final.observedAt, stage, events, b.final);
+      assertNativeProbeStateOrder(b.initial, b.final);
+      assertNativeProbeStateOrder(b.final, current);
+      check(
+        count(b.final.acceptedPayloadBytes) <= count(current.acceptedPayloadBytes) &&
+          b.final.leaseDeadline <= current.leaseDeadline &&
+          b.final.lastAcceptedAt <= current.lastAcceptedAt,
+        'admission read precedes final candidate snapshot',
+      );
+      initialRead = b.initial;
+      // This is a separately cached read. Never reuse the final read bracket.
+      currentRead = { readStartedAt: b.completedAt, readFinishedAt: candidate.evaluatedAt };
+    }
+    validateActive(binding.observation, binding.boundAt, stage, events, initialRead);
+    validateActive(current, candidate.evaluatedAt, stage, events, currentRead);
     check(
       count(current.acceptedPayloadBytes) >= count(binding.observation.acceptedPayloadBytes) &&
         current.lastAcceptedAt >= binding.observation.lastAcceptedAt,

@@ -70,13 +70,18 @@ export function qualifyRepeatedNativeReceiverIntervals({
   workerRecords,
   lifecycle,
   quality,
+  candidateProof,
 }) {
   const native = qualifyRepeatedNativeBandwidthProbe(nativeProbe, {
     scope,
     publishingGeneration: nativeProbe?.publishingGeneration,
   });
   const receiver = qualifyRepeatedReceiverProbeEvidence(records, scope, nativeProbe);
-  const retirements = qualifyRepeatedProbeRetirements(nativeProbe, { lifecycle, quality });
+  const retirements = qualifyRepeatedProbeRetirements(nativeProbe, {
+    lifecycle,
+    quality,
+    candidateProof,
+  });
   const workers = qualifyWorkerPublicationEvidence(workerRecords, scope);
   assert.equal(proof?.formatVersion, 1);
   assert.equal(proof.isClosed, true);

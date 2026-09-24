@@ -478,6 +478,9 @@ extension NativeCandidateFixtureTests {
         let final = try XCTUnwrap(binding["final"] as? [String: Any])
         XCTAssertEqual(initial["id"] as? String, bound.id.uuidString)
         XCTAssertEqual(final["id"] as? String, bound.id.uuidString)
+        XCTAssertEqual(fake.object?["formatVersion"] as? Int, 3)
+        XCTAssertNil(initial["readStartedAt"]); XCTAssertNil(initial["readFinishedAt"])
+        XCTAssertNil(final["readStartedAt"]); XCTAssertNil(final["readFinishedAt"])
         XCTAssertEqual(initial["stage"] as? Int, 3)
         XCTAssertEqual(initial["bitRate"] as? Int, 12_000_000)
         XCTAssertEqual(initial["publishingGeneration"] as? String, "7")
@@ -928,6 +931,80 @@ extension NativeCandidateFixtureTests {
         }
     }
 
+    func testRepeatedProbeReadIntervalPreservesSnapshotAcrossContextRenewalAndLateAppend() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value), provider = CandidateContextGate(context)
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink(), resultTime = CandidateReadResultTime()
+        fake.setProbe(stage: 3); fake.setCampaign(1)
+        let original = await fake.probeObservation()
+        let old = try XCTUnwrap(original)
+        let retirement = AsyncStream<Void>.makeStream(), base = fake.operations
+        let operations = NativeCandidatePublisher.Operations(start: base.start, offer: base.offer,
+            cancel: base.cancel, result: {
+                let result = await base.result()
+                resultTime.mark()
+                return result
+            }, export: base.export, retire: {
+                fake.markJoinedStop()
+                await Task.detached { for await _ in retirement.stream {} }.value
+            })
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .seconds(10)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { fake.operations }, waitTraceExport: { sink.receive($0) })
+        await wrapper.setDiagnostics { fake.pressure }
+        _ = await wrapper.setMeasurementContextProvider { await provider.read() }
+        try await wrapper.start(); await wait { provider.waiting }
+        let renewalStartedAt = ProcessInfo.processInfo.systemUptime
+        fake.advanceProbeReceipt()
+        let renewalFinishedAt = ProcessInfo.processInfo.systemUptime
+        provider.release(); await wait { fake.waiting }
+        // Keep an older append refresh suspended across the final result read.
+        fake.blockNextProbeRead()
+        let append = Task { try await wrapper.append(candidateVideo()) }
+        await wait { fake.probeReadIsBlocked }
+        fake.finish(); await wait { fake.joinedStops == 1 }
+        let lateReadReleasedAt = ProcessInfo.processInfo.systemUptime
+        fake.releaseProbeRead(); try await append.value
+        XCTAssertFalse(fake.events.contains("candidate"))
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        retirement.continuation.finish(); await stop.value
+        let proof = try XCTUnwrap(fake.object)
+        XCTAssertEqual(proof["formatVersion"] as? Int, 5)
+        let campaigns = try XCTUnwrap(proof["campaigns"] as? [[String: Any]])
+        XCTAssertEqual(campaigns.count, 1)
+        let measurement = try XCTUnwrap(campaigns[0]["measurement"] as? [String: Any])
+        let binding = try XCTUnwrap(measurement["probeBinding"] as? [String: Any])
+        let initial = try XCTUnwrap(binding["initial"] as? [String: Any])
+        let final = try XCTUnwrap(binding["final"] as? [String: Any])
+        let initialStart = try XCTUnwrap(initial["readStartedAt"] as? Double)
+        let initialFinish = try XCTUnwrap(initial["readFinishedAt"] as? Double)
+        let boundAt = try XCTUnwrap(binding["boundAt"] as? Double)
+        XCTAssertLessThanOrEqual(initialStart, initialFinish)
+        XCTAssertLessThanOrEqual(initialFinish, renewalStartedAt)
+        XCTAssertGreaterThanOrEqual(boundAt, renewalFinishedAt)
+        XCTAssertEqual(initial["observedAt"] as? Double, boundAt)
+        XCTAssertEqual(initial["acceptedPayloadBytes"] as? String, "1316")
+        XCTAssertEqual(initial["leaseDeadline"] as? Double, old.leaseDeadline)
+        XCTAssertEqual(initial["lastAcceptedAt"] as? Double, old.lastAcceptedAt)
+        let boundPoll = try XCTUnwrap(try sink.events().first { $0["outcome"] as? String == "bound" })
+        XCTAssertEqual(boundPoll["queryStartedAt"] as? Double, initialStart)
+        XCTAssertEqual(boundPoll["probeReturnedAt"] as? Double, initialFinish)
+        let finalStart = try XCTUnwrap(final["readStartedAt"] as? Double)
+        let finalFinish = try XCTUnwrap(final["readFinishedAt"] as? Double)
+        let observedAt = try XCTUnwrap(final["observedAt"] as? Double)
+        XCTAssertGreaterThanOrEqual(finalStart, try XCTUnwrap(resultTime.value))
+        XCTAssertLessThanOrEqual(finalStart, finalFinish)
+        XCTAssertLessThanOrEqual(finalFinish, observedAt)
+        XCTAssertLessThanOrEqual(observedAt, try XCTUnwrap(binding["completedAt"] as? Double))
+        XCTAssertLessThanOrEqual(finalFinish, lateReadReleasedAt, "late append must not replace joined evidence")
+        XCTAssertEqual(final["acceptedPayloadBytes"] as? String, "2632")
+        XCTAssertGreaterThan(try XCTUnwrap(final["leaseDeadline"] as? Double), old.leaseDeadline)
+        await f.owner.stop()
+    }
+
     func testRepeatedCandidateJoinsOldSlotAndRejectsLateInputBeforeFreshCampaign() async throws {
         let (f, initial, recovered) = try await repeatedCandidateContexts()
         let first = CandidateFixtureFake(), second = CandidateFixtureFake(), sink = CandidateWaitSink()
@@ -965,7 +1042,7 @@ extension NativeCandidateFixtureTests {
         XCTAssertFalse(second.events.contains("candidate"), "old append crossed campaign boundary")
         second.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
         let proof = try XCTUnwrap(second.object)
-        XCTAssertEqual(proof["formatVersion"] as? Int, 4)
+        XCTAssertEqual(proof["formatVersion"] as? Int, 5)
         let campaigns = try XCTUnwrap(proof["campaigns"] as? [[String: Any]])
         XCTAssertEqual(campaigns.count, 2)
         XCTAssertEqual(campaigns.map { $0["campaign"] as? String }, ["1", "2"])
@@ -1150,6 +1227,13 @@ extension NativeCandidateFixtureTests {
         await wrapper.stop()
         XCTAssertEqual(sink.count, 1); XCTAssertEqual(sink.data, frozen)
         XCTAssertFalse(fake.events.contains("candidateStart"))
+        let proof = try XCTUnwrap(fake.object)
+        XCTAssertEqual(proof["formatVersion"] as? Int, 5)
+        let campaigns = try XCTUnwrap(proof["campaigns"] as? [[String: Any]])
+        let measurement = try XCTUnwrap(campaigns.first?["measurement"] as? [String: Any])
+        let binding = try XCTUnwrap(measurement["probeBinding"] as? [String: Any])
+        XCTAssertTrue(binding["initial"] is NSNull)
+        XCTAssertTrue(binding["final"] is NSNull)
         await f.owner.stop()
     }
 
@@ -1506,4 +1590,11 @@ private final class CandidateWaitSink: @unchecked Sendable {
         try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
     }
     func events() throws -> [[String: Any]] { try XCTUnwrap(object()["events"] as? [[String: Any]]) }
+}
+
+private final class CandidateReadResultTime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Double?
+    var value: Double? { lock.withLock { stored } }
+    func mark() { lock.withLock { stored = ProcessInfo.processInfo.systemUptime } }
 }

@@ -30,9 +30,10 @@ increases remain disabled until full validation passes. The current focus is two
 independently verified upgrade → fault → minimum reset → recovery cycles in one
 native publication. The repeated experiment remains bounded to 180 seconds.
 
-All 459 Core tests, 3,306 tools tests and 485 FilmModel tests pass; the arm64
-simulator build succeeds. Independent specification and quality reviews approve
-the new bounded candidate-wait diagnostic. The latest frozen iPhone 14/iOS 26.2
+The unchanged Core package has 459 passing tests. The current probe-read fix
+passes 3,349 tools tests, 486 FilmModel tests and the arm64 simulator build.
+Independent specification and quality reviews approved the earlier bounded
+candidate-wait diagnostic. The latest frozen iPhone 14/iOS 26.2
 run (`native-app-q6s6KU`, source `b8a0609`) passed native scoring/recording export
 in 259.120 seconds. Both candidate measurements, upgrades, confirmations, owned
 faults and resets completed. All 919 source hashes stayed unchanged.
@@ -65,11 +66,13 @@ all independently replayed with no unknown rows; cadence retains 2,054 valid row
 The worker and recorder exited successfully, and owned simulator/container cleanup
 completed. These component results do not grant production upgrade permission.
 
-**Next:** export explicit native probe-read intervals separately from binding
-and completion times, then validate causal ordering across overlapping reads.
-Keep strict counter/lease consistency, no future evidence, withdrawal rejection,
-the two-second freshness rule and 16 MiB cap. Audit every binding consumer and add
-regressions before another native run. The
+**Now implemented, awaiting fresh native verification:** candidate envelope v5
+exports explicit native probe-read intervals separately from binding and completion.
+All binding consumers validate one possible snapshot instant across the overlapping
+counter and lease histories. Legacy v4 remains strict; the two-second freshness
+rule, withdrawal checks and 16 MiB cap are unchanged. Independent specification
+and quality reviews approved the fix; a frozen native run is next. The
+[probe-read plan](2026-09-24-probe-read-intervals.md),
 [diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) and
 [repeated verification log](2026-09-17-repeated-native-verification.md) retain the
 exact evidence and next-step constraints.

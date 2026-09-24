@@ -1196,3 +1196,19 @@ Next: explicit native read intervals, separate from binding time, with strict
 causal counter/lease validation and downstream-consumer audit. See the
 [bounded diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) for the TDD
 sequence. Do not remove the ownership check or extend freshness/probe budgets.
+
+### September 24 — probe-read interval repair
+
+Repeated candidate envelope v5 now exports actual initial/final probe-read brackets.
+All candidate, admission, witness, retirement and receiver consumers join those
+original bounds and require one common snapshot instant across counter and lease
+history. Original leases must cover use; terminal ownership, freshness and budget
+checks stay strict. Cached admission reads use separate completion-to-evaluation
+bounds. V4 remains strict and cannot opt into v5 by adding fields.
+
+Failing-first native and JS regressions precede implementation. Current evidence:
+55 focused native tests, 486 full FilmModel tests, 3,349 tools tests and arm64
+simulator build pass, with joined exit-zero commands. Core is unchanged from the
+459-test pass. Independent specification and quality reviews approve. Next is one
+fresh frozen native run; `q6s6KU` remains a failed historical run. See
+[the repair plan](2026-09-24-probe-read-intervals.md) for the exact contract.

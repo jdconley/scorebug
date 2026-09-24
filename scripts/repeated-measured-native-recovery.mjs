@@ -25,9 +25,8 @@ export function qualifyRepeatedMeasuredNativeRecovery(input) {
     input.nativeProbe?.formatVersion === 3 && input.nativeProbe.mode === 'repeated',
     'Repeated recovery requires raw repeated native probe',
   );
-  assert.equal(
-    input.candidateProof?.formatVersion,
-    4,
+  assert.ok(
+    [4, 5].includes(input.candidateProof?.formatVersion),
     'Repeated recovery requires two raw candidates',
   );
   assert.equal(

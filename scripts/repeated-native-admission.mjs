@@ -7,6 +7,7 @@ import {
   assertRepeatedNativeAcceptanceConsistent,
 } from './repeated-native-receiver-intervals.mjs';
 import { qualifyRepeatedCandidateWitness } from './measured-candidate-witness.mjs';
+import { assertNativeProbeStateOrder } from './native-probe-read-interval.mjs';
 
 const sameID = (a, b) => {
   assert.match(a, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i);
@@ -19,7 +20,7 @@ const sameID = (a, b) => {
 // interval rows: an unselected row may disprove authority, never improve the
 // captured pair. The admission probe is cached, so do not invent an exact read
 // instant from witness.clock.after; pace against native acceptance/renewal times.
-function reconcileAdmissionAcceptance(binding, admission, rows) {
+function reconcileAdmissionAcceptance(binding, admission, rows, version) {
   // NativeCandidateFixture.candidateSnapshot refreshes after the completed
   // measurement's final diagnostic. The read instant is not exported, but this
   // ordering and its monotonic floor are known.
@@ -30,13 +31,17 @@ function reconcileAdmissionAcceptance(binding, admission, rows) {
     'Admission regressed completed candidate observation',
   );
   // observedAt and clock.after are upper bounds on when the snapshot was
-  // read. Only the interval audit exports an actual read bracket. Current is
-  // additionally known to be refreshed after candidate completion. Compare
+  // read. The interval audit and v5 candidate snapshots export actual brackets.
+  // Current is known to be refreshed after candidate completion. Compare
   // monotonic floors only when those bounds prove nonoverlapping read order.
+  const interval = (sample) =>
+    version === 5
+      ? { lower: sample.readStartedAt, upper: sample.readFinishedAt }
+      : { upper: sample.observedAt };
   const samples = [
-    { sample: binding.initial, upper: binding.initial.observedAt },
-    { sample: binding.final, upper: binding.final.observedAt },
-    { sample: admission.binding, upper: binding.boundAt },
+    { sample: binding.initial, ...interval(binding.initial) },
+    { sample: binding.final, ...interval(binding.final) },
+    { sample: admission.binding, ...interval(binding.initial) },
     { sample: admission.probe, lower: binding.completedAt, upper: admission.clock.after },
   ];
   const requireForward = (before, after) =>
@@ -69,6 +74,7 @@ function reconcileAdmissionAcceptance(binding, admission, rows) {
     for (const key of ['campaign', 'stage', 'publishingGeneration', 'bitRate', 'startedAt'])
       assert.equal(sample[key], binding.initial[key], 'Cross-proof native owner mismatch');
     for (const prior of samples.slice(0, i)) {
+      if (version === 5) assertNativeProbeStateOrder(prior.sample, sample);
       assertRepeatedNativeAcceptanceConsistent(prior.sample, sample);
       if (entry.lower !== undefined && prior.upper <= entry.lower)
         requireForward(prior.sample, sample);
@@ -111,7 +117,11 @@ export function qualifyRepeatedNativeAdmissions({
     liveIDs,
     sequence: 'repeated240',
   });
-  const retirements = qualifyRepeatedProbeRetirements(nativeProbe, { lifecycle, quality });
+  const retirements = qualifyRepeatedProbeRetirements(nativeProbe, {
+    lifecycle,
+    quality,
+    candidateProof,
+  });
   const intervalQualification = qualifyRepeatedNativeReceiverIntervals({
     intervals,
     records,
@@ -120,6 +130,7 @@ export function qualifyRepeatedNativeAdmissions({
     workerRecords,
     lifecycle,
     quality,
+    candidateProof,
   });
   const decisions = quality.events.filter((e) => e.kind === 'candidate');
   assert.equal(decisions.length, 2);
@@ -135,6 +146,7 @@ export function qualifyRepeatedNativeAdmissions({
       nativeProof: nativeProbe,
       campaign: String(index + 1),
       quality,
+      candidateEnvelopeVersion: candidateProof.formatVersion,
     });
     reconcileAdmissionAcceptance(
       candidateProof.campaigns[index].measurement.probeBinding,
@@ -142,6 +154,7 @@ export function qualifyRepeatedNativeAdmissions({
       intervals.intervals.filter(
         (row) => row.nativeProbeCampaign === candidate.campaign && row.nativeProbeStage === 3,
       ),
+      candidateProof.formatVersion,
     );
     assert.equal(witness.headroomQualified, true, 'Admission lacks 25% measured padding headroom');
     const application = applications.applications[index * 2];

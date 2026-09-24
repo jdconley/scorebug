@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { qualifyRepeatedNativeBandwidthProbe } from './repeated-native-bandwidth-probe.mjs';
+import { qualifyNativeProbeReadInterval } from './native-probe-read-interval.mjs';
 
 const time = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const close = (a, b, tolerance = 1e-6) => {
@@ -68,6 +69,9 @@ export function qualifyMeasuredCandidateWitness(args) {
  * No revision, event index or native envelope is rewritten for legacy replay. */
 export function qualifyRepeatedCandidateWitness(args) {
   const { nativeProof, candidate, campaign, quality, witness, intervalQualification } = args;
+  const candidateEnvelopeVersion = args.candidateEnvelopeVersion ?? 4;
+  assert.ok([4, 5].includes(candidateEnvelopeVersion));
+  assert.equal(candidate.candidateEnvelopeVersion, candidateEnvelopeVersion);
   qualifyRepeatedNativeBandwidthProbe(nativeProof, {
     scope: nativeProof.scope,
     publishingGeneration: nativeProof.publishingGeneration,
@@ -122,7 +126,7 @@ export function qualifyRepeatedCandidateWitness(args) {
   return {
     ...replayCandidateWitness(
       { ...args, bootstrap: baseline },
-      { campaign, revision, events: owner.events },
+      { campaign, revision, events: owner.events, candidateEnvelopeVersion },
     ),
     campaign,
     appliedRevision: revision,
@@ -257,6 +261,14 @@ function replayCandidateWitness(
   assert.ok(Array.isArray(nativeEvents) && nativeEvents.length > 0 && nativeEvents.length <= 2000);
   const events = nativeEvents.filter((e) => e.sample.stage === 3);
   assert.ok(events.length > 0);
+  if (repeated?.candidateEnvelopeVersion === 5) {
+    qualifyNativeProbeReadInterval(w.binding, {
+      readStartedAt: binding.initial.readStartedAt,
+      readFinishedAt: binding.initial.readFinishedAt,
+      usedAt: w.boundAt,
+      events,
+    });
+  }
   for (const e of events) {
     sameUUID(e.sample.id, probe.id);
     assert.equal(e.sample.campaign, repeated?.campaign);

@@ -3,6 +3,7 @@ import { qualifyRepeatedNativeBandwidthProbe } from './repeated-native-bandwidth
 import { qualifyNativeProfileTransitions } from './native-profile-transitions.mjs';
 import { qualifyNativeCandidateMeasurement } from './native-candidate-measurement.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
+import { qualifyNativeProbeReadInterval } from './native-probe-read-interval.mjs';
 
 const check = (condition, message) => assert.ok(condition, `Repeated native candidate: ${message}`);
 const time = (value) =>
@@ -17,7 +18,7 @@ const counter = (value) => {
   return n;
 };
 
-function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign) {
+function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign, version) {
   const stage = campaign.stages[2];
   const events = rawCampaign.events.filter((event) => event.sample.stage === 3);
   check(binding && typeof binding === 'object', 'missing native binding');
@@ -53,6 +54,14 @@ function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign) {
   };
   let previous;
   for (const [index, observation] of [binding.initial, binding.final].entries()) {
+    if (version === 4) {
+      check(
+        observation &&
+          !Object.hasOwn(observation, 'readStartedAt') &&
+          !Object.hasOwn(observation, 'readFinishedAt'),
+        'v4 cannot carry read interval brackets',
+      );
+    }
     check(
       observation &&
         typeof observation.id === 'string' &&
@@ -92,6 +101,18 @@ function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign) {
           observation.observedAt <= binding.completedAt,
         'final observation outside completion',
       );
+    if (version === 5) {
+      qualifyNativeProbeReadInterval(observation, {
+        ...observation,
+        usedAt: observation.observedAt,
+        events,
+      });
+      if (index === 1)
+        check(
+          measurement.endedAt <= observation.readStartedAt,
+          'final read interval begins before measurement ended',
+        );
+    }
     const accepted = counter(observation.acceptedPayloadBytes);
     check(
       accepted > 0 && accepted <= stage.acceptedPayloadBytes,
@@ -137,7 +158,9 @@ function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign) {
           event.sample,
           'native acceptance after binding exceeds one-message token allowance',
         );
-      if (event.observedAt <= observation.observedAt) {
+      if (
+        event.observedAt <= (version === 5 ? observation.readStartedAt : observation.observedAt)
+      ) {
         check(
           event.sample.reason === null &&
             n <= accepted &&
@@ -147,7 +170,10 @@ function qualifyBinding(binding, measurement, closedAt, campaign, rawCampaign) {
       }
       // Native reads and candidate reads share the monotonic clock. Future
       // accepted payload cannot appear in an earlier candidate observation.
-      if (last !== null && last > observation.observedAt)
+      if (
+        last !== null &&
+        last > (version === 5 ? observation.readFinishedAt : observation.observedAt)
+      )
         check(n > accepted, 'binding borrows future native acceptance');
     }
     if (previous) {
@@ -187,8 +213,10 @@ export function qualifyRepeatedNativeCandidateMeasurements(
   { scope, nativeProbe, format, snapshot, liveIDs } = {},
 ) {
   check(
-    proof?.formatVersion === 4 && proof.isClosed === true && proof.maximumCampaigns === 2,
-    'requires a closed v4 two-campaign envelope',
+    [4, 5].includes(proof?.formatVersion) &&
+      proof.isClosed === true &&
+      proof.maximumCampaigns === 2,
+    'requires a closed v4/v5 two-campaign envelope',
   );
   assert.deepEqual(proof.scope, scope, 'Repeated native candidate: publication scope mismatch');
   assert.deepEqual(format?.scope, scope, 'Repeated native candidate: media scope mismatch');
@@ -272,6 +300,7 @@ export function qualifyRepeatedNativeCandidateMeasurements(
       p.closedAt,
       accepted,
       nativeProbe.campaigns[index],
+      proof.formatVersion,
     );
     if (previous) {
       assert.equal(
@@ -291,6 +320,7 @@ export function qualifyRepeatedNativeCandidateMeasurements(
     previous = { proof: p, candidate };
     return {
       ...candidate,
+      candidateEnvelopeVersion: proof.formatVersion,
       campaign: row.campaign,
       appliedRevision: row.appliedRevision,
       baselinePhaseIndex,
@@ -303,7 +333,7 @@ export function qualifyRepeatedNativeCandidateMeasurements(
     };
   });
   return {
-    formatVersion: 4,
+    formatVersion: proof.formatVersion,
     scope,
     publishingGeneration: media.publishingGeneration,
     campaigns,
