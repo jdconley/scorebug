@@ -133,7 +133,11 @@ focused reproduction and follow-up full suite (519 tests) pass, with root cause
 still unresolved. DEBUG simulator and unsigned iPhone/Watch Release builds pass. See the
 [source-diagnostics checkpoint](2026-09-24-file-source-diagnostics.md).
 Maintained streaming harness integration and real-match adaptive/network tests
-remain next.
+remain next. The [real-file streaming plan](2026-09-24-real-file-streaming.md) now
+has tested recording-ownership and natural-audio validators. They pass 48 focused
+cases and qualify the retained native recording against three original-audio windows;
+this is validator evidence, not a new streaming run. Staging, source timestamp mapping
+and score-state image checks remain required before that run.
 
 A read-only production audit confirms that the measured quality driver and candidate
 publisher currently exist only in the DEBUG simulator route. Continue by connecting
