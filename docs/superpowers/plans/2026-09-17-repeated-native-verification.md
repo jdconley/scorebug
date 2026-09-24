@@ -1092,3 +1092,52 @@ Synthetic repeated fixtures use the new envelope, while original native artifact
 remain untouched. The arm64 iPhone simulator build passes. Independent native/JS
 specification and quality reviews approve. Next is one fresh frozen native run
 with complete audit retention; no component pass grants production upgrades.
+
+
+#### Complete audit native run — September 24, `native-app-yB8xre`
+
+Source `6d55083` remained frozen across all 918 files. Native UI passed in
+260.869 seconds. The new delivery audit closed with 283 rows / 18,452,702 bytes,
+format 2 repeated metadata, no overflow and no invalidity. All 283 rows pass
+independent deadline replay with no unknown rows. Cadence has 2,053 valid rows.
+This verifies the bounded audit correction with actual native data.
+
+Full harness exited 1 during collection: second repeated quality readiness timed
+out. The first owned decoder pause completed and joined; no second pause began.
+Quality has 44 events, applied revisions one and two only, and no rejection events.
+The secondary cleanup message repeats the owned-fault failure; actual worker
+stdout joined with wrapper exit 0, and owned simulator/container removal succeeded.
+Failed native candidate/probe exports are preserved under
+`failure-app-data-YlIBrE/QA/`, since collection failed before their top-level copy.
+
+Separate analysis fully decoded both A/V tracks. Archive has 6,538 contiguous
+frames (0–6537), 30 fps and zero initial A/V offset. Live has 6,131 contiguous
+frames (192–6322), 30 fps and maximum gap 34 ms. Audio leads video 517 ms; all 102
+live markers match within 64.917 ms with negligible drift. The scoped direct
+recorder component also passes. Worker demux begins video 100081/90000 and
+audio 55680/90000, output video 1.112 and audio 0.595 seconds. These results do not
+reclassify the failed full run. Evidence: `diagnostic-complete-assessment.json`,
+`diagnostic-deadline-replay.json` and `diagnostic-media-assessment.json` in the run.
+
+Campaign one completed 121 accepted/encoded candidate frames. Campaign two began
+at 1893741.515333 with valid revision 2 health/context. Stages accepted 486,920,
+1,920,044 and 14,369,404 bytes. Stage three ran 1893761.449047–1893773.112177,
+then terminated `byteLimit` at 16,776,368 accepted bytes: 848 bytes below16 MiB,
+insufficient for another 1,316-byte packet. Ownership joined without invalidity.
+Only one candidate campaign is exported. That proves no second exported result,
+not that no allocation attempt occurred.
+
+The strongest timing hypothesis is a missed readiness window. Native candidate
+readiness allows health age at most two seconds; the candidate wait polls 100 ms.
+Healthy evaluation 26 completed at 1893766.524149 with health.end 1893764.533558,
+leaving 9.409 ms freshness at stage 3+5.075 s. Evaluation 27 arrived at stage 3+9.985 s;
+the byte cap ended probing at+11.663 s, too soon for a four-second measurement.
+Successful `L9jBCE` bound candidate 2 at+5.052 s, completed at+9.130 s and withdrew
+its probe at+10.040 s. Poll outcomes are absent; exact failed predicate remains
+unknown. Nothing here establishes that audit storage caused the failed campaign.
+
+Next bounded action: deterministic scheduling reproduction of a 9 ms readiness
+opportunity with 100 ms candidate polling. If existing results cannot distinguish
+failure causes, add a bounded candidate-wait/attempt diagnostic with failed guard
+and freshness timing. Preserve the two-second rule, 16 MiB cap, ownership checks,
+and failed run. Do not extend budgets or rerun unchanged merely to obtain a pass.

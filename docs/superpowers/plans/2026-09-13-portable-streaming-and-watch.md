@@ -37,28 +37,35 @@ All 3,306 tool tests and 477 FilmModel tests pass, and the arm64 simulator
 build succeeds. Independent specification and quality reviews approve the
 repeated deadline-audit correction.
 
-The latest frozen iPhone 14/iOS 26.2 run (`native-app-L9jBCE`, source `5cb09ae`)
-passed native scoring/recording export in 260.881 seconds and completed both
-controller upgrade/fault/minimum-reset/recovery cycles through revision four.
-Media coverage and direct delivery passed. The clean archive contains 6,533
-contiguous 1080p frames; live contains 6,128 contiguous source frames at about
-30 fps, with a maximum 34 ms gap. All 102 live A/V markers match, with maximum
-offset 65.583 ms and negligible drift. All 916 frozen source hashes stayed
-unchanged, and owned processes, simulator and container were cleaned up.
+The latest frozen iPhone 14/iOS 26.2 run (`native-app-yB8xre`, source `6d55083`)
+passed native scoring/recording export in 260.869 seconds. Its clean archive has
+6,538 contiguous 1080p frames; live has 6,131 contiguous source frames at about
+30 fps, with maximum 34 ms gap. Separate analysis after the failed run fully
+decoded both tracks, passed media coverage and direct delivery, and matched all
+102 live A/V markers with maximum offset 64.917 ms and negligible drift. All
+918 frozen source hashes remained unchanged. The worker joined successfully,
+and the owned simulator and container were removed.
 
-Full qualification still failed: the legacy delivery audit filled its 256-row
-limit and correctly marked overflow. The repeated run's two lanes naturally
-produce more rows during its hold and startup/teardown. The correction gives
-only the validated repeated fixture a separate format2 budget of 512 rows and
-32 MiB. Legacy limits and deadline/health checks remain unchanged; exhaustion
-retains the original prefix, marks failure, and cannot grant health from an
-unretained row. Explicit verifier routing covers media, policy and nested faults.
-Tests first reproduced the limits and unretained-health problem; component
-verification now passes. Truncated historical runs cannot become passes.
+The delivery-audit correction now has real native evidence: its explicit repeated
+format2 export retained all 283 rows (18,452,702 bytes), closed without overflow
+or invalidity, and every row passed independent deadline replay. Cadence retained
+2,053 valid rows. Legacy limits and the 100 ms missing-audio coverage gate remain
+unchanged. Earlier truncated native runs remain failed historical evidence.
+
+Full qualification still failed because campaign two never produced a candidate
+measurement before its probe exhausted the unchanged 16 MiB budget. Only the
+first upgrade/confirmation/fault/minimum-reset cycle completed. The previous
+`native-app-L9jBCE` completed both controller cycles but overflowed its legacy
+audit; neither run is a full pass. Current evidence suggests a narrow health-
+readiness opportunity can be missed by the candidate's 100 ms polling: the first
+eligible evaluation in campaign two had only 9.409 ms of its two-second freshness
+allowance remaining. The next came nearly ten seconds into high-rate probing,
+leaving too little budget for four seconds of candidate measurement. Actual
+poll outcomes are not exported, so that exact causal predicate is unproven.
 
 A separate startup issue remains open. `native-app-LeTozN` lost the first
-395.011 ms of live audio relative to video. The two subsequent traced runs did
-not reproduce it: audio led video by 605 ms and 279 ms. Their worker inputs
+395.011 ms of live audio relative to video. The three subsequent traced runs did
+not reproduce it: audio led video by 605 ms, 279 ms and 517 ms. The first two traced worker inputs
 already excluded 28 and 37 initial native AAC packets, respectively, and worker
 outputs preserved the relative timing. Relay code has no replay of media sent
 before a reader attaches, while H.264 waits independently for a usable keyframe.
@@ -66,12 +73,15 @@ That supports an acquisition hypothesis, but the old run has no worker packet
 trace, so its exact loss boundary remains unproven. Preserve the 100 ms
 missing-audio gate; do not retry merely to obtain favorable timing.
 
-Next: run one fresh frozen repeated test to collect complete deadline evidence. The strict
-policy replay also has separately documented startup-ownership and interrupted-
-recovery cases. Production automatic quality increases remain disabled until
-the full gates pass. The earlier 1080p real-match CPU/VideoToolbox streaming tests
-and 4K local transcode tests remain useful evidence; physical devices, full 4K
-network streaming and other proxy hosts are still pending.
+Next: reproduce the short readiness opportunity against the 100 ms poll with a
+deterministic scheduling test. Add bounded per-attempt diagnostics if needed to
+identify the actual failed guard before choosing a fix; preserve the two-second
+freshness rule and 16 MiB cap. Do not run another long native test unchanged.
+The strict policy replay also has separately documented startup-ownership and
+interrupted-recovery cases. Production automatic quality increases remain
+disabled until the full gates pass. The earlier 1080p real-match CPU/VideoToolbox
+streaming tests and 4K local transcode tests remain useful evidence; physical
+devices, full 4K network streaming and other proxy hosts are still pending.
 
 ## Baseline and owner decisions
 

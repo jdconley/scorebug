@@ -79,8 +79,10 @@ adds content realism; it does not replace those measurements.
 production native publishing/recording packages. Twelve seconds of the 1080p
 match run in real time through native H.264/AAC encoding, loopback SRT, the actual
 CPU or macOS VideoToolbox proxy and score overlay, RTMP, and the independent
-MP4 recorder. Separate runs verified both encoders. A clean
-segmented archive records in parallel and is exported by `ArchiveHarness`.
+MP4 recorder. Separate runs verified both encoders. These cases use a direct SRT listener
+and bypass the MediaMTX publication relay, so they do not qualify relay reader
+attachment or its startup audio coverage. A clean segmented archive records in
+parallel and is exported by `ArchiveHarness`.
 
 The prepared MOV has exactly 360 uniformly timed frames starting at zero, plus
 48 kHz mono PCM. Audio/video timestamp origins are explicitly normalized during
