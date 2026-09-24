@@ -74,6 +74,8 @@ export function qualifyRepeatedMeasuredPolicy(input) {
     quality,
     cadenceReports,
     scope: snapshot.scope,
+    snapshot,
+    sourceIntervalQualification: sources,
   });
   const invalidationByIndex = new Map(invalidations.map((value) => [value.eventIndex, value]));
   const boot = events[0],
@@ -361,6 +363,13 @@ export function qualifyRepeatedMeasuredPolicy(input) {
       assert(!trial && !pendingTrigger && recoveries.at(-1).resetEventIndex < eventIndex);
       assert(invalidation.evaluatedAt >= evaluatorTime, 'Invalidation evaluator clock reversal');
       evaluatorTime = invalidation.evaluatedAt;
+      if (invalidation.kind === 'source-expiry') {
+        const { source, proof } = sourceFor(row);
+        assert.equal(source, snapshot.sourceIntervals[invalidation.sourceIndex]);
+        assert.equal(proof, sources.intervals[invalidation.proofIndex]);
+        assert.equal(row.source.sequence, invalidation.sourceSequence);
+        lastEnd = row.source.end;
+      }
       baseline = undefined;
       healthySince = undefined;
       const recovery = recoveries.at(-1);
@@ -775,7 +784,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
     qualifyMeasuredCadenceContinuity({
       reports,
       cadenceAuditMode: 'repeated',
-      recoveryInvalidations: invalidations,
+      recoveryInvalidations: invalidations.filter((value) => value.kind !== 'source-expiry'),
       start,
       end,
       source: evaluated[0].source,
@@ -788,7 +797,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   qualifyMeasuredCadenceContinuity({
     reports,
     cadenceAuditMode: 'repeated',
-    recoveryInvalidations: invalidations,
+    recoveryInvalidations: invalidations.filter((value) => value.kind !== 'source-expiry'),
     start,
     end: cadenceCheckedThrough,
     source: evaluated[0].source,

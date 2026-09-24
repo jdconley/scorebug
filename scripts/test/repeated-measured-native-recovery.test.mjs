@@ -53,3 +53,34 @@ test('repeated artifact bound admits the complete two-candidate native export', 
   );
   assert.equal(implementation.repeatedMeasuredArtifacts.candidateProof[1], 512 * 1024);
 });
+
+test('complete raw reconstruction proves source expiry without relabeling the failed native run', () => {
+  const fixture = JSON.parse(
+    gunzipSync(
+      fs.readFileSync(new URL('./fixtures/repeated-source-expiry-aPqApF.json.gz', import.meta.url)),
+    ),
+  );
+  assert.equal(fixture.provenance.originalHarnessExit, 1);
+  assert.equal(fixture.provenance.originalFailureRelabeled, false);
+  const input = fixture.input,
+    before = JSON.stringify(input);
+  const result = implementation.qualifyRepeatedMeasuredNativeRecovery(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(result.measuredRepeatedRecoveryQualified, true);
+  assert.equal(result.readiness.readinessQualified, true);
+  assert.equal(result.productionUpgradeAuthorized, false);
+  assert.equal(result.policy.invalidations.length, 1);
+  const rejected = result.policy.invalidations[0];
+  assert.equal(rejected.kind, 'source-expiry');
+  assert.equal(rejected.eventIndex, 42);
+  assert.equal(rejected.sourceSequence, '35');
+  assert.equal(rejected.reportIndex, 1814);
+  assert.equal(rejected.nextReportIndex, 1821);
+  assert(result.policy.recoveries[1].sharedCoverage.start > rejected.availableAt);
+  // Reject an apparently fresh helper whose age was reset by a later poll.
+  input.quality.events[42].evaluationDiagnostic.session.sampleAgeSeconds = 0.12;
+  assert.throws(
+    () => implementation.qualifyRepeatedMeasuredNativeRecovery(input),
+    /Diagnostic sample age (outside independent bracket|excludes elapsed time)/,
+  );
+});

@@ -111,15 +111,21 @@ The strict repeated native run `native-app-aPqApF` completes both owned faults a
 all five profile phases, with UI success in 260.773 seconds, but **fails the full
 verifier**. At minimum revision 4, a source window crosses its two-second lifetime
 between selection (1.983599 s) and evaluation (2.001052 s) and is safely rejected.
-The independent verifier currently proves only cadence-freshness invalidations;
-this distinct source/time rejection is unsupported. Preserve the failed outcome,
+That frozen verifier proved only cadence-freshness invalidations;
+this distinct source/time rejection was unsupported. Preserve the failed outcome,
 exact raw event and both freshness limits. All 1,158 frozen source hashes remain
 unchanged. Native recording finishes cleanly; worker/recorder and simulator cleanup
 complete. See the [submission implementation and evidence](2026-09-24-video-submission-isolation.md).
 
-**Next local work:** execute the [source-expiry invalidation plan](2026-09-24-source-expiry-invalidation.md)
-to prove renewed recovery without granting healthy credit or accepting arbitrary time
-errors. Separately measure actual selected native hardware acceleration before
+**Source-expiry verification implemented:** independent review and all 3,415 tooling
+tests pass. The narrow typed proof consumes the rejected source once, grants no
+policy sequence or health credit, and preserves independent source/cadence freshness
+limits. Readiness also invalidates by evaluation time. A separately labelled raw
+reconstruction of `aPqApF` passes with renewed whole recovery; the original full run
+remains failed. See the [source-expiry plan](2026-09-24-source-expiry-invalidation.md).
+
+**Next local work:** freeze this verifier and run a fresh strict complete native
+fixture. Separately measure actual selected native hardware acceleration before
 changing encoder preferences or attributing the remaining 4K throughput limit.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),

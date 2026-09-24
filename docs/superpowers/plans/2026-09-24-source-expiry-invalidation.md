@@ -1,7 +1,9 @@
 # Independently prove source-expiry invalidation during minimum recovery
 
-Status: diagnosed; implementation not started. Continue in the existing isolated
-checkout. User authorization for autonomous local work remains in force.
+Status: implementation and independent review complete; 3,415 JavaScript tests
+pass, including raw preserved-run reconstruction. A fresh frozen full native
+fixture is still required. User authorization for autonomous local work remains
+in force; continue in the existing isolated checkout.
 
 ## Reproduced boundary
 
@@ -45,19 +47,19 @@ health continuity. Preserve all existing cadence invalidation checks.
 
 ## Execution
 
-- [ ] Trace source helper receipt retention/replacement and independently reconstruct
+- [x] Trace source helper receipt retention/replacement and independently reconstruct
       the first accepted report clock from raw exports. Specify unique joins and
       status lease arithmetic before writing the positive fixture.
-- [ ] Add timestamp-backed positive and negative tests: ownership/clock/configuration
+- [x] Add timestamp-backed positive and negative tests: ownership/clock/configuration
       changes, missing/duplicate proof, reversed clocks, already-expired selection,
       age at most two seconds at evaluation, stale report/lease, duplicate source
       consumption, policy-sequence advancement and reused recovery credit.
-- [ ] Implement the narrow typed source-expiry proof and policy replay cursor update.
+- [x] Implement the narrow typed source-expiry proof and policy replay cursor update.
       Keep runtime thresholds and exported evidence unchanged.
-- [ ] Independently review the proof and integration; run focused and full JS checks.
+- [x] Independently review the proof and integration; run focused and full JS checks.
       Add native tests only if runtime behavior changes or a missing ownership
       assertion must be established.
-- [ ] Reconstruct the preserved run as a separately labelled diagnostic using the
+- [x] Reconstruct the preserved run as a separately labelled diagnostic using the
       new verifier; never overwrite its original failed result or claim that a
       changed verifier was the frozen original harness.
 - [ ] Commit/freeze source and run a fresh strict complete native fixture, joining
@@ -65,6 +67,32 @@ health continuity. Preserve all existing cadence invalidation checks.
 - [ ] Update the main plan honestly. A fresh complete pass remains laboratory
       qualification only; production upgrades, physical devices and remote hosts
       retain their existing gates.
+
+## Implementation evidence
+
+The typed proof retains original event/source/proof/report indices. It independently
+joins the first retained decoded helper, unchanged subsequent source windows, the
+original status lease, source boundary crossing and separate fresh cadence. The
+policy consumes the source key without advancing its decision sequence, clears
+health and starts new whole recovery coverage. Source expiry never grants a stale
+cadence exception. Probe readiness handles this typed invalidation by evaluation
+time, including rejection logging after asynchronous probe allocation.
+
+Independent review caught and resolved the readiness integration omission; final
+review approves the complete change. All 3,415 tooling tests pass, including 49
+source-expiry tests, readiness joins/negatives and a full raw composition regression.
+No native runtime or thresholds changed. Earlier test runs preserve setup mistakes
+and overly narrow expected-error expressions; corrected runs pass without relaxing
+the assertions that reject bad evidence.
+
+`native-app-aPqApF/source-expiry-diagnostic-reconstruction.json` separately records
+the new-verifier result. Original event 42 joins source 35 / source and proof index
+33 / original report 1814 / fresh replacement report 1821. The second new whole
+recovery covers 14.999996 seconds after fresh availability. Its archived synthetic
+raw fixture is `scripts/test/fixtures/repeated-source-expiry-aPqApF.json.gz`, with
+all 16 raw-export provenance hashes checked independently. This contains no real
+match footage. Original harness exit 1 remains unchanged; production upgrades
+remain unauthorized. Full A/V, owned backend and cleanup gates require a fresh run.
 
 Related files: `scripts/repeated-recovery-invalidation.mjs`,
 `scripts/repeated-measured-policy.mjs`, `scripts/repeated-measured-native-recovery.mjs`,

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
+import { fixtureFrameID } from './video-observation-qualification.mjs';
+import { immutableWindow } from './worker-report-age-qualification.mjs';
 
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const uint = (n) => Number.isSafeInteger(n) && n >= 0;
@@ -139,7 +141,7 @@ function reportEvidence(row, scope, { stale = false } = {}) {
     },
   };
 }
-function validateTiming(row, trace, session, serverAge) {
+function validateTiming(row, trace, session, serverAge, { sourceExpiry = false } = {}) {
   const timing = row.timing;
   const stages = [
     'controlStartedUptime',
@@ -181,13 +183,14 @@ function validateTiming(row, trace, session, serverAge) {
   const tolerance = rounding(serverAge, D, E, R, C, Q);
   assert(finite(session.sampleAgeSeconds) && lower <= upper + tolerance);
   assert(
-    session.sampleAgeSeconds > 0.25,
-    'Fresh diagnostic cannot explain cadence-freshness rejection',
+    sourceExpiry ? session.sampleAgeSeconds <= 2 : session.sampleAgeSeconds > 0.25,
+    'Diagnostic freshness does not match rejection contract',
   );
   // Audit's ContinuousClock sample precedes MainActor selection; session's
   // ContinuousClock sample follows E. The same helper must age by at least
   // this intervening uptime interval, independent of the wider clock bracket.
-  const elapsedLower = row.sampleAgeSeconds + (E - trace.selectedAt);
+  const auditedAge = sourceExpiry ? serverAge + D + row.residenceSeconds : row.sampleAgeSeconds;
+  const elapsedLower = auditedAge + (E - trace.selectedAt);
   assert(
     session.sampleAgeSeconds +
       rounding(session.sampleAgeSeconds, row.sampleAgeSeconds, E, trace.selectedAt) >=
@@ -210,7 +213,13 @@ function matchSource(source, owner, scope) {
 /** Prove only explicit raw stale-receipt invalidations in minimum recovery.
  * Original indices are retained. No window, duration, health or authority is
  * awarded here; policy integration must independently clear/rebuild recovery. */
-export function qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, scope }) {
+export function qualifyRepeatedRecoveryInvalidations({
+  quality,
+  cadenceReports,
+  scope,
+  snapshot,
+  sourceIntervalQualification,
+}) {
   const reports = qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode: 'repeated' });
   assert.equal(quality?.formatVersion, 4);
   assert.equal(quality.overflow, false);
@@ -257,7 +266,10 @@ export function qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, 
         evaluationFloor = Math.max(evaluationFloor, event.acknowledgedAt);
       continue;
     }
+    const sourceExpiry =
+      event.reason === 'time' && event.evaluationDiagnostic?.session?.kind === 'source';
     keys(event, [
+      ...(sourceExpiry ? ['source'] : []),
       'kind',
       'reason',
       'at',
@@ -270,7 +282,7 @@ export function qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, 
       'acknowledgedAt',
       'evaluationDiagnostic',
     ]);
-    assert.equal(event.reason, 'cadence-freshness');
+    assert.equal(event.reason, sourceExpiry ? 'time' : 'cadence-freshness');
     assert.equal(event.closed, false);
     assert(
       current && ['2', '4'].includes(current.revision),
@@ -293,6 +305,26 @@ export function qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, 
       'acknowledgedAt',
     ])
       assert.deepEqual(event[key], current[key], 'Rejected input changed current reset ownership');
+    if (sourceExpiry) {
+      const descriptor = qualifySourceExpiry({
+        event,
+        eventIndex,
+        current,
+        reports,
+        scope,
+        snapshot,
+        sources: sourceIntervalQualification,
+        previousCaughtAt,
+        evaluationFloor,
+      });
+      const key = `source/${event.source.workerEpoch}/${event.source.workerAttempt}/${event.source.readerID}/${descriptor.sourceSequence}`;
+      assert(!used.has(key), 'Duplicate rejected source');
+      used.add(key);
+      previousCaughtAt = descriptor.caughtAt;
+      evaluationFloor = descriptor.evaluatedAt;
+      result.push(descriptor);
+      continue;
+    }
     const trace = event.evaluationDiagnostic,
       session = trace?.session;
     keys(trace, ['selectedAt', 'dispatchedAt', 'caughtAt', 'session']);
@@ -374,4 +406,247 @@ export function qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, 
     });
   }
   return result;
+}
+
+function qualifySourceExpiry({
+  event,
+  eventIndex,
+  current,
+  reports,
+  scope,
+  snapshot,
+  sources,
+  previousCaughtAt,
+  evaluationFloor,
+}) {
+  const trace = event.evaluationDiagnostic,
+    session = trace?.session,
+    s = event.source;
+  keys(trace, ['selectedAt', 'dispatchedAt', 'caughtAt', 'session']);
+  keys(session, [
+    'kind',
+    'cadenceReceiptID',
+    'evaluatedAt',
+    'sampleAgeSeconds',
+    'sourceAgeSeconds',
+    'sourceKey',
+  ]);
+  keys(s, [
+    'attemptID',
+    'workerID',
+    'workerEpoch',
+    'workerAttempt',
+    'readerID',
+    'sequence',
+    'previousSequence',
+    'processingScopeID',
+    'start',
+    'end',
+  ]);
+  assert.equal(session.kind, 'source');
+  assert.equal(session.cadenceReceiptID, null);
+  assert.deepEqual(session.sourceKey, {
+    workerEpoch: s.workerEpoch,
+    workerAttempt: s.workerAttempt,
+    readerID: s.readerID,
+    sequence: s.sequence,
+  });
+  const ordinal = (value) => {
+    assert(typeof value === 'string' && /^[1-9][0-9]{0,15}$/.test(value));
+    const n = Number(value);
+    assert(Number.isSafeInteger(n));
+    return n;
+  };
+  const sequence = ordinal(s.sequence),
+    previous = ordinal(s.previousSequence);
+  assert.equal(sequence, previous + 1);
+  assert.deepEqual(snapshot?.scope, scope);
+  assert.deepEqual(sources?.scope, scope);
+  for (const rows of [snapshot.sourceIntervals, sources.intervals])
+    assert(Array.isArray(rows) && rows.length > 0 && rows.length <= 512);
+  const matches = snapshot.sourceIntervals.filter(
+    (x) =>
+      x.sequence === s.sequence &&
+      x.workerEpoch === s.workerEpoch &&
+      x.workerAttempt === s.workerAttempt,
+  );
+  const proofs = sources.intervals.filter((x) => x.sequence === sequence);
+  assert.equal(matches.length, 1, 'Source expiry needs one original source');
+  assert.equal(proofs.length, 1, 'Source expiry needs one independent source proof');
+  const source = matches[0],
+    proof = proofs[0];
+  assert.deepEqual(source.scope, scope);
+  assert.equal(source.workerId, s.workerID);
+  assert.equal(source.previousSequence, s.previousSequence);
+  assert.equal(source.publication.readerId, s.readerID);
+  assert.equal(
+    identifier(source.publication.publishingAttemptId),
+    identifier(scope.publishingAttemptID),
+  );
+  assert.equal(identifier(s.attemptID), identifier(scope.publishingAttemptID));
+  assert.equal(source.processing?.scopeID, s.processingScopeID);
+  assert.equal(source.publishingGeneration, current.receipt.generation);
+  assert.deepEqual(source.encodingConfiguration, {
+    id: current.receipt.configurationID,
+    encoderSessionID: current.receipt.encoderSessionID,
+    bitRate: current.receipt.bitRate,
+  });
+  assert.equal(source.captureBoundaryStartTime, s.start);
+  assert.equal(source.captureBoundaryEndTime, s.end);
+  assert.equal(proof.previousSequence, previous);
+  assert.equal(proof.sourceStartExclusive, fixtureFrameID(source.sourceStartExclusive));
+  assert.equal(proof.sourceEndInclusive, fixtureFrameID(source.sourceEndInclusive));
+  for (const key of [
+    'capturedFrames',
+    'encodedFrames',
+    'decodedFrames',
+    'captureNotEncodedFrames',
+    'encodedNotDecodedFrames',
+    'leadingMissingEncodedFrames',
+  ])
+    assert.equal(source[key], proof[key]);
+  if (current.receipt.lastSubmittedPTS != null)
+    assert(
+      fixtureFrameID(source.sourceStartExclusive) >=
+        fixtureFrameID(current.receipt.lastSubmittedPTS),
+    );
+  const times = [
+    current.receipt.acceptedAt,
+    current.acknowledgedAt,
+    s.start,
+    s.end,
+    trace.selectedAt,
+    trace.dispatchedAt,
+    session.evaluatedAt,
+    trace.caughtAt,
+    event.at,
+  ];
+  assert(times.every(finite));
+  for (let i = 1; i < times.length; i++)
+    assert(times[i] >= times[i - 1], 'Source rejection clock reversal');
+  assert(s.end - s.start >= 1 && s.end - s.start <= 5.25, 'Invalid source rejection duration');
+  assert(trace.selectedAt - s.end <= 2, 'Source already expired at selection');
+  assert(session.evaluatedAt - s.end > 2, 'Source not expired at evaluation');
+  equalNumber(session.sourceAgeSeconds, session.evaluatedAt - s.end, session.evaluatedAt, s.end);
+  assert(previousCaughtAt <= trace.selectedAt, 'Overlapping rejected invocations');
+  assert(evaluationFloor <= session.evaluatedAt, 'Source rejection evaluator reversal');
+
+  // Same-sequence polls update processing but retain the first helper's clock.
+  // A missing/contradictory report or a new sequence would revoke that identity.
+  const reportIndex = reports.findIndex(
+    (r) => r.response?.status?.observation?.decodedVideo?.completed?.sequence === sequence,
+  );
+  assert(reportIndex > 0, 'Missing original source receipt or previous anchor');
+  const selectedIndex = reports.findLastIndex((r) => r.evaluatedUptime <= trace.selectedAt);
+  const nextReportIndex = reports.findIndex((r) => r.evaluatedUptime > trace.caughtAt);
+  assert(
+    selectedIndex >= reportIndex && nextReportIndex > selectedIndex,
+    'Missing source receipt neighbors',
+  );
+  const first = reports[reportIndex];
+  function sourceReport(row, expected) {
+    const status = row.response?.status,
+      observation = status?.observation,
+      decoded = observation?.decodedVideo,
+      window = decoded?.completed;
+    assert.equal(row.expectedAttempt, identifier(scope.publishingAttemptID));
+    assert.equal(status?.state, 'producing_output');
+    assert.equal(observation?.state, 'producing_output');
+    for (const item of [status, observation]) {
+      assert.equal(item.gameId, scope.matchID);
+      assert.equal(item.generation, scope.broadcastGeneration);
+    }
+    assert.equal(status.workerId, s.workerID);
+    assert.equal(status.workerEpoch, s.workerEpoch);
+    assert.equal(observation.attempt, s.workerAttempt);
+    assert.deepEqual(status.publication, source.publication);
+    assert.equal(decoded.clock, 'mpegts-pts-90k-v1');
+    assert.equal(decoded.ended, false);
+    assert.equal(decoded.invalidReason, null);
+    assert.equal(window?.sequence, expected);
+    assert.equal(window.durationMs, 5000);
+    assert.equal(window.valid, true);
+    assert(uint(window.freshFrames) && window.freshFrames > 0 && window.freshFrames <= 8192);
+    assert.equal(window.duplicateFrames, 0);
+    assert.equal(window.reorderedFrames, 0);
+    assert(Number.isSafeInteger(window.firstPTS) && Number.isSafeInteger(window.lastPTS));
+    assert(
+      window.freshFrames === 1
+        ? window.firstPTS === window.lastPTS
+        : window.firstPTS < window.lastPTS,
+    );
+    assert(
+      finite(window.ageMs) &&
+        uint(status.decodedVideoAgeUpperBoundMs) &&
+        status.decodedVideoAgeUpperBoundMs >= window.ageMs,
+    );
+    assert(
+      [row.receivedUptime, row.evaluatedUptime, row.requestSeconds, row.residenceSeconds].every(
+        finite,
+      ),
+    );
+    assert(row.evaluatedUptime >= row.receivedUptime);
+    assert(
+      row.residenceSeconds + rounding(row.evaluatedUptime, row.receivedUptime) >=
+        row.evaluatedUptime - row.receivedUptime,
+    );
+    assert(row.requestSeconds + row.residenceSeconds < ttl(row), 'Expired source status');
+    return window;
+  }
+  const prior = sourceReport(reports[reportIndex - 1], previous),
+    original = sourceReport(first, sequence);
+  assert.equal(prior.lastPTS, Number(source.previousDecodedPTS));
+  assert.equal(original.firstPTS, Number(source.firstDecodedPTS));
+  assert.equal(original.lastPTS, Number(source.lastDecodedPTS));
+  assert.equal(original.freshFrames, source.decodedFrames);
+  for (let index = reportIndex; index <= selectedIndex; index++) {
+    const row = reports[index];
+    assert(
+      row.evaluatedUptime - reports[index - 1].evaluatedUptime <= 0.5,
+      'Missing source receipt continuity',
+    );
+    assert.deepEqual(
+      immutableWindow(sourceReport(row, sequence)),
+      immutableWindow(original),
+      'Source helper changed before selection',
+    );
+  }
+  assert(first.evaluatedUptime <= trace.selectedAt);
+  validateTiming(first, trace, session, first.response.status.decodedVideoAgeUpperBoundMs / 1000, {
+    sourceExpiry: true,
+  });
+  const selected = reportEvidence(reports[selectedIndex], scope),
+    next = reportEvidence(reports[nextReportIndex], scope);
+  assert.deepEqual(selected.owner, next.owner, 'Source rejection cadence owner changed');
+  const cadenceAgeAtEvaluation =
+    reports[selectedIndex].sampleAgeSeconds +
+    session.evaluatedAt -
+    reports[selectedIndex].evaluatedUptime;
+  assert(
+    finite(cadenceAgeAtEvaluation) && cadenceAgeAtEvaluation <= 0.25,
+    'Cadence expired during source evaluation',
+  );
+  matchSource(s, selected.owner, scope);
+  assert.deepEqual(selected.owner.publication, source.publication);
+  assert(
+    reports[nextReportIndex].evaluatedUptime - reports[selectedIndex].evaluatedUptime <= 0.5,
+    'Missing fresh cadence after source rejection',
+  );
+  assert(
+    selected.progress.lastFreshPTS >= original.lastPTS &&
+      next.progress.lastFreshPTS >= selected.progress.lastFreshPTS,
+  );
+  return {
+    kind: 'source-expiry',
+    eventIndex,
+    sourceSequence: s.sequence,
+    sourceIndex: snapshot.sourceIntervals.indexOf(source),
+    proofIndex: sources.intervals.indexOf(proof),
+    reportIndex,
+    revision: event.revision,
+    evaluatedAt: session.evaluatedAt,
+    caughtAt: trace.caughtAt,
+    nextReportIndex,
+    availableAt: reports[nextReportIndex].evaluatedUptime,
+  };
 }

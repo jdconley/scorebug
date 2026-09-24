@@ -40,7 +40,13 @@ export function qualifyRepeatedMeasuredRecoveryFaults(input) {
       quality.decoderStallEnabled === true,
   );
   const events = quality.events;
-  const invalidations = qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, scope });
+  const invalidations = qualifyRepeatedRecoveryInvalidations({
+    quality,
+    cadenceReports,
+    scope,
+    snapshot: input.snapshot,
+    sourceIntervalQualification: input.sourceIntervalQualification,
+  });
   const invalidationIndices = new Set(invalidations.map((value) => value.eventIndex));
   assert(Array.isArray(events) && events.length > 0 && events.length <= 512);
   assert(events[0].kind === 'bootstrap' && events[0].revision === '0');

@@ -378,3 +378,132 @@ test('readiness cannot count a recovery window beginning before fresh telemetry 
   ];
   assert.throws(() => qualify(f), /availability|invalidation/i);
 });
+
+function sourceInvalidationFixture() {
+  const f = fixture(),
+    origin = f.nativeProbe.campaigns[1].events[0].sample.campaignStartedAt;
+  const source = {
+    workerEpoch: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    workerAttempt: 1,
+    readerID: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    sequence: '20',
+  };
+  const event = {
+    kind: 'rejected',
+    reason: 'time',
+    revision: '2',
+    at: origin + 0.04,
+    source,
+    evaluationDiagnostic: {
+      caughtAt: origin + 0.03,
+      session: {
+        kind: 'source',
+        cadenceReceiptID: null,
+        sourceKey: structuredClone(source),
+        evaluatedAt: origin + 0.02,
+      },
+    },
+  };
+  f.quality.events.push(event);
+  f.quality.events.sort((a, b) => a.at - b.at);
+  f.policyQualification.rawEventCount++;
+  f.policyQualification.invalidations = [
+    {
+      kind: 'source-expiry',
+      eventIndex: f.quality.events.indexOf(event),
+      sourceSequence: '20',
+      sourceIndex: 7,
+      proofIndex: 7,
+      reportIndex: 20,
+      nextReportIndex: 26,
+      availableAt: origin + 0.05,
+      revision: '2',
+      evaluatedAt: origin + 0.02,
+      caughtAt: origin + 0.03,
+    },
+  ];
+  return f;
+}
+test('readiness joins source expiry to retained original report and later fresh replacement', () => {
+  const f = sourceInvalidationFixture();
+  assert.equal(qualify(f).readinessQualified, true);
+});
+test('readiness still validates a revision4 source invalidation after both admissions', () => {
+  const f = sourceInvalidationFixture(),
+    d = f.policyQualification.invalidations[0],
+    e = f.quality.events[d.eventIndex];
+  d.revision = e.revision = '4';
+  assert.equal(qualify(f).readinessQualified, true);
+  e.evaluationDiagnostic.session.sourceKey.sequence = '21';
+  assert.throws(() => qualify(f));
+});
+test('source expiry before allocation invalidates an otherwise fresh readiness context', () => {
+  const f = sourceInvalidationFixture(),
+    d = f.policyQualification.invalidations[0],
+    e = f.quality.events[d.eventIndex];
+  d.evaluatedAt = e.evaluationDiagnostic.session.evaluatedAt =
+    f.nativeProbe.campaigns[1].events[0].sample.campaignStartedAt - 0.001;
+  assert.throws(() => qualify(f), /Intervening event invalidates native readiness/);
+});
+for (const [name, mutate] of [
+  [
+    'source sequence',
+    (d) => {
+      d.sourceSequence = '21';
+    },
+  ],
+  [
+    'source index',
+    (d) => {
+      d.sourceIndex = -1;
+    },
+  ],
+  [
+    'proof index',
+    (d) => {
+      d.proofIndex = -1;
+    },
+  ],
+  [
+    'report order',
+    (d) => {
+      d.nextReportIndex = d.reportIndex;
+    },
+  ],
+  [
+    'unknown descriptor kind',
+    (d) => {
+      d.kind = 'unknown';
+    },
+  ],
+  [
+    'event reason',
+    (_, e) => {
+      e.reason = 'cadence-freshness';
+    },
+  ],
+  [
+    'session kind',
+    (_, e) => {
+      e.evaluationDiagnostic.session.kind = 'cadence';
+    },
+  ],
+  [
+    'cadence receipt',
+    (_, e) => {
+      e.evaluationDiagnostic.session.cadenceReceiptID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    },
+  ],
+  [
+    'source key',
+    (_, e) => {
+      e.evaluationDiagnostic.session.sourceKey.sequence = '21';
+    },
+  ],
+])
+  test(`source expiry readiness rejects mismatched ${name}`, () => {
+    const f = sourceInvalidationFixture(),
+      d = f.policyQualification.invalidations[0];
+    mutate(d, f.quality.events[d.eventIndex]);
+    assert.throws(() => qualify(f));
+  });

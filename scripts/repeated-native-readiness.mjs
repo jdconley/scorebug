@@ -49,17 +49,25 @@ export function qualifyRepeatedNativeReadiness({
     } = invalidation;
     assert(Number.isSafeInteger(eventIndex) && eventIndex > 0 && eventIndex < events.length);
     assert(Number.isSafeInteger(reportIndex) && reportIndex >= 0);
-    assert.equal(
-      nextReportIndex,
-      reportIndex + 1,
-      'Readiness invalidation replacement index differs',
-    );
+    const sourceExpiry = invalidation.kind === 'source-expiry';
+    assert(sourceExpiry || invalidation.kind === undefined, 'Unknown readiness invalidation');
+    if (sourceExpiry) {
+      assert(Number.isSafeInteger(nextReportIndex) && nextReportIndex > reportIndex);
+      for (const key of ['sourceIndex', 'proofIndex'])
+        assert(Number.isSafeInteger(invalidation[key]) && invalidation[key] >= 0);
+    } else {
+      assert.equal(
+        nextReportIndex,
+        reportIndex + 1,
+        'Readiness invalidation replacement index differs',
+      );
+    }
     assert(finite(availableAt), 'Missing independently qualified fresh availability');
     assert(!invalidationByIndex.has(eventIndex), 'Duplicate readiness invalidation');
     const event = events[eventIndex],
       diagnostic = event.evaluationDiagnostic;
     assert(
-      event.kind === 'rejected' && event.reason === 'cadence-freshness',
+      event.kind === 'rejected' && event.reason === (sourceExpiry ? 'time' : 'cadence-freshness'),
       'Readiness invalidation lacks original rejection',
     );
     assert(['2', '4'].includes(revision) && event.revision === revision);
@@ -72,7 +80,21 @@ export function qualifyRepeatedNativeReadiness({
       'Readiness invalidation time differs',
     );
     assert.equal(diagnostic?.caughtAt, caughtAt, 'Readiness invalidation catch differs');
-    sameID(diagnostic?.session?.cadenceReceiptID, receiptID);
+    if (sourceExpiry) {
+      assert.equal(diagnostic?.session?.kind, 'source');
+      assert.equal(diagnostic.session.cadenceReceiptID, null);
+      assert.equal(receiptID, undefined);
+      assert.match(invalidation.sourceSequence, /^[1-9][0-9]{0,15}$/);
+      assert.equal(event.source?.sequence, invalidation.sourceSequence);
+      assert.deepEqual(diagnostic.session.sourceKey, {
+        workerEpoch: event.source.workerEpoch,
+        workerAttempt: event.source.workerAttempt,
+        readerID: event.source.readerID,
+        sequence: event.source.sequence,
+      });
+    } else {
+      sameID(diagnostic?.session?.cadenceReceiptID, receiptID);
+    }
     invalidationByIndex.set(eventIndex, invalidation);
   }
   events.forEach((event, index) => {
