@@ -1,11 +1,12 @@
 # Representative volleyball footage
 
 Latest: the [two-minute replay checkpoint](superpowers/plans/2026-09-24-long-match-replay.md)
-adds independently identified 120-second excerpts from both originals. The first
-1080p native/CPU case retains every frame in archive and live, but the campaign
-fails its sampled audio-correlation gate and stops before 4K. A separate fractional
-alignment diagnostic explains the low correlations; a tested estimator and a fresh
-passing campaign remain required. The original failure is retained.
+now passes fresh 1080p and 4K native/CPU-proxy cases. Each clean archive and stream
+contains all 3,600 frame identities, continuous audio and stable sampled A/V sync.
+The fractional audio estimator passes 29 focused tests; all 3,481 tooling tests
+pass. The original coarse-checker failure is preserved. These are local normalized
+30 fps file replays, with a scheduled bitrate change, not full-match or physical
+camera/adaptive-streaming qualification.
 
 The user supplied two private recordings in Downloads for local testing. The
 originals are read-only test inputs and are not committed or uploaded. Metadata,

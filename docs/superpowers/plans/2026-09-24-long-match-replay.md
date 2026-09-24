@@ -100,3 +100,77 @@ unrelated signals. Review it, then run a fresh declared 1080p case before advanc
 to 4K. Inspect and select an in-game rally excerpt for additional content coverage.
 These two-minute checks do not establish game-length thermal reliability,
 physical capture, automatic adaptation or viewer delivery deadlines.
+
+
+## Fresh v2 campaign declaration
+
+Preserve the original failed campaign. Run the same prepared sources and native
+binaries through `run-v2.mts`, writing new `1080p-cpu-v2` and `4k-cpu-v2` artifacts.
+Keep every original acceptance threshold and the serial stop-on-failure rule.
+The new checker searches every delay in the declared ±150 ms range at 1/32 of an
+8 kHz sample, using a 65-tap Hann-windowed sinc interpolator. Tests cover signed
+fractional/integer delays, gain/DC offset, unrelated signals, silence, nonfinite
+and unusable samples, support bounds, immutability and a zero-radius search.
+
+A high correlation alone does not identify a unique delay for repetitive content.
+Reject a selected search boundary and any competing local maximum at least one
+sample away whose correlation is within 0.005 of the winner. A repeated-tone
+negative control exercises this conservative ambiguity heuristic; it cannot
+establish uniqueness outside the search range or for arbitrary repetitive audio.
+The three windows remain sampled waveform evidence, not all-audio fidelity.
+
+
+## Fresh v2 campaign: both cases pass
+
+The reviewed reusable `scripts/audio-alignment.mjs` passes 29 focused tests and
+all 3,481 tooling tests. Refining only the winning integer peak failed analytic
+multitone controls; searching all fractional phases across the full declared
+radius fixes that defect. A repeated-tone control checks ambiguity rejection.
+This updates test measurement, with no production media settings changed.
+
+The new `1080p-cpu-v2` and `4k-cpu-v2` cases pass serially. Both independent
+archives and streamed MP4s fully decode and contain exactly 3,600 IDs 0–3,599.
+Every archive/live audio frame passes continuity and cumulative sample-timeline
+checks. Native archives retain all 5,760,000 source audio samples; archive
+rejection and live queue drops/rejections are zero. Sender, proxy and independent
+recorder all exit zero naturally. Both owned ports release after each case.
+All 1,173 repository and eight runner/input/executable hashes stay unchanged
+against `artifacts/qa/long-match-v2-source.json`.
+
+| Observation | 1080p CPU | 4K CPU |
+| --- | --- | --- |
+| Sender elapsed | 120.887 s | 120.913 s |
+| Maximum source scheduling lag | 59.768 ms | 2.666 ms |
+| Maximum archive / live video gap | 33.334 / 34 ms | 33.334 / 34 ms |
+| Minimum archive / live sampled correlation | 0.999438 / 0.998608 | 0.999881 / 0.999623 |
+| Measured archive / live A/V lag | 0 / 65.219 ms | 0 / 65.219 ms |
+| Sampled lag spread | 0 ms | 0 ms |
+
+All sampled peaks are interior and unambiguous under the declared heuristic.
+Decoded AAC padding remains visible: 20 ms extra archive PCM and about 24 ms
+extra live PCM, within the unchanged 100 ms duration/coverage bounds. Live audio
+frame timeline error is at most 0.114 ms. The 59.768 ms source scheduling lag in
+the 1080p case is reported separately; complete recorded content and PTS do not
+prove a wall-clock receiver/viewer deadline or uniformly paced delivery.
+
+Source, archive and live frame 1,800 were inspected in each case. Both archives
+are clean; both streams carry the expected score overlay. The 1080p scene is a
+warm-up drill; the 4K scene shows an active match rally. The selected native live
+profiles and scheduled changes remain diagnostic (1080p to 2 Mbps, 4K to 8 Mbps),
+not highest-quality or automatic adaptation qualification. Diagnostic prefixes
+remain explicitly incomplete at 512 encoder/submission and 4,096 transport rows;
+3,088 source-history frames are omitted in each case. Full media checks do not
+turn those prefixes into whole-run per-frame encoder/transport evidence.
+
+Evidence includes `result.json`, decoded frame probes, audio correlations,
+`assessment.json`, visual assessments and commands inside each new directory;
+joined wrapper exits are `repeated-live-checkpoint-long-match-v2-{1080p,4k}-exit.json`.
+The original failed `1080p-cpu` case remains failed. Two minutes extend the prior
+12-second CPU-proxy evidence; they do not establish a full match, physical-device
+thermal reliability, automatic adaptation, HDR/60 fps, relay startup behavior,
+remote host performance or the previously failing co-located VideoToolbox proxy.
+
+Next add longer in-game content coverage under a separately declared duration
+contract, and investigate Watch companion activation/context receipt before
+another actual paired simulator attempt. Physical phone/Watch and separate-host
+GPU qualification remain later stages.

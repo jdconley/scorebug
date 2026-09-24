@@ -154,21 +154,24 @@ the correction both fail before setup with Watch ACX43/missing-companion state;
 neither creates a pairing or scoring command. This correction does not resolve
 that simulator failure. See the [retry checkpoint](2026-09-24-watch-notice-retry.md).
 
-**Two-minute real-footage check:** the first 1080p CPU-proxy run preserves all
-3,600 identified frames in both archive and live, with zero queue loss and continuous
-audio timestamps. Full A/V decoding, duration/cadence and clean/overlay visual
-checks pass. The whole campaign nevertheless fails its sampled audio-correlation
-gate and stops before 4K. A separately reviewed fractional-delay diagnostic raises
-those correlations from 0.933–0.960 to 0.9986–0.9988 with the same 31-microsecond
-alignment correction at all three points. Keep the original failure. All 1,178
-source/runner/input/executable hashes remain unchanged; owned ports release.
+**Two-minute real-footage checks now pass:** fresh 1080p and 4K CPU-proxy replays
+retain all 3,600 identified frames in both clean archive and live, with zero queue
+loss, continuous audio timestamps and full A/V decoding. Reviewed fractional
+alignment measures 65.219 ms live A/V lag with no sampled drift; minimum live
+correlation is 0.998608 / 0.999623. All 1,181 source/runner/input/executable hashes
+remain unchanged, and owned ports release. Images confirm clean archives and score
+overlays; the 4K scene includes active match play. Twenty-nine focused tests and
+all 3,481 tooling tests pass. The original coarse-audio-checker campaign stays
+failed and preserved. This extends the 12-second CPU checks to two minutes with
+scheduled bitrate changes; it does not qualify full-match reliability, automatic
+adaptation, physical capture, HDR60 or relay/viewer latency.
 
-**Next local work:** implement and test the fractional audio-alignment estimator,
-then run a fresh 1080p case before the two-minute 4K case. See the
-[long replay contract and evidence](2026-09-24-long-match-replay.md). Keep sustained
-4K and the failing co-located hardware-proxy route unqualified. Actual Watch
-connectivity needs a new diagnostic before another simulator attempt; physical
-phone/watch and separate-host GPU tests remain required.
+**Next local work:** longer in-game content coverage under a new declared duration
+contract, plus a Watch companion activation/context diagnostic before another
+paired simulator attempt. See the
+[long replay contract and evidence](2026-09-24-long-match-replay.md). Keep game-length
+4K and the failing co-located hardware-proxy route unqualified. Physical phone/watch
+and separate-host GPU tests remain required.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and
