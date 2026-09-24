@@ -256,3 +256,34 @@ five profile phases but fails strict reconstruction on a source-age rejection at
 2.001052 seconds. It is distinct from cadence freshness. A dedicated source-expiry
 proof is required before this event can be accepted as a recovery invalidation.
 See the [full checkpoint](superpowers/plans/2026-09-24-video-submission-isolation.md).
+
+## Actual native hardware selection, September 24
+
+Frozen `bd7accb` adds optional observation of the encoder's native hardware-selection
+property after session preparation. It does not force hardware, change queue limits,
+or treat unavailable evidence as software. Independent review and 312 vendor, 12
+clean SDK, 170 clean Streaming and 3,434 tooling tests plus a clean simulator build pass.
+
+The capped VideoToolbox-proxy campaign passes case 1 (360 live/archive frames) and
+fails case 2 (348 live / 360 archive), then stops. Both native sessions actually
+report hardware selection. The failure includes a 23-frame second and maximum
+native call time 65.667 ms; median call time is 33.444 ms versus 0.194 ms in case 1.
+The original failure remains in `network-native-hardware-2-4k-videotoolbox/`.
+
+A separately declared two-case CPU/libx264-proxy comparison passes both cases with
+360 frames in both outputs. Both native sessions still select hardware, with median
+calls 0.215/0.225 ms. Shared hardware pressure is plausible, but uncontrolled time
+ordering and background resource scheduling prevent a causal conclusion.
+
+All four clean archives retain 360 frames and 576,000 audio samples with zero
+rejection. All eight outputs fully decode, and real-audio correlation at 1/5/9 s
+passes (minimum 0.9856, maximum lag 67.25 ms, no measured drift). Eight owned ports
+are released. All 1,167 tracked files and both native executable hashes are unchanged.
+See `native-hardware-selection-assessment.json`, the per-case selection/postmedia
+artifacts, and the selection/CPU-control audio summaries in the private QA directory.
+
+These are 12-second SDR30 normalized excerpts with a scheduled 24→8 Mbps live
+bitrate change. They do not qualify automatic 4K adaptation, original HDR60,
+physical capture, long thermal sessions, relay acquisition or remote hardware.
+The CPU proxy is the measured local integration path; the failing co-located 4K
+hardware-proxy route remains unqualified.

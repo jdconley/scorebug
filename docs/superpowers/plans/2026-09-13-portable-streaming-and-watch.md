@@ -135,10 +135,20 @@ reconstruction of `aPqApF` passes with renewed whole recovery; the original full
 remains failed. The subsequent fresh `23f0479` / `Gx1pcB` full run passes as described
 above. See the [source-expiry plan](2026-09-24-source-expiry-invalidation.md).
 
-**Next local work:** implement the reviewed [native encoder selection diagnostic](2026-09-24-native-hardware-selection.md),
-then measure actual selected acceleration before changing encoder preferences or
-attributing the remaining 4K throughput limit. Keep sustainable 4K unqualified until
-the representative campaign meets its frame/audio/archive gates.
+**Native encoder selection measured (`bd7accb`):** all four new 4K native sessions
+actually select hardware. The VideoToolbox-proxy campaign passes case 1 and fails
+case 2 with 348/360 live frames, including a 23-frame second. Two separately declared
+CPU-proxy controls pass 360/360. Every archive retains all video/audio; all eight
+outputs fully decode and pass real-audio correlation. Native calls slow sharply
+in the failing case, but shared hardware contention is still a hypothesis. All
+1,167 tracked and two executable hashes remain unchanged. Independent review,
+312 vendor / 12 clean SDK / 170 clean Streaming / 3,434 tooling tests and the clean
+simulator build pass. See the [diagnostic plan and evidence](2026-09-24-native-hardware-selection.md).
+
+**Next local work:** return to the outstanding paired-Watch simulator integration.
+Use the measured CPU proxy path for local media integration; keep sustained 4K and
+the failing co-located hardware-proxy route unqualified. Longer representative runs,
+physical phone/watch and separate-host GPU tests remain required.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and
