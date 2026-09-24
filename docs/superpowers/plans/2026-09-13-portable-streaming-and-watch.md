@@ -31,37 +31,36 @@ full validation gates pass. The current focus is two independently verified
 upgrade → fault → minimum reset → recovery cycles in one native publication.
 
 Live native checkpoints, causal two-pause orchestration, and the complete raw
-repeated verifier are connected. The repeated route is explicitly limited to a
+repeated verifier are connected. The repeated route remains limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,262 tool tests and 470 FilmModel tests pass. The fresh iPhone 14/iOS 26.2
-run (`native-app-ApmZnO`, source `4b1a333`) passed native scoring and recording
-export, but full repeated recovery still failed: only the first trial/fault/reset
-completed. The receiver export and enlarged cadence audit now work on-device in
-the simulator: 46 receiver intervals and 2,076 cadence rows, closed without
-invalidity or overflow. All 913 frozen source hashes remained unchanged.
+All 3,262 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
+independent spec/quality reviews also pass.
 
-The second campaign lost readiness during recovery, but its highest-rate probe
-stage continued spending its bounded byte budget. It exhausted that budget after
-only 79 of 121 candidate inputs, so the second trial correctly did not qualify.
-The repeated fixture now retires the lower-rate stage and waits for current
-recovered readiness within the original campaign deadline before allocating the
-high-rate stage. It preserves the 16 MiB cap, ownership, leases, strict health
-duration and stage time limits. Nine new regressions, the full FilmModel/tool
-suites and the simulator build pass; independent spec/quality reviews approved
-the change. A new frozen native run is next. Timing feasibility under the byte
-cap still needs measurement; component tests do not establish native success.
+The latest frozen iPhone 14/iOS 26.2 run (`native-app-LeTozN`, source `2a0a718`)
+passed native scoring/recording export and completed both controller
+upgrade/fault/minimum-reset/recovery cycles. The new scheduling gate waited
+3.99 and 3.77 seconds after joining stage two before spending high-rate probe
+bytes. Both candidate measurements completed all 121 inputs within the unchanged
+16 MiB cap. Independent raw probe replay passes. Cadence has 2,045 valid rows;
+all 46 receiver intervals are exported. All 913 frozen source hashes remained
+unchanged, and owned processes, simulator and container were cleaned up.
 
-This run also contains a different telemetry sequence from the narrowly supported
-replay: a report fresh when audited became stale before selection, an adjacent
-report was already stale, and an unknown-pressure window reset health again.
-Those remain unsupported by full independent qualification; no stale or unknown
-sample earns health credit. The earlier failed run remains failed too.
+Full qualification still failed: the live recording begins audio 395.011 ms
+after video, exceeding the 100 ms missing-audio coverage limit. Both tracks fully
+decode. The live video has 6,130 contiguous source frames at 30 fps, and 102 A/V
+markers show at most 65.594 ms offset with negligible drift. The clean 1080p
+archive has 6,503 contiguous frames and starts audio/video at zero. These checks
+separate a live startup coverage failure from ongoing synchronization; they do
+not turn the full run into a pass.
 
-The clean 1080p archive fully decoded all 6,605 frames with a maximum timestamp
-gap of approximately 33.3 ms. The independent live recording also fully decoded,
-with approximately 30 fps timestamps. These media checks do not establish both
-recovery cycles or wall-clock network delivery. Production automatic quality
-increases remain disabled.
+Next: trace the first two seconds of packet timestamps from native mux through
+the relay and worker. Native startup audio is present within about 21 ms of its
+first video, while the downstream recorder already receives the 395 ms gap.
+Current evidence cannot distinguish relay acquisition from worker startup loss.
+Keep the coverage limit and original artifacts unchanged. The strict policy
+replay also needs explicit treatment of two startup ownership rejections; the
+previous run's interrupted-recovery sequence remains a separate verifier gate.
+Production automatic quality increases remain disabled.
 
 Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
 proxy processing checks passed with software and macOS VideoToolbox encoding.

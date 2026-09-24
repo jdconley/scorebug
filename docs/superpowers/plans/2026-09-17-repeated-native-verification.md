@@ -895,3 +895,64 @@ spend about 2.5 MB, leaving roughly 9.52 seconds at 12 Mbps within 16 MiB. If th
 0.5-second maturity requirement misses a fresh source-health slot, measurement
 and admission could still arrive too late. The next frozen native run tests this
 scheduling hypothesis; no budget, health requirement or verifier is weakened.
+
+
+#### Fresh stage-readiness native run — September 24, `native-app-LeTozN`
+
+Frozen source `2a0a718` (913 hashes unchanged) passed the native UI workflow in
+261.486 seconds. Both controller cycles completed, with applied revisions
+0→1→2→3→4 and two closed, successful owned-fault records. Each candidate
+measurement completed 121 inputs. Stage-three allocation followed an inactive
+joined-stage gap of 3.987963 and 3.769069 seconds. Final campaign totals were
+14,581,280 and 14,719,460 bytes, below the unchanged 16 MiB cap. Both native
+owners joined, and independent raw v3 probe qualification passes. This measures
+scheduling progress without claiming broader recovery-policy qualification.
+
+The full harness exited 1 at live A/V coverage: video starts at 0; audio starts
+at 0.395011 seconds. This is missing early audio, not allowed leading audio from
+keyframe acquisition. Do not expand the 100 ms missing-audio-head limit. The
+archive fully decoded 6,503 contiguous 1080p frames, with audio/video both starting
+at zero and maximum video gap about 33.3 ms. Live media fully decoded 6,130
+contiguous source frames (160–6289), with 30 fps timestamps and maximum gap 34 ms.
+A separate diagnostic extraction into new files matched 102 audio markers, with
+maximum offset 65.594 ms and drift approximately −0.021 ms. Ongoing content sync
+passes that diagnostic; initial audio coverage and full qualification do not.
+
+The cadence audit contains 2,045 rows, valid and without overflow; 46 receiver
+intervals are closed and valid. Two initial revision-0 rejection events occur
+about 20 ms after bootstrap (`cadence-ownership`, `local-ownership`), before
+source health. They contain no evaluation diagnostic. The strict invalidation
+component rejects their unsupported metadata. Do not silently discard them or
+claim policy qualification merely because the controller finished both cycles.
+Future replay must establish startup semantics explicitly, separately from the
+recovery-segment design above.
+
+Independent startup timing diagnosis:
+
+- Native first AAC PTS is about 21.333 ms after first video; native mux keeps
+  that separation (10919 versus 9000 ticks). Startup audio was produced.
+- First video encoding took about 440.358 ms, and 21 native audio packets were
+  muxed before the first video packet. The writer flushes startup pending packets
+  in arrival order after both tracks become available.
+- Publication origin is 10919. The first live source frame 160 maps to native
+  PTS 27000, then worker PTS 16081 after the common relay shift. This common
+  normalization alone does not explain differential audio loss.
+- RTMP recorder input already starts audio at 395 ms; recorder output retains
+  it. The recorder did not create the gap.
+- The earlier representative 1080p native/SRT/proxy passes used a direct SRT
+  listener and bypassed this relay. They do not qualify its startup boundary.
+
+Next bounded diagnostic: retain the first approximately two seconds of packet
+identities and PTS at native mux, relay ingress, actual reader egress, and worker
+input/output. Identify the earliest retained AAC packet at each boundary before
+choosing a fix. Current evidence localizes the loss after native mux and before
+RTMP recorder input, but cannot separate relay acquisition and worker startup.
+Preserve the originals, scope/ownership, existing timestamp budgets and failed
+run. No new heavy native retry is justified until that diagnostic is concrete.
+
+All owned jobs joined; the simulator and owned container were removed. Evidence:
+`artifacts/qa/repeated-stage-readiness-native-assessment-20260924.json`, with
+separate `diagnostic-live-marker-sync.json`,
+`diagnostic-native-probe-qualification.json` and
+`diagnostic-invalidation-scope.json` inside the native run. Production upgrades
+and full repeated qualification remain disabled.
