@@ -236,6 +236,11 @@ function packetTiming(value) {
     packets,
   };
 }
+/** Numeric-only validation of one diagnostic row; not delivery or health proof. */
+export function sanitizeWorkerPacketTimingEvent(value) {
+  requireValue(object(value) && value.msg === 'worker_packet_timing');
+  return { msg: value.msg, ...scope(value), ...packetTiming(value) };
+}
 function event(value) {
   requireValue(object(value));
   if (value.msg === 'worker_state') {
@@ -252,8 +257,7 @@ function event(value) {
     }
     return result;
   }
-  if (value.msg === 'worker_packet_timing')
-    return { msg: value.msg, ...scope(value), ...packetTiming(value) };
+  if (value.msg === 'worker_packet_timing') return sanitizeWorkerPacketTimingEvent(value);
   if (value.msg === 'worker_pipeline_terminal')
     return { msg: value.msg, ...scope(value), ...terminal(value) };
   if (!pipelineEvents.has(value.msg)) return null;

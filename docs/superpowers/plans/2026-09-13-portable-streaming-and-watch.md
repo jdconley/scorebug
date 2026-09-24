@@ -33,7 +33,7 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route remains limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,276 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
+All 3,287 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
 independent spec/quality reviews also pass.
 
 The latest frozen iPhone 14/iOS 26.2 run (`native-app-LeTozN`, source `2a0a718`)
@@ -53,15 +53,30 @@ archive has 6,503 contiguous frames and starts audio/video at zero. These checks
 separate a live startup coverage failure from ongoing synchronization; they do
 not turn the full run into a pass.
 
-Next: trace the first two seconds of packet timestamps from native mux through
-the relay and worker. Native startup audio is present within about 21 ms of its
-first video, while the downstream recorder already receives the 395 ms gap.
-Current evidence cannot distinguish relay acquisition from worker startup loss.
-A bounded, explicitly enabled worker packet trace is now implemented and reviewed;
-all 429 worker tests, type checking and build pass. Its diagnostic native run is next.
-Keep the coverage limit and original artifacts unchanged. The strict policy
-replay also needs explicit treatment of two startup ownership rejections; the
-previous run's interrupted-recovery sequence remains a separate verifier gate.
+The next diagnostic run (`native-app-hB7NWJ`, source `809fd0d`) completed
+both controller cycles and collected a complete, bounded worker packet trace.
+Its UI workflow passed in 262.897 seconds; all 916 frozen source hashes remained
+unchanged. Full qualification failed because the delivery verifier rejected the
+new diagnostic event kind. That integration is now corrected behind an explicit
+trusted opt-in, with unchanged delivery and media requirements. Both independent
+reviews approve; all 79 focused and 3,287 full tool tests pass.
+
+Offline analysis of the preserved run passes media coverage and direct delivery:
+6,529 contiguous archive frames and 6,117 contiguous live frames, around 30 fps,
+102 live A/V markers with maximum offset 64.917 ms. It does not change the
+original failed run into a pass. The old missing-audio failure did not recur:
+this run acquired video after 36 frames rather than six, leaving audio 605 ms
+ahead of video. The worker input already has that early audio and excludes the
+first 28 native AAC packets; its output preserves the relative timing. This is
+a different acquisition interval, not a demonstrated audio fix.
+
+Next: one fresh run with the corrected verifier and the same traced 180-second
+configuration, looking specifically for recurrence of early video acquisition.
+The existing shorter routes also change relay image and startup configuration,
+so they cannot isolate this boundary. If early audio is already missing at
+worker input, instrument the relay boundary next. Keep the 100 ms coverage gate,
+original artifacts and unknowns intact. The strict policy replay still needs
+explicit treatment of startup ownership rejections and interrupted recovery.
 Production automatic quality increases remain disabled.
 
 Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K

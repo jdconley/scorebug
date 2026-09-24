@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { sanitizeWorkerPacketTimingEvent } from './native-worker-evidence.mjs';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -12,15 +13,59 @@ const range = (firstSourceFrame, lastSourceFrame) => ({
   sourceFrames: lastSourceFrame - firstSourceFrame + 1,
 });
 
+// Diagnostics remain separate from delivery counts. The explicit route validates
+// every chunk, scope, prefix and terminal position before admitting its event kind.
+function validatePacketTiming(pipeline, terminal, exit) {
+  const rows = pipeline.filter((event) => event.msg === 'worker_packet_timing');
+  const commonKeys = [
+    'formatVersion',
+    'diagnosticOnly',
+    'maximumPacketsPerLane',
+    'ended',
+    'pipeError',
+    'drainTimedOut',
+    'incompleteLine',
+    'malformedRows',
+    'oversizedLines',
+  ];
+  let cursor = 0,
+    common;
+  for (const stage of ['demux', 'mux'])
+    for (const media of ['video', 'audio']) {
+      const first = rows[cursor];
+      requireEvidence(first, 'Missing packet diagnostic lane');
+      const head = sanitizeWorkerPacketTimingEvent(first);
+      for (let index = 0; index < Math.max(1, head.retainedPackets); index += 8) {
+        const original = rows[cursor++];
+        const row = sanitizeWorkerPacketTimingEvent(original);
+        requireEvidence(
+          row.stage === stage && row.media === media && row.firstPacketIndex === index,
+          'Packet diagnostic prefix missing, duplicated or reordered',
+        );
+        requireEvidence(
+          row.packetCount === head.packetCount && row.retainedPackets === head.retainedPackets,
+          'Packet diagnostic lane counts changed',
+        );
+        requireEvidence(
+          row.ended && original.sequence > terminal.sequence && original.sequence < exit.sequence,
+          'Packet diagnostic did not join terminal drain',
+        );
+        const flags = commonKeys.map((key) => row[key]);
+        if (common === undefined) common = flags;
+        else assert.deepEqual(flags, common, 'Packet diagnostic snapshot flags changed');
+      }
+    }
+  requireEvidence(cursor === rows.length, 'Extra packet diagnostic chunks');
+}
+
 /** Additional direct-receiver gate after video observation and media qualification.
  * Count agreement localizes delivery after acquisition; decoder PTS is not mapped
  * to native source identity or compared with an unsynchronized host clock. */
-export function qualifyDirectRecorderDelivery({
-  recorder,
-  workerEvidence,
-  videoObservation,
-  live,
-}) {
+export function qualifyDirectRecorderDelivery(
+  { recorder, workerEvidence, videoObservation, live },
+  { packetTimingDiagnostics = false } = {},
+) {
+  requireEvidence(typeof packetTimingDiagnostics === 'boolean', 'Invalid packet diagnostic mode');
   requireEvidence(
     object(recorder) && recorder.formatVersion === 1,
     'Missing direct recorder manifest',
@@ -142,6 +187,7 @@ export function qualifyDirectRecorderDelivery({
     'worker_pipeline_terminal',
     'ffmpeg_exited',
   ]);
+  if (packetTimingDiagnostics) allowed.add('worker_packet_timing');
   requireEvidence(
     pipeline.every((event) => allowed.has(event.msg)),
     'Worker pipeline has a failed or forced lifecycle',
@@ -183,6 +229,7 @@ export function qualifyDirectRecorderDelivery({
       stops.every((event) => event.sequence > start.sequence && event.sequence < terminal.sequence),
     'Worker lifecycle events are out of order',
   );
+  if (packetTimingDiagnostics) validatePacketTiming(pipeline, terminal, exit);
   const encoderExit = terminal.encoderExit;
   requireEvidence(
     object(encoderExit) &&

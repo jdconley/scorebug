@@ -1008,14 +1008,17 @@ try {
       completedWindowLimit: streamingOptions.completedWindowLimit,
     });
     if (process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1') {
-      directRecorderDelivery = qualifyDirectRecorderDelivery({
-        recorder: JSON.parse(await readFile(join(artifact, 'direct-rtmp-recorder.json'), 'utf8')),
-        workerEvidence: JSON.parse(
-          await readFile(join(artifact, 'worker-terminal-evidence.json'), 'utf8'),
-        ),
-        videoObservation,
-        live,
-      });
+      directRecorderDelivery = qualifyDirectRecorderDelivery(
+        {
+          recorder: JSON.parse(await readFile(join(artifact, 'direct-rtmp-recorder.json'), 'utf8')),
+          workerEvidence: JSON.parse(
+            await readFile(join(artifact, 'worker-terminal-evidence.json'), 'utf8'),
+          ),
+          videoObservation,
+          live,
+        },
+        { packetTimingDiagnostics: process.env.SCOREBUG_TEST_WORKER_PACKET_TIMING === '1' },
+      );
       directRecorderDelivery.sourceDurationSeconds = qualifyNativeStreamingHold({
         holdSeconds: streamingOptions.holdSeconds,
         savedFrames: directRecorderDelivery.savedFrames,

@@ -997,3 +997,45 @@ Next run uses `SCOREBUG_TEST_WORKER_PACKET_TIMING=1` on the same repeated fixtur
 Treat the debug output as diagnostic: it can affect scheduling and does not
 qualify health or throughput. Keep source hashes frozen, retain all failed
 artifacts, and compare native mux, worker demux/mux, and recorder timestamps.
+
+
+#### Worker packet-trace native run — September 24, `native-app-hB7NWJ`
+
+Frozen source `809fd0d` (916 hashes unchanged) completed the native UI workflow
+in 262.897 seconds and both controller cycles through revision four. The trace
+contains all 64 ordered chunks, with clean framing, drain and collector flags.
+The full harness exited 1 because its direct-recorder lifecycle allowlist did
+not yet admit diagnostic packet records. Owned jobs joined and the simulator
+and container were removed. Preserve the failure and raw evidence unchanged.
+
+The verifier correction requires a trusted, explicit second-option opt-in.
+It validates all four complete prefixes, consistent counts/flags, scope, and
+terminal-before-trace-before-exit ordering. The default remains strict; packet
+records confer no health/delivery credit. Existing lifecycle, media, count and
+exit requirements remain unchanged. Two new positive tests failed before the
+correction. All 79 focused and 3,287 full tool tests now pass; independent spec
+and quality reviews approve.
+
+Offline analysis in `native-app-hB7NWJ/diagnostic-media-and-delivery.json`
+passes media coverage and the corrected direct-delivery component, not the full
+run. The archive has 6,529 contiguous frames with both tracks starting at zero;
+live has 6,117 contiguous frames (192–6308), about 30 fps and maximum gap 34 ms.
+All 102 live markers match, maximum offset 64.917 ms with negligible drift.
+Live audio starts at zero and video at 605 ms, within the existing leading-audio
+acquisition allowance. The old 395 ms missing-audio head did not recur.
+
+The acquired video prefix changed from six frames to 36. Worker input starts
+video at 106081/90000 and audio at 53760/90000 (581.345 ms audio lead).
+Worker output begins video at 1.179 seconds and audio at 0.574 seconds; the
+recorder preserves that 605 ms lead under common normalization. Native AAC count
+9614 minus worker input count 9586 equals 28; the first input AAC timestamp also
+maps to native packet index 28. No large worker audio delay is demonstrated.
+The prior run lacks these worker traces, so its loss boundary remains unknown.
+
+Next bounded experiment is one fresh run of the same traced 180-second route
+after this integration correction, seeking recurrence of early video acquisition.
+Read-only inspection found no shorter invocation preserving campaign-probe-v3,
+the repeated owners, native 240p/worker 360p and reporting configuration. Do not
+introduce a new test mode merely to shorten this experiment. Inspect first worker
+demux timestamps before choosing relay instrumentation or a media fix. Retain the
+100 ms missing-audio gate and failed runs; production upgrades remain disabled.

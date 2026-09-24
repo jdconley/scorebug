@@ -464,3 +464,87 @@ test('returns only sanitized scalar summaries without copying unknown fields', (
   assert.ok(result);
   assert.ok(!JSON.stringify(result).includes('SECRET'));
 });
+
+function withPacketTiming({ full = false } = {}) {
+  const value = fixture();
+  const records = [];
+  for (const stage of ['demux', 'mux'])
+    for (const media of ['video', 'audio']) {
+      const retainedPackets = full ? 128 : 0;
+      for (
+        let firstPacketIndex = 0;
+        firstPacketIndex < Math.max(1, retainedPackets);
+        firstPacketIndex += 8
+      ) {
+        records.push({
+          msg: 'worker_packet_timing',
+          ...pipelineScope,
+          formatVersion: 1,
+          diagnosticOnly: true,
+          maximumPacketsPerLane: 128,
+          ended: true,
+          pipeError: false,
+          drainTimedOut: false,
+          incompleteLine: false,
+          malformedRows: 0,
+          oversizedLines: 0,
+          stage,
+          media,
+          firstPacketIndex,
+          packetCount: full ? 200 : 0,
+          retainedPackets,
+          packets: Array.from({ length: full ? 8 : 0 }, (_, i) => ({
+            pts: String(firstPacketIndex + i),
+            ptsSeconds: String((firstPacketIndex + i) / 30),
+            dts: String(firstPacketIndex + i),
+            dtsSeconds: String((firstPacketIndex + i) / 30),
+          })),
+        });
+      }
+    }
+  const index = value.workerEvidence.events.findIndex((e) => e.msg === 'ffmpeg_exited');
+  value.workerEvidence.events.splice(index, 0, ...records);
+  value.workerEvidence.events.forEach((e, i) => (e.sequence = i + 1));
+  return value;
+}
+for (const full of [false, true])
+  test(`explicit diagnostic route retains strict delivery proof with full=${full}`, () => {
+    const value = withPacketTiming({ full });
+    assert.throws(() => qualify(value), /failed or forced lifecycle/);
+    assert.deepEqual(qualify(value, { packetTimingDiagnostics: true }), qualify(fixture()));
+  });
+for (const [name, mutate] of [
+  ['missingLane', (v) => v.workerEvidence.events.splice(4, 1)],
+  ['wrongScope', (v) => (v.workerEvidence.events[4].pipelineOrdinal = 2)],
+  [
+    'earlyTrace',
+    (v) => {
+      const r = v.workerEvidence.events.splice(4, 1)[0];
+      v.workerEvidence.events.splice(2, 0, r);
+    },
+  ],
+  ['duplicatePrefix', (v) => (v.workerEvidence.events[5].firstPacketIndex = 0)],
+  ['differentCount', (v) => (v.workerEvidence.events[5].packetCount = 201)],
+  ['differentFlags', (v) => (v.workerEvidence.events[5].pipeError = true)],
+  ['unsafeNumeric', (v) => (v.workerEvidence.events[4].packets[0].pts = 'SECRET')],
+  [
+    'unclosed',
+    (v) => {
+      for (const r of v.workerEvidence.events)
+        if (r.msg === 'worker_packet_timing') r.ended = false;
+    },
+  ],
+])
+  test(`diagnostic route cannot ignore malformed ${name}`, () => {
+    const value = withPacketTiming({ full: true });
+    mutate(value);
+    value.workerEvidence.events.forEach((e, i) => (e.sequence = i + 1));
+    assert.throws(() => qualify(value, { packetTimingDiagnostics: true }));
+  });
+test('packet diagnostics never permit a forced encoder exit', () => {
+  const value = withPacketTiming();
+  const ex = value.workerEvidence.events.find((e) => e.msg === 'ffmpeg_exited');
+  ex.code = 137;
+  terminal(value).encoderExit.code = 137;
+  assert.throws(() => qualify(value, { packetTimingDiagnostics: true }));
+});
