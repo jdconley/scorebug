@@ -593,6 +593,50 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     private func auditObject(_ audit: PublishingDeliveryMonitor.Audit) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
     }
+    func testAuditUnavailableCallbackCoversMissingFailedClosedAndMixedBatches() throws {
+        let (_, applied) = try auditFixture()
+        var captured: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: [], late: [], decodedThrough: 60, captureInput: { captured = $0 })
+        let input = try XCTUnwrap(captured)
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        var unavailable = false
+        audit.record(input: nil, applied: applied, at: 0, instant: instant, onUnavailable: { unavailable = true })
+        XCTAssertTrue(unavailable)
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        unavailable = false
+        audit.record(input: input, applied: applied, at: 1, instant: instant, onUnavailable: { unavailable = true })
+        XCTAssertFalse(unavailable, "No completed row is normal while waiting for its deadline")
+        // The next batch can classify a one-second window but its two-second
+        // source window lacks matching history after replacing the input history.
+        let short = PublishingDeliveryMonitor.Input(history: try history(captureRange: 29...61),
+            clock: input.clock, diagnostics: input.diagnostics, delivery: input.delivery)
+        let mixed = audit.record(input: short, applied: applied, at: 4.5, instant: instant, onUnavailable: { unavailable = true })
+        XCTAssertEqual(mixed.count, 1)
+        XCTAssertEqual(mixed.first?.result.onTimeFrames, 30)
+        let rows = try XCTUnwrap(try auditObject(audit)["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertNotNil(rows.last?["reason"] as? String)
+        XCTAssertTrue(unavailable, "Any unclassified row must invalidate the entire scheduling batch")
+        audit.close(); unavailable = false
+        audit.record(input: input, applied: applied, at: 5, instant: instant, onUnavailable: { unavailable = true })
+        XCTAssertTrue(unavailable)
+    }
+
+    func testAuditClassifiedUncertaintyInvalidatesEntireMixedBatchBeforeReturning() throws {
+        var captured: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: [], late: Set(60..<90), ageMs: 250, captureInput: { captured = $0 })
+        let input = try XCTUnwrap(captured), (_, applied) = try auditFixture()
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        var unavailable = false
+        let rows = audit.record(input: input, applied: applied, at: 4.5, instant: instant, onUnavailable: { unavailable = true })
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.first?.result.uncertainFrames, 0)
+        XCTAssertEqual(rows.first?.result.onTimeFrames, 30)
+        XCTAssertGreaterThan(try XCTUnwrap(rows.last?.result.uncertainFrames), 0)
+        XCTAssertTrue(unavailable, "Typed negative must be known before the driver submits any positive row")
+    }
+
     func testRepeatedDeadlineAuditRetains512RowsAndRejectsTheNextScheduledRow() throws {
         let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
             environment: repeatedAuditEnvironment)
@@ -621,7 +665,10 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: Array(retained.prefix(511)), options: [.sortedKeys]),
             try JSONSerialization.data(withJSONObject: prefix, options: [.sortedKeys]))
         let terminal = try audit.data()
-        XCTAssertTrue(audit.record(input: input, applied: applied, at: 345.25, instant: instant).isEmpty)
+        var unavailable = false
+        XCTAssertTrue(audit.record(input: input, applied: applied, at: 345.25, instant: instant,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
         XCTAssertEqual(try audit.data(), terminal)
         audit.close()
         XCTAssertEqual(try auditObject(audit)["closed"] as? Bool, true)
@@ -710,7 +757,10 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertGreaterThan(serializedRows.reduce(0, +) + rows.count + 4096 + (serializedRows.last ?? 0), 33_554_432)
         auditRecordingID = "recording"
         let (small, _) = try auditFixture()
-        XCTAssertTrue(audit.record(input: small, applied: applied, at: 103.25, instant: instant).isEmpty)
+        var unavailable = false
+        XCTAssertTrue(audit.record(input: small, applied: applied, at: 103.25, instant: instant,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
         XCTAssertEqual(try audit.data(), terminal)
     }
     func testRepeatedDeadlineAuditSerializationFailureIsInvalidAndTerminal() throws {

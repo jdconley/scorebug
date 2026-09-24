@@ -77,6 +77,30 @@ final class PublishingDeliveryMonitorTests: XCTestCase {
         XCTAssertEqual(schedule.poll(at: 102.25, identity: "a"), [.init(start: 100, end: 101)])
         XCTAssertLessThanOrEqual(schedule.poll(at: 110, identity: "a").count, 2)
     }
+    func testScheduleUnavailableSignalDistinguishesOrdinaryWaitFromDiscontinuity() throws {
+        var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: 1, maximumSampleAge: 0.25)
+        var unavailable = 0
+        _ = schedule.poll(at: 10, identity: "a", onUnavailable: { unavailable += 1 })
+        unavailable = 0
+        _ = schedule.poll(at: 10.5, identity: "a", onUnavailable: { unavailable += 1 })
+        XCTAssertEqual(unavailable, 0)
+        _ = schedule.poll(at: 16, identity: "a", onUnavailable: { unavailable += 1 })
+        XCTAssertGreaterThan(unavailable, 0, "Suspension must invalidate before another source query")
+        unavailable = 0
+        _ = schedule.poll(at: 16.1, identity: nil, onUnavailable: { unavailable += 1 })
+        XCTAssertGreaterThan(unavailable, 0)
+        unavailable = 0
+        _ = schedule.poll(at: 17, identity: "b", onUnavailable: { unavailable += 1 })
+        _ = schedule.poll(at: 17.1, identity: "c", onUnavailable: { unavailable += 1 })
+        XCTAssertGreaterThan(unavailable, 0)
+        unavailable = 0
+        _ = schedule.poll(at: .nan, identity: "c", onUnavailable: { unavailable += 1 })
+        XCTAssertGreaterThan(unavailable, 0)
+        unavailable = 0
+        _ = schedule.poll(at: 18, identity: "c", onUnavailable: { unavailable += 1 })
+        XCTAssertGreaterThan(unavailable, 0, "Terminal invalid schedule must not look like a normal empty poll")
+    }
+
     func testInvalidBudgetCannotStartSchedule() throws {
         for budget in [0.0, -1, .nan, .infinity, 10.01] {
             XCTAssertThrowsError(try PublishingDeliveryMonitor.Schedule(latencyBudget: budget, maximumSampleAge: 0.25))

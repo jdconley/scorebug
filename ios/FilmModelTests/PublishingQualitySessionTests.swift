@@ -698,6 +698,113 @@ private final class ProfileQualityNative: @unchecked Sendable {
 }
 
 final class PublishingMeasuredCandidateSessionTests: XCTestCase {
+    func testSharedRecoveryWaitsForDeliveryThenFreshSourceWithoutMovingCompletedPrefix() async throws {
+        for mode in ["healthy", "suppressedBatch", "foreignWorker"] {
+            let f = try await CandidateQualityFixture.make(requiresSharedCandidateRecovery: true)
+            let trial = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(trial.recommendation))
+            f.native.setNow(116)
+            try await f.owner.noteUnavailableCadence(diagnostics: try f.diagnostics())
+            let reset = try await f.owner.checkTrialDeadline()
+            try await f.owner.apply(XCTUnwrap(reset))
+            f.native.setNow(116.5)
+            _ = try await f.owner.evaluateDecoderStall(cadence: f.freshCadence(), diagnostics: f.diagnostics(), instant: f.native.instant)
+            var current: PublishingQualityTelemetry.Diagnostics?
+            var authority: PublishingDeliveryAuthority?
+            // Nonintegral five-second source windows require both partial delivery
+            // tails. The second lane's tail arrives after the source's 2s freshness.
+            var events: [(at: Double, sourceSequence: Int64?, deliveryEnd: Int?)] = [
+                (122.6, 3, nil), (127.6, 4, nil), (132.6, 5, nil)]
+            events += (118...129).map { (Double($0) + 1.8, nil, $0) }
+            for event in events.sorted(by: { $0.at < $1.at }) {
+                f.native.setNow(event.at)
+                if let sequence = event.sourceSequence {
+                    let health = try await f.freshSource(start: 117.5 + Double(sequence - 3) * 5, sequence: sequence)
+                    _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+                        workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                        transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                        instant: f.native.instant)
+                    current = health.1
+                    let context = await f.owner.candidateMeasurementContext(diagnostics: health.1)
+                    if sequence == 4 { XCTAssertNil(context, "Source-only ten seconds cannot start the repeated campaign before both delivery tails") }
+                    if sequence == 5 {
+                        XCTAssertEqual(context != nil, mode == "healthy",
+                            "Only owned completed117.5...127.5 delivery can accompany fresh source through132.5; mode=\(mode)")
+                    }
+                } else if let end = event.deliveryEnd {
+                    let one = try await f.delivery(start: Double(end - 1), authority: authority, foreignWorker: mode == "foreignWorker")
+                    authority = try XCTUnwrap(one.authority)
+                    _ = try await f.owner.evaluateDeliveryFailure(one, authority: XCTUnwrap(authority), recordCandidateRecovery: mode != "suppressedBatch", instant: f.native.instant)
+                    if (end - 117) % 2 == 0 {
+                        let two = try await f.delivery(start: Double(end - 2), duration: 2, authority: authority, foreignWorker: mode == "foreignWorker")
+                        _ = try await f.owner.evaluateDeliveryFailure(two, authority: XCTUnwrap(authority), recordCandidateRecovery: mode != "suppressedBatch", instant: f.native.instant)
+                    }
+                    if end == 129 {
+                        let stale = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+                        XCTAssertNil(stale, "Completed delivery does not renew stale source readiness")
+                    }
+                }
+            }
+            let before = await f.owner.snapshot
+            XCTAssertEqual(before.revision, 2)
+            XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000", "profile:240p30", "rate:350000"])
+            let cancelled = Task {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+            }
+            let cancelledContext = try await cancelled.value
+            XCTAssertNil(cancelledContext)
+            authority?.revoke()
+            let revoked = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+            XCTAssertNil(revoked, "Historical coverage cannot retain retired delivery authority")
+            await f.owner.stop()
+            let stopped = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+        XCTAssertNil(stopped)
+        }
+    }
+
+    func testMixedDeliveryBatchSuppressionPreservesExistingDownwardAction() async throws {
+        let f = try await CandidateQualityFixture.make(requiresSharedCandidateRecovery: true)
+        let trial = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(trial.recommendation))
+        f.native.setNow(117)
+        let failure = try await f.delivery(start: 115.2, missing: Set(0..<30))
+        f.owner.invalidateCandidateRecovery()
+        let decision = try await f.owner.evaluateDeliveryFailure(failure, authority: XCTUnwrap(failure.authority),
+            recordCandidateRecovery: false, instant: f.native.instant)
+        XCTAssertEqual(decision?.recommendation?.kind, .reset)
+        await f.owner.stop()
+    }
+
+    func testSharedRecoveryOptInPreservesInitialAndLegacyButBlocksRecoveredSourceAlone() async throws {
+        for enabled in [false, true] {
+            let f = try await CandidateQualityFixture.make(requiresSharedCandidateRecovery: enabled)
+            let initial = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            XCTAssertNotNil(initial, "Initial campaign stays source-only")
+            let trial = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(trial.recommendation))
+            f.native.setNow(116)
+            try await f.owner.noteUnavailableCadence(diagnostics: try f.diagnostics())
+            let reset = try await f.owner.checkTrialDeadline()
+            try await f.owner.apply(XCTUnwrap(reset))
+            var current: PublishingQualityTelemetry.Diagnostics?
+            for (start, sequence) in [(117.0, Int64(3)), (122.0, Int64(4))] {
+                f.native.setNow(start + 5.1)
+                let health = try await f.freshSource(start: start, sequence: sequence)
+                _ = try await f.owner.evaluate(source: health.0, diagnostics: health.1,
+                    workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                    transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                    instant: f.native.instant)
+                current = health.1
+            }
+            let recovered = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+            XCTAssertEqual(recovered == nil, enabled)
+            await f.owner.stop()
+            let stopped = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(current))
+            XCTAssertNil(stopped)
+        }
+    }
+
     func testMeasurementReadinessBindsAuthenticatedSourceAndVerifiedCurrentReceiptWithoutWrites() async throws {
         let f = try await CandidateQualityFixture.make()
         let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
@@ -1013,15 +1120,15 @@ struct CandidateQualityFixture: Sendable {
             receipt: native.receipt, ingress: ingress.poll(at: native.now),
             transport: PublishingTransportStatisticsTracker().snapshot, thermal: PublishingThermalTracker().snapshot)
     }
-    func delivery(start: Double, authority suppliedAuthority: PublishingDeliveryAuthority? = nil,
-                  missing: Set<Int> = [], uncertain: Bool = false) async throws -> PublishingDeliveryObservation {
+    func delivery(start: Double, duration: Double = 1, authority suppliedAuthority: PublishingDeliveryAuthority? = nil,
+                  missing: Set<Int> = [], uncertain: Bool = false, foreignWorker: Bool = false) async throws -> PublishingDeliveryObservation {
         let state = await owner.snapshot, receipt = try XCTUnwrap(state.receipt)
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: try XCTUnwrap(state.revision),
             settings: try XCTUnwrap(state.applied), receipt: receipt, acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
         let scope = admissionMeasurementScope
         var history = try VideoSourceHistory(scope: scope, capacity: 128)
         var arrivals: [[Any]] = []
-        for i in -1...30 {
+        for i in -1...Int(duration * 30) {
             let time = start + Double(i) / 30, pts = CMTime(value: Int64(1000 + i), timescale: 30)
             history.observe(.captureVideo, sourcePTS: pts, at: time)
             history.observe(.encodedVideo, sourcePTS: pts, at: time,
@@ -1042,7 +1149,7 @@ struct CandidateQualityFixture: Sendable {
         observation.decoderDelivery = packet
         let publication = admission.receiver.publication
         var response = WorkerMediaStatusResponse(status: .init(gameId: scope.matchID, generation: scope.broadcastGeneration,
-            workerId: "mac", state: .producingOutput, observation: observation, observedAt: "2040-01-01T00:00:00Z",
+            workerId: foreignWorker ? "foreign" : "mac", state: .producingOutput, observation: observation, observedAt: "2040-01-01T00:00:00Z",
             expiresAt: "2040-01-01T00:00:05Z", workerEpoch: admission.receiver.workerEpoch, publication: publication),
             serverTime: "2040-01-01T00:00:00Z")
         response.status.decoderDeliveryAgeUpperBoundMs = uncertain ? 100 : 0
@@ -1057,8 +1164,22 @@ struct CandidateQualityFixture: Sendable {
             thermal: PublishingThermalTracker().snapshot)
         return try PublishingDeliveryObservation.classify(history: history.snapshot,
             clock: .init(scope: scope, transportClock: clock, isClosed: false), applied: applied,
-            diagnostics: diagnostics, delivery: delivery, windowStart: start, windowEnd: start + 1,
+            diagnostics: diagnostics, delivery: delivery, windowStart: start, windowEnd: start + duration,
             at: native.now, instant: native.instant, maximumSampleAge: 0.25, latencyBudget: 0.5, authority: authority)
+    }
+
+    func freshCadence() throws -> WorkerDecoderCadenceFreshness {
+        let publication = String(data: try JSONEncoder().encode(admission.receiver.publication), encoding: .utf8)!
+        let json = """
+        {"status":{"gameId":"match","generation":2,"workerId":"mac","workerEpoch":"\(admission.receiver.workerEpoch)","state":"producing_output",
+        "observation":{"gameId":"match","generation":2,"state":"producing_output","reason":null,"attempt":1,"frame":12,"outTimeUs":400000,"scoreRevision":1,
+        "decodedVideo":{"clock":"mpegts-pts-90k-v1","completed":null,"invalidReason":null,"ended":false},
+        "decoderCadence":{"formatVersion":1,"scopeID":"11111111-1111-4111-8111-111111111111","oneSecond":null,"twoSeconds":null,"progress":{"lastFreshPTS":180000,"ageMs":50,"stalled":false},"invalidReason":null,"ended":false}},
+        "observedAt":"2040-01-01T00:00:00Z","expiresAt":"2040-01-01T00:00:05Z",
+        "publication":\(publication),"decoderCadenceAgeUpperBoundMs":0},"serverTime":"2040-01-01T00:00:01Z"}
+        """
+        return try XCTUnwrap(WorkerDecoderCadenceFreshness(response: JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(json.utf8)),
+            expectedPublishingAttemptID: attempt, receivedAt: native.instant, requestDuration: .zero))
     }
 
     private var admissionMeasurementScope: VideoFrameObservationScope {
@@ -1117,13 +1238,24 @@ struct CandidateQualityFixture: Sendable {
                 sentBytes: UInt64(index * 10000), retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 1,
                 estimatedBandwidthMbps: 100, senderBufferedBytes: 0, senderBufferMilliseconds: 0, availableSenderBytes: 10000))
         }
+        // Complete pressure coverage for source windows ending between integer
+        // samples; a window must not borrow a future/missing right bracket.
+        if native.now > native.now.rounded(.down) {
+            thermal.observe(.init(state: .nominal, sampledAt: native.now))
+            transport.observe(.init(publishingGeneration: 7, sampledAt: native.now,
+                elapsedMilliseconds: Int64((native.now * 1000).rounded()),
+                sentBytes: UInt64((native.now * 10000).rounded()), retransmittedBytes: 0, droppedPackets: 0,
+                rttMilliseconds: 1, estimatedBandwidthMbps: 100, senderBufferedBytes: 0,
+                senderBufferMilliseconds: 0, availableSenderBytes: 10000))
+        }
         let diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: clock, receipt: applied.receipt,
             ingress: ingress.poll(at: native.now), transport: transport.snapshot, thermal: thermal.snapshot)
         return (source, diagnostics)
     }
     static func make(sourceHealth: Bool = true, foreignPublication: Bool = false,
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
-                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil) async throws -> Self {
+                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil,
+                     requiresSharedCandidateRecovery: Bool = false) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
@@ -1135,7 +1267,8 @@ struct CandidateQualityFixture: Sendable {
             .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)],
             attemptID: attempt, initial: .init(profileID: initialProfile.rawValue, videoBitrate: initialProfile.bitRate),
-            strategy: .measuredCandidateTrials, behavior: .progressive, uptime: { native.now }, instant: { native.instant })
+            strategy: .measuredCandidateTrials, behavior: .progressive, requiresSharedCandidateRecovery: requiresSharedCandidateRecovery,
+            uptime: { native.now }, instant: { native.instant })
         try await owner.bootstrap()
         let state = await owner.snapshot
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0, settings: try XCTUnwrap(state.applied),

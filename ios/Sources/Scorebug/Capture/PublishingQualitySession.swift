@@ -84,7 +84,12 @@ actor PublishingQualitySession {
     private var deliveryEnds: [Int: Double] = [:]
     private var evaluatedAt: Double?
     private var pendingCandidate: PublishingCandidateAdmission?
-    private var candidateHealthSource: SourceScope?
+    private nonisolated let candidateRecovery: PublishingCandidateRecoveryCoverage?
+    private var recoveryDelivery: PublishingDeliveryObservation?
+    private var candidateHealthSource: SourceScope? {
+        didSet { if candidateHealthSource == nil { candidateRecovery?.invalidate(); recoveryDelivery = nil } }
+    }
+    nonisolated func invalidateCandidateRecovery() { candidateRecovery?.invalidate() }
     private var requiresCadenceFreshnessValidation = false
     private var pending: QualityController.Recommendation? {
         didSet {
@@ -136,17 +141,17 @@ actor PublishingQualitySession {
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
-         behavior: QualityController.Behavior = .legacy) throws {
+         behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
             stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing },
             videoStartup: { session.videoStartup },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
-            uptime: { ProcessInfo.processInfo.systemUptime })
+            requiresSharedCandidateRecovery: requiresSharedCandidateRecovery, uptime: { ProcessInfo.processInfo.systemUptime })
     }
     init(operations: Operations, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
-         behavior: QualityController.Behavior = .legacy,
+         behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
          uptime: @escaping @Sendable () -> Double,
          instant: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) throws {
         let now = uptime()
@@ -155,6 +160,7 @@ actor PublishingQualitySession {
         self.operations = operations; self.profiles = profiles; self.attemptID = attemptID
         self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
         self.sampleInstant = instant
+        self.candidateRecovery = requiresSharedCandidateRecovery ? PublishingCandidateRecoveryCoverage() : nil
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
@@ -185,6 +191,27 @@ actor PublishingQualitySession {
               source.publication.publishingAttemptId == attemptID.uuidString.lowercased(),
               receipt.configuration.bitRate == readiness.baseline.videoBitrate,
               acknowledgedAt.isFinite, acknowledgedAt >= receipt.acceptedAt, acknowledgedAt <= now else { return nil }
+        if let candidateRecovery, readiness.appliedRevision > 0 {
+            guard let delivery = recoveryDelivery, let authority = deliveryAuthority,
+                  delivery.authority === authority, authority.permits(delivery.delivery),
+                  delivery.appliedRevision == readiness.appliedRevision,
+                  delivery.source.scope == source.observationScope,
+                  delivery.source.publishingGeneration == receipt.publishingGeneration,
+                  delivery.source.configuration == receipt.configuration,
+                  delivery.delivery.context.gameId == source.gameID,
+                  delivery.delivery.context.generation == source.generation,
+                  delivery.delivery.context.workerId == source.workerId,
+                  delivery.delivery.context.workerEpoch == source.epoch,
+                  delivery.delivery.context.attempt == source.attempt,
+                  delivery.delivery.context.publication == source.publication,
+                  let decoderScope, decoderScope.gameID == source.gameID,
+                  decoderScope.generation == source.generation, decoderScope.workerID == source.workerId,
+                  decoderScope.epoch == source.epoch, decoderScope.attempt == source.attempt,
+                  decoderScope.publication == source.publication
+            else { candidateRecovery.invalidate(); return nil }
+            guard candidateRecovery.permits(healthySince: readiness.healthySince,
+                healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) else { return nil }
+        }
         return .init(readiness: readiness,
             applied: .init(attemptID: attemptID, revision: readiness.appliedRevision, settings: readiness.baseline,
                 receipt: receipt, acknowledgedAt: acknowledgedAt), scope: ingress.scope, clock: clock)
@@ -336,6 +363,7 @@ actor PublishingQualitySession {
             if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry(); candidateHealthSource = nil }
             let decision = try policy.evaluate(window, at: now)
             candidateHealthSource = sourceScope
+            candidateRecovery?.recordSource(start: window.start, end: window.end, sequence: window.sequence)
             lastSource = (sourceScope, source.sequence)
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
@@ -426,6 +454,7 @@ actor PublishingQualitySession {
             if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
             decoderScope = scope; decoderProgress = progress; consumedCadenceReceipt = cadence.receiptID
             requiresCadenceFreshnessValidation = false
+            if cadence.snapshot.progress?.stalled == false { candidateRecovery?.resume(at: now) }
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
             candidateHealthSource = nil
@@ -439,6 +468,7 @@ actor PublishingQualitySession {
     /// known failure may latch a reset. No await occurs during admission.
     func evaluateDeliveryFailure(_ observation: PublishingDeliveryObservation,
                                  authority: PublishingDeliveryAuthority,
+                                 recordCandidateRecovery: Bool = true,
                                  instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
         try admit()
         guard behavior == .progressive else { return nil }
@@ -473,6 +503,10 @@ actor PublishingQualitySession {
                 deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
             }
             deliveryEnds[lane] = source.windowEnd
+            if let candidateRecovery, recordCandidateRecovery {
+                candidateRecovery.recordDelivery(start: source.windowStart, end: source.windowEnd, result: observation.result)
+                recoveryDelivery = observation
+            }
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             guard let signal = observation.failureSignal(sequence: lastPolicySequence + 1) else {
                 if observation.result.uncertainFrames > 0 { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }

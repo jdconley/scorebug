@@ -47,15 +47,16 @@ enum PublishingDeliveryMonitor {
                   maximumSampleAge.isFinite, maximumSampleAge > 0, maximumSampleAge <= 5 else { throw Failure.invalidBudget }
             self.latencyBudget = latencyBudget; self.maximumSampleAge = maximumSampleAge
         }
-        mutating func poll(at now: Double, identity next: String?) -> [Window] {
-            guard !invalid else { return [] }
+        mutating func poll(at now: Double, identity next: String?, onUnavailable: (() -> Void)? = nil) -> [Window] {
+            guard !invalid else { onUnavailable?(); return [] }
             guard now.isFinite, (0...1e12).contains(now), previousTime.map({ now >= $0 }) ?? true else {
-                invalid = true; return []
+                invalid = true; onUnavailable?(); return []
             }
             let suspended = previousTime.map { now - $0 > 5 } ?? false
             previousTime = now
-            guard let next else { identity = nil; starts = []; return [] }
+            guard let next else { identity = nil; starts = []; onUnavailable?(); return [] }
             if identity != next || suspended {
+                if identity != nil || suspended { onUnavailable?() }
                 identity = next; starts = [ceil(now), ceil(now)]; return []
             }
             var result: [Window] = []
@@ -122,9 +123,9 @@ enum PublishingDeliveryMonitor {
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
         }
         @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
-                    instant: ContinuousClock.Instant) -> [PublishingDeliveryObservation] {
-            guard !closed, !overflow, !serializationInvalid else { return [] }
-            guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil); return [] }
+                    instant: ContinuousClock.Instant, onUnavailable: (() -> Void)? = nil) -> [PublishingDeliveryObservation] {
+            guard !closed, !overflow, !serializationInvalid else { onUnavailable?(); return [] }
+            guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil, onUnavailable: onUnavailable); return [] }
             var observations: [PublishingDeliveryObservation] = []
             let next = Key(scope: input.history.scope, clock: input.clock.transportClock,
                 context: input.delivery.context, deliveryScope: input.delivery.snapshot.scopeID,
@@ -133,11 +134,11 @@ enum PublishingDeliveryMonitor {
                 submittedPTS: applied.receipt.lastSubmittedSourcePTS, acknowledgedAt: applied.acknowledgedAt,
                 authorityID: input.authority.map(ObjectIdentifier.init))
             if key != next {
-                guard phase < 256 else { overflow = true; return [] }
+                guard phase < 256 else { overflow = true; onUnavailable?(); return [] }
                 key = next; phase += 1
             }
-            for window in schedule.poll(at: now, identity: String(phase)) {
-                guard rows.count < (repeated ? Self.repeatedMaximumRows : 256) else { overflow = true; return observations }
+            for window in schedule.poll(at: now, identity: String(phase), onUnavailable: onUnavailable) {
+                guard rows.count < (repeated ? Self.repeatedMaximumRows : 256) else { overflow = true; onUnavailable?(); return observations }
                 var row: [String: Any] = ["phase": phase, "start": window.start, "end": window.end, "evaluatedAt": now,
                     "appliedRevision": String(applied.revision), "acknowledgedAt": applied.acknowledgedAt,
                     "profileID": applied.settings.profileID, "videoBitrate": applied.settings.videoBitrate,
@@ -169,6 +170,8 @@ enum PublishingDeliveryMonitor {
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
                     row["history"] = Self.history(input.history, start: window.start, anchor: observation.source.anchorSourcePTS)
                     let result = observation.result
+                    if result.uncertainFrames != 0 || result.lateFrames != 0 || result.missingFrames != 0 ||
+                        Double(result.onTimeFrames) / (window.end - window.start) < 30 { onUnavailable?() }
                     row["result"] = ["expectedFrames": result.expectedFrames, "onTimeFrames": result.onTimeFrames,
                         "lateFrames": result.lateFrames, "missingFrames": result.missingFrames,
                         "uncertainFrames": result.uncertainFrames, "onTimeFPS": Self.optional(result.onTimeFPS),
@@ -176,15 +179,16 @@ enum PublishingDeliveryMonitor {
                     row["frames"] = observation.source.frames.map { ["pts": String($0.decodedPTS),
                         "sourcePTS": Self.time($0.sourcePTS), "capturedAt": $0.capturedAt, "wasEncoded": $0.wasEncoded] as [String: Any] }
                 } catch {
+                    onUnavailable?()
                     row["reason"] = String(describing: error)
                     row["history"] = Self.history(input.history, start: window.start, anchor: nil)
                 }
                 if repeated {
                     guard JSONSerialization.isValidJSONObject(row),
                           let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
-                    else { serializationInvalid = true; return observations }
+                    else { serializationInvalid = true; onUnavailable?(); return observations }
                     let available = Self.repeatedMaximumBytes - Self.envelopeAllowance - serializedRowBytes
-                    guard data.count < available else { overflow = true; return observations }
+                    guard data.count < available else { overflow = true; onUnavailable?(); return observations }
                     serializedRowBytes += data.count + 1
                 }
                 rows.append(row)

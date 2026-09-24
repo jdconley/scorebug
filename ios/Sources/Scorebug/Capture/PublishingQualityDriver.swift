@@ -92,19 +92,25 @@ import ScorebugMedia
             // No asynchronous work occurs between this read and classification.
             let currentDelivery = deliveryInputProvider?()
             var deliveryObservations: [PublishingDeliveryObservation] = []
+            var deliveryUnavailable = false
             if let settings = state.applied, let revision = state.revision, let receipt = state.receipt,
                let acknowledgedAt = state.acknowledgedAt, !state.isBusy, !state.isClosed {
                 let now = uptime(), instant = ContinuousClock.now
                 deliveryObservations = deliveryAudit?.record(input: currentDelivery,
                     applied: .init(attemptID: state.attemptID, revision: revision, settings: settings,
-                        receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant) ?? []
+                        receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant,
+                    onUnavailable: {
+                        deliveryUnavailable = true
+                        self.owner.invalidateCandidateRecovery()
+                    }) ?? []
             }
             if enableDeliveryFailures {
                 for observation in deliveryObservations {
                     guard let authority = observation.authority else { continue }
                     let decision: QualityController.Decision?
                     do {
-                        decision = try await owner.evaluateDeliveryFailure(observation, authority: authority)
+                        decision = try await owner.evaluateDeliveryFailure(observation, authority: authority,
+                            recordCandidateRecovery: !deliveryUnavailable)
                     } catch {
                         await record("rejected", reason: "delivery-" + Self.reason(error))
                         continue
@@ -288,7 +294,7 @@ import ScorebugMedia
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { isClosed = true; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() { owner.invalidateCandidateRecovery(); isClosed = true; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -598,7 +604,8 @@ import ScorebugMedia
             profiles: profiles, attemptID: attemptID,
             initial: .init(profileID: resetStall ? "540p30" : (minimumStall || measured) ? "240p30" : "1080p30", videoBitrate: resetStall ? 1_500_000 : (minimumStall || measured) ? 350_000 : 6_000_000),
             strategy: measured ? .measuredCandidateTrials : adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
-            behavior: (minimumStall || measured) ? .progressive : .legacy)
+            behavior: (minimumStall || measured) ? .progressive : .legacy,
+            requiresSharedCandidateRecovery: liveCheckpoint)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),

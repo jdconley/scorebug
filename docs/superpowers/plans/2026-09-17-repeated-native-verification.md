@@ -1229,3 +1229,17 @@ drift, coverage passes, audio leads 349 ms. Direct-recorder replay and exits pas
 owned cleanup joined. Candidate trace valid/closed, 956 events / 332,282 bytes.
 See [repair evidence](2026-09-24-probe-read-intervals.md) for exact times and next
 native scheduling conjunction. Original failed run remains immutable.
+
+### September 24 — typed shared-delivery scheduling prerequisite
+
+The repeated fixture now gates recovered candidate/probe context on a completed
+whole-source ten-second prefix inside both healthy delivery lanes, plus fresh Core
+readiness and joined source/cadence/delivery ownership. Historical delivery cannot
+extend source freshness. Synchronous negative callbacks invalidate the gate before
+actor awaits; mixed batches suppress positive credit while preserving resets.
+Initial/legacy paths and all independent replay thresholds remain unchanged.
+
+Failing-first contract tests precede implementation. Focused 96 tests and full
+498 FilmModel tests pass; arm64 simulator build succeeds. Independent specification
+and quality reviews approve. Core/JS are unchanged. Next is one frozen native run.
+Details: [shared-delivery plan](2026-09-24-shared-delivery-readiness.md).

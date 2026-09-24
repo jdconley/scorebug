@@ -58,10 +58,13 @@ acquisition prefix is 36 frames. The bounded candidate trace closed with 956 eve
 332,282 bytes and no invalidity, overflow or omissions. These are component results,
 not production upgrade permission.
 
-**Next:** add a repeated-fixture scheduling condition using already-classified,
-contiguous healthy delivery coverage in both lanes alongside fresh source readiness.
-After delivery arrives, reread source readiness; the earlier context has expired.
-Use bounded typed evidence, never audit JSON, and preserve ownership and invalidation.
+**Now implemented, awaiting a frozen run:** the repeated-fixture scheduler requires
+already-classified contiguous delivery coverage in both lanes alongside fresh source
+readiness. It retains a whole ten-second source prefix while rereading current health.
+Bounded typed evidence, remote/local ownership joins and synchronous invalidation
+prevent stale or uncertain evidence from starting a probe. All 498 native model tests
+and the simulator build pass; specification and quality reviews approve. See the
+[shared-readiness plan](2026-09-24-shared-delivery-readiness.md).
 The [probe-read repair plan](2026-09-24-probe-read-intervals.md) and
 [repeated verification log](2026-09-17-repeated-native-verification.md) retain details.
 
