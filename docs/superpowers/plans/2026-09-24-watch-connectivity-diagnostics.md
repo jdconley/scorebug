@@ -22,33 +22,32 @@ delivery. Missing log rows are not proof of a missing callback; retained sequenc
 and overflow markers make partial evidence visible.
 
 Apple's [WCSession documentation](https://developer.apple.com/documentation/watchconnectivity/wcsession)
-and [context delegate documentation](https://developer.apple.com/documentation/watchconnectivity/wcsessiondelegate/session(_:didreceiveapplicationcontext:))
+and [context delegate documentation](<https://developer.apple.com/documentation/watchconnectivity/wcsessiondelegate/session(_:didreceiveapplicationcontext:)>)
 separate activation, local publication and counterpart delivery.
 
 ## Tasks
 
 - [x] Add `ios/Sources/WatchSupport/WatchConnectivityDiagnostic.swift` and focused
-  `ios/WatchModelTests/WatchConnectivityDiagnosticTests.swift`. Tests require opt-in,
-  closed payload-free fields, nil/false distinction, 128-row cap plus one overflow,
-  and unique bounded sequence numbers under concurrent callbacks. Include the
-  helper in `ios/WatchModels.yml`; run isolated Watch model tests red then green.
+      `ios/WatchModelTests/WatchConnectivityDiagnosticTests.swift`. Tests require opt-in,
+      closed payload-free fields, nil/false distinction, 128-row cap plus one overflow,
+      and unique bounded sequence numbers under concurrent callbacks. Include the
+      helper in `ios/WatchModels.yml`; run isolated Watch model tests red then green.
 - [x] Instrument `WatchSetupConnectivity.swift`: activation request/completion,
-  local publish attempt/accept/reject (including activation-time replay), received
-  context callback, decoded notice/envelope, and peer lifecycle callbacks. Use
-  subsystem `live.scorebug.connectivity`, category `diagnostic`. Only construct
-  snapshots when DEBUG environment `SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS=1`.
+      local publish attempt/accept/reject (including activation-time replay), received
+      context callback, decoded notice/envelope, and peer lifecycle callbacks. Use
+      subsystem `live.scorebug.connectivity`, category `diagnostic`. Only construct
+      snapshots when DEBUG environment `SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS=1`.
 - [x] Enable the flag explicitly in the two actual-companion UI tests. Extend
-  `scripts/test-paired-watch.mjs` failure log predicate to collect this subsystem
-  alongside the existing filtered Apple state logs. Keep secret redaction and
-  byte/time limits; no injected setup fallback.
+      `scripts/test-paired-watch.mjs` failure log predicate to collect this subsystem
+      alongside the existing filtered Apple state logs. Keep secret redaction and
+      byte/time limits; no injected setup fallback.
 - [x] Review, run Watch models and tooling, then one fresh paired iOS/watchOS26.2
-  simulator case with the existing owned-process wrapper. Inspect the original
-  outcome and diagnostic logs; don't rerun an unchanged failing case. Verify
-  cleanup and unchanged source hashes. Build unsigned Release and verify the
-  diagnostic opt-in key is absent from the phone and embedded Watch binaries.
+      simulator case with the existing owned-process wrapper. Inspect the original
+      outcome and diagnostic logs; don't rerun an unchanged failing case. Verify
+      cleanup and unchanged source hashes. Build unsigned Release and verify the
+      diagnostic opt-in key is absent from the phone and embedded Watch binaries.
 - [x] Update this plan and parent status with the actual failure boundary and
-  next action. Retain prior ACX43 and missing-companion failures as failed.
-
+      next action. Retain prior ACX43 and missing-companion failures as failed.
 
 ## Verification and new failure boundary
 
@@ -94,3 +93,30 @@ considering an immediate setup-notice path; it would not qualify context deliver
 or authorize weakening setup authentication. Also investigate retention of phone
 application diagnostics before treating the two-sided trace as complete. Do not
 repeat the unchanged paired case or claim a framework/database repair.
+
+## OS 27 follow-up
+
+The scoped Xcode 27.0/27A266a case on frozen `c1fb1c7` uses iPhone 14/iOS 27.0
+and Ultra 2/watchOS 27.0. Both builds succeed, but the full paired workflow still
+fails before setup. The retained Watch trace contains two activation requests,
+63 notice attempts and 63 local not-ready rejections at activation 0, followed by
+the overflow marker. No activation completion or immediate probe occurs in that
+prefix. Later callbacks are unknown. The phone trace contains activation state 2
+with paired/installed true. ACX43 occurs in the Watch system log; WC7018 is not
+observed in this run. Preserve that distinction from the activated 26.2 failure.
+
+Watch XCTest exits 65 after 184.075 seconds waiting for the offered setup. The
+phone test is stopped by owned cleanup. SQLite confirms zero Watch pairings,
+scoring commands and media commands. Both owned simulators are deleted, the API
+port is bindable, owned test processes are gone, and all 1,179 tracked source hashes
+match. The outer wrapper is joined with exit 1. Detailed evidence is retained in
+`artifacts/qa/paired-watch-FzV6gI/diagnostic-assessment.json`.
+
+The separate OS27 direct native Watch scoring/relaunch UI passes with injected
+setup and real Keychain/URLSession. It does not qualify companion transport.
+The direct-launch 26.2 diagnostic also stayed at activation 0; explicit activation
+of a fresh simulator pair reported already active before launch. Template/plist
+inspection found no concrete companion-key mismatch. Do not flip registration
+keys or repeat the same failed workflow without a specific new hypothesis.
+Physical phone and Watch currently report unavailable from scoped Xcode27 device
+queries, so actual companion, Wi-Fi and cellular acceptance remains open.

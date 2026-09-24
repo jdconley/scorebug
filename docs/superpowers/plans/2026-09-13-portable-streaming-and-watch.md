@@ -51,14 +51,25 @@ direct native networking evidence, not companion transport. Both wrappers exit z
 and are joined, all 1,179 frozen tracked hashes match, and both owned simulators
 are absent. Evidence: `artifacts/qa/platform27-native-assessment.json`.
 
-Next, run the full paired workflow once on 27. The paired harness now honors an
-explicit `DEVELOPER_DIR` and records the selected path and actual Xcode version;
-without an override it retains Xcode 26.2. No global selection changes. The user removed older simulators to recover disk space;
-reuse the available 26.2/27 runtimes and remove owned temporary devices. Restore an
-older runtime only for a concrete compatibility check. Runtime download commands
-also registered the 27 runtimes; no global toolchain change or device OS upgrade was
-performed. Current-plus-two coverage is iOS 18/26/27 and watchOS 11/26/27; lower
-deployment targets and older Series 7 support remain intact.
+The full paired workflow on frozen `c1fb1c7` / `paired-watch-FzV6gI` **fails** on
+27 before setup. Both app builds pass. The phone activates with paired/installed
+true; the retained Watch trace stays at activation 0, rejects 63 notice attempts
+locally, then overflows at row 129. Later callbacks are unknown. ACX43 remains;
+this differs from the earlier activated Watch/WC7018 result and does not establish
+its cause. Watch UI fails after 184.075 seconds; no pairing or scoring/media command
+occurs. All 1,179 tracked hashes match, both simulators are deleted, the API port is
+released and owned processes are gone. The wrapper is joined with exit 1. See
+`artifacts/qa/paired-watch-FzV6gI/diagnostic-assessment.json`. Do not rerun unchanged
+or treat the passing direct-scoring test as companion qualification.
+
+The paired harness now honors an explicit `DEVELOPER_DIR` and records the selected
+path and actual Xcode version; without an override it retains Xcode 26.2. No global
+selection changes. The user removed older simulators to recover disk space; reuse
+the available 26.2/27 runtimes and remove owned temporary devices. Restore an older
+runtime only for a concrete compatibility check. Runtime download commands also
+registered the 27 runtimes; no device OS upgrade was performed. Current-plus-two
+coverage is iOS 18/26/27 and watchOS 11/26/27; lower deployment targets and older
+Series 7 support remain intact.
 
 The direct-launch Watch diagnostic preserved 18 existing app-file hashes but never
 observed Watch activation completion. An explicit pair-activation follow-up stopped
