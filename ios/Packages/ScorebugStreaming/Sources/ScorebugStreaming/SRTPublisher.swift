@@ -21,6 +21,7 @@ public actor SRTPublisher {
         }
     }
     private let healthObserver: (@Sendable (HealthSnapshot) -> Void)?
+    public typealias TransportSendObservation = SRTStream.TransportSendObservation
     public typealias CompressedAudioFrame = SRTStream.CompressedAudioFrame
     public typealias MuxedPacketFrame = SRTStream.MuxedPacketFrame
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
@@ -75,7 +76,8 @@ public actor SRTPublisher {
                 muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
                 videoCost: PublishingVideoCostOwner? = nil,
-                healthObserver: (@Sendable (HealthSnapshot) -> Void)? = nil) {
+                healthObserver: (@Sendable (HealthSnapshot) -> Void)? = nil,
+                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil) {
         self.healthObserver = healthObserver
         let startupEvidence = PublishingVideoStartupOwner(profile: videoProfile)
         self.startupEvidence = startupEvidence
@@ -114,7 +116,7 @@ public actor SRTPublisher {
                                compressedVideoObserver?(frame)
                            }, compressedAudioObserver: compressedAudioObserver,
                            muxedPacketObserver: muxedPacketObserver, pacesEncodedVideo: pacesEncodedVideo,
-                           allowsBandwidthProbes: allowsBandwidthProbes)
+                           allowsBandwidthProbes: allowsBandwidthProbes, transportSendObserver: transportSendObserver)
     }
     public func configure() async throws {
         try Task.checkCancellation()

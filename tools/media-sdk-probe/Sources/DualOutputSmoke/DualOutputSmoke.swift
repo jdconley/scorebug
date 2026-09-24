@@ -187,6 +187,10 @@ private func windowEvidence(_ window: PublishingTransportWindow?) -> Any {
 
 private enum Failure: Error { case arguments, missingTracks, reader, archiveOverflow, pcm }
 
+private func sealedTransportEvidence(_ trace: TransportSendTrace) throws -> Any {
+    try JSONSerialization.jsonObject(with: JSONEncoder().encode(trace.seal()))
+}
+
 private final class PublisherHealth: @unchecked Sendable {
     private let lock = NSLock()
     private var failed = false
@@ -332,8 +336,10 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             }
             let encoderEvidence = EncoderEvidence()
             let health = PublisherHealth()
+            let transportSends = TransportSendTrace()
             let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) },
-                videoProfile: configuration.liveProfile, healthObserver: { health.observe($0) })
+                videoProfile: configuration.liveProfile, healthObserver: { health.observe($0) },
+                transportSendObserver: { transportSends.record($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
@@ -396,7 +402,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 let finalTransport = transportEvidence.close()
                 let transportClockAfterStop = await publisher.transportClock()
                 let statisticsAfterStop = await publisher.transportStatistics()
-                try emit(["event": "publisher-finished", "videoSubmitted": publishedVideo,
+                try emit(["event": "publisher-finished", "transportSendEvidence": try sealedTransportEvidence(transportSends), "videoSubmitted": publishedVideo,
                           "audioSamplesSubmitted": publishedAudio, "changedBitrate": changed,
                           "sentBytes": status.map { $0.2 as Any } ?? NSNull(),
                           "packetDrops": status.map { $0.1 as Any } ?? NSNull(),
@@ -417,7 +423,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 await monitor?.value
                 // Network failure is reported independently; it cannot cancel the archive.
                 try emit(["event": "publisher-failed", "reason": String(describing: error),
-                          "firstUnhealthyObservation": health.evidence])
+                          "firstUnhealthyObservation": health.evidence,
+                          "encoderEvidence": encoderEvidence.snapshot(), "transportSendEvidence": try sealedTransportEvidence(transportSends)])
             }
         }
         let started = ContinuousClock.now

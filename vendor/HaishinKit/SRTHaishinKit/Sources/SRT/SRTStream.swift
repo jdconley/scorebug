@@ -7,6 +7,19 @@ import libsrt
 /// An actor that provides the interface to control a one-way channel over a SRTConnection.
 public actor SRTStream {
     static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
+    /// Scalar diagnostic of one FIFO payload's send call. Returned does not mean
+    /// socket acceptance or receiver delivery. Observers must not wait or do I/O.
+    public struct TransportSendObservation: Sendable {
+        public enum Phase: String, Sendable { case started, returned }
+        public let publishingGeneration: UInt64
+        public let sequence: UInt64
+        public let phase: Phase
+        public let byteCount: Int
+        public let pendingPacketCount: Int
+        public let observedAt: Double
+    }
+    private let transportSendObserver: (@Sendable (TransportSendObservation) -> Void)?
+
     static let supportedVideoCodecs: [VideoCodecSettings.Format] = VideoCodecSettings.Format.allCases
 
     /// A latched transport muxer failure. Cleared when the stream is closed/reset.
@@ -437,7 +450,9 @@ public actor SRTStream {
                 compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
-                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false) {
+                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
+                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil) {
+        self.transportSendObserver = transportSendObserver
         self.allowsBandwidthProbes = allowsBandwidthProbes
         probeWakeRunner = { probe, accounting in
             await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
@@ -457,12 +472,14 @@ public actor SRTStream {
          compressedVideoObserver: (@Sendable (CompressedVideoFrame) -> Void)? = nil,
          compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
          muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
+         transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
          allowsBandwidthProbes: Bool = false,
          probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
              await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
          },
          pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
+        self.transportSendObserver = transportSendObserver
         self.allowsBandwidthProbes = allowsBandwidthProbes
         self.probeWakeRunner = probeWakeRunner
         self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
@@ -567,6 +584,7 @@ public actor SRTStream {
             },
             transport: Task {
                 var iterator = transportOutput.makeAsyncIterator()
+                var sendSequence: UInt64 = 0
                 for await _ in transportAccounting.wakes {
                     guard generation == session, !Task.isCancelled, failure.error == nil else { return }
                     // Exactly one consumer owns all media and optional sends.
@@ -575,7 +593,19 @@ public actor SRTStream {
                         guard let data = await iterator.next() else { return }
                         guard generation == session, !Task.isCancelled, failure.error == nil else { return }
                         writer.didDequeueOutput()
+                        if let transportSendObserver {
+                            sendSequence &+= 1
+                            transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,
+                                phase: .started, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
+                                observedAt: ProcessInfo.processInfo.systemUptime))
+                        }
                         await connection.send(data, generation: connectionSession)
+                        // Keep the captured generation even if send failed/closed it.
+                        if let transportSendObserver {
+                            transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,
+                                phase: .returned, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
+                                observedAt: ProcessInfo.processInfo.systemUptime))
+                        }
                         guard generation == session, !Task.isCancelled, failure.error == nil else { return }
                     }
                     if publishingGeneration == session, let probe = bandwidthProbe {

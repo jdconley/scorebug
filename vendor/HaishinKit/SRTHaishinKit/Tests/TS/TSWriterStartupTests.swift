@@ -122,6 +122,55 @@ import Testing
         await connection.close()
     }
 
+    @Test func transportSendObserverPairsAttemptsAcrossPublishingGenerations() async throws {
+        let observed = TransportSendFrames()
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, transportSendObserver: observed.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        var generations: [UInt64] = []
+        for origin in [10.0, 100.0] {
+            await stream.setExpectedMedias([.audio]); await stream.publish()
+            generations.append(try #require(await stream.publishingGeneration))
+            await stream.append(audio(), when: time(origin))
+            await stream.finish()
+        }
+        let rows = observed.rows
+        #expect(!rows.isEmpty)
+        #expect(Set(rows.map(\.publishingGeneration)) == Set(generations))
+        for generation in generations {
+            let own = rows.filter { $0.publishingGeneration == generation }
+            #expect(own.count >= 4 && own.count.isMultiple(of: 2))
+            for index in stride(from: 0, to: own.count - 1, by: 2) {
+                let start = own[index], end = own[index + 1]
+                #expect(start.phase == .started && end.phase == .returned)
+                #expect(start.sequence == UInt64(index / 2 + 1) && end.sequence == start.sequence)
+                #expect(start.byteCount > 0 && end.byteCount == start.byteCount)
+                #expect(start.pendingPacketCount >= 0 && end.pendingPacketCount >= 0)
+                #expect(start.observedAt.isFinite && start.observedAt <= end.observedAt)
+            }
+        }
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
+    @Test func transportSendReturnDoesNotMeanFailedWriteSucceeded() async throws {
+        let observed = TransportSendFrames()
+        let connection = SRTConnection(socket: SRTSocket(sender: { _ in -1 }))
+        let stream = SRTStream(connection: connection, transportSendObserver: observed.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.audio]); await stream.publish()
+        await stream.append(audio(), when: time(10))
+        await stream.finish()
+        let rows = observed.rows
+        #expect(rows.count == 2)
+        #expect(rows.first?.phase == .started && rows.last?.phase == .returned)
+        #expect(rows.first?.sequence == rows.last?.sequence)
+        #expect(await connection.publishingError == .transportWriteFailed)
+        await connection.close()
+    }
+
     private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {
         var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
@@ -535,4 +584,11 @@ private final class StartupMuxFrames: @unchecked Sendable {
     private var stored: [SRTStream.MuxedPacketFrame] = []
     var rows: [SRTStream.MuxedPacketFrame] { lock.withLock { stored } }
     func record(_ frame: SRTStream.MuxedPacketFrame) { lock.withLock { stored.append(frame) } }
+}
+
+private final class TransportSendFrames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [SRTStream.TransportSendObservation] = []
+    var rows: [SRTStream.TransportSendObservation] { lock.withLock { stored } }
+    func record(_ frame: SRTStream.TransportSendObservation) { lock.withLock { stored.append(frame) } }
 }
