@@ -28,61 +28,53 @@ The native app, scoring/Watch work, clean recording, and portable proxy have
 substantial implementation and local evidence. Production automatic quality
 increases remain disabled until full validation passes. The current focus is two
 independently verified upgrade → fault → minimum reset → recovery cycles in one
-native publication. The repeated experiment remains bounded to 180 seconds.
+native publication, bounded to 180 seconds.
 
-The unchanged Core package has 459 passing tests. The current probe-read fix
-passes 3,349 tools tests, 486 FilmModel tests and the arm64 simulator build.
-Independent specification and quality reviews approved the earlier bounded
-candidate-wait diagnostic. The latest frozen iPhone 14/iOS 26.2
-run (`native-app-q6s6KU`, source `b8a0609`) passed native scoring/recording export
-in 259.120 seconds. Both candidate measurements, upgrades, confirmations, owned
-faults and resets completed. All 919 source hashes stayed unchanged.
+The probe-read interval repair is committed as `3040495`. It passes 3,349 tools
+tests, 486 FilmModel tests and the arm64 simulator build; unchanged Core retains
+459 passing tests. Independent specification and quality reviews approve. Candidate
+envelope v5 records actual read brackets, and every binding consumer checks causal
+counter/lease ordering. Legacy v4, freshness, ownership and bandwidth limits remain
+strict. The earlier `q6s6KU` snapshot-attribution failure remains historical evidence.
 
-**Full qualification still failed:** a candidate binding was attributed to a
-later instant than its saved native probe snapshot. The new trace establishes
-the cause: campaign two read its probe, then awaited health for 30.215 ms. The
-same probe owner renewed during that await, 1.636 ms before binding. The older
-snapshot still had 198.202 ms of lease remaining, but the export assigned it the
-binding time, and the verifier correctly rejected the contradictory history.
-This is an evidence-attribution defect; it is not proof of withdrawal, and the
-failed run is not reclassified as a pass.
+The fresh frozen iPhone 14/iOS 26.2 run `native-app-3ynqcN` passed native scoring,
+recording and export in 258.376 seconds; all 922 source hashes stayed unchanged.
+Both candidate admissions, five profile phases, confirmations, owned faults,
+resets, policy recovery and delivery coverage now pass independent replay. There
+are no rejected quality events. Worker/recorder exits and owned cleanup completed.
 
-The trace closed with 1,052 events / 365,482 bytes, no overflow, invalidity or
-omissions. Both candidate starts and post-start context checks succeeded. The
-prior `native-app-yB8xre` readiness timeout remains unresolved: its first eligible
-health evaluation left only 9.409 ms freshness. A deterministic test proves one
-100 ms polling phase can miss that window while another catches it. This latest
-run had enough freshness to bind both candidates, so it does not prove the older
-run's exact failed predicate. A separate `time` rejection during recovery is
-retained for strict policy replay; later recovery succeeded in the native app.
+**Full qualification still failed:** campaign two began before its shared recovery
+was proven by both source health and delivery deadlines. Source health was fresh
+at begin, but the final required delivery report arrived later. Independent raw
+receipts confirm that shared recovery became available 1.405218 seconds after
+native begin. The later trial admission was safe under the replay, but scheduling
+the probe early violates the existing readiness gate. Do not weaken that gate.
 
-Independent analysis of the latest run fully decoded both A/V tracks. The clean
-archive retains 6,539 contiguous 1080p frames; live retains 6,131 contiguous source
-frames, both at 30 fps. Live maximum frame gap is 34 ms. All 102 live audio markers
-match within 64.583 ms with negligible drift. Audio starts 420 ms before video;
-coverage and direct-recorder delivery checks pass. The native acquisition prefix
-is 33 frames. The repeated delivery audit retains 269 rows / 17,563,116 bytes,
-all independently replayed with no unknown rows; cadence retains 2,054 valid rows.
-The worker and recorder exited successfully, and owned simulator/container cleanup
-completed. These component results do not grant production upgrade permission.
+The archive retains 6,526 contiguous 1080p frames; live retains 6,120 contiguous
+source frames, both at 30 fps with a maximum live gap of 34 ms. Both A/V tracks fully
+decode; coverage and direct-recorder checks pass. All 102 live audio markers match
+within 64.917 ms with negligible drift. Audio leads video by 349 ms. The native
+acquisition prefix is 36 frames. The bounded candidate trace closed with 956 events,
+332,282 bytes and no invalidity, overflow or omissions. These are component results,
+not production upgrade permission.
 
-**Now implemented, awaiting fresh native verification:** candidate envelope v5
-exports explicit native probe-read intervals separately from binding and completion.
-All binding consumers validate one possible snapshot instant across the overlapping
-counter and lease histories. Legacy v4 remains strict; the two-second freshness
-rule, withdrawal checks and 16 MiB cap are unchanged. Independent specification
-and quality reviews approved the fix; a frozen native run is next. The
-[probe-read plan](2026-09-24-probe-read-intervals.md),
-[diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) and
-[repeated verification log](2026-09-17-repeated-native-verification.md) retain the
-exact evidence and next-step constraints.
+**Next:** add a repeated-fixture scheduling condition using already-classified,
+contiguous healthy delivery coverage in both lanes alongside fresh source readiness.
+After delivery arrives, reread source readiness; the earlier context has expired.
+Use bounded typed evidence, never audit JSON, and preserve ownership and invalidation.
+The [probe-read repair plan](2026-09-24-probe-read-intervals.md) and
+[repeated verification log](2026-09-17-repeated-native-verification.md) retain details.
 
-Startup audio coverage also remains open: `native-app-LeTozN` lost the first
-395.011 ms of live audio relative to video. Subsequent traced runs have audio
-leading video, so they do not resolve that earlier failure. Preserve the 100 ms
-missing-audio gate. The real-match 1080p CPU/VideoToolbox streaming and 4K local
-transcode checks remain useful separate evidence. Physical devices, paired-watch
-hardware networking, full 4K network streaming and other proxy hosts are pending.
+Earlier issues remain open: `native-app-yB8xre` missed a short readiness opportunity;
+its exact poll predicate is unknown. A deterministic test demonstrates the 9.409 ms
+freshness window can fall between 100 ms polls. `q6s6KU` retained a separate policy
+`time` rejection; this fresh run did not reproduce it. `native-app-LeTozN` lost the
+first 395.011 ms of live audio relative to video; subsequent audio-leading runs do
+not resolve it. Preserve the 100 ms missing-audio gate.
+
+The real-match 1080p CPU/VideoToolbox streaming and 4K local transcode checks remain
+useful separate evidence. Physical devices, paired-watch hardware networking, full
+4K network streaming and other proxy hosts are pending.
 
 ## Baseline and owner decisions
 

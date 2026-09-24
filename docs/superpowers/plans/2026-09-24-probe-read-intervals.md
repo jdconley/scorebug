@@ -61,5 +61,30 @@ focused native suite passes 55 tests; full FilmModel passes 486; tools pass 3,34
 The arm64 iOS simulator build succeeds. All commands exited zero and were joined
 (`repeated-live-checkpoint-probe-read-interval-*` QA logs). The unchanged Core
 package retains its previous 459-test passing evidence. Independent specification
-and quality reviews approved the implementation. A fresh frozen native run
-is pending; component results do not establish end-to-end qualification.
+and quality reviews approved the implementation. The fresh native result below establishes component progress, not complete qualification.
+
+## Frozen native verification
+
+Source `3040495`, `native-app-3ynqcN`: all 922 frozen hashes unchanged. Native UI
+passed in 258.376 seconds, both v5 candidates completed, and independent admission,
+profile, policy, owned fault and delivery coverage replay passed. All processes
+joined; owned cleanup completed. The full harness exited 1 at readiness:
+`Shared recovery evidence was unavailable at native begin`.
+
+Campaign two began at 1897431.4154335835. Source sequence 15 evaluated at
+1897431.3215112085 and expired at 1897431.5130364585. Shared source recovery
+[1897419.5123606669, 1897429.5130364585] needs overlapping delivery rows 112
+(one second) and 114 (two seconds). Their receipts first reached the app after
+begin, and the final row evaluated at 1897432.8206513335: 1.405218 seconds late.
+No quality rejections occurred. The next fresh source evaluated at 1897436.22089525.
+
+Both full A/V decodes and coverage pass: archive 6,526 contiguous frames, live
+6,120, both 30 fps. Live maximum gap is 34 ms, 102 matched audio markers have
+maximum error 64.917 ms and negligible drift, audio leads video by 349 ms. Direct
+recorder delivery passes with 36 acquisition frames and successful worker/recorder
+exits. The candidate-wait trace closed valid with 956 events / 332,282 bytes.
+
+Evidence lives in ignored `artifacts/qa/native-app-3ynqcN`, including diagnostic
+media, component, policy and complete assessments. Original raw artifacts remain
+unchanged. The next repair must delay repeated probe scheduling until typed delivery
+coverage and fresh source readiness both qualify; it must not relax replay.

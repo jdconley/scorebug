@@ -1212,3 +1212,20 @@ simulator build pass, with joined exit-zero commands. Core is unchanged from the
 459-test pass. Independent specification and quality reviews approve. Next is one
 fresh frozen native run; `q6s6KU` remains a failed historical run. See
 [the repair plan](2026-09-24-probe-read-intervals.md) for the exact contract.
+
+### September 24 — v5 native run advances to shared-readiness gate
+
+Frozen `3040495`, run `native-app-3ynqcN`, 922 unchanged hashes. UI passed in
+258.376 seconds. Both original v5 candidate admissions, profile/lifecycle joins,
+policy confirmations, owned faults, resets and recovery coverage pass. The full
+harness exits 1 at `Shared recovery evidence was unavailable at native begin`.
+The second probe started 1.405218 seconds before the final overlapping delivery
+row qualified. Raw cadence receipts arrived after begin; this is real missing
+evidence, not serialization lag. Existing strict readiness remains correct.
+
+Separate full media analysis: archive/live retain 6,526/6,120 contiguous 30 fps
+frames; live maximum gap 34 ms, 102 audio markers within 64.917 ms with negligible
+drift, coverage passes, audio leads 349 ms. Direct-recorder replay and exits pass;
+owned cleanup joined. Candidate trace valid/closed, 956 events / 332,282 bytes.
+See [repair evidence](2026-09-24-probe-read-intervals.md) for exact times and next
+native scheduling conjunction. Original failed run remains immutable.
