@@ -608,6 +608,11 @@ try {
       'NO',
       '-maximum-concurrent-test-simulator-destinations',
       '1',
+      // Xcode's automatic simctl diagnose can outlive this workflow in a
+      // separate process group. Keep bounded logs, attachments and app-data
+      // preservation below; collect any additional system diagnostics explicitly.
+      '-collect-test-diagnostics',
+      'never',
       '-resultBundlePath',
       resultBundle,
       ...(streamingBudget.testExecutionAllowanceSeconds === null
