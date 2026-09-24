@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,233 @@
+@@ -8,72 +8,229 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -145,6 +145,7 @@
 +    private var lastSubmittedSourcePTS: CMTime?
 +    private var replacement: VideoEncoderReplacement?
 +    private var terminalCompletionCaptured = false
++    private var preparedSubmission: VideoSubmission?
 +
 +    private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
 +    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
@@ -174,7 +175,7 @@
 +    func requestSessionInvalidation() { invalidation.invalidate() }
 +
 +    func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
-+        guard replacement == nil else { throw VideoEncoderReplacementError.busy }
++        guard replacement == nil, preparedSubmission == nil else { throw VideoEncoderReplacementError.busy }
 +        guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
 +            throw VideoEncoderReplacementError.notEncoding
 +        }
@@ -210,7 +211,7 @@
 +            throw VideoBitRateUpdateError.notEncoding
 +        }
 +        let observed = invalidation.snapshot
-+        guard replacement == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
++        guard replacement == nil, preparedSubmission == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
 +        let updated: VideoCodecSettings
 +        do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
 +        catch let error as VideoBitRateUpdateError {
@@ -243,7 +244,7 @@
 +    var settings: VideoCodecSettings {
 +        get { storedSettings }
 +        set {
-+            guard replacement == nil else {
++            guard replacement == nil, preparedSubmission == nil else {
 +                failure.fail(.outputTerminated(boundary: "video replacement settings")); return
 +            }
 +            let previous = storedSettings
@@ -293,17 +294,66 @@
      }
      private(set) var outputFormat: CMFormatDescription?
 
++    private func prepareSession(_ sample: CMSampleBuffer) throws -> (any VTSessionConvertible, UUID)? {
++        inputFormat = sample.formatDescription
++        let observed = invalidation.snapshot
++        if observed.pending {
++            let mode: VTSessionMode = sample.formatDescription?.isCompressed == true ? .decompression : .compression
++            session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
++            recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
++            sessionMode = mode
++            invalidation.installed(observed.revision)
++        }
++        guard invalidation.isCurrent(observed.revision), let session else { return nil }
++        return (session, observed.revision)
++    }
++
++    func prepareSubmission(_ sample: CMSampleBuffer) -> VideoSubmission? {
++        guard isRunning, !terminalCompletionCaptured, failure.error == nil else { return nil }
++        guard replacement == nil, preparedSubmission == nil else {
++            failure.fail(.outputTerminated(boundary: "video replacement input")); return nil
++        }
++        do {
++            guard sample.formatDescription?.isCompressed != true,
++                  let (session, revision) = try prepareSession(sample), let continuation,
++                  useFrame(sample.presentationTimeStamp) else { return nil }
++            let operation = VideoSubmission(revision: revision, sample: sample, session: session,
++                output: continuation, failure: failure, configuration: recordedBitRateChange?.configuration,
++                completionObserver: encoderCompletionObserver, configurationObserver: encoderConfigurationObserver,
++                submissionObserver: encoderSubmissionObserver)
++            preparedSubmission = operation
++            return operation
++        } catch {
++            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
++            logger.warn(error)
++            return nil
++        }
++    }
++
++    @discardableResult func commitSubmission(_ operation: VideoSubmission, succeeded: Bool) -> Bool {
++        guard preparedSubmission === operation else { return false }
++        preparedSubmission = nil
++        guard succeeded, isRunning, failure === operation.failure, failure.error == nil,
++              invalidation.isCurrent(operation.revision), replacement == nil else { return false }
++        if operation.sample.imageBuffer != nil { lastSubmittedSourcePTS = operation.sample.presentationTimeStamp }
++        presentationTimeStamp = operation.sample.presentationTimeStamp
++        return true
++    }
++
      func append(_ sampleBuffer: CMSampleBuffer) {
 -        guard isRunning else {
--            return
-+        guard isRunning, failure.error == nil else {
-+            return
-+        }
-+        guard replacement == nil else {
-+            failure.fail(.outputTerminated(boundary: "video replacement input")); return
++        if sampleBuffer.formatDescription?.isCompressed != true {
++            if let operation = prepareSubmission(sampleBuffer) {
++                commitSubmission(operation, succeeded: operation.run())
++            }
+             return
          }
++        guard isRunning, failure.error == nil else { return }
++        guard replacement == nil, preparedSubmission == nil else {
++            failure.fail(.outputTerminated(boundary: "video replacement input")); return
++        }
          do {
-             inputFormat = sampleBuffer.formatDescription
+-            inputFormat = sampleBuffer.formatDescription
 -            if invalidateSession {
 -                if sampleBuffer.formatDescription?.isCompressed == true {
 -                    session = try VTSessionMode.decompression.makeSession(self)
@@ -311,68 +361,23 @@
 -                    session = try VTSessionMode.compression.makeSession(self)
 -                }
 -            }
-+            let observed = invalidation.snapshot
-+            if observed.pending {
-+                let mode: VTSessionMode = sampleBuffer.formatDescription?.isCompressed == true ? .decompression : .compression
-+                session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
-+                recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
-+                sessionMode = mode
-+                invalidation.installed(observed.revision)
-+            }
-+            guard invalidation.isCurrent(observed.revision) else { return }
-             guard let session, let continuation else {
-                 return
-             }
-             if sampleBuffer.formatDescription?.isCompressed == true {
+-            guard let session, let continuation else {
+-                return
+-            }
+-            if sampleBuffer.formatDescription?.isCompressed == true {
 -                try session.convert(sampleBuffer, continuation: continuation)
-+                try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
-             } else {
-                 if useFrame(sampleBuffer.presentationTimeStamp) {
+-            } else {
+-                if useFrame(sampleBuffer.presentationTimeStamp) {
 -                    try session.convert(sampleBuffer, continuation: continuation)
-+                    let observer = submissionObserver(sessionID: observed.revision)
-+                    try submit(sampleBuffer, to: session, sessionID: observed.revision, completion: observer)
-+                    if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
-                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
-                 }
-             }
+-                    presentationTimeStamp = sampleBuffer.presentationTimeStamp
+-                }
+-            }
++            guard let (session, _) = try prepareSession(sampleBuffer), let continuation else { return }
++            try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
          } catch {
 +            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
              logger.warn(error)
          }
-+    }
-+
-+    private func submit(_ sample: CMSampleBuffer, to session: any VTSessionConvertible,
-+                        sessionID: UUID, completion: VideoEncoderCompletionObserver?) throws {
-+        guard let encoderSubmissionObserver else {
-+            try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion)
-+            return
-+        }
-+        let sourcePTS = sample.presentationTimeStamp
-+        let startedAt = ProcessInfo.processInfo.systemUptime
-+        var status: OSStatus = noErr
-+        defer {
-+            encoderSubmissionObserver(.init(sourcePTS: sourcePTS, encoderSessionID: sessionID,
-+                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
-+        }
-+        do { try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion) }
-+        catch {
-+            status = (error as? VTSessionError)?.status ?? -1
-+            throw error
-+        }
-+    }
-+
-+    private func submissionObserver(sessionID: UUID) -> VideoEncoderCompletionObserver? {
-+        guard let configurationObserver = encoderConfigurationObserver else { return encoderCompletionObserver }
-+        let legacyObserver = encoderCompletionObserver
-+        let configuration = recordedBitRateChange?.configuration
-+        let submittedAt = ProcessInfo.processInfo.systemUptime
-+        return { source, output in
-+            let completedAt = ProcessInfo.processInfo.systemUptime
-+            legacyObserver?(source, output)
-+            configurationObserver(.init(sourcePTS: source, outputPTS: output,
-+                encoderSessionID: sessionID, configuration: configuration,
-+                submittedAt: submittedAt, completedAt: completedAt))
-+        }
 +    }
 +
 +    /// Capture after raw input drains. The caller runs this off its stream actor
@@ -380,14 +385,14 @@
 +    /// Only terminal invalidation may overlap the captured native session.
 +    func makeCompletion() -> @Sendable () -> Void {
 +        terminalCompletionCaptured = true
-+        if replacement != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
-+        let completion = VideoCompletion(session: replacement == nil ? session : nil,
++        if replacement != nil || preparedSubmission != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
++        let completion = VideoCompletion(session: replacement == nil && preparedSubmission == nil ? session : nil,
 +            output: continuation, failure: failure)
 +        return { completion.run() }
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -82,7 +243,7 @@
+@@ -82,7 +239,7 @@
              var attributes: [NSString: AnyObject] = [:]
              if let inputFormat {
                  // Specify the pixel format of the uncompressed video.
@@ -396,7 +401,7 @@
              }
              return attributes.isEmpty ? nil : attributes
          case .decompression:
-@@ -97,19 +258,24 @@
+@@ -97,19 +254,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -424,7 +429,7 @@
      }
 
      @objc
-@@ -122,7 +288,7 @@
+@@ -122,7 +284,7 @@
          }
          switch type {
          case .ended:
@@ -433,7 +438,7 @@
          default:
              break
          }
-@@ -151,6 +317,7 @@
+@@ -151,6 +313,7 @@
          )
          #endif
          startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
@@ -441,10 +446,11 @@
          isRunning = true
      }
 
-@@ -159,11 +326,14 @@
+@@ -159,11 +322,15 @@
              return
          }
          isRunning = false
++        preparedSubmission = nil
 +        replacement = nil
          session = nil
 -        invalidateSession = true
@@ -458,7 +464,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +342,18 @@
+@@ -172,3 +339,18 @@
          #endif
      }
  }
@@ -710,14 +716,14 @@
          default:
              break
          }
-@@ -85,9 +124,20 @@
+@@ -85,8 +124,26 @@
 
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
 +        guard !inputFinished else { return }
          audioInputFormat = audioBuffer.format.formatDescription
          audioCodec.append(audioBuffer, when: when)
-     }
++    }
 +
 +    /// Ends ingress, preserving already queued raw video and complete AAC packets.
 +    /// Raw-video consumer must drain before makeVideoCompletion is invoked.
@@ -728,10 +734,16 @@
 +    }
 +
 +    package func makeVideoCompletion() -> @Sendable () -> Void { videoCodec.makeCompletion() }
++
++    package func prepareVideoSubmission(_ sample: CMSampleBuffer) -> VideoSubmission? {
++        videoCodec.prepareSubmission(sample)
++    }
++    @discardableResult package func commitVideoSubmission(_ operation: VideoSubmission, succeeded: Bool) -> Bool {
++        videoCodec.commitSubmission(operation, succeeded: succeeded)
+     }
 
      /// Appends a video buffer.
-     package func append(video sampleBuffer: CMSampleBuffer) {
-@@ -101,12 +151,15 @@
+@@ -101,12 +158,15 @@
          guard !isRunning else {
              return
          }
@@ -1374,7 +1386,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,421 @@
+@@ -7,7 +7,479 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
@@ -1440,7 +1452,7 @@
 +        guard !repeatable || staged else { throw SRTBandwidthProbeError.invalidConfiguration }
 +        let maximumBitRate = staged ? 12_000_000 : 2_000_000
 +        guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
-+        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
++        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
 +              let connection else { throw SRTBandwidthProbeError.notPublishing }
 +        guard bandwidthProbe == nil, !probeStarting else { throw SRTBandwidthProbeError.alreadyStarted }
 +        probeStarting = true
@@ -1448,7 +1460,7 @@
 +        defer { probeStarting = false }
 +        let statistics = await connection.samplePerformanceData()
 +        try Task.checkCancellation()
-+        guard publishingGeneration == expected, videoReplacement == nil,
++        guard publishingGeneration == expected, videoReplacement == nil, videoMutation == nil,
 +              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
 +        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
 +        let at = ProcessInfo.processInfo.systemUptime
@@ -1465,7 +1477,7 @@
 +        try Task.checkCancellation()
 +        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
 +        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
-+        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
++        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
 +              let connection else { throw SRTBandwidthProbeError.notPublishing }
 +        guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected,
 +              previous.snapshot(now: { ProcessInfo.processInfo.systemUptime }).stage == stage else {
@@ -1481,7 +1493,7 @@
 +        oldWake?.cancel()
 +        await oldWake?.value
 +        try Task.checkCancellation()
-+        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil,
++        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil, videoMutation == nil,
 +              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
 +        let retired = previous.snapshot(now: { ProcessInfo.processInfo.systemUptime })
 +        guard let origin = retired.campaignStartedAt, let accepted = retired.totalAcceptedPayloadBytes else {
@@ -1489,7 +1501,7 @@
 +        }
 +        let statistics = await connection.samplePerformanceData()
 +        try Task.checkCancellation()
-+        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil,
++        guard publishingGeneration == expected, bandwidthProbe === previous, videoReplacement == nil, videoMutation == nil,
 +              probeConfigurationRevision == configuration else { throw SRTBandwidthProbeError.obsolete }
 +        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
 +        let at = ProcessInfo.processInfo.systemUptime
@@ -1508,7 +1520,7 @@
 +        try Task.checkCancellation()
 +        guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
 +        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
-+        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil,
++        guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
 +              let connection else { throw SRTBandwidthProbeError.notPublishing }
 +        guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected else {
 +            throw SRTBandwidthProbeError.obsolete
@@ -1525,13 +1537,13 @@
 +        await oldWake?.value
 +        try Task.checkCancellation()
 +        guard publishingGeneration == expected, writer.transportClock != nil, bandwidthProbe === previous,
-+              videoReplacement == nil, probeConfigurationRevision == configuration else {
++              videoReplacement == nil, videoMutation == nil, probeConfigurationRevision == configuration else {
 +            throw SRTBandwidthProbeError.obsolete
 +        }
 +        let statistics = await connection.samplePerformanceData()
 +        try Task.checkCancellation()
 +        guard publishingGeneration == expected, writer.transportClock != nil, bandwidthProbe === previous,
-+              videoReplacement == nil, probeConfigurationRevision == configuration else {
++              videoReplacement == nil, videoMutation == nil, probeConfigurationRevision == configuration else {
 +            throw SRTBandwidthProbeError.obsolete
 +        }
 +        guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
@@ -1600,18 +1612,27 @@
 +
 +    /// Point-in-time native configuration acknowledgment. It is not a source-frame
 +    /// boundary, achieved output rate, or authorization to relabel queued frames.
-+    public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoCodecSettings {
-+        try setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected).change.settings
++    public func setVerifiedVideoBitRate(_ bitRate: Int, publishingGeneration expected: UInt64) async throws -> VideoCodecSettings {
++        try await setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected).change.settings
 +    }
 +    public struct VideoBitRateReceipt: Sendable {
 +        public let publishingGeneration: UInt64
 +        public let change: VideoBitRateChange
 +    }
-+    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) throws -> VideoBitRateReceipt {
++    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) async throws -> VideoBitRateReceipt {
 +        try Task.checkCancellation()
 +        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
-+        guard videoReplacement == nil else { throw VideoBitRateUpdateError.sessionInvalidated }
++        guard videoReplacement == nil, videoMutation == nil, closeTask == nil, finishingGeneration == nil else {
++            throw VideoBitRateUpdateError.sessionInvalidated
++        }
++        let mutation = reserveVideoMutation()
++        defer { releaseVideoMutation(mutation) }
 +        invalidateProbeConfiguration()
++        if let submission = videoSubmission { await commitVideoSubmission(submission) }
++        try Task.checkCancellation()
++        guard videoMutation == mutation, publishingGeneration == expected, closeTask == nil,
++              finishingGeneration == nil else { throw VideoBitRateUpdateError.sessionInvalidated }
++        guard videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
 +        _ = try outgoing.setVerifiedVideoBitRate(bitRate)
 +        guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
 +        return .init(publishingGeneration: expected, change: change)
@@ -1638,9 +1659,10 @@
 +    public func replaceVideoSettings(_ settings: VideoCodecSettings,
 +        publishingGeneration expected: UInt64, timeout: Duration = .seconds(2)) async throws -> VideoReplacementReceipt {
 +        try Task.checkCancellation()
-+        guard videoReplacement == nil else { throw VideoReplacementError.busy }
-+        guard publishingGeneration == expected, videoInputIsRaw,
-+              let previous = outgoing.lastVideoSubmission else { throw VideoReplacementError.notEncoding }
++        guard videoReplacement == nil, videoMutation == nil, closeTask == nil, finishingGeneration == nil else {
++            throw VideoReplacementError.busy
++        }
++        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoReplacementError.notEncoding }
 +        let dimensions: [CGFloat] = [settings.videoSize.width, settings.videoSize.height]
 +        let validDimensions = dimensions.allSatisfy { value in
 +            guard value.isFinite, value >= 16, value <= 8192, value.rounded() == value else { return false }
@@ -1648,11 +1670,21 @@
 +        }
 +        guard settings.format == .h264, settings.allowFrameReordering == false,
 +              validDimensions, settings.bitRate > 0 else { throw VideoReplacementError.invalidSettings }
++        let mutation = reserveVideoMutation()
++        defer { releaseVideoMutation(mutation) }
 +        invalidateProbeConfiguration()
++        if let submission = videoSubmission { await commitVideoSubmission(submission) }
++        try Task.checkCancellation()
++        guard videoMutation == mutation, publishingGeneration == expected, closeTask == nil,
++              finishingGeneration == nil, let previous = outgoing.lastVideoSubmission else {
++            throw VideoReplacementError.interrupted
++        }
++        guard videoInputIsRaw else { throw VideoReplacementError.notEncoding }
 +        let operation = try outgoing.prepareVideoReplacement(settings)
 +        let state = VideoReplacement(generation: expected, operation: operation, settings: settings,
 +            oldPTS: previous.sourcePTS, dropped: outgoing.rawVideoFramesDropped)
 +        videoReplacement = state
++        releaseVideoMutation(mutation) // Replacement now owns raw admission until its old drain commits.
 +        let task = Task { try await runVideoReplacement(state, timeout: timeout) }
 +        state.task = task
 +        let operationID = state.id
@@ -1747,18 +1779,56 @@
 +        await close()
 +    }
 +
++    /// Actor-owned record; the native worker never calls back into this owner.
++    private final class VideoSubmissionState {
++        let generation: UInt64
++        let operation: VideoSubmission
++        let task: Task<Bool, Never>
++        var committed = false
++        init(generation: UInt64, operation: VideoSubmission) {
++            self.generation = generation; self.operation = operation
++            task = Task.detached { operation.run() }
++        }
++    }
++    private var videoSubmission: VideoSubmissionState?
++    var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
++    var isVideoMutationPending: Bool { videoMutation != nil }
++    private var videoMutation: UUID?
++    private var videoMutationInput: CheckedContinuation<Void, Never>?
++    private func reserveVideoMutation() -> UUID {
++        let id = UUID(); videoMutation = id; return id
++    }
++    private func releaseVideoMutation(_ id: UUID) {
++        guard videoMutation == id else { return }
++        videoMutation = nil
++        videoMutationInput?.resume(); videoMutationInput = nil
++    }
++    private func commitVideoSubmission(_ state: VideoSubmissionState) async {
++        let succeeded = await state.task.value
++        guard !state.committed else { return }
++        state.committed = true
++        guard generation == state.generation, videoSubmission === state else { return }
++        videoSubmission = nil
++        guard outgoing.commitVideoSubmission(state.operation, succeeded: succeeded) else { return }
++        if let replacement = videoReplacement, replacement.committed, replacement.first == nil,
++           let submitted = outgoing.lastVideoSubmission, submitted.sessionID != replacement.operation.revision {
++            replacement.first = submitted
++        }
++    }
++
 +    private func consumeVideoInput(_ buffer: CMSampleBuffer, generation session: UInt64) async {
-+        if let state = videoReplacement, !state.committed, state.error == nil {
-+            await withCheckedContinuation { state.input = $0 }
++        while generation == session, !Task.isCancelled, failure.error == nil {
++            if videoMutation != nil {
++                await withCheckedContinuation { videoMutationInput = $0 }
++            } else if let state = videoReplacement, !state.committed, state.error == nil {
++                await withCheckedContinuation { state.input = $0 }
++            } else { break }
 +        }
-+        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-+        outgoing.append(video: buffer)
-+        if let state = videoReplacement, state.committed, state.first == nil,
-+           let submitted = outgoing.lastVideoSubmission,
-+           submitted.sessionID != state.operation.revision,
-+           CMTimeCompare(submitted.sourcePTS, buffer.presentationTimeStamp) == 0 {
-+            state.first = submitted
-+        }
++        guard generation == session, !Task.isCancelled, failure.error == nil,
++              let operation = outgoing.prepareVideoSubmission(buffer) else { return }
++        let state = VideoSubmissionState(generation: session, operation: operation)
++        videoSubmission = state
++        await commitVideoSubmission(state)
 +    }
 +
 +    private func observeVideoReplacement(_ sample: CMSampleBuffer, wasEncoded: Bool) {
@@ -1796,7 +1866,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +436,7 @@
+@@ -22,7 +494,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1805,7 +1875,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +446,59 @@
+@@ -32,8 +504,59 @@
      }
 
      /// Creates a new stream object.
@@ -1866,7 +1936,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +510,9 @@
+@@ -45,7 +568,9 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1877,7 +1947,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +524,45 @@
+@@ -57,8 +582,45 @@
              }
              return
          }
@@ -1924,38 +1994,25 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +572,51 @@
+@@ -68,26 +630,55 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
 -        Task {
 -            for await buffer in outgoing.videoOutputStream {
 -                append(buffer)
--            }
--        }
--        Task {
--            for await buffer in outgoing.audioOutputStream {
--                append(buffer.0, when: buffer.1)
--            }
--        }
--        Task {
--            for await buffer in outgoing.videoInputStream {
--                outgoing.append(video: buffer)
--            }
--        }
--        Task {
--            for await data in writer.output {
--                await connection.send(data)
--            }
--        }
 +        publishingTasks = PublishingTasks(
 +            video: Task {
 +                for await buffer in videoOutput {
 +                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
 +                    let dequeuedAt = ProcessInfo.processInfo.systemUptime
++                    // A native callback may yield before convert returns. Join one
++                    // snapshot, never chase later submissions; audio stays independent.
++                    if let submission = videoSubmission { await commitVideoSubmission(submission) }
++                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
 +                    if pacesEncodedVideo {
 +                        do {
-+                            let delay = try sourceCadenceClock.delay(sourcePTS: buffer.presentationTimeStamp, now: dequeuedAt)
++                            let delay = try sourceCadenceClock.delay(sourcePTS: buffer.presentationTimeStamp, now: ProcessInfo.processInfo.systemUptime)
 +                            if delay > 0 { try await pacingSleep(delay) }
 +                        } catch {
 +                            if generation == session, !Task.isCancelled {
@@ -1991,20 +2048,37 @@
 +                    await connection.failPublishing(error, generation: connectionSession)
 +                    return
 +                }
-+            }
+             }
+-        }
+-        Task {
+-            for await buffer in outgoing.audioOutputStream {
+-                append(buffer.0, when: buffer.1)
+-            }
+-        }
+-        Task {
+-            for await buffer in outgoing.videoInputStream {
+-                outgoing.append(video: buffer)
+-            }
+-        }
+-        Task {
+-            for await data in writer.output {
+-                await connection.send(data)
+-            }
+-        }
 +        )
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +645,91 @@
+@@ -116,16 +707,99 @@
          readyState = .playing
      }
 
 +    /// Stops ingress and drains accepted publishing media through the codec,
 +    /// muxer and socket. Success means transport acceptance, not remote delivery.
 +    /// One owned deadline aborts a stalled drain; all finish callers join the same
-+    /// operation. Failure is latched in publishingError. close() remains immediate
-+    /// abort, and publication cannot restart until this operation has joined.
++    /// operation. Failure is latched in publishingError. Close revokes admission
++    /// immediately, but may await native conversion before invalidating its session.
++    /// Publication cannot restart until this operation has joined.
 +    public func finish(timeout: Duration = .seconds(2)) async {
 +        bandwidthProbe?.cancel(.finished)
 +        probeWakeTask?.cancel()
@@ -2072,10 +2146,13 @@
 +        generation &+= 1
 +        sourceCadenceClock = SourceCadenceClock()
 +        videoInputIsRaw = false
++        let submission = videoSubmission
++        videoSubmission = nil
++        if let mutation = videoMutation { releaseVideoMutation(mutation) }
 +        for task in publishingTasks?.all ?? [] { task.cancel() }
 +        if let transport = publishingTasks?.transport { retiredTransport = transport }
 +        publishingTasks = nil
-+        outgoing.stopRunning()
++        outgoing.finishInput()
 +        failure.finish()
          writer.clear()
          reader.clear()
@@ -2083,6 +2160,10 @@
 -        Task { await incoming.stopRunning() }
          readyState = .idle
 +        let closing = Task {
++            // Only the independent call is joined. Consumers may themselves be
++            // closing us, and session invalidation must not race conversion.
++            _ = await submission?.task.value
++            outgoing.stopRunning()
 +            await wakeTask?.value
 +            await incoming.stopRunning()
 +            // Clear inside the shared owner so every caller sees reusable state.
@@ -2093,7 +2174,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +750,33 @@
+@@ -146,23 +820,43 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2101,12 +2182,23 @@
          outgoing.audioSettings = audioSettings
      }
 
-     public func setVideoSettings(_ videoSettings: VideoCodecSettings) throws {
-+        guard videoReplacement == nil else { throw VideoReplacementError.busy }
+-    public func setVideoSettings(_ videoSettings: VideoCodecSettings) throws {
++    public func setVideoSettings(_ videoSettings: VideoCodecSettings) async throws {
++        try Task.checkCancellation()
++        guard videoReplacement == nil, videoMutation == nil, closeTask == nil, finishingGeneration == nil else {
++            throw VideoReplacementError.busy
++        }
          guard Self.supportedVideoCodecs.contains(videoSettings.format) else {
              throw Error.unsupportedCodec
          }
++        let expected = generation, mutation = reserveVideoMutation()
++        defer { releaseVideoMutation(mutation) }
 +        invalidateProbeConfiguration()
++        if let submission = videoSubmission { await commitVideoSubmission(submission) }
++        try Task.checkCancellation()
++        guard generation == expected, videoMutation == mutation, closeTask == nil, finishingGeneration == nil else {
++            throw VideoReplacementError.interrupted
++        }
          outgoing.videoSettings = videoSettings
      }
 
@@ -2129,7 +2221,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +786,36 @@
+@@ -172,16 +866,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -4381,3 +4473,74 @@
 +        }
 +    }
 +}
+--- /dev/null
++++ b/HaishinKit/Sources/Codec/VideoSubmission.swift
+@@ -0,0 +1,57 @@
++import AVFoundation
++import Foundation
++
++/// One retained native call. Only immutable inputs cross the actor boundary;
++/// the caller runs this once and joins it before changing or invalidating session.
++package final class VideoSubmission: @unchecked Sendable {
++    package let revision: UUID
++    let sample: CMSampleBuffer
++    let session: any VTSessionConvertible
++    let output: PublishingQueue<CMSampleBuffer>
++    let failure: PublishingFailureLatch
++    let configuration: VideoEncoderConfiguration?
++    let completionObserver: VideoEncoderCompletionObserver?
++    let configurationObserver: VideoEncoderConfigurationObserver?
++    let submissionObserver: VideoEncoderSubmissionObserver?
++
++    init(revision: UUID, sample: CMSampleBuffer, session: any VTSessionConvertible,
++         output: PublishingQueue<CMSampleBuffer>, failure: PublishingFailureLatch,
++         configuration: VideoEncoderConfiguration?, completionObserver: VideoEncoderCompletionObserver?,
++         configurationObserver: VideoEncoderConfigurationObserver?, submissionObserver: VideoEncoderSubmissionObserver?) {
++        self.revision = revision; self.sample = sample; self.session = session
++        self.output = output; self.failure = failure; self.configuration = configuration
++        self.completionObserver = completionObserver; self.configurationObserver = configurationObserver
++        self.submissionObserver = submissionObserver
++    }
++
++    package func run() -> Bool {
++        guard failure.error == nil else { return false }
++        let startedAt = configurationObserver != nil || submissionObserver != nil
++            ? ProcessInfo.processInfo.systemUptime : 0
++        let completion: VideoEncoderCompletionObserver?
++        if let configurationObserver {
++            let legacy = completionObserver, revision = revision, configuration = configuration
++            completion = { source, output in
++                let completedAt = ProcessInfo.processInfo.systemUptime
++                legacy?(source, output)
++                configurationObserver(.init(sourcePTS: source, outputPTS: output,
++                    encoderSessionID: revision, configuration: configuration,
++                    submittedAt: startedAt, completedAt: completedAt))
++            }
++        } else { completion = completionObserver }
++        var status: OSStatus = noErr
++        defer {
++            submissionObserver?(.init(sourcePTS: sample.presentationTimeStamp, encoderSessionID: revision,
++                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
++        }
++        do {
++            try session.convert(sample, continuation: output, encoderCompletionObserver: completion)
++            return true
++        } catch {
++            status = (error as? VTSessionError)?.status ?? -1
++            failure.fail(.codecFailed(status: status))
++            logger.warn(error)
++            return false
++        }
++    }
++}
+--- a/HaishinKit/Sources/Stream/StreamConvertible.swift
++++ b/HaishinKit/Sources/Stream/StreamConvertible.swift
+@@ -21,7 +21,7 @@
+     func setAudioSettings(_ audioSettings: AudioCodecSettings) throws
+
+     /// Sets the video compression properties.
+-    func setVideoSettings(_ videoSettings: VideoCodecSettings) throws
++    func setVideoSettings(_ videoSettings: VideoCodecSettings) async throws
+
+     /// Sets the sound transform value control.
+     func setSoundTransform(_ soundTransfrom: SoundTransform) async

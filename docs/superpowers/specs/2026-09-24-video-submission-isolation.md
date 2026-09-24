@@ -1,6 +1,7 @@
 # Isolate native video submission from the stream actor
 
-Status: reviewed design; implementation pending. Autonomous continuation is authorized.
+Status: implemented and independently reviewed; local verification in progress.
+Autonomous continuation is authorized.
 
 ## Evidence and scope
 

@@ -10,6 +10,7 @@ import VideoToolbox
         var options: [String: AnyObject] = [:]
         var writes = 0, conversions = 0, invalidations = 0
         var onWrite: (() -> Void)?
+        var onConvert: (() -> Void)?
         var writeStatus: OSStatus = noErr
         var convertStatus: OSStatus = noErr
         var convertEnteredAt = 0.0, convertReturnedAt = 0.0
@@ -23,6 +24,7 @@ import VideoToolbox
         }
         func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
             conversions += 1
+            onConvert?()
             convertEnteredAt = ProcessInfo.processInfo.systemUptime
             defer { convertReturnedAt = ProcessInfo.processInfo.systemUptime }
             if convertStatus != noErr { throw VTSessionError.failedToConvert(status: convertStatus) }
@@ -46,6 +48,33 @@ import VideoToolbox
         #expect(row.status == status)
         #expect(codec.failure.error == (status == 0 ? nil : .codecFailed(status: status)))
         if status == 0 { #expect(row.encoderSessionID == codec.lastSubmission?.sessionID) }
+        codec.stopRunning()
+    }
+
+    @Test func invalidationDuringSubmissionRevokesCommitAndRebuildsAfterReturn() throws {
+        let first = Session(), second = Session()
+        var creations = 0
+        let codec = VideoCodec(sessionFactory: { _, _ in creations += 1; return creations == 1 ? first : second })
+        _ = codec.outputStream; codec.startRunning()
+        let operation = try #require(codec.prepareSubmission(frame(0)))
+        first.onConvert = {
+            codec.requestSessionInvalidation()
+            #expect(first.invalidations == 0, "Notification must not destroy a session inside its native call")
+            #expect(codec.lastSubmission == nil)
+        }
+        let succeeded = operation.run()
+        #expect(succeeded)
+        #expect(!codec.commitSubmission(operation, succeeded: succeeded))
+        #expect(codec.lastSubmission == nil && first.invalidations == 0)
+        first.onConvert = nil
+        let fresh = try #require(codec.prepareSubmission(frame(1)))
+        #expect(first.invalidations == 1 && creations == 2)
+        #expect(fresh.revision != operation.revision)
+        #expect(codec.commitSubmission(fresh, succeeded: fresh.run()))
+        #expect(!codec.commitSubmission(operation, succeeded: true))
+        #expect(!codec.commitSubmission(fresh, succeeded: true))
+        #expect(codec.lastSubmission?.sourcePTS == CMTime(value: 1, timescale: 30))
+        #expect(codec.lastSubmission?.sessionID == fresh.revision)
         codec.stopRunning()
     }
 

@@ -2,9 +2,11 @@ import AVFoundation
 import CoreMedia
 @testable import HaishinKit
 import Testing
+import libsrt
 @testable import SRTHaishinKit
 
-@Suite struct TSWriterStartupTests {
+// These tests deliberately block native calls; concurrent gates can exhaust the cooperative pool.
+@Suite(.serialized) struct TSWriterStartupTests {
     @Test func compressedSRTPassthroughDoesNotNotifyEncoderObserver() async throws {
         let bytes = PassthroughTransport()
         let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
@@ -216,6 +218,248 @@ import Testing
                 "Prequeued transport must drain without resuming the blocked stream actor")
         #expect(!firstSend.timedOut && !conversion.timedOut)
         #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
+    @Test func encodedAudioDrainsWhileNativeVideoSubmissionIsBlocked() async throws {
+        let conversion = PumpSynchronousGate(), sent = PumpCounter(), observed = StartupMuxFrames()
+        defer { conversion.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in PumpBlockedSession(gate: conversion) })
+        let connection = SRTConnection(socket: SRTSocket(sender: { data in
+            _ = sent.increment(); return Int32(data.count)
+        }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            muxedPacketObserver: observed.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.audio]); await stream.publish()
+        await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { conversion.entered }
+        try #require(entered)
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        pcm.frameLength = 4096
+        if let data = pcm.floatChannelData { memset(data[0], 0, 4096 * MemoryLayout<Float>.size) }
+        let audio = Task { await stream.append(pcm, when: AVAudioTime(sampleTime: 0, atRate: 48_000)) }
+        let audioDrained = await pumpWait { observed.rows.contains { $0.media == .audio } && sent.count > 0 }
+        let stillBlocked = !conversion.released && !conversion.timedOut
+        conversion.release()
+        await audio.value
+        await stream.finish()
+        #expect(audioDrained && stillBlocked, "PCM must encode, mux and reach transport before video conversion returns")
+        #expect(!conversion.timedOut)
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
+    @Test(arguments: ["begin", "replace", "restart"])
+    func probeAdmissionRejectsPendingVideoMutation(mode: String) async throws {
+        let gate = PumpSynchronousGate()
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in PumpBlockedSession(gate: gate) })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) },
+            statisticsReader: { _, mon, _ in mon.msRTT = 2; return 0 }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            allowsBandwidthProbes: true, probeWakeRunner: { _, _ in })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try video(0))
+        let generation = try #require(await stream.publishingGeneration)
+        let previous = mode == "begin" ? nil : try await stream.beginBandwidthProbe(
+            bitRate: 250_000, publishingGeneration: generation, staged: true, repeatable: true)
+        await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { gate.entered }
+        try #require(entered)
+        let mutation = Task { try await stream.setVideoSettings(.init(bitRate: 1_000_000)) }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !(await stream.isVideoMutationPending) && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await stream.isVideoMutationPending)
+        do {
+            switch mode {
+            case "replace":
+                _ = try await stream.replaceBandwidthProbe(id: previous!.id,
+                    publishingGeneration: generation, stage: 1, bitRate: 500_000)
+            case "restart":
+                _ = try await stream.restartBandwidthProbe(id: previous!.id,
+                    publishingGeneration: generation, stage: 1, bitRate: 250_000)
+            default:
+                _ = try await stream.beginBandwidthProbe(bitRate: 250_000, publishingGeneration: generation)
+            }
+            Issue.record("A probe must not acquire authority while a video mutation awaits native conversion")
+        } catch { #expect(error is SRTBandwidthProbeError) }
+        gate.release(); try await mutation.value
+        await stream.finish(); await connection.close()
+        #expect(!gate.timedOut)
+    }
+
+    @Test func encodedPacingUsesTimeAfterSubmissionCommit() async throws {
+        let gate = PumpSynchronousGate(), calls = PumpCounter(), sleeps = PumpCounter()
+        let frames = PumpCompressedFrames()
+        defer { gate.release() }
+        let first = try video(0.1), second = try video(0.6)
+        let codec = VideoCodec(sessionFactory: { _, _ in
+            PumpEarlyOutputSession(gate: gate, calls: calls, first: first, second: second)
+        })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            compressedVideoObserver: frames.record, pacesEncodedVideo: true,
+            pacingSleep: { _ in _ = sleeps.increment() })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try pumpRawVideo())
+        let firstObserved = await pumpWait { frames.rows.count == 1 }
+        try #require(firstObserved)
+        await stream.append(try pumpRawVideo(18))
+        let entered = await pumpWait { gate.entered }
+        try #require(entered)
+        // The next frame becomes due while its native call still owns the session.
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(frames.rows.count == 1, "Early native output must wait for submission commit")
+        gate.release(); await stream.finish(); await connection.close()
+        #expect(frames.rows.count == 2)
+        if frames.rows.count == 2 {
+            #expect(frames.rows[1].dequeuedAt - frames.rows[0].dequeuedAt < 0.5,
+                    "Fixture must dequeue before the next frame's due time")
+        }
+        #expect(sleeps.count == 0, "An already-due frame must not be delayed again after commit")
+        #expect(!gate.timedOut)
+    }
+
+    @Test func slowSubmissionKeepsOnlyBoundedNewestRawTailAndFinishJoinsIt() async throws {
+        let gate = PumpSynchronousGate(), native = PumpTrackedSession()
+        native.gate = gate
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try video(0))
+        await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { gate.entered }; try #require(entered)
+        for frame in 4...13 { await stream.append(try pumpRawVideo(Int64(frame))) }
+        #expect(native.frames == [3])
+        #expect(await stream.rawVideoFramesDropped == 8)
+        let finished = PumpCounter()
+        let finish = Task { await stream.finish(); _ = finished.increment() }
+        // A concurrent actor call proves finish has not blocked actor access.
+        _ = await stream.videoSettings
+        #expect(finished.count == 0)
+        gate.release(); await finish.value
+        #expect(native.frames == [3, 12, 13])
+        #expect(native.maximumConcurrent == 1)
+        #expect(native.completed == 1 && native.invalidations == 1)
+        #expect(await stream.publishingError == nil)
+        #expect(!gate.timedOut)
+        await connection.close()
+    }
+
+    @Test(arguments: [false, true])
+    func bitrateMutationJoinsLastOldFrameAndRejectsOvertaking(cancel: Bool) async throws {
+        let gate = PumpSynchronousGate(), native = PumpTrackedSession()
+        native.gate = gate
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try video(0)); await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { gate.entered }; try #require(entered)
+        let change = Task { try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000, publishingGeneration: generation) }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !(await stream.isVideoMutationPending) && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await stream.isVideoMutationPending)
+        await stream.append(try pumpRawVideo(4))
+        #expect(native.frames == [3] && native.rates == [640_000])
+        await #expect(throws: VideoBitRateUpdateError.sessionInvalidated) {
+            try await stream.setVerifiedVideoBitRate(900_000, publishingGeneration: generation)
+        }
+        if cancel { change.cancel() }
+        gate.release()
+        if cancel {
+            await #expect(throws: CancellationError.self) { try await change.value }
+        } else {
+            let receipt = try await change.value
+            #expect(receipt.change.lastSubmittedSourcePTS == CMTime(value: 3, timescale: 30))
+            #expect(receipt.change.configuration.bitRate == 1_000_000)
+        }
+        await stream.finish()
+        #expect(native.frames == [3, 4])
+        #expect(native.rates == [640_000, cancel ? 640_000 : 1_000_000])
+        #expect(native.maximumConcurrent == 1)
+        #expect(!gate.timedOut)
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
+    @Test(arguments: [false, true])
+    func pendingNativeMutationRejectsInterveningPassthrough(replace: Bool) async throws {
+        let gate = PumpSynchronousGate(), native = PumpTrackedSession()
+        native.gate = gate
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try video(0)); await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { gate.entered }; try #require(entered)
+        let change = Task {
+            if replace {
+                _ = try await stream.replaceVideoSettings(.init(videoSize: CGSize(width: 32, height: 32),
+                    allowFrameReordering: false), publishingGeneration: generation)
+            } else {
+                _ = try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000, publishingGeneration: generation)
+            }
+        }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !(await stream.isVideoMutationPending) && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await stream.isVideoMutationPending)
+        await stream.append(try video(0.2))
+        gate.release()
+        if replace {
+            await #expect(throws: SRTStream.VideoReplacementError.notEncoding) { try await change.value }
+        } else {
+            await #expect(throws: VideoBitRateUpdateError.notEncoding) { try await change.value }
+        }
+        #expect(await stream.videoSettings.bitRate == 640_000)
+        await stream.finish(); await connection.close()
+        #expect(!gate.timedOut)
+    }
+
+    @Test func closeRetainsBlockedSessionAndRejectsMutationUntilWorkerReturns() async throws {
+        let gate = PumpSynchronousGate(), native = PumpTrackedSession(), returned = PumpCounter()
+        native.gate = gate
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try pumpRawVideo())
+        let entered = await pumpWait { gate.entered }; try #require(entered)
+        let close = Task { await stream.close(); _ = returned.increment() }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while await stream.readyState != .idle, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await stream.readyState == .idle)
+        #expect(native.invalidations == 0 && returned.count == 0)
+        await #expect(throws: SRTStream.VideoReplacementError.busy) {
+            try await stream.setVideoSettings(.init(bitRate: 900_000))
+        }
+        await stream.publish()
+        #expect(await stream.publishingGeneration == nil)
+        gate.release(); await close.value
+        #expect(native.invalidations == 1 && returned.count == 1)
+        await stream.publish()
+        #expect(await stream.publishingGeneration != nil)
+        await stream.append(try video(10)); await stream.finish()
+        #expect(await stream.publishingError == nil)
+        #expect(!gate.timedOut)
         await connection.close()
     }
 
@@ -738,7 +982,7 @@ private func pumpWait(_ predicate: () -> Bool) async -> Bool {
     while !predicate() && ContinuousClock.now < deadline { await Task.yield() }
     return predicate()
 }
-private func pumpRawVideo() throws -> CMSampleBuffer {
+private func pumpRawVideo(_ frame: Int64 = 3) throws -> CMSampleBuffer {
     var image: CVPixelBuffer?
     #expect(CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         nil, &image) == kCVReturnSuccess)
@@ -747,9 +991,71 @@ private func pumpRawVideo() throws -> CMSampleBuffer {
     #expect(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
         imageBuffer: buffer, formatDescriptionOut: &format) == noErr)
     var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
-        presentationTimeStamp: CMTime(value: 3, timescale: 30), decodeTimeStamp: .invalid)
+        presentationTimeStamp: CMTime(value: frame, timescale: 30), decodeTimeStamp: .invalid)
     var sample: CMSampleBuffer?
     #expect(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
         formatDescription: try #require(format), sampleTiming: &timing, sampleBufferOut: &sample) == noErr)
     return try #require(sample)
+}
+
+private final class PumpCompressedFrames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [SRTStream.CompressedVideoFrame] = []
+    var rows: [SRTStream.CompressedVideoFrame] { lock.withLock { stored } }
+    func record(_ frame: SRTStream.CompressedVideoFrame) { lock.withLock { stored.append(frame) } }
+}
+private final class PumpEarlyOutputSession: VTSessionConvertible {
+    let gate: PumpSynchronousGate, calls: PumpCounter
+    let first: CMSampleBuffer, second: CMSampleBuffer
+    init(gate: PumpSynchronousGate, calls: PumpCounter, first: CMSampleBuffer, second: CMSampleBuffer) {
+        self.gate = gate; self.calls = calls; self.first = first; self.second = second
+    }
+    func setOption(_ option: VTSessionOption) -> OSStatus { noErr }
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) { (noErr, nil) }
+    func setOptions(_ options: Set<VTSessionOption>) -> OSStatus { noErr }
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?,
+                 encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
+        let count = calls.increment()
+        let output = count == 1 ? first : second
+        encoderCompletionObserver?(sampleBuffer.presentationTimeStamp, output.presentationTimeStamp)
+        continuation?.yield(output, byteCount: output.totalSampleSize)
+        if count == 2 { gate.block() }
+    }
+    func completeFrames() -> OSStatus { noErr }
+    func invalidate() {}
+}
+
+private final class PumpTrackedSession: VTSessionConvertible, @unchecked Sendable {
+    var gate: PumpSynchronousGate?
+    private let lock = NSLock()
+    private var sourceFrames: [Int64] = [], sourceRates: [Int] = []
+    private var properties: [String: CFTypeRef] = [:]
+    private var active = 0, maximum = 0, drains = 0, retired = 0
+    var frames: [Int64] { lock.withLock { sourceFrames } }
+    var rates: [Int] { lock.withLock { sourceRates } }
+    var maximumConcurrent: Int { lock.withLock { maximum } }
+    var completed: Int { lock.withLock { drains } }
+    var invalidations: Int { lock.withLock { retired } }
+    func setOption(_ option: VTSessionOption) -> OSStatus {
+        lock.withLock { #expect(active == 0); properties[option.key.CFString as String] = option.value }; return noErr
+    }
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) {
+        lock.withLock { #expect(active == 0); return (noErr, properties[key.CFString as String]) }
+    }
+    func setOptions(_ options: Set<VTSessionOption>) -> OSStatus {
+        for option in options { _ = setOption(option) }; return noErr
+    }
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?,
+                 encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
+        let first = lock.withLock {
+            active += 1; maximum = max(maximum, active)
+            sourceFrames.append(CMTimeConvertScale(sampleBuffer.presentationTimeStamp, timescale: 30, method: .default).value)
+            sourceRates.append((properties[VTSessionOptionKey.averageBitRate.CFString as String] as? NSNumber)?.intValue ?? 640_000)
+            return sourceFrames.count == 1
+        }
+        if first { gate?.block() }
+        lock.withLock { active -= 1 }
+    }
+    func completeFrames() -> OSStatus { lock.withLock { #expect(active == 0); drains += 1 }; return noErr }
+    func invalidate() { lock.withLock { #expect(active == 0); retired += 1 } }
 }

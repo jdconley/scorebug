@@ -21,7 +21,7 @@ public protocol StreamConvertible: Actor, MediaMixerOutput {
     func setAudioSettings(_ audioSettings: AudioCodecSettings) throws
 
     /// Sets the video compression properties.
-    func setVideoSettings(_ videoSettings: VideoCodecSettings) throws
+    func setVideoSettings(_ videoSettings: VideoCodecSettings) async throws
 
     /// Sets the sound transform value control.
     func setSoundTransform(_ soundTransfrom: SoundTransform) async

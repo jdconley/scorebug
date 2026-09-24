@@ -311,6 +311,69 @@ import Testing
         await connection.close()
     }
 
+    @Test(arguments: ["success", "failure", "close"])
+    func earlyReplacementOutputRequiresSuccessfulJoinedSubmission(outcome: String) async throws {
+        let fixtureCodec = VideoCodec()
+        fixtureCodec.settings = reduced
+        let fixtureOutput = fixtureCodec.outputStream
+        fixtureCodec.startRunning(); fixtureCodec.append(try replacementVideo(1))
+        let complete = fixtureCodec.makeCompletion(); await Task.detached { complete() }.value
+        fixtureCodec.stopRunning()
+        var iterator = fixtureOutput.makeAsyncIterator()
+        let fixture = try #require(await iterator.next())
+        let gate = ReplacementGate(), done = ReplacementDone(), observed = ReplacementFrames()
+        defer { gate.open() }
+        var creations = 0
+        let codec = VideoCodec(sessionFactory: { mode, codec in
+            creations += 1
+            return creations == 1 ? try mode.makeSession(codec) : EarlyReplacementSession(
+                sample: fixture, gate: gate, fails: outcome == "failure")
+        })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            compressedVideoObserver: observed.record)
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try replacementVideo(0))
+        let ready = ContinuousClock.now + .seconds(1)
+        while observed.frames.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        try #require(observed.frames.count == 1)
+        let change = Task {
+            defer { done.set() }
+            return try await stream.replaceVideoSettings(reduced, publishingGeneration: generation)
+        }
+        let staged = ContinuousClock.now + .seconds(1)
+        while await stream.videoSettings.videoSize.width != 32, ContinuousClock.now < staged { await Task.yield() }
+        try #require(await stream.videoSettings.videoSize.width == 32)
+        await stream.append(try replacementVideo(1)); try await gate.waitForEntry()
+        // Let the encoded consumer reach its join without releasing native convert.
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(!done.value && observed.frames.count == 1)
+        var closing: Task<Void, Never>?
+        if outcome == "close" {
+            closing = Task { await stream.close() }
+            let deadline = ContinuousClock.now + .seconds(1)
+            while await stream.readyState != .idle, ContinuousClock.now < deadline { await Task.yield() }
+            #expect(await stream.readyState == .idle)
+        }
+        gate.open()
+        if outcome == "success" {
+            let receipt = try await change.value
+            #expect(receipt.lastOldSourcePTS == .zero)
+            #expect(receipt.firstNewSourcePTS == CMTime(value: 1, timescale: 30))
+            #expect(receipt.width == 32 && observed.frames.count == 2)
+            await stream.finish()
+            #expect(await stream.publishingError == nil)
+        } else {
+            do { _ = try await change.value; Issue.record("Unsuccessful submission produced a replacement receipt") } catch {}
+            #expect(observed.frames.count == 1)
+        }
+        await closing?.value
+        await stream.close(); await connection.close()
+    }
+
     @Test func invalidatedRevisionCannotAcknowledgeItsPendingFirstOutput() async throws {
         let fixtureCodec = VideoCodec()
         fixtureCodec.settings = reduced
@@ -479,6 +542,25 @@ private final class DelayedReplacementOutput: VTSessionConvertible, @unchecked S
         let work = lock.withLock { let work = pending; pending = nil; return work }
         work?.1?(sample.presentationTimeStamp, sample.presentationTimeStamp)
         _ = work?.0?.yield(sample, byteCount: CMSampleBufferGetTotalSampleSize(sample))
+    }
+    func completeFrames() -> OSStatus { noErr }
+    func invalidate() {}
+}
+
+private final class EarlyReplacementSession: VTSessionConvertible {
+    let sample: CMSampleBuffer, gate: ReplacementGate, fails: Bool
+    init(sample: CMSampleBuffer, gate: ReplacementGate, fails: Bool) {
+        self.sample = sample; self.gate = gate; self.fails = fails
+    }
+    func setOption(_ option: VTSessionOption) -> OSStatus { noErr }
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) { (noErr, nil) }
+    func setOptions(_ options: Set<VTSessionOption>) -> OSStatus { noErr }
+    func convert(_ input: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?,
+                 encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
+        encoderCompletionObserver?(input.presentationTimeStamp, sample.presentationTimeStamp)
+        _ = continuation?.yield(sample, byteCount: sample.totalSampleSize)
+        #expect(gate.pause(), "Native gate must be released explicitly")
+        if fails { throw VTSessionError.failedToConvert(status: -73) }
     }
     func completeFrames() -> OSStatus { noErr }
     func invalidate() {}

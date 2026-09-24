@@ -139,6 +139,13 @@ package final class OutgoingStream {
 
     package func makeVideoCompletion() -> @Sendable () -> Void { videoCodec.makeCompletion() }
 
+    package func prepareVideoSubmission(_ sample: CMSampleBuffer) -> VideoSubmission? {
+        videoCodec.prepareSubmission(sample)
+    }
+    @discardableResult package func commitVideoSubmission(_ operation: VideoSubmission, succeeded: Bool) -> Bool {
+        videoCodec.commitSubmission(operation, succeeded: succeeded)
+    }
+
     /// Appends a video buffer.
     package func append(video sampleBuffer: CMSampleBuffer) {
         videoCodec.append(sampleBuffer)

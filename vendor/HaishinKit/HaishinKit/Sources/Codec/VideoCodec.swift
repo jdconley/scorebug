@@ -15,6 +15,7 @@ final class VideoCodec {
     private var lastSubmittedSourcePTS: CMTime?
     private var replacement: VideoEncoderReplacement?
     private var terminalCompletionCaptured = false
+    private var preparedSubmission: VideoSubmission?
 
     private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
     init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
@@ -44,7 +45,7 @@ final class VideoCodec {
     func requestSessionInvalidation() { invalidation.invalidate() }
 
     func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
-        guard replacement == nil else { throw VideoEncoderReplacementError.busy }
+        guard replacement == nil, preparedSubmission == nil else { throw VideoEncoderReplacementError.busy }
         guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
             throw VideoEncoderReplacementError.notEncoding
         }
@@ -80,7 +81,7 @@ final class VideoCodec {
             throw VideoBitRateUpdateError.notEncoding
         }
         let observed = invalidation.snapshot
-        guard replacement == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
+        guard replacement == nil, preparedSubmission == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
         let updated: VideoCodecSettings
         do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
         catch let error as VideoBitRateUpdateError {
@@ -113,7 +114,7 @@ final class VideoCodec {
     var settings: VideoCodecSettings {
         get { storedSettings }
         set {
-            guard replacement == nil else {
+            guard replacement == nil, preparedSubmission == nil else {
                 failure.fail(.outputTerminated(boundary: "video replacement settings")); return
             }
             let previous = storedSettings
@@ -155,74 +156,69 @@ final class VideoCodec {
     }
     private(set) var outputFormat: CMFormatDescription?
 
-    func append(_ sampleBuffer: CMSampleBuffer) {
-        guard isRunning, failure.error == nil else {
-            return
+    private func prepareSession(_ sample: CMSampleBuffer) throws -> (any VTSessionConvertible, UUID)? {
+        inputFormat = sample.formatDescription
+        let observed = invalidation.snapshot
+        if observed.pending {
+            let mode: VTSessionMode = sample.formatDescription?.isCompressed == true ? .decompression : .compression
+            session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
+            recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
+            sessionMode = mode
+            invalidation.installed(observed.revision)
         }
-        guard replacement == nil else {
-            failure.fail(.outputTerminated(boundary: "video replacement input")); return
+        guard invalidation.isCurrent(observed.revision), let session else { return nil }
+        return (session, observed.revision)
+    }
+
+    func prepareSubmission(_ sample: CMSampleBuffer) -> VideoSubmission? {
+        guard isRunning, !terminalCompletionCaptured, failure.error == nil else { return nil }
+        guard replacement == nil, preparedSubmission == nil else {
+            failure.fail(.outputTerminated(boundary: "video replacement input")); return nil
         }
         do {
-            inputFormat = sampleBuffer.formatDescription
-            let observed = invalidation.snapshot
-            if observed.pending {
-                let mode: VTSessionMode = sampleBuffer.formatDescription?.isCompressed == true ? .decompression : .compression
-                session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
-                recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
-                sessionMode = mode
-                invalidation.installed(observed.revision)
-            }
-            guard invalidation.isCurrent(observed.revision) else { return }
-            guard let session, let continuation else {
-                return
-            }
-            if sampleBuffer.formatDescription?.isCompressed == true {
-                try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
-            } else {
-                if useFrame(sampleBuffer.presentationTimeStamp) {
-                    let observer = submissionObserver(sessionID: observed.revision)
-                    try submit(sampleBuffer, to: session, sessionID: observed.revision, completion: observer)
-                    if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
-                    presentationTimeStamp = sampleBuffer.presentationTimeStamp
-                }
-            }
+            guard sample.formatDescription?.isCompressed != true,
+                  let (session, revision) = try prepareSession(sample), let continuation,
+                  useFrame(sample.presentationTimeStamp) else { return nil }
+            let operation = VideoSubmission(revision: revision, sample: sample, session: session,
+                output: continuation, failure: failure, configuration: recordedBitRateChange?.configuration,
+                completionObserver: encoderCompletionObserver, configurationObserver: encoderConfigurationObserver,
+                submissionObserver: encoderSubmissionObserver)
+            preparedSubmission = operation
+            return operation
         } catch {
             failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
             logger.warn(error)
+            return nil
         }
     }
 
-    private func submit(_ sample: CMSampleBuffer, to session: any VTSessionConvertible,
-                        sessionID: UUID, completion: VideoEncoderCompletionObserver?) throws {
-        guard let encoderSubmissionObserver else {
-            try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion)
+    @discardableResult func commitSubmission(_ operation: VideoSubmission, succeeded: Bool) -> Bool {
+        guard preparedSubmission === operation else { return false }
+        preparedSubmission = nil
+        guard succeeded, isRunning, failure === operation.failure, failure.error == nil,
+              invalidation.isCurrent(operation.revision), replacement == nil else { return false }
+        if operation.sample.imageBuffer != nil { lastSubmittedSourcePTS = operation.sample.presentationTimeStamp }
+        presentationTimeStamp = operation.sample.presentationTimeStamp
+        return true
+    }
+
+    func append(_ sampleBuffer: CMSampleBuffer) {
+        if sampleBuffer.formatDescription?.isCompressed != true {
+            if let operation = prepareSubmission(sampleBuffer) {
+                commitSubmission(operation, succeeded: operation.run())
+            }
             return
         }
-        let sourcePTS = sample.presentationTimeStamp
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        var status: OSStatus = noErr
-        defer {
-            encoderSubmissionObserver(.init(sourcePTS: sourcePTS, encoderSessionID: sessionID,
-                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
+        guard isRunning, failure.error == nil else { return }
+        guard replacement == nil, preparedSubmission == nil else {
+            failure.fail(.outputTerminated(boundary: "video replacement input")); return
         }
-        do { try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion) }
-        catch {
-            status = (error as? VTSessionError)?.status ?? -1
-            throw error
-        }
-    }
-
-    private func submissionObserver(sessionID: UUID) -> VideoEncoderCompletionObserver? {
-        guard let configurationObserver = encoderConfigurationObserver else { return encoderCompletionObserver }
-        let legacyObserver = encoderCompletionObserver
-        let configuration = recordedBitRateChange?.configuration
-        let submittedAt = ProcessInfo.processInfo.systemUptime
-        return { source, output in
-            let completedAt = ProcessInfo.processInfo.systemUptime
-            legacyObserver?(source, output)
-            configurationObserver(.init(sourcePTS: source, outputPTS: output,
-                encoderSessionID: sessionID, configuration: configuration,
-                submittedAt: submittedAt, completedAt: completedAt))
+        do {
+            guard let (session, _) = try prepareSession(sampleBuffer), let continuation else { return }
+            try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
+        } catch {
+            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
+            logger.warn(error)
         }
     }
 
@@ -231,8 +227,8 @@ final class VideoCodec {
     /// Only terminal invalidation may overlap the captured native session.
     func makeCompletion() -> @Sendable () -> Void {
         terminalCompletionCaptured = true
-        if replacement != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
-        let completion = VideoCompletion(session: replacement == nil ? session : nil,
+        if replacement != nil || preparedSubmission != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
+        let completion = VideoCompletion(session: replacement == nil && preparedSubmission == nil ? session : nil,
             output: continuation, failure: failure)
         return { completion.run() }
     }
@@ -326,6 +322,7 @@ extension VideoCodec: Runner {
             return
         }
         isRunning = false
+        preparedSubmission = nil
         replacement = nil
         session = nil
         sessionMode = nil
