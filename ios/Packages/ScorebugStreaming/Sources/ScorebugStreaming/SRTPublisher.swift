@@ -249,8 +249,8 @@ public actor SRTPublisher {
         return receipt
     }
 
-    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
-        guard !repeatable || staged else { throw PublishingBandwidthProbeError.obsolete }
+    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false, policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) async throws -> PublishingBandwidthProbeSnapshot {
+        guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw PublishingBandwidthProbeError.obsolete }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
@@ -258,8 +258,8 @@ public actor SRTPublisher {
         return try await runProbeOperation(generation: generation, revision: revision) {
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.beginBandwidthProbe(
-                    bitRate: bitRate, publishingGeneration: generation, staged: staged, repeatable: repeatable))
-                guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable) else {
+                    bitRate: bitRate, publishingGeneration: generation, staged: staged, repeatable: repeatable, policy: policy))
+                guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable, policy: policy) else {
                     try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }

@@ -24,13 +24,22 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The native probe and publisher adapters now support an **explicit recovery-budget
+policy**. It uses actual negotiated SRT delay, RTT and sender backlog, permits
+recovered retransmissions, and stops on exhausted budgets, invalid telemetry or
+actual sender drops. Legacy callers keep the prior policy. Native (320), Streaming (179) and app-model (522)
+suites pass, including a real local SRT connection that preserves policy through
+replacement and restart. App admission/audit integration is still pending, so this
+is not yet an impaired-network adaptation pass. See the
+[recovery-budget implementation](2026-09-24-recovery-budget-probe.md).
+
 The newest real-match **network impairment check is not yet qualified**. A local
 link with 30ms delay each way and 0.2% datagram removal exposed insufficient SRT
 recovery latency, decoder buffering and loopback-only probe assumptions. With an
 explicit 400ms SRT budget and slice decoding, all 157 observed deadline windows
-now deliver 30fps within 1.5s; archive/live frame continuity also passes. Quality
-increases remain blocked by the probe's 50ms RTT/buffer limits, no-retransmission gate and short
-retransmission-pressure windows. Production stays at the minimum. The
+now deliver 30fps within 1.5s; archive/live frame continuity also passes. In those runs, quality
+increases remained blocked by the legacy probe's 50ms RTT/buffer limits, zero-retransmission
+gate and short retransmission-pressure windows. Production stays at the minimum. The
 [measured-network plan](2026-09-24-measured-network-link.md) records all three
 failed full qualifications, passing component evidence, cleanup and the next
 network-aware admission work. No removed simulator runtime was reinstalled.

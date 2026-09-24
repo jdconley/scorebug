@@ -985,3 +985,32 @@ private func expectRestartInterruption(_ pending: Task<SRTBandwidthProbeSnapshot
         else { #expect(error as? SRTBandwidthProbeError == .obsolete) }
     }
 }
+
+extension SRTStreamPaddingTests {
+    @Test func recoveryPolicyIsExplicitAndInheritedAcrossReplacementAndRestart() async throws {
+        let (stream, connection, generation) = try await restartFixture(statisticsReader: { _, mon, _ in
+            mon.msRTT = 65; mon.msSndBuf = 67; mon.msSndTsbPdDelay = 400
+            mon.byteSentTotal = 10_000; mon.byteRetransTotal = 100; return 0
+        })
+        await #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+            try await stream.beginBandwidthProbe(bitRate: 500_000, publishingGeneration: generation, policy: .recoveryBudget)
+        }
+        #expect(await stream.bandwidthProbeSnapshot == nil)
+        let first = try await stream.beginBandwidthProbe(bitRate: 500_000, publishingGeneration: generation,
+            staged: true, repeatable: true, policy: .recoveryBudget)
+        #expect(first.policy == .recoveryBudget)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1, policy: .recoveryBudget) == true)
+        let renewed = try await stream.renewBandwidthProbe(id: first.id, publishingGeneration: generation)
+        #expect(renewed.policy == .recoveryBudget)
+        let replacement = try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 1_000_000)
+        #expect(replacement.policy == .recoveryBudget && replacement.stage == 2)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1, policy: .recoveryBudget) == false)
+        try await stream.cancelBandwidthProbe(id: replacement.id, publishingGeneration: generation)
+        let restarted = try await stream.restartBandwidthProbe(id: replacement.id, publishingGeneration: generation, stage: 2, bitRate: 500_000)
+        #expect(restarted.policy == .recoveryBudget && restarted.campaign == 2)
+        #expect(restarted.authority?.permits(id: restarted.id, generation: generation, stage: 1, policy: .recoveryBudget) == true)
+        await stream.finish(); await connection.close()
+        #expect(restarted.authority?.permits(id: restarted.id, generation: generation, stage: 1, policy: .recoveryBudget) == false)
+    }
+}

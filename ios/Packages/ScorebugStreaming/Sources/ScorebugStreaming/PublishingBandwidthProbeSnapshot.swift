@@ -7,6 +7,7 @@ public enum PublishingBandwidthProbeError: Error, Equatable, Sendable {
 
 /// Local native acceptance only; this is not receiver delivery or usable capacity.
 public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
+    public typealias Policy = SRTBandwidthProbePolicy
     public typealias Reason = SRTBandwidthProbeSnapshot.Reason
     public typealias Authority = SRTBandwidthProbeAuthority
     public let id: UUID
@@ -22,6 +23,7 @@ public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
     public internal(set) var authority: Authority? = nil
     public internal(set) var campaignStartedAt: Double? = nil
     public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
+    public internal(set) var policy: Policy = .localZeroLoss
 }
 
 extension PublishingBandwidthProbeSnapshot {
@@ -30,11 +32,12 @@ extension PublishingBandwidthProbeSnapshot {
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
             acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt, reason: value.reason,
             stage: value.stage, campaign: value.campaign, authority: value.authority, campaignStartedAt: value.campaignStartedAt,
-            totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes)
+            totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes, policy: value.policy)
     }
 
-    func isValidStart(staged: Bool, bitRate: Int, repeatable: Bool = false) -> Bool {
-        guard self.bitRate == bitRate, !repeatable || staged,
+    func isValidStart(staged: Bool, bitRate: Int, repeatable: Bool = false, policy: Policy = .localZeroLoss) -> Bool {
+        guard self.policy == policy, policy == .localZeroLoss || staged,
+              self.bitRate == bitRate, !repeatable || staged,
               campaign == (repeatable ? UInt32(1) : nil) else { return false }
         if !staged { return stage == nil && campaignStartedAt == nil && totalAcceptedPayloadBytes == nil }
         return stage == 1 && hasValidCampaignAccounting && campaignStartedAt == startedAt
@@ -42,7 +45,7 @@ extension PublishingBandwidthProbeSnapshot {
     }
 
     func isValidRenewal(of prior: Self) -> Bool {
-        guard id == prior.id, publishingGeneration == prior.publishingGeneration,
+        guard policy == prior.policy, id == prior.id, publishingGeneration == prior.publishingGeneration,
               bitRate == prior.bitRate, startedAt == prior.startedAt, stage == prior.stage, campaign == prior.campaign,
               campaignStartedAt == prior.campaignStartedAt,
               acceptedPayloadBytes >= prior.acceptedPayloadBytes else { return false }
@@ -54,7 +57,7 @@ extension PublishingBandwidthProbeSnapshot {
     }
 
     func isValidReplacement(of prior: Self, bitRate: Int) -> Bool {
-        guard let previousStage = prior.stage, previousStage < 32,
+        guard policy == prior.policy, let previousStage = prior.stage, previousStage < 32,
               stage == previousStage + 1, campaign == prior.campaign, id != prior.id,
               publishingGeneration == prior.publishingGeneration, self.bitRate == bitRate,
               campaignStartedAt == prior.campaignStartedAt, startedAt >= prior.startedAt,
@@ -67,7 +70,7 @@ extension PublishingBandwidthProbeSnapshot {
 
     /// A new campaign must carry neither the old traffic budget nor stale time.
     func isValidRestart(of prior: Self, bitRate: Int, requestedAt: Double, observedAt: Double) -> Bool {
-        guard (1...12_000_000).contains(bitRate), prior.hasValidCampaignAccounting, id != prior.id,
+        guard policy == prior.policy, (1...12_000_000).contains(bitRate), prior.hasValidCampaignAccounting, id != prior.id,
               let previousCampaign = prior.campaign, previousCampaign > 0, previousCampaign < UInt32.max,
               campaign == previousCampaign + 1,
               publishingGeneration == prior.publishingGeneration,

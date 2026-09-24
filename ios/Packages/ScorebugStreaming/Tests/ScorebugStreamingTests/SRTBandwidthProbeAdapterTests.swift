@@ -36,11 +36,23 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
     }
 
     func testConnectedNativeAdapterStagesReplaceAndRetainAuthority() async throws {
+        try await connectedStages(policy: .localZeroLoss)
+    }
+
+    func testConnectedNativeRecoveryPolicySurvivesReplacementAndRestart() async throws {
+        try await connectedStages(policy: .recoveryBudget)
+    }
+
+    private func connectedStages(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         let adapter = SRTPublisher(allowsBandwidthProbes: true)
         try await adapter.configure()
         let listener = try ProbeTestListener()
         defer { listener.close() }
-        let url = listener.url
+        var components = try XCTUnwrap(URLComponents(url: listener.url, resolvingAgainstBaseURL: false))
+        if policy == .recoveryBudget {
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "peerlatency", value: "400")]
+        }
+        let url = try XCTUnwrap(components.url)
         let start = Task { try await adapter.start(url) }
         do {
             try await listener.accept()
@@ -68,11 +80,17 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(10))
             }
             XCTAssertTrue(admissionReady, "Loopback statistics must satisfy native admission")
-            let first = try await adapter.beginBandwidthProbe(bitRate: 500_000, staged: true)
+            if policy == .recoveryBudget {
+                let statistics = await adapter.transportStatistics()
+                XCTAssertEqual(statistics?.senderDeliveryDelayMilliseconds, 400)
+            }
+            let first = try await adapter.beginBandwidthProbe(bitRate: 500_000, staged: true, repeatable: true, policy: policy)
+            XCTAssertEqual(first.policy, policy)
             XCTAssertEqual(first.stage, 1)
             XCTAssertEqual(first.campaignStartedAt, first.startedAt)
             XCTAssertEqual(first.totalAcceptedPayloadBytes, 0)
             let firstAuthority = try XCTUnwrap(first.authority)
+            XCTAssertTrue(firstAuthority.permits(id: first.id, generation: first.publishingGeneration, stage: 1, policy: policy))
             for (id, generation, stage) in [(UUID(), first.publishingGeneration, UInt32(1)),
                 (first.id, first.publishingGeneration + 1, 1), (first.id, first.publishingGeneration, 2)] {
                 do { _ = try await adapter.replaceBandwidthProbe(id: id, publishingGeneration: generation, stage: stage, bitRate: 1_000_000); XCTFail() }
@@ -82,9 +100,10 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             // its identity available for an explicit valid retry.
             do { _ = try await adapter.replaceBandwidthProbe(id: first.id, publishingGeneration: first.publishingGeneration, stage: 1, bitRate: 0); XCTFail() }
             catch { XCTAssertEqual(error as? PublishingBandwidthProbeError, .failed) }
-            XCTAssertFalse(firstAuthority.permits(id: first.id, generation: first.publishingGeneration, stage: 1))
+            XCTAssertFalse(firstAuthority.permits(id: first.id, generation: first.publishingGeneration, stage: 1, policy: policy))
             let second = try await adapter.replaceBandwidthProbe(id: first.id, publishingGeneration: first.publishingGeneration, stage: 1, bitRate: 1_000_000)
             XCTAssertNotEqual(second.id, first.id)
+            XCTAssertEqual(second.policy, policy)
             XCTAssertEqual(second.stage, 2)
             XCTAssertEqual(second.campaignStartedAt, first.campaignStartedAt)
             XCTAssertEqual(second.acceptedPayloadBytes, 0)
@@ -92,6 +111,17 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             XCTAssertEqual(renewed.stage, second.stage)
             XCTAssertTrue(renewed.authority === second.authority)
             XCTAssertEqual(renewed.campaignStartedAt, first.campaignStartedAt)
+            XCTAssertEqual(renewed.policy, policy)
+            let authority = try XCTUnwrap(renewed.authority)
+            XCTAssertTrue(authority.permits(id: renewed.id, generation: renewed.publishingGeneration, stage: 2, policy: policy))
+            if policy == .recoveryBudget {
+                XCTAssertFalse(authority.permits(id: renewed.id, generation: renewed.publishingGeneration, stage: 2))
+            }
+            await adapter.cancelBandwidthProbe(id: renewed.id, publishingGeneration: renewed.publishingGeneration)
+            let restarted = try await adapter.restartBandwidthProbe(id: renewed.id, publishingGeneration: renewed.publishingGeneration, stage: 2, bitRate: 500_000)
+            XCTAssertEqual(restarted.policy, policy)
+            XCTAssertEqual(restarted.campaign, 2)
+            XCTAssertFalse(authority.permits(id: renewed.id, generation: renewed.publishingGeneration, stage: 2, policy: policy))
             let healthy = await adapter.isPublishing()
             XCTAssertTrue(healthy)
             await adapter.stop()

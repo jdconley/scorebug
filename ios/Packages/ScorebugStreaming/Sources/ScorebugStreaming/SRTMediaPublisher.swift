@@ -1,5 +1,6 @@
 import Foundation
 import ScorebugMedia
+import SRTHaishinKit
 
 /// One terminal SRT attempt for PublishingSession. Configuration, connection and
 /// shutdown may overlap: stopping prevents late readiness and joins one shielded
@@ -66,7 +67,8 @@ public actor SRTMediaPublisher: MediaPublisher {
             beginStagedProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true) },
             replaceProbe: { try await adapter.replaceBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) },
             restartProbe: { try await adapter.restartBandwidthProbe(id: $0, publishingGeneration: $1, stage: $2, bitRate: $3) },
-            beginRepeatableProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true, repeatable: true) })
+            beginRepeatableProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true, repeatable: true) },
+            beginRecoveryProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true, repeatable: $1, policy: .recoveryBudget) })
     }
 
     struct Operations: Sendable {
@@ -88,6 +90,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var replaceProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
         var restartProbe: @Sendable (UUID, UInt64, UInt32, Int) async throws -> PublishingBandwidthProbeSnapshot = { _, _, _, _ in throw PublishingBandwidthProbeError.disabled }
         var beginRepeatableProbe: @Sendable (Int) async throws -> PublishingBandwidthProbeSnapshot = { _ in throw PublishingBandwidthProbeError.disabled }
+        var beginRecoveryProbe: @Sendable (Int, Bool) async throws -> PublishingBandwidthProbeSnapshot = { _, _ in throw PublishingBandwidthProbeError.disabled }
     }
     init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
@@ -217,18 +220,19 @@ public actor SRTMediaPublisher: MediaPublisher {
         }
     }
 
-    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false) async throws -> PublishingBandwidthProbeSnapshot {
-        guard !repeatable || staged else { throw PublishingBandwidthProbeError.obsolete }
+    public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false, policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) async throws -> PublishingBandwidthProbeSnapshot {
+        guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw PublishingBandwidthProbeError.obsolete }
         guard state == .publishing else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
         return try await runProbeOperation { try await self.performProbeOperation(revision: revision) {
             let value: PublishingBandwidthProbeSnapshot
-            if repeatable { value = try await self.operations.beginRepeatableProbe(bitRate) }
+            if policy == .recoveryBudget { value = try await self.operations.beginRecoveryProbe(bitRate, repeatable) }
+            else if repeatable { value = try await self.operations.beginRepeatableProbe(bitRate) }
             else if staged { value = try await self.operations.beginStagedProbe(bitRate) }
             else { value = try await self.operations.beginProbe(bitRate) }
-            guard value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable) else {
+            guard value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable, policy: policy) else {
                 await self.operations.cancelProbe(value.id, value.publishingGeneration)
                 throw PublishingBandwidthProbeError.obsolete
             }

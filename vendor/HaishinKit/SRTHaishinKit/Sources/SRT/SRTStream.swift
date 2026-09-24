@@ -63,10 +63,10 @@ public actor SRTStream {
         bandwidthProbe?.snapshot(now: { ProcessInfo.processInfo.systemUptime })
     }
     public func beginBandwidthProbe(bitRate: Int, publishingGeneration expected: UInt64,
-                                    staged: Bool = false, repeatable: Bool = false) async throws -> SRTBandwidthProbeSnapshot {
+                                    staged: Bool = false, repeatable: Bool = false, policy: SRTBandwidthProbePolicy = .localZeroLoss) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard !repeatable || staged else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw SRTBandwidthProbeError.invalidConfiguration }
         let maximumBitRate = staged ? 12_000_000 : 2_000_000
         guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
@@ -82,7 +82,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: staged ? 1 : nil, campaign: repeatable ? 1 : nil, campaignStartedAt: staged ? at : nil)
+            stage: staged ? 1 : nil, campaign: repeatable ? 1 : nil, campaignStartedAt: staged ? at : nil, policy: policy)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -123,7 +123,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: stage + 1, campaign: retired.campaign, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted)
+            stage: stage + 1, campaign: retired.campaign, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted, policy: retired.policy)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -166,7 +166,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: 1, campaign: campaign, campaignStartedAt: at)
+            stage: 1, campaign: campaign, campaignStartedAt: at, policy: retired.policy)
         return installBandwidthProbe(probe, at: at)
     }
 
