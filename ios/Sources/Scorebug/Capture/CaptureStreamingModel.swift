@@ -754,7 +754,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
         if let prior = receiverProbeOwner {
             let sameOwner = prior.id == value.id && prior.publishingGeneration == value.publishingGeneration &&
-                prior.stage == value.stage && prior.campaign == value.campaign && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
+                prior.policy == value.policy && prior.stage == value.stage && prior.campaign == value.campaign && prior.bitRate == value.bitRate && prior.startedAt == value.startedAt
             if sameOwner {
                 guard value.acceptedPayloadBytes >= prior.acceptedPayloadBytes,
                       value.leaseDeadline >= prior.leaseDeadline,

@@ -113,7 +113,7 @@ struct PublishingCandidateAdmission: Sendable {
               candidateIsCurrent(), authority.permits(receiver), authority.permits(pair.older.end),
               pair.older.end.snapshot == pair.newer.start,
               binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
-              binding.stage == probe.stage, binding.campaign == probe.campaign, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
+              binding.policy == probe.policy, binding.stage == probe.stage, binding.campaign == probe.campaign, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
               binding.startedAt + 0.5 <= boundAt, boundAt <= m.startedAt, binding.isActive(at: boundAt),
               probe.id.uuidString.lowercased() == expected.probeId, probe.publishingGeneration == expected.publishingGeneration,
               probe.stage == expected.stage, probe.campaign == expected.campaign, probe.bitRate == expected.bitRate, probe.stage != nil,
@@ -209,6 +209,10 @@ extension PublishingCandidateAdmission {
              "stage": optional(p.stage), "bitRate": p.bitRate, "startedAt": p.startedAt,
              "leaseDeadline": p.leaseDeadline, "acceptedPayloadBytes": String(p.acceptedPayloadBytes),
              "lastAcceptedAt": optional(p.lastAcceptedAt), "reason": optional(p.reason)]
+            if p.policy == .recoveryBudget {
+                object["policy"] = p.policy.rawValue
+                object["recoveryObservation"] = p.recoveryObservation?.auditObject ?? NSNull()
+            }
             if let campaign = p.campaign { object["campaign"] = String(campaign) }
             return object
         }
@@ -236,7 +240,9 @@ extension PublishingCandidateAdmission {
                 "payloadBitsPerSecondLowerBound": i.payloadBitsPerSecondLowerBound]
         }
         let m = w.measurement, receipt = applied.receipt
-        let result: [String: Any] = ["formatVersion": 1, "convention": "measured-candidate-ipv4-v1",
+        let recovery = probe.policy == .recoveryBudget
+        let result: [String: Any] = ["formatVersion": recovery ? 2 : 1,
+            "convention": recovery ? "measured-candidate-ipv4-recovery-v1" : "measured-candidate-ipv4-v1",
             "evaluatedAt": value.evaluatedAt, "validUntil": value.validUntil,
             "measurement": ["id": m.id.uuidString.lowercased(),
                 "scope": ["recordingID": m.scope.recordingID, "matchID": m.scope.matchID,

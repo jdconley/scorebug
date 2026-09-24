@@ -6,6 +6,29 @@ public enum SRTBandwidthProbePolicy: String, Sendable {
     case recoveryBudget = "recovery-budget-v1"
 }
 
+/// The exact most recent successful native preflight check. Snapshot reads do
+/// not refresh either clock. This is not receiver delivery or spare capacity.
+public struct SRTBandwidthProbeRecoveryObservation: Equatable, Sendable {
+    public let checkedAt: Double
+    public let sampledAt: Double
+    public let elapsedMilliseconds: Int64
+    public let sentBytes: UInt64
+    public let retransmittedBytes: UInt64
+    public let droppedPackets: Int32
+    public let rttMilliseconds: Double
+    public let senderBufferMilliseconds: Int32
+    public let senderDeliveryDelayMilliseconds: Int32
+    public var isValid: Bool {
+        checkedAt.isFinite && sampledAt.isFinite && sampledAt >= 0 && sampledAt <= checkedAt
+            && checkedAt - sampledAt <= 0.1 && elapsedMilliseconds >= 0
+            && retransmittedBytes <= sentBytes && droppedPackets >= 0
+            && rttMilliseconds.isFinite && rttMilliseconds >= 0
+            && senderBufferMilliseconds >= 0 && senderDeliveryDelayMilliseconds > 0
+            && rttMilliseconds <= min(500, Double(senderDeliveryDelayMilliseconds) / 4)
+            && Double(senderBufferMilliseconds) <= min(500, Double(senderDeliveryDelayMilliseconds) / 2)
+    }
+}
+
 /// Constant-size native-send guard. Receipt and media proof remain separate.
 /// The half-delay queue ceiling reserves recovery room; it is a project probe
 /// bound, not a protocol promise that packets will arrive before a deadline.
@@ -34,9 +57,16 @@ struct SRTProbeTransportGuard {
         }
     }
     private var previous: Sample
+    private var checkedAt: Double
+    var observation: SRTBandwidthProbeRecoveryObservation {
+        .init(checkedAt: checkedAt, sampledAt: previous.at, elapsedMilliseconds: previous.elapsed,
+            sentBytes: previous.sent, retransmittedBytes: previous.retransmitted, droppedPackets: previous.dropped,
+            rttMilliseconds: previous.rtt, senderBufferMilliseconds: previous.buffer,
+            senderDeliveryDelayMilliseconds: previous.delay)
+    }
     init?(statistics: SRTPerformanceData, at now: Double) {
         guard let initial = Sample(statistics, at: now), initial.withinBudget else { return nil }
-        previous = initial
+        previous = initial; checkedAt = now
     }
     mutating func observe(_ statistics: SRTPerformanceData?, at now: Double) -> SRTBandwidthProbeSnapshot.Reason? {
         guard let statistics, let current = Sample(statistics, at: now),
@@ -46,7 +76,7 @@ struct SRTProbeTransportGuard {
               current.retransmitted - previous.retransmitted <= current.sent - previous.sent,
               current.at != previous.at || current == previous else { return .unavailableStatistics }
         guard current.withinBudget, current.dropped == previous.dropped else { return .transportPressure }
-        previous = current
+        previous = current; checkedAt = now
         return nil
     }
 }

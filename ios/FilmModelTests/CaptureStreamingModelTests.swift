@@ -3,6 +3,7 @@ import Foundation
 import ScorebugCore
 import ScorebugMedia
 import XCTest
+@testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
     func testReceiverEvidenceWriterIncludesRepeatedModeAndRetainsLegacySelection() {
@@ -268,6 +269,37 @@ import XCTest
             evaluatedAt: nil, isClosed: false, isBusy: false)
     }
 
+    func testChangedProbePolicyRevokesPriorReceiverAuthority() async throws {
+        let (model, server, publisher, initial) = try await receiverProbeModel()
+        let original = await publisher.probeValue()
+        var probe = try XCTUnwrap(original)
+        probe.stage = 3
+        await publisher.setProbe(probe)
+        var response = initial
+        response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
+        response.status.receiverProbe?.snapshot.stage = 3
+        response.status.receiverProbe?.snapshot.totalDeliveredPayloadBytes = "2632"
+        let template = response, anchor = ProcessInfo.processInfo.systemUptime
+        await server.setStatusResponseFactory { at in
+            var response = template
+            response.status.receiverProbe?.snapshot.observedAtNanoseconds = String(1_000_000_000 + Int64((at - anchor) * 1e9))
+            return response
+        }
+        await model.pollControl()
+        let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+        let authority = try XCTUnwrap(model.candidateAuthority)
+        XCTAssertTrue(authority.permits(receiver))
+        probe.policy = .recoveryBudget
+        let checkedAt = ProcessInfo.processInfo.systemUptime
+        probe.recoveryObservation = .init(checkedAt: checkedAt, sampledAt: checkedAt, elapsedMilliseconds: 1000,
+            sentBytes: 10_000, retransmittedBytes: 100, droppedPackets: 0, rttMilliseconds: 65,
+            senderBufferMilliseconds: 67, senderDeliveryDelayMilliseconds: 400)
+        XCTAssertTrue(probe.isActive(at: checkedAt))
+        await publisher.setProbe(probe)
+        await model.pollControl()
+        XCTAssertFalse(authority.permits(receiver), "New native policy must revoke prior receiver ownership")
+        await model.stopStreaming()
+    }
     func testReplacementTapSynchronouslyWithdrawsReceiverEvidence() async throws {
         let (model, server, _, response) = try await receiverProbeModel()
         await server.setStatusOverride(response); await model.pollControl()
@@ -281,7 +313,7 @@ import XCTest
     func testProbeObservationRateCeilingDependsOnStageAndRequiresCurrentOwner() {
         var sample = PublishingProbeObservation(id: UUID(), publishingGeneration: 1, bitRate: 2_000_000,
             startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil,
-            reason: nil, permitsCurrentOwner: { _, _, _ in true })
+            reason: nil, permitsCurrentOwner: { _, _, _, _ in true })
         XCTAssertTrue(sample.isActive(at: 10.1))
         sample.bitRate = 2_000_001
         XCTAssertFalse(sample.isActive(at: 10.1))
@@ -295,9 +327,9 @@ import XCTest
         sample.stage = 33
         XCTAssertFalse(sample.isActive(at: 10.1))
         sample.stage = 1
-        sample.permitsCurrentOwner = { _, _, _ in false }
+        sample.permitsCurrentOwner = { _, _, _, _ in false }
         XCTAssertFalse(sample.isActive(at: 10.1))
-        sample.permitsCurrentOwner = { _, _, _ in true }
+        sample.permitsCurrentOwner = { _, _, _, _ in true }
         XCTAssertFalse(sample.isActive(at: 10.3))
         sample.reason = "cancelled"
         XCTAssertFalse(sample.isActive(at: 10.1))
@@ -353,7 +385,7 @@ import XCTest
         let ownership = CaptureProbeOwnership()
         let value = await publisher.probeValue()
         var sample = try XCTUnwrap(value)
-        sample.permitsCurrentOwner = { _, _, _ in ownership.permits }
+        sample.permitsCurrentOwner = { _, _, _, _ in ownership.permits }
         await publisher.setProbe(sample)
         await server.setStatusOverride(response); await model.pollControl()
         XCTAssertNotNil(model.workerReceiverProbeFreshness)
@@ -384,7 +416,7 @@ import XCTest
             var sample = try XCTUnwrap(value)
             sample.stage = mode == "legacyOwner" ? nil : 3
             sample.permitsCurrentOwner = nil
-            if mode != "missingAuthority" { sample.permitsCurrentOwner = { _, _, _ in true } }
+            if mode != "missingAuthority" { sample.permitsCurrentOwner = { _, _, _, _ in true } }
             await publisher.setProbe(sample)
             var response = initial
             response.status.receiverProbe?.snapshot.convention = "mpegts-null-probe-v2"
@@ -405,7 +437,7 @@ import XCTest
             let value = await publisher.probeValue()
             var sample = try XCTUnwrap(value)
             sample.stage = stage
-            sample.permitsCurrentOwner = { _, _, _ in ownership.permits }
+            sample.permitsCurrentOwner = { _, _, _, _ in ownership.permits }
             await publisher.setProbe(sample)
             var response = initial
             if let stage {
@@ -600,7 +632,7 @@ import XCTest
         let id = UUID()
         await publisher.setProbe(.init(id: id, publishingGeneration: 1, bitRate: 1_000_000,
             startedAt: now - 1, leaseDeadline: now + 10, acceptedPayloadBytes: 2632,
-            lastAcceptedAt: now - 0.01, reason: nil, permitsCurrentOwner: { _, _, _ in true }))
+            lastAcceptedAt: now - 0.01, reason: nil, permitsCurrentOwner: { _, _, _, _ in true }))
         var response = workerAgeResponse()
         response.status.workerEpoch = "22222222-2222-2222-2222-222222222222"
         response.status.publication = .init(readerId: "33333333-3333-3333-3333-333333333333",

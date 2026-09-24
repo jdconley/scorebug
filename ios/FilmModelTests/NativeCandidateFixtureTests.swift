@@ -578,7 +578,7 @@ extension NativeCandidateFixtureTests {
         XCTAssertTrue(fake.object?["invalidReason"] is NSNull)
     }
     func testCombinedAppendRejectsChangedCurrentIdentityAndRateBeforeMonitorPoll() async throws {
-        for fault in [5, 6, 7] {
+        for fault in [5, 6, 7, 8] {
             let fake = CandidateFixtureFake(), wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10))
             fake.setProbe(stage: 3)
             await wrapper.setDiagnostics { fake.pressure }
@@ -704,60 +704,70 @@ extension NativeCandidateFixtureTests {
     }
 
     func testLifecycleCapturesAuthorityBeforeRevocationAndKeepsClosedMeasurement() async throws {
-        let fake = CandidateFixtureFake()
-        let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
-        let wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10), lifecycle: audit,
-            profileReceipt: { fake.receivedProfile($0) }, joinedStop: { fake.markJoinedStop() })
-        fake.produceTypedCost = true; fake.allowProfileWrite = true; fake.allowBitRateWrite = true; fake.setProbe(stage: 3)
-        await wrapper.setDiagnostics { fake.pressure }
-        try await wrapper.start(); await wait { fake.waiting }
-        fake.finish(); await wrapper.waitForMeasurement()
-        let snapshot = await wrapper.candidateSnapshot()
-        let candidate = try XCTUnwrap(snapshot)
-        let receipt = try await wrapper.setVideoProfile(.low360)
-        XCTAssertFalse(candidate.permitsCurrentCandidate(candidate.cost.id))
-        _ = try await wrapper.setVideoBitRate(600_000)
-        _ = try await wrapper.setVideoProfile(.low240)
-        async let first: Void = wrapper.stop()
-        async let second: Void = wrapper.stop()
-        _ = await (first, second)
-        let object = try XCTUnwrap(fake.lifecycleObject)
-        XCTAssertEqual(object["formatVersion"] as? Int, 1)
-        XCTAssertEqual(object["isClosed"] as? Bool, true)
-        XCTAssertEqual(object["overflow"] as? Bool, false)
-        let rows = try XCTUnwrap(object["profileRequests"] as? [[String: Any]])
-        XCTAssertEqual(rows.count, 2)
-        XCTAssertNotEqual(rows[0]["requestID"] as? String, rows[1]["requestID"] as? String)
-        XCTAssertEqual(rows[0]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
-        XCTAssertEqual(rows[1]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
-        XCTAssertEqual(rows[0]["authorityPermitted"] as? Bool, true)
-        XCTAssertEqual(rows[1]["authorityPermitted"] as? Bool, false)
-        XCTAssertEqual(rows[0]["targetProfile"] as? String, "360p30")
-        XCTAssertEqual(rows[1]["targetProfile"] as? String, "240p30")
-        let binding = try XCTUnwrap(rows[0]["probeBinding"] as? [String: Any])
-        let observation = try XCTUnwrap(binding["observation"] as? [String: Any])
-        XCTAssertEqual(observation["id"] as? String, candidate.binding.id.uuidString)
-        let native = try XCTUnwrap(rows[0]["receipt"] as? [String: Any])
-        XCTAssertEqual(native["encoderSessionID"] as? String, receipt.encoderSessionID.uuidString)
-        XCTAssertEqual(native["acknowledgedAt"] as? Double, receipt.acknowledgedAt)
-        let completed = try XCTUnwrap(rows[0]["completedAt"] as? Double)
-        XCTAssertLessThanOrEqual(try XCTUnwrap(rows[0]["requestedAt"] as? Double), receipt.acknowledgedAt)
-        XCTAssertGreaterThanOrEqual(completed, receipt.acknowledgedAt)
-        let terminal = try XCTUnwrap(rows[0]["terminalProbeRead"] as? [String: Any])
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["startedAt"] as? Double), completed)
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["completedAt"] as? Double), try XCTUnwrap(terminal["startedAt"] as? Double))
-        XCTAssertNil(terminal["acknowledgedAt"])
-        let rates = try XCTUnwrap(object["bitRateRequests"] as? [[String: Any]])
-        XCTAssertEqual(rates.count, 1)
-        XCTAssertEqual(rates[0]["profileRequestID"] as? String, rows[0]["requestID"] as? String)
-        XCTAssertEqual((rates[0]["receipt"] as? [String: Any])?["bitRate"] as? Int, 600_000)
-        XCTAssertEqual(fake.receivedProfiles.count, 2)
-        XCTAssertEqual(fake.joinedStops, 1)
-        XCTAssertEqual(fake.lifecycleExports, 1)
-        XCTAssertTrue(fake.object?["invalidReason"] is NSNull, "measured candidate closes before configuration retirement")
-        // The closed candidate's final probe is never replaced by lifecycle reads.
-        let closedBinding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
-        XCTAssertLessThanOrEqual(try XCTUnwrap((closedBinding["final"] as? [String: Any])?["observedAt"] as? Double), candidate.completedAt)
+        for recovery in [false, true] {
+            let fake = CandidateFixtureFake()
+            let audit = NativeCandidateLifecycleAudit(scope: fake.scope, export: { fake.exportLifecycle($0) })
+            let wrapper = makeCandidate(fake, candidateHeadroom: true, poll: .seconds(10), lifecycle: audit,
+                profileReceipt: { fake.receivedProfile($0) }, joinedStop: { fake.markJoinedStop() })
+            fake.produceTypedCost = true; fake.allowProfileWrite = true; fake.allowBitRateWrite = true; fake.setProbe(stage: 3)
+            if recovery { fake.mutateProbe(8) }
+            await wrapper.setDiagnostics { fake.pressure }
+            try await wrapper.start(); await wait { fake.waiting }
+            fake.finish(); await wrapper.waitForMeasurement()
+            let snapshot = await wrapper.candidateSnapshot()
+            let candidate = try XCTUnwrap(snapshot)
+            let receipt = try await wrapper.setVideoProfile(.low360)
+            XCTAssertFalse(candidate.permitsCurrentCandidate(candidate.cost.id))
+            _ = try await wrapper.setVideoBitRate(600_000)
+            _ = try await wrapper.setVideoProfile(.low240)
+            async let first: Void = wrapper.stop()
+            async let second: Void = wrapper.stop()
+            _ = await (first, second)
+            let object = try XCTUnwrap(fake.lifecycleObject)
+            XCTAssertEqual(object["formatVersion"] as? Int, 1)
+            XCTAssertEqual(object["isClosed"] as? Bool, true)
+            XCTAssertEqual(object["overflow"] as? Bool, false)
+            let rows = try XCTUnwrap(object["profileRequests"] as? [[String: Any]])
+            XCTAssertEqual(rows.count, 2)
+            XCTAssertNotEqual(rows[0]["requestID"] as? String, rows[1]["requestID"] as? String)
+            XCTAssertEqual(rows[0]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
+            XCTAssertEqual(rows[1]["candidateMeasurementID"] as? String, candidate.cost.id.uuidString)
+            XCTAssertEqual(rows[0]["authorityPermitted"] as? Bool, true)
+            XCTAssertEqual(rows[1]["authorityPermitted"] as? Bool, false)
+            XCTAssertEqual(rows[0]["targetProfile"] as? String, "360p30")
+            XCTAssertEqual(rows[1]["targetProfile"] as? String, "240p30")
+            let binding = try XCTUnwrap(rows[0]["probeBinding"] as? [String: Any])
+            let observation = try XCTUnwrap(binding["observation"] as? [String: Any])
+            XCTAssertEqual(observation["policy"] as? String, recovery ? "recovery-budget-v1" : nil)
+            XCTAssertEqual((observation["recoveryObservation"] as? [String: Any])?["senderDeliveryDelayMilliseconds"] as? Int, recovery ? 400 : nil)
+            XCTAssertEqual(observation["id"] as? String, candidate.binding.id.uuidString)
+            let native = try XCTUnwrap(rows[0]["receipt"] as? [String: Any])
+            XCTAssertEqual(native["encoderSessionID"] as? String, receipt.encoderSessionID.uuidString)
+            XCTAssertEqual(native["acknowledgedAt"] as? Double, receipt.acknowledgedAt)
+            let completed = try XCTUnwrap(rows[0]["completedAt"] as? Double)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(rows[0]["requestedAt"] as? Double), receipt.acknowledgedAt)
+            XCTAssertGreaterThanOrEqual(completed, receipt.acknowledgedAt)
+            let terminal = try XCTUnwrap(rows[0]["terminalProbeRead"] as? [String: Any])
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["startedAt"] as? Double), completed)
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(terminal["completedAt"] as? Double), try XCTUnwrap(terminal["startedAt"] as? Double))
+            XCTAssertNil(terminal["acknowledgedAt"])
+            let rates = try XCTUnwrap(object["bitRateRequests"] as? [[String: Any]])
+            XCTAssertEqual(rates.count, 1)
+            XCTAssertEqual(rates[0]["profileRequestID"] as? String, rows[0]["requestID"] as? String)
+            XCTAssertEqual((rates[0]["receipt"] as? [String: Any])?["bitRate"] as? Int, 600_000)
+            XCTAssertEqual(fake.receivedProfiles.count, 2)
+            XCTAssertEqual(fake.joinedStops, 1)
+            XCTAssertEqual(fake.lifecycleExports, 1)
+            XCTAssertTrue(fake.object?["invalidReason"] is NSNull, "measured candidate closes before configuration retirement")
+            // The closed candidate's final probe is never replaced by lifecycle reads.
+            let closedBinding = try XCTUnwrap(fake.object?["probeBinding"] as? [String: Any])
+            for name in ["initial", "final"] {
+                let exported = try XCTUnwrap(closedBinding[name] as? [String: Any])
+                XCTAssertEqual(exported["policy"] as? String, recovery ? "recovery-budget-v1" : nil)
+                XCTAssertEqual((exported["recoveryObservation"] as? [String: Any])?["senderDeliveryDelayMilliseconds"] as? Int, recovery ? 400 : nil)
+            }
+            XCTAssertLessThanOrEqual(try XCTUnwrap((closedBinding["final"] as? [String: Any])?["observedAt"] as? Double), candidate.completedAt)
+        }
     }
 
     func testLifecycleFailureMissingProbeAndOverflowRemainBoundedDiagnostics() async throws {
@@ -1404,7 +1414,7 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
             probe = .init(id: UUID(), publishingGeneration: 7, bitRate: stage == 3 ? 12_000_000 : 2_000_000,
                 startedAt: now - age, leaseDeadline: now + 10, acceptedPayloadBytes: 1316,
                 lastAcceptedAt: now, reason: nil, stage: stage,
-                permitsCurrentOwner: { [weak self] _,_,_ in self?.lock.withLock { self?.authority == true } ?? false })
+                permitsCurrentOwner: { [weak self] _,_,_,_ in self?.lock.withLock { self?.authority == true } ?? false })
         }
     }
     func mutateProbe(_ fault: Int) {
@@ -1417,6 +1427,13 @@ private final class CandidateFixtureFake: MediaPublisher, PublishingProbeObservi
             case 4: authority = false
             case 5: probe?.bitRate = 2_000_000
             case 6: probe?.id = UUID()
+            case 8:
+                let now = ProcessInfo.processInfo.systemUptime
+                probe?.policy = .recoveryBudget
+                probe?.recoveryObservation = .init(checkedAt: now, sampledAt: now,
+                    elapsedMilliseconds: 1000, sentBytes: 10000, retransmittedBytes: 100,
+                    droppedPackets: 0, rttMilliseconds: 65, senderBufferMilliseconds: 67,
+                    senderDeliveryDelayMilliseconds: 400)
             default: probe?.publishingGeneration = 8
             }
         }
@@ -1606,4 +1623,57 @@ private final class CandidateReadResultTime: @unchecked Sendable {
     private var stored: Double?
     var value: Double? { lock.withLock { stored } }
     func mark() { lock.withLock { stored = ProcessInfo.processInfo.systemUptime } }
+}
+
+final class PublishingProbePolicyObservationTests: XCTestCase {
+    private func raw(check: Double = 10, sample: Double = 10, delay: Int32 = 400,
+                     rtt: Double = 65, buffer: Int32 = 67) -> SRTBandwidthProbeRecoveryObservation {
+        .init(checkedAt: check, sampledAt: sample, elapsedMilliseconds: 1000,
+            sentBytes: 10_000, retransmittedBytes: 1000, droppedPackets: 0,
+            rttMilliseconds: rtt, senderBufferMilliseconds: buffer, senderDeliveryDelayMilliseconds: delay)
+    }
+    private func observation(policy: PublishingProbeObservation.Policy = .recoveryBudget,
+                             evidence: SRTBandwidthProbeRecoveryObservation?) -> PublishingProbeObservation {
+        .init(id: UUID(), publishingGeneration: 1, bitRate: 500_000, startedAt: 10, leaseDeadline: 10.3,
+            acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil, stage: 1,
+            permitsCurrentOwner: { _, _, _, requested in requested == policy }, policy: policy, recoveryObservation: evidence)
+    }
+    func testNativePolicyAndObservationReachAppAuthorityAndExport() {
+        let id = UUID(), evidence = raw()
+        let authority = SRTBandwidthProbeAuthority(id: id, generation: 1, stage: 1, policy: .recoveryBudget)
+        let native = SRTBandwidthProbeSnapshot(id: id, publishingGeneration: 1, bitRate: 500_000,
+            startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil,
+            stage: 1, authority: authority, campaignStartedAt: 10, totalAcceptedPayloadBytes: 0,
+            policy: .recoveryBudget, recoveryObservation: evidence)
+        let wrapped = PublishingBandwidthProbeSnapshot(native)
+        let app = PublishingProbeObservation(wrapped)
+        XCTAssertEqual(app.policy, .recoveryBudget)
+        XCTAssertEqual(app.recoveryObservation, evidence)
+        XCTAssertTrue(app.isActive(at: 10.01))
+        var changed = app; changed.policy = .localZeroLoss
+        XCTAssertFalse(changed.isActive(at: 10.01))
+        let export = NativeBandwidthProbeSample(wrapped)
+        XCTAssertEqual(export.policy, .recoveryBudget)
+        XCTAssertEqual(export.recoveryObservation, evidence)
+        XCTAssertEqual(export.object["policy"] as? String, "recovery-budget-v1")
+        let object = export.object["recoveryObservation"] as? [String: Any]
+        XCTAssertEqual(object?["checkedAt"] as? Double, 10)
+        XCTAssertEqual(object?["sentBytes"] as? String, "10000")
+        XCTAssertEqual(object?["retransmittedBytes"] as? String, "1000")
+        authority.revoke()
+        XCTAssertFalse(app.isActive(at: 10.01))
+    }
+    func testRecoveryPolicyRequiresExactValidNativePreflight() {
+        XCTAssertTrue(observation(evidence: raw()).isActive(at: 10.01))
+        for evidence in [nil, raw(check: 9.99, sample: 9.99), raw(check: 10.1, sample: 10.1),
+                         raw(sample: 9.89), raw(sample: 10.01), raw(delay: 0), raw(rtt: 101), raw(buffer: 201)] {
+            XCTAssertFalse(observation(evidence: evidence).isActive(at: 10.01))
+        }
+        var value = observation(evidence: raw()); value.stage = nil
+        XCTAssertFalse(value.isActive(at: 10.01))
+        value = observation(evidence: raw()); value.policy = .localZeroLoss
+        XCTAssertFalse(value.isActive(at: 10.01))
+        XCTAssertTrue(observation(policy: .localZeroLoss, evidence: nil).isActive(at: 10.01))
+        XCTAssertFalse(observation(policy: .localZeroLoss, evidence: raw()).isActive(at: 10.01))
+    }
 }

@@ -17,6 +17,32 @@ import Testing
         try SRTBandwidthProbe(bitRate: 500_000, generation: 1, statistics: sample ?? stats(10), at: 10,
             stage: 1, campaignStartedAt: 10, policy: .recoveryBudget)
     }
+    @Test func recoverySnapshotsRetainRawSuccessfulCheckWithoutRefreshingOrLosingFailureContext() throws {
+        let p = try probe(), initial = p.snapshot(now: { 10 })
+        let first = try #require(initial.recoveryObservation)
+        #expect(first.isValid && first.checkedAt == 10 && first.sampledAt == 10)
+        #expect(first.elapsedMilliseconds == 1000 && first.sentBytes == 10_000 && first.retransmittedBytes == 0)
+        #expect(first.droppedPackets == 0 && first.rttMilliseconds == 65)
+        #expect(first.senderBufferMilliseconds == 67 && first.senderDeliveryDelayMilliseconds == 400)
+        let sample = stats(10.05, sent: 12000, retransmitted: 1316)
+        #expect(try p.offer(statistics: sample, now: { 10.1 }, send: { _ in true }))
+        let next = try #require(p.snapshot(now: { 10.11 }).recoveryObservation)
+        #expect(next.checkedAt == 10.1 && next.sampledAt == 10.05 && next.isValid)
+        #expect(next.sentBytes == 12000 && next.retransmittedBytes == 1316)
+        #expect(initial.recoveryObservation == first)
+        #expect(p.snapshot(now: { 10.12 }).recoveryObservation == next)
+        #expect(try p.offer(statistics: sample, now: { 10.13 }, send: { _ in true }))
+        let cached = try #require(p.snapshot(now: { 10.13 }).recoveryObservation)
+        #expect(cached.checkedAt == 10.13 && cached.sampledAt == 10.05)
+        #expect(try !p.offer(statistics: stats(10.2, sent: 14000, retransmitted: 1500, drops: 1), now: { 10.2 }, send: { _ in Issue.record("Dropped sample sent"); return true }))
+        let terminal = p.snapshot(now: { 10.21 })
+        #expect(terminal.reason == .transportPressure && terminal.recoveryObservation == cached)
+        p.cancel(.cancelled)
+        #expect(p.snapshot(now: { 11 }).recoveryObservation == cached)
+        let legacy = try SRTBandwidthProbe(bitRate: 500_000, generation: 1,
+            statistics: stats(10, rtt: 20, buffer: 20), at: 10)
+        #expect(legacy.snapshot(now: { 10 }).recoveryObservation == nil)
+    }
     @Test func delayedLinkAndRecoveredRetriesKeepNativePermitWithoutClaimingDelivery() throws {
         let p = try probe(), initial = p.snapshot(now: { 10 })
         #expect(initial.policy == .recoveryBudget)

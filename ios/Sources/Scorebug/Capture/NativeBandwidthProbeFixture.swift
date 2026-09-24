@@ -2,6 +2,7 @@
 import Foundation
 import ScorebugMedia
 import ScorebugStreaming
+import SRTHaishinKit
 
 struct NativeBandwidthProbeSample: Sendable {
     let id: UUID
@@ -14,13 +15,19 @@ struct NativeBandwidthProbeSample: Sendable {
     var reason: String?
     var stage: Int? = nil
     var campaign: UInt32? = nil
-    var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?) -> Bool)? = nil
+    var permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?, PublishingProbeObservation.Policy) -> Bool)? = nil
     var campaignStartedAt: Double? = nil
     var totalAcceptedPayloadBytes: UInt64? = nil
+    var policy: PublishingProbeObservation.Policy = .localZeroLoss
+    var recoveryObservation: PublishingProbeObservation.RecoveryObservation? = nil
     var object: [String: Any] {
         var object: [String: Any] = ["id": id.uuidString, "publishingGeneration": String(publishingGeneration), "bitRate": bitRate,
          "startedAt": startedAt, "leaseDeadline": leaseDeadline, "acceptedPayloadBytes": String(acceptedPayloadBytes),
          "lastAcceptedAt": lastAcceptedAt as Any? ?? NSNull(), "reason": reason as Any? ?? NSNull()]
+        if policy == .recoveryBudget {
+            object["policy"] = policy.rawValue
+            object["recoveryObservation"] = recoveryObservation.map(\.auditObject) as Any? ?? NSNull()
+        }
         if let stage { object["stage"] = stage }
         if let campaign { object["campaign"] = String(campaign) }
         if let campaignStartedAt { object["campaignStartedAt"] = campaignStartedAt }
@@ -34,7 +41,8 @@ extension NativeBandwidthProbeSample {
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
             lastAcceptedAt: value.lastAcceptedAt, reason: value.reason?.rawValue,
             stage: value.stage.flatMap(Int.init(exactly:)), campaign: value.campaign, permitsCurrentOwner: PublishingProbeObservation(value).permitsCurrentOwner,
-            campaignStartedAt: value.campaignStartedAt, totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes)
+            campaignStartedAt: value.campaignStartedAt, totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes,
+            policy: value.policy, recoveryObservation: value.recoveryObservation)
     }
 }
 
@@ -155,7 +163,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         return .init(id: value.id, publishingGeneration: value.publishingGeneration, bitRate: value.bitRate,
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline, acceptedPayloadBytes: value.acceptedPayloadBytes,
             lastAcceptedAt: value.lastAcceptedAt, reason: value.reason, stage: value.stage, campaign: value.campaign,
-            permitsCurrentOwner: value.permitsCurrentOwner)
+            permitsCurrentOwner: value.permitsCurrentOwner, policy: value.policy, recoveryObservation: value.recoveryObservation)
     }
     func append(_ sample: CapturedMediaSample) async throws { try await publisher.append(sample) }
     var isPublishing: Bool { get async { await publisher.isPublishing } }

@@ -1322,7 +1322,7 @@ struct CandidateQualityFixture: Sendable {
         let pair = try XCTUnwrap(tracker.latestPair)
         let binding = PublishingProbeObservation(id: probeID, publishingGeneration: 7, bitRate: 12_000_000, startedAt: 109,
             leaseDeadline: 109.9, acceptedPayloadBytes: 100 * 1316, lastAcceptedAt: 109.59, reason: nil, stage: 3,
-            permitsCurrentOwner: { _, _, _ in true })
+            permitsCurrentOwner: { _, _, _, _ in true })
         var probe = binding
         probe.leaseDeadline = 115.3; probe.acceptedPayloadBytes = 6000 * 1316; probe.lastAcceptedAt = 115.09
         let admission = try XCTUnwrap(PublishingCandidateAdmission.laboratoryIPv4(measurement: .init(id: UUID(),

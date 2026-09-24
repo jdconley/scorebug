@@ -40,7 +40,7 @@ final class NativeCandidateLifecycleAudit: @unchecked Sendable {
                 "probeBinding": ["boundAt": boundAt as Any? ?? NSNull(),
                     "candidateCompletedAt": candidateCompletedAt as Any? ?? NSNull(),
                     "observation": binding.map(Self.probe) as Any? ?? NSNull()],
-                "probeAuthorityPermitted": binding.map { $0.permitsCurrentOwner?($0.id, $0.publishingGeneration, $0.stage) == true } ?? false,
+                "probeAuthorityPermitted": binding.map { $0.permitsCurrentOwner?($0.id, $0.publishingGeneration, $0.stage, $0.policy) == true } ?? false,
                 "currentProbe": currentProbe.map(Self.probe) as Any? ?? NSNull(),
                 "currentProbeActive": currentProbe?.isActive(at: requestedAt) ?? false,
                 "outcome": "pending", "completedAt": NSNull(), "receipt": NSNull(),
@@ -111,7 +111,8 @@ final class NativeCandidateLifecycleAudit: @unchecked Sendable {
         NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
             bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
             acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
-            reason: value.reason, stage: value.stage, campaign: value.campaign).object
+            reason: value.reason, stage: value.stage, campaign: value.campaign,
+                policy: value.policy, recoveryObservation: value.recoveryObservation).object
     }
     private static func profileReceipt(_ value: PublishingVideoProfileChange) -> [String: Any] {
         ["profile": value.profile.rawValue, "publishingGeneration": String(value.publishingGeneration),

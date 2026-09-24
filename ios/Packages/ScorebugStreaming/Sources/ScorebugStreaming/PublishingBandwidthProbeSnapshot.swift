@@ -7,6 +7,7 @@ public enum PublishingBandwidthProbeError: Error, Equatable, Sendable {
 
 /// Local native acceptance only; this is not receiver delivery or usable capacity.
 public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
+    public typealias RecoveryObservation = SRTBandwidthProbeRecoveryObservation
     public typealias Policy = SRTBandwidthProbePolicy
     public typealias Reason = SRTBandwidthProbeSnapshot.Reason
     public typealias Authority = SRTBandwidthProbeAuthority
@@ -24,6 +25,7 @@ public struct PublishingBandwidthProbeSnapshot: Equatable, Sendable {
     public internal(set) var campaignStartedAt: Double? = nil
     public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
     public internal(set) var policy: Policy = .localZeroLoss
+    public internal(set) var recoveryObservation: RecoveryObservation? = nil
 }
 
 extension PublishingBandwidthProbeSnapshot {
@@ -32,7 +34,7 @@ extension PublishingBandwidthProbeSnapshot {
             startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
             acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt, reason: value.reason,
             stage: value.stage, campaign: value.campaign, authority: value.authority, campaignStartedAt: value.campaignStartedAt,
-            totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes, policy: value.policy)
+            totalAcceptedPayloadBytes: value.totalAcceptedPayloadBytes, policy: value.policy, recoveryObservation: value.recoveryObservation)
     }
 
     func isValidStart(staged: Bool, bitRate: Int, repeatable: Bool = false, policy: Policy = .localZeroLoss) -> Bool {

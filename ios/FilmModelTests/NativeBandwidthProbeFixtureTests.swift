@@ -8,7 +8,7 @@ final class NativeBandwidthProbeFixtureTests: XCTestCase {
         let id = UUID()
         let sample = NativeBandwidthProbeSample(id: id, publishingGeneration: 7, bitRate: 500_000,
             startedAt: 10, leaseDeadline: 10.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil,
-            reason: nil, stage: 1, campaign: UInt32.max, permitsCurrentOwner: { _, _, _ in true })
+            reason: nil, stage: 1, campaign: UInt32.max, permitsCurrentOwner: { _, _, _, _ in true })
         XCTAssertEqual(sample.object["campaign"] as? String, "4294967295")
         let fixture = ProbeFixtureOperations()
         var operations = await fixture.operations()
@@ -351,7 +351,7 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
         let now = clock()
         let value = NativeBandwidthProbeSample(id: UUID(), publishingGeneration: 7, bitRate: 500_000,
             startedAt: now, leaseDeadline: now + 0.3, acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil,
-            stage: 1, permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: now, totalAcceptedPayloadBytes: 0)
+            stage: 1, permitsCurrentOwner: { _,_,_,_ in true }, campaignStartedAt: now, totalAcceptedPayloadBytes: 0)
         sample = value; return value
     }
     func renew() -> NativeBandwidthProbeSample {
@@ -375,7 +375,7 @@ private actor StagedProbeFixtureOperations: MediaPublisher {
             bitRate: fault == .rate ? 123 : rate, startedAt: now, leaseDeadline: now + 0.3,
             acceptedPayloadBytes: fault == .localBytes ? 1316 : 0, lastAcceptedAt: fault == .localBytes ? now : nil,
             reason: stopped ? "cancelled" : nil, stage: fault == .stage ? stage : stage + 1,
-            permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: fault == .campaign ? now : prior.campaignStartedAt,
+            permitsCurrentOwner: { _,_,_,_ in true }, campaignStartedAt: fault == .campaign ? now : prior.campaignStartedAt,
             totalAcceptedPayloadBytes: fault == .cumulative ? 0 : prior.totalAcceptedPayloadBytes)
         sample = value; return value
     }
@@ -1004,7 +1004,7 @@ private final class RepeatedProbeOperations: MediaPublisher, @unchecked Sendable
         time += 0.01
         return .init(id: UUID(), publishingGeneration: 7, bitRate: rate, startedAt: time, leaseDeadline: time + 0.3,
             acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil, stage: stage, campaign: campaign,
-            permitsCurrentOwner: { _,_,_ in true }, campaignStartedAt: origin ?? time, totalAcceptedPayloadBytes: total)
+            permitsCurrentOwner: { _,_,_,_ in true }, campaignStartedAt: origin ?? time, totalAcceptedPayloadBytes: total)
     }
     func begin() async -> NativeBandwidthProbeSample {
         lock.withLock { beginCount += 1 }

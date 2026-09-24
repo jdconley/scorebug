@@ -212,7 +212,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             var object = NativeBandwidthProbeSample(id: value.id, publishingGeneration: value.publishingGeneration,
                 bitRate: value.bitRate, startedAt: value.startedAt, leaseDeadline: value.leaseDeadline,
                 acceptedPayloadBytes: value.acceptedPayloadBytes, lastAcceptedAt: value.lastAcceptedAt,
-                reason: value.reason, stage: value.stage, campaign: value.campaign).object
+                reason: value.reason, stage: value.stage, campaign: value.campaign,
+                policy: value.policy, recoveryObservation: value.recoveryObservation).object
             object["observedAt"] = observedAt
             if includingReadInterval {
                 object["readStartedAt"] = readStartedAt
@@ -489,7 +490,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         guard candidateHeadroom else { return true }
         let now = ProcessInfo.processInfo.systemUptime
         guard let pinnedProbe, let currentProbe,
-              pinnedProbe.permitsCurrentOwner?(pinnedProbe.id, pinnedProbe.publishingGeneration, pinnedProbe.stage) == true,
+              pinnedProbe.permitsCurrentOwner?(pinnedProbe.id, pinnedProbe.publishingGeneration, pinnedProbe.stage, pinnedProbe.policy) == true,
               currentProbe.isActive(at: now) else { revoke(.ownerChanged); return false }
         return true
     }
@@ -593,7 +594,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             }
             guard let pinnedProbe, let value,
                   value.id == pinnedProbe.id, value.publishingGeneration == pinnedProbe.publishingGeneration,
-                  value.stage == pinnedProbe.stage, value.campaign == pinnedProbe.campaign, value.bitRate == pinnedProbe.bitRate,
+                  value.policy == pinnedProbe.policy, value.stage == pinnedProbe.stage, value.campaign == pinnedProbe.campaign, value.bitRate == pinnedProbe.bitRate,
                   value.startedAt == pinnedProbe.startedAt, value.isActive(at: now),
                   value.acceptedPayloadBytes >= (currentProbe?.acceptedPayloadBytes ?? 0),
                   value.leaseDeadline >= (currentProbe?.leaseDeadline ?? 0) else {

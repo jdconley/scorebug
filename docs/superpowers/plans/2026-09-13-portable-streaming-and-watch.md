@@ -24,13 +24,23 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+Recovery-policy evidence now reaches app ownership, candidate pinning/admission and
+exported diagnostics. Changing policy revokes old receiver authority. Frozen recovery
+admissions have a distinct format, and a new independent raw-SRT replay helper checks
+successful preflight evidence without refreshing its original timestamps. Native321,
+Streaming179, app-model530 and tooling3758 tests pass. The
+[app integration plan](2026-09-24-recovery-policy-app-integration.md) tracks the
+remaining native fixture/host schema joins and explicit route selection. Those are
+still required before another impaired-match run; production remains at minimum.
+
 The native probe and publisher adapters now support an **explicit recovery-budget
 policy**. It uses actual negotiated SRT delay, RTT and sender backlog, permits
 recovered retransmissions, and stops on exhausted budgets, invalid telemetry or
 actual sender drops. Legacy callers keep the prior policy. Native (320), Streaming (179) and app-model (522)
 suites pass, including a real local SRT connection that preserves policy through
-replacement and restart. App admission/audit integration is still pending, so this
-is not yet an impaired-network adaptation pass. See the
+replacement and restart. These are the preceding native-policy checkpoint counts;
+app evidence now has the foundation described above, while full route integration
+remains pending. This is not yet an impaired-network adaptation pass. See the
 [recovery-budget implementation](2026-09-24-recovery-budget-probe.md).
 
 The matching [transport-pressure classifier and independent replay](2026-09-24-recovery-budget-pressure.md)

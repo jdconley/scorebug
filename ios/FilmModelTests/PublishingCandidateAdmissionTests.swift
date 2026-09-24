@@ -3,6 +3,7 @@ import Foundation
 import ScorebugCore
 import ScorebugMedia
 import XCTest
+@testable import SRTHaishinKit
 
 final class PublishingCandidateAdmissionTests: XCTestCase {
     private let anchor = ContinuousClock.now
@@ -72,12 +73,12 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
             sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400)
         let binding = PublishingProbeObservation(id: probeID, publishingGeneration: 7, bitRate: 12_000_000,
             startedAt: 109, leaseDeadline: 109.9, acceptedPayloadBytes: 131600, lastAcceptedAt: 109.59,
-            reason: nil, stage: 3, campaign: campaign, permitsCurrentOwner: { _, _, _ in true })
+            reason: nil, stage: 3, campaign: campaign, permitsCurrentOwner: { _, _, _, _ in true })
         let probe = PublishingProbeObservation(id: fault == .wrongProbe ? UUID() : probeID, publishingGeneration: 7,
             bitRate: fault == .wrongRate ? 2_000_000 : 12_000_000, startedAt: 109,
             leaseDeadline: fault == .expiredLease ? 115 : 115.3, acceptedPayloadBytes: 6_000 * 1316,
             lastAcceptedAt: 115.09, reason: nil, stage: fault == .wrongStage ? 2 : 3, campaign: campaign,
-            permitsCurrentOwner: { _, _, _ in fault != .revokedProbe })
+            permitsCurrentOwner: { _, _, _, _ in fault != .revokedProbe })
         var f = Fixture(measurement: measurement, applied: applied, binding: binding,
             boundAt: fault == .lateBinding ? 111 : 109.6,
             completedAt: fault == .earlyCompletion ? 113 : fault == .exactCompletion ? exactCompletion + 0.01 : 114.07,
@@ -87,6 +88,37 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         // A changed policy revision has no effect until rechecking an existing admission.
         if fault == .wrongRevision { f.applied.revision = 1 }
         return f
+    }
+    func testRecoveryPolicyCannotChangeAcrossCandidateBindingAndAuditRetainsEvidence() throws {
+        var f = try fixture()
+        func recovery(_ value: PublishingProbeObservation, at: Double) -> PublishingProbeObservation {
+            var value = value
+            value.policy = .recoveryBudget
+            value.recoveryObservation = .init(checkedAt: at, sampledAt: at, elapsedMilliseconds: Int64(at * 1000),
+                sentBytes: 20_000_000, retransmittedBytes: 1000, droppedPackets: 0,
+                rttMilliseconds: 65, senderBufferMilliseconds: 67, senderDeliveryDelayMilliseconds: 400)
+            return value
+        }
+        f.binding = recovery(f.binding, at: 109.59)
+        XCTAssertTrue(f.binding.isActive(at: f.boundAt))
+        XCTAssertNil(f.admit(), "Recovery binding cannot borrow a legacy current owner")
+        f = try fixture(); f.probe = recovery(f.probe, at: 115.08)
+        XCTAssertTrue(f.probe.isActive(at: f.clock.after))
+        XCTAssertNil(f.admit(), "Legacy binding cannot borrow a recovery owner")
+        f.binding = recovery(f.binding, at: 109.59)
+        let admission = try XCTUnwrap(f.admit())
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: admission.auditData()) as? [String: Any])
+        XCTAssertEqual(object["formatVersion"] as? Int, 2)
+        XCTAssertEqual(object["convention"] as? String, "measured-candidate-ipv4-recovery-v1")
+        for field in ["binding", "probe"] {
+            let probe = try XCTUnwrap(object[field] as? [String: Any])
+            XCTAssertEqual(probe["policy"] as? String, "recovery-budget-v1")
+            XCTAssertEqual((probe["recoveryObservation"] as? [String: Any])?["senderDeliveryDelayMilliseconds"] as? Int, 400)
+        }
+        let legacy = try XCTUnwrap(try fixture().admit())
+        let old = try XCTUnwrap(try JSONSerialization.jsonObject(with: legacy.auditData()) as? [String: Any])
+        XCTAssertEqual(old["formatVersion"] as? Int, 1)
+        XCTAssertNil((old["probe"] as? [String: Any])?["policy"])
     }
     func testCampaignAdmissionRequiresExactBindingCurrentAndReceiverIdentity() throws {
         for ordinal: UInt32? in [nil, 1, UInt32.max] {

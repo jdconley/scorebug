@@ -86,6 +86,10 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             }
             let first = try await adapter.beginBandwidthProbe(bitRate: 500_000, staged: true, repeatable: true, policy: policy)
             XCTAssertEqual(first.policy, policy)
+            if policy == .recoveryBudget {
+                XCTAssertEqual(first.recoveryObservation?.senderDeliveryDelayMilliseconds, 400)
+                XCTAssertEqual(first.recoveryObservation?.isValid, true)
+            } else { XCTAssertNil(first.recoveryObservation) }
             XCTAssertEqual(first.stage, 1)
             XCTAssertEqual(first.campaignStartedAt, first.startedAt)
             XCTAssertEqual(first.totalAcceptedPayloadBytes, 0)
@@ -121,6 +125,14 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             let restarted = try await adapter.restartBandwidthProbe(id: renewed.id, publishingGeneration: renewed.publishingGeneration, stage: 2, bitRate: 500_000)
             XCTAssertEqual(restarted.policy, policy)
             XCTAssertEqual(restarted.campaign, 2)
+            for snapshot in [first, second, renewed, restarted] {
+                if policy == .recoveryBudget {
+                    let raw = try XCTUnwrap(snapshot.recoveryObservation)
+                    XCTAssertTrue(raw.isValid)
+                    XCTAssertEqual(raw.senderDeliveryDelayMilliseconds, 400)
+                    XCTAssertGreaterThanOrEqual(raw.checkedAt, snapshot.startedAt)
+                } else { XCTAssertNil(snapshot.recoveryObservation) }
+            }
             XCTAssertFalse(authority.permits(id: renewed.id, generation: renewed.publishingGeneration, stage: 2, policy: policy))
             let healthy = await adapter.isPublishing()
             XCTAssertTrue(healthy)

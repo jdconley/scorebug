@@ -44,6 +44,7 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public internal(set) var campaignStartedAt: Double? = nil
     public internal(set) var totalAcceptedPayloadBytes: UInt64? = nil
     public internal(set) var policy: SRTBandwidthProbePolicy = .localZeroLoss
+    public internal(set) var recoveryObservation: SRTBandwidthProbeRecoveryObservation? = nil
 }
 
 /// One publication-owned attempt. Revocation is synchronous across actor hops.
@@ -229,7 +230,8 @@ final class SRTBandwidthProbe: @unchecked Sendable {
             return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
                 leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
                 stage: stage, campaign: campaign, authority: authority, campaignStartedAt: campaignStartedAt,
-                totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes, policy: policy)
+                totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes, policy: policy,
+                recoveryObservation: recoveryGuard?.observation)
         }
     }
 }
