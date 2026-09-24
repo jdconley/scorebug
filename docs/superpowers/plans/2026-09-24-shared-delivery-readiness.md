@@ -91,3 +91,30 @@ diagnostic prints were removed. Independent specification and quality reviews ap
 498 tests and the arm64 simulator build succeeds (joined exit-zero checks). Core
 and JS are unchanged from their 459/3,349-test passing evidence. One fresh frozen
 experiment is next; full native qualification remains unproven.
+
+## Frozen native pass
+
+Source `89926f4`, run `native-app-cbBvJb`: **complete repeated laboratory route PASS**,
+joined harness exit 0, native UI 257.729 seconds, all 924 frozen source hashes unchanged.
+Both admissions, five native phases, confirmations, owned decoder faults, resets,
+shared recoveries, readiness joins, direct-recorder delivery and full A/V gates pass.
+
+First shared recovery qualified at 1899440.7725119584; campaign two began at
+1899444.8923889168, 4.119877 seconds later. Its current source health extends through
+1899443.0243494168, while the completed shared prefix ends at 1899438.0249034585.
+Thus the runtime waits for delivery and then rereads fresh source without moving
+the required prefix forward. No quality rejection events occurred.
+
+Archive/live: 6,538/6,130 contiguous 30 fps frames, complete decoded A/V coverage.
+All 102 live audio markers match within 65.583 ms, drift is negligible, audio leads
+video by 287 ms. The direct recorder accounts for 38 acquisition frames and no lost
+encoded tail. All 274 deadline rows replay; 25 intentional fault deadline misses
+remain recorded, with no unknown rows. Cadence retains 2,056 reports. The valid
+closed wait trace contains 1,007 events / 350,355 bytes, no overflow or omissions.
+Worker, recorder, simulator and container cleanup joined successfully.
+
+Raw evidence, `results.json`, complete repeated qualification, live reconciliation
+and compact `complete-assessment.json` remain in ignored
+`artifacts/qa/native-app-cbBvJb`. The preceding failed runs remain unchanged. This
+passes the repeated local laboratory milestone; production upgrades, network-loss
+recovery, physical devices and other proxy hosts remain unqualified.

@@ -22,8 +22,9 @@ Use bounded version-aware verification instead of cloning or rewriting old artif
 - [x] Combined campaign admission: extend receiver interval and candidate-witness replay with original campaign and applied revision; join each candidate proof to the corresponding real baseline phase and exact native profile request. Test cross-campaign substitution, stale measurement and receiver-counter carry-over.
 - [x] Policy/fault replay: qualify each confirmed trial, each exact decoder fault, each reset and recovery, preserving the global event timeline. Verify second-campaign readiness occurs after first recovery and that no ignored events or missing cadence coverage can manufacture healthy duration. Add malicious mutations and preserve existing single-cycle checks.
 - [x] Harness: add explicit repeated options, two causally triggered owned decoder pauses after the respective confirmed trial, bounded 180-second hold and new raw fault envelope. Keep legacy routes unchanged. Require the complete repeated verifier plus all existing archive/scoring/A/V gates before a pass.
-- [ ] Run `pnpm test:tools`; obtain independent spec/quality review, then build and run the full native simulator fixture on frozen sources. Preserve raw outputs and failures, decode archive/live media, and compare every cycle. Fix observed failures with failing-first regressions; never relax thresholds to obtain a pass.
-- [ ] Update this plan and the portable streaming/Watch plan with evidence and remaining work. Commit verified changes. Continue physical devices and remote proxies; production automatic upgrades remain disabled until their required qualification is complete.
+- [x] Run `pnpm test:tools`; obtain independent spec/quality review, then build and run the full native simulator fixture on frozen sources. Preserve raw outputs and failures, decode archive/live media, and compare every cycle. Fix observed failures with failing-first regressions; never relax thresholds to obtain a pass.
+- [x] Update this plan and the portable streaming/Watch plan with evidence and remaining work. Commit verified local changes.
+- [ ] Continue physical devices and remote proxies; production automatic upgrades remain disabled until their required qualification is complete.
 
 ## Evidence
 
@@ -1243,3 +1244,26 @@ Failing-first contract tests precede implementation. Focused 96 tests and full
 498 FilmModel tests pass; arm64 simulator build succeeds. Independent specification
 and quality reviews approve. Core/JS are unchanged. Next is one frozen native run.
 Details: [shared-delivery plan](2026-09-24-shared-delivery-readiness.md).
+
+### September 24 — complete repeated native recovery PASS
+
+Frozen `89926f4`, `native-app-cbBvJb`, 924 unchanged hashes. Full harness exits zero;
+native UI passes in 257.729 seconds. Original raw evidence independently qualifies
+both measured admissions, five profile phases, two confirmations, two owned faults,
+minimum resets, shared source/delivery recovery, readiness and delivery coverage.
+Second campaign begins 4.119877 seconds after shared recovery qualified, using a
+later fresh source context. No quality rejections occur.
+
+Full A/V gates pass with 6,538 archive and 6,130 acquired live frames, contiguous
+at 30 fps. Live 102 audio markers match within 65.583 ms with negligible drift;
+audio leads video 287 ms. Direct-recorder accounting covers 38 acquisition frames,
+no encoded tail loss and successful exits. All 274 delivery rows replay with no
+unknown rows; intentional fault deadline misses remain recorded. Cadence has 2,056
+reports. The wait trace closes valid: 1,007 events / 350,355 bytes. All cleanup joins.
+
+Current component checks: 498 FilmModel tests and simulator build pass; unchanged
+Core/JS retain 459/3,349 passing tests. Both repairs have independent spec/quality
+approval. Raw result/qualification/reconciliation and compact assessment are under
+`artifacts/qa/native-app-cbBvJb`. Historical failures stay failed. Local milestone is
+complete; production upgrades, network-loss recovery, physical devices and other
+hosts remain outside this result. See [shared-readiness evidence](2026-09-24-shared-delivery-readiness.md).

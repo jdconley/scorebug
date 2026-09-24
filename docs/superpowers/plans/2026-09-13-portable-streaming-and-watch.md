@@ -24,60 +24,54 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The native app, scoring/Watch work, clean recording, and portable proxy have
-substantial implementation and local evidence. Production automatic quality
-increases remain disabled until full validation passes. The current focus is two
-independently verified upgrade → fault → minimum reset → recovery cycles in one
-native publication, bounded to 180 seconds.
+**The complete repeated native recovery route now passes locally.** On frozen
+source `89926f4`, `native-app-cbBvJb` passed native iPhone scoring, independent clean
+recording/export, both measured admissions, all five 240p/360p profile phases,
+two owned decoder faults, minimum resets and independently reconstructed recoveries.
+The full harness exited zero; native UI took 257.729 seconds. All 924 source hashes
+stayed unchanged, and worker/recorder exits plus owned cleanup completed.
 
-The probe-read interval repair is committed as `3040495`. It passes 3,349 tools
-tests, 486 FilmModel tests and the arm64 simulator build; unchanged Core retains
-459 passing tests. Independent specification and quality reviews approve. Candidate
-envelope v5 records actual read brackets, and every binding consumer checks causal
-counter/lease ordering. Legacy v4, freshness, ownership and bandwidth limits remain
-strict. The earlier `q6s6KU` snapshot-attribution failure remains historical evidence.
+Two repaired prerequisites made this possible: candidate envelope v5 preserves
+actual probe-read intervals across asynchronous waits, and the repeated-fixture
+scheduler waits for completed delivery recovery alongside fresh source health.
+Campaign two began 4.119877 seconds after the shared recovery proof became available.
+It uses a later fresh source reading rather than extending the earlier reading's
+expiry. Independent specification and quality reviews approve both changes.
 
-The fresh frozen iPhone 14/iOS 26.2 run `native-app-3ynqcN` passed native scoring,
-recording and export in 258.376 seconds; all 922 source hashes stayed unchanged.
-Both candidate admissions, five profile phases, confirmations, owned faults,
-resets, policy recovery and delivery coverage now pass independent replay. There
-are no rejected quality events. Worker/recorder exits and owned cleanup completed.
+Verification includes 498 passing native model tests and the arm64 simulator build.
+Unchanged Core and JS retain their 459/3,349-test passing evidence. The native
+qualification uses the existing 180-second repeated fixture, motion/frame-ID/audio
+markers, local SRT relay, VideoToolbox proxy, overlay, RTMP and independent recorder.
+It is a complete pass for this laboratory route, not production upgrade permission.
 
-**Full qualification still failed:** campaign two began before its shared recovery
-was proven by both source health and delivery deadlines. Source health was fresh
-at begin, but the final required delivery report arrived later. Independent raw
-receipts confirm that shared recovery became available 1.405218 seconds after
-native begin. The later trial admission was safe under the replay, but scheduling
-the probe early violates the existing readiness gate. Do not weaken that gate.
+The clean archive contains 6,538 contiguous 1080p frames; live contains 6,130 contiguous
+source frames, both at 30 fps. Both MP4s fully decode and pass audio/video coverage.
+All 102 live audio markers match within 65.583 ms with negligible drift. Audio leads
+video by 287 ms. Direct-recorder reconciliation accounts for the 38-frame acquisition
+prefix. All 274 delivery rows independently replay with no unknown rows; the 25
+missing deadline frames from the intentional faults remain in the evidence. There
+are 2,056 cadence reports and no rejected quality events. The candidate-wait trace
+closed valid with 1,007 events / 350,355 bytes.
 
-The archive retains 6,526 contiguous 1080p frames; live retains 6,120 contiguous
-source frames, both at 30 fps with a maximum live gap of 34 ms. Both A/V tracks fully
-decode; coverage and direct-recorder checks pass. All 102 live audio markers match
-within 64.917 ms with negligible drift. Audio leads video by 349 ms. The native
-acquisition prefix is 36 frames. The bounded candidate trace closed with 956 events,
-332,282 bytes and no invalidity, overflow or omissions. These are component results,
-not production upgrade permission.
+**Next local work:** extend representative real-match coverage to an explicitly
+configured 4K native sender/archive and network path, and investigate the historical
+startup-audio and narrow-readiness failures before broader release qualification.
+The real-match 1080p CPU/VideoToolbox native streaming checks and 4K local transcodes
+already pass; they do not yet prove 4K networking or adaptive behavior on that footage.
+Keep the instrumented fixture for independent frame identity and recovery proof.
 
-**Now implemented, awaiting a frozen run:** the repeated-fixture scheduler requires
-already-classified contiguous delivery coverage in both lanes alongside fresh source
-readiness. It retains a whole ten-second source prefix while rereading current health.
-Bounded typed evidence, remote/local ownership joins and synchronous invalidation
-prevent stale or uncertain evidence from starting a probe. All 498 native model tests
-and the simulator build pass; specification and quality reviews approve. See the
-[shared-readiness plan](2026-09-24-shared-delivery-readiness.md).
-The [probe-read repair plan](2026-09-24-probe-read-intervals.md) and
-[repeated verification log](2026-09-17-repeated-native-verification.md) retain details.
+Historical failures remain preserved: `3ynqcN` began its second probe before shared
+recovery; `q6s6KU` misattributed a saved probe snapshot and retained a separate policy
+`time` rejection; `yB8xre` missed a short readiness opportunity whose exact poll
+predicate is unknown. A deterministic test shows its 9.409 ms freshness window can
+fall between 100 ms polls. `LeTozN` lost the first 395.011 ms of live audio; subsequent
+audio-leading runs do not resolve it. Preserve the 100 ms missing-audio gate.
 
-Earlier issues remain open: `native-app-yB8xre` missed a short readiness opportunity;
-its exact poll predicate is unknown. A deterministic test demonstrates the 9.409 ms
-freshness window can fall between 100 ms polls. `q6s6KU` retained a separate policy
-`time` rejection; this fresh run did not reproduce it. `native-app-LeTozN` lost the
-first 395.011 ms of live audio relative to video; subsequent audio-leading runs do
-not resolve it. Preserve the 100 ms missing-audio gate.
-
-The real-match 1080p CPU/VideoToolbox streaming and 4K local transcode checks remain
-useful separate evidence. Physical devices, paired-watch hardware networking, full
-4K network streaming and other proxy hosts are pending.
+Production automatic upgrades, network-loss recovery, long physical-device thermal
+runs, paired-watch hardware networking and other proxy hosts remain unqualified.
+The [shared-readiness plan](2026-09-24-shared-delivery-readiness.md),
+[probe-read repair plan](2026-09-24-probe-read-intervals.md), and
+[repeated verification log](2026-09-17-repeated-native-verification.md) retain evidence.
 
 ## Baseline and owner decisions
 
@@ -123,8 +117,10 @@ experimental high startup and gradual-only downshift do not satisfy this amendme
       bounded retry backoff to the existing policy.
 - [ ] Start the actual native encoder at the minimum before its first sample;
       acknowledge actual dimensions and configuration during policy bootstrap.
-- [ ] Complete candidate-cost and repeated/staged admission, then qualify real
-      upward/downward transitions before enabling production automatic adaptation.
+- [x] Qualify candidate-cost, staged admission and two native upward/fault/minimum-reset/
+      recovery cycles in the local instrumented fixture (`89926f4`, September 24).
+- [ ] Extend that qualification to realistic networks, physical devices and remote
+      workers before enabling production automatic adaptation.
 - [ ] Measure startup, collapse/reset and recovery on this Mac, then physical
       phone/watch and portable remote workers, preserving independent local A/V.
 
