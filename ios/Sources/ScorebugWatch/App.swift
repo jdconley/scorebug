@@ -42,7 +42,7 @@ struct ScorebugWatchApp: App {
                         return await connectivity.canRelayRequests
                     })
             }, recoverUncertainSendImmediately: true,
-            onNotice: { try? connectivity.sendNotice($0) },
+            onNotice: { try connectivity.sendNotice($0) },
             acknowledgmentHaptic: { WKInterfaceDevice.current().play(.success) }))
         self.fixture = fixture
         connectivity.activate()

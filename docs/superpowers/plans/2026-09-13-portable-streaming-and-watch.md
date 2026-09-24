@@ -145,10 +145,21 @@ in the failing case, but shared hardware contention is still a hypothesis. All
 312 vendor / 12 clean SDK / 170 clean Streaming / 3,434 tooling tests and the clean
 simulator build pass. See the [diagnostic plan and evidence](2026-09-24-native-hardware-selection.md).
 
-**Next local work:** return to the outstanding paired-Watch simulator integration.
-Use the measured CPU proxy path for local media integration; keep sustained 4K and
-the failing co-located hardware-proxy route unqualified. Longer representative runs,
-physical phone/watch and separate-host GPU tests remain required.
+**Watch notice recovery corrected:** a failed initial context publication now
+retries during foreground polling, without blocking direct scoring or sending
+stale setup notices. Independent review, 54 Watch model/gate tests, 502 filming
+model tests, Ultra 2/watchOS 26.2 native scoring/relaunch UI and the unsigned
+phone/Watch Release build pass. The fresh actual paired probes before and after
+the correction both fail before setup with Watch ACX43/missing-companion state;
+neither creates a pairing or scoring command. This correction does not resolve
+that simulator failure. See the [retry checkpoint](2026-09-24-watch-notice-retry.md).
+
+**Next local work:** qualify longer representative-content runs through the measured
+CPU proxy path. The current short-run probe retains only 512 encoder observations;
+design bounded long-run evidence before extending its input duration. Keep sustained
+4K and the failing co-located hardware-proxy route unqualified. Actual Watch
+connectivity needs a new diagnostic before another simulator attempt; physical
+phone/watch and separate-host GPU tests remain required.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and

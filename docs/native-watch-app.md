@@ -162,6 +162,30 @@ the chosen configuration. Simulator evidence does not replace physical routing a
 suspension tests. Apple's [WatchConnectivity sample](https://developer.apple.com/documentation/watchconnectivity/transferring-data-with-watch-connectivity)
 explicitly calls for a physical iPhone and Watch.
 
+## September 24 recovery correction
+
+The Watch now retries a failed setup-notice publication during foreground polling,
+including before initial pairing. Locally accepted notices are deduplicated;
+suspension or an in-flight operation suppresses poll retries. A failed newer notice
+invalidates the previous cache so discarding an expired offer cannot leave that
+failed pending context retained. Publication failure does not disable direct
+scoring or change command haptics. Local context acceptance is not confirmation
+that the phone received it.
+
+The [retry implementation and evidence](superpowers/plans/2026-09-24-watch-notice-retry.md)
+records 54 passing Watch model/gate tests, 502 filming/model tests, independent
+review and the combined unsigned Release build (both Watch architectures).
+Ultra 2/watchOS 26.2 passes native scoring and Keychain relaunch recovery at
+`artifacts/qa/native-watch-8NXAx7`; screenshots were inspected. This standalone run
+injects initial setup and then uses real HTTP and Keychain.
+
+Fresh actual paired runs before (`paired-watch-wzOACx`) and after the correction
+(`paired-watch-t9PB1Q`) both fail before setup. The Watch again reports ACX43 and a
+missing companion; neither run creates a pairing or score command. Correct bundle
+identifiers and embedding were verified. The retry correction does not resolve
+the retained simulator failure. Both runs preserve their original failures and
+remove their owned devices. Physical companion exchange remains unqualified.
+
 ## Remaining qualification
 
 - Exercise actual companion exchange with paired simulators and physical devices.

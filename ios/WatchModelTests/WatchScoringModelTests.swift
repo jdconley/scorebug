@@ -70,12 +70,14 @@ private actor Server {
     var lastHeldRequestWasCancelled = false
     var rejectTiedSet = false
     var pairingExpired = false
+    var failReads = false
     var serverTime = date
     init(owner: String = phone) { current = snapshot(owner) }
     func setLoseCommand() { loseCommand = true }
     func setLosePair() { losePair = true }
     func setRejectTiedSet() { rejectTiedSet = true }
     func setPairingExpired() { pairingExpired = true }
+    func setFailReads() { failReads = true }
     func advanceClock() { serverTime = "2026-09-14T01:01:00.000Z" }
     func hold(_ path: String) { heldPath = path }
     func waitForHold() async { while !isHeld { await Task.yield() } }
@@ -126,6 +128,7 @@ private actor Server {
             if let receipt = receipts[request.url!.lastPathComponent] { return try response(receipt) }
             return try response(["error": "command_not_found"], 404)
         }
+        if failReads { throw Failure.network }
         return try response(MatchSnapshotResponse(snapshot: current, serverTime: serverTime))
     }
 }
@@ -133,7 +136,7 @@ private actor Server {
 @MainActor
 final class WatchScoringModelTests: XCTestCase {
     private func model(_ store: SetupStore, _ server: Server, outbox: Outbox = Outbox(),
-                       notice: @escaping (WatchCompanionNotice) -> Void = { _ in },
+                       notice: @escaping (WatchCompanionNotice) throws -> Void = { _ in },
                        haptic: @escaping () -> Void = {}) -> WatchScoringModel {
         let factory: @Sendable (ScoringEndpoint) -> MatchHTTPClient = {
             MatchHTTPClient(endpoint: $0, transport: { try await server.handle($0) })
@@ -143,6 +146,185 @@ final class WatchScoringModelTests: XCTestCase {
             newRecoveryKey: { String(repeating: "A", count: 43) })
         return WatchScoringModel(setupCoordinator: setup, pendingStore: outbox, clientFactory: factory,
             onNotice: notice, acknowledgmentHaptic: haptic)
+    }
+
+    func testFailedInitialNoticeRetriesOnForegroundPollAndStopsAfterAcceptance() async throws {
+        let server = Server(), store = SetupStore()
+        var attempts: [WatchCompanionNotice] = []
+        let model = model(store, server, notice: {
+            attempts.append($0)
+            if attempts.count == 1 { throw Failure.network }
+        })
+        await model.wake()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(model.phase, .unpaired)
+        await model.poll()
+        XCTAssertEqual(attempts.count, 2, "Retry without another foreground transition")
+        XCTAssertEqual(attempts.first, attempts.last)
+        await model.poll()
+        XCTAssertEqual(attempts.count, 2, "Accepted context is not republished on every poll")
+        XCTAssertNil(try store.load()?.paired)
+        XCTAssertNil(try store.load()?.pending)
+        let requests = await server.requests
+        XCTAssertTrue(requests.isEmpty, "Identity publication cannot redeem or take over")
+    }
+
+    func testPersistentNoticeFailureAttemptsOncePerPollAndNeverWhileSuspended() async {
+        let server = Server()
+        var attempts = 0
+        let model = model(SetupStore(), server, notice: { _ in
+            attempts += 1; throw Failure.network
+        })
+        await model.poll()
+        XCTAssertEqual(attempts, 0)
+        await model.wake()
+        XCTAssertEqual(attempts, 1)
+        await model.poll()
+        XCTAssertEqual(attempts, 2)
+        await model.poll()
+        XCTAssertEqual(attempts, 3)
+        await model.suspend()
+        await model.poll()
+        await model.refresh()
+        XCTAssertEqual(attempts, 3)
+    }
+
+    func testAcceptedNoticeIsReadvertisedOnWakeButNotOnHealthyPoll() async {
+        var attempts = 0
+        let model = model(SetupStore(), Server(), notice: { _ in attempts += 1 })
+        await model.wake()
+        await model.poll()
+        await model.refresh()
+        XCTAssertEqual(attempts, 1)
+        await model.suspend()
+        await model.wake()
+        XCTAssertEqual(attempts, 2)
+    }
+
+    func testFailingScoringPollMakesOnlyOneNoticeAttempt() async {
+        let server = Server()
+        var attempts = 0
+        let model = model(SetupStore(paired()), server, notice: { _ in
+            attempts += 1; throw Failure.network
+        })
+        await model.wake()
+        XCTAssertEqual(attempts, 1)
+        await server.setFailReads()
+        await model.poll()
+        XCTAssertEqual(attempts, 2)
+        await model.poll()
+        XCTAssertEqual(attempts, 3)
+    }
+
+    func testNoticeRetryDoesNotEnterBusySetupRecovery() async {
+        let server = Server()
+        var attempts = 0
+        let model = model(SetupStore(paired()), server, notice: { _ in
+            attempts += 1; throw Failure.network
+        })
+        await server.hold(game)
+        let waking = Task { await model.wake() }
+        await server.waitForHold()
+        XCTAssertTrue(model.busy)
+        XCTAssertEqual(attempts, 1)
+        await model.poll()
+        XCTAssertEqual(attempts, 1)
+        await server.release()
+        await waking.value
+        await model.poll()
+        XCTAssertEqual(attempts, 2)
+    }
+
+    func testNoticeFailureDoesNotPreventPairedScoringOrChangeHaptics() async throws {
+        let server = Server(owner: device), outbox = Outbox()
+        var attempts = 0, haptics = 0
+        let model = model(SetupStore(paired()), server, outbox: outbox, notice: { _ in
+            attempts += 1; throw Failure.network
+        }, haptic: { haptics += 1 })
+        await model.wake()
+        XCTAssertTrue(model.canScore)
+        await model.send(.awardPoint(side: .home))
+        XCTAssertEqual(model.snapshot?.score.home, 1)
+        XCTAssertEqual(haptics, 1)
+        XCTAssertNil(try outbox.load())
+        await model.poll()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(haptics, 1)
+        XCTAssertEqual(model.message, "Action accepted.")
+    }
+
+    func testNoticeRetryPublishesLatestSetupInsteadOfFailedOldNotice() async throws {
+        let server = Server(), store = SetupStore()
+        var attempts: [WatchCompanionNotice] = []
+        var failing = true
+        let model = model(store, server, notice: {
+            attempts.append($0)
+            if failing { throw Failure.network }
+        })
+        await model.wake()
+        XCTAssertEqual(attempts.last?.phase, .unpaired)
+        await model.receive(envelope())
+        await model.acceptOfferedSetup()
+        XCTAssertEqual(model.phase, .paired)
+        XCTAssertEqual(attempts.last?.phase, .paired)
+        let before = attempts.count
+        failing = false
+        await model.poll()
+        XCTAssertEqual(attempts.count, before + 1)
+        XCTAssertEqual(attempts.last?.phase, .paired)
+        XCTAssertEqual(attempts.last?.pairingId, pair)
+        XCTAssertEqual(attempts.last?.gameId, game)
+        await model.poll()
+        XCTAssertEqual(attempts.count, before + 1)
+        XCTAssertEqual(try store.load()?.paired?.credential, credential())
+    }
+
+    func testDiscardReplacesFailedPendingContextEvenWhenUnpairedWasPreviouslyAccepted() async {
+        let server = Server()
+        var retainedOutgoing: WatchCompanionNotice?
+        let model = model(SetupStore(), server, notice: {
+            // The native adapter retains the latest value even if OS publication fails.
+            retainedOutgoing = $0
+            if $0.phase == .pending { throw Failure.network }
+        })
+        await model.wake()
+        XCTAssertEqual(retainedOutgoing?.phase, .unpaired)
+        await server.setPairingExpired()
+        await model.receive(envelope())
+        await model.acceptOfferedSetup()
+        XCTAssertEqual(retainedOutgoing?.phase, .pending)
+        await model.discardExpiredPairing()
+        XCTAssertEqual(model.phase, .unpaired)
+        XCTAssertEqual(retainedOutgoing?.phase, .unpaired,
+                       "A previously accepted identity cannot leave a failed pending context retained")
+        XCTAssertNil(retainedOutgoing?.pairingId)
+    }
+
+    func testCanceledPollDoesNotRetryNoticeWhileScoringOwnsAdmission() async {
+        let server = Server(owner: device)
+        var attempts = 0
+        let model = model(SetupStore(paired()), server, notice: { _ in
+            attempts += 1; throw Failure.network
+        })
+        await model.wake()
+        await server.hold(game)
+        let polling = Task { await model.poll() }
+        await server.waitForHold()
+        await model.poll()
+        XCTAssertEqual(attempts, 1, "No retry alongside an in-flight passive poll")
+        let sending = Task { await model.send(.awardPoint(side: .home)) }
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertTrue(model.busy)
+        await server.hold("/commands")
+        await server.release()
+        await server.waitForHold()
+        await polling.value
+        XCTAssertEqual(attempts, 1, "The canceled poll cannot publish during the admitted command")
+        await server.release()
+        await sending.value
+        XCTAssertEqual(model.snapshot?.score.home, 1)
+        await model.poll()
+        XCTAssertEqual(attempts, 2)
     }
 
     func testWakeAdvertisesPersistedIdentityWithoutImplicitTakeover() async {

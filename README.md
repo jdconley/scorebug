@@ -5,9 +5,10 @@ An iPhone films and keeps a clean local recording. Score from its paired Apple W
 or the native Scorebug app on another iPhone, including a watch paired to that iPhone. A portable worker adds the score and sends the broadcast
 to YouTube.
 
-> Status: durable native iPhone scoring is validated in simulators, including
-> joining from a second phone and recovery after relaunch. Reliable recording,
-> streaming integration, and the watch app remain in progress. Not ready for a real game.
+> Status: native iPhone/Watch scoring and clean recording/export have passing local
+> and simulator checks. Adaptive streaming has laboratory recovery passes. Actual
+> paired-Watch delivery, physical camera reliability, sustained 4K and other proxy
+> hosts remain unqualified. Not ready for a real game; see the current plan below.
 
 ## Current plan
 
@@ -33,7 +34,7 @@ older phones; support the current OS and two prior release generations.
 ## Components
 
 ```text
-ios/                    Native iPhone scorer; camera scaffold and planned watch app
+ios/                    Native iPhone/Watch scoring, capture, archive and streaming
 apps/scoring/           Legacy PWA prototype; superseded by native scoring
 apps/control-plane/     Hono API and game state
 apps/home-daemon/       Broadcast worker (name retained from initial implementation)

@@ -17,7 +17,7 @@ final class WatchScoringModel: ObservableObject {
     private let pendingStore: any PendingCommandStore
     private let scoringClientFactory: @MainActor @Sendable (WatchPairedSetup) throws -> any MatchScoringClient
     private let recoverUncertainSendImmediately: Bool
-    private let onNotice: (WatchCompanionNotice) -> Void
+    private let onNotice: (WatchCompanionNotice) throws -> Void
     private let acknowledgmentHaptic: () -> Void
     private var coordinator: MatchCommandCoordinator?
     private var scoringSetup: WatchPairedSetup?
@@ -29,12 +29,13 @@ final class WatchScoringModel: ObservableObject {
     private var describedOutcomeId: String?
     private var problemMessage = false
     private var lastNotice: WatchCompanionNotice?
+    private var noticeAttemptRevision = UUID()
 
     init(setupCoordinator: WatchSetupCoordinator, pendingStore: any PendingCommandStore,
          clientFactory: @escaping @Sendable (ScoringEndpoint) -> MatchHTTPClient = { MatchHTTPClient(endpoint: $0) },
          scoringClientFactory: (@MainActor @Sendable (WatchPairedSetup) throws -> any MatchScoringClient)? = nil,
          recoverUncertainSendImmediately: Bool = false,
-         onNotice: @escaping (WatchCompanionNotice) -> Void = { _ in },
+         onNotice: @escaping (WatchCompanionNotice) throws -> Void = { _ in },
          acknowledgmentHaptic: @escaping () -> Void = {}) {
         self.setupCoordinator = setupCoordinator; self.pendingStore = pendingStore
         self.scoringClientFactory = scoringClientFactory ?? { paired in
@@ -132,11 +133,21 @@ final class WatchScoringModel: ObservableObject {
     /// Foreground observation only. Pending work uses explicit refresh/recovery;
     /// healthy polling must not disable point or takeover controls.
     func poll() async {
-        guard phase == .paired, !pending, let coordinator else { return }
+        guard isActive, !busy, operationTask == nil else { return }
+        guard phase == .paired, !pending, let coordinator else {
+            publishCurrentNoticeIfNeeded()
+            return
+        }
+        let attemptedBeforePoll = noticeAttemptRevision
         await run(passive: true) { token in
             let result = try await coordinator.refresh()
             try self.check(token)
             self.install(result)
+        }
+        // Error recovery may already have installed setup and tried its notice.
+        // Do not make a second attempt in the same foreground poll.
+        if !busy, operationTask == nil, noticeAttemptRevision == attemptedBeforePoll {
+            publishCurrentNoticeIfNeeded()
         }
     }
 
@@ -284,11 +295,26 @@ final class WatchScoringModel: ObservableObject {
            (try? ScoringEndpoint(paired.endpoint).canonicalAddress) == (try? ScoringEndpoint(offeredSetup.endpoint).canonicalAddress) {
             self.offeredSetup = nil
         }
-        if let record = setup.record {
-            let notice = WatchCompanionNotice(deviceId: record.deviceId, phase: phase,
-                gameId: record.paired?.credential.gameId ?? record.pending?.offer.gameId,
-                pairingId: record.paired?.pairingId ?? record.pending?.offer.pairingId)
-            if notice != lastNotice { lastNotice = notice; onNotice(notice) }
+        publishCurrentNoticeIfNeeded()
+    }
+
+    private func publishCurrentNoticeIfNeeded() {
+        guard isActive, let record = setupRecord else { return }
+        let notice = WatchCompanionNotice(deviceId: record.deviceId, phase: phase,
+            gameId: record.paired?.credential.gameId ?? record.pending?.offer.gameId,
+            pairingId: record.paired?.pairingId ?? record.pending?.offer.pairingId)
+        guard notice != lastNotice else { return }
+        noticeAttemptRevision = UUID()
+        do {
+            try onNotice(notice)
+            // Local context acceptance is not peer delivery or server acceptance.
+            lastNotice = notice
+        } catch {
+            // The adapter may retain a failed newer context for activation replay.
+            // Even reverting to the old accepted value must replace that context.
+            lastNotice = nil
+            // Direct scoring remains usable. The existing foreground poll retries
+            // only the latest persisted setup; no background task or notice queue.
         }
     }
 
