@@ -37,7 +37,8 @@ final class NativeStreamingTests: XCTestCase {
         let liveProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_LIVE_PROFILE"] ?? ""
         if !liveProfile.isEmpty {
             XCTAssertTrue(["540p30", "360p30", "240p30"].contains(liveProfile)); XCTAssertTrue(qualityFlag.isEmpty)
-            XCTAssertEqual(motionFlag, "blocks16"); XCTAssertGreaterThanOrEqual(holdSeconds, 90)
+            XCTAssertTrue((fileFlag == "1" && motionFlag.isEmpty) || (fileFlag.isEmpty && motionFlag == "blocks16"))
+            XCTAssertGreaterThanOrEqual(holdSeconds, 90)
             app.launchEnvironment["SCOREBUG_TEST_LIVE_PROFILE"] = liveProfile
         }
         let transitions = ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROFILE_TRANSITIONS"] ?? ""

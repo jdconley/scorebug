@@ -15,11 +15,13 @@ export function qualifyScoreTemplate({ actual, expected, alternative }) {
     common = 0,
     commonMatches = 0;
   for (let i = 0; i < expected.length; i++) {
-    const white = expected[i] >= 220,
+    // Small-font antialiasing still provides a clear white/black contrast.
+    // Keep common-text support stricter than the discriminating digit mask.
+    const white = expected[i] >= 190,
       black = expected[i] <= 60;
-    const otherWhite = alternative[i] >= 220,
+    const otherWhite = alternative[i] >= 190,
       otherBlack = alternative[i] <= 60;
-    if (white && otherWhite) {
+    if (expected[i] >= 220 && alternative[i] >= 220) {
       common++;
       if (actual[i] >= 180) commonMatches++;
     }

@@ -5,6 +5,23 @@ import ScorebugMedia
 import XCTest
 
 final class VideoObservationFixtureTests: XCTestCase {
+    func testReducedFileProfilesRequireExclusiveStandaloneSource() throws {
+        for raw in ["240p30", "360p30", "540p30"] {
+            let environment = ["SCOREBUG_TEST_FILE_CAPTURE": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+                "SCOREBUG_TEST_LIVE_PROFILE": raw, "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+            XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: environment).rawValue, raw)
+            for (key, value) in [("SCOREBUG_TEST_FILE_CAPTURE", "true"), ("SCOREBUG_TEST_FILE_CAPTURE", "0"),
+                ("SCOREBUG_TEST_MOTION_FIXTURE", "blocks16"), ("SCOREBUG_TEST_STREAM_HOLD_SECONDS", "89"),
+                ("SCOREBUG_TEST_VIDEO_OBSERVATIONS", "0"), ("SCOREBUG_TEST_CANDIDATE_PROFILE", "360p30"),
+                ("SCOREBUG_TEST_BANDWIDTH_PROBE", "staged"), ("SCOREBUG_TEST_MEASURED_TRIAL", "1"),
+                ("SCOREBUG_TEST_UPLINK_PROXY_PORT", "12345"), ("SCOREBUG_TEST_DECODER_STALL", "1"),
+                ("SCOREBUG_TEST_NATIVE_CONFIRMATION", "1")] {
+                var invalid = environment; invalid[key] = value
+                XCTAssertThrowsError(try VideoObservationFixture.liveProfile(environment: invalid), "\(key)")
+            }
+        }
+    }
+
     func testPublishingProxyChangesOnlyPortAndPreservesEncodedQueryBytes() throws {
         let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:8890?streamid=publish%3Amatch%2Fa&passphrase=a%2Bb%26c%3Dd&latency=120&mode=caller"))
         let environment = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_NATIVE_QUALITY": "1",

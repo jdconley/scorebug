@@ -197,3 +197,42 @@ test('staging copies exact bytes, rejects stale/symlink inputs and never overwri
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('fixed reduced file profiles require ninety seconds and keep strict experiment exclusions', () => {
+  for (const profile of ['240p30', '360p30', '540p30']) {
+    const env = { ...environment, SCOREBUG_TEST_LIVE_PROFILE: profile };
+    assert.equal(
+      nativeFileFixtureOptions({ environment: env, streaming: true, holdSeconds: 90 })
+        .minimumDurationSeconds,
+      180,
+    );
+    for (const holdSeconds of [12, 89, 601])
+      assert.throws(() =>
+        nativeFileFixtureOptions({ environment: env, streaming: true, holdSeconds }),
+      );
+    for (const key of [
+      'SCOREBUG_TEST_MOTION_FIXTURE',
+      'SCOREBUG_TEST_CANDIDATE_PROFILE',
+      'SCOREBUG_TEST_BANDWIDTH_PROBE',
+      'SCOREBUG_TEST_MEASURED_TRIAL',
+      'SCOREBUG_TEST_UPLINK_PROFILE',
+      'SCOREBUG_TEST_DECODER_STALL',
+    ])
+      for (const value of ['', '1', 'blocks16'])
+        assert.throws(() =>
+          nativeFileFixtureOptions({
+            environment: { ...env, [key]: value },
+            streaming: true,
+            holdSeconds: 90,
+          }),
+        );
+  }
+  for (const profile of ['', '1080p30', '720p30', '240p30 ', null])
+    assert.throws(() =>
+      nativeFileFixtureOptions({
+        environment: { ...environment, SCOREBUG_TEST_LIVE_PROFILE: profile },
+        streaming: true,
+        holdSeconds: 90,
+      }),
+    );
+});

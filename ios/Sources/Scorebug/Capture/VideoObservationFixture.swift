@@ -20,8 +20,24 @@ enum VideoObservationFixture {
         guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else {
             return requested(environment: environment) ? .hd1080 : .minimumStartup
         }
+        let fileFlag = environment["SCOREBUG_TEST_FILE_CAPTURE"] ?? ""
+        let motionFlag = environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? ""
+        if !fileFlag.isEmpty {
+            guard fileFlag == "1", motionFlag.isEmpty,
+                  ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION",
+                   "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
+                   "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_CANDIDATE_PROFILE",
+                   "SCOREBUG_TEST_CANDIDATE_HEADROOM", "SCOREBUG_TEST_MEASURED_TRIAL",
+                   "SCOREBUG_TEST_MEASURED_RECOVERY", "SCOREBUG_TEST_BANDWIDTH_PROBE",
+                   "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL",
+                   "SCOREBUG_TEST_CADENCE_REPORTS", "SCOREBUG_TEST_DEADLINE_RESETS",
+                   "SCOREBUG_TEST_DELIVERY_DEADLINE_MS", "SCOREBUG_TEST_DECODER_THREADING",
+                   "SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS", "SCOREBUG_TEST_PUBLISH_PACING",
+                   "SCOREBUG_FIXTURE_FAIL_AFTER"].allSatisfy({ (environment[$0] ?? "").isEmpty })
+            else { throw UplinkError.invalidFixtureRoute }
+        }
         guard let profile = PublishingVideoProfile(rawValue: raw), [.low240, .low360, .sd540].contains(profile), requested(environment: environment),
-              environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
+              fileFlag == "1" || motionFlag == "blocks16",
               (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,
               let rawHold = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"],
               let hold = Int(rawHold), String(hold) == rawHold, (90...600).contains(hold)

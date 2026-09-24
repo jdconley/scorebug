@@ -44,3 +44,21 @@ for (const [name, change] of Object.entries({
     change(input);
     assert.throws(() => qualifyScoreTemplate(input));
   });
+
+test('antialiased digit strokes provide distinct support while common text stays bright', () => {
+  const input = fixture();
+  for (const template of [input.expected, input.alternative])
+    for (let i = 400; i < 600; i++) if (template[i] === 255) template[i] = 195;
+  input.actual = Buffer.from(input.expected);
+  assert.equal(qualifyScoreTemplate(input).passed, true);
+  assert.throws(() => qualifyScoreTemplate({ ...input, actual: input.alternative }));
+  input.actual.fill(150, 400, 600);
+  assert.throws(() => qualifyScoreTemplate(input));
+});
+test('faint ambiguous digit edges cannot manufacture distinct score support', () => {
+  const input = fixture();
+  for (const template of [input.expected, input.alternative])
+    for (let i = 400; i < 600; i++) if (template[i] === 255) template[i] = 189;
+  input.actual = Buffer.from(input.expected);
+  assert.throws(() => qualifyScoreTemplate(input));
+});

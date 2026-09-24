@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { nativeFileFixtureOptions } from './native-file-fixture.mjs';
 export function nativeLiveProfile({
   environment,
   streaming,
@@ -17,10 +18,12 @@ export function nativeLiveProfile({
       holdSeconds >= 90 &&
       holdSeconds <= 600 &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
-      environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
+      (environment.SCOREBUG_TEST_FILE_INPUT !== undefined
+        ? nativeFileFixtureOptions({ environment, streaming, holdSeconds }) !== null
+        : environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16') &&
       environment.SCOREBUG_TEST_NATIVE_QUALITY === undefined &&
       environment.SCOREBUG_TEST_NATIVE_CONFIRMATION === undefined,
-    'Reduced live profile requires explicit fixed-profile structured-motion qualification',
+    'Reduced live profile requires explicit fixed-profile structured-motion or validated file qualification',
   );
   return raw;
 }

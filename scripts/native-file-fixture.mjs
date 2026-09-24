@@ -31,7 +31,6 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     'SCOREBUG_FIXTURE_FAIL_AFTER',
     'SCOREBUG_TEST_NATIVE_QUALITY',
     'SCOREBUG_TEST_NATIVE_CONFIRMATION',
-    'SCOREBUG_TEST_LIVE_PROFILE',
     'SCOREBUG_TEST_PROFILE_TRANSITIONS',
     'SCOREBUG_TEST_ADAPTIVE_PROFILES',
     'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
@@ -51,6 +50,12 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     'SCOREBUG_TEST_PUBLISH_PACING',
   ])
     assert.equal(environment[key], undefined, `File baseline conflicts with ${key}`);
+  if (environment.SCOREBUG_TEST_LIVE_PROFILE !== undefined)
+    assert(
+      ['240p30', '360p30', '540p30'].includes(environment.SCOREBUG_TEST_LIVE_PROFILE) &&
+        holdSeconds >= 90,
+      'Reduced file profile requires an explicit supported profile and at least ninety seconds',
+    );
   return { path, minimumDurationSeconds: holdSeconds + 90, sourceOriginSeconds: 123.25 };
 }
 

@@ -160,3 +160,31 @@ test('fixed240 uses actual even geometry and preserves archive and admission gat
   ])
     assert.throws(() => nativeUplinkOptions({ ...input, ...patch }));
 });
+
+test('reduced file profiles require independently validated exclusive file options', () => {
+  const file = {
+    SCOREBUG_TEST_FILE_INPUT: '/local/input.mov',
+    SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
+    SCOREBUG_TEST_RELAY_PUBLICATION: '1',
+    SCOREBUG_TEST_WORKER_PROCESSING: '1',
+  };
+  for (const profile of ['240p30', '360p30', '540p30']) {
+    const env = { ...file, SCOREBUG_TEST_LIVE_PROFILE: profile };
+    assert.equal(nativeLiveProfile({ ...args, environment: env }), profile);
+    for (const patch of [
+      { SCOREBUG_TEST_FILE_INPUT: '' },
+      { SCOREBUG_TEST_FILE_INPUT: 'relative.mov' },
+      { SCOREBUG_TEST_MOTION_FIXTURE: 'blocks16' },
+      { SCOREBUG_TEST_MEASURED_TRIAL: '1' },
+      { SCOREBUG_TEST_WORKER_PROCESSING: undefined },
+    ])
+      assert.throws(() => nativeLiveProfile({ ...args, environment: { ...env, ...patch } }));
+    for (const patch of [
+      { streaming: false },
+      { requireProcessing: false },
+      { requirePublication: false },
+      { holdSeconds: 89 },
+    ])
+      assert.throws(() => nativeLiveProfile({ ...args, ...patch, environment: env }));
+  }
+});

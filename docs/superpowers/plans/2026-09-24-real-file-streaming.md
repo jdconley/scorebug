@@ -210,3 +210,110 @@ checks. Preserve strict rejection of mixed/unsupported experiments. Then qualify
 adaptive phases and network impairment on representative footage before production
 controller/provider integration. Physical phone/Watch and other hosts remain later
 gates in the main plan.
+
+## Reduced-profile implementation batch
+
+Use the existing explicit live-profile option with validated file input. Keep the
+1080p archive independent. The host, native route and UI must accept exactly one
+source (structured motion or file capture); malformed, mixed and unsupported
+experiment combinations still reject. Initially allow only standalone fixed
+240p/360p/540p file runs with 90–600 seconds hold. Candidate/probe/adaptive/fault
+flags remain rejected until their complete route is implemented and qualified.
+This staged extension preserves existing measurement gates instead of pretending
+the file is a structured-motion source or allowing all flags globally.
+
+- [x] Add behavioral host/native tests for reduced file profiles and strict conflicting
+      flags; observe failure before implementing the route.
+- [x] Render expected scores at actual worker dimensions/font minimum and crop geometry.
+      Keep existing glyph agreement thresholds and require enough distinguishing pixels.
+      Verify rendered templates at all supported profiles, including minimum quality.
+- [x] Extend host/app/UI reduced-file route, preserving synthetic routes and all archive,
+      audio, cadence, source identity, score and worker observation checks.
+- [x] Prepare a bounded longer copy from retained normalized footage, preserving exact
+      source PTS/barcodes and natural audio; do not modify original videos.
+- [x] Run tooling/native model/build checks and a frozen minimum-quality native case.
+      Inspect decoded media, score crops, archive independence and resource cleanup.
+- [x] Review evidence and update this plan before adding measured candidate admission.
+
+Reduced-profile source selection now passes host behavioral red/green tests and
+12 focused native tests. The full native model suite passes 520 tests. The native
+route rejects candidate/probe/adaptive/fault options when file capture selects a
+reduced profile; these are not enabled by accepting file capture as a source.
+Independent read-only code review finds no actionable issue.
+
+The first actual template-raster experiment failed at 360p: the worker's 14-pixel
+font yields only 12 near-white distinguishing pixels at the former 220 mask cutoff.
+Using antialiased digit strokes at intensity 190 supplies 20 independently rendered
+distinguishing pixels at both 360p and 240p. Common-text support still requires
+intensity 220; actual white/black cutoffs remain 180/140, required agreement remains
+90%, alternative agreement remains at most 10%, and support remains at least
+20 distinguishing and 100 common pixels. Behavioral regressions cover antialiased
+strokes, wrong state, damaged output and faint ambiguous edges. This is a calibrated
+raster mask change, not permission to count resampled duplicate pixels or background
+motion. Actual compressed low-resolution output remains unqualified until the run.
+
+All four profile rasters pass (`reduced-score-raster-EsZbSN`), and both retained
+1080p real-output score states still pass with 277 distinguishing pixels and full
+agreement (`reduced-score-retained1080-replay.json`). The initial failed raster
+experiment remains preserved (`reduced-score-raster-HswaDZ`).
+
+## Verified minimum-profile native checkpoint
+
+`native-app-Z8J4tL` passes the maintained real-file route at **426×240/30 fps**
+through the local VideoToolbox proxy while independently recording **1920×1080/30**.
+The native UI test passes in 163.761 seconds. The build, test workflow, media checks
+and outer wrapper (`native-file-reduced-minimum-run`) exit zero and join. All
+**1,201 frozen source/input/runner hashes** match (`file-reduced-freeze-hf5i3m62`).
+The similarly named `native-file-reduced-minimum` wrapper contains only a Node
+version check and is not native execution evidence.
+
+The archive has **3,843 consecutive frames (0–3,842)**; the saved live output has
+**3,415 consecutive frames (223–3,637)** at exactly 30 fps with zero identity loss
+inside its saved span. The archive continues for 205 frames / **6.833 seconds** after
+the last streamed frame. Both fully decode. Every decoded AAC frame follows the
+continuous sample timeline; maximum cumulative timestamp error is 0.000334 ms in
+the archive and 0.114 ms live. Audio tails are 5.333 ms and 18.002 ms respectively.
+
+Three natural-audio windows per output pass with correlations above 0.9982.
+Maximum sampled interior live lag is **65.052 ms**, with effectively zero measured
+spread. Both score states pass on all 20 distinguishing pixels and all common glyph
+support, with no alternative-state agreement. Original decoded pixels, not enlarged
+inspection images, feed the classifier. Source/archive/live frame 746 barcodes agree;
+visual review confirms matching action, clean archive and the 0-0→1-0 score change.
+
+The file source is closed and all recording/export/diagnostic owners agree. Source
+video count equals archive count; archive queue loss/rejection is zero and diagnostic
+coverage is complete. Maximum nominal file-source delivery lag is 2.371 ms, excluding
+initial reader preparation. Owned simulator, relay container, API port and artifact
+processes are absent. The standalone cleanup assessment initially rejected Docker's
+lowercase 'no such object' wording; the retained output proves absence, and the
+case-insensitive diagnostic checker passes without rerunning the app.
+
+**The startup limitation persists:** 60 encoded acquisition frames (163–222) are
+absent from the saved stream, and live audio leads its first video by **1.041 seconds**
+within the separate 2.1-second GOP allowance. Interior alignment does not establish
+instant startup. This is a fixed minimum-profile local test, not a quality ramp,
+real network impairment, camera, device thermal or remote-host qualification.
+
+Input `prepared-native-reduced-6a8D9K/input.mov` is a validated 180-second excerpt
+from the retained normalized SDR30 match source: 5,400 complete identities, exact
+123.25+frameID/30 timestamps, continuous 48k PCM and a 10-ms audio tail. SHA-256 is
+`373b915017c723141bcbfe8e2cb6af402ff5dca2884539e5831d6a2129f15bed`.
+All preparation commands exit zero and join; original private videos are unchanged.
+
+Final verification: **3,594 tooling tests**, **520 native model tests**, 12 focused
+native tests, supported-profile rasters and the complete minimum native workflow
+pass. Retained 1080p output still passes the revised antialias mask. Runtime changes
+are restricted to the explicit DEBUG fixture route; production upgrades stay gated.
+
+Next extend file capture through the complete measured candidate/probe/trial route,
+including authoritative admission and recovery checks. The source-selection helper
+must validate the complete supported combination before accepting it; do not simply
+remove candidate exclusions from the fixed-file route. Worker output during the
+measured 240p→360p trial is 360p, so render/check score templates at that actual output
+profile while archive remains 1080p. Add natural-audio probes around each transition
+and failure/recovery phase, beyond the present three whole-recording samples.
+
+Independent final evidence review finds no actionable issue. This native case qualifies
+240p only; the 360p/540p route tests and template rasters are not native media
+qualification at those profiles.

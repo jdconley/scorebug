@@ -152,6 +152,17 @@ preserved, with exact historical relay build provenance for the passing attempt.
 See the [real-file streaming checkpoint](2026-09-24-real-file-streaming.md) and
 `artifacts/qa/native-app-rHRTnp/post-run-assessment.json`.
 
+The **real-match minimum-profile native test also passes** (`native-app-Z8J4tL`):
+3,415 consecutive 240p live frames at 30 fps alongside 3,843 consecutive 1080p archive
+frames. Both decoded score states verify correctly; sampled live A/V lag is 65.052 ms
+with negligible spread, and the archive continues 6.833 seconds after the last live
+frame. The 60-frame acquisition gap and 1.041-second startup audio lead remain explicit
+limitations. All 3,594 tooling and 520 native model tests pass, along with the native
+build/UI/media workflow; 1,201 frozen hashes match and owned resources clean up.
+This verifies the minimum fixed profile with real content. Measured quality increases,
+recovery and real network impairment with that content remain next; production
+upgrades stay gated. See the [minimum-profile checkpoint](2026-09-24-real-file-streaming.md).
+
 A read-only production audit confirms that the measured quality driver and candidate
 publisher currently exist only in the DEBUG simulator route. Continue by connecting
 the staged file source and natural-audio verification to that adaptive app route

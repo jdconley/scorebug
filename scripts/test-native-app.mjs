@@ -8,6 +8,7 @@ import {
 import { qualifyNaturalAudio } from './natural-audio-qualification.mjs';
 import { qualifyNativeFileRecording } from './native-file-recording.mjs';
 import { qualifyScoreTemplate } from './score-template-qualification.mjs';
+import { nativeScoreTemplate } from './native-score-template.mjs';
 import {
   nativeCandidateProfile,
   qualifyNativeCandidateMeasurement,
@@ -702,10 +703,9 @@ try {
     sourcePCM = Float32Array.from({ length: raw.length / 4 }, (_, i) => raw.readFloatLE(i * 4));
     // Render the known fixture score states with the same declared font/geometry.
     // Classification examines differing digit glyphs, not changing background pixels.
-    assert(!/[\\':;,\[\]\n]/.test(font), 'Unsupported test font path');
     for (const [index, score] of ['0-0', '1-0'].entries()) {
       const path = join(artifact, `score-template-${index}.gray`);
-      const filter = `drawtext=text='HOME ${score} AWAY · Set 1 · Sets 0-0':expansion=none:fontcolor=white:fontsize=42:box=1:boxcolor=black@0.55:boxborderw=18:x=40:y=h-100:fontfile=${font},format=gray,crop=750:120:0:930`;
+      const template = nativeScoreTemplate({ profile: workerOutputProfile, font, score });
       await run(
         ffmpeg,
         [
@@ -716,9 +716,9 @@ try {
           '-f',
           'lavfi',
           '-i',
-          'color=black:s=1920x1080:r=30',
+          template.input,
           '-vf',
-          filter,
+          template.filter,
           '-frames:v',
           '1',
           '-f',
@@ -727,7 +727,9 @@ try {
         ],
         `score-template-${index}`,
       );
-      scoreTemplates.push(await readFile(path));
+      const pixels = await readFile(path);
+      assert.equal(pixels.length, template.byteLength);
+      scoreTemplates.push(pixels);
     }
   }
   await run('pnpm', ['--filter', '@scorebug/protocol', 'build'], 'protocol');
