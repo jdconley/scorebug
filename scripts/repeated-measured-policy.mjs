@@ -1,3 +1,4 @@
+import { qualifyRepeatedRecoveryInvalidations } from './repeated-recovery-invalidation.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure } from './native-quality-pressure.mjs';
@@ -68,6 +69,12 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   assert(Array.isArray(witnesses) && witnesses.length === 2);
   qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode: 'repeated' });
   const reports = cadenceReports.rows;
+  const invalidations = qualifyRepeatedRecoveryInvalidations({
+    quality,
+    cadenceReports,
+    scope: snapshot.scope,
+  });
+  const invalidationByIndex = new Map(invalidations.map((value) => [value.eventIndex, value]));
   const boot = events[0],
     stop = events.at(-1);
   assert.equal(boot.kind, 'bootstrap');
@@ -219,7 +226,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
         'decoderStall',
         'deliveryFailure',
         'stopped',
-      ].includes(row.kind),
+      ].includes(row.kind) || invalidationByIndex.has(eventIndex),
     );
     if (pendingTrigger) assert.equal(row.kind, 'applied', 'Reset must immediately follow trigger');
     if (row.kind === 'applied') {
@@ -347,6 +354,25 @@ export function qualifyRepeatedMeasuredPolicy(input) {
       continue;
     }
     assert.equal(row.closed, false);
+    if (row.kind === 'rejected') {
+      const invalidation = invalidationByIndex.get(eventIndex);
+      assert(invalidation && ['2', '4'].includes(current.revision));
+      assert(!trial && !pendingTrigger && recoveries.at(-1).resetEventIndex < eventIndex);
+      assert(invalidation.evaluatedAt >= evaluatorTime, 'Invalidation evaluator clock reversal');
+      evaluatorTime = invalidation.evaluatedAt;
+      baseline = undefined;
+      healthySince = undefined;
+      const recovery = recoveries.at(-1);
+      recovery.latestInvalidationCaughtAt = Math.max(
+        recovery.latestInvalidationCaughtAt ?? 0,
+        invalidation.caughtAt,
+      );
+      recovery.latestInvalidationAvailableAt = Math.max(
+        recovery.latestInvalidationAvailableAt ?? 0,
+        invalidation.availableAt,
+      );
+      continue;
+    }
     if (['decoderStall', 'deliveryFailure'].includes(row.kind)) {
       assert(
         !trial &&
@@ -628,8 +654,13 @@ export function qualifyRepeatedMeasuredPolicy(input) {
       }
       return { duration, start: rows[0].start, end, rowCount: rows.length };
     });
+    const creditAfter = Math.max(
+      resumedAt,
+      recovery.latestInvalidationCaughtAt ?? resumedAt,
+      recovery.latestInvalidationAvailableAt ?? resumedAt,
+    );
     const eligible = recovery.healthyWindows.filter(
-      (w) => w.start >= resumedAt && lanes.every((l) => w.start >= l.start && w.end <= l.end),
+      (w) => w.start >= creditAfter && lanes.every((l) => w.start >= l.start && w.end <= l.end),
     );
     assert(eligible.length, 'No whole recovered source windows');
     const credited = [];
@@ -742,6 +773,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
     qualifyMeasuredCadenceContinuity({
       reports,
       cadenceAuditMode: 'repeated',
+      recoveryInvalidations: invalidations,
       start,
       end,
       source: evaluated[0].source,
@@ -754,6 +786,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   qualifyMeasuredCadenceContinuity({
     reports,
     cadenceAuditMode: 'repeated',
+    recoveryInvalidations: invalidations,
     start,
     end: cadenceCheckedThrough,
     source: evaluated[0].source,
@@ -762,6 +795,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   return {
     scope: structuredClone(snapshot.scope),
     rawEventCount: events.length,
+    invalidations,
     confirmations,
     faults,
     recoveries,

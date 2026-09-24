@@ -50,6 +50,7 @@ export function qualifyMeasuredCadenceContinuity({
   scope,
   allowedStall,
   cadenceAuditMode = 'legacy',
+  recoveryInvalidations = [],
 }) {
   assert(finite(start) && finite(end) && end >= start);
   assert(
@@ -57,6 +58,21 @@ export function qualifyMeasuredCadenceContinuity({
       reports.length > 0 &&
       reports.length <= cadenceAuditRowLimit(cadenceAuditMode),
   );
+  // These are exact receipt/index joins independently replayed from the full
+  // repeated raw quality and audit histories, never a caller-selected age limit.
+  assert(Array.isArray(recoveryInvalidations) && recoveryInvalidations.length <= 512);
+  assert(
+    cadenceAuditMode === 'repeated' || recoveryInvalidations.length === 0,
+    'Recovery invalidation requires explicit repeated cadence mode',
+  );
+  const unavailable = new Map();
+  for (const invalidation of recoveryInvalidations) {
+    const index = invalidation.reportIndex;
+    assert(Number.isSafeInteger(index) && index >= 0 && index < reports.length);
+    assert(!unavailable.has(index), 'Duplicate unavailable cadence receipt');
+    assert.equal(reports[index].cadenceReceiptID, id(invalidation.receiptID));
+    unavailable.set(index, invalidation);
+  }
   if (allowedStall)
     assert(
       finite(allowedStall.start) &&
@@ -73,7 +89,7 @@ export function qualifyMeasuredCadenceContinuity({
     publication,
     lastProgress,
     count = 0;
-  for (const report of reports) {
+  for (const [reportIndex, report] of reports.entries()) {
     assert(
       finite(report.evaluatedUptime) && report.evaluatedUptime > previousTime,
       'Cadence audit time reversal',
@@ -166,7 +182,16 @@ export function qualifyMeasuredCadenceContinuity({
       'Intermediate decoder stall invalidates probation',
     );
     assert.equal(progress.stalled, progress.ageMs >= 1000);
-    assert.equal(report.observedStall, progress.stalled);
+    const invalidated = unavailable.has(reportIndex);
+    assert(
+      !invalidated || (!progress.stalled && !repeatedStall),
+      'Unavailable cadence cannot excuse a stall',
+    );
+    assert.equal(
+      report.observedStall,
+      invalidated ? null : progress.stalled,
+      'Unjoined unavailable cadence or inconsistent stall classification',
+    );
     assert(
       Number.isSafeInteger(status.decoderCadenceAgeUpperBoundMs) &&
         status.decoderCadenceAgeUpperBoundMs >= 0,
@@ -176,7 +201,7 @@ export function qualifyMeasuredCadenceContinuity({
       status.decoderCadenceAgeUpperBoundMs / 1000 + report.requestSeconds + report.residenceSeconds;
     assert(
       finite(report.sampleAgeSeconds) &&
-        age <= 0.25 &&
+        (invalidated ? age > 0.25 : age <= 0.25) &&
         Math.abs(age - report.sampleAgeSeconds) < 1e-8,
       'Unavailable or stale intermediate cadence',
     );

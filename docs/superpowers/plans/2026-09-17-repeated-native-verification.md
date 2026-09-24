@@ -704,7 +704,7 @@ or health credit rules have changed, and this capacity fix does not qualify repe
 recovery. The narrow recovery-time invalidation replay above is still required.
 
 
-#### Recovery invalidation replay design — implementation pending
+#### Recovery invalidation replay — component implementation, native run pending
 
 Only an original `rejected` / `cadence-freshness` event during acknowledged
 minimum-profile recovery (revision 2 or 4) may enter the supported path. It must
@@ -733,8 +733,8 @@ advancing the evaluator clock to E, and retaining source/policy ordinals,
 last source end and transition state. Native `healthySince` restarts at the next
 accepted window's actual start, even if that window straddles E. Independent
 recovery credit is stricter: require whole contiguous healthy windows starting
-after both resumed decoder progress and the latest rejection's `caughtAt`
-(the conservative upper bound on completed invalidation), plus both
+after resumed decoder progress, the latest rejection's `caughtAt` and the
+proved fresh replacement report's audit time, plus both
 verified delivery lanes, for at least ten seconds. Earlier credit cannot carry
 across the rejection. A straddling window remains in raw/native replay but earns
 no post-invalidation shared recovery duration.
@@ -744,3 +744,40 @@ its asynchronously serialized event time. A rejection evaluated before probe
 begin invalidates old readiness even if its event was exported after begin.
 The joined unavailable row must be accounted for explicitly in cadence/fault
 validation; all other gaps, stalls, identities and freshness checks remain.
+
+
+The implementation now proves each supported rejection from the complete raw
+version-2 audit and quality history. Both the repeated policy and fault entry
+replay that proof independently. Cadence continuity accepts only the exact
+proved row index/receipt on the repeated route; legacy callers remain strict.
+Readiness requires the policy proof and uses the evaluation timestamp even if
+the rejection was serialized after probe begin. Trigger/resumption freshness
+and ordinary cadence/delivery budgets remain unchanged.
+
+Tests first reproduced the missing invalidation behavior. All 69 helper tests,
+12 integrated policy/fault tests and 33 readiness tests pass. The integrated fixture extends actual synthetic raw delivery lanes to
+22 seconds so it can prove a fresh ten-second interval after invalidation; it
+does not fill missing coverage with a summary. Both fault kinds and mixed
+campaigns pass. Negative cases cover missing/forged proof, duplicate receipts,
+unjoined stale rows, clock/owner changes, and insufficient later recovery.
+The earlier native failure remains failed. Independent spec and quality reviews
+are approved and each reran all 114 focused tests. All 3,262 tool tests pass. A
+fresh frozen-source native run is next; production upgrades stay disabled.
+
+
+Review found and reproduced two false acceptance cases before a new native run:
+a diagnostic age could be fresh or younger than the same receipt's earlier audit,
+and multiple rejected calls could have overlapping timing that regressed the
+recovery cutoff. Added behavioral regressions now require strictly stale actual
+session age, the elapsed lower bound `auditAge + (evaluation - selection)`,
+selection before the next audited receipt, serialized rejection calls, and
+monotonically accumulated cutoffs. Representation rounding never expands the
+250 ms freshness boundary.
+
+The independent recovery cutoff also includes the adjacent fresh receipt's
+proved availability. A whole source window starting after rejection but before
+replacement stays in native replay and earns no independent recovery seconds.
+A regression with rejection near 170.75 seconds and replacement at 171.05 now
+requires the complete 172–182 interval. The prior native `healthySince` is never
+rewritten. This handles the explicitly joined stale receipt and its replacement;
+it does not claim to reconstruct every possible unlogged later rejection.

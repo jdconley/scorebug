@@ -8,7 +8,10 @@ const processingID = 'eeeeeeee-eeee-4eee-8eee-000000000001';
 /** Synthetic policy component fixture. Raw pressure/cadence/deadline artifacts
  * are replayed; source/media and admission summaries remain explicit external
  * contracts. It retains the original five encoder phases and global revisions. */
-export function repeatedMeasuredPolicyFixture(base = repeatedMeasuredRecoveryFaultFixture()) {
+export function repeatedMeasuredPolicyFixture(
+  base = repeatedMeasuredRecoveryFaultFixture(),
+  { recoveryDeliverySeconds = 10 } = {},
+) {
   const f = base;
   const original = f.quality.events;
   const boot = original[0],
@@ -305,7 +308,7 @@ export function repeatedMeasuredPolicyFixture(base = repeatedMeasuredRecoveryFau
     ['4', 221],
   ])
     for (const duration of [1, 2])
-      for (let at = start; at < start + 10; at += duration) {
+      for (let at = start; at < start + recoveryDeliverySeconds; at += duration) {
         // Builder reads the cadence owner from rows[0].
         f.cadenceReports.rows = [template];
         const { row, report } = repeatedFaultDeliveryRow(f, {

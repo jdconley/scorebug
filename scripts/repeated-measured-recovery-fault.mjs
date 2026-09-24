@@ -1,3 +1,4 @@
+import { qualifyRepeatedRecoveryInvalidations } from './repeated-recovery-invalidation.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { qualifyRepeatedMeasuredRecoveryFaultCampaign } from './measured-recovery-fault.mjs';
@@ -39,11 +40,13 @@ export function qualifyRepeatedMeasuredRecoveryFaults(input) {
       quality.decoderStallEnabled === true,
   );
   const events = quality.events;
+  const invalidations = qualifyRepeatedRecoveryInvalidations({ quality, cadenceReports, scope });
+  const invalidationIndices = new Set(invalidations.map((value) => value.eventIndex));
   assert(Array.isArray(events) && events.length > 0 && events.length <= 512);
   assert(events[0].kind === 'bootstrap' && events[0].revision === '0');
   assert(events.at(-1).kind === 'stopped' && events.at(-1).closed === true);
   let at = -1;
-  for (const event of events) {
+  for (const [eventIndex, event] of events.entries()) {
     assert(time(event.at) && event.at >= at, 'Global repeated fault timeline regressed');
     at = event.at;
     assert(
@@ -56,7 +59,7 @@ export function qualifyRepeatedMeasuredRecoveryFaults(input) {
         'decoderStall',
         'deliveryFailure',
         'stopped',
-      ].includes(event.kind),
+      ].includes(event.kind) || invalidationIndices.has(eventIndex),
       'Unsupported repeated fault timeline event',
     );
   }
@@ -196,6 +199,14 @@ export function qualifyRepeatedMeasuredRecoveryFaults(input) {
     const resumedAt = cadenceReports.rows[result.resumedCadenceReportIndex].evaluatedUptime;
     const nextBoundary = index === 0 ? applications[2].application.admittedAt : events.at(-1).at;
     assert(resumedAt < nextBoundary, 'Fault resumed progress escaped its original campaign');
+    for (const invalidation of invalidations.filter((value) => value.revision === resetRevision)) {
+      assert(
+        invalidation.reportIndex > result.resumedCadenceReportIndex &&
+          invalidation.evaluatedAt >= resumedAt &&
+          invalidation.caughtAt < nextBoundary,
+        'Recovery invalidation must follow proved decoder resumption within its campaign',
+      );
+    }
     previous = { fault, resetEventIndex: resetIndex };
     return {
       ...result,

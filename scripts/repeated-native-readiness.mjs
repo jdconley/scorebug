@@ -30,6 +30,58 @@ export function qualifyRepeatedNativeReadiness({
   assert.equal(policy.rawEventCount, events.length, 'Readiness requires full policy history');
   assert(Array.isArray(policy.healthHistory) && policy.healthHistory.length <= events.length);
   assert.equal(policy.recoveries?.length, 2, 'Readiness requires both replayed recoveries');
+  // The full policy replay owns raw receipt/clock validation. Retain its exact
+  // event joins here: asynchronous serialization must not hide an invalidation
+  // that had already cleared native readiness before probe allocation.
+  const invalidations = policy.invalidations ?? [];
+  assert(Array.isArray(invalidations) && invalidations.length <= events.length);
+  const invalidationByIndex = new Map();
+  for (const invalidation of invalidations) {
+    const {
+      eventIndex,
+      reportIndex,
+      nextReportIndex,
+      availableAt,
+      revision,
+      evaluatedAt,
+      caughtAt,
+      receiptID,
+    } = invalidation;
+    assert(Number.isSafeInteger(eventIndex) && eventIndex > 0 && eventIndex < events.length);
+    assert(Number.isSafeInteger(reportIndex) && reportIndex >= 0);
+    assert.equal(
+      nextReportIndex,
+      reportIndex + 1,
+      'Readiness invalidation replacement index differs',
+    );
+    assert(finite(availableAt), 'Missing independently qualified fresh availability');
+    assert(!invalidationByIndex.has(eventIndex), 'Duplicate readiness invalidation');
+    const event = events[eventIndex],
+      diagnostic = event.evaluationDiagnostic;
+    assert(
+      event.kind === 'rejected' && event.reason === 'cadence-freshness',
+      'Readiness invalidation lacks original rejection',
+    );
+    assert(['2', '4'].includes(revision) && event.revision === revision);
+    assert(
+      finite(evaluatedAt) && finite(caughtAt) && evaluatedAt <= caughtAt && caughtAt <= event.at,
+    );
+    assert.equal(
+      diagnostic?.session?.evaluatedAt,
+      evaluatedAt,
+      'Readiness invalidation time differs',
+    );
+    assert.equal(diagnostic?.caughtAt, caughtAt, 'Readiness invalidation catch differs');
+    sameID(diagnostic?.session?.cadenceReceiptID, receiptID);
+    invalidationByIndex.set(eventIndex, invalidation);
+  }
+  events.forEach((event, index) => {
+    if (event.kind === 'rejected')
+      assert(
+        invalidationByIndex.has(index),
+        'Missing independently qualified readiness invalidation',
+      );
+  });
   const seen = new Set();
   for (const checkpoint of policy.healthHistory) {
     assert(
@@ -106,7 +158,7 @@ export function qualifyRepeatedNativeReadiness({
     // weak evaluated event has no strong checkpoint and cannot be ignored.
     for (let i = checkpoint.eventIndex + 1; i < events.length; i++) {
       const next = events[i],
-        evaluatedAt = next.evaluatedAt ?? next.at;
+        evaluatedAt = invalidationByIndex.get(i)?.evaluatedAt ?? next.evaluatedAt ?? next.at;
       if (evaluatedAt > origin) continue;
       assert.equal(next.kind, 'evaluated', 'Intervening event invalidates native readiness');
       const later = policy.healthHistory.find((h) => h.eventIndex === i);
@@ -126,6 +178,16 @@ export function qualifyRepeatedNativeReadiness({
       assert(shared && [shared.start, shared.end, shared.coverageSeconds].every(finite));
       assert.equal(shared.coverageSeconds, shared.end - shared.start);
       assert(shared.coverageSeconds >= 10, 'Insufficient preceding shared recovery');
+      const invalidatedThrough = Math.max(
+        0,
+        ...invalidations
+          .filter((value) => value.revision === revision && value.evaluatedAt <= origin)
+          .map((value) => Math.max(value.caughtAt, value.availableAt)),
+      );
+      assert(
+        shared.start >= invalidatedThrough,
+        'Recovery predates fresh availability after invalidation',
+      );
       assert(
         Array.isArray(shared.policyWindowSequences) && shared.policyWindowSequences.length > 0,
       );

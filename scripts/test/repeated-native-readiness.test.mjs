@@ -245,3 +245,136 @@ for (const [name, mutate] of Object.entries(mutations))
     mutate(f);
     assert.throws(() => qualify(f));
   });
+
+test('readiness rejects invalidation evaluated before begin but serialized afterward', () => {
+  const f = fixture();
+  const origin = f.nativeProbe.campaigns[1].events[0].sample.campaignStartedAt;
+  const event = {
+    kind: 'rejected',
+    reason: 'cadence-freshness',
+    revision: '2',
+    at: origin + 0.02,
+    evaluationDiagnostic: {
+      caughtAt: origin + 0.01,
+      session: {
+        evaluatedAt: origin - 0.01,
+        cadenceReceiptID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      },
+    },
+  };
+  f.quality.events.push(event);
+  f.quality.events.sort((a, b) => a.at - b.at);
+  const eventIndex = f.quality.events.indexOf(event);
+  f.policyQualification.rawEventCount++;
+  f.policyQualification.invalidations = [
+    {
+      eventIndex,
+      reportIndex: 7,
+      nextReportIndex: 8,
+      availableAt: origin + 0.05,
+      receiptID: event.evaluationDiagnostic.session.cadenceReceiptID,
+      revision: '2',
+      evaluatedAt: origin - 0.01,
+      caughtAt: origin + 0.01,
+    },
+  ];
+  assert.throws(() => qualify(f), /invalidation|intervening/i);
+});
+
+test('readiness never infers a rejection proof from unqualified diagnostic metadata', () => {
+  const f = fixture();
+  const origin = f.nativeProbe.campaigns[1].events[0].sample.campaignStartedAt;
+  f.quality.events.push({
+    kind: 'rejected',
+    reason: 'cadence-freshness',
+    revision: '2',
+    at: origin + 0.02,
+    evaluationDiagnostic: { caughtAt: origin + 0.01, session: { evaluatedAt: origin - 0.01 } },
+  });
+  f.quality.events.sort((a, b) => a.at - b.at);
+  f.policyQualification.rawEventCount++;
+  assert.throws(() => qualify(f), /invalidation/i);
+});
+
+test('a qualified rejection evaluated after begin does not rewrite earlier readiness', () => {
+  const f = fixture();
+  const origin = f.nativeProbe.campaigns[1].events[0].sample.campaignStartedAt;
+  const event = {
+    kind: 'rejected',
+    reason: 'cadence-freshness',
+    revision: '2',
+    at: origin + 0.04,
+    evaluationDiagnostic: {
+      caughtAt: origin + 0.03,
+      session: {
+        evaluatedAt: origin + 0.02,
+        cadenceReceiptID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      },
+    },
+  };
+  f.quality.events.push(event);
+  f.quality.events.sort((a, b) => a.at - b.at);
+  f.policyQualification.rawEventCount++;
+  f.policyQualification.invalidations = [
+    {
+      eventIndex: f.quality.events.indexOf(event),
+      reportIndex: 7,
+      nextReportIndex: 8,
+      availableAt: origin + 0.05,
+      receiptID: event.evaluationDiagnostic.session.cadenceReceiptID,
+      revision: '2',
+      evaluatedAt: origin + 0.02,
+      caughtAt: origin + 0.03,
+    },
+  ];
+  assert.equal(qualify(f).readinessQualified, true);
+  const original = structuredClone(f.policyQualification.invalidations[0]);
+  for (const change of [
+    { evaluatedAt: origin + 0.01 },
+    { caughtAt: origin + 0.04 },
+    { revision: '4' },
+    { receiptID: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+    { reportIndex: -1 },
+  ]) {
+    f.policyQualification.invalidations = [{ ...original, ...change }];
+    assert.throws(() => qualify(f));
+  }
+  f.policyQualification.invalidations = [original, original];
+  assert.throws(() => qualify(f), /duplicate/i);
+});
+
+test('readiness cannot count a recovery window beginning before fresh telemetry became available', () => {
+  const f = fixture();
+  const original = [...f.quality.events];
+  const event = {
+    kind: 'rejected',
+    reason: 'cadence-freshness',
+    revision: '2',
+    at: 161,
+    evaluationDiagnostic: {
+      caughtAt: 160.99,
+      session: { evaluatedAt: 160.9, cadenceReceiptID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    },
+  };
+  f.quality.events.push(event);
+  f.quality.events.sort((a, b) => a.at - b.at);
+  for (const h of [
+    ...f.policyQualification.healthHistory,
+    ...f.policyQualification.recoveries[0].healthyWindows,
+  ])
+    h.eventIndex = f.quality.events.indexOf(original[h.eventIndex]);
+  f.policyQualification.rawEventCount++;
+  f.policyQualification.invalidations = [
+    {
+      eventIndex: f.quality.events.indexOf(event),
+      reportIndex: 7,
+      nextReportIndex: 8,
+      availableAt: 161.05,
+      receiptID: event.evaluationDiagnostic.session.cadenceReceiptID,
+      revision: '2',
+      evaluatedAt: 160.9,
+      caughtAt: 160.99,
+    },
+  ];
+  assert.throws(() => qualify(f), /availability|invalidation/i);
+});
