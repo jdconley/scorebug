@@ -20,8 +20,8 @@ Use bounded version-aware verification instead of cloning or rewriting old artif
 - [x] Receiver v3 replay foundation: extend raw validation/progress in `scripts/receiver-probe-evidence.mjs` for `mpegts-null-probe-v3`, retaining v1/v2 behavior. Require bounded positive campaign and campaign-delivered counters, same-campaign continuity, fresh restart identity, and nonregressing publication totals. Add failing-first mutation tests in `scripts/test/receiver-probe-evidence.test.mjs` or a separate v3 test file. Do not enable the repeated harness merely because wire reports validate.
 - [x] Native media phases: add explicit repeated sequence support to `scripts/native-profile-transitions.mjs`, requiring exactly 240/360/240/360/240 with original receipts, frame continuity and decoded transition evidence. Add failing-first tests for missing/reordered phases, receipt chain breaks and changed dimensions.
 - [x] Combined campaign admission: extend receiver interval and candidate-witness replay with original campaign and applied revision; join each candidate proof to the corresponding real baseline phase and exact native profile request. Test cross-campaign substitution, stale measurement and receiver-counter carry-over.
-- [ ] Policy/fault replay: qualify each confirmed trial, each exact decoder fault, each reset and recovery, preserving the global event timeline. Verify second-campaign readiness occurs after first recovery and that no ignored events or missing cadence coverage can manufacture healthy duration. Add malicious mutations and preserve existing single-cycle checks.
-- [ ] Harness: add explicit repeated options, two causally triggered owned decoder pauses after the respective confirmed trial, bounded 180-second hold and new raw fault envelope. Keep legacy routes unchanged. Require the complete repeated verifier plus all existing archive/scoring/A/V gates before a pass.
+- [x] Policy/fault replay: qualify each confirmed trial, each exact decoder fault, each reset and recovery, preserving the global event timeline. Verify second-campaign readiness occurs after first recovery and that no ignored events or missing cadence coverage can manufacture healthy duration. Add malicious mutations and preserve existing single-cycle checks.
+- [x] Harness: add explicit repeated options, two causally triggered owned decoder pauses after the respective confirmed trial, bounded 180-second hold and new raw fault envelope. Keep legacy routes unchanged. Require the complete repeated verifier plus all existing archive/scoring/A/V gates before a pass.
 - [ ] Run `pnpm test:tools`; obtain independent spec/quality review, then build and run the full native simulator fixture on frozen sources. Preserve raw outputs and failures, decode archive/live media, and compare every cycle. Fix observed failures with failing-first regressions; never relax thresholds to obtain a pass.
 - [ ] Update this plan and the portable streaming/Watch plan with evidence and remaining work. Commit verified changes. Continue physical devices and remote proxies; production automatic upgrades remain disabled until their required qualification is complete.
 
@@ -575,3 +575,40 @@ and `3`; raw media replay still requires the actual fixed source revision.
 All 3,167 tool tests pass after this correction, and independent scope review
 approved it. Source hashes and diagnostic evidence use `repeated-harness-*`;
 failed run artifacts are retained unchanged.
+
+
+### Final-stage scheduling verified; telemetry delay remains open
+
+The repeated-only final-stage scheduling fix is implemented: 12 seconds and 120
+default polls, while the first two stages and the legacy route retain their
+eight-second ceilings. The native cumulative 16 MiB / 60-second campaign and
+300-ms lease limits still terminate earlier, as does actual profile withdrawal.
+The 0.5-second maturity, two-second source freshness and all admission thresholds
+are unchanged. Four new regressions cover observed late admission, the absolute
+ceiling, early native budget termination and bounded derived poll counts.
+Failing-first evidence and the 30/30 focused, 450/450 full FilmModel passes are
+in `artifacts/qa/repeated-live-checkpoint-repeated-probe-*`. Both independent
+reviews approved the correction.
+
+On frozen sources, `native-app-HJeP6C` passed the iPhone 14/iOS 26.2 native UI
+workflow in 270.705 seconds, including scoring, publish/stop and recording
+export. Unlike the preceding failed attempt, its original quality history
+contains a real trial application (event 8), candidate (9), confirmation (13),
+and healthy evaluation (14). The harness still failed its shared readiness
+deadline. No decoder fault was injected and no repeated recovery was qualified.
+
+Events 15 and 19 reject cadence freshness; events 16 and 18 reject source time.
+Source interval 14 first appeared fully processed only about 82.9 ms before its
+two-second freshness limit; interval 16 had about 206.2 ms remaining. The cadence
+audit contains 2,040 rows, with a maximum audited sample age of 165.7 ms, below
+the 250-ms decision limit. Crucially, the nearest audit row cannot be assumed to
+be the decision input: earlier rows could have aged beyond the limit by the
+rejection, while the newest rows remained fresh. The current rejected events
+lack the receipt/evaluation join needed to distinguish actor scheduling, old
+input capture, and other local delays. Add that bounded diagnostic before
+changing runtime scheduling. Do not weaken freshness, discard rejected events,
+or classify stale reports as decoder stalls.
+
+Tasks 5 and 6 above now describe implemented/reviewed code. Their checkmarks do
+not imply completion of task 7’s full repeated native media gate, which remains
+open. Production automatic upgrade permission is still disabled.

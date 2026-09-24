@@ -596,9 +596,102 @@ extension NativeBandwidthProbeFixtureTests {
         await f.owner.stop()
     }
 
-    private func repeatedPublisher(_ fake: RepeatedProbeOperations, scope: VideoFrameObservationScope) -> NativeBandwidthProbePublisher {
+    func testRepeatedFinalStageSurvivesObservedEightPointEightEightSecondProfileWithdrawal() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(renewalStep: 0.12, finalTerminalAfter: 8.88)
+        let publisher = repeatedPublisher(fake, scope: context.scope, maximumPolls: 600, stagePolls: 80)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        let object = try fake.object()
+        let campaigns = try XCTUnwrap(object["campaigns"] as? [[String: Any]])
+        let campaign = try XCTUnwrap(campaigns.first)
+        let events = try XCTUnwrap(campaign["events"] as? [[String: Any]])
+        let final = try XCTUnwrap(events.last?["sample"] as? [String: Any])
+        let terminalAge = try XCTUnwrap(events.last?["observedAt"] as? Double) - XCTUnwrap(final["startedAt"] as? Double)
+        // The real run needed fresh health at stage age 8.877s after its four-second
+        // measurement. A timer retirement at eight seconds destroyed that owner.
+        XCTAssertGreaterThanOrEqual(terminalAge, 8.88 - 0.000001)
+        XCTAssertLessThan(terminalAge, 9.01)
+        XCTAssertEqual(campaign["status"] as? String, "withdrawn")
+        XCTAssertEqual(final["reason"] as? String, "cancelled")
+        XCTAssertEqual(object["invalid"] as? Bool, false)
+        XCTAssertEqual(fake.renewalsAfterTerminal, 0)
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertLessThanOrEqual(events.count, 607)
+        await f.owner.stop()
+    }
+
+    func testRepeatedFinalStageHasAbsoluteTwelveSecondCeilingAndEarlierStagesRemainEight() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(renewalStep: 0.25)
+        let publisher = repeatedPublisher(fake, scope: context.scope, maximumPolls: 600, stagePolls: 80)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        let campaigns = try XCTUnwrap(try fake.object()["campaigns"] as? [[String: Any]])
+        let events = try XCTUnwrap(campaigns.first?["events"] as? [[String: Any]])
+        let retired = events.filter { $0["phase"] as? String == "retired" }
+        XCTAssertEqual(retired.count, 3)
+        for (index, event) in retired.enumerated() {
+            let sample = try XCTUnwrap(event["sample"] as? [String: Any])
+            let duration = try XCTUnwrap(event["retirementRequestedAt"] as? Double) - XCTUnwrap(sample["startedAt"] as? Double)
+            XCTAssertEqual(duration, index == 2 ? 12 : 8, accuracy: 0.000001)
+        }
+        XCTAssertEqual(fake.stageRenewals, [32, 32, 48])
+        XCTAssertEqual(fake.restarts, 0)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+        await f.owner.stop()
+    }
+
+    func testRepeatedFinalStageStopsAtOriginalNativeByteOrTimeTerminal() async throws {
+        for reason in ["byteLimit", "timeLimit"] {
+            let f = try await CandidateQualityFixture.make()
+            let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+            let fake = RepeatedProbeOperations(renewalStep: 0.25, finalTerminalAfter: 1, finalTerminalReason: reason)
+            let publisher = repeatedPublisher(fake, scope: context.scope, maximumPolls: 600, stagePolls: 80)
+            _ = await publisher.setMeasurementContextProvider { context }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            let campaigns = try XCTUnwrap(try fake.object()["campaigns"] as? [[String: Any]])
+            let events = try XCTUnwrap(campaigns.first?["events"] as? [[String: Any]])
+            let final = try XCTUnwrap(events.last?["sample"] as? [String: Any])
+            XCTAssertEqual(final["reason"] as? String, reason)
+            XCTAssertEqual(campaigns.first?["status"] as? String, "withdrawn")
+            XCTAssertEqual(fake.stageRenewals, [32, 32, 4])
+            XCTAssertEqual(fake.renewalsAfterTerminal, 0)
+            XCTAssertTrue(fake.lastOwnerJoined)
+            XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+            await f.owner.stop()
+        }
+    }
+
+    func testRepeatedFinalPollAllowanceIsBoundedAndIncludedInTotalScheduleValidation() async throws {
+        for (stagePolls, maximumPolls, valid, expected) in [
+            (1, 3, false, [Int]()), (1, 4, true, [1, 1, 2]),
+            (80, 279, false, []), (80, 280, true, [80, 80, 120]),
+            (200, 600, true, [200, 200, 200]), (201, 600, false, [])
+        ] {
+            let f = try await CandidateQualityFixture.make()
+            let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+            let fake = RepeatedProbeOperations()
+            let publisher = repeatedPublisher(fake, scope: context.scope, maximumPolls: maximumPolls, stagePolls: stagePolls)
+            _ = await publisher.setMeasurementContextProvider { context }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            XCTAssertEqual(fake.begins, valid ? 1 : 0)
+            XCTAssertEqual(fake.stageRenewals, expected)
+            XCTAssertEqual(try fake.object()["invalid"] as? Bool, !valid)
+            if valid {
+                let campaigns = try XCTUnwrap(try fake.object()["campaigns"] as? [[String: Any]])
+                XCTAssertLessThanOrEqual(try XCTUnwrap(campaigns.first?["events"] as? [Any]).count, 607)
+            }
+            await f.owner.stop()
+        }
+    }
+
+    private func repeatedPublisher(_ fake: RepeatedProbeOperations, scope: VideoFrameObservationScope,
+                                   maximumPolls: Int = 12, stagePolls: Int = 1) -> NativeBandwidthProbePublisher {
         NativeBandwidthProbePublisher(publisher: fake, scope: scope, mode: .repeated,
-            operations: fake.operations, timing: .init(delay: .zero, poll: .zero, maximumPolls: 12, stagePolls: 1,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .zero, maximumPolls: maximumPolls, stagePolls: stagePolls,
                 now: fake.now), candidateHeadroom: true)
     }
     private func repeatedContexts() async throws -> (CandidateQualityFixture, PublishingQualitySession.CandidateMeasurementContext,
@@ -649,14 +742,20 @@ private final class RepeatedProbeOperations: MediaPublisher, @unchecked Sendable
     private let lock = NSLock()
     let beginGate: RepeatedProbeGate, terminalGate: RepeatedProbeGate
     private let mismatchCampaign: Bool, terminalOnStageThree: Bool
+    private let renewalStep: Double, finalTerminalAfter: Double?, finalTerminalReason: String
+    private var renewals: [Int] = [], terminalRenewals = 0
     private var time = 115.1, stopped = false, beginCount = 0, restartCount = 0
     private var value: NativeBandwidthProbeSample?, cancelled: [UUID] = [], exported: [Data] = []
     private var joined = Set<UUID>(), firstJoined = false, restartJoined = false
-    init(blockBegin: Bool = false, blockTerminal: Bool = false, mismatchCampaign: Bool = false, terminalOnStageThree: Bool = false) {
+    init(blockBegin: Bool = false, blockTerminal: Bool = false, mismatchCampaign: Bool = false, terminalOnStageThree: Bool = false,
+         renewalStep: Double = 0.01, finalTerminalAfter: Double? = nil, finalTerminalReason: String = "cancelled") {
         beginGate = .init(blocked: blockBegin); terminalGate = .init(blocked: blockTerminal)
         self.mismatchCampaign = mismatchCampaign; self.terminalOnStageThree = terminalOnStageThree
+        self.renewalStep = renewalStep; self.finalTerminalAfter = finalTerminalAfter; self.finalTerminalReason = finalTerminalReason
     }
     var hasStopped: Bool { lock.withLock { stopped } }
+    var stageRenewals: [Int] { lock.withLock { renewals } }
+    var renewalsAfterTerminal: Int { lock.withLock { terminalRenewals } }
     var begins: Int { lock.withLock { beginCount } }
     var restarts: Int { lock.withLock { restartCount } }
     var exports: Int { lock.withLock { exported.count } }
@@ -693,10 +792,15 @@ private final class RepeatedProbeOperations: MediaPublisher, @unchecked Sendable
     func renew(_ id: UUID, _ generation: UInt64) -> NativeBandwidthProbeSample {
         lock.withLock {
             let old = value!; XCTAssertEqual(id, old.id); XCTAssertEqual(generation, 7)
-            time += 0.01
+            if old.reason != nil { terminalRenewals += 1 }
+            let stage = old.stage!
+            while renewals.count < stage { renewals.append(0) }
+            renewals[stage - 1] += 1
+            time += renewalStep
+            let terminal = stage == 3 && (terminalOnStageThree || finalTerminalAfter.map { time - old.startedAt >= $0 - 0.000000001 } == true)
             let sample = NativeBandwidthProbeSample(id: old.id, publishingGeneration: 7, bitRate: old.bitRate,
                 startedAt: old.startedAt, leaseDeadline: time + 0.3, acceptedPayloadBytes: old.acceptedPayloadBytes + 1316,
-                lastAcceptedAt: time, reason: terminalOnStageThree && old.stage == 3 ? "cancelled" : nil,
+                lastAcceptedAt: time, reason: terminal ? finalTerminalReason : nil,
                 stage: old.stage, campaign: mismatchCampaign ? 2 : old.campaign,
                 permitsCurrentOwner: old.permitsCurrentOwner, campaignStartedAt: old.campaignStartedAt,
                 totalAcceptedPayloadBytes: old.totalAcceptedPayloadBytes! + 1316)
@@ -704,7 +808,7 @@ private final class RepeatedProbeOperations: MediaPublisher, @unchecked Sendable
         }
     }
     func cancel(_ id: UUID, _ generation: UInt64) {
-        lock.withLock { XCTAssertEqual(id, value?.id); XCTAssertEqual(generation, 7); cancelled.append(id); value?.reason = "cancelled" }
+        lock.withLock { XCTAssertEqual(id, value?.id); XCTAssertEqual(generation, 7); cancelled.append(id); if value?.reason == nil { value?.reason = "cancelled" } }
     }
     func snapshot() async -> NativeBandwidthProbeSample? {
         if lock.withLock({ value?.reason != nil }) { await terminalGate.wait() }

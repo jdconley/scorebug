@@ -39,7 +39,7 @@ differences under 100 ms. Output targets were 6 Mbps for 1080p and 24 Mbps for
 local processing measurements do not establish sustained thermal performance,
 network capacity, native archive durability or production upgrade permission.
 
-## Network replay remains unqualified
+## Initial file-sender network failures
 
 The first real-time replay sent the 1080p excerpt as MPEG-TS over loopback SRT,
 through the actual proxy CPU encoder and overlay, then over RTMP to the existing
@@ -72,3 +72,43 @@ separate transport-tail loss from decoder flush, then repeat both resolutions
 through SRT and RTMP. Retain the instrumented simulator clips for independent
 frame identity, deadline, archive and adaptive-policy proofs. Real match footage
 adds content realism; it does not replace those measurements.
+
+
+## Native 1080p network and archive check passed
+
+`network-native-aligned.mts` uses the existing `DualOutputSmoke` sender and
+production native publishing/recording packages. Twelve seconds of the 1080p
+match run in real time through native H.264/AAC encoding, loopback SRT, the actual
+CPU proxy and score overlay, RTMP, and the independent MP4 recorder. A clean
+segmented archive records in parallel and is exported by `ArchiveHarness`.
+
+The prepared MOV has exactly 360 uniformly timed frames starting at zero, plus
+48 kHz mono PCM. Audio/video timestamp origins are explicitly normalized during
+fixture preparation, before the measurement boundary. This tests representative
+content and the native media path, not preservation of the original recording's
+camera timestamps, stereo layout or HDR metadata. The native harness uses its
+existing 1080p profile and scheduled 2 Mbps bitrate change; the CPU proxy targets
+1080p30 at 6 Mbps. It does not test automatic adaptation.
+
+All 360 frames were submitted, encoded, decoded by the proxy, archived, and
+present in the streamed output. The archive rejected no samples, the live queue
+dropped/rejected none, and maximum source scheduling lag was 2.50 ms. Streamed
+frame gaps were 33–34 ms; audio/video track starts differed by 2 ms. Both archive
+and stream fully decoded without errors, and visual inspection confirmed the
+match and expected score overlay. Evidence is in
+`network-native-aligned-1080p-software/`, including the untouched raw native
+events, recorder packet timings, result, full-decode results and preview.
+
+Two preceding native fixture attempts remain failed and preserved. A direct TS
+to MP4 remux introduced an empty leading edit interval that AVFoundation read
+as an extra frame (361 native frames for 360 compressed frames). Disabling edit
+lists removed that extra frame but produced a 56.6 ms first-frame interval in
+the input itself. The aligned fixture corrects its input timeline; no output
+frames or failed results were discarded to obtain a pass.
+
+This establishes one short 1080p local native content check. It does not qualify
+4K networking, long-match thermals, physical-device camera capture, archive crash
+recovery or repeated adaptation. The previous file-sender and console-bridge
+failures are unresolved for those adapters. A 4K network test must explicitly
+configure a supported 4K sender/archive path; the existing native smoke harness
+uses a fixed 1080p archive and must not silently label that output 4K.

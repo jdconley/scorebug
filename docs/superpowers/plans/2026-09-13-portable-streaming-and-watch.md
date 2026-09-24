@@ -33,16 +33,20 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route is explicitly limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,167 tool tests pass. The iPhone 14/iOS 26.2 workflow passed native scoring
-and recording export, but repeated recovery failed: no candidate was admitted
-before the bounded readiness deadline. Probe retirement raced measurement
-completion; the next fix addresses that test scheduling. Production qualification
-remains open.
+All 3,167 tool tests and 450 FilmModel tests pass. A bounded scheduling fix
+keeps the repeated test’s final probe alive long enough for measured admission;
+its native byte, lease and campaign limits are unchanged. The latest iPhone 14/
+iOS 26.2 run passed native scoring and recording export and confirmed the first
+quality upgrade. Repeated recovery still failed: stale cadence/source evidence
+prevented the first controlled fault. The next step is to join each rejected
+input to its exact evaluation timing. Production qualification remains open.
 
 Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
 proxy processing checks passed with software and macOS VideoToolbox encoding.
-The real-footage network tests exposed tail-frame loss and a failed drain
-experiment, so that end-to-end test remains open. See
+A 12-second 1080p excerpt also passed through the native encoder, clean archive,
+SRT, proxy overlay, RTMP and independent recorder with all 360 frames. Earlier
+file-sender network attempts remain failed; 4K networking and longer runs remain
+open. See
 [representative match testing](../../representative-match-testing.md) for results
 and limits. Physical iPhone/Watch tests and other proxy systems remain later gates.
 

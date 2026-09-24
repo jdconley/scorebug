@@ -193,7 +193,8 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             guard timing.delay >= .zero, timing.poll >= .zero, (1...600).contains(timing.maximumPolls),
                   !candidateHeadroom || mode == .staged || mode == .repeated,
                   mode != .repeated || candidateHeadroom,
-                  (mode != .staged && mode != .repeated) || ((1...200).contains(timing.stagePolls) && timing.stagePolls * 3 <= timing.maximumPolls) else {
+                  (mode != .staged && mode != .repeated) || ((1...200).contains(timing.stagePolls) &&
+                    (mode == .repeated ? timing.stagePolls * 2 + repeatedFinalStagePolls : timing.stagePolls * 3) <= timing.maximumPolls) else {
                 throw FixtureError.invalidEvidence
             }
             try await Task.sleep(for: timing.delay)
@@ -326,8 +327,13 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         campaigns[campaigns.count - 1].status = "completed"
         for index in 0..<3 {
             if current.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return }
-            let deadline = current.startedAt + 8
-            for _ in 0..<timing.stagePolls {
+            // A four-second measurement may begin only when the next original
+            // source-health window becomes fresh. Keep its probe alive through
+            // the following admission window; native byte/time/lease limits and
+            // real profile withdrawal still terminate this owner immediately.
+            let deadline = current.startedAt + (index == 2 ? 12 : 8)
+            let polls = index == 2 ? repeatedFinalStagePolls : timing.stagePolls
+            for _ in 0..<polls {
                 if timing.now() >= deadline { break }
                 try await Task.sleep(for: timing.poll)
                 try Task.checkCancellation()
@@ -435,6 +441,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         return true
     }
 
+    private var repeatedFinalStagePolls: Int { min(200, timing.stagePolls + (timing.stagePolls + 1) / 2) }
     private var stagedBitRates: [Int] { candidateHeadroom ? [500_000, 2_000_000, 12_000_000] : [500_000, 1_000_000, 2_000_000] }
     private func runStaged() async throws {
         var current = try await operations.beginStaged()
