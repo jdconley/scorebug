@@ -6,6 +6,57 @@ import ScorebugStreaming
 import XCTest
 
 final class PublishingQualitySessionTests: XCTestCase {
+    func testSuccessfulSourceEvaluationDiagnosticRetainsOriginalDecisionAndSequence() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let source = try XCTUnwrap(f.source), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let capture = QualityEvaluationTestCapture()
+        let result = try await f.owner.evaluate(source: source, diagnostics: diagnostics,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant, observeEvaluation: capture.observer)
+        XCTAssertEqual(result.state, .healthy)
+        let state = await f.owner.snapshot
+        XCTAssertEqual(state.lastWindow?.sequence, 1)
+        XCTAssertEqual(state.revision, 0)
+        XCTAssertEqual(capture.values.count, 1)
+        let trace = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(trace.input, .source(.init(source)))
+        XCTAssertEqual(trace.evaluatedAt, f.native.now)
+        XCTAssertEqual(try XCTUnwrap(trace.sourceAgeSeconds), 0.1, accuracy: 0.000000001)
+        await f.owner.stop()
+    }
+
+    func testSourceEvaluationDiagnosticPreservesTimeErrorAndExactSourceAge() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let source = try XCTUnwrap(f.source), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        f.native.setNow(source.interval.captureBoundaryEndTime + 2.01)
+        let instant = f.native.instant, capture = QualityEvaluationTestCapture()
+        do {
+            _ = try await f.owner.evaluate(source: source, diagnostics: diagnostics,
+                workerLimits: nil, transportLimits: nil, instant: instant, observeEvaluation: capture.observer)
+            XCTFail("Instrumentation cannot relax source freshness")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .time) }
+        XCTAssertEqual(capture.values.count, 1)
+        let trace = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(trace.input, .source(.init(source)))
+        XCTAssertEqual(trace.evaluatedAt, f.native.now)
+        XCTAssertEqual(try XCTUnwrap(trace.sourceAgeSeconds), 2.01, accuracy: 0.000000001)
+        let expectedAge = source.freshness.ageUpperBound(at: instant).map {
+            Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18
+        }
+        XCTAssertEqual(trace.sampleAgeSeconds, expectedAge)
+        await f.owner.stop()
+        do {
+            _ = try await f.owner.evaluate(source: source, diagnostics: diagnostics,
+                workerLimits: nil, transportLimits: nil, instant: instant, observeEvaluation: capture.observer)
+            XCTFail("Closed owner cannot evaluate the old source")
+        } catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .closed) }
+        XCTAssertEqual(capture.values.count, 2)
+        let early = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(early.input, .source(.init(source)))
+        XCTAssertNil(early.evaluatedAt); XCTAssertNil(early.sampleAgeSeconds); XCTAssertNil(early.sourceAgeSeconds)
+    }
+
     private let attempt = UUID()
     private var profiles: [QualityController.Profile] {
         [.init(id: "small", width: 640, height: 360, minimumBitrate: 500_000, maximumBitrate: 1_000_000),
@@ -1208,5 +1259,15 @@ final class CandidateQualityNative: @unchecked Sendable {
                 firstNewSourcePTS: .init(value: Int64(100 + ordinal * 100), timescale: 30), width: profile.width, height: profile.height,
                 rawVideoFramesDropped: 0, acknowledgedAt: self.now)!
         })
+    }
+}
+
+/// Test-only storage for immutable synchronous actor evaluation callbacks.
+final class QualityEvaluationTestCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [PublishingQualitySession.EvaluationDiagnostic] = []
+    var values: [PublishingQualitySession.EvaluationDiagnostic] { lock.withLock { records } }
+    var observer: @Sendable (PublishingQualitySession.EvaluationDiagnostic) -> Void {
+        { [self] value in lock.withLock { records.append(value) } }
     }
 }

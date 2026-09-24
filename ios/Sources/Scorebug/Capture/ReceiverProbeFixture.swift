@@ -67,6 +67,10 @@ struct ReceiverProbeFixtureHistory {
     private static func milliseconds(_ duration: Duration) -> Double {
         Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
     }
+    static func writer(environment: [String: String]) -> ((Data) async -> Void)? {
+        guard ["renew", "expire", "staged", "repeated"].contains(environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? "") else { return nil }
+        return { await persist($0) }
+    }
     static func persist(_ data: Data) async {
         await Task.detached(priority: .utility) {
             do {

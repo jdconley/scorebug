@@ -5,6 +5,16 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testReceiverEvidenceWriterIncludesRepeatedModeAndRetainsLegacySelection() {
+        for mode in ["renew", "expire", "staged", "repeated"] {
+            XCTAssertNotNil(ReceiverProbeFixtureHistory.writer(environment: ["SCOREBUG_TEST_BANDWIDTH_PROBE": mode]), mode)
+        }
+        XCTAssertNil(ReceiverProbeFixtureHistory.writer(environment: [:]))
+        for mode in ["", "repeat", "1", "unknown"] {
+            XCTAssertNil(ReceiverProbeFixtureHistory.writer(environment: ["SCOREBUG_TEST_BANDWIDTH_PROBE": mode]), mode)
+        }
+    }
+
     func testOnlyExplicitMeasuredFactoryInstallsCandidateProviderAndStopClearsIt() async throws {
         for enabled in [false, true] {
             let server = CaptureTestServer()

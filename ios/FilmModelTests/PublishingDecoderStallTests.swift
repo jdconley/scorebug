@@ -64,6 +64,57 @@ final class PublishingDecoderStallTests: XCTestCase {
         XCTAssertThrowsError(try PublishingQualityTelemetry.decoderStall(cadence: cadence(), applied: applied(n),
             diagnostics: diagnostics(n), sequence: 1, at: n.now, instant: instant + .milliseconds(201)))
     }
+    func testCadenceEvaluationDiagnosticUsesValidationInstantAndPreservesFreshnessError() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        let selected = try cadence(stalled: false, age: 50)
+        let capture = QualityEvaluationTestCapture()
+        do {
+            _ = try await owner.evaluateDecoderStall(cadence: selected, diagnostics: diagnostics(native),
+                instant: instant + .milliseconds(201))
+            XCTFail("Absent observer must retain the same freshness failure")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+        do {
+            _ = try await owner.evaluateDecoderStall(cadence: selected, diagnostics: diagnostics(native),
+                instant: instant + .milliseconds(201), observeEvaluation: capture.observer)
+            XCTFail("Diagnostic callback must not suppress the original freshness failure")
+        } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+        let trace = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(trace.input, .cadence(receiptID: selected.receiptID))
+        XCTAssertEqual(trace.evaluatedAt, 102)
+        XCTAssertEqual(try XCTUnwrap(trace.sampleAgeSeconds), 0.251, accuracy: 0.000000001)
+        XCTAssertNil(trace.sourceAgeSeconds)
+        XCTAssertEqual(capture.values.count, 1)
+        await owner.stop()
+    }
+
+    func testSuccessfulCadenceDiagnosticAndEarlyFailureNeverBorrowPreviousTiming() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        let original = try cadence(stalled: false, age: 50), replacement = try cadence(stalled: false, age: 10)
+        let capture = QualityEvaluationTestCapture()
+        let result = try await owner.evaluateDecoderStall(cadence: original, diagnostics: diagnostics(native),
+            instant: instant + .milliseconds(100), observeEvaluation: capture.observer)
+        XCTAssertNil(result, "Tracing a healthy cadence cannot manufacture a decision")
+        let successful = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(successful.input, .cadence(receiptID: original.receiptID))
+        XCTAssertEqual(successful.evaluatedAt, 102)
+        XCTAssertEqual(try XCTUnwrap(successful.sampleAgeSeconds), 0.15, accuracy: 0.000000001)
+        await owner.stop()
+        do {
+            _ = try await owner.evaluateDecoderStall(cadence: replacement, diagnostics: diagnostics(native),
+                instant: instant + .milliseconds(200), observeEvaluation: capture.observer)
+            XCTFail("Closed admission must retain its original error")
+        } catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .closed) }
+        XCTAssertEqual(capture.values.count, 2)
+        let closed = try XCTUnwrap(capture.values.last)
+        XCTAssertEqual(closed.input, .cadence(receiptID: replacement.receiptID))
+        XCTAssertNil(closed.evaluatedAt)
+        XCTAssertNil(closed.sampleAgeSeconds)
+        XCTAssertNil(closed.sourceAgeSeconds)
+        XCTAssertEqual(successful.evaluatedAt, 102, "Earlier immutable record stays intact")
+    }
+
     func testSessionStallResetsOnceAndKeepsSourceWindowAbsent() async throws {
         let n = StallNative(), o = try owner(n); try await o.bootstrap(); n.setNow(101.25)
         let decision = try await o.evaluateDecoderStall(cadence: cadence(), diagnostics: diagnostics(n), instant: instant)
@@ -205,6 +256,35 @@ final class PublishingDecoderStallTests: XCTestCase {
         try await owner.apply(reset)
         XCTAssertEqual(native.calls, 2)
         await owner.stop()
+    }
+
+    @MainActor func testRejectedCadenceDiagnosticsJoinSelectedHelperAndActualSessionEvaluation() async throws {
+        let native = StallNative(), owner = try owner(native)
+        try await owner.bootstrap(); native.setNow(102)
+        let tickHelper = try cadence(stalled: false, age: 10, receivedAt: .now)
+        let selected = try cadence(stalled: false, age: 251, receivedAt: .now)
+        let d = try diagnostics(native)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, export: { exported = $0 })
+        driver.cadenceInputProvider = { .init(cadence: selected, diagnostics: d) }
+        await driver.tick(encoderReady: true, source: nil, cadence: tickHelper, diagnostics: d)?.value
+        await driver.stop()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+        let rejected = try XCTUnwrap(events.first { $0["reason"] as? String == "cadence-freshness" })
+        let trace = try XCTUnwrap(rejected["evaluationDiagnostic"] as? [String: Any])
+        XCTAssertEqual(trace["selectedAt"] as? Double, 102)
+        XCTAssertEqual(trace["dispatchedAt"] as? Double, 102)
+        XCTAssertEqual(trace["caughtAt"] as? Double, 102)
+        let session = try XCTUnwrap(trace["session"] as? [String: Any])
+        XCTAssertEqual(session["kind"] as? String, "cadence")
+        XCTAssertEqual(session["cadenceReceiptID"] as? String, selected.receiptID.uuidString.lowercased())
+        XCTAssertNotEqual(session["cadenceReceiptID"] as? String, tickHelper.receiptID.uuidString.lowercased())
+        XCTAssertEqual(session["evaluatedAt"] as? Double, 102)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(session["sampleAgeSeconds"] as? Double), 0.251)
+        XCTAssertTrue(session["sourceAgeSeconds"] is NSNull)
+        XCTAssertEqual(native.calls, 1, "Diagnostic rejection cannot create a policy action")
     }
 
     @MainActor func testCurrentStaleCadenceStillRejectsAndProviderClearsOnCancel() async throws {

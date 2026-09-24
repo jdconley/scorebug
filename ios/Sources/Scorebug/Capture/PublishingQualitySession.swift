@@ -22,6 +22,32 @@ actor PublishingQualitySession {
         let isClosed: Bool
         let isBusy: Bool
     }
+    /// Observational only: these scalars cannot authorize a policy action. Each
+    /// callback receives its own immutable record, including early failures that
+    /// never reached the existing evaluation-clock sample.
+    struct EvaluationDiagnostic: Sendable {
+        struct SourceKey: Sendable, Equatable {
+            let workerEpoch: String
+            let workerAttempt: Int
+            let readerID: String
+            let sequence: Int64
+            init(_ source: WorkerSourceIntervalObservation) {
+                workerEpoch = source.workerEpoch; workerAttempt = source.workerAttempt
+                readerID = source.publication.readerId; sequence = source.sequence
+            }
+        }
+        enum Input: Sendable, Equatable {
+            case cadence(receiptID: UUID)
+            case source(SourceKey)
+        }
+        let input: Input
+        let evaluatedAt: Double?
+        let sampleAgeSeconds: Double?
+        let sourceAgeSeconds: Double?
+        fileprivate static func seconds(_ duration: Duration?) -> Double? {
+            duration.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 }
+        }
+    }
     /// Advisory work request only. Re-read after suspension; it cannot authorize
     /// a quality increase or keep measurement authority alive after invalidation.
     struct CandidateMeasurementContext: Sendable {
@@ -278,7 +304,16 @@ actor PublishingQualitySession {
     }
     func evaluate(source: WorkerSourceIntervalObservation, diagnostics: PublishingQualityTelemetry.Diagnostics,
                   workerLimits: PublishingQualityTelemetry.WorkerLimits?, transportLimits: PublishingQualityTelemetry.TransportLimits?,
-                  instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision {
+                  instant: ContinuousClock.Instant? = nil,
+                  observeEvaluation: (@Sendable (EvaluationDiagnostic) -> Void)? = nil) throws -> QualityController.Decision {
+        var evaluationAt: Double?, evaluationInstant: ContinuousClock.Instant?
+        defer {
+            if let observeEvaluation {
+                observeEvaluation(.init(input: .source(.init(source)), evaluatedAt: evaluationAt,
+                    sampleAgeSeconds: EvaluationDiagnostic.seconds(evaluationInstant.flatMap { source.freshness.ageUpperBound(at: $0) }),
+                    sourceAgeSeconds: evaluationAt.map { $0 - source.interval.captureBoundaryEndTime }))
+            }
+        }
         try admit()
         guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
         defer { self.policy = policy }
@@ -287,6 +322,7 @@ actor PublishingQualitySession {
             // Sample age after uptime so elapsed work cannot make a remote
             // completion's conservative lower bound appear newer than it is.
             let sampledInstant = instant ?? .now
+            evaluationAt = now; evaluationInstant = sampledInstant
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             let sourceScope = SourceScope(source)
             if let lastSource, lastSource.scope == sourceScope, source.sequence <= lastSource.sequence {
@@ -355,13 +391,23 @@ actor PublishingQualitySession {
     }
 
     func evaluateDecoderStall(cadence: WorkerDecoderCadenceFreshness, diagnostics: PublishingQualityTelemetry.Diagnostics,
-                              instant: ContinuousClock.Instant? = nil) throws -> QualityController.Decision? {
+                              instant: ContinuousClock.Instant? = nil,
+                              observeEvaluation: (@Sendable (EvaluationDiagnostic) -> Void)? = nil) throws -> QualityController.Decision? {
+        var evaluationAt: Double?, evaluationInstant: ContinuousClock.Instant?
+        defer {
+            if let observeEvaluation {
+                observeEvaluation(.init(input: .cadence(receiptID: cadence.receiptID), evaluatedAt: evaluationAt,
+                    sampleAgeSeconds: EvaluationDiagnostic.seconds(evaluationInstant.flatMap { cadence.sampleAgeUpperBound(at: $0) }),
+                    sourceAgeSeconds: nil))
+            }
+        }
         try admit()
         guard behavior == .progressive else { return nil }
         guard var policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
         defer { self.policy = policy }
         do {
             let now = try time(), sampledInstant = instant ?? .now
+            evaluationAt = now; evaluationInstant = sampledInstant
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
                 settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)

@@ -22,7 +22,7 @@ intentionally does not invent unverified Swift media method signatures. The medi
 compatibility experiment must establish those before detailed implementation of its
 adapters. No runtime code was changed while preparing this plan.
 
-## Current assessment — September 23
+## Current assessment — September 24
 
 The native app, scoring/Watch work, clean recording, and portable proxy now have
 substantial implementation and local evidence; the original baseline below is
@@ -33,18 +33,23 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route is explicitly limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,167 tool tests and 450 FilmModel tests pass. A bounded scheduling fix
-keeps the repeated test’s final probe alive long enough for measured admission;
-its native byte, lease and campaign limits are unchanged. The latest iPhone 14/
-iOS 26.2 run passed native scoring and recording export and confirmed the first
-quality upgrade. Repeated recovery still failed: stale cadence/source evidence
-prevented the first controlled fault. The next step is to join each rejected
-input to its exact evaluation timing. Production qualification remains open.
+All 3,167 tool tests and 458 FilmModel tests pass. The latest iPhone 14/iOS 26.2
+run passed native scoring and recording export and the controller completed both
+upgrade/fault/reset/recovery cycles. Full independent qualification still failed:
+the repeated mode omitted a required receiver-evidence export, the cadence audit
+hit its 2,048-row ceiling, and one stale report during recovery needs explicit
+replay semantics. The missing writer selector is fixed and regression tested;
+that fix has not yet received a fresh full native run. Diagnostic receipt joins
+show the stale report had already exceeded 250 ms before policy selection.
+Next: retain a complete bounded repeated audit, then independently replay
+supported recovery-time telemetry invalidation without granting health credit.
+Production automatic quality increases remain disabled.
 
 Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
 proxy processing checks passed with software and macOS VideoToolbox encoding.
 A 12-second 1080p excerpt also passed through the native encoder, clean archive,
-SRT, proxy overlay, RTMP and independent recorder with all 360 frames. Earlier
+SRT, proxy overlay, RTMP and independent recorder with all 360 frames, using
+both CPU and VideoToolbox proxy encoding. Earlier
 file-sender network attempts remain failed; 4K networking and longer runs remain
 open. See
 [representative match testing](../../representative-match-testing.md) for results

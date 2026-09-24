@@ -5,6 +5,39 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testRejectedSourceDiagnosticsPreserveTickSelectionAndOriginalSourceKey() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let source = try XCTUnwrap(f.source)
+        let d = try XCTUnwrap(f.sourceDiagnostics)
+        f.native.setNow(source.interval.captureBoundaryEndTime + 2.01)
+        var exported: Data?, clockReads = 0
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { clockReads += 1; return 200 + Double(clockReads) / 1000 }, export: { exported = $0 })
+        await driver.tick(encoderReady: true, source: source, diagnostics: d)?.value
+        await driver.stop()
+        let quality = try checkpointObject(XCTUnwrap(exported))
+        let events = try XCTUnwrap(quality["events"] as? [[String: Any]])
+        let rejected = try XCTUnwrap(events.first { $0["kind"] as? String == "rejected" && $0["reason"] as? String == "time" })
+        let trace = try XCTUnwrap(rejected["evaluationDiagnostic"] as? [String: Any])
+        XCTAssertEqual(trace["selectedAt"] as? Double, 200.001, "Source selection is the original tick capture, before actor awaits")
+        XCTAssertLessThan(try XCTUnwrap(trace["selectedAt"] as? Double), try XCTUnwrap(trace["dispatchedAt"] as? Double))
+        XCTAssertLessThan(try XCTUnwrap(trace["dispatchedAt"] as? Double), try XCTUnwrap(trace["caughtAt"] as? Double))
+        XCTAssertLessThan(try XCTUnwrap(trace["caughtAt"] as? Double), try XCTUnwrap(rejected["at"] as? Double))
+        let session = try XCTUnwrap(trace["session"] as? [String: Any])
+        XCTAssertEqual(session["kind"] as? String, "source")
+        XCTAssertEqual(session["evaluatedAt"] as? Double, f.native.now)
+        XCTAssertEqual(try XCTUnwrap(session["sourceAgeSeconds"] as? Double), 2.01, accuracy: 0.000001)
+        let key = try XCTUnwrap(session["sourceKey"] as? [String: Any])
+        XCTAssertEqual(key["workerEpoch"] as? String, source.workerEpoch)
+        XCTAssertEqual(key["workerAttempt"] as? Int, source.workerAttempt)
+        XCTAssertEqual(key["readerID"] as? String, source.publication.readerId)
+        XCTAssertEqual(key["sequence"] as? String, String(source.sequence))
+        XCTAssertTrue(session["cadenceReceiptID"] is NSNull)
+        XCTAssertEqual((rejected["source"] as? [String: Any])?["sequence"] as? String, String(source.sequence))
+    }
+
     func testRepeatedLiveCheckpointPreservesOriginalPrefixSourceAndIdentity() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
         var live: [Data] = [], final: Data?

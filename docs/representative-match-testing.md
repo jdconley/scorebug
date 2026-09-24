@@ -67,19 +67,19 @@ cleanup after the pre-close assertion; it is not successful live drain evidence.
 Decoder buffering and transport shutdown still need separate measurement. Do not lower the 360-frame requirement or reclassify either
 failure as a passing end-to-end test.
 
-Next use the already validated native/SRT sender and receiver telemetry to
-separate transport-tail loss from decoder flush, then repeat both resolutions
-through SRT and RTMP. Retain the instrumented simulator clips for independent
+The next investigation used the validated native/SRT sender, as described below.
+The 4K network case remains open. Retain the instrumented simulator clips for independent
 frame identity, deadline, archive and adaptive-policy proofs. Real match footage
 adds content realism; it does not replace those measurements.
 
 
-## Native 1080p network and archive check passed
+## Native 1080p network and archive checks passed
 
 `network-native-aligned.mts` uses the existing `DualOutputSmoke` sender and
 production native publishing/recording packages. Twelve seconds of the 1080p
 match run in real time through native H.264/AAC encoding, loopback SRT, the actual
-CPU proxy and score overlay, RTMP, and the independent MP4 recorder. A clean
+CPU or macOS VideoToolbox proxy and score overlay, RTMP, and the independent
+MP4 recorder. Separate runs verified both encoders. A clean
 segmented archive records in parallel and is exported by `ArchiveHarness`.
 
 The prepared MOV has exactly 360 uniformly timed frames starting at zero, plus
@@ -87,17 +87,28 @@ The prepared MOV has exactly 360 uniformly timed frames starting at zero, plus
 fixture preparation, before the measurement boundary. This tests representative
 content and the native media path, not preservation of the original recording's
 camera timestamps, stereo layout or HDR metadata. The native harness uses its
-existing 1080p profile and scheduled 2 Mbps bitrate change; the CPU proxy targets
+existing 1080p profile and scheduled 2 Mbps bitrate change; both proxy encoders target
 1080p30 at 6 Mbps. It does not test automatic adaptation.
 
 All 360 frames were submitted, encoded, decoded by the proxy, archived, and
 present in the streamed output. The archive rejected no samples, the live queue
-dropped/rejected none, and maximum source scheduling lag was 2.50 ms. Streamed
+dropped/rejected none, and maximum source scheduling lag was 2.50 ms (CPU proxy) and 4.74 ms
+(VideoToolbox proxy). Streamed
 frame gaps were 33–34 ms; audio/video track starts differed by 2 ms. Both archive
 and stream fully decoded without errors, and visual inspection confirmed the
 match and expected score overlay. Evidence is in
-`network-native-aligned-1080p-software/`, including the untouched raw native
+`network-native-aligned-1080p-software/` and
+`network-native-aligned-1080p-videotoolbox/`, including the untouched raw native
 events, recorder packet timings, result, full-decode results and preview.
+
+A separate real-audio correlation diagnostic compares one-second windows at
+1, 5 and 9 seconds against the normalized PCM fixture. Both clean archives
+match with zero measured lag and correlation above 0.999. Both streamed outputs
+show a consistent 67.25 ms decoded-audio lag (correlation above 0.965), with no
+measured drift across those windows; output audio durations differ by less than
+29 ms. These meet the existing 100 ms diagnostic tolerance. The 2 ms track-start
+difference alone is therefore not evidence of 2 ms content synchronization.
+See `native-network-audio-correlation.json` and `audio-correlation.py`.
 
 Two preceding native fixture attempts remain failed and preserved. A direct TS
 to MP4 remux introduced an empty leading edit interval that AVFoundation read
@@ -106,8 +117,8 @@ lists removed that extra frame but produced a 56.6 ms first-frame interval in
 the input itself. The aligned fixture corrects its input timeline; no output
 frames or failed results were discarded to obtain a pass.
 
-This establishes one short 1080p local native content check. It does not qualify
-4K networking, long-match thermals, physical-device camera capture, archive crash
+These establish short 1080p local native content checks with both proxy encoders.
+They do not qualify 4K networking, long-match thermals, physical-device camera capture, archive crash
 recovery or repeated adaptation. The previous file-sender and console-bridge
 failures are unresolved for those adapters. A 4K network test must explicitly
 configure a supported 4K sender/archive path; the existing native smoke harness

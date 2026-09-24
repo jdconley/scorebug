@@ -54,13 +54,14 @@ import ScorebugMedia
     @discardableResult func tick(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics) -> Task<Void, Never>? {
         guard !isClosed else { return nil }
         if let task { return task }
+        let selectedAt = diagnosticUptime()
         task = Task { [self] in
             defer { task = nil }
-            await cycle(encoderReady: encoderReady, source: source, cadence: cadence, diagnostics: diagnostics)
+            await cycle(encoderReady: encoderReady, source: source, cadence: cadence, diagnostics: diagnostics, selectedAt: selectedAt)
         }
         return task
     }
-    private func cycle(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness?, diagnostics: PublishingQualityTelemetry.Diagnostics) async {
+    private func cycle(encoderReady: Bool, source: WorkerSourceIntervalObservation?, cadence: WorkerDecoderCadenceFreshness?, diagnostics: PublishingQualityTelemetry.Diagnostics, selectedAt: Double?) async {
         do {
             let state = await owner.snapshot
             try Task.checkCancellation()
@@ -127,7 +128,9 @@ import ScorebugMedia
                 try Task.checkCancellation()
                 guard !isClosed else { return }
                 var currentCadence = cadence
+                var cadenceSelectedAt = selectedAt
                 if let provider = cadenceInputProvider {
+                    cadenceSelectedAt = diagnosticUptime()
                     let input = provider()
                     currentCadence = input?.cadence
                     currentDiagnostics = input?.diagnostics
@@ -144,15 +147,18 @@ import ScorebugMedia
                 }
                 if let cadence = currentCadence, let cadenceDiagnostics = currentDiagnostics {
                     let decision: QualityController.Decision?
+                    let evaluation = evaluationCapture(selectedAt: cadenceSelectedAt)
                     do {
-                        decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: cadenceDiagnostics)
+                        decision = try await owner.evaluateDecoderStall(cadence: cadence, diagnostics: cadenceDiagnostics,
+                            observeEvaluation: evaluation?.observer)
                         cadenceRejection = nil
                     } catch {
+                        let evaluationDiagnostic = evaluation?.rejected(at: diagnosticUptime())
                         decision = nil; canEvaluateSource = false; canEvaluateCandidate = false
                         let reason = Self.reason(error), key = "\(state.revision ?? 0)/\(reason)"
                         if cadenceRejection != key {
                             cadenceRejection = key
-                            await record("rejected", reason: "cadence-" + reason)
+                            await record("rejected", reason: "cadence-" + reason, evaluationDiagnostic: evaluationDiagnostic)
                         }
                     }
                     try Task.checkCancellation()
@@ -174,7 +180,7 @@ import ScorebugMedia
                 return
             }
             guard let currentDiagnostics else { return }
-            if canEvaluateSource, let source, try await evaluateSource(source, state: state, diagnostics: currentDiagnostics) { return }
+            if canEvaluateSource, let source, try await evaluateSource(source, state: state, diagnostics: currentDiagnostics, selectedAt: selectedAt) { return }
             let decision: QualityController.Decision?
             do {
                 decision = try await owner.evaluateLocalPressure(diagnostics: currentDiagnostics, transportLimits: transportLimits)
@@ -232,7 +238,7 @@ import ScorebugMedia
         await record("candidate", decision: decision, candidate: candidate, advice: decision.recommendation)
     }
     private func evaluateSource(_ source: WorkerSourceIntervalObservation, state: PublishingQualitySession.Snapshot,
-                                diagnostics: PublishingQualityTelemetry.Diagnostics) async throws -> Bool {
+                                diagnostics: PublishingQualityTelemetry.Diagnostics, selectedAt: Double?) async throws -> Bool {
         let key = "\(source.workerEpoch)/\(source.workerAttempt)/\(source.publication.readerId)/\(source.sequence)"
         guard consumed != key else { return false }
         guard case .verified(let config) = source.interval.encodingCoverage,
@@ -247,11 +253,15 @@ import ScorebugMedia
            uptime() - source.interval.captureBoundaryEndTime < 2 { return false }
         consumed = key
         let decision: QualityController.Decision
+        let evaluation = evaluationCapture(selectedAt: selectedAt)
         do {
             decision = try await owner.evaluate(source: source, diagnostics: diagnostics,
-                workerLimits: workerLimits, transportLimits: transportLimits)
+                workerLimits: workerLimits, transportLimits: transportLimits, observeEvaluation: evaluation?.observer)
         } catch {
-            if !isClosed && !Task.isCancelled { await record("rejected", source: source, reason: Self.reason(error)) }
+            let evaluationDiagnostic = evaluation?.rejected(at: diagnosticUptime())
+            if !isClosed && !Task.isCancelled {
+                await record("rejected", source: source, reason: Self.reason(error), evaluationDiagnostic: evaluationDiagnostic)
+            }
             return false
         }
         try Task.checkCancellation()
@@ -325,6 +335,59 @@ import ScorebugMedia
             liveDrain = nil
         }
     }
+    /// Scalar tracing is debug-only and adds no actor or I/O await. Source
+    /// selectedAt is threaded from tick; cadence uses the current-provider read.
+    private func diagnosticUptime() -> Double? {
+        #if DEBUG
+        return uptime()
+        #else
+        return nil
+        #endif
+    }
+    private func evaluationCapture(selectedAt: Double?) -> EvaluationCapture? {
+        #if DEBUG
+        return .init(selectedAt: selectedAt, dispatchedAt: diagnosticUptime())
+        #else
+        return nil
+        #endif
+    }
+    /// One invocation owns one slot, so a rejected call cannot borrow an older
+    /// successful evaluation. The callback runs synchronously on the owner actor.
+    private final class EvaluationCapture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: PublishingQualitySession.EvaluationDiagnostic?
+        private let selectedAt: Double?
+        private let dispatchedAt: Double?
+        init(selectedAt: Double?, dispatchedAt: Double?) {
+            self.selectedAt = selectedAt; self.dispatchedAt = dispatchedAt
+        }
+        var observer: @Sendable (PublishingQualitySession.EvaluationDiagnostic) -> Void {
+            { [self] value in lock.withLock { self.value = value } }
+        }
+        func rejected(at caughtAt: Double?) -> [String: Any] {
+            let value = lock.withLock { self.value }
+            var session: [String: Any]?
+            if let value {
+                var fields: [String: Any] = ["evaluatedAt": Self.scalar(value.evaluatedAt),
+                    "sampleAgeSeconds": Self.scalar(value.sampleAgeSeconds), "sourceAgeSeconds": Self.scalar(value.sourceAgeSeconds),
+                    "cadenceReceiptID": NSNull(), "sourceKey": NSNull()]
+                switch value.input {
+                case .cadence(let receiptID):
+                    fields["kind"] = "cadence"; fields["cadenceReceiptID"] = receiptID.uuidString.lowercased()
+                case .source(let key):
+                    fields["kind"] = "source"
+                    fields["sourceKey"] = ["workerEpoch": key.workerEpoch, "workerAttempt": key.workerAttempt,
+                        "readerID": key.readerID, "sequence": String(key.sequence)]
+                }
+                session = fields
+            }
+            return ["selectedAt": Self.scalar(selectedAt), "dispatchedAt": Self.scalar(dispatchedAt),
+                "caughtAt": Self.scalar(caughtAt), "session": session as Any? ?? NSNull()]
+        }
+        private static func scalar(_ value: Double?) -> Any {
+            value.flatMap { $0.isFinite ? $0 : nil } as Any? ?? NSNull()
+        }
+    }
     private static func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
     private static func reason(_ error: Error) -> String {
         if let error = error as? PublishingQualityTelemetry.Failure { return String(describing: error) }
@@ -335,7 +398,8 @@ import ScorebugMedia
     private func record(_ kind: String, source: WorkerSourceIntervalObservation? = nil,
                         decision: QualityController.Decision? = nil, delivery: PublishingDeliveryObservation? = nil, cadence: WorkerDecoderCadenceFreshness? = nil, diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
                         candidate: PublishingCandidateAdmission? = nil,
-                        advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false) async {
+                        advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false,
+                        evaluationDiagnostic: [String: Any]? = nil) async {
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
         guard events.count < 512 else {
@@ -345,6 +409,7 @@ import ScorebugMedia
         }
         var row: [String: Any] = ["kind": kind, "at": uptime(), "closed": state.isClosed]
         row["reason"] = reason
+        row["evaluationDiagnostic"] = evaluationDiagnostic
         row["revision"] = state.revision.map(String.init)
         row["acknowledgedAt"] = state.acknowledgedAt
         row["profileID"] = state.applied?.profileID

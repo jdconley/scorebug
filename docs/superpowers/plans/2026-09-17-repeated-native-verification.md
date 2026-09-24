@@ -612,3 +612,66 @@ or classify stale reports as decoder stalls.
 Tasks 5 and 6 above now describe implemented/reviewed code. Their checkmarks do
 not imply completion of task 7’s full repeated native media gate, which remains
 open. Production automatic upgrade permission is still disabled.
+
+
+### September 24: two observed cycles and exact stale-report diagnosis
+
+Diagnostic-only changes now join a rejected decision to its original cadence
+receipt or source key. Each invocation captures immutable scalar selection,
+dispatch, actual session evaluation and catch timing. The session reuses its
+existing validation instant; the DEBUG driver adds no suspension point. Early
+failures have nil evaluation times, never a previous invocation's values. The
+cadence audit exports the same receipt ID. Seven regressions cover exact identity,
+ages, original errors/results, selection ordering and early failures. Three export
+assertions failed before implementation, then all 67 focused and 457 FilmModel
+tests passed. Independent spec and quality reviews approved the diagnostics;
+3,167 tool tests and the unsigned iPhone/embedded-Watch Release build passed.
+
+On frozen diagnostic sources, `native-app-jQCpxM` passed its iPhone 14/iOS 26.2 UI
+workflow in 263.843 seconds. Original revisions 0→1→2→3→4 are present, with trial
+confirmations at events 12 and 31. Both owned fault records are joined, closed
+and nonfailed; pauses were about 1.875 seconds each. The controller returned to
+healthy minimum quality after both. These observations do not establish a full
+media/recovery qualification.
+
+The harness failed collection because `native-receiver-intervals.json` was
+missing. The simulator writer's selector listed `renew`, `expire`, and `staged`
+but omitted `repeated`. That selector now includes repeated; a regression first
+failed only for that mode and passes after the correction. All 458 FilmModel
+tests and the arm64 iOS simulator build pass, and independent review approved
+the selector fix. Legacy selection
+and DEBUG/simulator restrictions remain unchanged. No missing historical file
+was fabricated; the failed run stays failed.
+
+The cadence audit also reached its 2,048-row limit and set overflow. It cannot
+prove the complete run. Its one stale audited report, original row 742, uniquely
+joins rejection event 17 at minimum-profile revision 2. It was already 263.223 ms
+old at audit: 147 ms server age + 112.798 ms request + 3.425 ms residence. At actual
+session evaluation it was 294.990 ms old, only 1.465 ms after provider selection.
+The decoder reported advancing, nonstalled progress. This instance is stale
+input availability, not substantial actor-dispatch delay. Exact original indices
+and timings are saved in `repeated-evaluation-diagnostic-native-assessment.json`.
+
+#### Next bounded implementation work
+
+- Add an explicit repeated-audit envelope/capacity for the 180-second route and
+  its UI/setup/stop overhead. Preserve every original row, retain a finite byte
+  and count bound, and leave the legacy 2,048-row contract unchanged. Test overflow,
+  wrong-mode/version inputs and all consumers before running the native fixture.
+  Do not downsample or discard rows to fit the old bound.
+- Model only explicitly supported `cadence-freshness` invalidation during
+  acknowledged minimum-profile recovery revisions 2/4. Preserve the event and
+  original indices. Require exact receipt/audit ownership, independent raw age
+  arithmetic, ordered selection/dispatch/evaluation/catch/event clocks, unchanged
+  application/receipt and benign advancing decoder progress. Reject unsupported
+  phases/reasons, duplicate receipts and forged diagnostic ages.
+- Match `QualityController.invalidateTelemetry`: clear accumulated health and
+  pending readiness without advancing source/policy sequences or creating an
+  action. Grant zero health credit for the unavailable interval, then require
+  complete healthy recovery and both delivery lanes after it. Explicitly account
+  for the joined unavailable audit row in every cadence/fault validator; merely
+  expanding an event whitelist is insufficient. Keep all other freshness limits.
+- Obtain independent review and a new frozen-source native run. Require the
+  receiver export, complete audits, all media/deadline/ownership gates and both
+  raw reconstructed cycles before claiming repeated qualification. Production
+  upgrade permission remains disabled.

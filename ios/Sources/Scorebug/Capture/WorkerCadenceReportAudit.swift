@@ -67,6 +67,7 @@ struct WorkerCadenceReportAudit {
             "receivedUptime": receivedUptime, "evaluatedUptime": evaluatedUptime,
             "requestSeconds": Self.seconds(requestDuration),
             "residenceSeconds": Self.seconds(receivedAt.duration(to: instant)),
+            "cadenceReceiptID": helper?.receiptID.uuidString.lowercased() as Any? ?? NSNull(),
             "deliveryReceiptID": delivery?.receiptID.uuidString.lowercased() as Any? ?? NSNull(),
             "deliverySampleAgeSeconds": delivery?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "sampleAgeSeconds": helper?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),

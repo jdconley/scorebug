@@ -9,6 +9,38 @@ final class WorkerCadenceReportAuditTests: XCTestCase {
         """.utf8))
     }
 
+    func testCadenceReceiptIDIdentifiesExactHelperRatherThanEquivalentResponse() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var status = try XCTUnwrap(raw["status"] as? [String: Any])
+        var observation = try XCTUnwrap(status["observation"] as? [String: Any])
+        observation["decodedVideo"] = ["clock": "mpegts-pts-90k-v1", "completed": NSNull(), "invalidReason": NSNull(), "ended": false]
+        observation["decoderCadence"] = ["formatVersion": 1, "scopeID": "11111111-1111-4111-8111-111111111111",
+            "oneSecond": NSNull(), "twoSeconds": NSNull(),
+            "progress": ["lastFreshPTS": 180000, "ageMs": 50, "stalled": false], "invalidReason": NSNull(), "ended": false]
+        status["observation"] = observation; status["decoderCadenceAgeUpperBoundMs"] = 50; raw["status"] = status
+        let response = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: JSONSerialization.data(withJSONObject: raw))
+        let attempt = try XCTUnwrap(UUID(uuidString: response.status.publication!.publishingAttemptId))
+        let instant = ContinuousClock.now
+        let helper = try XCTUnwrap(WorkerDecoderCadenceFreshness(response: response,
+            expectedPublishingAttemptID: attempt, receivedAt: instant, requestDuration: .milliseconds(20)))
+        let other = try XCTUnwrap(WorkerDecoderCadenceFreshness(response: response,
+            expectedPublishingAttemptID: attempt, receivedAt: instant, requestDuration: .milliseconds(20)))
+        XCTAssertNotEqual(helper.receiptID, other.receiptID)
+        var audit = WorkerCadenceReportAudit()
+        for value in [helper, other] {
+            audit.record(response: response, expectedAttempt: attempt, helper: value,
+                receivedAt: instant, requestDuration: .milliseconds(20), receivedUptime: 100,
+                instant: instant + .milliseconds(10), evaluatedUptime: 100.01)
+        }
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        let rows = try XCTUnwrap(object["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.map { $0["cadenceReceiptID"] as? String },
+            [helper.receiptID.uuidString.lowercased(), other.receiptID.uuidString.lowercased()])
+        XCTAssertEqual(rows[0]["sampleAgeSeconds"] as? Double, 0.08)
+    }
+
     func testStageTimingSeparatesMaintenanceHTTPNativeReadAndProcessing() throws {
         var audit = WorkerCadenceReportAudit()
         let instant = ContinuousClock.now
@@ -80,6 +112,7 @@ final class WorkerCadenceReportAuditTests: XCTestCase {
         XCTAssertEqual(rows[0]["requestSeconds"] as? Double, 0.02)
         XCTAssertEqual(rows[0]["residenceSeconds"] as? Double, 0.01)
         XCTAssertTrue(rows[0]["sampleAgeSeconds"] is NSNull)
+        XCTAssertTrue(rows[0]["cadenceReceiptID"] is NSNull)
         XCTAssertEqual(rows[0]["expectedAttempt"] as? String, attempt.uuidString.lowercased())
         XCTAssertNil(rows[0]["timing"], "Legacy rows can omit optional stage timing")
     }
