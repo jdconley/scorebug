@@ -33,21 +33,31 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route is explicitly limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,262 tool tests and 461 FilmModel tests pass. The latest iPhone 14/iOS 26.2
-run passed native scoring and recording export and the controller completed both
-upgrade/fault/reset/recovery cycles. Full independent qualification still failed:
-the repeated mode omitted a required receiver-evidence export, the cadence audit
-hit its 2,048-row ceiling, and one stale report during recovery needs explicit
-replay semantics. The missing writer selector is fixed and regression tested;
-that fix has not yet received a fresh full native run. Diagnostic receipt joins
-show the stale report had already exceeded 250 ms before policy selection.
-The repeated audit now has an explicit 3,072-row / 16 MiB envelope, with strict
-legacy isolation and overflow failure; focused regressions and the simulator
-build pass. Supported recovery-time telemetry invalidation is now independently
-replayed from exact raw receipt/clock joins, resetting health credit and requiring
-whole subsequent recovery windows. Component and regression tests pass, and independent spec and quality reviews
-are approved. A fresh full native run is still pending.
-Production automatic quality increases remain disabled.
+All 3,262 tool tests and 461 FilmModel tests pass. The fresh iPhone 14/iOS 26.2
+run (`native-app-ApmZnO`, source `4b1a333`) passed native scoring and recording
+export, but full repeated recovery still failed: only the first trial/fault/reset
+completed. The receiver export and enlarged cadence audit now work on-device in
+the simulator: 46 receiver intervals and 2,076 cadence rows, closed without
+invalidity or overflow. All 913 frozen source hashes remained unchanged.
+
+The second campaign lost readiness during recovery, but its highest-rate probe
+stage continued spending its bounded byte budget. It exhausted that budget after
+only 79 of 121 candidate inputs, so the second trial correctly did not qualify.
+Next: retire the lower-rate stage, wait for current recovered readiness within
+the original campaign deadline, then allocate the high-rate stage. Preserve the
+16 MiB cap, ownership, leases, strict health duration and stage time limits.
+
+This run also contains a different telemetry sequence from the narrowly supported
+replay: a report fresh when audited became stale before selection, an adjacent
+report was already stale, and an unknown-pressure window reset health again.
+Those remain unsupported by full independent qualification; no stale or unknown
+sample earns health credit. The earlier failed run remains failed too.
+
+The clean 1080p archive fully decoded all 6,605 frames with a maximum timestamp
+gap of approximately 33.3 ms. The independent live recording also fully decoded,
+with approximately 30 fps timestamps. These media checks do not establish both
+recovery cycles or wall-clock network delivery. Production automatic quality
+increases remain disabled.
 
 Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
 proxy processing checks passed with software and macOS VideoToolbox encoding.

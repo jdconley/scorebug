@@ -704,7 +704,7 @@ or health credit rules have changed, and this capacity fix does not qualify repe
 recovery. The narrow recovery-time invalidation replay above is still required.
 
 
-#### Recovery invalidation replay — component implementation, native run pending
+#### Recovery invalidation replay — component implementation, fresh native result below
 
 Only an original `rejected` / `cadence-freshness` event during acknowledged
 minimum-profile recovery (revision 2 or 4) may enter the supported path. It must
@@ -781,3 +781,58 @@ A regression with rejection near 170.75 seconds and replacement at 171.05 now
 requires the complete 172–182 interval. The prior native `healthySince` is never
 rewritten. This handles the explicitly joined stale receipt and its replacement;
 it does not claim to reconstruct every possible unlogged later rejection.
+
+
+#### Fresh native result — September 24, `native-app-ApmZnO`
+
+Source `4b1a333` was frozen across 913 files and independently checked unchanged
+after the run. The UI test passed (265.122 seconds), including scoring, publish,
+stop and recording export. The full harness exited 1: repeated readiness timed
+out after the first confirmed trial/fault/minimum reset. All owned jobs joined;
+the owned simulator and container were removed. Original evidence is retained.
+
+The capacity and export corrections worked: cadence audit v2 has 2,076 rows,
+8,083,779 bytes, closed/valid/no overflow; the failure export contains all 46
+receiver intervals, closed and valid. The archive fully decoded 6,605 contiguous
+barcode frames at 1080p, maximum PTS gap about 33.3 ms. A separate post-run decode
+of the live recorder succeeded with 6,199 frames at 360p and maximum PTS gap
+34 ms. Different start/stop intervals mean these counts are not a loss ratio;
+media timestamps alone do not prove wall-clock delivery through the fault.
+
+The new rejection joins report 998: fresh at audit (124.603 ms), stale at session
+evaluation (377.890 ms). Report 999 is independently stale (357.338 ms), followed
+by fresh report 1000. The next source window also reports worker pressure unknown
+with no filter duration. Current narrow invalidation replay intentionally does
+not qualify this sequence. Its original evidence must not be rewritten as the
+previous already-stale/adjacent-fresh supported case.
+
+Readiness correctly resets twice. The new strong-health start is
+1888511.3896225; subsequent windows cover 4.976412 and 9.976831 seconds, so the
+strict ten-second threshold is first satisfied at evaluation 1888528.185.
+Meanwhile, stage three started at 1888519.284 and consumed 11,134,676 bytes over
+8.987 seconds before candidate binding. Only 3,246,104 campaign bytes remained.
+The native byte cap then stopped the owner after 79/121 candidate inputs.
+
+Next bounded implementation and verification:
+
+- [ ] Add a repeated-only wait after stage two is retired and joined, before
+  allocating stage three. Poll current valid readiness finitely within the
+  original 60-second campaign deadline; spend no probe bytes while inactive.
+- [ ] Require the same immutable publication/configuration/revision as the
+  campaign. A new `healthySince` may represent legitimate recovered readiness;
+  pin that fresh context across allocation and use the existing strict
+  `sameConfiguration` check afterward. Do not weaken its shared semantics.
+- [ ] Preserve origin, cumulative 16 MiB budget, 300 ms leases, 0.5-second
+  maturity, stage-three 12-second ceiling and exactly two campaigns. Own every
+  returned allocation before cancellation or revalidation, and join on failure.
+- [ ] First reproduce absent readiness, resumed readiness with a new health
+  start, bounded exhaustion, cancellation and allocation-time context changes
+  in behavioral tests. Run focused tests, full FilmModel tests, simulator build
+  and independent spec/quality reviews before another frozen native run.
+- [ ] Independently specify any broader telemetry replay needed for the newly
+  observed stale-at-selection/adjacent-stale/unknown-pressure sequence. No
+  threshold expansion, health credit for unavailable data, or invented rows.
+
+The stage scheduling change is an evidence-backed hypothesis, not a guaranteed
+native pass. Full repeated qualification and production upgrades remain closed.
+Assessment: `artifacts/qa/repeated-recovery-invalidation-native-assessment-20260924.json`.
