@@ -165,6 +165,16 @@ tooling tests pass; both simulator builds and unsigned phone/Watch Release pass.
 Release binaries exclude the opt-in key and logging subsystem. See the
 [diagnostic evidence and next experiment](2026-09-24-watch-connectivity-diagnostics.md).
 
+**Immediate Watch route also rejected:** the single debug probe in fresh
+`paired-watch-WWMaEj` fails with WC7018, even while reachable. Notice-level logging
+now retains phone activation with its Watch installed, while the Watch still
+reports its companion missing. No pairing or scoring command occurs; all 1,178
+source hashes remain unchanged and owned simulators are deleted. All 64 Watch
+model/gate/diagnostic tests, both simulator builds and unsigned Release pass.
+Release excludes both opt-in keys and logging subsystem. This does not justify
+an immediate-message setup fallback. See the
+[probe result and limits](2026-09-24-watch-immediate-probe.md).
+
 **Two-minute real-footage checks now pass:** fresh 1080p and 4K CPU-proxy replays
 retain all 3,600 identified frames in both clean archive and live, with zero queue
 loss, continuous audio timestamps and full A/V decoding. Reviewed fractional
@@ -178,8 +188,9 @@ scheduled bitrate changes; it does not qualify full-match reliability, automatic
 adaptation, physical capture, HDR60 or relay/viewer latency.
 
 **Next local work:** longer in-game content coverage under a new declared duration
-contract, plus a bounded Watch immediate-message diagnostic to test whether
-reported reachability supplies a usable route despite context-publication rejection. See the
+contract. Another paired Watch run needs a concrete companion-registration change
+or a minimal independent framework reproducer; the immediate-message alternative
+has now been tested and rejected in this simulator state. See the
 [long replay contract and evidence](2026-09-24-long-match-replay.md). Keep game-length
 4K and the failing co-located hardware-proxy route unqualified. Physical phone/watch
 and separate-host GPU tests remain required.

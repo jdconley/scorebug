@@ -20,6 +20,8 @@ import OSLog
 
     #if DEBUG
     private nonisolated let diagnosticsEnabled = ProcessInfo.processInfo.environment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] == "1"
+    private nonisolated let probeEnabled = ProcessInfo.processInfo.environment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] == "1"
+    private nonisolated let probeGate = WatchConnectivityProbeGate(enabled: true)
     private nonisolated let diagnostic = WatchConnectivityDiagnostic(enabled: true)
     private nonisolated let diagnosticLogger = Logger(subsystem: "live.scorebug.connectivity", category: "diagnostic")
     #endif
@@ -45,10 +47,44 @@ import OSLog
             else { snapshot.otherError = true }
         }
         if let row = diagnostic.record(event, kind: kind, state: snapshot) {
-            diagnosticLogger.info("\(row, privacy: .public)")
+            diagnosticLogger.notice("\(row, privacy: .public)")
         }
         #endif
     }
+
+    #if DEBUG
+    private nonisolated func completeProbe(_ result: WatchConnectivityProbeGate.Outcome,
+                                          session: WCSession, error: Error? = nil) {
+        guard let result = probeGate.finish(result, now: ProcessInfo.processInfo.systemUptime) else { return }
+        let event: WatchConnectivityDiagnostic.Event
+        switch result {
+        case .reply: event = .probeReply
+        case .unexpectedReply: event = .probeUnexpectedReply
+        case .failed: event = .probeFailed
+        case .timedOut: event = .probeTimedOut
+        }
+        observe(event, session: session, error: result == .failed ? error : nil)
+    }
+    #if os(watchOS)
+    private func probeImmediateRoute(_ session: WCSession) {
+        guard diagnosticsEnabled, probeEnabled,
+              probeGate.begin(eligible: session.activationState == .activated && session.isReachable,
+                              now: ProcessInfo.processInfo.systemUptime) else { return }
+        observe(.probeStarted, session: session)
+        // This deliberately invalid request receives the production delegate's
+        // empty rejection reply, never a scoring/bootstrap handler invocation.
+        session.sendMessageData(WatchConnectivityProbeGate.payload,
+            replyHandler: { [weak self] data in
+                self?.completeProbe(data.isEmpty ? .reply : .unexpectedReply, session: session)
+            }, errorHandler: { [weak self] error in
+                self?.completeProbe(.failed, session: session, error: error)
+            })
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.completeProbe(.timedOut, session: session)
+        }
+    }
+    #endif
+    #endif
 
     var canRelayRequests: Bool {
         WCSession.isSupported() && WCSession.default.activationState == .activated && WCSession.default.isReachable
@@ -114,6 +150,9 @@ import OSLog
             observe(.publishAccepted, session: session, kind: kind)
         } catch {
             observe(.publishRejected, session: session, kind: kind, error: error)
+            #if DEBUG && os(watchOS)
+            probeImmediateRoute(session)
+            #endif
             throw error
         }
     }
@@ -154,6 +193,11 @@ import OSLog
 
     nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data,
                              replyHandler: @escaping (Data) -> Void) {
+        #if DEBUG && os(iOS)
+        if diagnosticsEnabled, probeEnabled, messageData == WatchConnectivityProbeGate.payload {
+            observe(.probeReceived, session: session)
+        }
+        #endif
         #if os(iOS)
         let reply = WatchRelayReplyOnce(replyHandler)
         guard let request = try? WatchRelayInboundRequest(validating: messageData) else {

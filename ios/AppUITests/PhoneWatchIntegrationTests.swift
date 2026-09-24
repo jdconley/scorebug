@@ -11,6 +11,7 @@ final class PhoneWatchIntegrationTests: XCTestCase {
         app.launchEnvironment["SCOREBUG_TEST_API_URL"] = endpoint
         app.launchEnvironment["SCOREBUG_TEST_TOKEN"] = try XCTUnwrap(environment["SCOREBUG_TEST_TOKEN"])
         app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = "1"
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = "1"
         app.launch()
         app.tabBars.buttons["Score"].tap()
         tap(app, app.buttons["scoring.connect"])
