@@ -8,6 +8,19 @@ import ScorebugMedia
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
+    /// Diagnostic values from the existing sequential health reads, not an atomic
+    /// observation or proof of receiver delivery. Never includes destination URLs.
+    public struct HealthSnapshot: Sendable {
+        public let connected: Bool
+        public let streamPublishing: Bool
+        public let muxerError: SRTStream.MuxerError?
+        public let streamError: PublishingError?
+        public let transportError: PublishingError?
+        public var isPublishing: Bool {
+            connected && streamPublishing && muxerError == nil && streamError == nil && transportError == nil
+        }
+    }
+    private let healthObserver: (@Sendable (HealthSnapshot) -> Void)?
     public typealias CompressedAudioFrame = SRTStream.CompressedAudioFrame
     public typealias MuxedPacketFrame = SRTStream.MuxedPacketFrame
     public typealias CompressedVideoFrame = SRTStream.CompressedVideoFrame
@@ -61,7 +74,9 @@ public actor SRTPublisher {
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
-                videoCost: PublishingVideoCostOwner? = nil) {
+                videoCost: PublishingVideoCostOwner? = nil,
+                healthObserver: (@Sendable (HealthSnapshot) -> Void)? = nil) {
+        self.healthObserver = healthObserver
         let startupEvidence = PublishingVideoStartupOwner(profile: videoProfile)
         self.startupEvidence = startupEvidence
         let cost = videoCost ?? observations.map { PublishingVideoCostOwner(scope: $0.snapshot.scope) }
@@ -410,10 +425,13 @@ public actor SRTPublisher {
     public func isPublishing() async -> Bool {
         let connected = await connection.connected
         let publishing = await stream.readyState == .publishing
-        let muxerHealthy = await stream.muxerError == nil
-        let streamHealthy = await stream.publishingError == nil
-        let transportHealthy = await connection.publishingError == nil
-        return connected && publishing && muxerHealthy && streamHealthy && transportHealthy
+        let muxerError = await stream.muxerError
+        let streamError = await stream.publishingError
+        let transportError = await connection.publishingError
+        let snapshot = HealthSnapshot(connected: connected, streamPublishing: publishing,
+            muxerError: muxerError, streamError: streamError, transportError: transportError)
+        healthObserver?(snapshot)
+        return snapshot.isPublishing
     }
     public func stop() async {
         stopping = true

@@ -190,6 +190,18 @@ private enum Failure: Error { case arguments, missingTracks, reader, archiveOver
 private final class PublisherHealth: @unchecked Sendable {
     private let lock = NSLock()
     private var failed = false
+    private var firstFailure: SDKProbe.HealthSnapshot?
+    func observe(_ snapshot: SDKProbe.HealthSnapshot) {
+        guard !snapshot.isPublishing else { return }
+        lock.withLock { if firstFailure == nil { firstFailure = snapshot } }
+    }
+    var evidence: Any {
+        guard let snapshot = lock.withLock({ firstFailure }) else { return NSNull() }
+        return ["connected": snapshot.connected, "streamPublishing": snapshot.streamPublishing,
+            "muxerError": snapshot.muxerError.map { String(describing: $0) } as Any? ?? NSNull(),
+            "streamError": snapshot.streamError.map { String(describing: $0) } as Any? ?? NSNull(),
+            "transportError": snapshot.transportError.map { String(describing: $0) } as Any? ?? NSNull()] as [String: Any]
+    }
     var isFailed: Bool { lock.withLock { failed } }
     func fail() { lock.withLock { failed = true } }
 }
@@ -319,13 +331,13 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 return
             }
             let encoderEvidence = EncoderEvidence()
+            let health = PublisherHealth()
             let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) },
-                videoProfile: configuration.liveProfile)
+                videoProfile: configuration.liveProfile, healthObserver: { health.observe($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
             var acceptedReceipt: SDKProbe.BitRateChangeReceipt?
-            let health = PublisherHealth()
             let transportEvidence = TransportEvidence()
             var monitor: Task<Void, Never>?
             do {
@@ -404,7 +416,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 await publisher.stop()
                 await monitor?.value
                 // Network failure is reported independently; it cannot cancel the archive.
-                try emit(["event": "publisher-failed", "reason": String(describing: error)])
+                try emit(["event": "publisher-failed", "reason": String(describing: error),
+                          "firstUnhealthyObservation": health.evidence])
             }
         }
         let started = ContinuousClock.now

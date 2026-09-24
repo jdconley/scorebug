@@ -29,3 +29,13 @@ Keep the current three/four CLI arguments and accept a fifth profile ID after ti
 ## Verification record
 
 Component checks: profile RED failed on missing recipe; streaming GREEN passed 168 tests. Configuration RED failed on missing type; SDKProbe GREEN passed six tests and built the native executables. Debug live-selector RED reproduced accidental 4K acceptance. Full FilmModel GREEN passed 498 tests. Independent code review found equivalent candidate-selector widening; its added RED test failed all three live-profile cases, then the explicit candidate allowlist passed all 56 candidate tests. Simulator build passed. Logs use exclusive `artifacts/qa/repeated-live-checkpoint-native-4k-*` names. Network/media checks pending; historical 1080p and repeated adaptive tests remain independently scoped evidence.
+
+
+## Failure diagnostic amendment
+
+CPU v2 passed the full media gates. VideoToolbox v2 stopped native publishing after roughly three seconds (84 proxy-decoded frames); the independent 4K archive retained all 360 frames. Existing boolean health combines five failure boundaries and cannot identify the failed one. Do not guess or enlarge queues.
+
+- [x] Add a typed `SRTPublisher.HealthSnapshot` observation to the existing five health reads (connection, stream state, muxer error, stream error, transport error). The predicate and read order remain unchanged; the optional observer is diagnostic, not atomic health evidence or policy authority. Forward through SRTMediaPublisher and use only the file-driven harness to emit one bounded first-failure event. No settings, buffering or retry changes.
+- [ ] RED: unit-test each failed boundary plus the actual unconnected adapter callback; GREEN: full Streaming suite and SDKProbe build. Run one new VideoToolbox experiment with the diagnostic, retaining every earlier failure. Diagnose from the first reported boundary before any runtime fix.
+
+Diagnostic tests passed: 170 Streaming tests (including two new health tests) and six SDKProbe tests. Independent code review approves the diagnostic; interpret first observed unhealthy state as a clue, not necessarily the initiating cause.
