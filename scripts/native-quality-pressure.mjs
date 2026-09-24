@@ -38,8 +38,13 @@ function classifyNativePressure(
   row,
   snapshot,
   source,
-  { local = false, recoveryBudget = false } = {},
+  { local = false, transportPolicy = 'legacy-threshold-v1' } = {},
 ) {
+  assert(
+    ['legacy-threshold-v1', 'sender-delay-v1', 'recovery-budget-v1'].includes(transportPolicy),
+    'Unknown transport pressure policy',
+  );
+  const recoveryBudget = transportPolicy !== 'legacy-threshold-v1';
   const e = row.evidence,
     w = row.window;
   assert(e, 'Missing evaluated raw diagnostic evidence');
@@ -112,9 +117,14 @@ function classifyNativePressure(
           s.rttMilliseconds > 500 ||
           (recoveryBudget &&
             s.senderDeliveryDelayMilliseconds > 0 &&
-            s.rttMilliseconds > s.senderDeliveryDelayMilliseconds / 4),
+            s.rttMilliseconds > s.senderDeliveryDelayMilliseconds / 4) ||
+          (transportPolicy === 'recovery-budget-v1' &&
+            s.senderDeliveryDelayMilliseconds > 0 &&
+            s.senderBufferMilliseconds > s.senderDeliveryDelayMilliseconds / 2),
       ) ||
-      (sent > 0n && Number(retransmitted) / Number(sent) > 0.01)
+      (transportPolicy !== 'recovery-budget-v1' &&
+        sent > 0n &&
+        Number(retransmitted) / Number(sent) > 0.01)
         ? 'elevated'
         : sent > 0n &&
             (!recoveryBudget ||
@@ -233,20 +243,31 @@ function assertPressure(window, values) {
     );
   return values;
 }
-export function replayNativePressure(row, snapshot, source, { recoveryBudget = false } = {}) {
+export function replayNativePressure(
+  row,
+  snapshot,
+  source,
+  { transportPolicy = 'legacy-threshold-v1', ...unsupported } = {},
+) {
+  assert.equal(Object.keys(unsupported).length, 0, 'Unknown pressure replay option');
   return assertPressure(
     row.window,
-    classifyNativePressure(row, snapshot, source, { recoveryBudget }),
+    classifyNativePressure(row, snapshot, source, { transportPolicy }),
   );
 }
 /** Reconstruct bounded local endpoint selection; absence never proves delivery. */
 export function replayNativeLocalPressure(
   row,
   snapshot,
-  { after, duration = 5, recoveryBudget = false } = {},
+  { after, duration = 5, transportPolicy = 'legacy-threshold-v1', ...unsupported } = {},
 ) {
+  assert.equal(Object.keys(unsupported).length, 0, 'Unknown pressure replay option');
+  assert(
+    ['legacy-threshold-v1', 'sender-delay-v1', 'recovery-budget-v1'].includes(transportPolicy),
+    'Unknown transport pressure policy',
+  );
   assert([0.25, 1, 5].includes(duration));
-  assert.equal(duration === 0.25, recoveryBudget);
+  assert.equal(duration === 0.25, transportPolicy !== 'legacy-threshold-v1');
   const w = row.window,
     e = row.evidence;
   assert.equal(row.source, undefined);
@@ -279,7 +300,7 @@ export function replayNativeLocalPressure(
     const candidate = { ...row, window: { ...w, start: end - duration, end } };
     const values = classifyNativePressure(candidate, snapshot, undefined, {
       local: true,
-      recoveryBudget,
+      transportPolicy,
     });
     if (values[metric] !== null && values[metric] !== 'unknown') candidates.set(end, values);
   }

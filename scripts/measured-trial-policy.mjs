@@ -568,7 +568,7 @@ function replayMeasuredTrialPolicy(
     assert.equal(w.lost, w.captured - w.received);
     assert(w.expected > 0 && w.lost >= 0);
     assert.equal(w.capacity, null);
-    replayNativePressure(row, snapshot, source, { recoveryBudget: true });
+    replayNativePressure(row, snapshot, source, { transportPolicy: 'sender-delay-v1' });
     const report = cadenceReports.rows.findLast((r) => r.evaluatedUptime <= row.evaluatedAt);
     assert(
       report && row.evaluatedAt - report.evaluatedUptime <= 0.25,

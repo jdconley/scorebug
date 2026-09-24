@@ -419,7 +419,7 @@ export function qualifyMeasuredRecoveryPolicy({
     assert(w.expected > 0 && w.lost >= 0 && w.lost / w.expected <= 0.01);
     assert.equal(w.capacity, null);
     assert.equal(w.connectivity, 'connected');
-    replayNativePressure(row, snapshot, source, { recoveryBudget: true });
+    replayNativePressure(row, snapshot, source, { transportPolicy: 'sender-delay-v1' });
     assert(finite(w.queue) && w.queue < 0.5);
     for (const key of ['thermal', 'worker', 'transport']) assert.equal(w[key], 'nominal');
     assert(

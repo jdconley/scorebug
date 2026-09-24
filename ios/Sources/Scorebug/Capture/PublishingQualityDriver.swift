@@ -608,7 +608,7 @@ import ScorebugMedia
             requiresSharedCandidateRecovery: liveCheckpoint)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
-            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, policy: .senderDelay),
             deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25, usesRequestTiming: true, environment: environment) : nil,
             deliveryExport: (minimumStall || measured) ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             enableDeliveryFailures: enableDeliveryFailures, enableMeasuredSourceEvaluation: measured,

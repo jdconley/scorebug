@@ -102,7 +102,39 @@ final class PublishingQualityTelemetryTests: XCTestCase {
     }
     private var recoveryLimits: Adapter.TransportLimits {
         .init(maximumBufferMs: 500, maximumRTTMs: 500,
-              maximumRetransmittedFraction: 0.01, usesSenderRecoveryBudget: true)!
+              maximumRetransmittedFraction: 0.01, policy: .senderDelay)!
+    }
+    private var recoveredPacketLimits: Adapter.TransportLimits {
+        .init(maximumBufferMs: 500, maximumRTTMs: 500,
+              maximumRetransmittedFraction: 0.01, policy: .recoveryBudget)!
+    }
+    func testRecoveredRetriesAloneDoNotEstablishDeliveryPressure() throws {
+        for retries: UInt64 in [101, 850, 10_000] {
+            let f = try fixture(retransmitted: retries, buffer: 67, rtt: 65, delay: 400)
+            XCTAssertEqual(try window(f, transport: recoveredPacketLimits).transportPressure, .nominal)
+            XCTAssertNil(try local(f, limits: recoveredPacketLimits))
+            XCTAssertEqual(try window(f, transport: recoveryLimits).transportPressure, .elevated)
+            XCTAssertEqual(try local(f)?.transportPressure, .elevated)
+        }
+    }
+    func testRecoveredPacketPolicyHonorsExactBudgetsAndActualDropPressure() throws {
+        XCTAssertEqual(try window(fixture(buffer: 200, rtt: 100, delay: 400), transport: recoveredPacketLimits).transportPressure, .nominal)
+        XCTAssertEqual(try window(fixture(buffer: 500, rtt: 500, delay: 2000), transport: recoveredPacketLimits).transportPressure, .nominal)
+        for f in [try fixture(buffer: 201, rtt: 65, delay: 400),
+                  try fixture(buffer: 67, rtt: 100.01, delay: 400),
+                  try fixture(drops: 1, delay: 400), try fixture(buffer: 501, delay: 10000),
+                  try fixture(rtt: 501, delay: 10000)] {
+            XCTAssertEqual(try window(f, transport: recoveredPacketLimits).transportPressure, .elevated)
+            XCTAssertEqual(try local(f, limits: recoveredPacketLimits)?.transportPressure, .elevated)
+        }
+    }
+    func testRecoveredRetriesWithUnknownDelayCannotEstablishHealthOrInventLoss() throws {
+        for delay: Int32? in [nil, 0] {
+            let f = try fixture(retransmitted: 850, delay: delay)
+            XCTAssertEqual(try window(f, transport: recoveredPacketLimits).transportPressure, .unknown)
+            XCTAssertNil(try local(f, limits: recoveredPacketLimits))
+            XCTAssertEqual(try local(fixture(drops: 1, delay: delay), limits: recoveredPacketLimits)?.transportPressure, .elevated)
+        }
     }
     func testQuarterSecondPressureDoesNotWaitForOneSecondAfterAck() throws {
         var f = try fixture(buffer: 501)

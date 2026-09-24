@@ -49,13 +49,18 @@ enum PublishingQualityTelemetry {
         let maximumBufferMs: Double
         let maximumRTTMs: Double
         let maximumRetransmittedFraction: Double
-        let usesSenderRecoveryBudget: Bool
-        init?(maximumBufferMs: Double, maximumRTTMs: Double, maximumRetransmittedFraction: Double, usesSenderRecoveryBudget: Bool = false) {
+        enum Policy: String, Sendable {
+            case legacyThreshold = "legacy-threshold-v1"
+            case senderDelay = "sender-delay-v1"
+            case recoveryBudget = "recovery-budget-v1"
+        }
+        let policy: Policy
+        init?(maximumBufferMs: Double, maximumRTTMs: Double, maximumRetransmittedFraction: Double, policy: Policy = .legacyThreshold) {
             guard maximumBufferMs.isFinite, maximumBufferMs > 0, maximumRTTMs.isFinite, maximumRTTMs > 0,
                   maximumRetransmittedFraction.isFinite, (0..<1).contains(maximumRetransmittedFraction) else { return nil }
             self.maximumBufferMs = maximumBufferMs; self.maximumRTTMs = maximumRTTMs
             self.maximumRetransmittedFraction = maximumRetransmittedFraction
-            self.usesSenderRecoveryBudget = usesSenderRecoveryBudget
+            self.policy = policy
         }
     }
     static func decoderStall(cadence: WorkerDecoderCadenceFreshness, applied: Applied, diagnostics: Diagnostics,
@@ -204,15 +209,16 @@ enum PublishingQualityTelemetry {
         let excessive = sample.enclosingDroppedPackets > 0
             || Double(sample.enclosingMaximumBufferMilliseconds) > limits.maximumBufferMs
             || sample.enclosingMaximumRTTMilliseconds > limits.maximumRTTMs
-            || (sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
+            || (limits.policy != .recoveryBudget && sample.enclosingSentBytes > 0 && Double(sample.enclosingRetransmittedBytes) / Double(sample.enclosingSentBytes) > limits.maximumRetransmittedFraction)
         if excessive { return .elevated }
-        if limits.usesSenderRecoveryBudget {
+        if limits.policy != .legacyThreshold {
             // Compare each RTT to the delay collected with that same sample.
             // The enclosing points, including boundary gauges, remain unchanged.
             let points = history.samples.filter { $0.sampledAt >= sample.enclosingStart && $0.sampledAt <= sample.enclosingEnd }
             if points.contains(where: { point in
                 guard let delay = point.senderDeliveryDelayMilliseconds, delay > 0 else { return false }
                 return point.rttMilliseconds > min(limits.maximumRTTMs, Double(delay) / 4)
+                    || (limits.policy == .recoveryBudget && Double(point.senderBufferMilliseconds) > min(limits.maximumBufferMs, Double(delay) / 2))
             }) { return .elevated }
             guard points.allSatisfy({ ($0.senderDeliveryDelayMilliseconds ?? 0) > 0 }) else { return .unknown }
         }

@@ -150,3 +150,11 @@ Existing diagnostic compiler/runtime warnings remain in the test logs; these are
 passing commands, not warning-free builds. No simulator was created or downloaded
 for this batch. Installed iOS/watchOS26.2 and27 simulators remain available; the
 user's removal of other simulators is expected, not a test failure.
+
+The subsequent [pressure classifier checkpoint](2026-09-24-recovery-budget-pressure.md)
+adds the matching explicit pressure policy and independent replay, while keeping
+existing app/audit selection unchanged. Next, integrate policy identity and raw
+admission evidence through `PublishingProbeObservation`,
+`NativeBandwidthProbeFixture`, candidate admission/audit and host qualification.
+Do not simply change the fixture's begin call: legacy authority checks deliberately
+reject recovery owners, and historical audit versions still replay old semantics.

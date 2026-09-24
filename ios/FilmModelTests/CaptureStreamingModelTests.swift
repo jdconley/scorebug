@@ -72,7 +72,10 @@ import XCTest
     func testMeasuredProviderBindsLaterRevisionAndV3CampaignWithoutReusingInitialRevision() async throws {
         try await checkMeasuredProvider(revision: 2)
     }
-    private func checkMeasuredProvider(revision: UInt64) async throws {
+    func testMeasuredProviderRetainsTwoActualIntervalsAfterDelayedFirstStatus() async throws {
+        try await checkMeasuredProvider(revision: 2, additionalFirstStatusDelay: .milliseconds(250))
+    }
+    private func checkMeasuredProvider(revision: UInt64, additionalFirstStatusDelay: Duration = .zero) async throws {
         var session: PublishingSession?
         let (model, server, publisher, initial) = try await receiverProbeModel { value, _ in session = value; return nil }
         let live = try XCTUnwrap(session)
@@ -93,8 +96,14 @@ import XCTest
         response.status.receiverProbe?.snapshot.bitRate = 12_000_000
         response.status.receiverProbe?.ageUpperBoundMs = 1
         response.status.receiverProbe?.snapshot.firstDeliveredAtNanoseconds = "1000000"
+        var previousObservedNanoseconds: Int64?
         func report(at offset: Double, messages: Int, delayBeforeStatus: Bool = false) async throws {
-            try await Task.sleep(for: .seconds(max(0, start + offset - ProcessInfo.processInfo.systemUptime)))
+            // Status is sampled after the recovery delay. Schedule from that
+            // actual observation so scheduler lateness cannot collapse the next
+            // required one-second receiver interval.
+            let earliest = previousObservedNanoseconds.map { start + Double($0) / 1e9 + 1.1 } ?? start
+            let target = max(start + offset, earliest)
+            try await Task.sleep(for: .seconds(max(0, target - ProcessInfo.processInfo.systemUptime)))
             let deliveredAt = ProcessInfo.processInfo.systemUptime
             let ns = Int64((deliveredAt - start) * 1e9)
             response.status.receiverProbe?.snapshot.observedAtNanoseconds = String(ns)
@@ -119,16 +128,21 @@ import XCTest
                 let delay = FilmTestGate(); await server.setSnapshotGate(delay)
                 let poll = Task { await model.pollControl() }
                 await delay.waitUntilEntered()
-                try await Task.sleep(for: .milliseconds(400))
+                try await Task.sleep(for: .milliseconds(400) + additionalFirstStatusDelay)
                 await delay.release(); await poll.value
             } else { await model.pollControl() }
             let sampledProbe = await publisher.probeValue()
             probe = try XCTUnwrap(sampledProbe)
             XCTAssertEqual(probe.lastAcceptedAt, deliveredAt)
             XCTAssertEqual(probe.acceptedPayloadBytes, UInt64(messages * 1316))
+            let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
+            let observed = try XCTUnwrap(Int64(receiver.snapshot.observedAtNanoseconds))
+            if let previousObservedNanoseconds {
+                XCTAssertGreaterThanOrEqual(observed - previousObservedNanoseconds, 1_000_000_000)
+                XCTAssertNotNil(model.workerReceiverProbeInterval)
+            }
+            previousObservedNanoseconds = observed
             if delayBeforeStatus {
-                let receiver = try XCTUnwrap(model.workerReceiverProbeFreshness)
-                let observed = try XCTUnwrap(Int64(receiver.snapshot.observedAtNanoseconds))
                 XCTAssertGreaterThan(observed - ns, 350_000_000)
                 XCTAssertEqual(receiver.snapshot.lastDeliveredAtNanoseconds, String(ns))
                 XCTAssertGreaterThan(try XCTUnwrap(receiver.lastDeliveryAgeUpperBound()), .milliseconds(350))

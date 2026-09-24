@@ -33,6 +33,16 @@ replacement and restart. App admission/audit integration is still pending, so th
 is not yet an impaired-network adaptation pass. See the
 [recovery-budget implementation](2026-09-24-recovery-budget-probe.md).
 
+The matching [transport-pressure classifier and independent replay](2026-09-24-recovery-budget-pressure.md)
+now distinguish retries within the recovery budget from actual drops or exhausted
+RTT/backlog reserves. All 25 saved retry-only pressure decisions disappear under
+that separate policy, with original evidence unchanged. This diagnostic comparison
+does not qualify the earlier run. Existing app/audit paths keep their historical
+policy until explicit versioned integration is complete. Tooling passes 3,675 tests;
+the final app suite passes 526 after repairing a demonstrated test-fixture interval
+spacing weakness. Earlier intermittent failures and the controlled reproduction
+are preserved in that checkpoint. Runtime admission limits were unchanged.
+
 The newest real-match **network impairment check is not yet qualified**. A local
 link with 30ms delay each way and 0.2% datagram removal exposed insufficient SRT
 recovery latency, decoder buffering and loopback-only probe assumptions. With an

@@ -137,11 +137,11 @@ export function qualifyNativeQuality({
         replayNativeLocalPressure(row, snapshot, {
           after: lastWindowEnd,
           duration: quality.formatVersion === 4 ? 0.25 : quality.formatVersion === 3 ? 1 : 5,
-          recoveryBudget: quality.formatVersion === 4,
+          transportPolicy: quality.formatVersion === 4 ? 'sender-delay-v1' : 'legacy-threshold-v1',
         });
       } else {
         replayNativePressure(row, snapshot, source, {
-          recoveryBudget: quality.formatVersion === 4,
+          transportPolicy: quality.formatVersion === 4 ? 'sender-delay-v1' : 'legacy-threshold-v1',
         });
         assert.equal(s.workerID, source.workerId);
         assert.equal(s.readerID, source.publication.readerId);
