@@ -836,3 +836,62 @@ Next bounded implementation and verification:
 The stage scheduling change is an evidence-backed hypothesis, not a guaranteed
 native pass. Full repeated qualification and production upgrades remain closed.
 Assessment: `artifacts/qa/repeated-recovery-invalidation-native-assessment-20260924.json`.
+
+#### Follow-up design: recovery segments, not retroactive health replacement
+
+Independent inspection of the latest raw evidence identified a further verifier
+boundary. One reset revision can contain valid recovery, campaign startup,
+telemetry loss, then a new recovery. A single final invalidation cutoff must not
+retroactively invalidate the earlier legitimate startup or let that earlier
+health authorize a later candidate. Preserve separate segments and select proof
+as of the action being checked. This design is not yet implemented or qualified.
+
+- Separate exact rejected-call anchors from unavailable audit spans. A joined
+  receipt may be fresh at audit but stale at selection/evaluation. Independently
+  reconstruct its audit classification and require the session-age lower bound
+  `serverAge + requestSeconds + evaluation - receivedUptime` to exceed 250 ms
+  for delayed-staleness cases. Preserve exact diagnostic timing and ownership.
+- Validate every original row through the first fresh replacement: bounded
+  gaps, unchanged publication/decoder, TTL, arithmetic and nonstalled progress.
+  Equal cached PTS can be legitimate; retain the existing global arrival-bound
+  consistency checks. Never label an unlogged audit row as a rejected call.
+- Replay an unknown-pressure evaluated window from its actual evidence and
+  retain source/policy ordinals, configuration, timing and counts. Require the
+  corresponding unknown state/reasons and no action. Clear baseline and health;
+  the window earns no healthy duration.
+- Retain each segment's original invalidation indexes, availability cutoff,
+  native health start, strong checkpoints and independently credited whole
+  windows. Require both validated delivery lanes and at least ten seconds.
+  Startup joins the segment valid then; candidate admission joins the segment
+  valid at admission. Earlier proof remains historical after invalidation.
+
+The driver deduplicates consecutive rejection events by revision/reason. Current
+exports cannot establish whether report 999 was selected or exactly when a fresh
+report was consumed. Exclude the unavailable audit span conservatively; do not
+invent invocation timestamps. Exact invocation replay would require a separate
+bounded trace of every cadence call, including absent input, successful no-ops
+and suppressed rejections. Keep any extension confined to acknowledged minimum
+recovery (revisions 2/4); trial, fault, ownership, ordinal and legacy checks stay
+strict. The failed run cannot pass regardless of this extension because its
+second candidate/trial/fault/recovery never completed.
+
+
+#### Stage-three readiness checkpoint
+
+Implemented the repeated-only joined-stage wait and post-allocation revalidation.
+Exhaustion stops with `readinessUnavailable` before marking the campaign finished
+or restarting. A returned allocation is always owned before cancellation, clock
+or context checks. Deadline checks cover both the readiness read and an allocation
+created before the deadline but returned afterward. Historical startup context
+and the shared candidate comparison remain unchanged.
+
+Nine new behavioral regressions first reproduced the missing gate. The complete
+focused class passes 39/39; all 470 FilmModel and 3,262 tool tests pass. The arm64
+simulator build passes. Independent spec and quality reviews approved the change.
+Evidence uses `artifacts/qa/repeated-live-checkpoint-stage-readiness-*`.
+
+The quality review confirmed a remaining timing constraint: the first two stages
+spend about 2.5 MB, leaving roughly 9.52 seconds at 12 Mbps within 16 MiB. If the
+0.5-second maturity requirement misses a fresh source-health slot, measurement
+and admission could still arrive too late. The next frozen native run tests this
+scheduling hypothesis; no budget, health requirement or verifier is weakened.

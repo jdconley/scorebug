@@ -33,7 +33,7 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route is explicitly limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,262 tool tests and 461 FilmModel tests pass. The fresh iPhone 14/iOS 26.2
+All 3,262 tool tests and 470 FilmModel tests pass. The fresh iPhone 14/iOS 26.2
 run (`native-app-ApmZnO`, source `4b1a333`) passed native scoring and recording
 export, but full repeated recovery still failed: only the first trial/fault/reset
 completed. The receiver export and enlarged cadence audit now work on-device in
@@ -43,9 +43,13 @@ invalidity or overflow. All 913 frozen source hashes remained unchanged.
 The second campaign lost readiness during recovery, but its highest-rate probe
 stage continued spending its bounded byte budget. It exhausted that budget after
 only 79 of 121 candidate inputs, so the second trial correctly did not qualify.
-Next: retire the lower-rate stage, wait for current recovered readiness within
-the original campaign deadline, then allocate the high-rate stage. Preserve the
-16 MiB cap, ownership, leases, strict health duration and stage time limits.
+The repeated fixture now retires the lower-rate stage and waits for current
+recovered readiness within the original campaign deadline before allocating the
+high-rate stage. It preserves the 16 MiB cap, ownership, leases, strict health
+duration and stage time limits. Nine new regressions, the full FilmModel/tool
+suites and the simulator build pass; independent spec/quality reviews approved
+the change. A new frozen native run is next. Timing feasibility under the byte
+cap still needs measurement; component tests do not establish native success.
 
 This run also contains a different telemetry sequence from the narrowly supported
 replay: a report fresh when audited became stale before selection, an adjacent

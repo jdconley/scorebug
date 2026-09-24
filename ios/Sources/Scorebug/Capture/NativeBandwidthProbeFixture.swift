@@ -288,7 +288,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             guard let after, validRepeatedContext(after), NativeCandidateAttempt.sameConfiguration(context, after) else {
                 throw FixtureError.invalidEvidence
             }
-            try await runRepeatedStages(value)
+            guard try await runRepeatedStages(value) else { return }
             await joinRepeatedOwner(phase: "final")
             guard !invalid, campaigns.last?.joined == true else { throw FixtureError.invalidEvidence }
             campaigns[campaigns.count - 1].finished = true
@@ -322,11 +322,50 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         return nil
     }
 
-    private func runRepeatedStages(_ initial: NativeBandwidthProbeSample) async throws {
+    /// Health may restart while the cheaper stages run. Keep the campaign's
+    /// immutable identity, but pin a fresh readiness window for stage three.
+    private func sameRepeatedCampaignConfiguration(_ context: PublishingQualitySession.CandidateMeasurementContext) -> Bool {
+        guard let original = campaigns.last?.context else { return false }
+        let old = original.readiness, new = context.readiness
+        let oldApplied = original.applied, newApplied = context.applied
+        let oldReceipt = oldApplied.receipt, newReceipt = newApplied.receipt
+        return original.scope == context.scope && original.clock == context.clock
+            && old.attemptID == new.attemptID && old.appliedRevision == new.appliedRevision
+            && old.baseline == new.baseline && old.settings == new.settings
+            && oldApplied.attemptID == newApplied.attemptID && oldApplied.revision == newApplied.revision
+            && oldApplied.settings == newApplied.settings && oldApplied.acknowledgedAt == newApplied.acknowledgedAt
+            && oldReceipt.publishingGeneration == newReceipt.publishingGeneration
+            && oldReceipt.configuration == newReceipt.configuration && oldReceipt.acceptedAt == newReceipt.acceptedAt
+            && oldReceipt.lastSubmittedSourcePTS == newReceipt.lastSubmittedSourcePTS
+    }
+
+    private func repeatedStageReadiness(deadline: Double) async throws -> PublishingQualitySession.CandidateMeasurementContext? {
+        for _ in 0..<timing.maximumPolls {
+            try Task.checkCancellation()
+            let before = timing.now()
+            guard before.isFinite else { throw FixtureError.invalidEvidence }
+            guard before < deadline else { return nil }
+            let context = await measurementContext.read()
+            try Task.checkCancellation()
+            let after = timing.now()
+            guard after.isFinite else { throw FixtureError.invalidEvidence }
+            guard after < deadline else { return nil }
+            if let context {
+                guard validRepeatedContext(context), sameRepeatedCampaignConfiguration(context) else {
+                    throw FixtureError.invalidEvidence
+                }
+                return context
+            }
+            try await Task.sleep(for: timing.poll)
+        }
+        return nil
+    }
+
+    private func runRepeatedStages(_ initial: NativeBandwidthProbeSample) async throws -> Bool {
         var current = initial
         campaigns[campaigns.count - 1].status = "completed"
         for index in 0..<3 {
-            if current.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return }
+            if current.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return true }
             // A four-second measurement may begin only when the next original
             // source-health window becomes fresh. Keep its probe alive through
             // the following admission window; native byte/time/lease limits and
@@ -349,26 +388,48 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
                           recordRepeated(terminal, phase: "observed") else { throw error }
                     handle = terminal
                     campaigns[campaigns.count - 1].status = "withdrawn"
-                    return
+                    return true
                 }
                 try Task.checkCancellation()
                 guard recordRepeated(renewed, phase: "renewed") else { throw FixtureError.invalidEvidence }
                 current = renewed; handle = renewed
-                if renewed.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return }
+                if renewed.reason != nil { campaigns[campaigns.count - 1].status = "withdrawn"; return true }
             }
             await joinRepeatedOwner(phase: "retired")
             guard !invalid, campaigns.last?.joined == true, let retired = handle else { throw FixtureError.invalidEvidence }
             try Task.checkCancellation()
-            if retired.reason != "cancelled" { campaigns[campaigns.count - 1].status = "withdrawn"; return }
-            if index == 2 { return }
-            guard let stage = retired.stage else { throw FixtureError.invalidEvidence }
+            if retired.reason != "cancelled" { campaigns[campaigns.count - 1].status = "withdrawn"; return true }
+            if index == 2 { return true }
+            guard let stage = retired.stage, let origin = retired.campaignStartedAt else { throw FixtureError.invalidEvidence }
+            let campaignDeadline = origin + 60
+            let stageContext: PublishingQualitySession.CandidateMeasurementContext?
+            if index == 1 {
+                guard let context = try await repeatedStageReadiness(deadline: campaignDeadline) else {
+                    result = "readinessUnavailable"
+                    campaigns[campaigns.count - 1].status = result
+                    return false
+                }
+                stageContext = context
+            } else { stageContext = nil }
             let replacement = try await operations.replace(retired.id, retired.publishingGeneration, stage, stagedBitRates[index + 1])
             handle = replacement
             campaigns[campaigns.count - 1].joined = false
             guard recordRepeated(replacement, phase: "replaced") else { throw FixtureError.invalidEvidence }
             try Task.checkCancellation()
+            if let stageContext {
+                let before = timing.now()
+                guard before.isFinite, before < campaignDeadline else { throw FixtureError.invalidEvidence }
+                let after = await measurementContext.read()
+                try Task.checkCancellation()
+                let now = timing.now()
+                guard now.isFinite, now < campaignDeadline,
+                      let after, validRepeatedContext(after), NativeCandidateAttempt.sameConfiguration(stageContext, after) else {
+                    throw FixtureError.invalidEvidence
+                }
+            }
             current = replacement
         }
+        return true
     }
 
     private func joinRepeatedOwner(phase: String) async {
