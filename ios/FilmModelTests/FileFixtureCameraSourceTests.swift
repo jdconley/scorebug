@@ -6,6 +6,131 @@ import XCTest
 final class FileFixtureCameraSourceTests: XCTestCase {
     private let profile = ArchiveProfile(width: 320, height: 240)
 
+    @MainActor func testFilmExportsClosedFileStatisticsAndJoinsFailingDiagnosticWriter() async throws {
+        let movie = try await FileSourceTestMovie.make(frames: 30)
+        defer { movie.remove() }
+        let source = FileFixtureCameraSource(url: movie.url, profile: profile)
+        let model = FilmModel(library: RecordingLibrary(rootDirectory: movie.root.appendingPathComponent("library")),
+                              profile: profile, sourceFactory: { source })
+        let gate = FilmTestGate()
+        var exports: [(String, FileFixtureStatistics)] = []
+        var archive: ArchivePressureDiagnostics.Snapshot?
+        model.archivePressureFactory = { ArchivePressureDiagnostics(recordingID: $0) }
+        model.archivePressureWriter = { archive = $0 }
+        model.fileFixtureStatisticsWriter = { id, stats in
+            exports.append((id, stats))
+            await gate.enter()
+            throw CocoaError(.fileWriteUnknown)
+        }
+        await model.start()
+        let id = try XCTUnwrap(model.currentCapture?.id)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while source.statistics.videoFrames < 3 && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertGreaterThanOrEqual(source.statistics.videoFrames, 3)
+        let stopping = Task { await model.stop() }
+        guard await gate.waitUntilEntered(timeout: .seconds(3)) else {
+            await gate.release(); await stopping.value
+            XCTFail("Joined statistics writer was not called"); return
+        }
+        XCTAssertEqual(model.state, .stopping)
+        XCTAssertFalse(model.canStart)
+        XCTAssertEqual(exports.count, 1)
+        XCTAssertEqual(exports.first?.0, id)
+        XCTAssertEqual(exports.first?.1, source.statistics)
+        XCTAssertEqual(exports.first?.1.closed, true)
+        XCTAssertEqual(archive?.recordingID, id)
+        XCTAssertEqual(archive?.coverage.producer, true)
+        XCTAssertEqual(archive?.coverage.session, true)
+        XCTAssertEqual(archive?.coverage.persistence, true)
+        await model.start()
+        XCTAssertEqual(exports.count, 1)
+        await gate.release(); await stopping.value
+        XCTAssertEqual(model.state, .idle, "Diagnostic write failure must preserve successful recording")
+        XCTAssertEqual(model.recordings.first?.status, .completed)
+        await model.stop()
+        XCTAssertEqual(exports.count, 1)
+    }
+
+    func testFileStatisticsEncodingRequiresClosureAndPreservesExactCounters() throws {
+        var stats = FileFixtureStatistics()
+        XCTAssertThrowsError(try FileFixtureDiagnostics.data(recordingID: "recording", statistics: stats))
+        stats.closed = true
+        stats.videoFrames = 9_007_199_254_740_993
+        stats.audioSamples = 19_200
+        stats.audioBuffers = 12
+        stats.readCalls = 25
+        stats.totalReadSeconds = 0.02
+        stats.maximumReadSeconds = 0.01
+        stats.maximumSourceLagSeconds = 0.2
+        stats.firstVideoDeliverySeconds = 0.01
+        stats.lastVideoDeliverySeconds = 0.4
+        XCTAssertThrowsError(try FileFixtureDiagnostics.data(recordingID: "", statistics: stats))
+        let data = try FileFixtureDiagnostics.data(recordingID: "recording", statistics: stats)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["formatVersion"] as? Int, 1)
+        XCTAssertEqual(object["recordingID"] as? String, "recording")
+        let value = try XCTUnwrap(object["statistics"] as? [String: Any])
+        XCTAssertEqual(value["videoFrames"] as? String, "9007199254740993")
+        XCTAssertEqual(value["audioSamples"] as? String, "19200")
+        XCTAssertEqual(value["readCalls"] as? String, "25")
+        XCTAssertEqual(value["audioBuffers"] as? String, "12")
+        XCTAssertEqual(value["closed"] as? Bool, true)
+        XCTAssertEqual(value["maximumSourceLagSeconds"] as? Double, 0.2)
+        XCTAssertEqual(value["totalReadSeconds"] as? Double, 0.02)
+        XCTAssertEqual(value["firstVideoDeliverySeconds"] as? Double, 0.01)
+    }
+
+    func testFileDiagnosticsBracketVideoPreparationAndCloseOnlyAfterJoinedStop() async throws {
+        let movie = try await FileSourceTestMovie.make()
+        defer { movie.remove() }
+        let source = FileFixtureCameraSource(url: movie.url, profile: profile)
+        let diagnostics = ArchivePressureDiagnostics(recordingID: "file-hooks")
+        XCTAssertTrue(source.attachArchivePressureDiagnostics(diagnostics))
+        let other = ArchivePressureDiagnostics(recordingID: "other")
+        XCTAssertFalse(source.attachArchivePressureDiagnostics(other))
+        XCTAssertFalse(other.snapshot.coverage.producer)
+        let delivered = FileSourceLedger(), ended = expectation(description: "File complete")
+        _ = try await source.prepare(callbacks: .init(sample: { sample in
+            delivered.append(sample)
+            let active = diagnostics.snapshot.observations.activeProducer
+            if sample.kind == .video {
+                XCTAssertEqual(active?.frameIndex, String(delivered.videoCount - 1))
+                XCTAssertNotNil(active?.generationEnd)
+                XCTAssertNotNil(active?.callbackStart)
+                XCTAssertNil(active?.callbackEnd)
+            } else { XCTAssertNil(active) }
+        }, event: { _ in ended.fulfill() }))
+        XCTAssertFalse(source.attachArchivePressureDiagnostics(other))
+        try await source.start()
+        await fulfillment(of: [ended], timeout: 4)
+        XCTAssertFalse(source.statistics.closed)
+        await source.stop()
+        let stats = source.statistics
+        XCTAssertTrue(stats.closed)
+        XCTAssertEqual(stats.videoFrames, 12)
+        XCTAssertEqual(stats.audioSamples, 19_200)
+        XCTAssertEqual(stats.audioBuffers, Int64(delivered.rows.filter { $0.kind == .audio }.count))
+        XCTAssertEqual(stats.readCalls, stats.videoFrames + stats.audioBuffers + 1)
+        XCTAssertGreaterThanOrEqual(stats.totalReadSeconds, stats.maximumReadSeconds)
+        XCTAssertGreaterThan(stats.maximumReadSeconds, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(stats.lastVideoDeliverySeconds), try XCTUnwrap(stats.firstVideoDeliverySeconds))
+        let snapshot = diagnostics.snapshot
+        XCTAssertTrue(snapshot.coverage.producer)
+        XCTAssertTrue(snapshot.validity.timingValid)
+        XCTAssertFalse(snapshot.validity.invalidSequence)
+        XCTAssertNil(snapshot.observations.activeProducer)
+        let spans = snapshot.observations.producers.completed
+        XCTAssertEqual(spans.map(\.frameIndex), (0..<12).map(String.init))
+        for span in spans {
+            XCTAssertLessThanOrEqual(try XCTUnwrap(span.generationStart), try XCTUnwrap(span.generationEnd))
+            XCTAssertLessThanOrEqual(try XCTUnwrap(span.generationEnd), try XCTUnwrap(span.callbackStart))
+            XCTAssertLessThanOrEqual(try XCTUnwrap(span.callbackStart), try XCTUnwrap(span.callbackEnd))
+            XCTAssertNotNil(span.nominalDeadline)
+        }
+        await source.stop()
+        XCTAssertEqual(source.statistics, stats)
+    }
+
     func testPreparedSourceIsSilentThenPreservesDecodedMediaAndInterruptsAtEOF() async throws {
         let movie = try await FileSourceTestMovie.make()
         defer { movie.remove() }

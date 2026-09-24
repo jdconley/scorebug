@@ -16,6 +16,7 @@ import XCTest
         let model = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { FilmTestSource() }, sinkFactory: testArchiveSink)
         XCTAssertNil(model.archivePressureFactory)
         XCTAssertNil(model.archivePressureWriter)
+        XCTAssertNil(model.fileFixtureStatisticsWriter)
         var exports = 0
         model.archivePressureWriter = { _ in exports += 1 }
         await model.start(); await model.stop()

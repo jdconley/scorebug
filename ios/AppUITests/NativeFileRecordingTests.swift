@@ -7,6 +7,7 @@ final class NativeFileRecordingTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment["SCOREBUG_TEST_FILE_CAPTURE"] = "1"
+        app.launchEnvironment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] = "1"
         app.launch()
         app.tabBars.buttons["Recordings"].tap()
         XCTAssertTrue(app.staticTexts["No saved recordings"].waitForExistence(timeout: 10), "This test requires a fresh app container")

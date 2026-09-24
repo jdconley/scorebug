@@ -119,8 +119,21 @@ value and timestamp; the fresh app case's audio tail is 16.000 ms within the unc
 100-ms allowance. The failed case remains preserved. All 516 model tests, DEBUG
 simulator test build and unsigned iPhone/embedded-Watch Release build pass. See the
 [file-app plan and exact evidence](2026-09-24-file-app-recording.md). This is short
-file-driven recording evidence; source pressure/lag diagnostics, maintained streaming
-harness integration and real-match adaptive/network tests remain next.
+file-driven recording evidence.
+
+**Real-file source diagnostics now pass in the native app.** Frozen
+`file-app-kjg87h0n` records/exports 221 consecutive frames with matching closed
+source/archive counts and recording IDs, complete diagnostic coverage and zero
+archive queue rejection/loss. Source delivery averages 29.992 fps with 2.293-ms
+maximum nominal lag; sampled natural audio remains aligned. UI/media checks pass,
+all 1,191 frozen hashes match and the owned simulator is deleted. Read preparation
+statistics exclude startup and do not measure viewer latency. The first full model
+run exposes a pre-existing intermittent candidate-admission test failure; unchanged
+focused reproduction and follow-up full suite (519 tests) pass, with root cause
+still unresolved. DEBUG simulator and unsigned iPhone/Watch Release builds pass. See the
+[source-diagnostics checkpoint](2026-09-24-file-source-diagnostics.md).
+Maintained streaming harness integration and real-match adaptive/network tests
+remain next.
 
 A read-only production audit confirms that the measured quality driver and candidate
 publisher currently exist only in the DEBUG simulator route. Continue by connecting

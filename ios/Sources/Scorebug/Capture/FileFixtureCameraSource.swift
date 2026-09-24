@@ -3,9 +3,16 @@
 import Foundation
 import ScorebugMedia
 
-struct FileFixtureStatistics: Sendable {
+struct FileFixtureStatistics: Sendable, Equatable {
     var videoFrames: Int64 = 0
     var audioSamples: Int64 = 0
+    var audioBuffers: Int64 = 0
+    var readCalls: Int64 = 0
+    var totalReadSeconds = 0.0
+    var maximumReadSeconds = 0.0
+    var firstVideoDeliverySeconds: Double?
+    var lastVideoDeliverySeconds: Double?
+    var closed = false
     /// Relative to the original wall/source anchor, before pacing adjustments.
     var maximumSourceLagSeconds = 0.0
 }
@@ -23,10 +30,18 @@ final class FileFixtureCameraSource: CaptureSource, @unchecked Sendable {
     private var reader: FileFixtureReader?
     private var callbacks: CaptureSourceCallbacks?
     private var pump: Task<Void, Never>?
+    private var archivePressureDiagnostics: ArchivePressureDiagnostics?
 
     init(url: URL, profile: ArchiveProfile = .init()) { self.url = url; self.profile = profile }
     deinit { pump?.cancel() }
     var statistics: FileFixtureStatistics { ledger.snapshot }
+    @discardableResult func attachArchivePressureDiagnostics(_ owner: ArchivePressureDiagnostics) -> Bool {
+        lock.withLock {
+            guard !used, archivePressureDiagnostics == nil, owner.attachProducer() else { return false }
+            archivePressureDiagnostics = owner
+            return true
+        }
+    }
 
     func prepare(callbacks: CaptureSourceCallbacks) async throws -> CMTime {
         try lock.withLock {
@@ -48,7 +63,7 @@ final class FileFixtureCameraSource: CaptureSource, @unchecked Sendable {
     func start() async throws {
         try lock.withLock {
             guard !stopped, pump == nil, let reader, let callbacks else { throw FileFixtureError.invalidState }
-            let ledger = ledger
+            let ledger = ledger, diagnostics = archivePressureDiagnostics
             // Capture the reader/callbacks, never the source owner. Its deinit can
             // therefore cancel this task even if a caller abandons the fixture.
             pump = Task.detached {
@@ -56,18 +71,33 @@ final class FileFixtureCameraSource: CaptureSource, @unchecked Sendable {
                 do {
                     while true {
                         try Task.checkCancellation()
-                        guard let sample = try autoreleasepool(invoking: { try reader.nextSample() }) else {
+                        if let next = try reader.peek(), next.kind == .video {
+                            let seconds = (next.pts - reader.origin).seconds
+                            diagnostics?.beginFrame(index: next.videoIndex,
+                                deadline: cadence.deadline(sourceSeconds: seconds),
+                                nominalDeadline: cadence.origin + .seconds(seconds))
+                        }
+                        let readStart = ContinuousClock.now
+                        let prepared = try autoreleasepool { () throws -> CapturedMediaSample? in
+                            defer { ledger.readFinished(seconds: FileFixtureCadence.seconds(readStart.duration(to: .now))) }
+                            return try reader.nextSample()
+                        }
+                        guard let sample = prepared else {
                             try Task.checkCancellation()
                             callbacks.event(.interrupted)
                             return
                         }
+                        if sample.kind == .video { diagnostics?.generationFinished() }
                         let elapsed = (sample.sampleBuffer.presentationTimeStamp - reader.origin).seconds
                         try await ContinuousClock().sleep(until: cadence.deadline(sourceSeconds: elapsed))
                         try Task.checkCancellation()
                         let now = ContinuousClock.now
                         cadence.began(sourceSeconds: elapsed, at: now)
-                        ledger.record(sample, lag: cadence.nominalLag(sourceSeconds: elapsed, at: now))
+                        ledger.record(sample, lag: cadence.nominalLag(sourceSeconds: elapsed, at: now),
+                                      deliveredAt: FileFixtureCadence.seconds(cadence.origin.duration(to: now)))
+                        if sample.kind == .video { diagnostics?.callbacksStarted() }
                         callbacks.sample(sample)
+                        if sample.kind == .video { diagnostics?.callbacksFinished() }
                     }
                 } catch is CancellationError {
                     // Explicit stop cancels pacing and joins the current callback.
@@ -87,6 +117,7 @@ final class FileFixtureCameraSource: CaptureSource, @unchecked Sendable {
         await pending.0?.value
         // Never mutate AVAssetReader concurrently with copyNextSampleBuffer.
         pending.1?.cancel()
+        ledger.close()
         lock.withLock { pump = nil; reader = nil; callbacks = nil }
     }
 }
@@ -103,8 +134,11 @@ struct FileFixtureCadence {
         if late >= .seconds(1.0 / 30) { adjustment += late }
     }
     func nominalLag(sourceSeconds: Double, at now: ContinuousClock.Instant) -> Double {
-        let duration = (origin + .seconds(sourceSeconds)).duration(to: now).components
-        return max(0, Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
+        max(0, Self.seconds((origin + .seconds(sourceSeconds)).duration(to: now)))
+    }
+    static func seconds(_ duration: Duration) -> Double {
+        let parts = duration.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 }
 
@@ -112,10 +146,24 @@ private final class FileFixtureLedger: @unchecked Sendable {
     private let lock = NSLock()
     private var value = FileFixtureStatistics()
     var snapshot: FileFixtureStatistics { lock.withLock { value } }
-    func record(_ sample: CapturedMediaSample, lag: Double) {
+    func close() { lock.withLock { value.closed = true } }
+    func readFinished(seconds: Double) {
         lock.withLock {
-            if sample.kind == .video { value.videoFrames += 1 }
-            else { value.audioSamples += Int64(sample.sampleBuffer.numSamples) }
+            value.readCalls += 1
+            value.totalReadSeconds += seconds
+            value.maximumReadSeconds = max(value.maximumReadSeconds, seconds)
+        }
+    }
+    func record(_ sample: CapturedMediaSample, lag: Double, deliveredAt: Double) {
+        lock.withLock {
+            if sample.kind == .video {
+                value.videoFrames += 1
+                if value.firstVideoDeliverySeconds == nil { value.firstVideoDeliverySeconds = deliveredAt }
+                value.lastVideoDeliverySeconds = deliveredAt
+            } else {
+                value.audioSamples += Int64(sample.sampleBuffer.numSamples)
+                value.audioBuffers += 1
+            }
             value.maximumSourceLagSeconds = max(value.maximumSourceLagSeconds, lag)
         }
     }
@@ -215,12 +263,25 @@ private final class FileFixtureReader: @unchecked Sendable {
 
     func cancel() { videoReader.cancelReading(); audioReader.cancelReading() }
 
+    private var nextIsVideo: Bool {
+        nextAudio == nil || (nextVideo != nil && nextVideo!.presentationTimeStamp <= nextAudio!.presentationTimeStamp)
+    }
+
+    /// Inspect the already-decoded lookahead without advancing either reader.
+    func peek() throws -> (kind: CapturedMediaSample.Kind, pts: CMTime, videoIndex: Int64)? {
+        guard nextVideo != nil || nextAudio != nil else { return nil }
+        let isVideo = nextIsVideo
+        let pts = (isVideo ? nextVideo! : nextAudio!).presentationTimeStamp
+        guard pts.isNumeric, pts.epoch == 0, pts >= origin else { throw FileFixtureError.invalidTimeline }
+        return (isVideo ? .video : .audio, pts, videoCount)
+    }
+
     func nextSample() throws -> CapturedMediaSample? {
         guard nextVideo != nil || nextAudio != nil else {
             guard videoReader.status == .completed, audioReader.status == .completed else { throw FileFixtureError.readerFailed }
             return nil
         }
-        let isVideo = nextAudio == nil || (nextVideo != nil && nextVideo!.presentationTimeStamp <= nextAudio!.presentationTimeStamp)
+        let isVideo = nextIsVideo
         var buffer = isVideo ? nextVideo! : nextAudio!
         let pts = buffer.presentationTimeStamp
         guard pts.isNumeric, pts.epoch == 0 else { throw FileFixtureError.invalidTimeline }

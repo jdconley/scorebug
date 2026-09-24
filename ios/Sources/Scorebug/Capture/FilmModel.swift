@@ -61,6 +61,14 @@ struct CurrentCapture: Sendable {
         #endif
     }()
     private var archivePressureDiagnostics: ArchivePressureDiagnostics?
+    var fileFixtureStatisticsWriter: ((String, FileFixtureStatistics) async throws -> Void)? = {
+        #if targetEnvironment(simulator)
+        return { try await FileFixtureDiagnostics.writeClosed(recordingID: $0, statistics: $1) }
+        #else
+        return nil
+        #endif
+    }()
+    private var fileFixtureSource: FileFixtureCameraSource?
     #endif
 
     init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
@@ -105,10 +113,12 @@ struct CurrentCapture: Sendable {
             let tap = PublishingTap()
             let session = try RecordingSession(sink: created.sink)
             #if DEBUG
+            fileFixtureSource = source as? FileFixtureCameraSource
             if let owner = archivePressureFactory?(created.id), owner.snapshot.recordingID == created.id {
                 archivePressureDiagnostics = owner
                 session.attachArchivePressureDiagnostics(owner)
                 (source as? FixtureCameraSource)?.attachArchivePressureDiagnostics(owner)
+                fileFixtureSource?.attachArchivePressureDiagnostics(owner)
                 (created.sink as? SegmentedArchiveSink)?.writer.attachArchivePressureDiagnostics(owner)
             }
             #endif
@@ -150,6 +160,7 @@ struct CurrentCapture: Sendable {
             if wasStarting, failure == nil { failure = "Recording stopped before capture was ready." }
             #if DEBUG
             var closedDiagnostics: ArchivePressureDiagnostics.Snapshot?
+            var closedFileStatistics: FileFixtureStatistics?
             #endif
             if let recorder {
                 do { _ = try await recorder.stop() }
@@ -157,6 +168,7 @@ struct CurrentCapture: Sendable {
                 #if DEBUG
                 // Freeze before metrics/storage reads can wait on unrelated I/O.
                 closedDiagnostics = archivePressureDiagnostics?.close(snapshot: recorder.snapshot)
+                closedFileStatistics = fileFixtureSource?.statistics
                 #endif
                 await updateCounters(recorder)
             }
@@ -171,6 +183,11 @@ struct CurrentCapture: Sendable {
                 // must never replace the recording outcome or permit early restart.
                 try? await writer(closedDiagnostics)
             }
+            if let closedFileStatistics, closedFileStatistics.closed, let id = draft?.id,
+               let writer = fileFixtureStatisticsWriter {
+                try? await writer(id, closedFileStatistics)
+            }
+            fileFixtureSource = nil
             archivePressureDiagnostics = nil
             #endif
             self.recorder = nil
