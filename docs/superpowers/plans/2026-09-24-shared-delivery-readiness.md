@@ -163,3 +163,30 @@ Its separate failing-first regression passes after correction. Native 28/58-fram
 negative. Full native model verification passes 502 tests (66.902 seconds). Independent
 review approves the runtime and replay correction, including explicit recovery-only
 final coverage. All 3,353 JS tool tests and the simulator build pass. A fresh frozen repeated run follows.
+
+
+## Frozen correction regression
+
+`d73461b`, `native-app-hT3aOi`: harness **FAIL**, UI workflow passes in 262.682 seconds,
+all 1,155 tracked file hashes unchanged. Both native probe campaigns run, the second
+360p trial confirms, and recovered readiness is reachable. This is not the required
+two controlled-fault cycles: the first trial loses freshness before confirmation,
+so the fault scheduler never starts either owned pause. Four profile phases occur,
+240p → 360p → 240p → 360p, with no final controlled reset. Preserve the failure.
+
+The first trial's rejected cadence receipt is 243.464125 ms old in its audit row
+at uptime 1906271.6720534167. Its server upper bound is 143 ms, request time
+97.347417 ms, and audit residence 3.116708 ms. At session evaluation uptime
+1906271.690563, its age is 261.973750 ms, beyond the unchanged 250 ms limit.
+The first trial is safely revoked; a later healthy recovery admits campaign two.
+Do not relax freshness or reclassify this as a complete pass. The second campaign
+confirms, but cannot replace the missing original first confirmation in this fixture.
+
+The bounded candidate-wait export is closed/valid with no omissions or overflow.
+Archive diagnostics report 13,072 written samples, no queue drops/rejections and a
+finished writer. Worker/recorder exit zero; simulator deletion completes. The full
+media/qualification pipeline exits at the failed fault scheduler and reports a
+secondary owned-cleanup error, so neither full media qualification nor clean harness
+success is claimed. Compact evidence is `boundary-count-assessment.json` in the run.
+Next native runtime work addresses the independently measured 4K audio starvation;
+repeat this strict fixture after that implementation, preserving this freshness case.

@@ -83,15 +83,23 @@ times out. Only three of the required five profile phases occur. All 1,153 froze
 tracked file hashes remain unchanged. No second-cycle qualification or full media
 qualification is claimed for this failed run; the earlier `89926f4` pass is retained.
 
-**Next local work:** re-run the complete adaptive fixture after the reviewed
-[readiness correction](2026-09-24-shared-delivery-readiness.md). It permits one frame
-of short-bucket boundary tolerance for lossless 29/31 or 59/61 delivery counts while
-retaining stronger source health. All 502 native model and 3,353 JS tool tests plus
-the simulator build pass; this is not yet a new complete native qualification.
-Then isolate native video submission from the stream actor with one
-bounded in-flight operation and explicit configuration/lifecycle gates. Preserve
-queue bounds, recording independence and strict recovery thresholds. Re-run the
-real 4K and complete repeated routes after the corresponding deterministic fixes.
+**Latest recovery correction:** the reviewed
+[one-frame boundary correction](2026-09-24-shared-delivery-readiness.md) passes all
+502 native model and 3,353 JS tool tests plus simulator build. Frozen `d73461b`
+reaches both probe campaigns and confirms the second trial, but its complete run
+`native-app-hT3aOi` still fails: a 261.974 ms cadence sample exceeds the strict
+250 ms freshness limit during the first trial. That trial safely rolls back before
+any controlled fault. Only four profile phases occur. All 1,155 tracked hashes are
+unchanged; UI passes in 262.682 seconds. Retain this failed run and the freshness
+limit. Recovered readiness is reachable, but the full repeated route is unqualified
+on current source.
+
+**Next local work:** implement the reviewed
+[video-submission isolation plan](2026-09-24-video-submission-isolation.md) to keep
+native 4K video conversion from starving audio. Use one bounded in-flight operation,
+configuration/lifecycle gates and exact receipt ordering. Preserve recording
+independence. Follow deterministic regression and package/native checks with bounded
+real-match tests and the strict complete adaptive fixture.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and

@@ -222,5 +222,10 @@ keeping configuration writes, retirement and accepted-tail ownership explicit.
 The same source passes 297 vendor / 170 Streaming / 10 clean SDKProbe / 499 native
 model tests and simulator build. Its separate repeated adaptive simulator route
 `native-app-gN2v2o` fails before the second probe starts, despite a passing UI
-workflow and first minimum reset. That readiness regression is being investigated;
-the prior complete adaptive pass on `89926f4` does not qualify the newer source.
+workflow and first minimum reset. Lossless clock-boundary buckets incorrectly
+cleared recovery; that defect is corrected in `d73461b` with native/replay regressions.
+Its subsequent `native-app-hT3aOi` run reaches both probe campaigns but still fails:
+a 261.974 ms cadence sample revokes the first trial under the strict 250 ms freshness
+limit before any owned fault. The prior complete adaptive pass on `89926f4` does
+not qualify either newer source. The next reviewed runtime work isolates native
+video conversion to prevent the independently measured 4K audio queue starvation.

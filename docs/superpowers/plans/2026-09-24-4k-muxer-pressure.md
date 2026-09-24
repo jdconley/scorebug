@@ -169,3 +169,11 @@ remain unchanged. Worker and recorder exit zero; simulator deletion completes.
 The harness also reports a secondary cleanup failure related to its failed owned
 fault task. Do not claim full cleanup success or a complete media pass from UI
 success. Preserve the earlier complete `89926f4` qualification separately.
+
+
+The one-frame recovery correction is implemented in `d73461b`; 502 native model
+and 3,353 JS tool tests plus simulator build pass. Its fresh native run `hT3aOi`
+reaches the second probe and trial confirmation, but an expired 261.974 ms cadence
+receipt revokes the first trial before any controlled fault. This remains a failed
+full fixture; preserve the 250 ms freshness gate. The next reviewed runtime work is
+[video-submission isolation](2026-09-24-video-submission-isolation.md).
