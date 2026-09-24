@@ -9,6 +9,12 @@ final class NativeStreamingTests: XCTestCase {
         app.launchEnvironment["SCOREBUG_TEST_API_URL"] = endpoint
         app.launchEnvironment["SCOREBUG_TEST_TOKEN"] = "qa-phone-token-not-production"
         app.launchEnvironment["SCOREBUG_TEST_VIDEO_OBSERVATIONS"] = "1"
+        let fileFlag = ProcessInfo.processInfo.environment["SCOREBUG_TEST_FILE_CAPTURE"] ?? ""
+        if !fileFlag.isEmpty {
+            XCTAssertEqual(fileFlag, "1")
+            XCTAssertTrue((ProcessInfo.processInfo.environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? "").isEmpty)
+            app.launchEnvironment["SCOREBUG_TEST_FILE_CAPTURE"] = fileFlag
+        }
         let rawHold = ProcessInfo.processInfo.environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] ?? ""
         var holdSeconds = 12
         if !rawHold.isEmpty {

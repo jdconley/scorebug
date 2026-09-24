@@ -1,4 +1,14 @@
 import {
+  nativeFileFixtureOptions,
+  qualifyNativeFileFixture,
+  nativeFileFixtureHash,
+  stageNativeFileFixture,
+  verifyNativeFileFixtureHash,
+} from './native-file-fixture.mjs';
+import { qualifyNaturalAudio } from './natural-audio-qualification.mjs';
+import { qualifyNativeFileRecording } from './native-file-recording.mjs';
+import { qualifyScoreTemplate } from './score-template-qualification.mjs';
+import {
   nativeCandidateProfile,
   qualifyNativeCandidateMeasurement,
 } from './native-candidate-measurement.mjs';
@@ -108,6 +118,11 @@ assert.ok(
 );
 const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const fileFixture = nativeFileFixtureOptions({
+  environment: process.env,
+  streaming,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const cadenceReports = nativeCadenceReports({
   environment: process.env,
   streaming,
@@ -124,7 +139,9 @@ const { requireQuality, requireConfirmation } = nativeQualityOptions({
   requireProcessing,
   holdSeconds: streamingOptions.holdSeconds,
 });
-const fixtureWorkload = nativeFixtureWorkload({ streaming, environment: process.env });
+const fixtureWorkload = fileFixture
+  ? 'real-file'
+  : nativeFixtureWorkload({ streaming, environment: process.env });
 const liveProfile = nativeLiveProfile({
   environment: process.env,
   streaming,
@@ -234,6 +251,7 @@ await writeFile(
       requireQuality,
       requireConfirmation,
       streamingOptions,
+      fileFixture,
       fixtureWorkload,
       uplinkProfile,
       liveProfile,
@@ -252,7 +270,9 @@ await writeFile(
     2,
   ),
 );
-const { ffmpeg, ffprobe } = mediaTools();
+const { ffmpeg, ffprobe, font } = mediaTools();
+let fileInputEvidence, sourcePCM, fileRecordingQualification;
+const scoreTemplates = [];
 let simulator;
 let liveContainer;
 const execute = promisify(execFile);
@@ -422,7 +442,13 @@ async function analyze(path, index, live = false) {
     if (!live)
       assert.equal(code, frame, `Missing, duplicated, or reordered source frame at ${frame}`);
   }
-  let sync, freshFps, sourceLoss, overlayChangedPixels, videoPayload, workloadQualification;
+  let sync,
+    freshFps,
+    sourceLoss,
+    overlayChangedPixels,
+    scoreGlyphs,
+    videoPayload,
+    workloadQualification;
   if (streaming) {
     const packetProbe = JSON.parse(
       await run(
@@ -464,7 +490,7 @@ async function analyze(path, index, live = false) {
         '-ac',
         '1',
         '-ar',
-        '48000',
+        fileFixture ? '8000' : '48000',
         '-f',
         'f32le',
         pcmPath,
@@ -474,14 +500,23 @@ async function analyze(path, index, live = false) {
     const raw = await readFile(pcmPath);
     const samples = new Float32Array(raw.length / 4);
     for (let i = 0; i < samples.length; i++) samples[i] = raw.readFloatLE(i * 4);
-    sync = assertMediaSync(
-      analyzeMediaSync({
-        codes,
-        videoTimes: times,
-        audioSamples: samples,
-        audioStartTime: Number(pcm[0].best_effort_timestamp_time),
-      }),
-    );
+    sync = fileFixture
+      ? qualifyNaturalAudio({
+          sourceSamples: sourcePCM,
+          targetSamples: samples,
+          codes,
+          videoTimes: times,
+          audioStartTime: Number(pcm[0].best_effort_timestamp_time),
+          sourceAudioStartTime: fileInputEvidence.audioStartSeconds,
+        })
+      : assertMediaSync(
+          analyzeMediaSync({
+            codes,
+            videoTimes: times,
+            audioSamples: samples,
+            audioStartTime: Number(pcm[0].best_effort_timestamp_time),
+          }),
+        );
     freshFps = (codes.length - 1) / (times.at(-1) - times[0]);
     sourceLoss = 1 - codes.length / (codes.at(-1) - codes[0] + 1);
     assert.ok(freshFps >= 24, 'Fresh source cadence fell below 24 fps');
@@ -517,10 +552,23 @@ async function analyze(path, index, live = false) {
     }
     assert.equal(crops[0].length, geometry.overlay.width * geometry.overlay.height);
     assert.equal(crops[0].length, crops[1].length);
-    overlayChangedPixels = 0;
-    for (let i = 0; i < crops[0].length; i++)
-      if (crops[0][i] > 180 !== crops[1][i] > 180) overlayChangedPixels++;
-    assert.ok(overlayChangedPixels > 20, 'Native scoring did not change burned-in overlay pixels');
+    if (fileFixture) {
+      scoreGlyphs = crops.map((actual, index) =>
+        qualifyScoreTemplate({
+          actual,
+          expected: scoreTemplates[index],
+          alternative: scoreTemplates[1 - index],
+        }),
+      );
+    } else {
+      overlayChangedPixels = 0;
+      for (let i = 0; i < crops[0].length; i++)
+        if (crops[0][i] > 180 !== crops[1][i] > 180) overlayChangedPixels++;
+      assert.ok(
+        overlayChangedPixels > 20,
+        'Native scoring did not change burned-in overlay pixels',
+      );
+    }
   }
   return {
     file: path,
@@ -530,6 +578,7 @@ async function analyze(path, index, live = false) {
     freshFps,
     sourceLoss,
     overlayChangedPixels,
+    scoreGlyphs,
     videoPayload,
     workloadQualification,
     frames: frames.length,
@@ -549,6 +598,138 @@ try {
     runtimes.runtimes.some((item) => item.identifier === runtimeID && item.isAvailable),
     `iOS ${runtime} runtime unavailable`,
   );
+  if (fileFixture) {
+    const sha256 = await nativeFileFixtureHash(fileFixture.path);
+    const input = join(artifact, 'input.mov');
+    await stageNativeFileFixture({ source: fileFixture.path, destination: input, sha256 });
+    await run(
+      ffmpeg,
+      [
+        '-nostdin',
+        '-v',
+        'error',
+        '-xerror',
+        '-i',
+        input,
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a:0',
+        '-f',
+        'null',
+        '-',
+      ],
+      'file-input-decode',
+    );
+    const probe = JSON.parse(
+      await run(
+        ffprobe,
+        [
+          '-v',
+          'error',
+          '-show_streams',
+          '-show_frames',
+          '-show_entries',
+          'stream=codec_type,codec_name,width,height,pix_fmt,color_space,color_transfer,color_primaries,avg_frame_rate,time_base,sample_rate,channels:stream_side_data:frame=media_type,best_effort_timestamp,best_effort_timestamp_time,nb_samples',
+          '-of',
+          'json',
+          input,
+        ],
+        'file-input-probe',
+      ),
+    );
+    const gray = join(artifact, 'file-input.gray');
+    await run(
+      ffmpeg,
+      [
+        '-nostdin',
+        '-n',
+        '-v',
+        'error',
+        '-xerror',
+        '-i',
+        input,
+        '-map',
+        '0:v:0',
+        '-vf',
+        'crop=iw:2:0:16,scale=16:1:flags=neighbor,format=gray',
+        '-fps_mode',
+        'passthrough',
+        '-f',
+        'rawvideo',
+        gray,
+      ],
+      'file-input-identities',
+    );
+    fileInputEvidence = {
+      ...qualifyNativeFileFixture({
+        probe,
+        bytes: await readFile(gray),
+        minimumDurationSeconds: fileFixture.minimumDurationSeconds,
+      }),
+      sha256,
+    };
+    await writeFile(
+      join(artifact, 'file-input-qualification.json'),
+      JSON.stringify(fileInputEvidence, null, 2),
+      { flag: 'wx' },
+    );
+    const pcm = join(artifact, 'file-input.f32');
+    await run(
+      ffmpeg,
+      [
+        '-nostdin',
+        '-n',
+        '-v',
+        'error',
+        '-xerror',
+        '-i',
+        input,
+        '-map',
+        '0:a:0',
+        '-ac',
+        '1',
+        '-ar',
+        '8000',
+        '-f',
+        'f32le',
+        pcm,
+      ],
+      'file-input-audio',
+    );
+    const raw = await readFile(pcm);
+    assert.equal(raw.length % 4, 0);
+    sourcePCM = Float32Array.from({ length: raw.length / 4 }, (_, i) => raw.readFloatLE(i * 4));
+    // Render the known fixture score states with the same declared font/geometry.
+    // Classification examines differing digit glyphs, not changing background pixels.
+    assert(!/[\\':;,\[\]\n]/.test(font), 'Unsupported test font path');
+    for (const [index, score] of ['0-0', '1-0'].entries()) {
+      const path = join(artifact, `score-template-${index}.gray`);
+      const filter = `drawtext=text='HOME ${score} AWAY · Set 1 · Sets 0-0':expansion=none:fontcolor=white:fontsize=42:box=1:boxcolor=black@0.55:boxborderw=18:x=40:y=h-100:fontfile=${font},format=gray,crop=750:120:0:930`;
+      await run(
+        ffmpeg,
+        [
+          '-nostdin',
+          '-n',
+          '-v',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          'color=black:s=1920x1080:r=30',
+          '-vf',
+          filter,
+          '-frames:v',
+          '1',
+          '-f',
+          'rawvideo',
+          path,
+        ],
+        `score-template-${index}`,
+      );
+      scoreTemplates.push(await readFile(path));
+    }
+  }
   await run('pnpm', ['--filter', '@scorebug/protocol', 'build'], 'protocol');
   if (streaming)
     proxy = await nativeStreamingFixture({
@@ -589,68 +770,106 @@ try {
     'create',
   );
   const resultBundle = join(artifact, 'workflow.xcresult');
-  await run(
-    'xcodebuild',
-    [
-      '-project',
-      'ios/Scorebug.xcodeproj',
-      '-scheme',
-      'Scorebug',
-      '-configuration',
-      'Debug',
-      '-derivedDataPath',
-      'ios/DerivedData/App',
-      '-destination',
-      `platform=iOS Simulator,id=${simulator}`,
-      '-destination-timeout',
-      '60',
-      '-parallel-testing-enabled',
-      'NO',
-      '-maximum-concurrent-test-simulator-destinations',
-      '1',
-      // Xcode's automatic simctl diagnose can outlive this workflow in a
-      // separate process group. Keep bounded logs, attachments and app-data
-      // preservation below; collect any additional system diagnostics explicitly.
-      '-collect-test-diagnostics',
-      'never',
-      '-resultBundlePath',
-      resultBundle,
-      ...(streamingBudget.testExecutionAllowanceSeconds === null
-        ? []
-        : [
-            '-test-timeouts-enabled',
-            'YES',
-            '-default-test-execution-time-allowance',
-            String(streamingBudget.testExecutionAllowanceSeconds),
-            '-maximum-test-execution-time-allowance',
-            String(streamingBudget.testExecutionAllowanceSeconds),
-          ]),
-      'test',
-      `-only-testing:ScorebugAppUITests/${streaming ? 'NativeStreamingTests' : 'NativeRecordingTests'}`,
-      'CODE_SIGNING_ALLOWED=YES',
-      'CODE_SIGN_IDENTITY=-',
-      `SCOREBUG_TEST_API_URL=${api.baseURL}`,
-      `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
-      `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
-      `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
-      `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
-      `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? process.env.SCOREBUG_TEST_DECODER_STALL : ''}`,
-      `SCOREBUG_TEST_DELIVERY_DEADLINE_MS=${process.env.SCOREBUG_TEST_DELIVERY_DEADLINE_MS ?? ''}`,
-      `SCOREBUG_TEST_DEADLINE_RESETS=${deadlineResets ? '1' : ''}`,
-      `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
-      `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
-      `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
-      `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
-      `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
-      `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
-      `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
-      `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
-      `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
-      `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
-    ],
-    'workflow',
-    { timeout: streamingBudget.workflowTimeoutMs },
-  );
+  const workflowArguments = [
+    '-project',
+    'ios/Scorebug.xcodeproj',
+    '-scheme',
+    'Scorebug',
+    '-configuration',
+    'Debug',
+    '-derivedDataPath',
+    'ios/DerivedData/App',
+    '-destination',
+    `platform=iOS Simulator,id=${simulator}`,
+    '-destination-timeout',
+    '60',
+    '-parallel-testing-enabled',
+    'NO',
+    '-maximum-concurrent-test-simulator-destinations',
+    '1',
+    // Xcode's automatic simctl diagnose can outlive this workflow in a
+    // separate process group. Keep bounded logs, attachments and app-data
+    // preservation below; collect any additional system diagnostics explicitly.
+    '-collect-test-diagnostics',
+    'never',
+    '-resultBundlePath',
+    resultBundle,
+    ...(streamingBudget.testExecutionAllowanceSeconds === null
+      ? []
+      : [
+          '-test-timeouts-enabled',
+          'YES',
+          '-default-test-execution-time-allowance',
+          String(streamingBudget.testExecutionAllowanceSeconds),
+          '-maximum-test-execution-time-allowance',
+          String(streamingBudget.testExecutionAllowanceSeconds),
+        ]),
+    fileFixture ? 'test-without-building' : 'test',
+    `-only-testing:ScorebugAppUITests/${streaming ? 'NativeStreamingTests' : 'NativeRecordingTests'}`,
+    'CODE_SIGNING_ALLOWED=YES',
+    'CODE_SIGN_IDENTITY=-',
+    `SCOREBUG_TEST_API_URL=${api.baseURL}`,
+    `SCOREBUG_TEST_FILE_CAPTURE=${fileFixture ? '1' : ''}`,
+    `SCOREBUG_TEST_STREAM_HOLD_SECONDS=${streamingOptions.extended ? streamingOptions.holdSeconds : ''}`,
+    `SCOREBUG_TEST_MOTION_FIXTURE=${fixtureMotionFlag}`,
+    `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
+    `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
+    `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? process.env.SCOREBUG_TEST_DECODER_STALL : ''}`,
+    `SCOREBUG_TEST_DELIVERY_DEADLINE_MS=${process.env.SCOREBUG_TEST_DELIVERY_DEADLINE_MS ?? ''}`,
+    `SCOREBUG_TEST_DEADLINE_RESETS=${deadlineResets ? '1' : ''}`,
+    `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
+    `SCOREBUG_TEST_ADAPTIVE_PROFILES=${adaptiveProfiles ? '1' : ''}`,
+    `SCOREBUG_TEST_SOURCE_CADENCE_PACING=${sourceCadencePacing ? '1' : ''}`,
+    `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
+    `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
+    `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
+    `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
+    `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
+    `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
+    `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
+  ];
+  if (fileFixture) {
+    await run('xcrun', ['simctl', 'boot', simulator], 'file-boot');
+    await run('xcrun', ['simctl', 'bootstatus', simulator, '-b'], 'file-boot-ready');
+    const buildArguments = workflowArguments
+      .filter(
+        (value, index, all) =>
+          value !== '-resultBundlePath' && all[index - 1] !== '-resultBundlePath',
+      )
+      .map((value) => (value === 'test-without-building' ? 'build-for-testing' : value));
+    await run('xcodebuild', buildArguments, 'file-build', {
+      timeout: streamingBudget.workflowTimeoutMs,
+    });
+    await run(
+      'xcrun',
+      [
+        'simctl',
+        'install',
+        simulator,
+        join(root, 'ios/DerivedData/App/Build/Products/Debug-iphonesimulator/Scorebug.app'),
+      ],
+      'file-install',
+    );
+    const before = await run(
+      'xcrun',
+      ['simctl', 'get_app_container', simulator, 'live.scorebug.app', 'data'],
+      'file-container-before',
+    );
+    assert(isAbsolute(before));
+    await stageNativeFileFixture({
+      source: join(artifact, 'input.mov'),
+      destination: join(before, 'Library/Application Support/Scorebug/QA/input.mov'),
+      sha256: fileInputEvidence.sha256,
+    });
+    await writeFile(
+      join(artifact, 'file-staging.json'),
+      JSON.stringify({ container: before, sha256: fileInputEvidence.sha256 }, null, 2),
+      { flag: 'wx' },
+    );
+  }
+  await run('xcodebuild', workflowArguments, 'workflow', {
+    timeout: streamingBudget.workflowTimeoutMs,
+  });
   // Xcode may shut its destination down after tests; boot the same owned device
   // to inspect the app container rather than rerunning or losing its recordings.
   const devices = JSON.parse(
@@ -668,6 +887,22 @@ try {
     ['simctl', 'get_app_container', simulator, 'live.scorebug.app', 'data'],
     'container',
   );
+  if (fileFixture) {
+    const sha256 = await verifyNativeFileFixtureHash(
+      join(container, 'Library/Application Support/Scorebug/QA/input.mov'),
+      fileInputEvidence.sha256,
+    );
+    await writeFile(
+      join(artifact, 'file-staging-after.json'),
+      JSON.stringify({ container, sha256 }, null, 2),
+      { flag: 'wx' },
+    );
+    await cp(
+      join(container, 'Library/Application Support/Scorebug/QA/file-source.json'),
+      join(artifact, 'file-source.json'),
+      { errorOnExist: true, force: false },
+    );
+  }
   if (repeatedRecovery) {
     // Diagnostic only: preserve it before media/proxy qualification can fail.
     // The existing failure snapshot also retains QA if earlier collection fails.
@@ -781,6 +1016,20 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
+  if (fileFixture) {
+    fileRecordingQualification = qualifyNativeFileRecording({
+      recordings: states.map((status, index) => ({ status, folder: recordingFolders[index] })),
+      exports,
+      archive: archiveDiagnosticsSnapshot,
+      file: await readBoundedJSON(join(artifact, 'file-source.json'), 16384),
+      videoFrames: media[0].frames,
+    });
+    await writeFile(
+      join(artifact, 'file-recording-qualification.json'),
+      JSON.stringify(fileRecordingQualification, null, 2),
+      { flag: 'wx' },
+    );
+  }
   let repeatedRecoveryQualification,
     measuredRecoveryQualification,
     measuredTrialQualification,
@@ -1237,6 +1486,9 @@ try {
       {
         runtime,
         deviceType,
+        fileFixture,
+        fileInputEvidence,
+        fileRecordingQualification,
         streamingOptions,
         fixtureWorkload,
         liveProfile,

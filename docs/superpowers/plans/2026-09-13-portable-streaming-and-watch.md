@@ -132,12 +132,25 @@ run exposes a pre-existing intermittent candidate-admission test failure; unchan
 focused reproduction and follow-up full suite (519 tests) pass, with root cause
 still unresolved. DEBUG simulator and unsigned iPhone/Watch Release builds pass. See the
 [source-diagnostics checkpoint](2026-09-24-file-source-diagnostics.md).
-Maintained streaming harness integration and real-match adaptive/network tests
-remain next. The [real-file streaming plan](2026-09-24-real-file-streaming.md) now
-has tested recording-ownership and natural-audio validators. They pass 48 focused
-cases and qualify the retained native recording against three original-audio windows;
-this is validator evidence, not a new streaming run. Staging, source timestamp mapping
-and score-state image checks remain required before that run.
+The **maintained native real-match streaming baseline now passes** on iPhone 14 /
+iOS 26.2 through local SRT ingest, VideoToolbox proxy and an independent RTMP
+recorder. The archive preserves 1,483 consecutive 1080p30 frames; the saved stream
+preserves 1,053 consecutive frames at about 30 fps, and the archive continues
+6.9 seconds after streaming stops. Recording ownership, closed-source diagnostics,
+zero archive queue rejection/loss, full decode and continuous audio all pass. Three
+original-audio windows per output pass; maximum sampled interior live A/V lag is
+65.387 ms, with 0.667-ms spread. Decoded glyph checks and visual review verify the
+native score change from 0-0 to 1-0 while the archive remains clean.
+
+This baseline does **not** qualify instant startup: 60 acquisition frames are absent
+from the saved stream, and audio starts 1.069 seconds before video within the existing
+2.1-second GOP allowance. The interior A/V result does not cover this startup gap.
+Adaptive real-match/network testing remains next. Production upgrades remain disabled.
+All 3,585 tooling tests and the native build/UI/media workflow pass; 1,199 frozen
+hashes match and owned resources clean up. The initial missing-image failure remains
+preserved, with exact historical relay build provenance for the passing attempt.
+See the [real-file streaming checkpoint](2026-09-24-real-file-streaming.md) and
+`artifacts/qa/native-app-rHRTnp/post-run-assessment.json`.
 
 A read-only production audit confirms that the measured quality driver and candidate
 publisher currently exist only in the DEBUG simulator route. Continue by connecting
