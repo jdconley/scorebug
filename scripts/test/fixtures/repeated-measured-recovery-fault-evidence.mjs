@@ -83,7 +83,16 @@ export function repeatedMeasuredRecoveryFaultFixture(base = repeatedLifecycleFix
     guardian: { pid: 11, ppid: 10, start: '2040-01-01T00:00:01Z', command: '/bin/node' },
     decoder: { pid: 12, ppid: 11, start: '2040-01-01T00:00:02Z', command: '/bin/ffmpeg' },
   };
-  f.cadenceReports = { formatVersion: 1, closed: true, invalid: false, overflow: false, rows: [] };
+  f.cadenceReports = {
+    formatVersion: 2,
+    mode: 'repeated',
+    maximumRows: 3072,
+    maximumBytes: 16777216,
+    closed: true,
+    invalid: false,
+    overflow: false,
+    rows: [],
+  };
   f.faults = {
     formatVersion: 2,
     mode: 'repeated',

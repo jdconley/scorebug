@@ -33,7 +33,19 @@ struct WorkerCadenceReportAudit {
         }
     }
     private let usesRequestTiming: Bool
-    init(usesRequestTiming: Bool = false) { self.usesRequestTiming = usesRequestTiming }
+    private let repeated: Bool
+    private static let repeatedMaximumRows = 3072
+    private static let repeatedMaximumBytes = 16 * 1024 * 1024
+    // Reserve space for the small envelope and separators. Overflow is terminal:
+    // retaining a later smaller row would hide a gap in the original history.
+    private static let envelopeAllowance = 4096
+    private var serializedRowBytes = 0
+    init(usesRequestTiming: Bool = false, environment: [String: String] = [:]) {
+        self.usesRequestTiming = usesRequestTiming
+        repeated = environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated"
+            && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180"
+            && (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
+    }
     private var rows: [[String: Any]] = []
     private var closed = false
     private var overflow = false
@@ -53,8 +65,8 @@ struct WorkerCadenceReportAudit {
                          helper: WorkerDecoderCadenceFreshness?, delivery: WorkerDecoderDeliveryFreshness? = nil, receivedAt: ContinuousClock.Instant,
                          requestDuration: Duration, receivedUptime: Double,
                          instant: ContinuousClock.Instant, evaluatedUptime: Double, timing: StageTiming? = nil) {
-        guard !closed else { return }
-        guard rows.count < 2048 else { overflow = true; return }
+        guard !closed, !overflow else { return }
+        guard rows.count < (repeated ? Self.repeatedMaximumRows : 2048) else { overflow = true; return }
         guard requestDuration >= .zero, instant >= receivedAt,
               receivedUptime.isFinite, evaluatedUptime.isFinite, receivedUptime >= 0,
               evaluatedUptime >= receivedUptime,
@@ -76,6 +88,13 @@ struct WorkerCadenceReportAudit {
             row["deliverySampleTimeBounds"] = delivery?.sampleTimeBounds.map { ["lower": $0.lower, "upper": $0.upper] } as Any? ?? NSNull()
         }
         if let fields { row["timing"] = fields }
+        if repeated {
+            guard let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+            else { invalid = true; return }
+            let available = Self.repeatedMaximumBytes - Self.envelopeAllowance - serializedRowBytes
+            guard data.count < available else { overflow = true; return }
+            serializedRowBytes += data.count + 1
+        }
         rows.append(row)
     }
     mutating func close() { closed = true }
@@ -83,8 +102,17 @@ struct WorkerCadenceReportAudit {
         var fields: [String: Any] = ["formatVersion": 1, "closed": closed,
             "overflow": overflow, "invalid": invalid, "rows": rows]
         if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
-        return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+        if repeated {
+            fields["formatVersion"] = 2
+            fields["mode"] = "repeated"
+            fields["maximumRows"] = Self.repeatedMaximumRows
+            fields["maximumBytes"] = Self.repeatedMaximumBytes
+        }
+        let data = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+        guard !repeated || data.count <= Self.repeatedMaximumBytes else { throw ExportError.capacity }
+        return data
     }
+    private enum ExportError: Error { case capacity }
     static func persist(_ data: Data) async {
         await Task.detached {
             let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

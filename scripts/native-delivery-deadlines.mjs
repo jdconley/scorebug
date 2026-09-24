@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { advanceDelivery, deliverySnapshot } from '../packages/protocol/dist/index.js';
@@ -130,8 +131,12 @@ function binding(status, scope, expectedAttempt) {
 }
 
 // Reconstruct the bounded wire history independently of the native exported snapshot.
-function reconstructReports(reports, scope) {
-  envelope(reports, 2048, 'report audit');
+function reconstructReports(reports, scope, cadenceAuditMode) {
+  qualifyCadenceAuditEnvelope(reports, { cadenceAuditMode });
+  assert(
+    reports.deliveryTiming === undefined || reports.deliveryTiming === 'request-uptime-v1',
+    'Unknown delivery timing mode',
+  );
   const anchored = reports.deliveryTiming === 'request-uptime-v1';
   let acceptedRequestTiming;
   let priorTime = -1,
@@ -561,6 +566,7 @@ export function qualifyNativeDeliveryDeadlines({
   reports,
   scope,
   expectedLatencyBudget = 1,
+  cadenceAuditMode = 'legacy',
 }) {
   envelope(audit, 256, 'deadline audit');
   assert(
@@ -573,7 +579,7 @@ export function qualifyNativeDeliveryDeadlines({
   );
   same(audit.deliveryTiming, reports.deliveryTiming, 'Delivery timing modes differ');
   const anchored = audit.deliveryTiming === 'request-uptime-v1';
-  const reconstructed = reconstructReports(reports, scope),
+  const reconstructed = reconstructReports(reports, scope, cadenceAuditMode),
     lanes = new Map(),
     phases = new Map();
   const counts = {

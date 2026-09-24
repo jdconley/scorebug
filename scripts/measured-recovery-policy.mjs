@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure } from './native-quality-pressure.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -224,15 +225,7 @@ export function qualifyMeasuredRecoveryPolicy({
       sourceIntervalQualification.intervals.length <= 512,
   );
   assert(Array.isArray(snapshot.sourceIntervals) && snapshot.sourceIntervals.length <= 512);
-  assert.equal(cadenceReports.formatVersion, 1);
-  assert.equal(cadenceReports.closed, true);
-  assert.equal(cadenceReports.invalid, false);
-  assert.equal(cadenceReports.overflow, false);
-  assert(
-    Array.isArray(cadenceReports.rows) &&
-      cadenceReports.rows.length > 0 &&
-      cadenceReports.rows.length <= 2048,
-  );
+  qualifyCadenceAuditEnvelope(cadenceReports);
   const {
     trial,
     reset,

@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 export function nativeCadenceReports({
@@ -37,18 +38,8 @@ export function nativeCadenceReports({
 }
 /** Reconcile historical native helper execution. This is reporting freshness,
  * not source-frame health, capacity, or a measured stall-to-reset latency. */
-export function qualifyNativeCadenceReports({ audit, scope }) {
-  assert(
-    audit.formatVersion === 1 &&
-      audit.closed === true &&
-      audit.overflow === false &&
-      audit.invalid === false,
-    'Invalid audit',
-  );
-  assert(
-    Array.isArray(audit.rows) && audit.rows.length > 0 && audit.rows.length <= 2048,
-    'Unbounded or missing audit',
-  );
+export function qualifyNativeCadenceReports({ audit, scope, cadenceAuditMode = 'legacy' }) {
+  qualifyCadenceAuditEnvelope(audit, { cadenceAuditMode });
   let previous = -1,
     firstUsable,
     known = 0;

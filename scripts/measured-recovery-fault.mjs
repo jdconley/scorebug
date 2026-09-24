@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import { qualifiedDeliverySampleBounds } from './native-delivery-deadlines.mjs';
 import assert from 'node:assert/strict';
 import { basename } from 'node:path';
@@ -69,12 +70,14 @@ function deliveryFaultSignal({
   fault,
   scope,
   trialRevision,
+  cadenceAuditMode,
 }) {
   const qualified = qualifyNativeDeliveryFailureSignal({
     event: trigger,
     audit: deliveryAudit,
     reports: cadenceReports,
     scope,
+    cadenceAuditMode,
   });
   const { row, duration, triggerDeliveryRowIndex } = qualified,
     d = trigger.deliveryFailure;
@@ -161,6 +164,7 @@ function deliveryFaultSignal({
  * are independently replayed by the composition; this joins their exact facts.
  * Node times never share an epoch with native capture/decision uptime. */
 export function qualifyMeasuredRecoveryFault(input) {
+  qualifyCadenceAuditEnvelope(input.cadenceReports);
   assert.equal(input.fault?.formatVersion, 1);
   assert.equal(input.fault.delayBeforePauseMs, 70000, 'Wrong measured recovery pause schedule');
   return replayMeasuredRecoveryFault(input, {
@@ -172,6 +176,7 @@ export function qualifyMeasuredRecoveryFault(input) {
 /** Internal repeated component boundary. Caller selects original global indices
  * after validating the complete repeated envelope and both campaign identities. */
 export function qualifyRepeatedMeasuredRecoveryFaultCampaign(input, context) {
+  qualifyCadenceAuditEnvelope(input.cadenceReports, { cadenceAuditMode: 'repeated' });
   assert(['1', '2'].includes(context.campaign), 'Unknown repeated fault campaign');
   const index = Number(context.campaign) - 1;
   assert.equal(context.trialRevision, String(index * 2 + 1));
@@ -278,7 +283,15 @@ function replayMeasuredRecoveryFault(
   );
   const signal =
     trigger.kind === 'deliveryFailure'
-      ? deliveryFaultSignal({ trigger, deliveryAudit, cadenceReports, fault, scope, trialRevision })
+      ? deliveryFaultSignal({
+          trigger,
+          deliveryAudit,
+          cadenceReports,
+          fault,
+          scope,
+          trialRevision,
+          cadenceAuditMode: repeated ? 'repeated' : 'legacy',
+        })
       : (repeated ? qualifyRepeatedNativeStallSignal : qualifyNativeStallSignal)(
           { quality, audit: cadenceReports, fault, scope, expectedRevision: trialRevision },
           trigger,

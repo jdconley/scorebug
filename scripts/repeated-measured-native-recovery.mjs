@@ -39,7 +39,7 @@ export function qualifyRepeatedMeasuredNativeRecovery(input) {
     input.faults?.formatVersion === 2 && input.faults.mode === 'repeated',
     'Repeated recovery requires two original owned faults',
   );
-  const media = qualifyMeasuredNativeMedia(input);
+  const media = qualifyMeasuredNativeMedia(input, { cadenceAuditMode: 'repeated' });
   const profile = qualifyNativeProfileTransitions(input.format, input.snapshot, input.liveIDs, {
     sequence: 'repeated240',
     requireFrameEvidence: true,

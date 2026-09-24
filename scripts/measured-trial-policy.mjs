@@ -1,3 +1,4 @@
+import { cadenceAuditRowLimit, qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure } from './native-quality-pressure.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -48,9 +49,14 @@ export function qualifyMeasuredCadenceContinuity({
   source,
   scope,
   allowedStall,
+  cadenceAuditMode = 'legacy',
 }) {
   assert(finite(start) && finite(end) && end >= start);
-  assert(Array.isArray(reports) && reports.length > 0 && reports.length <= 2048);
+  assert(
+    Array.isArray(reports) &&
+      reports.length > 0 &&
+      reports.length <= cadenceAuditRowLimit(cadenceAuditMode),
+  );
   if (allowedStall)
     assert(
       finite(allowedStall.start) &&
@@ -322,15 +328,7 @@ function replayMeasuredTrialPolicy(
     c.validUntil > c.evaluatedAt &&
       c.validUntil <= Math.min(c.measuredEnd + 2, c.evaluatedAt + 1.5),
   );
-  assert.equal(cadenceReports?.formatVersion, 1);
-  assert.equal(cadenceReports.closed, true);
-  assert.equal(cadenceReports.invalid, false);
-  assert.equal(cadenceReports.overflow, false);
-  assert(
-    Array.isArray(cadenceReports.rows) &&
-      cadenceReports.rows.length > 0 &&
-      cadenceReports.rows.length <= 2048,
-  );
+  qualifyCadenceAuditEnvelope(cadenceReports);
   const evaluatedRows = [];
   let appliedCount = 0,
     candidateCount = 0,

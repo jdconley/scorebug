@@ -289,8 +289,20 @@ function qualifiedFailure(event, audit, reports, ages) {
 
 /** Recompute one raw deadline signal without imposing an isolated driver revision.
  * This grants failure evidence only, never reset or recovery authority. */
-export function qualifyNativeDeliveryFailureSignal({ event, audit, reports, scope }) {
-  qualifyNativeDeliveryDeadlines({ audit, reports, scope, expectedLatencyBudget: 1.5 });
+export function qualifyNativeDeliveryFailureSignal({
+  event,
+  audit,
+  reports,
+  scope,
+  cadenceAuditMode = 'legacy',
+}) {
+  qualifyNativeDeliveryDeadlines({
+    audit,
+    reports,
+    scope,
+    expectedLatencyBudget: 1.5,
+    cadenceAuditMode,
+  });
   const result = qualifiedFailure(event, audit, reports, receiptAges(reports));
   return { ...result, triggerDeliveryRowIndex: audit.rows.indexOf(result.row) };
 }

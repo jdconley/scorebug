@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure } from './native-quality-pressure.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -65,11 +66,8 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   assert(Array.isArray(sources.intervals) && sources.intervals.length <= 512);
   assert(Array.isArray(snapshot.sourceIntervals) && snapshot.sourceIntervals.length <= 512);
   assert(Array.isArray(witnesses) && witnesses.length === 2);
-  assert.equal(cadenceReports.formatVersion, 1);
-  for (const key of ['invalid', 'overflow']) assert.equal(cadenceReports[key], false);
-  assert.equal(cadenceReports.closed, true);
+  qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode: 'repeated' });
   const reports = cadenceReports.rows;
-  assert(Array.isArray(reports) && reports.length > 0 && reports.length <= 2048);
   const boot = events[0],
     stop = events.at(-1);
   assert.equal(boot.kind, 'bootstrap');
@@ -598,6 +596,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   const delivery = qualifyNativeDeliveryDeadlines({
     audit: deliveryAudit,
     reports: cadenceReports,
+    cadenceAuditMode: 'repeated',
     scope: snapshot.scope,
     expectedLatencyBudget: 1.5,
   });
@@ -742,6 +741,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
     const end = recoveries[i].resumedAt;
     qualifyMeasuredCadenceContinuity({
       reports,
+      cadenceAuditMode: 'repeated',
       start,
       end,
       source: evaluated[0].source,
@@ -753,6 +753,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
   }
   qualifyMeasuredCadenceContinuity({
     reports,
+    cadenceAuditMode: 'repeated',
     start,
     end: cadenceCheckedThrough,
     source: evaluated[0].source,

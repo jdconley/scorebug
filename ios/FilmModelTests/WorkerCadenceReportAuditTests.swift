@@ -3,6 +3,91 @@ import ScorebugCore
 import XCTest
 
 final class WorkerCadenceReportAuditTests: XCTestCase {
+    private var repeatedEnvironment: [String: String] { [
+        "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+        "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "repeated",
+        "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+        "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+        "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+    ] }
+
+    func testRepeatedEnvelopePreservesFullOrderedHistoryAndFailsAtCountLimit() throws {
+        var audit = WorkerCadenceReportAudit(environment: repeatedEnvironment)
+        let instant = ContinuousClock.now, attempt = UUID(), response = try response()
+        for index in 0..<3072 {
+            audit.record(response: response, expectedAttempt: attempt, helper: nil,
+                receivedAt: instant, requestDuration: .zero, receivedUptime: Double(index),
+                instant: instant, evaluatedUptime: Double(index))
+        }
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(value["formatVersion"] as? Int, 2)
+        XCTAssertEqual(value["mode"] as? String, "repeated")
+        XCTAssertEqual(value["maximumRows"] as? Int, 3072)
+        XCTAssertEqual(value["maximumBytes"] as? Int, 16 * 1024 * 1024)
+        XCTAssertEqual(value["overflow"] as? Bool, false)
+        let rows = try XCTUnwrap(value["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 3072)
+        XCTAssertEqual(rows.compactMap { $0["evaluatedUptime"] as? Double }, (0..<3072).map(Double.init))
+        audit.record(response: response, expectedAttempt: attempt, helper: nil,
+            receivedAt: instant, requestDuration: .zero, receivedUptime: 3072,
+            instant: instant, evaluatedUptime: 3072)
+        audit.close()
+        value = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(value["overflow"] as? Bool, true)
+        XCTAssertEqual(value["closed"] as? Bool, true)
+        XCTAssertEqual((value["rows"] as? [Any])?.count, 3072)
+    }
+
+    func testRepeatedEnvelopeRequiresCompleteExplicitRoute() throws {
+        for key in repeatedEnvironment.keys {
+            var environment = repeatedEnvironment; environment.removeValue(forKey: key)
+            let audit = WorkerCadenceReportAudit(environment: environment)
+            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+            XCTAssertEqual(value["formatVersion"] as? Int, 1, key)
+            XCTAssertNil(value["mode"], key)
+            XCTAssertNil(value["maximumRows"], key)
+            XCTAssertNil(value["maximumBytes"], key)
+        }
+        for (key, values) in ["SCOREBUG_TEST_BANDWIDTH_PROBE": ["staged", "renew", "expire"],
+                              "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["90", "179", "181", "600"],
+                              "SCOREBUG_TEST_CANDIDATE_PROFILE": ["540p30", "1080p30"]] {
+            for value in values {
+                var environment = repeatedEnvironment; environment[key] = value
+                let audit = WorkerCadenceReportAudit(environment: environment)
+                let object = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+                XCTAssertEqual(object["formatVersion"] as? Int, 1, "\(key)=\(value)")
+            }
+        }
+    }
+
+    func testRepeatedByteOverflowIsBoundedLatchedAndRetainsOriginalPrefix() throws {
+        let game = String(repeating: "x", count: 128 * 1024)
+        let raw: [String: Any] = ["status": ["gameId": game, "generation": 1, "workerId": NSNull(),
+            "state": "unknown", "observation": NSNull(), "observedAt": NSNull(), "expiresAt": NSNull()],
+            "serverTime": "2040-01-01T00:00:00Z"]
+        let large = try JSONDecoder().decode(WorkerMediaStatusResponse.self,
+            from: JSONSerialization.data(withJSONObject: raw))
+        var audit = WorkerCadenceReportAudit(environment: repeatedEnvironment)
+        let instant = ContinuousClock.now, attempt = UUID()
+        for index in 0..<140 {
+            audit.record(response: large, expectedAttempt: attempt, helper: nil,
+                receivedAt: instant, requestDuration: .zero, receivedUptime: Double(index),
+                instant: instant, evaluatedUptime: Double(index))
+        }
+        let before = try audit.data()
+        let prefix = try XCTUnwrap(JSONSerialization.jsonObject(with: before) as? [String: Any])
+        let rows = try XCTUnwrap(prefix["rows"] as? [[String: Any]])
+        XCTAssertEqual(prefix["overflow"] as? Bool, true)
+        XCTAssertGreaterThan(rows.count, 0)
+        XCTAssertLessThan(rows.count, 140)
+        XCTAssertLessThanOrEqual(before.count, 16 * 1024 * 1024)
+        XCTAssertEqual(rows.compactMap { $0["evaluatedUptime"] as? Double }, (0..<rows.count).map(Double.init))
+        audit.record(response: try response(), expectedAttempt: attempt, helper: nil,
+            receivedAt: instant, requestDuration: .zero, receivedUptime: 999,
+            instant: instant, evaluatedUptime: 999)
+        XCTAssertEqual(try audit.data(), before, "Byte overflow must not resume with smaller later rows")
+    }
+
     private func response() throws -> WorkerMediaStatusResponse {
         try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data("""
         {"status":{"gameId":"match","generation":1,"workerId":null,"state":"unknown","observation":null,"observedAt":null,"expiresAt":null},"serverTime":"2040-01-01T00:00:00Z"}

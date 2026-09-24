@@ -33,7 +33,7 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route is explicitly limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,167 tool tests and 458 FilmModel tests pass. The latest iPhone 14/iOS 26.2
+All 3,177 tool tests and 461 FilmModel tests pass. The latest iPhone 14/iOS 26.2
 run passed native scoring and recording export and the controller completed both
 upgrade/fault/reset/recovery cycles. Full independent qualification still failed:
 the repeated mode omitted a required receiver-evidence export, the cadence audit
@@ -41,7 +41,9 @@ hit its 2,048-row ceiling, and one stale report during recovery needs explicit
 replay semantics. The missing writer selector is fixed and regression tested;
 that fix has not yet received a fresh full native run. Diagnostic receipt joins
 show the stale report had already exceeded 250 ms before policy selection.
-Next: retain a complete bounded repeated audit, then independently replay
+The repeated audit now has an explicit 3,072-row / 16 MiB envelope, with strict
+legacy isolation and overflow failure; focused regressions and the simulator
+build pass. A fresh full native run is still pending. Next: independently replay
 supported recovery-time telemetry invalidation without granting health credit.
 Production automatic quality increases remain disabled.
 

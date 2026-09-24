@@ -490,7 +490,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                         diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery, authority: self.deliveryAuthority)
                 }
                 #if DEBUG
-                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true)
+                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment)
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
                     else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }

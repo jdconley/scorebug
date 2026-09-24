@@ -253,6 +253,7 @@ for (const duration of [1, 2])
         rows: [row],
       },
       reports: { ...f.cadenceReports, rows: [report] },
+      cadenceAuditMode: 'repeated',
       scope: f.scope,
       expectedLatencyBudget: 1.5,
     });

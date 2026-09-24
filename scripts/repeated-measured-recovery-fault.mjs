@@ -1,3 +1,4 @@
+import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { qualifyRepeatedMeasuredRecoveryFaultCampaign } from './measured-recovery-fault.mjs';
 
@@ -61,12 +62,7 @@ export function qualifyRepeatedMeasuredRecoveryFaults(input) {
   }
   assert.equal(events.filter((e) => e.kind === 'bootstrap').length, 1);
   assert.equal(events.filter((e) => e.kind === 'stopped').length, 1);
-  assert(
-    cadenceReports?.formatVersion === 1 &&
-      Array.isArray(cadenceReports.rows) &&
-      cadenceReports.rows.length > 0 &&
-      cadenceReports.rows.length <= 2048,
-  );
+  qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode: 'repeated' });
   let reportAt = -1;
   for (const row of cadenceReports.rows) {
     assert(

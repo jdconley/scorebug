@@ -675,3 +675,72 @@ and timings are saved in `repeated-evaluation-diagnostic-native-assessment.json`
   receiver export, complete audits, all media/deadline/ownership gates and both
   raw reconstructed cycles before claiming repeated qualification. Production
   upgrade permission remains disabled.
+
+
+#### Repeated cadence audit capacity — September 24
+
+The longer simulator route now has an explicit cadence-audit contract: version 2,
+mode `repeated`, at most 3,072 original rows and 16 MiB of serialized JSON. This
+covers 307.2 seconds at the nominal 100 ms polling interval, including the
+180-second stream hold and setup/stop work. The previous run's 2,048 retained
+rows occupied 7,971,218 bytes; the byte bound remains independently enforced.
+Neither estimate is proof that a future run is complete: overflow still fails.
+
+Native selection requires the validated measured-trial fixture, repeated probe
+mode and an exact 180-second hold. Legacy routes retain version 1 and the
+2,048-row limit. Rows are never sampled or trimmed to pass qualification. A
+count or byte overflow latches, preserving only the original bounded prefix
+and explicitly marking it incomplete; later smaller rows cannot hide the gap.
+
+The native regression tests first reproduced the old capacity and missing
+version failures, then passed after implementation. All 461 FilmModel tests
+pass. Independent inspection approved the Swift capture/export changes.
+The shared JavaScript consumers now require explicit caller-selected repeated
+mode, including the nested delivery-failure path. Ten new tests first failed
+against the old implementation; all 595 focused tests and all 3,177 tool tests
+then passed. The arm64 iPhone simulator build also passes. Independent review
+approved the JavaScript routing and reran all ten new capacity tests. No telemetry freshness
+or health credit rules have changed, and this capacity fix does not qualify repeated
+recovery. The narrow recovery-time invalidation replay above is still required.
+
+
+#### Recovery invalidation replay design — implementation pending
+
+Only an original `rejected` / `cadence-freshness` event during acknowledged
+minimum-profile recovery (revision 2 or 4) may enter the supported path. It must
+join one original cadence receipt and preserve ownership, raw row/event indices,
+configuration, application and sequence state. A stale receipt is unavailable
+telemetry, never a healthy or stalled sample. Other rejection reasons/phases
+continue to fail qualification.
+
+The diagnostic uses independently sampled monotonic clocks. Its sample age must
+not be compared for exact equality to audit age plus uptime delta. From the
+native sampling order, let S be server cadence age in seconds, D request duration,
+Q request-start uptime, R response-received uptime, E session evaluation uptime
+and C caller catch uptime. The admissible age bracket is:
+
+`S + D + E - R <= diagnostic sample age <= S + C - Q`.
+
+Use only representation-scale outward rounding. Separately replay audit age
+as `S + D + residenceSeconds`, validate all original ordered timing stages,
+receipt uniqueness, freshness/TTL, same decoder/publication ownership and benign
+progress. Diagnostic agreement is a consistency check, not freshness authority.
+For the preserved failed run, the bracket is approximately 294.988–296.092 ms;
+the recorded 294.990 ms fits and the raw report was already stale at audit.
+
+Match native invalidation by clearing accumulated strong health and readiness,
+advancing the evaluator clock to E, and retaining source/policy ordinals,
+last source end and transition state. Native `healthySince` restarts at the next
+accepted window's actual start, even if that window straddles E. Independent
+recovery credit is stricter: require whole contiguous healthy windows starting
+after both resumed decoder progress and the latest rejection's `caughtAt`
+(the conservative upper bound on completed invalidation), plus both
+verified delivery lanes, for at least ten seconds. Earlier credit cannot carry
+across the rejection. A straddling window remains in raw/native replay but earns
+no post-invalidation shared recovery duration.
+
+Readiness must also consider a validated rejection's evaluation time, not just
+its asynchronously serialized event time. A rejection evaluated before probe
+begin invalidates old readiness even if its event was exported after begin.
+The joined unavailable row must be accounted for explicitly in cadence/fault
+validation; all other gaps, stalls, identities and freshness checks remain.
