@@ -12,7 +12,7 @@ import { startScoringTestServer, scoringTestToken } from './scoring-test-server.
 // Explicit qualification only: creates its own paired simulators and loopback API.
 // Both builds finish before either app starts recording. No setup-injection fallback.
 const root = fileURLToPath(new URL('..', import.meta.url));
-const developer = '/Applications/Xcode-26.2.0.app/Contents/Developer';
+const developer = process.env.DEVELOPER_DIR ?? '/Applications/Xcode-26.2.0.app/Contents/Developer';
 const owner = randomUUID();
 const phoneName = `Scorebug Paired Phone ${owner}`;
 const watchName = `Scorebug Paired Watch ${owner}`;
@@ -35,6 +35,7 @@ for (const deviceType of [phoneDeviceType, watchDeviceType])
 const phoneRuntime = `com.apple.CoreSimulator.SimRuntime.iOS-${phoneVersion.replaceAll('.', '-')}`;
 const watchRuntime = `com.apple.CoreSimulator.SimRuntime.watchOS-${watchVersion.replaceAll('.', '-')}`;
 const configuration = {
+  developerDir: developer,
   phone: { runtime: phoneVersion, deviceType: phoneDeviceType },
   watch: { runtime: watchVersion, deviceType: watchDeviceType },
 };
@@ -352,6 +353,7 @@ try {
     `Paired ${phoneDeviceType} iOS ${phoneVersion} + ${watchDeviceType} watchOS ${watchVersion}; evidence: ${artifact}`,
   );
   await writeFile(join(artifact, 'configuration.json'), JSON.stringify(configuration, null, 2));
+  await run('xcodebuild', ['-version'], 'toolchain-version');
   const runtimes = JSON.parse(
     await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], 'runtimes'),
   );
