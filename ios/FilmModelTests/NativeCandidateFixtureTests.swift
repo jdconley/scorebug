@@ -930,7 +930,7 @@ extension NativeCandidateFixtureTests {
 
     func testRepeatedCandidateJoinsOldSlotAndRejectsLateInputBeforeFreshCampaign() async throws {
         let (f, initial, recovered) = try await repeatedCandidateContexts()
-        let first = CandidateFixtureFake(), second = CandidateFixtureFake()
+        let first = CandidateFixtureFake(), second = CandidateFixtureFake(), sink = CandidateWaitSink()
         first.setProbe(stage: 3); first.setCampaign(1)
         let contexts = RepeatedCandidateContextBox(initial), gate = AsyncStream<Void>.makeStream()
         var operations = first.operations
@@ -942,7 +942,7 @@ extension NativeCandidateFixtureTests {
         let wrapper = NativeCandidatePublisher(publisher: first, scope: initial.scope, liveProfile: .low240,
             operations: operations, timing: .init(delay: .zero, poll: .milliseconds(10)),
             candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
-            repeated: true, repeatOperations: { second.operations })
+            repeated: true, repeatOperations: { second.operations }, waitTraceExport: { sink.receive($0) })
         await wrapper.setDiagnostics { first.pressure }
         _ = await wrapper.setMeasurementContextProvider { contexts.read() }
         try await wrapper.start(); await wait { first.waiting }
@@ -974,6 +974,21 @@ extension NativeCandidateFixtureTests {
         XCTAssertNotEqual(ids[0]?["id"] as? String, ids[1]?["id"] as? String)
         XCTAssertEqual(first.joinedStops, 1)
         XCTAssertEqual(second.events.filter { $0 == "candidateStart" }.count, 1)
+        let trace = try sink.events()
+        for campaign in 1...2 {
+            let rows = trace.filter { $0["campaign"] as? Int == campaign }
+            XCTAssertTrue(rows.contains { $0["kind"] as? String == "operationReturned" })
+            let postStart = try XCTUnwrap(rows.first { $0["kind"] as? String == "postStartContext" })
+            XCTAssertEqual(postStart["outcome"] as? String, "matched")
+            XCTAssertNotNil(postStart["context"] as? [String: Any])
+            XCTAssertLessThanOrEqual(try XCTUnwrap(postStart["contextReadStartedAt"] as? Double),
+                try XCTUnwrap(postStart["contextReadReturnedAt"] as? Double))
+            XCTAssertTrue(rows.contains { $0["kind"] as? String == "measurementJoined" })
+            XCTAssertEqual(rows.last?["kind"] as? String, "campaignEnded")
+            XCTAssertEqual(rows.last?["operationStarted"] as? Bool, true)
+        }
+        XCTAssertEqual(try sink.object()["invalid"] as? Bool, false)
+        XCTAssertEqual(sink.count, 1)
         await f.owner.stop()
     }
 
@@ -998,6 +1013,178 @@ extension NativeCandidateFixtureTests {
         await wrapper.stop()
         XCTAssertFalse(second.events.contains("candidateStart"))
         await f.owner.stop()
+    }
+
+    func testWaitTraceRetainsBoundedPrefixAndNeverReopensAfterExport() async throws {
+        let sink = CandidateWaitSink()
+        let trace = NativeCandidateWaitTrace(attemptID: UUID(), export: { sink.receive($0) })
+        for index in 0..<4100 {
+            trace.record(.init(kind: .campaignStarted, campaign: 1, at: Double(index)))
+        }
+        await trace.closeAndExport()
+        let first = try XCTUnwrap(sink.data)
+        trace.record(.init(kind: .operationStarted, campaign: 1, at: 5000))
+        await trace.closeAndExport()
+        XCTAssertEqual(sink.count, 1)
+        XCTAssertEqual(sink.data, first)
+        XCTAssertLessThanOrEqual(first.count, 4 * 1024 * 1024)
+        let object = try sink.object()
+        XCTAssertEqual(object["isClosed"] as? Bool, true)
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        XCTAssertEqual(object["omittedEventCount"] as? Int, 4)
+        let events = try sink.events()
+        XCTAssertEqual(events.count, 4096)
+        XCTAssertEqual(events.last?["at"] as? Double, 4095)
+    }
+
+    func testWaitTraceFullyPopulatedPrefixFitsFinalByteLimit() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value), sink = CandidateWaitSink()
+        let trace = NativeCandidateWaitTrace(attemptID: UUID(), export: { sink.receive($0) })
+        let time = Double.greatestFiniteMagnitude
+        let probe = PublishingProbeObservation(id: UUID(), publishingGeneration: .max,
+            bitRate: .max, startedAt: time, leaseDeadline: time, acceptedPayloadBytes: .max,
+            lastAcceptedAt: time, reason: nil, stage: .max, campaign: .max)
+        let event = NativeCandidateWaitTrace.Event(kind: .postStartContext, campaign: 2, at: time,
+            outcome: .leaseExpiredAfterAwait, queryStartedAt: time, probeReturnedAt: time,
+            probe: .init(probe), contextReadStartedAt: time, contextReadReturnedAt: time,
+            context: .init(context), operationStarted: true)
+        for _ in 0..<4096 { trace.record(event) }
+        await trace.closeAndExport()
+        XCTAssertEqual(try sink.events().count, 4096)
+        XCTAssertEqual(try sink.object()["overflow"] as? Bool, false)
+        XCTAssertEqual(try sink.object()["omittedEventCount"] as? Int, 0)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(sink.data).count, 4 * 1024 * 1024)
+        await f.owner.stop()
+    }
+
+    func testWaitTraceNonfiniteInputLatchesInvalidAndStillExports() async throws {
+        let sink = CandidateWaitSink()
+        let trace = NativeCandidateWaitTrace(attemptID: UUID(), export: { sink.receive($0) })
+        trace.record(.init(kind: .campaignStarted, campaign: 1, at: 1))
+        trace.record(.init(kind: .campaignStarted, campaign: 1, at: .nan))
+        await trace.closeAndExport()
+        XCTAssertEqual(try sink.object()["invalid"] as? Bool, true)
+        XCTAssertEqual(try sink.object()["omittedEventCount"] as? Int, 1)
+        XCTAssertEqual(try sink.events().count, 1)
+    }
+
+    func testWaitTraceUnavailableContextAndNeverStartedCampaignAreExportedOnlyAfterRetirement() async throws {
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        fake.setProbe(stage: 3); fake.setCampaign(1); fake.finish()
+        let gate = AsyncStream<Void>.makeStream()
+        var operations = fake.operations
+        operations.retire = {
+            fake.markJoinedStop()
+            await Task.detached { for await _ in gate.stream {} }.value
+        }
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .milliseconds(1), maximumCampaignWaitPolls: 2),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { fake.operations }, waitTraceExport: { sink.receive($0) })
+        _ = await wrapper.setMeasurementContextProvider { nil }
+        try await wrapper.start()
+        await wait { fake.joinedStops == 1 }
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        XCTAssertNil(sink.data)
+        gate.continuation.finish(); await stop.value
+        let events = try sink.events()
+        let polls = events.filter { $0["kind"] as? String == "poll" }
+        XCTAssertEqual(polls.count, 2)
+        XCTAssertTrue(polls.allSatisfy { $0["outcome"] as? String == "contextUnavailable" })
+        XCTAssertTrue(polls.allSatisfy { $0["queryStartedAt"] is Double && $0["probeReturnedAt"] is Double && $0["contextReadStartedAt"] is Double && $0["contextReadReturnedAt"] is Double })
+        XCTAssertFalse(events.contains { $0["kind"] as? String == "operationStarted" })
+        let terminal = try XCTUnwrap(events.last { $0["kind"] as? String == "campaignEnded" })
+        XCTAssertEqual(terminal["operationStarted"] as? Bool, false)
+        XCTAssertEqual(terminal["outcome"] as? String, "deadline")
+        XCTAssertEqual(sink.count, 1)
+    }
+
+    func testWaitTraceRecordsExpiredLeaseAfterContextAwaitWithoutStarting() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value), provider = CandidateContextGate(context)
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        fake.setProbe(stage: 3); fake.setCampaign(1); fake.updateProbeLease(after: 0.1); fake.finish()
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(1), maximumCampaignWaitPolls: 1),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { fake.operations }, waitTraceExport: { sink.receive($0) })
+        _ = await wrapper.setMeasurementContextProvider { await provider.read() }
+        try await wrapper.start(); await wait { provider.waiting }
+        try await Task.sleep(for: .milliseconds(120))
+        provider.release(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        let poll = try XCTUnwrap(try sink.events().first { $0["kind"] as? String == "poll" })
+        XCTAssertEqual(poll["outcome"] as? String, "leaseExpiredAfterAwait")
+        let observed = try XCTUnwrap(poll["context"] as? [String: Any])
+        XCTAssertEqual(observed["appliedRevision"] as? UInt64, context.applied.revision)
+        XCTAssertEqual(observed["healthyThrough"] as? Double, context.readiness.healthyThrough)
+        XCTAssertEqual(observed["validUntil"] as? Double, context.readiness.validUntil)
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        await f.owner.stop()
+    }
+
+    func testWaitTraceCancellationJoinsSuspendedContextAndExportsOnce() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value), provider = CandidateContextGate(context)
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        fake.setProbe(stage: 3); fake.setCampaign(1)
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(1)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { fake.operations }, waitTraceExport: { sink.receive($0) })
+        _ = await wrapper.setMeasurementContextProvider { await provider.read() }
+        try await wrapper.start(); await wait { provider.waiting }
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.stops == 1 }
+        XCTAssertNil(sink.data)
+        provider.release(); await stop.value
+        let events = try sink.events()
+        XCTAssertEqual(events.first { $0["kind"] as? String == "poll" }?["outcome"] as? String, "cancelled")
+        XCTAssertEqual(events.last { $0["kind"] as? String == "campaignEnded" }?["outcome"] as? String, "cancelled")
+        let frozen = sink.data
+        await wrapper.stop()
+        XCTAssertEqual(sink.count, 1); XCTAssertEqual(sink.data, frozen)
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        await f.owner.stop()
+    }
+
+    func testWaitTraceRecordsBoundOperationFailureAndMeasurementJoin() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value)
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        fake.setProbe(stage: 3); fake.setCampaign(1); fake.finish()
+        let operations = NativeCandidatePublisher.Operations(start: { throw PublishingSessionError.invalidState },
+            offer: { _ in false }, cancel: { _ in }, result: { Data("{}".utf8) }, export: { _ in })
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+            operations: operations, timing: .init(delay: .zero, poll: .milliseconds(1), maximumCampaignWaitPolls: 1),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            repeated: true, repeatOperations: { fake.operations }, waitTraceExport: { sink.receive($0) })
+        await wrapper.setDiagnostics { fake.pressure }
+        _ = await wrapper.setMeasurementContextProvider { context }
+        try await wrapper.start(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        let first = try sink.events().filter { $0["campaign"] as? Int == 1 }
+        XCTAssertEqual(first.map { $0["kind"] as? String }, ["campaignStarted", "poll", "operationStarted", "operationFailed", "measurementJoined", "campaignEnded"])
+        XCTAssertEqual(first[1]["outcome"] as? String, "bound")
+        XCTAssertEqual(first.last?["operationStarted"] as? Bool, true)
+        XCTAssertEqual(first.last?["outcome"] as? String, "startupFailed")
+        await f.owner.stop()
+    }
+
+    func testWaitTraceLegacyFixtureNeverExports() async throws {
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .milliseconds(1)),
+            waitTraceExport: { sink.receive($0) })
+        await wrapper.setDiagnostics { fake.pressure }
+        try await wrapper.start(); await wait { fake.waiting }
+        fake.finish(); await wrapper.waitForMeasurement(); await wrapper.stop()
+        XCTAssertNil(sink.data)
     }
 
     private func repeatedCandidateContexts() async throws -> (CandidateQualityFixture,
@@ -1307,4 +1494,16 @@ private final class RepeatedCandidateContextBox: @unchecked Sendable {
     init(_ value: PublishingQualitySession.CandidateMeasurementContext) { self.value = value }
     func read() -> PublishingQualitySession.CandidateMeasurementContext? { lock.withLock { value } }
     func set(_ value: PublishingQualitySession.CandidateMeasurementContext?) { lock.withLock { self.value = value } }
+}
+
+private final class CandidateWaitSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedData: Data?, storedCount = 0
+    var data: Data? { lock.withLock { storedData } }
+    var count: Int { lock.withLock { storedCount } }
+    func receive(_ value: Data) { lock.withLock { storedData = value; storedCount += 1 } }
+    func object() throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
+    }
+    func events() throws -> [[String: Any]] { try XCTUnwrap(object()["events"] as? [[String: Any]]) }
 }

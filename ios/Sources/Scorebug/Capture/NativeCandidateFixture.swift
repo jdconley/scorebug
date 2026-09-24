@@ -184,6 +184,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
     private let liveProfile: PublishingVideoProfile
     private var operations: Operations
     private let repeated: Bool
+    private let waitTrace: NativeCandidateWaitTrace?
     private let repeatOperations: (@Sendable () -> Operations)?
     private var candidateEpoch = UUID()
     private var measurementCampaign: UInt32 = 1
@@ -252,6 +253,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 typedResult: { await attempt.result().flatMap(PublishingCandidateCost.init) },
                 retire: { await attempt.retire() })
         }
+        self.waitTrace = repeated ? NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID) : nil
         self.repeated = repeated; self.repeatOperations = repeated ? make : nil
         self.requiresMeasurementReadiness = requiresMeasurementReadiness
         self.measurementProfile = candidate
@@ -265,9 +267,12 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
          operations: Operations, timing: Timing, candidateHeadroom: Bool = false, requiresMeasurementReadiness: Bool = false, measurementProfile: PublishingVideoProfile? = nil, repeated: Bool = false,
          repeatOperations: (@Sendable () -> Operations)? = nil, lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
-         joinedStop: (@Sendable () async -> Void)? = nil) {
+         joinedStop: (@Sendable () async -> Void)? = nil,
+         waitTraceExport: (@Sendable (Data) async -> Void)? = nil) {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
+        self.waitTrace = repeated ? waitTraceExport.map { NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID, export: $0) }
+            ?? NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID) : nil
         self.repeated = repeated; self.repeatOperations = repeatOperations
         self.requiresMeasurementReadiness = requiresMeasurementReadiness; self.measurementProfile = measurementProfile
         self.measurementContext = NativeCandidateContextReader()
@@ -439,6 +444,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             if let data, data.count <= (repeated ? 512 : 256) * 1024 { await operations.export(data) }
             await joinedStop?()
             await lifecycle?.closeAndExport()
+            await waitTrace?.closeAndExport()
         }
         shutdown = task
         await task.value
@@ -486,16 +492,32 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         for _ in 0..<maximumPolls {
             try Task.checkCancellation()
             guard !stopped, invalidReason == nil else { throw CancellationError() }
+            var event = NativeCandidateWaitTrace.Event(kind: .poll, campaign: measurementCampaign,
+                at: ProcessInfo.processInfo.systemUptime, outcome: .cancelled)
+            event.queryStartedAt = event.at
+            defer {
+                if event.outcome == .cancelled { event.at = ProcessInfo.processInfo.systemUptime }
+                waitTrace?.record(event)
+            }
             let value = await probeObservation()
+            event.probeReturnedAt = ProcessInfo.processInfo.systemUptime
+            event.probe = value.map(NativeCandidateWaitTrace.Probe.init)
             try Task.checkCancellation()
             let now = ProcessInfo.processInfo.systemUptime
-            guard !stopped, invalidReason == nil, now < deadline else { break }
+            guard !stopped, invalidReason == nil, now < deadline else {
+                event.at = now
+                event.outcome = stopped || invalidReason != nil ? .cancelled : .deadline
+                break
+            }
             if let value, value.stage == 3, value.bitRate == 12_000_000,
                !repeated || value.campaign == measurementCampaign,
                publisher.videoStartup?.publishingGeneration == value.publishingGeneration,
                value.isActive(at: now), now - value.startedAt >= 0.5 {
                 if requiresMeasurementReadiness {
+                    event.contextReadStartedAt = ProcessInfo.processInfo.systemUptime
                     let context = await measurementContext.read()
+                    event.contextReadReturnedAt = ProcessInfo.processInfo.systemUptime
+                    event.context = context.map(NativeCandidateWaitTrace.Context.init)
                     try Task.checkCancellation()
                     guard !stopped, invalidReason == nil else { throw CancellationError() }
                     guard let context, let measurementProfile,
@@ -508,6 +530,8 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                               context.readiness.settings == previous.readiness.settings &&
                               context.applied.revision > previous.applied.revision
                           }) ?? true else {
+                        event.at = ProcessInfo.processInfo.systemUptime
+                        event.outcome = context == nil ? .contextUnavailable : .contextMismatch
                         try await Task.sleep(for: timing.poll)
                         continue
                     }
@@ -517,13 +541,18 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 // or restore authority that was revoked during that suspension.
                 let boundAt = ProcessInfo.processInfo.systemUptime
                 guard boundAt < deadline, value.isActive(at: boundAt) else {
+                    event.at = boundAt
+                    event.outcome = boundAt >= deadline ? .deadline :
+                        (boundAt >= value.leaseDeadline ? .leaseExpiredAfterAwait : .probeRejectedAfterAwait)
                     try await Task.sleep(for: timing.poll)
                     continue
                 }
                 pinnedProbe = value; currentProbe = value; probeBoundAt = boundAt
                 initialProbe = .init(value: value, observedAt: boundAt)
+                event.at = boundAt; event.outcome = .bound
                 return
             }
+            event.at = now; event.outcome = value == nil ? .probeUnavailable : .probeRejectedOrNotReady
             try await Task.sleep(for: timing.poll)
         }
         revoke(.deadline)
@@ -622,7 +651,13 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             "campaigns": closedCampaigns], options: [.sortedKeys])
     }
     private func runCampaign(delay: Duration) async {
+        waitTrace?.record(.init(kind: .campaignStarted, campaign: measurementCampaign, at: ProcessInfo.processInfo.systemUptime))
         defer {
+            waitTrace?.record(.init(kind: .campaignEnded, campaign: measurementCampaign,
+                at: ProcessInfo.processInfo.systemUptime,
+                outcome: Task.isCancelled || stopped ? .cancelled :
+                    invalidReason.flatMap(NativeCandidateWaitTrace.Outcome.init(rawValue:)) ?? .completed,
+                operationStarted: candidateOperationsStarted))
             if (lifecycle != nil || repeated), measurement != nil { frozenMeasurementExport = try? exportData() }
         }
         do {
@@ -636,15 +671,35 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             baseline = value; finalPressure = value; maximumThermal = value.thermal
             candidateAuthority = CandidateAuthority()
             candidateOperationsStarted = true
-            try await operations.start()
+            waitTrace?.record(.init(kind: .operationStarted, campaign: measurementCampaign, at: ProcessInfo.processInfo.systemUptime))
+            do {
+                try await operations.start()
+                waitTrace?.record(.init(kind: .operationReturned, campaign: measurementCampaign, at: ProcessInfo.processInfo.systemUptime))
+            } catch {
+                waitTrace?.record(.init(kind: .operationFailed, campaign: measurementCampaign,
+                    at: ProcessInfo.processInfo.systemUptime, outcome: Task.isCancelled || stopped ? .cancelled : .startupFailed))
+                throw error
+            }
             try Task.checkCancellation()
             if repeated {
+                var event = NativeCandidateWaitTrace.Event(kind: .postStartContext, campaign: measurementCampaign,
+                    at: ProcessInfo.processInfo.systemUptime, outcome: .cancelled)
+                event.contextReadStartedAt = event.at
+                defer {
+                    if event.outcome == .cancelled { event.at = ProcessInfo.processInfo.systemUptime }
+                    waitTrace?.record(event)
+                }
                 let current = await measurementContext.read()
+                event.contextReadReturnedAt = ProcessInfo.processInfo.systemUptime
+                event.context = current.map(NativeCandidateWaitTrace.Context.init)
                 try Task.checkCancellation()
                 guard let bound = currentMeasurementContext, let current,
                       NativeCandidateAttempt.sameConfiguration(bound, current) else {
+                    event.at = ProcessInfo.processInfo.systemUptime
+                    event.outcome = current == nil ? .contextUnavailable : .contextMismatch
                     revoke(.ownerChanged); throw CancellationError()
                 }
+                event.at = ProcessInfo.processInfo.systemUptime; event.outcome = .matched
             }
             guard !stopped, invalidReason == nil, await refreshProbe(), checkPressure() else { throw CancellationError() }
             sampling = true
@@ -659,6 +714,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 if candidateHeadroom { probeCompletedAt = ProcessInfo.processInfo.systemUptime }
             }
             measurement = result
+            waitTrace?.record(.init(kind: .measurementJoined, campaign: measurementCampaign, at: ProcessInfo.processInfo.systemUptime))
             completedCandidateID = cost?.id
             if !stopped, invalidReason == nil, let cost,
                cost.scope == scope, cost.publishingGeneration == pinnedProbe?.publishingGeneration,
@@ -670,6 +726,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         } catch {
             revoke(Task.isCancelled || stopped ? .publisherStopped : .startupFailed)
             measurement = await operations.result()
+            waitTrace?.record(.init(kind: .measurementJoined, campaign: measurementCampaign, at: ProcessInfo.processInfo.systemUptime))
         }
     }
     private func exportData() throws -> Data {

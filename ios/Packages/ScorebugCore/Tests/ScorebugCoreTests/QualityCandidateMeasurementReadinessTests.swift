@@ -169,6 +169,61 @@ final class QualityCandidateMeasurementReadinessTests: XCTestCase {
         }
     }
 
+    func testDelayedRecoveryEvaluationCanFallBetweenHundredMillisecondReadinessQueries() throws {
+        var policy = try qualified()
+        let advice = try XCTUnwrap(policy.evaluateCandidate(candidate(), at: 4).recommendation)
+        try policy.acknowledge(advice, applied: next, at: 4)
+        let reset = try XCTUnwrap(policy.evaluate(window(4, duration: 1, sequence: 2,
+            revision: 1, frames: 0), at: 5).recommendation)
+        XCTAssertEqual(reset.kind, .reset)
+        try policy.acknowledge(reset, applied: baseline, at: 5)
+
+        let recoveryStart = 5.0
+        let evaluationDelay = 1.990591
+        // Reproduce the observed delay using deterministic relative times. This
+        // experiment assumes a polling phase; it does not establish native ordering.
+        for elapsed in 1...9 {
+            let end = recoveryStart + Double(elapsed)
+            _ = try policy.evaluate(window(end - 1, duration: 1, sequence: UInt64(elapsed + 2),
+                revision: 2), at: end + evaluationDelay)
+            XCTAssertNil(policy.candidateMeasurementReadiness(at: end + evaluationDelay),
+                "The failed trial requires ten complete seconds of recovery health")
+        }
+        let healthEnd = recoveryStart + 10
+        let evaluatedAt = healthEnd + evaluationDelay
+        let previousQuery = healthEnd + 1.95
+        let nextQuery = previousQuery + 0.1
+        XCTAssertEqual(nextQuery - previousQuery, 0.1, accuracy: 1e-12)
+        XCTAssertLessThan(previousQuery, evaluatedAt)
+        XCTAssertNil(policy.candidateMeasurementReadiness(at: previousQuery))
+
+        _ = try policy.evaluate(window(healthEnd - 1, duration: 1, sequence: 12, revision: 2),
+            at: evaluatedAt)
+        let ready = try XCTUnwrap(policy.candidateMeasurementReadiness(at: evaluatedAt))
+        XCTAssertEqual(ready.appliedRevision, 2)
+        XCTAssertEqual(ready.healthSequence, 12)
+        XCTAssertEqual(ready.healthySince, recoveryStart)
+        XCTAssertEqual(ready.healthyThrough, healthEnd)
+        XCTAssertEqual(ready.settings, next)
+        XCTAssertEqual(ready.validUntil, healthEnd + 2)
+        XCTAssertEqual((ready.validUntil - evaluatedAt) * 1000, 9.409, accuracy: 1e-6)
+        XCTAssertGreaterThan(nextQuery, ready.validUntil)
+        XCTAssertNil(policy.candidateMeasurementReadiness(at: nextQuery),
+            "This 100 ms polling phase misses the entire available readiness interval")
+
+        // A differently aligned 100 ms schedule can observe the same interval;
+        // polling frequency alone therefore cannot prove the native miss.
+        let alignedPreviousQuery = healthEnd + 1.895
+        let alignedNextQuery = alignedPreviousQuery + 0.1
+        XCTAssertLessThan(alignedPreviousQuery, evaluatedAt)
+        XCTAssertGreaterThanOrEqual(alignedNextQuery, evaluatedAt)
+        XCTAssertLessThan(alignedNextQuery, ready.validUntil)
+        XCTAssertEqual(policy.candidateMeasurementReadiness(at: alignedNextQuery), ready)
+        XCTAssertEqual(policy.candidateMeasurementReadiness(at: ready.validUntil), ready)
+        XCTAssertNil(policy.candidateMeasurementReadiness(at: ready.validUntil + 0.000001),
+            "The existing two-second freshness deadline remains strict")
+    }
+
     func testRepeatedFailuresReuseEscalatingRecoveryAfterAcknowledgedReset() throws {
         var policy = try qualified()
         var now = 4.0

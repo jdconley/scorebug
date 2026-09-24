@@ -33,7 +33,7 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route remains limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,306 tool tests and 477 FilmModel tests pass, and the arm64 simulator
+All 3,306 tool tests and 485 FilmModel tests pass, and the arm64 simulator
 build succeeds. Independent specification and quality reviews approve the
 repeated deadline-audit correction.
 
@@ -73,10 +73,14 @@ That supports an acquisition hypothesis, but the old run has no worker packet
 trace, so its exact loss boundary remains unproven. Preserve the 100 ms
 missing-audio gate; do not retry merely to obtain favorable timing.
 
-Next: reproduce the short readiness opportunity against the 100 ms poll with a
-deterministic scheduling test. Add bounded per-attempt diagnostics if needed to
-identify the actual failed guard before choosing a fix; preserve the two-second
-freshness rule and 16 MiB cap. Do not run another long native test unchanged.
+The deterministic scheduling experiment now reproduces both a missed 9.409 ms
+readiness opportunity and a successful alternate 100 ms polling phase, with all
+459 Core tests passing. A separate DEBUG diagnostic records actual repeated
+candidate polls and operation outcomes, including campaigns that never start.
+It retains at most 4,096 scalar events / 4 MiB and exports after joined teardown.
+The [diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) tracks verification.
+Next: one instrumented native run to identify the actual failed guard before
+choosing a fix; preserve the two-second freshness rule and 16 MiB cap.
 The strict policy replay also has separately documented startup-ownership and
 interrupted-recovery cases. Production automatic quality increases remain
 disabled until the full gates pass. The earlier 1080p real-match CPU/VideoToolbox

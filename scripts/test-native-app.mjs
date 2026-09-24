@@ -36,7 +36,7 @@ import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, writeFile, lstat } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -663,6 +663,22 @@ try {
     ['simctl', 'get_app_container', simulator, 'live.scorebug.app', 'data'],
     'container',
   );
+  if (repeatedRecovery) {
+    // Diagnostic only: preserve it before media/proxy qualification can fail.
+    // The existing failure snapshot also retains QA if earlier collection fails.
+    const name = 'native-candidate-wait.json';
+    const path = join(container, 'Library/Application Support/Scorebug/QA', name);
+    try {
+      const info = await lstat(path);
+      if (info.isFile() && info.size <= 4 * 1024 * 1024)
+        await cp(path, join(artifact, name), { errorOnExist: true, force: false });
+      else
+        console.warn('Candidate wait diagnostic exceeds its file bound or is not a regular file');
+    } catch (error) {
+      if (error?.code !== 'ENOENT')
+        console.warn('Candidate wait diagnostic could not be collected');
+    }
+  }
   const source = join(container, 'Library/Application Support/Scorebug/Recordings');
   const saved = join(artifact, 'recordings');
   await cp(source, saved, { recursive: true, errorOnExist: true, force: false });

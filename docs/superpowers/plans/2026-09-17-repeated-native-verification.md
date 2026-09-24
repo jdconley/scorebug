@@ -1141,3 +1141,22 @@ opportunity with 100 ms candidate polling. If existing results cannot distinguis
 failure causes, add a bounded candidate-wait/attempt diagnostic with failed guard
 and freshness timing. Preserve the two-second rule, 16 MiB cap, ownership checks,
 and failed run. Do not extend budgets or rerun unchanged merely to obtain a pass.
+
+#### Candidate wait diagnostic — September 24
+
+The deterministic Core test confirms that a 9.409 ms readiness interval can be
+missed by one 100 ms phase and caught by another, without relaxing the two-second
+freshness deadline. Actual native cause remains unproven. The new separate DEBUG
+`native-candidate-wait.json` records repeated fixture polls and operation outcomes,
+including never-started candidates. Its typed 4,096-event prefix / 4 MiB export
+has invalid/overflow latches and joins teardown before one export. It cannot grant
+health or admission. Harness collection is optional and precedes qualification.
+
+All 459 Core, 3,306 tools, 54 focused candidate and 485 full FilmModel tests pass;
+arm64 simulator build passes. Eight new trace tests cover bounds, invalid input,
+never-started candidates, suspended context, expired leases, cancellation, start
+failure and legacy isolation; an existing two-campaign test verifies successful
+operation/context records. Independent specification and quality reviews approve.
+See [bounded diagnostic plan](2026-09-24-candidate-wait-diagnostics.md). Next is one
+fresh frozen instrumented repeated native run. Freshness, leases and 16 MiB remain
+unchanged, and the prior failed native run remains failed evidence.
