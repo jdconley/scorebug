@@ -41,7 +41,10 @@ export const measuredTrialArtifacts = {
 /** Shared raw capture/receiver/worker/delivery replay for measured routes.
  * This grants no candidate, policy, recovery, or production permission. Each
  * route must still qualify its original media phases and admission timeline. */
-export function qualifyMeasuredNativeMedia(input, { cadenceAuditMode = 'legacy' } = {}) {
+export function qualifyMeasuredNativeMedia(
+  input,
+  { cadenceAuditMode = 'legacy', deliveryAuditMode = 'legacy' } = {},
+) {
   const {
     snapshot,
     workerRecords,
@@ -89,6 +92,7 @@ export function qualifyMeasuredNativeMedia(input, { cadenceAuditMode = 'legacy' 
     audit: deliveryAudit,
     reports: cadenceReports,
     cadenceAuditMode,
+    deliveryAuditMode,
     scope: video.scope,
     expectedLatencyBudget: 1.5,
   });

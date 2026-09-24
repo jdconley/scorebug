@@ -1039,3 +1039,56 @@ the repeated owners, native 240p/worker 360p and reporting configuration. Do not
 introduce a new test mode merely to shorten this experiment. Inspect first worker
 demux timestamps before choosing relay instrumentation or a media fix. Retain the
 100 ms missing-audio gate and failed runs; production upgrades remain disabled.
+
+#### Fresh trace reproduction — September 24, `native-app-L9jBCE`
+
+Frozen source `5cb09ae` (916 source hashes unchanged) passed the native UI
+workflow in 260.881 seconds, completed both controller cycles, and passed media
+coverage plus direct delivery with the corrected diagnostic route. Full harness
+qualification still exited 1: delivery audit overflow, not malformed packet
+tracing or an A/V coverage failure. The audit retained its original 256-row
+prefix (16,624,334 bytes) and marked overflow. Both prior native runs also have
+this overflow flag; their earlier failures prevented reaching this gate.
+
+The complete worker trace starts input video at 94081/90000 and audio at
+71040/90000. Output video starts at 1.045 s and audio at 0.766 s; recorder audio
+leads video by 279 ms. Native AAC count 9625 minus worker input 9588 equals 37,
+matching first AAC PTS / 1920. This further demonstrates variable acquisition,
+not a fix for the old missing-audio head. The archive has 6,533 decoded video
+frames and live has 6,128. Do not rerun again merely to seek the old timing.
+
+Next bounded correction: retain the entire repeated deadline audit. Its two
+scheduled lanes produce roughly 1.5 rows/second, so the 180-second hold plus
+startup/teardown naturally exceeds the legacy 256 rows. Keep legacy format1,
+256 rows and 256 phases unchanged. Add an explicitly selected repeated format2
+with at most 512 rows and 32 MiB serialized bytes (the existing artifact file
+limit). Match the validated repeated native fixture prerequisites; raw metadata
+must not select the verifier route. Preserve a terminal prefix on row/byte
+exhaustion, set overflow, and never grant native health from an unretained row.
+The verifier must require exact repeated metadata and closed/nonoverflow/valid
+status, then apply all existing row, clock, scope, source and deadline checks.
+
+Use bounded parallel ownership: a Swift implementer owns native audit storage,
+fixture wiring and native regressions; the parent owns the JS envelope/replay
+route and regressions. Parent alone runs heavy tests/builds. Establish RED for
+boundary retention and legacy isolation, then test GREEN, relevant full suites,
+simulator build and independent reviews. Preserve the overflowed failed artifacts;
+no truncated historical run can qualify after this change. Broader policy replay
+and startup acquisition remain separate open issues.
+
+
+The repeated deadline-audit correction is implemented. Seven native regressions
+cover full prefix/count retention, unchanged legacy and phase bounds, exact
+fixture prerequisites, serialized byte exhaustion, serialization failure and
+withholding health for unretained rows. Behavioral RED reproduced the old row
+limit and missing byte guard. An independent serialization RED reproduced the
+invalid JSON export. A count-only fixture initially reached the byte cap first;
+reducing its valid history isolates the independent row cap without changing
+limits. All 477 FilmModel tests now pass, including those seven regressions.
+
+All 3,306 tools tests pass. Nested regressions initially exposed missing trusted
+mode propagation through policy and delivery-failure replay; both are corrected.
+Synthetic repeated fixtures use the new envelope, while original native artifacts
+remain untouched. The arm64 iPhone simulator build passes. Independent native/JS
+specification and quality reviews approve. Next is one fresh frozen native run
+with complete audit retention; no component pass grants production upgrades.

@@ -390,7 +390,10 @@ export function repeatedMeasuredDeliveryFaultFixture(
 ) {
   const f = structuredClone(base);
   f.deliveryAudit = {
-    formatVersion: 1,
+    formatVersion: 2,
+    mode: 'repeated',
+    maximumRows: 512,
+    maximumBytes: 33554432,
     closed: true,
     overflow: false,
     invalid: false,

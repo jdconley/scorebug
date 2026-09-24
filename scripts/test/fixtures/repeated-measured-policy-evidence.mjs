@@ -26,7 +26,10 @@ export function repeatedMeasuredPolicyFixture(
   f.quality.events = [boot, ...apps, ...candidates, ...triggers, original.at(-1)];
   f.cadenceReports.rows = [];
   f.deliveryAudit ??= {
-    formatVersion: 1,
+    formatVersion: 2,
+    mode: 'repeated',
+    maximumRows: 512,
+    maximumBytes: 33554432,
     closed: true,
     invalid: false,
     overflow: false,

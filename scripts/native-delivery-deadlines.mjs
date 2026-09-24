@@ -1,3 +1,4 @@
+import { qualifyDeliveryAuditEnvelope } from './delivery-audit-envelope.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
@@ -43,23 +44,6 @@ function ticks(source, origin) {
   const result = (numerator * 90000n) / (a.d * b.d) + 9000n;
   assert(result <= INT64, 'Transport clock overflow');
   return result;
-}
-function envelope(value, maximum, label) {
-  assert(
-    value?.deliveryTiming === undefined || value.deliveryTiming === 'request-uptime-v1',
-    'Unknown delivery timing mode',
-  );
-  assert(
-    value?.formatVersion === 1 &&
-      value.closed === true &&
-      value.overflow === false &&
-      value.invalid === false,
-    `Invalid ${label} envelope`,
-  );
-  assert(
-    Array.isArray(value.rows) && value.rows.length > 0 && value.rows.length <= maximum,
-    `Unbounded ${label}`,
-  );
 }
 function config(c) {
   assert(
@@ -567,8 +551,9 @@ export function qualifyNativeDeliveryDeadlines({
   scope,
   expectedLatencyBudget = 1,
   cadenceAuditMode = 'legacy',
+  deliveryAuditMode = 'legacy',
 }) {
-  envelope(audit, 256, 'deadline audit');
+  qualifyDeliveryAuditEnvelope(audit, { deliveryAuditMode });
   assert(
     expectedLatencyBudget === 1 || expectedLatencyBudget === 1.5,
     'Unsupported expected deadline budget',

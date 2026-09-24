@@ -77,7 +77,8 @@ enum PublishingDeliveryMonitor {
         var authority: PublishingDeliveryAuthority? = nil
     }
 
-    /// Explicit qualification export. Scalar metadata only, bounded to 256 rows.
+    /// Explicit qualification export. Legacy storage remains bounded to 256 rows;
+    /// the validated repeated fixture uses a separate row and serialized-byte budget.
     /// Caller serializes access. Only the explicit deadline-reset fixture consumes results.
     final class Audit {
         private struct Key: Equatable {
@@ -95,19 +96,34 @@ enum PublishingDeliveryMonitor {
             let authorityID: ObjectIdentifier?
         }
         private let usesRequestTiming: Bool
+        private let repeated: Bool
+        private static let repeatedMaximumRows = 512
+        private static let repeatedMaximumBytes = 32 * 1024 * 1024
+        // Include separators and reserve the fixed envelope before retaining a
+        // row. Exhaustion is terminal so later smaller rows cannot hide a gap.
+        private static let envelopeAllowance = 4096
+        private var serializedRowBytes = 0
+        private var serializationInvalid = false
         private var schedule: Schedule
         private var key: Key?
         private var phase = 0
         private var rows: [[String: Any]] = []
         private var closed = false
         private var overflow = false
-        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false) throws {
+        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false, environment: [String: String] = [:]) throws {
             self.usesRequestTiming = usesRequestTiming
+            #if DEBUG
+            repeated = environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated"
+                && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180"
+                && (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
+            #else
+            repeated = false
+            #endif
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
         }
         @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
                     instant: ContinuousClock.Instant) -> [PublishingDeliveryObservation] {
-            guard !closed, !overflow else { return [] }
+            guard !closed, !overflow, !serializationInvalid else { return [] }
             guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil); return [] }
             var observations: [PublishingDeliveryObservation] = []
             let next = Key(scope: input.history.scope, clock: input.clock.transportClock,
@@ -121,7 +137,7 @@ enum PublishingDeliveryMonitor {
                 key = next; phase += 1
             }
             for window in schedule.poll(at: now, identity: String(phase)) {
-                guard rows.count < 256 else { overflow = true; return observations }
+                guard rows.count < (repeated ? Self.repeatedMaximumRows : 256) else { overflow = true; return observations }
                 var row: [String: Any] = ["phase": phase, "start": window.start, "end": window.end, "evaluatedAt": now,
                     "appliedRevision": String(applied.revision), "acknowledgedAt": applied.acknowledgedAt,
                     "profileID": applied.settings.profileID, "videoBitrate": applied.settings.videoBitrate,
@@ -140,13 +156,14 @@ enum PublishingDeliveryMonitor {
                 if usesRequestTiming {
                     row["sampleTimeBounds"] = Self.optional(input.delivery.sampleTimeBounds.map { ["lower": $0.lower, "upper": $0.upper] })
                 }
+                var retainedObservation: PublishingDeliveryObservation?
                 do {
                     guard usesRequestTiming == (input.delivery.sampleTimeBounds != nil) else { throw PublishingDeliveryObservation.Failure.freshness }
                     let observation = try PublishingDeliveryObservation.classify(history: input.history, clock: input.clock,
                         applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
                         windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
                         maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget, authority: input.authority)
-                    observations.append(observation)
+                    retainedObservation = observation
                     row["classifiedAt"] = observation.classifiedAt
                     row["observedAtLowerBound"] = observation.observedAtLowerBound
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
@@ -162,18 +179,38 @@ enum PublishingDeliveryMonitor {
                     row["reason"] = String(describing: error)
                     row["history"] = Self.history(input.history, start: window.start, anchor: nil)
                 }
+                if repeated {
+                    guard JSONSerialization.isValidJSONObject(row),
+                          let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+                    else { serializationInvalid = true; return observations }
+                    let available = Self.repeatedMaximumBytes - Self.envelopeAllowance - serializedRowBytes
+                    guard data.count < available else { overflow = true; return observations }
+                    serializedRowBytes += data.count + 1
+                }
                 rows.append(row)
+                // Classification grants no health unless its complete replay row
+                // was retained within the selected audit's capacity.
+                if let retainedObservation { observations.append(retainedObservation) }
             }
             return observations
         }
         func close() { closed = true }
         func data() throws -> Data {
             var fields: [String: Any] = ["formatVersion": 1, "closed": closed, "overflow": overflow,
-                "invalid": schedule.invalid, "latencyBudget": schedule.latencyBudget,
+                "invalid": schedule.invalid || serializationInvalid, "latencyBudget": schedule.latencyBudget,
                 "maximumSampleAge": schedule.maximumSampleAge, "rows": rows]
             if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
-            return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+            if repeated {
+                fields["formatVersion"] = 2
+                fields["mode"] = "repeated"
+                fields["maximumRows"] = Self.repeatedMaximumRows
+                fields["maximumBytes"] = Self.repeatedMaximumBytes
+            }
+            let data = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+            guard !repeated || data.count <= Self.repeatedMaximumBytes else { throw ExportError.capacity }
+            return data
         }
+        private enum ExportError: Error { case capacity }
         private static func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
         private static func seconds(_ value: Duration) -> Double {
             Double(value.components.seconds) + Double(value.components.attoseconds) / 1e18

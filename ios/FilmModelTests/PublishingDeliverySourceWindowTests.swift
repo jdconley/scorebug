@@ -296,12 +296,13 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertFalse(authority.permits(delivery))
         XCTAssertTrue(PublishingDeliveryAuthority(delivery: delivery).permits(delivery))
     }
+    private var auditRecordingID = "recording"
     private let session = UUID()
     private var configuration: VideoEncodingConfiguration {
         .init(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, encoderSessionID: session, bitRate: bitRate)!
     }
     private var scope: VideoFrameObservationScope {
-        .init(recordingID: "recording", matchID: "game", broadcastGeneration: 1,
+        .init(recordingID: auditRecordingID, matchID: "game", broadcastGeneration: 1,
               publishingAttemptID: session, appliedProfileRevision: 1)
     }
     private func history(capacity: Int = 256, captureRange: ClosedRange<Int> = 0...120,
@@ -571,6 +572,176 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         if let output = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DEADLINE_EXPORT"], !output.isEmpty {
             try audit.data().write(to: URL(fileURLWithPath: output))
         }
+    }
+
+    private var repeatedAuditEnvironment: [String: String] { [
+        "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+        "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "repeated",
+        "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+        "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+        "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+    ] }
+    private func auditFixture() throws -> (PublishingDeliveryMonitor.Input, PublishingQualityTelemetry.Applied) {
+        var input: PublishingDeliveryMonitor.Input?
+        let healthy = try classify(missing: [], late: [], captureInput: { input = $0 })
+        XCTAssertEqual(healthy.result.onTimeFrames, 60)
+        let value = try XCTUnwrap(input)
+        return (value, .init(attemptID: session, revision: 7,
+            settings: .init(profileID: "minimum", videoBitrate: configuration.bitRate),
+            receipt: try XCTUnwrap(value.diagnostics.receipt), acknowledgedAt: 0))
+    }
+    private func auditObject(_ audit: PublishingDeliveryMonitor.Audit) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+    }
+    func testRepeatedDeadlineAuditRetains512RowsAndRejectsTheNextScheduledRow() throws {
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: repeatedAuditEnvironment)
+        let (fixture, applied) = try auditFixture()
+        // A shorter valid source history keeps 512 rows below the independent
+        // byte limit, so this test reaches the row boundary specifically.
+        let input = PublishingDeliveryMonitor.Input(history: try history(captureRange: 0...90),
+            clock: fixture.clock, diagnostics: fixture.diagnostics, delivery: fixture.delivery)
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        for step in 1...341 {
+            audit.record(input: input, applied: applied, at: Double(step) + 2.25, instant: instant)
+        }
+        let before = try auditObject(audit)
+        let prefix = try XCTUnwrap(before["rows"] as? [[String: Any]])
+        XCTAssertEqual(prefix.count, 511)
+        XCTAssertEqual(before["formatVersion"] as? Int, 2)
+        XCTAssertEqual(before["mode"] as? String, "repeated")
+        XCTAssertEqual(before["maximumRows"] as? Int, 512)
+        XCTAssertEqual(before["maximumBytes"] as? Int, 33_554_432)
+        XCTAssertEqual(before["overflow"] as? Bool, false)
+        audit.record(input: input, applied: applied, at: 344.25, instant: instant)
+        let full = try auditObject(audit)
+        let retained = try XCTUnwrap(full["rows"] as? [[String: Any]])
+        XCTAssertEqual(retained.count, 512)
+        XCTAssertEqual(full["overflow"] as? Bool, true)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: Array(retained.prefix(511)), options: [.sortedKeys]),
+            try JSONSerialization.data(withJSONObject: prefix, options: [.sortedKeys]))
+        let terminal = try audit.data()
+        XCTAssertTrue(audit.record(input: input, applied: applied, at: 345.25, instant: instant).isEmpty)
+        XCTAssertEqual(try audit.data(), terminal)
+        audit.close()
+        XCTAssertEqual(try auditObject(audit)["closed"] as? Bool, true)
+    }
+    func testDeadlineAuditLegacyCapacityAndEnvelopeRemainUnchanged() throws {
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        let (input, applied) = try auditFixture()
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        for step in 1...171 {
+            audit.record(input: input, applied: applied, at: Double(step) + 2.25, instant: instant)
+        }
+        let full = try auditObject(audit)
+        XCTAssertEqual((full["rows"] as? [Any])?.count, 256)
+        XCTAssertEqual(full["formatVersion"] as? Int, 1)
+        XCTAssertEqual(full["overflow"] as? Bool, false)
+        XCTAssertNil(full["mode"]); XCTAssertNil(full["maximumRows"]); XCTAssertNil(full["maximumBytes"])
+        XCTAssertTrue(audit.record(input: input, applied: applied, at: 174.25, instant: instant).isEmpty)
+        XCTAssertEqual(try auditObject(audit)["overflow"] as? Bool, true)
+        let terminal = try audit.data()
+        audit.record(input: nil, applied: applied, at: 175.25, instant: instant)
+        XCTAssertEqual(try audit.data(), terminal)
+    }
+    func testRepeatedDeadlineAuditRequiresEveryValidatedFixturePrerequisite() throws {
+        var rejected: [[String: String]] = [[:]]
+        for key in repeatedAuditEnvironment.keys {
+            var environment = repeatedAuditEnvironment; environment.removeValue(forKey: key)
+            rejected.append(environment)
+        }
+        for (key, values) in ["SCOREBUG_TEST_BANDWIDTH_PROBE": ["staged", "renew", "Repeated"],
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["90", "179", "181", "0180"],
+            "SCOREBUG_TEST_CANDIDATE_PROFILE": ["540p30", "1080p30"],
+            "SCOREBUG_TEST_MEASURED_TRIAL": ["true", "01"],
+            "SCOREBUG_TEST_CADENCE_REPORTS": ["1"], "SCOREBUG_TEST_NATIVE_QUALITY": ["1"]] {
+            for value in values {
+                var environment = repeatedAuditEnvironment; environment[key] = value
+                rejected.append(environment)
+            }
+        }
+        for environment in rejected {
+            let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+                environment: environment)
+            let object = try auditObject(audit)
+            XCTAssertEqual(object["formatVersion"] as? Int, 1, "\(environment)")
+            XCTAssertNil(object["mode"]); XCTAssertNil(object["maximumRows"]); XCTAssertNil(object["maximumBytes"])
+        }
+    }
+    func testRepeatedAndLegacyDeadlineAuditsKeep256PhaseLimit() throws {
+        let (input, initial) = try auditFixture()
+        for environment in [[:], repeatedAuditEnvironment] {
+            let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+                environment: environment)
+            var applied = initial
+            for revision in 0..<256 {
+                applied.revision = UInt64(revision)
+                audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+            }
+            XCTAssertEqual(try auditObject(audit)["overflow"] as? Bool, false)
+            applied.revision = 256
+            XCTAssertTrue(audit.record(input: input, applied: applied, at: 0.5, instant: instant).isEmpty)
+            XCTAssertEqual(try auditObject(audit)["overflow"] as? Bool, true)
+            XCTAssertEqual((try auditObject(audit)["rows"] as? [Any])?.count, 0)
+            let terminal = try audit.data()
+            audit.record(input: input, applied: initial, at: 4.5, instant: instant)
+            XCTAssertEqual(try audit.data(), terminal)
+        }
+    }
+    func testRepeatedDeadlineAuditByteOverflowRetainsPrefixAndCannotResumeWithSmallerRows() throws {
+        auditRecordingID = String(repeating: "x", count: 128 * 1024)
+        let (large, applied) = try auditFixture()
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: repeatedAuditEnvironment)
+        audit.record(input: large, applied: applied, at: 0.5, instant: instant)
+        for step in 1...100 {
+            audit.record(input: large, applied: applied, at: Double(step) + 2.25, instant: instant)
+        }
+        let terminal = try audit.data(), object = try auditObject(audit)
+        let rows = try XCTUnwrap(object["rows"] as? [[String: Any]])
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertGreaterThan(rows.count, 0)
+        XCTAssertLessThan(rows.count, 150)
+        XCTAssertLessThanOrEqual(terminal.count, 33_554_432)
+        XCTAssertEqual(rows.first?["start"] as? Double, 1)
+        XCTAssertEqual(rows.first?["end"] as? Double, 2)
+        let serializedRows = try rows.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]).count }
+        XCTAssertLessThanOrEqual(serializedRows.reduce(0, +) + rows.count + 4096, 33_554_432)
+        XCTAssertGreaterThan(serializedRows.reduce(0, +) + rows.count + 4096 + (serializedRows.last ?? 0), 33_554_432)
+        auditRecordingID = "recording"
+        let (small, _) = try auditFixture()
+        XCTAssertTrue(audit.record(input: small, applied: applied, at: 103.25, instant: instant).isEmpty)
+        XCTAssertEqual(try audit.data(), terminal)
+    }
+    func testRepeatedDeadlineAuditSerializationFailureIsInvalidAndTerminal() throws {
+        let (input, validApplied) = try auditFixture()
+        var invalidApplied = validApplied
+        invalidApplied.acknowledgedAt = .infinity
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: repeatedAuditEnvironment)
+        audit.record(input: input, applied: invalidApplied, at: 0.5, instant: instant)
+        XCTAssertTrue(audit.record(input: input, applied: invalidApplied, at: 4.5, instant: instant).isEmpty)
+        let object = try auditObject(audit)
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        XCTAssertEqual((object["rows"] as? [Any])?.count, 0)
+        let terminal = try audit.data()
+        audit.record(input: input, applied: validApplied, at: 5.5, instant: instant)
+        audit.record(input: input, applied: validApplied, at: 8.5, instant: instant)
+        XCTAssertEqual(try audit.data(), terminal, "Serialization failure cannot leave a resumable gap")
+    }
+
+    func testRepeatedDeadlineAuditNeverReturnsHealthyObservationForUnretainedOversizedRow() throws {
+        auditRecordingID = String(repeating: "x", count: 12 * 1024 * 1024)
+        let (input, applied) = try auditFixture()
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: repeatedAuditEnvironment)
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        XCTAssertTrue(audit.record(input: input, applied: applied, at: 4.5, instant: instant).isEmpty,
+            "Healthy classification cannot escape when its serialized row was not retained")
+        let object = try auditObject(audit)
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertEqual((object["rows"] as? [Any])?.count, 0)
+        XCTAssertLessThan(try audit.data().count, 4096)
     }
 
     func testDeadlineAuditRetainsTheOlderDecoderAnchorDuringSilence() throws {

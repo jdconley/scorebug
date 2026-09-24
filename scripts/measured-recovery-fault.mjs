@@ -71,6 +71,7 @@ function deliveryFaultSignal({
   scope,
   trialRevision,
   cadenceAuditMode,
+  deliveryAuditMode,
 }) {
   const qualified = qualifyNativeDeliveryFailureSignal({
     event: trigger,
@@ -78,6 +79,7 @@ function deliveryFaultSignal({
     reports: cadenceReports,
     scope,
     cadenceAuditMode,
+    deliveryAuditMode,
   });
   const { row, duration, triggerDeliveryRowIndex } = qualified,
     d = trigger.deliveryFailure;
@@ -291,6 +293,7 @@ function replayMeasuredRecoveryFault(
           scope,
           trialRevision,
           cadenceAuditMode: repeated ? 'repeated' : 'legacy',
+          deliveryAuditMode: repeated ? 'repeated' : 'legacy',
         })
       : (repeated ? qualifyRepeatedNativeStallSignal : qualifyNativeStallSignal)(
           { quality, audit: cadenceReports, fault, scope, expectedRevision: trialRevision },

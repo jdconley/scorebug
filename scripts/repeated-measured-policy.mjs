@@ -623,6 +623,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
     audit: deliveryAudit,
     reports: cadenceReports,
     cadenceAuditMode: 'repeated',
+    deliveryAuditMode: 'repeated',
     scope: snapshot.scope,
     expectedLatencyBudget: 1.5,
   });

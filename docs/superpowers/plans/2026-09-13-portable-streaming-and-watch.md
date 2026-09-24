@@ -33,61 +33,45 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route remains limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,287 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
-independent spec/quality reviews also pass.
+All 3,306 tool tests and 477 FilmModel tests pass, and the arm64 simulator
+build succeeds. Independent specification and quality reviews approve the
+repeated deadline-audit correction.
 
-The latest frozen iPhone 14/iOS 26.2 run (`native-app-LeTozN`, source `2a0a718`)
-passed native scoring/recording export and completed both controller
-upgrade/fault/minimum-reset/recovery cycles. The new scheduling gate waited
-3.99 and 3.77 seconds after joining stage two before spending high-rate probe
-bytes. Both candidate measurements completed all 121 inputs within the unchanged
-16 MiB cap. Independent raw probe replay passes. Cadence has 2,045 valid rows;
-all 46 receiver intervals are exported. All 913 frozen source hashes remained
+The latest frozen iPhone 14/iOS 26.2 run (`native-app-L9jBCE`, source `5cb09ae`)
+passed native scoring/recording export in 260.881 seconds and completed both
+controller upgrade/fault/minimum-reset/recovery cycles through revision four.
+Media coverage and direct delivery passed. The clean archive contains 6,533
+contiguous 1080p frames; live contains 6,128 contiguous source frames at about
+30 fps, with a maximum 34 ms gap. All 102 live A/V markers match, with maximum
+offset 65.583 ms and negligible drift. All 916 frozen source hashes stayed
 unchanged, and owned processes, simulator and container were cleaned up.
 
-Full qualification still failed: the live recording begins audio 395.011 ms
-after video, exceeding the 100 ms missing-audio coverage limit. Both tracks fully
-decode. The live video has 6,130 contiguous source frames at 30 fps, and 102 A/V
-markers show at most 65.594 ms offset with negligible drift. The clean 1080p
-archive has 6,503 contiguous frames and starts audio/video at zero. These checks
-separate a live startup coverage failure from ongoing synchronization; they do
-not turn the full run into a pass.
+Full qualification still failed: the legacy delivery audit filled its 256-row
+limit and correctly marked overflow. The repeated run's two lanes naturally
+produce more rows during its hold and startup/teardown. The correction gives
+only the validated repeated fixture a separate format2 budget of 512 rows and
+32 MiB. Legacy limits and deadline/health checks remain unchanged; exhaustion
+retains the original prefix, marks failure, and cannot grant health from an
+unretained row. Explicit verifier routing covers media, policy and nested faults.
+Tests first reproduced the limits and unretained-health problem; component
+verification now passes. Truncated historical runs cannot become passes.
 
-The next diagnostic run (`native-app-hB7NWJ`, source `809fd0d`) completed
-both controller cycles and collected a complete, bounded worker packet trace.
-Its UI workflow passed in 262.897 seconds; all 916 frozen source hashes remained
-unchanged. Full qualification failed because the delivery verifier rejected the
-new diagnostic event kind. That integration is now corrected behind an explicit
-trusted opt-in, with unchanged delivery and media requirements. Both independent
-reviews approve; all 79 focused and 3,287 full tool tests pass.
+A separate startup issue remains open. `native-app-LeTozN` lost the first
+395.011 ms of live audio relative to video. The two subsequent traced runs did
+not reproduce it: audio led video by 605 ms and 279 ms. Their worker inputs
+already excluded 28 and 37 initial native AAC packets, respectively, and worker
+outputs preserved the relative timing. Relay code has no replay of media sent
+before a reader attaches, while H.264 waits independently for a usable keyframe.
+That supports an acquisition hypothesis, but the old run has no worker packet
+trace, so its exact loss boundary remains unproven. Preserve the 100 ms
+missing-audio gate; do not retry merely to obtain favorable timing.
 
-Offline analysis of the preserved run passes media coverage and direct delivery:
-6,529 contiguous archive frames and 6,117 contiguous live frames, around 30 fps,
-102 live A/V markers with maximum offset 64.917 ms. It does not change the
-original failed run into a pass. The old missing-audio failure did not recur:
-this run acquired video after 36 frames rather than six, leaving audio 605 ms
-ahead of video. The worker input already has that early audio and excludes the
-first 28 native AAC packets; its output preserves the relative timing. This is
-a different acquisition interval, not a demonstrated audio fix.
-
-Next: one fresh run with the corrected verifier and the same traced 180-second
-configuration, looking specifically for recurrence of early video acquisition.
-The existing shorter routes also change relay image and startup configuration,
-so they cannot isolate this boundary. If early audio is already missing at
-worker input, instrument the relay boundary next. Keep the 100 ms coverage gate,
-original artifacts and unknowns intact. The strict policy replay still needs
-explicit treatment of startup ownership rejections and interrupted recovery.
-Production automatic quality increases remain disabled.
-
-Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
-proxy processing checks passed with software and macOS VideoToolbox encoding.
-A 12-second 1080p excerpt also passed through the native encoder, clean archive,
-SRT, proxy overlay, RTMP and independent recorder with all 360 frames, using
-both CPU and VideoToolbox proxy encoding. Earlier
-file-sender network attempts remain failed; 4K networking and longer runs remain
-open. See
-[representative match testing](../../representative-match-testing.md) for results
-and limits. Physical iPhone/Watch tests and other proxy systems remain later gates.
+Next: run one fresh frozen repeated test to collect complete deadline evidence. The strict
+policy replay also has separately documented startup-ownership and interrupted-
+recovery cases. Production automatic quality increases remain disabled until
+the full gates pass. The earlier 1080p real-match CPU/VideoToolbox streaming tests
+and 4K local transcode tests remain useful evidence; physical devices, full 4K
+network streaming and other proxy hosts are still pending.
 
 ## Baseline and owner decisions
 

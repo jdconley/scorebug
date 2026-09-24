@@ -295,6 +295,7 @@ export function qualifyNativeDeliveryFailureSignal({
   reports,
   scope,
   cadenceAuditMode = 'legacy',
+  deliveryAuditMode = 'legacy',
 }) {
   qualifyNativeDeliveryDeadlines({
     audit,
@@ -302,6 +303,7 @@ export function qualifyNativeDeliveryFailureSignal({
     scope,
     expectedLatencyBudget: 1.5,
     cadenceAuditMode,
+    deliveryAuditMode,
   });
   const result = qualifiedFailure(event, audit, reports, receiptAges(reports));
   return { ...result, triggerDeliveryRowIndex: audit.rows.indexOf(result.row) };
