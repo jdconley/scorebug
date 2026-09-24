@@ -1,6 +1,12 @@
 # Representative volleyball footage
 
-Latest: the [two-minute replay checkpoint](superpowers/plans/2026-09-24-long-match-replay.md)
+Latest: the [thirty-minute 1080p checkpoint](superpowers/plans/2026-09-24-match-endurance.md)
+passes all 54,000 frame identities in both archive and stream, audio continuity,
+seven sampled alignment windows, visual inspection and owned cleanup. The 4K
+thirty-minute case is pending. This remains a file-driven local CPU route with a
+scheduled bitrate change; physical capture and automatic adaptation are not qualified.
+
+The earlier [two-minute replay checkpoint](superpowers/plans/2026-09-24-long-match-replay.md)
 now passes fresh 1080p and 4K native/CPU-proxy cases. Each clean archive and stream
 contains all 3,600 frame identities, continuous audio and stable sampled A/V sync.
 The fractional audio estimator passes 29 focused tests; all 3,481 tooling tests
@@ -13,10 +19,10 @@ originals are read-only test inputs and are not committed or uploaded. Metadata,
 SHA-256 fingerprints, derived excerpts, commands, logs and results are saved in
 `artifacts/qa/match-footage-n6n1f13m/`.
 
-| Source | Video | Audio | Duration |
-| --- | --- | --- | --- |
-| `76865e1f-bcca-43de-9fff-4a27b2dd5b92.MP4` | 1920×1080 HEVC Main, approximately 30 fps, SDR | AAC-LC stereo, 44.1 kHz | 3018.145 s |
-| `IMG_4729.MOV` | 3840×2160 HEVC Main 10, approximately 60 fps, HLG/BT.2020 HDR | AAC-LC stereo, 48 kHz; additional audio/data tracks | 1828.992 s |
+| Source                                     | Video                                                         | Audio                                               | Duration   |
+| ------------------------------------------ | ------------------------------------------------------------- | --------------------------------------------------- | ---------- |
+| `76865e1f-bcca-43de-9fff-4a27b2dd5b92.MP4` | 1920×1080 HEVC Main, approximately 30 fps, SDR                | AAC-LC stereo, 44.1 kHz                             | 3018.145 s |
+| `IMG_4729.MOV`                             | 3840×2160 HEVC Main 10, approximately 60 fps, HLG/BT.2020 HDR | AAC-LC stereo, 48 kHz; additional audio/data tracks | 1828.992 s |
 
 ## First content checks, 2026-09-23
 
@@ -34,12 +40,12 @@ its score overlay, timestamp handling, frame cap and encoder settings. It decode
 the resulting file independently and checks dimensions, codecs, frame counts,
 monotonic frame times and audio/video start alignment.
 
-| Input | Proxy encoder | Decoded/output frames | Processing rate including startup | Result |
-| --- | --- | --- | --- | --- |
-| 1080p30 | CPU/libx264 | 360 / 360 | 512.3 frames/s | Pass |
-| 1080p30 | VideoToolbox | 360 / 360 | 201.6 frames/s | Pass |
-| 4K30 | CPU/libx264 | 360 / 360 | 123.8 frames/s | Pass |
-| 4K30 | VideoToolbox | 360 / 360 | 57.6 frames/s | Pass |
+| Input   | Proxy encoder | Decoded/output frames | Processing rate including startup | Result |
+| ------- | ------------- | --------------------- | --------------------------------- | ------ |
+| 1080p30 | CPU/libx264   | 360 / 360             | 512.3 frames/s                    | Pass   |
+| 1080p30 | VideoToolbox  | 360 / 360             | 201.6 frames/s                    | Pass   |
+| 4K30    | CPU/libx264   | 360 / 360             | 123.8 frames/s                    | Pass   |
+| 4K30    | VideoToolbox  | 360 / 360             | 57.6 frames/s                     | Pass   |
 
 All four outputs had maximum frame gaps of about 34 ms and audio/video start
 differences under 100 ms. Output targets were 6 Mbps for 1080p and 24 Mbps for
@@ -79,7 +85,6 @@ The next investigation used the validated native/SRT sender, as described below.
 At that point, 4K networking remained untested; the explicit native checks appear below. Retain the instrumented simulator clips for independent
 frame identity, deadline, archive and adaptive-policy proofs. Real match footage
 adds content realism; it does not replace those measurements.
-
 
 ## Native 1080p network and archive checks passed
 
@@ -201,7 +206,6 @@ MediaMTX and do not qualify impaired networks, relay startup, full matches,
 phone hardware/thermals or production 4K adaptive eligibility. See the
 [native 4K plan](superpowers/plans/2026-09-24-native-4k-match.md).
 
-
 ## Transport isolation regression, 2026-09-24
 
 Four-phase socket/worker observations plus native submission timing establish that
@@ -237,7 +241,6 @@ a 261.974 ms cadence sample revokes the first trial under the strict 250 ms fres
 limit before any owned fault. The prior complete adaptive pass on `89926f4` does
 not qualify either newer source. The next reviewed runtime work isolates native
 video conversion to prevent the independently measured 4K audio queue starvation.
-
 
 ## Native video submission isolation, 2026-09-24
 

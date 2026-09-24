@@ -24,6 +24,37 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The **30-minute 1080p real-match CPU-proxy replay passes**: both clean archive and
+stream retain all 54,000 frames, continuous audio and stable sampled A/V alignment.
+The native sender reports zero archive rejection or live queue loss/rejection.
+All 1,191 frozen file hashes match, normal process exits and port cleanup pass, and
+matched images confirm a clean archive and readable live score overlay. The scheduled
+2 Mbps live bitrate visibly reduces image quality; this does not establish the
+highest sustainable quality. See the [endurance contract and evidence](2026-09-24-match-endurance.md).
+
+| Area                                    | Current evidence                                                                                                                                    | Remaining qualification                                                                                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Native iPhone scoring                   | Create/join, takeover, recovery and two-phone UI workflows pass locally.                                                                            | Physical concurrent use and remaining adversarial integration audit.                                                           |
+| Clean recording                         | Thirty-minute 1080p file-driven native archive passes while streaming; shorter 4K checks pass.                                                      | Thirty-minute 4K, real camera, interruptions and long device thermal runs.                                                     |
+| Streaming proxy                         | Native Mac CPU/VideoToolbox and Linux arm64 CPU have local evidence; 1080p CPU now passes thirty minutes with real match footage.                   | Co-located 4K hardware-proxy reliability, installation and qualification on other hosts.                                       |
+| Progressive streaming                   | Repeated laboratory 240p/360p increases, controlled faults, minimum resets and recoveries pass.                                                     | Production automatic upgrades remain disabled; realistic network and device qualification stays open.                          |
+| Native Watch scoring                    | Direct scoring/relaunch UI passes across tested Watch sizes and OS generations; model tests cover companion routing and uncertain-command recovery. | Actual paired setup still fails in Simulator with ACX43/WC7018. Physical Wi-Fi, cellular and companion routes remain untested. |
+| Physical devices and external streaming | Local foundations and test procedures exist.                                                                                                        | Phone/Watch acceptance, destination playback, home GPU and cloud hosts remain required.                                        |
+
+Next, prepare and qualify the thirty-minute 4K CPU case under the same declared
+contract. A separate Watch diagnostic can launch the existing installed apps
+directly, without XCTest reinstallation, to isolate the companion-registration
+failure; it is not a replacement for the complete paired workflow. Continue the
+remaining adaptive/network gates before enabling production upgrades, then physical
+phone/Watch and additional-host acceptance. Original private match videos stay local
+and untouched.
+
+## Earlier checkpoint evidence
+
+The following paragraphs retain outcomes at their named revisions. Later results
+in the current assessment supersede historical status wording; failed runs remain
+failed and available for diagnosis.
+
 **The latest complete repeated native recovery test passes.** Frozen `23f0479` /
 `native-app-Gx1pcB` passes native iPhone scoring, clean recording/export, both measured
 admissions, all five 240p/360p phases, two controlled decoder failures, minimum resets
@@ -187,8 +218,9 @@ failed and preserved. This extends the 12-second CPU checks to two minutes with
 scheduled bitrate changes; it does not qualify full-match reliability, automatic
 adaptation, physical capture, HDR60 or relay/viewer latency.
 
-**Next local work:** longer in-game content coverage under a new declared duration
-contract. Another paired Watch run needs a concrete companion-registration change
+**Next work at the two-minute checkpoint:** longer in-game content coverage under a
+new declared duration contract, now addressed for 1080p above. Another paired Watch
+run needs a concrete companion-registration change
 or a minimal independent framework reproducer; the immediate-message alternative
 has now been tested and rejected in this simulator state. See the
 [long replay contract and evidence](2026-09-24-long-match-replay.md). Keep game-length
@@ -2478,7 +2510,6 @@ other proxy hosts. Production increases stay disabled; the goal remains active.
 See [the recovery plan](2026-09-17-measured-posttrial-recovery.md) and
 `artifacts/qa/measured-posttrial-recovery-final-verification.json`.
 
-
 ### 2026-09-17: fresh candidate startup and repeated native scheduling
 
 The subsequent full native run `native-app-ceM4Yc` passed the complete single-cycle
@@ -2500,7 +2531,6 @@ Next implement the versioned two-cycle verifier and two controlled faults, then
 run and independently decode the full repeated stream and archive. Physical
 phone/Watch networking and portable proxy hosts remain later gates. See the
 [repeated native campaign plan](2026-09-17-repeated-native-campaigns.md).
-
 
 ### 2026-09-17: repeated native evidence replay foundations
 
@@ -2555,7 +2585,6 @@ repeated A/V qualification or production automatic upgrade permission is claimed
 See the [repeated verification plan](2026-09-17-repeated-native-verification.md)
 and `artifacts/qa/repeated-native-lifecycle-*` evidence.
 
-
 ### 2026-09-17: repeated receiver intervals and complete admissions
 
 Both ramp-up admissions now replay their own raw candidate A/V cost, native
@@ -2575,7 +2604,6 @@ simulator harness. Production automatic upgrades remain disabled. See the
 [repeated verification plan](2026-09-17-repeated-native-verification.md) and
 `artifacts/qa/repeated-campaign-admission-*` evidence.
 
-
 ### 2026-09-17: repeated fault causality and shared raw media replay
 
 Both controlled pauses now retain their original confirmation, candidate,
@@ -2593,7 +2621,6 @@ recovery replay, second-campaign readiness join and causal two-fault native
 harness remain pending. Production automatic upgrades remain disabled. See the
 [repeated verification plan](2026-09-17-repeated-native-verification.md) and
 `artifacts/qa/repeated-policy-replay-*` evidence.
-
 
 ### 2026-09-17: complete repeated policy replay and native readiness joins
 
@@ -2623,7 +2650,6 @@ Production automatic upgrades remain disabled. See the
 [repeated verification plan](2026-09-17-repeated-native-verification.md) and
 `artifacts/qa/repeated-policy-integration-*` / `repeated-global-policy-*` evidence.
 
-
 ### 2026-09-23: resumed decoder-freshness verification
 
 Resumed review fixed a false-freshness acceptance in the new global verifier.
@@ -2635,7 +2661,6 @@ tests pass; the new policy suite contains 74 cases. The saved native run also
 passes a read-only timing-bound check for 1,039 applicable reports. All 269,319
 previously frozen evidence files remain unchanged after the resumed check.
 Full repeated native A/V qualification and production upgrades remain pending.
-
 
 ### 2026-09-23: live checkpoints and supplied match footage
 

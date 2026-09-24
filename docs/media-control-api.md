@@ -48,8 +48,9 @@ transaction. Exact retries return the original outcome before checking age or
 generation; changed content under the same ID is rejected. New commands expire
 after ten seconds and reject timestamps more than five seconds ahead of server time.
 Clients must reconcile an uncertain receipt before creating a replacement command.
-The shared Swift client exposes these endpoints; a durable broadcast UI coordinator
-is still to be added with capture integration.
+The shared Swift client exposes these endpoints. `BroadcastCommandCoordinator`
+persists uncertain broadcast commands and is wired into the native
+`CaptureStreamingModel`; recording and live publication retain separate lifecycles.
 
 The selected worker snapshot contains a consistent `{match, media}` assignment only
 when that worker is selected for the active match's requested broadcast. Other

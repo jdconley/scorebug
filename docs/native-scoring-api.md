@@ -4,10 +4,12 @@ The `/v1/matches` API now stores native matches, scoring authority, command rece
 and score history in SQLite. The native SwiftUI scorer creates/joins matches, scores,
 undoes actions, ends sets/matches, and restores its session. The shared Swift outbox
 persists uncertain commands and reconciles receipts. Full milestone 1 is still in
-progress: recording associations and durable broadcast intent are implemented, but
-relay credential routes and source observation now have real SRT validation.
-Observed worker status and the actual worker consumer still need integration.
-See the [media control API](media-control-api.md).
+progress: recording associations and durable broadcast intent are implemented;
+relay credential routes and source observation have real SRT validation. The worker
+consumes durable assignments and reports observed status to the API and native UI.
+See the [media control API](media-control-api.md), [worker status](worker-status.md)
+and [current delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+for the remaining integration and device gates.
 
 ## Run locally
 
@@ -46,7 +48,8 @@ Creating, discovering, and joining use the installation's existing `PHONE_TOKEN`
 After joining, each native client uses a token scoped to its match, device, and
 role. A scoring token grants no access to the old `/games` publishing API. A capture
 role can read its match but cannot submit scoring commands or take over scoring.
-Watch pairing-code provisioning follows in milestone 5.
+Watch pairing-code provisioning is implemented separately; see the
+[pairing foundation](watch-pairing-foundation.md) and [native Watch status](native-watch-app.md).
 
 Keep `PHONE_TOKEN` stable and outside SQLite. Scoped tokens are derived with HMAC
 using that installation secret and a domain-separated match/device/role identifier;
@@ -115,9 +118,10 @@ It does not share the new native match lifecycle yet; do not mix both APIs in on
 session. Native match creation needs no YouTube key and starts no recording or
 broadcast. Recording associations, broadcast commands, and a selected-worker snapshot
 endpoint now share the durable lifecycle. Relay credentials and reconciliation are
-connected through separate native API routes; the actual worker consumer remains
-an integration step. The native scoring app remains independent
-of the unfinished camera/media project. Watch UI and route integration follow later.
+connected through separate native API routes and consumed by the worker. Native
+scoring remains independent of filming. Native capture/publishing and Watch UI,
+direct networking and companion relay adapters are implemented, with separate local
+evidence; actual paired-Watch setup and physical-device qualification remain open.
 
 ## Native validation
 
@@ -162,6 +166,6 @@ confirmation during an in-flight refresh. Production storage remains Keychain-on
 
 These tests do not yet simulate two people tapping simultaneously through two
 real UI processes, actual watch connectivity, or camera/streaming performance.
-The remaining milestone 1 integration connects durable match identity to actual
-worker reconciliation/status; the legacy publishing
-scaffold currently still has a separate in-memory lifecycle.
+Durable match identity is now connected to worker reconciliation/status. The
+remaining adversarial integration audit and device acceptance are tracked in the
+delivery plan; the legacy publishing scaffold still has a separate in-memory lifecycle.
