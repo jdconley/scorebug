@@ -371,3 +371,90 @@ source changed and no new native build or repeated A/V run is claimed. Task 5
 remains open until the global policy/recovery replay and readiness joins exist.
 Evidence: `artifacts/qa/repeated-policy-replay-*` and
 `artifacts/qa/repeated-policy-fault-*`.
+
+
+## Task 5: global policy, readiness and raw composition
+
+The global replay consumes the complete original event list and carries source,
+policy, configuration, probation and recovery state across both cycles. The first
+matched source interval follows an already observed worker window (sequence 2 or
+later), then subsequent source and policy sequences stay continuous. Consumed source
+rows must match the original exported array prefix. A trailing source interval
+may finish during shutdown after policy consumption stops; it stays in the raw
+media replay and gains no policy health credit. This matches the saved
+`measured-recovery-mnaRRb` export (source sequences 2–21; policy consumed 2–20)
+without changing that historical run's result. Warm-up cadence reports remain in the original audit but receive no health credit before
+the first qualified source interval. Pressure, decoder continuity, owned faults
+and raw delivery deadlines are independently replayed. Recovery uses only whole
+source windows after resumed progress, covered by both one- and two-second
+delivery lanes; overlapping lanes never add time together.
+
+`qualifyRepeatedNativeReadiness` independently replays raw native probes and
+joins both original readiness contexts to the reconstructed baseline health
+history. It requires the original configuration/acknowledgement, four seconds
+initial health or ten seconds after reset, and fresh source/receiver observations.
+The second campaign must follow all source and delivery evaluations needed for
+the first shared recovery. Its reconstructed `qualifiedAt` prevents future
+delivery evidence from authorizing an earlier probe.
+A context read may precede asynchronous native allocation and diagnostic logging:
+a newer healthy checkpoint is allowed only while its health start and baseline
+remain unchanged. An intervening weak decision or health reset invalidates it.
+
+`qualifyRepeatedMeasuredNativeRecovery` composes the shared raw media verifier,
+five native phases, actual lifecycle and admissions, global policy, readiness and
+both probation/recovery delivery coverage. Its current boundary tests reject
+single-cycle evidence and incomplete admission-only fixtures. Positive component
+integration covers raw admissions/lifecycle with both decoder and delivery faults,
+including mixed routes, on one synthetic publication identity. These component
+fixtures still supply explicit source/media qualification contracts; they do not
+constitute a complete positive raw-media or native A/V run. Next wire the repeated
+harness to this raw entry and acquire a diagnostic run; it may report success only
+when the full raw gate and all existing A/V, archive and scoring checks pass.
+Until that wiring exists, the current harness continues to reject repeated mode.
+Production automatic upgrades and network-loss recovery qualification remain
+disabled.
+
+Evidence for this checkpoint is under `artifacts/qa/repeated-policy-integration-*`
+and `artifacts/qa/repeated-global-policy-*`. The historical raw recordings and
+exports remain immutable. Task 5 remains open for complete raw integration;
+Task 6 still needs causal live confirmation checkpoints and both owned pauses.
+
+
+The complete tool suite passes 3,016 tests, including 113 new policy, readiness
+and integration/boundary cases. Source-suffix regressions preserve the original
+native shutdown semantics without weakening leading/interior coverage. The stop
+schema has no independent terminal policy cursor; a removed final decision is
+indistinguishable from a source interval that the controller never consumed.
+A future native terminal checkpoint can make that distinction explicit. This
+checkpoint grants no extra tail health and does not claim complete native
+qualification. All 269,319 prior frozen evidence files remain unchanged.
+
+
+## Resumed freshness review and next harness boundary
+
+The global cadence replay now checks cross-report last-fresh-time consistency.
+For unchanged decoder scope and PTS, intersect the feasible native arrival bounds
+`[evaluatedUptime - sampleAgeSeconds - progress.ageMs / 1000,
+ evaluatedUptime - progress.ageMs / 1000]`. A cached snapshot may retain its
+sampled age while its sample-age bound grows; it cannot repeatedly acquire a new
+fresh arrival time without a new PTS. Preserve this constraint across owned
+stalls and resumption partitions. Only representation-scale tolerance is applied.
+The new synthetic fixtures use one explicit frame-arrival schedule for cadence ages and raw delivery packets.
+Their owned 1.8-second pauses and resumed observations agree through a
+fixture-only clock mapping; the verifier assumes no exact clock offset.
+The saved `native-app-ceM4Yc` evidence passes a read-only check of these bounds
+for 1,039 applicable reports, including 84 repeated-PTS reports. This does not
+requalify the historical run or replace a complete repeated native run.
+
+Task 6 must replace the repeated route's fixed-delay fault scheduling with two
+bounded confirmation-driven campaigns. The current driver writes its complete
+quality export only at stop. Add simulator-only live checkpoints that preserve
+the original global event index, applied revision, candidate and source identity.
+Before pausing, wait for a subsequent whole source interval after the matching
+confirmation and sample the same owned decoder. Revalidate its process identity
+immediately before each pause, always resume in teardown, and join the previous
+campaign before another starts. Keep the existing single-cycle delay route
+unchanged. Terminal evidence must reconcile each live checkpoint with the final
+quality history; live checkpoints alone grant no qualification. Connect the
+raw repeated composition and retain every existing archive, live A/V, scoring,
+ownership and teardown gate before attempting the full simulator run.

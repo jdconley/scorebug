@@ -2400,3 +2400,45 @@ recovery replay, second-campaign readiness join and causal two-fault native
 harness remain pending. Production automatic upgrades remain disabled. See the
 [repeated verification plan](2026-09-17-repeated-native-verification.md) and
 `artifacts/qa/repeated-policy-replay-*` evidence.
+
+
+### 2026-09-17: complete repeated policy replay and native readiness joins
+
+The repeated verifier now consumes one original global history through both
+trial confirmations, controlled faults, resets and recoveries. Recovery requires
+at least ten seconds of whole healthy source windows after resumed progress,
+independently covered by one- and two-second delivery lanes. The next probe's
+captured readiness is tied to its actual configuration and reconstructed health;
+all evidence needed for the preceding recovery must exist before that probe
+starts. Native evaluation time is distinguished from delayed diagnostic logging.
+
+The raw composition now invokes media, lifecycle, admission, policy, readiness
+and delivery-coverage checks. Positive component integration covers decoder
+stalls, delivery failures and mixed routes with raw admissions and lifecycle.
+These fixtures still supply explicit source/media contracts, so they are not a
+complete positive raw-media or native A/V run. The repeated harness still needs
+live confirmation checkpoints, both causally owned pauses and the raw gate wired
+into its existing recording, scoring and A/V checks.
+
+All 3,005 tool tests passed, including 102 new cases. All 269,319 frozen evidence
+files remain unchanged, and runtime source has not changed. A legitimate final
+source-export suffix during shutdown is checked without adding health credit;
+consumed intervals must match the original array prefix. The current stop export
+has no independent terminal policy cursor, so it cannot distinguish a removed
+last decision from a never-consumed source tail. Interior omissions still reject.
+Production automatic upgrades remain disabled. See the
+[repeated verification plan](2026-09-17-repeated-native-verification.md) and
+`artifacts/qa/repeated-policy-integration-*` / `repeated-global-policy-*` evidence.
+
+
+### 2026-09-23: resumed decoder-freshness verification
+
+Resumed review fixed a false-freshness acceptance in the new global verifier.
+Repeated decoder timestamps must retain one feasible last-arrival time across
+reports and both faults; legitimately cached snapshots remain accepted. New
+synthetic cadence, raw deadline packets and owned-pause samples share a physically
+consistent arrival schedule. All 3,016 tooling tests and 344 focused new/legacy
+tests pass; the new policy suite contains 74 cases. The saved native run also
+passes a read-only timing-bound check for 1,039 applicable reports. All 269,319
+previously frozen evidence files remain unchanged after the resumed check.
+Full repeated native A/V qualification and production upgrades remain pending.

@@ -7,8 +7,8 @@ const id = (n) => `dddddddd-dddd-4ddd-8ddd-${String(n).padStart(12, '0')}`;
 /** Synthetic component contracts only: confirms/faults use one original global
  * five-phase history. Source/confirmation summaries are explicit dependencies;
  * this fixture does not claim complete policy or real hardware qualification. */
-export function repeatedMeasuredRecoveryFaultFixture() {
-  const f = repeatedLifecycleFixture();
+export function repeatedMeasuredRecoveryFaultFixture(base = repeatedLifecycleFixture()) {
+  const f = structuredClone(base);
   f.archiveIDs = f.format.compressedFrames.map((r) => fixtureFrameID(r.sourcePTS));
   f.profileQualification = qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, {
     sequence: 'repeated240',
@@ -377,8 +377,9 @@ export function repeatedFaultDeliveryRow(
 
 export function repeatedMeasuredDeliveryFaultFixture(
   routes = ['deliveryFailure', 'deliveryFailure'],
+  base = repeatedMeasuredRecoveryFaultFixture(),
 ) {
-  const f = repeatedMeasuredRecoveryFaultFixture();
+  const f = structuredClone(base);
   f.deliveryAudit = {
     formatVersion: 1,
     closed: true,
