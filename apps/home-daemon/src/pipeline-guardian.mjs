@@ -1,5 +1,8 @@
 // @ts-check
 import { spawn } from 'node:child_process';
+import { WorkerPacketTiming } from './worker-packet-timing.mjs';
+/** @type {WorkerPacketTiming | undefined} */
+let packetTiming;
 import { EncoderDiagnostics, observeEncoderDiagnostics } from './encoder-diagnostics.mjs';
 /** @type {EncoderDiagnostics | undefined} */
 let diagnostics;
@@ -41,12 +44,14 @@ function finish(code, signal) {
   clearTimeout(drainTimer);
   // A guardian exit is never substituted for the encoder's actual exit status.
   diagnostics?.end();
+  packetTiming?.end();
   report(
     {
       event: 'exit',
       code,
       signal,
       ...(diagnostics ? { diagnostics: diagnostics.snapshot() } : {}),
+      ...(packetTiming ? { packetTiming: packetTiming.snapshot() } : {}),
     },
     true,
   );
@@ -75,7 +80,7 @@ process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 process.on('message', (message) => {
   const request =
-    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number, diagnostics?: boolean }} */ (
+    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number, diagnostics?: boolean, packetTiming?: boolean }} */ (
       message
     );
   if (request.type === 'stop') {
@@ -90,10 +95,16 @@ process.on('message', (message) => {
     // the guardian before it kills/reaps the encoder. Diagnostics contain URLs.
     // Parent fd4 is decoded telemetry and fd5 is encoder timing; IPC stays fd3.
     diagnostics = request.diagnostics === true ? new EncoderDiagnostics() : undefined;
+    packetTiming =
+      diagnostics && request.packetTiming === true ? new WorkerPacketTiming() : undefined;
     encoder = spawn(request.binary, request.args, {
       stdio: ['ignore', 'inherit', diagnostics ? 'pipe' : 'ignore', 4, 5],
     });
     if (encoder.stderr && diagnostics) observeEncoderDiagnostics(encoder.stderr, diagnostics);
+    if (encoder.stderr && packetTiming) {
+      encoder.stderr.on('data', (chunk) => packetTiming?.push(chunk));
+      encoder.stderr.on('error', () => packetTiming?.failPipe());
+    }
     encoder.on('error', () => {
       report({ event: 'process_error' });
       if (!encoder?.pid) finish(null, null);
@@ -107,6 +118,7 @@ process.on('message', (message) => {
       // that exit status and bound diagnostic drain independently of stop().
       drainTimer = setTimeout(() => {
         diagnostics?.timeOutDrain();
+        packetTiming?.timeOutDrain();
         encoder?.stderr?.destroy();
         finish(code, signal);
       }, 250);

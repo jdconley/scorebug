@@ -170,3 +170,14 @@ it('applies slice threading to input video only without altering output encoder 
   expect(slice).toEqual(normal);
   expect(() => buildFfmpegArgs({ ...spec, decoderThreading: 'invalid' as 'slice' })).toThrow();
 });
+
+it('enables numeric packet timing only with the explicit diagnostic option', () => {
+  const spec = { ...baseSpec, nvenc: false };
+  for (const options of [{}, { decoderDiagnostics: true }])
+    expect(buildFfmpegArgs(spec, options)).not.toContain('-debug_ts');
+  const args = buildFfmpegArgs(spec, { packetTiming: true } as any);
+  expect(args.filter((arg) => arg === '-debug_ts')).toHaveLength(1);
+  expect(args[args.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
+  expect(args).toContain('-copyts');
+  expect(args[args.indexOf('-avoid_negative_ts') + 1]).toBe('make_zero');
+});

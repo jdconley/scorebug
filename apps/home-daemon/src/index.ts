@@ -17,6 +17,7 @@ const log = createLogger(config.LOG_LEVEL);
 const terminalDiagnostics = createWorkerTerminalDiagnostics(
   log,
   process.env.SCOREBUG_TEST_WORKER_TERMINAL,
+  process.env.SCOREBUG_TEST_WORKER_PACKET_TIMING,
 );
 const scoreFile = scoreFilePath(config.SCORE_DIR);
 const client = new WorkerClient(config.CONTROL_PLANE_URL, config.HOME_TOKEN, config.WORKER_ID);
@@ -50,6 +51,7 @@ const supervisor = new WorkerSupervisor({
         stopTimeoutMs: 1000,
         encoderTiming,
         deliveryTimeline: true,
+        packetTiming: terminalDiagnostics.packetTimingEnabled,
         ...(diagnostics.onTerminal && { onTerminal: diagnostics.onTerminal }),
       },
     );

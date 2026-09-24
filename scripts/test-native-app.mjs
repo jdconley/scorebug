@@ -246,6 +246,7 @@ await writeFile(
       adaptiveProfiles,
       streamingBudget,
       directRTMPRecorder: process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
+      workerPacketTiming: process.env.SCOREBUG_TEST_WORKER_PACKET_TIMING === '1',
     },
     null,
     2,

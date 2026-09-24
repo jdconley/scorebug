@@ -2,6 +2,7 @@ import type { DecoderDeliveryPacket } from '@scorebug/protocol';
 import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
 import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { EncoderDiagnosticSnapshot } from './encoder-diagnostics.mjs';
+import type { WorkerPacketTimingSnapshot } from './worker-packet-timing.mjs';
 import type { WorkerProcessingReport } from '@scorebug/protocol';
 import { DecodedFrameHistory, type DecodedFrameHistorySnapshot } from './decoded-frame-history.js';
 import { observeDecodedPipe } from './decoded-pipe.js';
@@ -73,7 +74,7 @@ function filterPath(value: string): string {
  */
 export function buildFfmpegArgs(
   spec: PipelineSpec,
-  options: { encoderTiming?: boolean; decoderDiagnostics?: boolean } = {},
+  options: { encoderTiming?: boolean; decoderDiagnostics?: boolean; packetTiming?: boolean } = {},
 ): string[] {
   const decoderThreading = spec.decoderThreading ?? 'automatic';
   if (!['automatic', 'slice'].includes(decoderThreading))
@@ -154,7 +155,8 @@ export function buildFfmpegArgs(
     '-progress',
     'pipe:1',
     '-loglevel',
-    options.decoderDiagnostics ? 'repeat+level+info' : 'warning',
+    options.decoderDiagnostics || options.packetTiming ? 'repeat+level+info' : 'warning',
+    ...(options.packetTiming ? ['-debug_ts'] : []),
     '-fflags',
     '+genpts',
     '-copyts',
@@ -206,6 +208,7 @@ export type PipelineTerminal = Readonly<{
   decodedVideo: DecodedVideoLifetimeSnapshot;
   telemetryEOF: boolean;
   diagnostics?: EncoderDiagnosticSnapshot;
+  packetTiming?: WorkerPacketTimingSnapshot;
   /** Null means the guardian never reported the encoder status. */
   encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
   outputProgress: PipelineProgress | null;
@@ -215,6 +218,8 @@ export type PipelineTerminal = Readonly<{
 }>;
 
 export type PipelineOptions = {
+  /** Test-only numeric packet prefixes; requires onTerminal, never health evidence. */
+  packetTiming?: boolean;
   /** Enable the bounded arrival collector and negotiated reporting packets. */
   deliveryTimeline?: boolean;
   /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
@@ -311,6 +316,7 @@ export function startPipeline(
   const args = buildFfmpegArgs(spec, {
     ...options,
     decoderDiagnostics: Boolean(options.onTerminal),
+    packetTiming: Boolean(options.onTerminal && options.packetTiming),
   });
   const encoderTiming = options.encoderTiming
     ? new EncoderTimingTelemetry(options.monotonicNow)
@@ -327,6 +333,7 @@ export function startPipeline(
   const lifetime = options.onTerminal ? new DecodedVideoLifetime() : undefined;
   let telemetryEOF = false;
   let diagnostics: EncoderDiagnosticSnapshot | undefined;
+  let packetTiming: WorkerPacketTimingSnapshot | undefined;
   let outputProgress: PipelineProgress | null = null;
   let terminalEmitted = false;
   let child: ChildProcess | undefined;
@@ -344,6 +351,7 @@ export function startPipeline(
         decoderCadence: decoderCadence.snapshot(),
         telemetryEOF,
         ...(diagnostics ? { diagnostics } : {}),
+        ...(packetTiming ? { packetTiming } : {}),
         encoderExit: encoderExit ? { ...encoderExit } : null,
         outputProgress: outputProgress ? { ...outputProgress } : null,
         ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
@@ -433,10 +441,12 @@ export function startPipeline(
         code: number | null;
         signal: NodeJS.Signals | null;
         diagnostics?: EncoderDiagnosticSnapshot;
+        packetTiming?: WorkerPacketTimingSnapshot;
       };
       if (event.event === 'exit') {
         encoderExit = { code: event.code, signal: event.signal };
         diagnostics = event.diagnostics;
+        packetTiming = event.packetTiming;
       } else if (event.event === 'sigterm' || event.event === 'sigkill') {
         log.info(`ffmpeg_${event.event}`, { gameId: spec.gameId });
       } else if (event.event === 'process_error' || event.event === 'spawn_failed') {
@@ -467,6 +477,7 @@ export function startPipeline(
       args,
       stopTimeoutMs,
       diagnostics: Boolean(options.onTerminal),
+      packetTiming: Boolean(options.onTerminal && options.packetTiming),
     });
   } catch {
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });

@@ -175,3 +175,90 @@ it('keeps terminal log records small when optional processing histories are pres
   expect(f.records[0]).not.toHaveProperty('encoderTiming');
   expect(JSON.stringify(f.records[0]).length).toBeLessThan(4096);
 });
+
+it('requires both explicit flags for packet diagnostics', () => {
+  for (const [terminalFlag, packetFlag, enabled] of [
+    [undefined, '1', false],
+    ['1', undefined, false],
+    ['1', 'true', false],
+    ['1', '1', true],
+  ] as const) {
+    const f = fixture();
+    expect(
+      (diagnostics.createWorkerTerminalDiagnostics as any)(f.log, terminalFlag, packetFlag)
+        .packetTimingEnabled,
+    ).toBe(enabled);
+  }
+});
+
+it('emits bounded scoped packet prefixes separately from terminal media history', () => {
+  const f = fixture();
+  const lane = () => ({
+    packetCount: 200,
+    first: Array.from({ length: 128 }, (_, i) => ({
+      pts: String(i),
+      ptsSeconds: String(i / 30),
+      dts: String(i),
+      dtsSeconds: String(i / 30),
+    })),
+  });
+  const packetTiming = {
+    formatVersion: 1,
+    diagnosticOnly: true,
+    maximumPacketsPerLane: 128,
+    ended: true,
+    pipeError: false,
+    drainTimedOut: false,
+    incompleteLine: false,
+    malformedRows: 0,
+    oversizedLines: 0,
+    demux: { video: lane(), audio: lane() },
+    mux: { video: lane(), audio: lane() },
+  };
+  const terminal: any = {
+    packetTiming,
+    telemetryEOF: true,
+    encoderExit: { code: 0, signal: null },
+    outputProgress: null,
+    decodedVideo: {
+      acceptedFrames: 0,
+      freshFrames: 0,
+      duplicateFrames: 0,
+      reorderedFrames: 0,
+      firstPTS: null,
+      lastPTS: null,
+      highestPTS: null,
+      timeBase: '1/90000',
+      invalidReason: null,
+      ended: true,
+    },
+  };
+  (diagnostics.createWorkerTerminalDiagnostics as any)(f.log, '1', '1')
+    .scope({ gameId: 'game', generation: 1 })
+    .onTerminal(terminal);
+  const records = f.records as any[];
+  const chunks = records.filter((r) => r.msg === 'worker_packet_timing');
+  expect(chunks).toHaveLength(64);
+  for (const stage of ['demux', 'mux'])
+    for (const media of ['video', 'audio']) {
+      const parts = chunks.filter((r) => r.stage === stage && r.media === media);
+      expect(parts.map((r) => r.firstPacketIndex)).toEqual(
+        Array.from({ length: 16 }, (_, i) => i * 8),
+      );
+      expect(parts.flatMap((r) => r.packets)).toEqual(
+        packetTiming[stage as 'demux'][media as 'video'].first,
+      );
+      expect(
+        parts.every(
+          (r) => r.packetCount === 200 && r.retainedPackets === 128 && r.diagnosticOnly === true,
+        ),
+      ).toBe(true);
+    }
+  expect(records.every((r) => JSON.stringify(r).length < 4096)).toBe(true);
+  expect(
+    records.every((r) => r.gameId === 'game' && r.generation === 1 && r.pipelineOrdinal === 1),
+  ).toBe(true);
+  expect(records.find((r) => r.msg === 'worker_pipeline_terminal')).not.toHaveProperty(
+    'packetTiming',
+  );
+});

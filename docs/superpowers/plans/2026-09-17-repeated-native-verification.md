@@ -956,3 +956,44 @@ separate `diagnostic-live-marker-sync.json`,
 `diagnostic-native-probe-qualification.json` and
 `diagnostic-invalidation-scope.json` inside the native run. Production upgrades
 and full repeated qualification remain disabled.
+
+#### Bounded worker startup packet trace
+
+First instrument the actual worker's FFmpeg demux and output-mux boundaries;
+existing native mux and RTMP recorder traces bracket them. This smaller step can
+separate worker startup loss from loss already present at worker input before
+adding relay instrumentation. Use an explicit test-only packet-timing opt-in
+alongside terminal diagnostics. Normal production arguments and media timestamps
+remain unchanged.
+
+Retain a numeric-only ordered prefix of at most 128 packets in each of four
+lanes (demux/mux × video/audio), plus saturated counts and framing/error flags.
+This covers at least the first two seconds at the selected 30 fps / AAC rates
+when packets are recognized, without assuming stderr interstream ordering or
+claiming packet delivery/health. Join stderr at actual encoder exit under the
+existing bounded drain. Never export raw stderr, URLs, addresses or codec labels.
+Emit separate scoped chunks of at most eight records so the existing 4 KiB log
+line and 256-event bounds remain unchanged; retain original lane indexes and
+counts, including truncation. An absent or malformed trace is unknown evidence.
+
+A bounded parser worker owns its module/tests; the parent owns guardian/pipeline,
+worker logging and fixture collector integration. Test parser framing, prefix
+retention, malformed/unsafe values and shutdown; then test real child-pipe
+propagation, explicit opt-in isolation, scoped sanitized collection and log-size
+bounds. Run focused and relevant full suites, typecheck/build and independent
+reviews before one new diagnostic native run. Preserve the 100 ms coverage gate.
+
+
+The bounded worker trace is implemented behind both exact test flags. Its parser
+passes 32 focused cases and parses the installed FFmpeg's actual sampled output
+without malformed, oversized or incomplete rows. Integration tests first failed
+for absent argument wiring, real guardian-pipe propagation, dual opt-in and
+scoped chunk export; those checks now pass. All 100 focused worker tests, 429
+full worker tests and 3,276 tool tests pass; worker typecheck and build pass.
+Independent specification and quality reviews approve the change. A worst-case
+eight-packet record is 2,011 bytes, below the unchanged 4 KiB collector bound.
+
+Next run uses `SCOREBUG_TEST_WORKER_PACKET_TIMING=1` on the same repeated fixture.
+Treat the debug output as diagnostic: it can affect scheduling and does not
+qualify health or throughput. Keep source hashes frozen, retain all failed
+artifacts, and compare native mux, worker demux/mux, and recorder timestamps.

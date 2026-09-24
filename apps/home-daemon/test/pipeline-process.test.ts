@@ -673,8 +673,10 @@ it('joins sanitized terminal stderr before reporting actual encoder exit', async
   }
 });
 
-it('bounds stderr drain after the encoder exits even if a descendant holds the pipe', async () => {
-  const fixture = await childFixture(`
+it.each([false, true])(
+  'bounds stderr drain after encoder exit with packet timing=%s',
+  async (packetTiming) => {
+    const fixture = await childFixture(`
     const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
       stdio: ['ignore', 'ignore', 'inherit'],
     });
@@ -682,29 +684,36 @@ it('bounds stderr drain after the encoder exits even if a descendant holds the p
     child.unref();
     process.exitCode = 19;
   `);
-  const terminals: unknown[] = [];
-  const pipeline = startPipeline(fixture.spec, fixture.log, {
-    onTerminal: (value) => terminals.push(value),
-  });
-  try {
-    await fixture.ready();
-    // Stop after leader exit must not leave completion dependent on inherited stderr.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    pipeline.stop();
-    expect(await boundedExit(pipeline)).toEqual({ code: 19, signal: null });
-    expect(terminals).toHaveLength(1);
-    expect(terminals[0]).toMatchObject({
-      diagnostics: { ended: true, drainTimedOut: true, pipeError: false },
+    const terminals: unknown[] = [];
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      packetTiming,
+      onTerminal: (value) => terminals.push(value),
     });
-  } finally {
-    const pid = Number(await readFile(fixture.spec.ffmpegPath + '.descendant', 'utf8'));
     try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
-    await pipeline.waitExit();
-    await fixture.cleanup();
-  }
-});
+      await fixture.ready();
+      // Stop after leader exit must not leave completion dependent on inherited stderr.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      pipeline.stop();
+      expect(await boundedExit(pipeline)).toEqual({ code: 19, signal: null });
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0]).toMatchObject({
+        diagnostics: { ended: true, drainTimedOut: true, pipeError: false },
+      });
+      if (packetTiming)
+        expect(terminals[0]).toMatchObject({
+          packetTiming: { ended: true, drainTimedOut: true, pipeError: false },
+        });
+      else expect(terminals[0]).not.toHaveProperty('packetTiming');
+    } finally {
+      const pid = Number(await readFile(fixture.spec.ffmpegPath + '.descendant', 'utf8'));
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {}
+      await pipeline.waitExit();
+      await fixture.cleanup();
+    }
+  },
+);
 
 it('optional decoder delivery timeline closes even when native spawning fails', async () => {
   const pipeline = startPipeline(
@@ -726,4 +735,31 @@ it('optional decoder delivery timeline closes even when native spawning fails', 
     arrivals: [],
     lastOrdinal: 0,
   });
+});
+
+it('joins bounded packet timing through real guardian stderr without leaking raw input', async () => {
+  const packet =
+    '[aist#0:1/aac @ 0xabc] [info] demuxer -> ist_index:0:1 type:audio pkt_pts:10919 pkt_pts_time:0.121322 pkt_dts:10919 pkt_dts_time:0.121322 duration:1024 duration_time:0.0213333\n';
+  const fixture = await childFixture(
+    `require('node:fs').writeSync(2, ${JSON.stringify('SECRET rtmp://host/key\n' + packet)}); process.exitCode=23;`,
+  );
+  const terminals: any[] = [];
+  try {
+    const pipeline = startPipeline(fixture.spec, fixture.log, {
+      packetTiming: true,
+      onTerminal: (value: unknown) => terminals.push(value),
+    } as any);
+    expect(await boundedExit(pipeline)).toEqual({ code: 23, signal: null });
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0].packetTiming).toMatchObject({
+      ended: true,
+      diagnosticOnly: true,
+      pipeError: false,
+      drainTimedOut: false,
+      demux: { audio: { packetCount: 1, first: [{ pts: '10919', ptsSeconds: '0.121322' }] } },
+    });
+    expect(JSON.stringify([terminals, fixture.records])).not.toContain('SECRET');
+  } finally {
+    await fixture.cleanup();
+  }
 });

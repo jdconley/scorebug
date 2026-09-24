@@ -173,6 +173,69 @@ function terminal(value) {
     ...(value.diagnostics === undefined ? {} : { diagnostics: diagnostics(value.diagnostics) }),
   };
 }
+function packetTiming(value) {
+  requireValue(
+    value.formatVersion === 1 &&
+      value.diagnosticOnly === true &&
+      value.maximumPacketsPerLane === 128,
+  );
+  requireValue(['demux', 'mux'].includes(value.stage) && ['video', 'audio'].includes(value.media));
+  requireValue(
+    ['ended', 'pipeError', 'drainTimedOut', 'incompleteLine'].every(
+      (key) => typeof value[key] === 'boolean',
+    ),
+  );
+  requireValue(
+    ['malformedRows', 'oversizedLines', 'packetCount', 'retainedPackets', 'firstPacketIndex'].every(
+      (key) => count(value[key]),
+    ),
+  );
+  requireValue(value.retainedPackets === Math.min(128, value.packetCount));
+  requireValue(
+    value.firstPacketIndex % 8 === 0 && value.firstPacketIndex < Math.max(1, value.retainedPackets),
+  );
+  requireValue(
+    Array.isArray(value.packets) &&
+      value.packets.length === Math.min(8, value.retainedPackets - value.firstPacketIndex),
+  );
+  const packets = value.packets.map((packet) => {
+    requireValue(object(packet));
+    for (const key of ['pts', 'dts']) {
+      requireValue(typeof packet[key] === 'string' && /^-?(?:0|[1-9]\d{0,18})$/.test(packet[key]));
+      requireValue(BigInt(packet[key]) > -(1n << 63n) && BigInt(packet[key]) < 1n << 63n);
+    }
+    for (const key of ['ptsSeconds', 'dtsSeconds'])
+      requireValue(
+        typeof packet[key] === 'string' &&
+          /^-?\d{1,20}(?:\.\d{1,20})?(?:e[+-]?\d{1,3})?$/.test(packet[key]) &&
+          Number.isFinite(Number(packet[key])),
+      );
+    return Object.fromEntries(
+      ['pts', 'ptsSeconds', 'dts', 'dtsSeconds'].map((key) => [key, packet[key]]),
+    );
+  });
+  return {
+    ...Object.fromEntries(
+      [
+        'formatVersion',
+        'diagnosticOnly',
+        'maximumPacketsPerLane',
+        'ended',
+        'pipeError',
+        'drainTimedOut',
+        'incompleteLine',
+        'malformedRows',
+        'oversizedLines',
+        'stage',
+        'media',
+        'firstPacketIndex',
+        'packetCount',
+        'retainedPackets',
+      ].map((key) => [key, value[key]]),
+    ),
+    packets,
+  };
+}
 function event(value) {
   requireValue(object(value));
   if (value.msg === 'worker_state') {
@@ -189,6 +252,8 @@ function event(value) {
     }
     return result;
   }
+  if (value.msg === 'worker_packet_timing')
+    return { msg: value.msg, ...scope(value), ...packetTiming(value) };
   if (value.msg === 'worker_pipeline_terminal')
     return { msg: value.msg, ...scope(value), ...terminal(value) };
   if (!pipelineEvents.has(value.msg)) return null;

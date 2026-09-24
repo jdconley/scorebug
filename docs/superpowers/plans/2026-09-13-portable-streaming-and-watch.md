@@ -33,7 +33,7 @@ upgrade → fault → minimum reset → recovery cycles in one native publicatio
 Live native checkpoints, causal two-pause orchestration, and the complete raw
 repeated verifier are connected. The repeated route remains limited to a
 180-second simulator experiment with its own campaign-capable relay image.
-All 3,262 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
+All 3,276 tool tests and 470 FilmModel tests pass; the arm64 simulator build and
 independent spec/quality reviews also pass.
 
 The latest frozen iPhone 14/iOS 26.2 run (`native-app-LeTozN`, source `2a0a718`)
@@ -57,6 +57,8 @@ Next: trace the first two seconds of packet timestamps from native mux through
 the relay and worker. Native startup audio is present within about 21 ms of its
 first video, while the downstream recorder already receives the 395 ms gap.
 Current evidence cannot distinguish relay acquisition from worker startup loss.
+A bounded, explicitly enabled worker packet trace is now implemented and reviewed;
+all 429 worker tests, type checking and build pass. Its diagnostic native run is next.
 Keep the coverage limit and original artifacts unchanged. The strict policy
 replay also needs explicit treatment of two startup ownership rejections; the
 previous run's interrupted-recovery sequence remains a separate verifier gate.
