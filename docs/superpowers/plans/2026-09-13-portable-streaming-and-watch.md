@@ -39,7 +39,7 @@ camera, automatic adaptation or maximum sustainable quality qualification. See t
 | Streaming proxy                         | Native Mac CPU/VideoToolbox and Linux arm64 CPU have local evidence; CPU passes thirty minutes at both 1080p and 4K with real match footage.                                                      | Co-located 4K hardware-proxy reliability, installation and qualification on other hosts.                                                                                                                                     |
 | Progressive streaming                   | Repeated laboratory 240p/360p increases, controlled faults, minimum resets and recoveries pass.                                                                                                   | Production needs the quality-controller/provider integration: it currently starts and stays at the minimum. Realistic network and device qualification stays open.                                                           |
 | Native Watch scoring                    | Direct scoring/relaunch UI passes across tested Watch sizes and OS generations; model tests cover companion routing and uncertain-command recovery.                                               | Actual paired setup still fails in Simulator. Direct launch without XCTest also fails to activate the Watch session; it does not isolate XCTest as the cause. Physical Wi-Fi, cellular and companion routes remain untested. |
-| OS compatibility                        | Historical tests cover iOS 17/18/26 and watchOS 10/11/26; lower deployment targets remain iOS 17 and watchOS 10. iPhone 14/iOS 27 recording UI and Ultra 2/watchOS 27 direct scoring UI now pass. | OS 27 streaming and paired WatchConnectivity remain unqualified. Preserve Series 7 coverage on its supported older OS.                                                                                                       |
+| OS compatibility                        | Historical tests cover iOS 17/18/26 and watchOS 10/11/26; lower deployment targets remain iOS 17 and watchOS 10. iPhone 14/iOS 27 recording UI and Ultra 2/watchOS 27 direct scoring UI now pass. | OS 27 fixed-profile streaming baseline passes; adaptive/representative-media and paired WatchConnectivity remain open. Preserve Series 7 on its supported older OS.                                                          |
 | Physical devices and external streaming | Local foundations and test procedures exist.                                                                                                                                                      | Phone/Watch acceptance, destination playback, home GPU and cloud hosts remain required.                                                                                                                                      |
 
 The scoped Xcode 27 baseline passes: iPhone 14 runs all three native recording UI
@@ -50,6 +50,30 @@ set ending and match completion. The Watch setup is simulator-injected, so this 
 direct native networking evidence, not companion transport. Both wrappers exit zero
 and are joined, all 1,179 frozen tracked hashes match, and both owned simulators
 are absent. Evidence: `artifacts/qa/platform27-native-assessment.json`.
+
+The OS27 streaming baseline also passes on frozen `a313e4c` / `native-app-Lg31V4`:
+UI completes in 83.805 seconds, and the full harness exits zero and is joined. The
+1080p archive contains 1,475 consecutive frames (0–1,474); the live recording
+contains 1,045 consecutive frames (226–1,270), both fully decoded at 30 fps with no
+missing identities inside their recorded spans. All 24 archive / 18 live audio
+markers match, with maximum live offset 65.583 ms and negligible measured drift.
+Live audio precedes the first video by 1.021 seconds within this baseline's existing
+2.1-second GOP-acquisition allowance; this is not instant-start or whole-pipeline
+losslessness qualification. Recording continues after streaming stops. All 1,179
+tracked hashes match; owned simulator, containers and processes are absent. This
+uses the synthetic fixed-profile app route through local SRT relay/worker/RTMP sink,
+not the real-match adaptive route. Evidence:
+`artifacts/qa/native-app-Lg31V4/post-run-assessment.json`.
+
+The first OS27 streaming attempt (`native-app-JNIxUl`) remains a failed full harness:
+its UI passed in 85.198 seconds, but Xcode waited in automatic simulator diagnostics
+until the 600-second workflow deadline. A sampled stack and owned-process inventory
+establish the diagnostic wait; its trigger is unknown. Its diagnostic helper used
+a separate process group and survived the timeout, so it was explicitly stopped
+and confirmed absent. The archive and failure evidence remain preserved. The harness
+now passes `-collect-test-diagnostics never`, supported by both installed Xcodes;
+it retains bounded logs, attachments and failed-app data. No app behavior, acceptance
+threshold or workflow deadline changed before the successful fresh run.
 
 The full paired workflow on frozen `c1fb1c7` / `paired-watch-FzV6gI` **fails** on
 27 before setup. Both app builds pass. The phone activates with paired/installed
