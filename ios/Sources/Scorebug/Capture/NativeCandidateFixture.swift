@@ -28,7 +28,8 @@ enum NativeCandidateFixture {
         guard let raw = environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] else { return nil }
         if headroom { return PublishingVideoProfile(rawValue: raw) }
         let live = try VideoObservationFixture.liveProfile(environment: environment)
-        guard let profile = PublishingVideoProfile(rawValue: raw), profile.bitRate > live.bitRate,
+        guard let profile = PublishingVideoProfile(rawValue: raw),
+              [.low360, .sd540, .hd1080].contains(profile), profile.bitRate > live.bitRate,
               live != .hd1080, environment["SCOREBUG_TEST_LIVE_PROFILE"] == live.rawValue,
               VideoObservationFixture.requested(environment: environment),
               ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",

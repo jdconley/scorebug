@@ -223,10 +223,11 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             // Network exercise is deliberately restricted to an owned local sink.
-            guard args.count == 3 || args.count == 4 else { throw Failure.arguments }
-            let timestampOffset = args.count == 4 ? Double(args[3]) : 0
+            guard (3...5).contains(args.count) else { throw Failure.arguments }
+            let timestampOffset = args.count >= 4 ? Double(args[3]) : 0
             guard let timestampOffset, timestampOffset.isFinite,
                   timestampOffset >= 0, timestampOffset <= 86_400 else { throw Failure.arguments }
+            let configuration = try DualOutputConfiguration(profileID: args.count == 5 ? args[4] : "1080p30")
             let url: URL?
             if args[2] == "record-only" { url = nil }
             else {
@@ -235,7 +236,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 url = candidate
             }
             try await run(source: URL(fileURLWithPath: args[0]), directory: URL(fileURLWithPath: args[1]),
-                          url: url, timestampOffset: timestampOffset)
+                          url: url, timestampOffset: timestampOffset, configuration: configuration)
         } catch {
             try? emit(["event": "failed", "reason": String(describing: error)])
             exit(1)
@@ -267,7 +268,14 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
         return result
     }
 
-    private static func run(source: URL, directory: URL, url: URL?, timestampOffset: Double) async throws {
+    private static func run(source: URL, directory: URL, url: URL?, timestampOffset: Double,
+                            configuration: DualOutputConfiguration) async throws {
+        try emit(["event": "media-configuration", "liveProfile": configuration.liveProfile.rawValue,
+            "width": configuration.liveProfile.width, "height": configuration.liveProfile.height,
+            "liveBitRate": configuration.liveProfile.bitRate, "changedBitRate": configuration.changedBitRate,
+            "archiveBitRate": configuration.archiveProfile.videoBitRate,
+            "liveQueueMaxBytes": configuration.liveQueueMaxBytes,
+            "archiveQueueMaxBytes": configuration.archiveQueueMaxBytes])
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first,
               let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else { throw Failure.missingTracks }
@@ -292,8 +300,9 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             try VideoFrameObservationOwner(scope: .init(recordingID: "dual-output", matchID: "fixture",
                 broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1), sourceHistoryCapacity: 512)
         }
-        let archive = try SegmentedArchiveWriter(directory: directory)
-        let archiveSession = try RecordingSession(sink: SegmentedArchiveSink(writer: archive))
+        let archive = try SegmentedArchiveWriter(directory: directory, profile: configuration.archiveProfile)
+        let archiveSession = try RecordingSession(sink: SegmentedArchiveSink(writer: archive),
+            maxBytes: configuration.archiveQueueMaxBytes)
         let captureSource = FixtureCaptureSource(origin: origin)
         let recording = CaptureRecording(source: captureSource, session: archiveSession)
         try await recording.start()
@@ -301,7 +310,7 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             LiveIngressObservationConfiguration(scope: owner.snapshot.scope, monotonicAnchor: owner.snapshot.monotonicAnchor,
                 initialPhase: .startup)
         }
-        let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: 12 * 1024 * 1024,
+        let liveQueue = try BoundedMailbox<CapturedMediaSample>(maxItems: 8, maxBytes: configuration.liveQueueMaxBytes,
             overflowPolicy: .dropOldest, ingressObservation: ingressConfiguration)
         let publisherTask = Task.detached {
             guard let url else {
@@ -310,7 +319,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 return
             }
             let encoderEvidence = EncoderEvidence()
-            let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) })
+            let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) },
+                videoProfile: configuration.liveProfile)
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
@@ -347,10 +357,10 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
                 }
                 while let sample = try await liveQueue.next() {
                     if !changed && sample.sampleBuffer.presentationTimeStamp.seconds - originSeconds >= 5 {
-                        let receipt = try await publisher.setVideoBitRate(2_000_000)
+                        let receipt = try await publisher.setVideoBitRate(configuration.changedBitRate)
                         acceptedReceipt = receipt
                         changed = true
-                        try emit(["event": "bitrate-changed", "bitsPerSecond": 2_000_000,
+                        try emit(["event": "bitrate-changed", "bitsPerSecond": configuration.changedBitRate,
                                   "receipt": receiptEvidence(receipt)])
                     }
                     if sample.kind == .video {

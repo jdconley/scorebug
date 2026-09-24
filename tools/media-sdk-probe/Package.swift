@@ -18,7 +18,8 @@ let package = Package(
             "SDKProbe", .product(name: "ScorebugMedia", package: "ScorebugMedia")
         ]),
         .target(name: "SDKProbe", dependencies: [
-            .product(name: "ScorebugStreaming", package: "ScorebugStreaming")
+            .product(name: "ScorebugStreaming", package: "ScorebugStreaming"),
+            .product(name: "ScorebugMedia", package: "ScorebugMedia")
         ], linkerSettings: [.linkedLibrary("c++")]),
         .testTarget(name: "SDKProbeTests", dependencies: ["SDKProbe"])
     ]

@@ -7,6 +7,15 @@ import ScorebugMedia
 import XCTest
 
 final class NativeCandidateFixtureTests: XCTestCase {
+    func test4KRecipeCannotWidenPhoneCandidateFixture() throws {
+        for live in ["240p30", "360p30", "540p30"] {
+            let environment = ["SCOREBUG_TEST_CANDIDATE_PROFILE": "2160p30",
+                "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_LIVE_PROFILE": live,
+                "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90"]
+            XCTAssertThrowsError(try NativeCandidateFixture.requested(environment: environment), live)
+        }
+    }
+
     func testCombinedHeadroomRouteRequiresExactCompleteOptInInBothParsers() throws {
         let valid = ["SCOREBUG_TEST_CANDIDATE_HEADROOM": "1", "SCOREBUG_TEST_CANDIDATE_PROFILE": "540p30",
             "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",

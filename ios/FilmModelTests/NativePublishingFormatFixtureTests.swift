@@ -193,6 +193,7 @@ final class NativePublishingFormatFixtureTests: XCTestCase {
         XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: [:]), .low240)
         XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1"]), .hd1080)
         for (key,value) in [("SCOREBUG_TEST_NATIVE_QUALITY","1"),("SCOREBUG_TEST_LIVE_PROFILE","720p30"),
+                            ("SCOREBUG_TEST_LIVE_PROFILE","2160p30"),
                             ("SCOREBUG_TEST_VIDEO_OBSERVATIONS","0"),("SCOREBUG_TEST_MOTION_FIXTURE","1"),
                             ("SCOREBUG_TEST_STREAM_HOLD_SECONDS","89")] {
             var invalid = environment; invalid[key] = value

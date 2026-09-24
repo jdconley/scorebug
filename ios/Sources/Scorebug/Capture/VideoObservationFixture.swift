@@ -20,7 +20,7 @@ enum VideoObservationFixture {
         guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else {
             return requested(environment: environment) ? .hd1080 : .minimumStartup
         }
-        guard let profile = PublishingVideoProfile(rawValue: raw), profile != .hd1080, requested(environment: environment),
+        guard let profile = PublishingVideoProfile(rawValue: raw), [.low240, .low360, .sd540].contains(profile), requested(environment: environment),
               environment["SCOREBUG_TEST_MOTION_FIXTURE"] == "blocks16",
               (environment["SCOREBUG_TEST_NATIVE_QUALITY"] ?? "").isEmpty,
               let rawHold = environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"],
