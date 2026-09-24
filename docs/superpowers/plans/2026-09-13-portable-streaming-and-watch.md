@@ -102,6 +102,19 @@ support missing active-pair selection as the cause. These diagnostic outcomes ar
 not paired scoring passes. Evidence is retained in
 `artifacts/qa/watch-direct-launch-assessment-2026-09-24.json`.
 
+The DEBUG file-capture adapter now feeds decoded local H.264/SDR30 video and
+48-kHz mono PCM into the existing native capture/archive contract. Its ten focused
+tests cover real decoded samples, exact counts, source timestamps, independent
+track starts, pacing, EOF, invalid input and joined cancellation. The archive
+integration retains every delivered video frame with zero queue drops/rejections.
+It is not yet selected in the app: simulator staging, source diagnostics and
+natural-audio verification remain the next checkpoint before real-match adaptive
+qualification. See the [file-source plan](2026-09-24-file-capture-source.md) for
+preserved failures, review findings and validation boundaries. All 512 model tests
+and the arm64 simulator build pass. An earlier full-suite attempt failed one
+existing admission test; its focused and full-suite follow-ups pass unchanged,
+and the original rejection remains unexplained and preserved.
+
 A read-only production audit confirms that the measured quality driver and candidate
 publisher currently exist only in the DEBUG simulator route. Continue by integrating
 representative footage with that app route and qualifying real network impairment,
