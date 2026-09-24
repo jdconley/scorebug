@@ -2,15 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { verifyContinuousFixtureMedia } from '../continuous-fixture-media.mjs';
 
-function fixture(sampleRate = 48000) {
-  const bytes = Buffer.alloc(30 * 16);
-  for (let i = 0; i < 30; i++)
+function fixture(sampleRate = 48000, count = 30) {
+  const bytes = Buffer.alloc(count * 16);
+  for (let i = 0; i < count; i++)
     for (let bit = 0; bit < 16; bit++) bytes[i * 16 + bit] = i & (1 << bit) ? 235 : 16;
   return {
-    expectedFrames: 30,
+    expectedFrames: count,
     sampleRate,
     bytes,
-    frames: Array.from({ length: 30 }, (_, i) => [
+    frames: Array.from({ length: count }, (_, i) => [
       { media_type: 'video', best_effort_timestamp_time: String(i / 30) },
       {
         media_type: 'audio',
@@ -72,3 +72,21 @@ for (const [name, mutate] of Object.entries(faults)) {
     assert.throws(() => verifyContinuousFixtureMedia(input));
   });
 }
+
+test('thirty-minute timeline retains identities above the signed 16-bit boundary', () => {
+  const input = fixture(44100, 54000);
+  const result = verifyContinuousFixtureMedia(input);
+  assert.equal(result.videoFrames, 54000);
+  assert.equal(result.lastSourceFrame, 53999);
+  assert.equal(result.audioSamples, 1800 * 44100);
+  assert.equal(result.duration, 1800);
+  // Erasing bit15 must not turn the second half of the recording into a valid wrap.
+  input.bytes[32768 * 16 + 15] = 16;
+  assert.throws(() => verifyContinuousFixtureMedia(input), /source frame 32768/);
+});
+
+test('rejects an endurance declaration that wraps the 16-bit identity range', () => {
+  const input = fixture();
+  input.expectedFrames = 65536;
+  assert.throws(() => verifyContinuousFixtureMedia(input));
+});
