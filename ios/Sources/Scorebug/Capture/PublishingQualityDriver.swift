@@ -23,6 +23,9 @@ import ScorebugMedia
     private var task: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
     private let export: ((Data) async -> Void)?
+    private let liveExport: ((Data) async -> Void)?
+    private var pendingLiveCheckpoint: [String: Any]?
+    private var liveDrain: Task<Void, Never>?
     private var events: [[String: Any]] = []
     private var overflow = false
     private var consumed: String?
@@ -35,7 +38,8 @@ import ScorebugMedia
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, export: ((Data) async -> Void)? = nil) {
+         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+        self.liveExport = liveExport
         self.enableDeliveryFailures = enableDeliveryFailures
         self.enableMeasuredSourceEvaluation = enableMeasuredSourceEvaluation
         self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
@@ -283,16 +287,43 @@ import ScorebugMedia
             await owner.stop()
             await work?.value
             await record("stopped", allowClosed: true)
+            await liveDrain?.value
             deliveryAudit?.close()
             if let deliveryExport, let data = try? deliveryAudit?.data() { await deliveryExport(data) }
-            if let export, let data = try? JSONSerialization.data(withJSONObject:
-                ["formatVersion": 4, "overflow": overflow, "deadlineFailuresEnabled": enableDeliveryFailures,
-                 "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation, "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events], options: [.sortedKeys]) {
+            if let export, let data = try? JSONSerialization.data(withJSONObject: qualityObject, options: [.sortedKeys]) {
                 await export(data)
             }
         }
         shutdown = finish
         await finish.value
+    }
+    /// Live checkpoints and the final export share the exact original v4 object.
+    private var qualityObject: [String: Any] {
+        ["formatVersion": 4, "overflow": overflow, "deadlineFailuresEnabled": enableDeliveryFailures,
+         "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation,
+         "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events]
+    }
+    /// Retain only one in-flight write and the newest complete original prefix.
+    /// In particular, disk I/O must never delay the short reset/candidate lease.
+    /// The dictionaries contain immutable captured values; later appends use
+    /// Array's value semantics without rewriting an earlier exported prefix.
+    private func enqueueLiveCheckpoint(attemptID: UUID, closed: Bool) {
+        guard let liveExport else { return }
+        pendingLiveCheckpoint = ["formatVersion": 1, "mode": "repeated",
+            "publishingAttemptID": attemptID.uuidString.lowercased(),
+            "eventCount": events.count, "closed": closed, "quality": qualityObject]
+        guard liveDrain == nil else { return }
+        liveDrain = Task { [self] in
+            while let checkpoint = pendingLiveCheckpoint {
+                pendingLiveCheckpoint = nil
+                if let data = try? JSONSerialization.data(withJSONObject: checkpoint, options: [.sortedKeys]) {
+                    await liveExport(data)
+                }
+            }
+            // No await separates the empty check and clearing the drain, so a
+            // reentrant enqueue cannot lose its pending snapshot here.
+            liveDrain = nil
+        }
     }
     private static func optional<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
     private static func reason(_ error: Error) -> String {
@@ -307,7 +338,11 @@ import ScorebugMedia
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false) async {
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
-        guard events.count < 512 else { overflow = true; return }
+        guard events.count < 512 else {
+            overflow = true
+            enqueueLiveCheckpoint(attemptID: state.attemptID, closed: kind == "stopped")
+            return
+        }
         var row: [String: Any] = ["kind": kind, "at": uptime(), "closed": state.isClosed]
         row["reason"] = reason
         row["revision"] = state.revision.map(String.init)
@@ -392,6 +427,7 @@ import ScorebugMedia
             "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil,
             "candidateID": Self.optional(advice.candidateID?.uuidString)] }
         events.append(row)
+        enqueueLiveCheckpoint(attemptID: state.attemptID, closed: kind == "stopped")
     }
     private static func profileReceiptJSON(_ receipt: PublishingVideoProfileChange) -> [String: Any] {
         func time(_ pts: CMTime) -> [String: Any] {
@@ -445,10 +481,33 @@ import ScorebugMedia
         }
         return result
     }
+    #if DEBUG
+    static func repeatedLiveExportRequested(environment: [String: String]) throws -> Bool {
+        guard environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated" else { return false }
+        guard try NativeMeasuredTrialFixture.requested(environment: environment),
+              try NativeBandwidthProbePublisher.requested(environment: environment) == .repeated else {
+            throw VideoObservationFixture.UplinkError.invalidFixtureRoute
+        }
+        return true
+    }
+    #endif
+    #if DEBUG && targetEnvironment(simulator)
+    private static func persistLiveCheckpoint(_ data: Data) async {
+        await Task.detached(priority: .utility) {
+            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Scorebug/QA", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: directory.appendingPathComponent("quality-control-live.json"), options: .atomic)
+            } catch { /* Missing evidence cannot qualify or own recording. */ }
+        }.value
+    }
+    #endif
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
         let measured = try NativeMeasuredTrialFixture.requested(environment: environment)
+        let liveCheckpoint = try repeatedLiveExportRequested(environment: environment)
         let deliveryLatencyBudget = try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment)
         let requestedDeliveryFailures = try PublishingDeliveryMonitor.fixtureResetsRequested(environment: environment)
         let enableDeliveryFailures = measured || requestedDeliveryFailures
@@ -481,6 +540,7 @@ import ScorebugMedia
             deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25, usesRequestTiming: true) : nil,
             deliveryExport: (minimumStall || measured) ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             enableDeliveryFailures: enableDeliveryFailures, enableMeasuredSourceEvaluation: measured,
+            liveExport: liveCheckpoint ? { await Self.persistLiveCheckpoint($0) } : nil,
             export: { data in
                 await Task.detached {
                     let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

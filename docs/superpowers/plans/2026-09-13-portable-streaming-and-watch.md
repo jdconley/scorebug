@@ -2442,3 +2442,31 @@ tests pass; the new policy suite contains 74 cases. The saved native run also
 passes a read-only timing-bound check for 1,039 applicable reports. All 269,319
 previously frozen evidence files remain unchanged after the resumed check.
 Full repeated native A/V qualification and production upgrades remain pending.
+
+
+### 2026-09-23: live checkpoints and supplied match footage
+
+The repeated simulator route now has bounded asynchronous live quality
+checkpoints and a reader that retains original event indices, requires actual
+trial/receipt ownership and waits for a whole post-confirmation source window.
+Stop drains the terminal checkpoint. Connecting this boundary to both controlled
+pauses and the complete native harness remains next; production upgrades stay
+disabled.
+
+Both supplied recordings are identified and fingerprinted without modifying the
+originals. Twelve-second 1080p and 4K excerpts pass all four local proxy processing
+checks (CPU and VideoToolbox, 360 frames each). The 4K input is HLG HDR and is
+explicitly tone-mapped for the SDR test stream. A first SRT→proxy→RTMP content
+replay failed on five undelivered final frames; a separate drain diagnostic also
+failed and is preserved. Neither is counted as end-to-end qualification. See
+[the footage assessment](../../representative-match-testing.md) for commands,
+measurements, limitations and the next network checks.
+
+Verified checkpoint: 3,043 tool tests and 446 FilmModel tests passed (including
+28 driver tests); all 27 checkpoint-reader tests passed. The arm64 iOS 26.2
+simulator build and unsigned iPhone/embedded-Watch Release build passed.
+Independent specification and quality reviews approved the frozen runtime/test
+sources. All 269,407 earlier evidence files and both supplied original videos
+were verified unchanged. Evidence is under `artifacts/qa/repeated-live-checkpoint-*`.
+This is a harness foundation checkpoint; full repeated native A/V qualification
+and the real-match network test remain open.

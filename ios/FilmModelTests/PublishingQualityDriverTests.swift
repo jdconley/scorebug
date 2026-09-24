@@ -5,6 +5,196 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testRepeatedLiveCheckpointPreservesOriginalPrefixSourceAndIdentity() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        var live: [Data] = [], final: Data?
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true,
+            liveExport: { live.append($0) }, export: { final = $0 })
+        driver.candidateInputProvider = { _ in f.admission }
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        await driver.stop()
+        let quality = try checkpointObject(XCTUnwrap(final)), original = try XCTUnwrap(quality["events"] as? [[String: Any]])
+        XCTAssertFalse(live.isEmpty)
+        var previousCount = 0
+        for data in live {
+            let checkpoint = try checkpointObject(data), prefix = try XCTUnwrap(checkpoint["quality"] as? [String: Any])
+            let rows = try XCTUnwrap(prefix["events"] as? [[String: Any]])
+            XCTAssertEqual(checkpoint["formatVersion"] as? Int, 1)
+            XCTAssertEqual(checkpoint["mode"] as? String, "repeated")
+            XCTAssertEqual(checkpoint["publishingAttemptID"] as? String, f.attempt.uuidString.lowercased())
+            XCTAssertEqual(checkpoint["eventCount"] as? Int, rows.count)
+            XCTAssertGreaterThanOrEqual(rows.count, previousCount)
+            XCTAssertEqual(try json(rows), try json(Array(original.prefix(rows.count))))
+            var completed = prefix; completed["events"] = original
+            XCTAssertEqual(try json(completed), try json(quality))
+            previousCount = rows.count
+        }
+        let terminal = try checkpointObject(XCTUnwrap(live.last))
+        XCTAssertEqual(terminal["closed"] as? Bool, true)
+        XCTAssertEqual(terminal["eventCount"] as? Int, original.count)
+        XCTAssertEqual(original.last?["kind"] as? String, "stopped")
+        let source = try XCTUnwrap(original.first { $0["kind"] as? String == "evaluated" }?["source"] as? [String: Any])
+        XCTAssertEqual(source["sequence"] as? String, String(try XCTUnwrap(f.source).sequence))
+        XCTAssertEqual(source["attemptID"] as? String, f.attempt.uuidString)
+        let appliedIndex = try XCTUnwrap(original.firstIndex { $0["kind"] as? String == "applied" })
+        let candidateIndex = try XCTUnwrap(original.firstIndex { $0["kind"] as? String == "candidate" })
+        XCTAssertLessThan(appliedIndex, candidateIndex)
+        let candidate = try XCTUnwrap(original[candidateIndex]["candidate"] as? [String: Any])
+        XCTAssertEqual(candidate["id"] as? String, f.admission.value.id.uuidString)
+        XCTAssertEqual(original[appliedIndex]["revision"] as? String, "1")
+    }
+
+    func testRepeatedLiveDrainDoesNotDelayAdmissionAndStopJoinsTerminalAfterBlockedWriter() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true), gate = LiveCheckpointGate()
+        var writes: [Data] = [], final: Data?, tickFinished = false, stopped = false
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, liveExport: { data in
+                if writes.isEmpty { await gate.wait() }
+                writes.append(data)
+            }, export: { final = $0 })
+        driver.candidateInputProvider = { _ in f.admission }
+        let work = driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let observe = Task { await work?.value; tickFinished = true }
+        await checkpointWait { gate.started && tickFinished }
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"], "Live I/O must not run inside the short admission lease")
+        driver.cancel()
+        let stop = Task { await driver.stop(); stopped = true }
+        await checkpointWait { f.native.stops == 1 }
+        XCTAssertFalse(stopped, "stop must join the blocked live writer")
+        XCTAssertNil(final)
+        gate.release()
+        await observe.value; await stop.value
+        XCTAssertTrue(stopped)
+        XCTAssertGreaterThanOrEqual(writes.count, 2)
+        XCTAssertLessThanOrEqual(writes.count, 3, "Pending applied/candidate prefixes must coalesce while the first writer waits")
+        // If stop has already enqueued its terminal prefix only two writes are
+        // needed; if the writer wins that actor turn, the pending active prefix
+        // may finish first. Either order must end with exactly one closed write.
+        XCTAssertEqual(try writes.filter { try checkpointObject($0)["closed"] as? Bool == true }.count, 1)
+        let first = try checkpointObject(XCTUnwrap(writes.first)), terminal = try checkpointObject(XCTUnwrap(writes.last))
+        XCTAssertEqual(first["closed"] as? Bool, false)
+        XCTAssertEqual(terminal["closed"] as? Bool, true)
+        XCTAssertLessThan(try XCTUnwrap(first["eventCount"] as? Int), try XCTUnwrap(terminal["eventCount"] as? Int))
+        XCTAssertEqual(try json(XCTUnwrap(terminal["quality"])), try json(checkpointObject(XCTUnwrap(final))))
+        let writesAtStop = writes.count
+        XCTAssertNil(driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        await driver.stop()
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(writes.count, writesAtStop, "No active checkpoint may be written after the joined terminal checkpoint")
+    }
+
+    func testRepeatedLiveOverflowKeepsBoundedOriginalPrefixAndClosesWithoutTruncation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let expired = try XCTUnwrap(decision.recommendation)
+        f.native.setNow(expired.validUntil + 0.1)
+        var live: Data?, final: Data?, largestCount = 0
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now }, liveExport: { data in
+                live = data
+                if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let count = object["eventCount"] as? Int {
+                    largestCount = max(largestCount, count)
+                }
+            }, export: { final = $0 })
+        for _ in 0..<520 { try await driver.apply(expired) }
+        await driver.stop()
+        let terminal = try checkpointObject(XCTUnwrap(live)), quality = try checkpointObject(XCTUnwrap(final))
+        XCTAssertEqual(largestCount, 512)
+        XCTAssertEqual(terminal["eventCount"] as? Int, 512)
+        XCTAssertEqual(terminal["closed"] as? Bool, true)
+        XCTAssertEqual(quality["overflow"] as? Bool, true)
+        XCTAssertEqual((quality["events"] as? [[String: Any]])?.count, 512)
+        XCTAssertEqual(try json(XCTUnwrap(terminal["quality"])), try json(quality))
+    }
+
+    func testLiveCheckpointFixtureSelectionRequiresValidatedRepeatedMeasuredRoute() throws {
+        let valid = [
+            "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+            "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "repeated",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_MOTION_FIXTURE": "blocks16",
+            "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+        ]
+        XCTAssertTrue(try PublishingQualityDriver.repeatedLiveExportRequested(environment: valid))
+        XCTAssertFalse(try PublishingQualityDriver.repeatedLiveExportRequested(environment: [:]))
+        for mode in ["staged", "renew", "expire", ""] {
+            var legacy = valid; legacy["SCOREBUG_TEST_BANDWIDTH_PROBE"] = mode
+            XCTAssertFalse(try PublishingQualityDriver.repeatedLiveExportRequested(environment: legacy))
+        }
+        for key in ["SCOREBUG_TEST_MEASURED_TRIAL", "SCOREBUG_TEST_CANDIDATE_HEADROOM", "SCOREBUG_TEST_VIDEO_OBSERVATIONS"] {
+            var malformed = valid; malformed.removeValue(forKey: key)
+            XCTAssertThrowsError(try PublishingQualityDriver.repeatedLiveExportRequested(environment: malformed))
+        }
+    }
+
+    func testFailedLivePrefixRemainsNonterminalUntilJoinedStoppedSnapshot() async throws {
+        let attempt = UUID()
+        let owner = try PublishingQualitySession(operations: .init(setBitRate: { _, _ in
+            throw NSError(domain: "LiveCheckpointFixture", code: 1)
+        }, stop: {}), profiles: [.init(id: "hd", width: 1920, height: 1080,
+            minimumBitrate: 1_000_000, maximumBitrate: 12_000_000)],
+            attemptID: attempt, initial: .init(profileID: "hd", videoBitrate: 6_000_000), uptime: { 100 })
+        var live: [Data] = [], final: Data?
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { 100 }, liveExport: { live.append($0) }, export: { final = $0 })
+        let diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: nil, receipt: nil, ingress: nil,
+            transport: PublishingTransportStatisticsTracker().snapshot, thermal: PublishingThermalTracker().snapshot)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
+        await checkpointWait { !live.isEmpty }
+        XCTAssertTrue(driver.isClosed)
+        let failed = try checkpointObject(XCTUnwrap(live.last))
+        let failedQuality = try XCTUnwrap(failed["quality"] as? [String: Any])
+        let failedRows = try XCTUnwrap(failedQuality["events"] as? [[String: Any]])
+        XCTAssertEqual(failed["closed"] as? Bool, false, "Session closure does not finalize the original audit prefix")
+        XCTAssertEqual(failed["publishingAttemptID"] as? String, attempt.uuidString.lowercased())
+        XCTAssertEqual(failedRows.last?["kind"] as? String, "failed")
+        XCTAssertEqual(failedRows.last?["closed"] as? Bool, true)
+        XCTAssertNil(final)
+        await driver.stop()
+        let terminal = try checkpointObject(XCTUnwrap(live.last)), quality = try checkpointObject(XCTUnwrap(final))
+        let rows = try XCTUnwrap(quality["events"] as? [[String: Any]])
+        XCTAssertEqual(terminal["closed"] as? Bool, true)
+        XCTAssertEqual(rows.map { $0["kind"] as? String }, ["failed", "stopped"])
+        XCTAssertEqual(try json(failedRows), try json(Array(rows.prefix(failedRows.count))))
+        XCTAssertEqual(try json(XCTUnwrap(terminal["quality"])), try json(quality))
+        XCTAssertEqual(terminal["eventCount"] as? Int, rows.count)
+        let count = live.count
+        await driver.stop()
+        XCTAssertEqual(live.count, count)
+    }
+
+    func testDefaultDriverRetainsLegacyFinalQualityEnvelope() async throws {
+        let f = try await CandidateQualityFixture.make()
+        var exported: [Data] = []
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil,
+            uptime: { f.native.now }, export: { exported.append($0) })
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
+        XCTAssertTrue(exported.isEmpty)
+        await driver.stop()
+        XCTAssertEqual(exported.count, 1)
+        let quality = try checkpointObject(XCTUnwrap(exported.first))
+        XCTAssertEqual(quality["formatVersion"] as? Int, 4)
+        XCTAssertEqual(Set(quality.keys), Set(["formatVersion", "overflow", "deadlineFailuresEnabled", "decoderStallEnabled", "measuredSourceEvaluationEnabled", "events"]))
+        XCTAssertEqual(quality["overflow"] as? Bool, false)
+    }
+
+    private func checkpointObject(_ data: Data) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+    private func json(_ object: Any) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+    private func checkpointWait(_ condition: () -> Bool) async {
+        let end = ContinuousClock.now + .seconds(2)
+        while !condition(), ContinuousClock.now < end { await Task.yield() }
+        XCTAssertTrue(condition())
+    }
+
     func testMeasurementContextForwardsCurrentOwnerWithoutApplyingQuality() async throws {
         let f = try await CandidateQualityFixture.make()
         let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil, transportLimits: nil)
@@ -463,5 +653,21 @@ private final class DriverNative: @unchecked Sendable {
     func release() {
         let c = lock.withLock { released = true; let c = continuation; continuation = nil; return c }
         c?.resume()
+    }
+}
+
+@MainActor private final class LiveCheckpointGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var started = false
+    func wait() async {
+        started = true
+        await withCheckedContinuation { value in
+            if released { value.resume() } else { continuation = value }
+        }
+    }
+    func release() {
+        released = true
+        let value = continuation; continuation = nil; value?.resume()
     }
 }

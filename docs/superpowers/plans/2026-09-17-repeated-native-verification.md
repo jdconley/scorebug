@@ -458,3 +458,40 @@ unchanged. Terminal evidence must reconcile each live checkpoint with the final
 quality history; live checkpoints alone grant no qualification. Connect the
 raw repeated composition and retain every existing archive, live A/V, scoring,
 ownership and teardown gate before attempting the full simulator run.
+
+
+## Task 6 checkpoint: live history before fault-runner wiring
+
+The simulator driver now emits an exact original v4 event prefix inside a v1
+repeated checkpoint with attempt identity and original event count. One in-flight
+write and the latest pending prefix bound the queue; coalescing never removes
+interior events. Stop joins the terminal checkpoint before exporting final quality.
+The envelope's closed flag means the joined stop boundary: a failed session may
+first appear in a nonterminal prefix and is an immediate harness abort.
+The default hook is nil, and only the validated DEBUG simulator repeated route
+installs the atomic file writer. Filesystem I/O is detached. JSON serialization
+still uses the bounded MainActor drain; its real simulator timing cost remains
+part of the next run's assessment.
+
+The Node checkpoint tracker preserves prefix identity across polls, validates
+native receipt/application ownership and the original applied→candidate→confirmed
+ordering, then claims each campaign once only after a whole healthy source
+window starts after confirmation. Its terminal reconciliation requires both claims
+and exact final history. These are fault-scheduling gates, not independent media
+qualification. Missing receipts and a reset relabelled as a trial cannot schedule
+faults. The actual two-pause runner and app-container polling are still to be wired.
+
+The prior iOS 17.5 simulator destination is no longer installed in the current
+environment. The next build check uses an available arm64 iOS 26.2 simulator;
+this does not replace the earlier compatibility evidence or establish a new
+full native run. Real volleyball content testing is recorded separately in
+[representative match testing](../../representative-match-testing.md).
+
+Verified checkpoint: 3,043 tool tests and 446 FilmModel tests passed (including
+28 driver tests); all 27 checkpoint-reader tests passed. The arm64 iOS 26.2
+simulator build and unsigned iPhone/embedded-Watch Release build passed.
+Independent specification and quality reviews approved the frozen runtime/test
+sources. All 269,407 earlier evidence files and both supplied original videos
+were verified unchanged. Evidence is under `artifacts/qa/repeated-live-checkpoint-*`.
+This is a harness foundation checkpoint; full repeated native A/V qualification
+and the real-match network test remain open.
