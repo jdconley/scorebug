@@ -454,7 +454,8 @@ public actor SRTStream {
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
-                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil) {
+                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
+                encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
         self.transportSendObserver = transportSendObserver
         self.allowsBandwidthProbes = allowsBandwidthProbes
         probeWakeRunner = { probe, accounting in
@@ -463,7 +464,8 @@ public actor SRTStream {
         self.pacesEncodedVideo = pacesEncodedVideo
         pacingSleep = { try await Task.sleep(for: .seconds($0)) }
         outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
-                                  encoderConfigurationObserver: encoderConfigurationObserver)
+                                  encoderConfigurationObserver: encoderConfigurationObserver,
+                                  encoderSubmissionObserver: encoderSubmissionObserver)
         self.connection = connection
         self.compressedVideoObserver = compressedVideoObserver
         self.compressedAudioObserver = compressedAudioObserver

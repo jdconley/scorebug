@@ -327,3 +327,12 @@ disconnected guards omit the inner pair. Outer return still closes the attempt.
 Observers must do bounded synchronous work without I/O, waits or tasks. Nil adds
 no timestamps or callback work. The current media queue limits, socket yielding,
 shutdown and failure decisions are unchanged by observation.
+
+
+An optional immutable `encoderSubmissionObserver` brackets synchronous raw-video
+`session.convert` calls with session ID, source PTS, monotonic start/return and
+status. Native compression uses `VTCompressionSessionEncodeFrame` inside that
+wrapper. Session creation and asynchronous output completion are outside this
+bracket. Both successful and throwing calls report; compressed conversion does
+not. Nil avoids clock reads and callback work. This diagnostic neither moves
+encoding off its actor nor changes media admission, errors or lifecycle.

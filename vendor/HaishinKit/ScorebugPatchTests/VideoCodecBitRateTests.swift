@@ -11,6 +11,8 @@ import VideoToolbox
         var writes = 0, conversions = 0, invalidations = 0
         var onWrite: (() -> Void)?
         var writeStatus: OSStatus = noErr
+        var convertStatus: OSStatus = noErr
+        var convertEnteredAt = 0.0, convertReturnedAt = 0.0
         func setOption(_ option: VTSessionOption) -> OSStatus {
             writes += 1; options[option.key.rawValue] = option.value; onWrite?()
             return writeStatus
@@ -21,10 +23,41 @@ import VideoToolbox
         }
         func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
             conversions += 1
+            convertEnteredAt = ProcessInfo.processInfo.systemUptime
+            defer { convertReturnedAt = ProcessInfo.processInfo.systemUptime }
+            if convertStatus != noErr { throw VTSessionError.failedToConvert(status: convertStatus) }
         }
         func completeFrames() -> OSStatus { noErr }
         func invalidate() { invalidations += 1 }
     }
+    @Test(arguments: [Int32(0), Int32(-1234)])
+    func submissionCallObserverBracketsReturnAndPreservesFailure(status: Int32) throws {
+        let session = Session(), observations = SubmissionCallRows()
+        session.convertStatus = status
+        let codec = VideoCodec(encoderSubmissionObserver: observations.record, sessionFactory: { _, _ in session })
+        _ = codec.outputStream; codec.startRunning()
+        let input = try frame(0)
+        codec.append(input)
+        let row = try #require(observations.rows.first)
+        #expect(observations.rows.count == 1)
+        #expect(row.sourcePTS == input.presentationTimeStamp)
+        #expect(row.startedAt.isFinite && row.startedAt <= session.convertEnteredAt)
+        #expect(row.returnedAt.isFinite && row.returnedAt >= session.convertReturnedAt)
+        #expect(row.status == status)
+        #expect(codec.failure.error == (status == 0 ? nil : .codecFailed(status: status)))
+        if status == 0 { #expect(row.encoderSessionID == codec.lastSubmission?.sessionID) }
+        codec.stopRunning()
+    }
+
+    @Test func compressedConversionDoesNotReportCompressionSubmission() throws {
+        let session = Session(), observations = SubmissionCallRows()
+        let codec = VideoCodec(encoderSubmissionObserver: observations.record, sessionFactory: { _, _ in session })
+        _ = codec.outputStream; codec.startRunning(); codec.append(try compressedFrame())
+        #expect(session.conversions == 1)
+        #expect(observations.rows.isEmpty)
+        codec.stopRunning()
+    }
+
     private func ready(_ session: Session) throws -> VideoCodec {
         let codec = VideoCodec(sessionFactory: { _, _ in session })
         _ = codec.outputStream
@@ -167,4 +200,11 @@ import VideoToolbox
             sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample) == noErr)
         return try #require(sample)
     }
+}
+
+private final class SubmissionCallRows: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [VideoEncoderSubmission] = []
+    var rows: [VideoEncoderSubmission] { lock.withLock { stored } }
+    func record(_ value: VideoEncoderSubmission) { lock.withLock { stored.append(value) } }
 }

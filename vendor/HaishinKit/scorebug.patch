@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,210 @@
+@@ -8,72 +8,233 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -138,6 +138,7 @@
 -            } else {
 -                settings.apply(self, rhs: oldValue)
 -            }
++    private let encoderSubmissionObserver: VideoEncoderSubmissionObserver?
 +    private let encoderCompletionObserver: VideoEncoderCompletionObserver?
 +    private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
 +    private var recordedBitRateChange: VideoBitRateChange?
@@ -148,7 +149,9 @@
 +    private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
 +    init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
 +         encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
++         encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil,
 +         sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)? = nil) {
++        self.encoderSubmissionObserver = encoderSubmissionObserver
 +        self.encoderCompletionObserver = encoderCompletionObserver
 +        self.encoderConfigurationObserver = encoderConfigurationObserver
 +        self.sessionFactory = sessionFactory
@@ -292,8 +295,9 @@
 
      func append(_ sampleBuffer: CMSampleBuffer) {
 -        guard isRunning else {
+-            return
 +        guard isRunning, failure.error == nil else {
-             return
++            return
 +        }
 +        guard replacement == nil else {
 +            failure.fail(.outputTerminated(boundary: "video replacement input")); return
@@ -326,7 +330,7 @@
                  if useFrame(sampleBuffer.presentationTimeStamp) {
 -                    try session.convert(sampleBuffer, continuation: continuation)
 +                    let observer = submissionObserver(sessionID: observed.revision)
-+                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: observer)
++                    try submit(sampleBuffer, to: session, sessionID: observed.revision, completion: observer)
 +                    if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
                      presentationTimeStamp = sampleBuffer.presentationTimeStamp
                  }
@@ -335,6 +339,26 @@
 +            failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
              logger.warn(error)
          }
++    }
++
++    private func submit(_ sample: CMSampleBuffer, to session: any VTSessionConvertible,
++                        sessionID: UUID, completion: VideoEncoderCompletionObserver?) throws {
++        guard let encoderSubmissionObserver else {
++            try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion)
++            return
++        }
++        let sourcePTS = sample.presentationTimeStamp
++        let startedAt = ProcessInfo.processInfo.systemUptime
++        var status: OSStatus = noErr
++        defer {
++            encoderSubmissionObserver(.init(sourcePTS: sourcePTS, encoderSessionID: sessionID,
++                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
++        }
++        do { try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion) }
++        catch {
++            status = (error as? VTSessionError)?.status ?? -1
++            throw error
++        }
 +    }
 +
 +    private func submissionObserver(sessionID: UUID) -> VideoEncoderCompletionObserver? {
@@ -363,7 +387,7 @@
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -82,7 +220,7 @@
+@@ -82,7 +243,7 @@
              var attributes: [NSString: AnyObject] = [:]
              if let inputFormat {
                  // Specify the pixel format of the uncompressed video.
@@ -372,7 +396,7 @@
              }
              return attributes.isEmpty ? nil : attributes
          case .decompression:
-@@ -97,19 +235,24 @@
+@@ -97,19 +258,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -400,7 +424,7 @@
      }
 
      @objc
-@@ -122,7 +265,7 @@
+@@ -122,7 +288,7 @@
          }
          switch type {
          case .ended:
@@ -409,7 +433,7 @@
          default:
              break
          }
-@@ -151,6 +294,7 @@
+@@ -151,6 +317,7 @@
          )
          #endif
          startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
@@ -417,7 +441,7 @@
          isRunning = true
      }
 
-@@ -159,11 +303,14 @@
+@@ -159,11 +326,14 @@
              return
          }
          isRunning = false
@@ -434,7 +458,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +319,18 @@
+@@ -172,3 +342,18 @@
          #endif
      }
  }
@@ -643,7 +667,7 @@
 
      /// Specifies the video buffering count.
      package var videoInputBufferCounts = -1
-@@ -58,26 +84,37 @@
+@@ -58,26 +84,39 @@
      package private(set) var videoInputFormat: CMFormatDescription?
 
      private var audioCodec = AudioCodec()
@@ -663,9 +687,11 @@
      /// Create a new instance.
 -    package init() {
 +    package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
-+                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
++                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
++                 encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
 +        videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver,
-+                                encoderConfigurationObserver: encoderConfigurationObserver)
++                                encoderConfigurationObserver: encoderConfigurationObserver,
++                                encoderSubmissionObserver: encoderSubmissionObserver)
      }
 +
 +    init(videoCodec: VideoCodec) { self.videoCodec = videoCodec }
@@ -684,7 +710,7 @@
          default:
              break
          }
-@@ -85,9 +122,20 @@
+@@ -85,9 +124,20 @@
 
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -705,7 +731,7 @@
 
      /// Appends a video buffer.
      package func append(video sampleBuffer: CMSampleBuffer) {
-@@ -101,12 +149,15 @@
+@@ -101,12 +151,15 @@
          guard !isRunning else {
              return
          }
@@ -1772,7 +1798,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +439,57 @@
+@@ -32,8 +439,59 @@
      }
 
      /// Creates a new stream object.
@@ -1792,7 +1818,8 @@
 +                compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
 +                muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
 +                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
-+                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil) {
++                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
++                encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
 +        self.transportSendObserver = transportSendObserver
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
 +        probeWakeRunner = { probe, accounting in
@@ -1801,7 +1828,8 @@
 +        self.pacesEncodedVideo = pacesEncodedVideo
 +        pacingSleep = { try await Task.sleep(for: .seconds($0)) }
 +        outgoing = OutgoingStream(encoderCompletionObserver: encoderCompletionObserver,
-+                                  encoderConfigurationObserver: encoderConfigurationObserver)
++                                  encoderConfigurationObserver: encoderConfigurationObserver,
++                                  encoderSubmissionObserver: encoderSubmissionObserver)
          self.connection = connection
 +        self.compressedVideoObserver = compressedVideoObserver
 +        self.compressedAudioObserver = compressedAudioObserver
@@ -1831,7 +1859,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +501,7 @@
+@@ -45,7 +503,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1840,7 +1868,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +513,37 @@
+@@ -57,8 +515,37 @@
              }
              return
          }
@@ -1879,7 +1907,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +553,88 @@
+@@ -68,26 +555,88 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1988,7 +2016,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +663,90 @@
+@@ -116,16 +665,90 @@
          readyState = .playing
      }
 
@@ -2084,7 +2112,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +767,33 @@
+@@ -146,23 +769,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2120,7 +2148,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +803,36 @@
+@@ -172,16 +805,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -3106,7 +3134,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,44 @@
 +import CoreMedia
 +import Foundation
 +
@@ -3137,6 +3165,20 @@
 +    public let acceptedAt: Double
 +    public let lastSubmittedSourcePTS: CMTime?
 +}
++
++
++/// Synchronous compression submission wrapper, separate from output completion.
++/// Scalar diagnostics only; a successful return does not prove encoded delivery.
++public struct VideoEncoderSubmission: Sendable {
++    public let sourcePTS: CMTime
++    public let encoderSessionID: UUID
++    public let startedAt: Double
++    public let returnedAt: Double
++    public let status: Int32
++}
++
++/// Must remain bounded and synchronous; never wait, perform I/O or create tasks.
++public typealias VideoEncoderSubmissionObserver = @Sendable (VideoEncoderSubmission) -> Void
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoEncoderReplacement.swift
 @@ -0,0 +1,31 @@

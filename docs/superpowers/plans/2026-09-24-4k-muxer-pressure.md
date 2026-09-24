@@ -64,3 +64,33 @@ The maintained patch verifies162 upstream hashes and exact round trip. The faile
 case above delivered83 proxy-decoded frames; all six owned ports were released.
 Next run the reviewed diagnostic on a new frozen source; final native model and
 simulator checks remain required before closing this diagnostic checkpoint.
+
+
+### Inner call localizes actor resumption
+
+The initial incremental-tool run has invalid phase labels (old two-case enum
+layout in a stale dependent object); it is preserved and excluded from timing
+inference. After a clean tool build, all10 tests pass. A fresh bounded batch on
+`4a89c98` stops at case3 after two passes; all1151 tracked hashes remain unchanged.
+`network-native-clean-inner-trace-3-4k-videotoolbox` has220 complete four-phase sends,
+no overflow/unmatched attempt. Maximum inner socket-call interval is1.363ms; maximum
+socket-return→stream-resumption delay is51.144ms. Pending reaches32.81 frames reach
+the proxy; the archive completes360frames/576000audio samples with0rejections.
+This isolates the long bracket to stream-actor resumption, not the socket call.
+
+Next bracket synchronous raw `session.convert` in VideoCodec with an immutable,
+optional submission observer. Include sourcePTS, sessionID, start/return monotonic
+clocks and native error status on success/throw; skip compressed passthrough and
+nil-observer clocks. This measures the synchronous conversion wrapper (containing
+VTCompressionSessionEncodeFrame), not asynchronous completion or delivery. Retain
+at most512 rows in the existing tool encoder evidence. Preserve the actual media,
+queue, lifecycle and failure behavior. Tests verify timing encloses the injected
+conversion, failure status remains latched and compressed inputs are excluded.
+Clean consumers after the public Swift API change, then use one bounded reproduction.
+
+
+Submission diagnostics passed failing-first tests, then all294 vendor tests and a
+clean build of all10 SDKProbe tests. Maintained vendor provenance verifies162
+upstream hashes and exact patch round trip. Independent review approves the change.
+Submission observations are emitted on return; absent rows do not prove a native
+call is still blocked. The measured wrapper includes synchronous callback work.

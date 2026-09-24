@@ -35,13 +35,15 @@ public actor SRTMediaPublisher: MediaPublisher {
                 didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false,
                 allowsBandwidthProbes: Bool = false, videoCost: PublishingVideoCostOwner? = nil,
                 healthObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)? = nil,
-                transportSendObserver: (@Sendable (SRTPublisher.TransportSendObservation) -> Void)? = nil) {
+                transportSendObserver: (@Sendable (SRTPublisher.TransportSendObservation) -> Void)? = nil,
+                encoderSubmissionObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)? = nil) {
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
             compressedVideoObserver: compressedVideoObserver, compressedAudioObserver: compressedAudioObserver,
             muxedPacketObserver: muxedPacketObserver,
             pacesEncodedVideo: pacesEncodedVideo,
-            allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost, healthObserver: healthObserver, transportSendObserver: transportSendObserver)
+            allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost, healthObserver: healthObserver, transportSendObserver: transportSendObserver,
+            encoderSubmissionObserver: encoderSubmissionObserver)
         self.videoCost = adapter.videoCost
         self.startupRead = { adapter.videoStartup }
         operations = Operations(configure: { try await adapter.configure() },

@@ -8,6 +8,7 @@ import UIKit
 final class VideoCodec {
     static let frameInterval: Double = 0.0
 
+    private let encoderSubmissionObserver: VideoEncoderSubmissionObserver?
     private let encoderCompletionObserver: VideoEncoderCompletionObserver?
     private let encoderConfigurationObserver: VideoEncoderConfigurationObserver?
     private var recordedBitRateChange: VideoBitRateChange?
@@ -18,7 +19,9 @@ final class VideoCodec {
     private let sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)?
     init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
          encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
+         encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil,
          sessionFactory: ((VTSessionMode, VideoCodec) throws -> any VTSessionConvertible)? = nil) {
+        self.encoderSubmissionObserver = encoderSubmissionObserver
         self.encoderCompletionObserver = encoderCompletionObserver
         self.encoderConfigurationObserver = encoderConfigurationObserver
         self.sessionFactory = sessionFactory
@@ -178,7 +181,7 @@ final class VideoCodec {
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
                     let observer = submissionObserver(sessionID: observed.revision)
-                    try session.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: observer)
+                    try submit(sampleBuffer, to: session, sessionID: observed.revision, completion: observer)
                     if sampleBuffer.imageBuffer != nil { lastSubmittedSourcePTS = sampleBuffer.presentationTimeStamp }
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 }
@@ -186,6 +189,26 @@ final class VideoCodec {
         } catch {
             failure.fail(.codecFailed(status: (error as? VTSessionError)?.status ?? -1))
             logger.warn(error)
+        }
+    }
+
+    private func submit(_ sample: CMSampleBuffer, to session: any VTSessionConvertible,
+                        sessionID: UUID, completion: VideoEncoderCompletionObserver?) throws {
+        guard let encoderSubmissionObserver else {
+            try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion)
+            return
+        }
+        let sourcePTS = sample.presentationTimeStamp
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var status: OSStatus = noErr
+        defer {
+            encoderSubmissionObserver(.init(sourcePTS: sourcePTS, encoderSessionID: sessionID,
+                startedAt: startedAt, returnedAt: ProcessInfo.processInfo.systemUptime, status: status))
+        }
+        do { try session.convert(sample, continuation: continuation, encoderCompletionObserver: completion) }
+        catch {
+            status = (error as? VTSessionError)?.status ?? -1
+            throw error
         }
     }
 

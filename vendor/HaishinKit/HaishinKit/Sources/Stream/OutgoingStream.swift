@@ -98,9 +98,11 @@ package final class OutgoingStream {
 
     /// Create a new instance.
     package init(encoderCompletionObserver: VideoEncoderCompletionObserver? = nil,
-                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil) {
+                 encoderConfigurationObserver: VideoEncoderConfigurationObserver? = nil,
+                 encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
         videoCodec = VideoCodec(encoderCompletionObserver: encoderCompletionObserver,
-                                encoderConfigurationObserver: encoderConfigurationObserver)
+                                encoderConfigurationObserver: encoderConfigurationObserver,
+                                encoderSubmissionObserver: encoderSubmissionObserver)
     }
 
     init(videoCodec: VideoCodec) { self.videoCodec = videoCodec }

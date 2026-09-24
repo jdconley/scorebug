@@ -28,3 +28,17 @@ public struct VideoBitRateChange: Sendable {
     public let acceptedAt: Double
     public let lastSubmittedSourcePTS: CMTime?
 }
+
+
+/// Synchronous compression submission wrapper, separate from output completion.
+/// Scalar diagnostics only; a successful return does not prove encoded delivery.
+public struct VideoEncoderSubmission: Sendable {
+    public let sourcePTS: CMTime
+    public let encoderSessionID: UUID
+    public let startedAt: Double
+    public let returnedAt: Double
+    public let status: Int32
+}
+
+/// Must remain bounded and synchronous; never wait, perform I/O or create tasks.
+public typealias VideoEncoderSubmissionObserver = @Sendable (VideoEncoderSubmission) -> Void

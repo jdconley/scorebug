@@ -36,11 +36,19 @@ private func receiptEvidence(_ receipt: SDKProbe.BitRateChangeReceipt) -> [Strin
      "lastSubmittedSourcePTS": receipt.lastSubmittedSourcePTS.map(timeEvidence) as Any? ?? NSNull()]
 }
 
-/// Only bounded immutable scalars cross the native callback; JSON is produced after joined stop.
+/// Only bounded immutable scalars cross the native callback; JSON is produced after tool stop.
 private final class EncoderEvidence: @unchecked Sendable {
     private let lock = NSLock()
     private var frames: [SDKProbe.EncoderFrame] = []
     private var overflow = false
+    private var submissions: [SDKProbe.EncoderSubmission] = []
+    private var submissionOverflow = false
+    func record(_ call: SDKProbe.EncoderSubmission) {
+        lock.withLock {
+            guard submissions.count < 512 else { submissionOverflow = true; return }
+            submissions.append(call)
+        }
+    }
     func record(_ frame: SDKProbe.EncoderFrame) {
         lock.withLock {
             guard frames.count < 512 else { overflow = true; return }
@@ -48,8 +56,11 @@ private final class EncoderEvidence: @unchecked Sendable {
         }
     }
     func snapshot() -> [String: Any] {
-        let (records, exceeded) = lock.withLock { (frames, overflow) }
-        return ["overflow": exceeded, "frames": records.map { frame in
+        let (records, exceeded, calls, callsExceeded) = lock.withLock { (frames, overflow, submissions, submissionOverflow) }
+        return ["submissionOverflow": callsExceeded, "submissionCalls": calls.map { call in
+            ["sourcePTS": timeEvidence(call.sourcePTS), "encoderSessionID": call.encoderSessionID.uuidString,
+             "startedAt": call.startedAt, "returnedAt": call.returnedAt, "status": call.status] as [String: Any]
+        }, "overflow": exceeded, "frames": records.map { frame in
             ["sourcePTS": timeEvidence(frame.sourcePTS), "outputPTS": timeEvidence(frame.outputPTS),
              "encoderSessionID": frame.encoderSessionID.uuidString,
              "configuration": frame.configuration.map(configurationEvidence) as Any? ?? NSNull(),
@@ -339,7 +350,8 @@ private final class FixtureCaptureSource: CaptureSource, @unchecked Sendable {
             let transportSends = TransportSendTrace()
             let publisher = SRTMediaPublisher(url: url, observations: observations, encoderConfigurationObserver: { encoderEvidence.record($0) },
                 videoProfile: configuration.liveProfile, healthObserver: { health.observe($0) },
-                transportSendObserver: { transportSends.record($0) })
+                transportSendObserver: { transportSends.record($0) },
+                encoderSubmissionObserver: { encoderEvidence.record($0) })
             var publishedVideo = 0
             var publishedAudio = 0
             var changed = false
