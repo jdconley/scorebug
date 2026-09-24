@@ -68,7 +68,7 @@ Decoder buffering and transport shutdown still need separate measurement. Do not
 failure as a passing end-to-end test.
 
 The next investigation used the validated native/SRT sender, as described below.
-The 4K network case remains open. Retain the instrumented simulator clips for independent
+At that point, 4K networking remained untested; the explicit native checks appear below. Retain the instrumented simulator clips for independent
 frame identity, deadline, archive and adaptive-policy proofs. Real match footage
 adds content realism; it does not replace those measurements.
 
@@ -120,8 +120,75 @@ the input itself. The aligned fixture corrects its input timeline; no output
 frames or failed results were discarded to obtain a pass.
 
 These establish short 1080p local native content checks with both proxy encoders.
-They do not qualify 4K networking, long-match thermals, physical-device camera capture, archive crash
+They do not qualify long-match thermals, physical-device camera capture, archive crash
 recovery or repeated adaptation. The previous file-sender and console-bridge
-failures are unresolved for those adapters. A 4K network test must explicitly
-configure a supported 4K sender/archive path; the existing native smoke harness
-uses a fixed 1080p archive and must not silently label that output 4K.
+failures are unresolved for those adapters. The explicit 4K experiment below
+extends resolution coverage without changing these historical results.
+
+## Explicit native 4K checks — September 24
+
+`DualOutputSmoke` now accepts an optional fifth argument, `2160p30`, after the
+existing timestamp offset. It selects actual 3840×2160/30 native H.264 publishing
+and an independent 4K H.264/AAC archive at 24 Mbps. Default invocations still use
+1080p; app startup remains 240p and the phone debug fixture rejects unqualified
+4K live/candidate selections. The qualification tool bounds raw queues at 48 MiB
+live / 96 MiB archive (8/24 items), excluding in-flight samples and codec internals.
+
+Example after building the tool, using an owned loopback SRT listener and an
+unused archive directory:
+
+```sh
+tools/media-sdk-probe/.build/debug/DualOutputSmoke \
+  "$MATCH_FIXTURE" "$ARCHIVE_DIRECTORY" \
+  'srt://127.0.0.1:19000?mode=caller&latency=120&conntimeo=1500&sndtimeo=200&peeridletimeo=2000' \
+  0 2160p30
+```
+
+The new private `4k-native-aligned-source.mov` has 360 uniform frames and zero
+track origins. It comes from the existing tone-mapped 12-second 4K excerpt at
+600 seconds into the original. Its 30 fps SDR / mono 48 kHz PCM normalization is
+explicit; this does not qualify native HDR/60 fps or original camera timing.
+Original Downloads files were not modified or uploaded.
+
+A complete CPU → VideoToolbox sequence passed on source `b998b5f`, with all 1,148
+tracked file hashes unchanged during the run. Each case captured, submitted,
+encoded, archived, decoded in the proxy and delivered all 360 frames. Both MP4s
+are 3840×2160 H.264/AAC and fully decode. There were no live drops/rejections or
+archive rejections. Stream gaps were 33–34 ms; track starts differed by 2 ms.
+Maximum source scheduling lag was 2.520 ms (CPU) and 2.351 ms (VideoToolbox).
+Evidence: `network-native-warm-4k-software/` and
+`network-native-warm-4k-videotoolbox/`, run by `network-native-4k-warm.mts`.
+
+The requested startup setting is 24 Mbps. A scheduled write at five seconds
+changes live encoding to 8 Mbps: all 210 later frames match the accepted receipt
+ID, encoder session and bitrate. The first 150 frames have no verified-write
+receipt by design. Neither requested nor accepted bitrate proves achieved bitrate,
+and this deterministic experiment does not exercise automatic adaptation.
+
+`native-4k-warm-audio-correlation.json` compares one-second windows at 1/5/9
+seconds. Both archives match with zero measured lag and correlation >0.9995;
+both streams have stable 67.25 ms lag and correlation >0.9856. Archive/audio length
+difference is 9.375 ms; live is 28 ms. Earlier successful CPU and diagnostic
+VideoToolbox runs have the same results. Visual previews of those runs show the
+expected clean court image and live-only score overlay.
+
+**Intermittent failure remains open.** The first VideoToolbox case following a
+CPU case (`network-native-aligned-v2-4k-videotoolbox/`, source `072685e`) stopped
+native publishing after roughly three seconds / 84 proxy-decoded frames. Its
+independent archive still retained all 360 frames with zero archive rejection.
+Final live counters show six dropped and 286 rejected samples. Existing
+boolean health could not identify the failed boundary. A new optional diagnostic
+records the first observed unhealthy connection/stream/muxer/transport state;
+it changes no settings, queue limits or retry behavior. A standalone diagnostic
+VideoToolbox run and the repeated CPU → VideoToolbox sequence both passed without
+reproducing it. This is not a resolved failure or general reliability qualification.
+
+An earlier CPU run failed only a runner assertion that incorrectly required a
+verified startup bitrate receipt; its media and raw evidence remain preserved.
+The corrected assertion follows the existing codec contract and checks every
+post-write frame against the exact receipt using source timestamps.
+
+These are short direct-loopback SRT → production proxy → RTMP checks. They bypass
+MediaMTX and do not qualify impaired networks, relay startup, full matches,
+phone hardware/thermals or production 4K adaptive eligibility. See the
+[native 4K plan](superpowers/plans/2026-09-24-native-4k-match.md).

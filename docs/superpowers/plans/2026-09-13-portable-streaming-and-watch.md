@@ -53,12 +53,24 @@ missing deadline frames from the intentional faults remain in the evidence. Ther
 are 2,056 cadence reports and no rejected quality events. The candidate-wait trace
 closed valid with 1,007 events / 350,355 bytes.
 
-**Next local work:** extend representative real-match coverage to an explicitly
-configured 4K native sender/archive and network path, and investigate the historical
-startup-audio and narrow-readiness failures before broader release qualification.
-The real-match 1080p CPU/VideoToolbox native streaming checks and 4K local transcodes
-already pass; they do not yet prove 4K networking or adaptive behavior on that footage.
-Keep the instrumented fixture for independent frame identity and recovery proof.
+**Representative 4K coverage added:** an explicitly configured native 3840×2160
+sender and independent archive now have passing 12-second real-match runs through
+both CPU and VideoToolbox proxies. A CPU → VideoToolbox sequence on `b998b5f` retained
+all 360 frames in both outputs, zero queue loss, 33–34 ms live frame gaps and stable
+67.25 ms measured live audio lag. All 1,148 tracked file hashes stayed unchanged.
+Both outputs fully decode; separate visual checks confirm clean archive and live
+score overlay. This uses 30 fps SDR normalization and a scheduled bitrate change,
+not automatic adaptation, HDR/60 fps, camera capture or relay qualification.
+
+**Next local work:** investigate the intermittent 4K VideoToolbox publishing failure
+before broader reliability claims. One earlier case stopped after 84 proxy-decoded
+frames while its independent archive retained all 360. New bounded health diagnostics
+are installed; two later VideoToolbox cases passed without reproducing the failure.
+The historical startup-audio and narrow-readiness failures also remain open.
+The [4K plan](2026-09-24-native-4k-match.md) and
+[representative-match evidence](../../representative-match-testing.md) retain the
+passing and failed cases. Keep the instrumented fixture for independent frame
+identity and recovery proof.
 
 Historical failures remain preserved: `3ynqcN` began its second probe before shared
 recovery; `q6s6KU` misattributed a saved probe snapshot and retained a separate policy
