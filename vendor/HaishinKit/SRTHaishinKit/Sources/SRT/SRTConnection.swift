@@ -195,11 +195,23 @@ public actor SRTConnection: NetworkConnection {
         await close()
     }
 
-    func send(_ data: Data, generation session: UInt64) async {
+    enum SocketSendPhase: Sendable { case started, returned }
+
+    /// Inner bracket includes socket-actor scheduling and datagram yields. Return
+    /// is emitted on success or throw before failure handling; it is not delivery.
+    func send(_ data: Data, generation session: UInt64,
+              socketSendObserver: (@Sendable (SocketSendPhase) -> Void)? = nil) async {
         guard generation == session else { return }
         do {
             guard connected, let socket else { return }
-            try await socket.send(data)
+            socketSendObserver?(.started)
+            do {
+                try await socket.send(data)
+            } catch {
+                socketSendObserver?(.returned)
+                throw error
+            }
+            socketSendObserver?(.returned)
         } catch {
             guard generation == session else { return }
             await failPublishing((error as? PublishingError) ?? .transportWriteFailed, generation: session)

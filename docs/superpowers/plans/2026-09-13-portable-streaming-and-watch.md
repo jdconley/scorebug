@@ -62,15 +62,19 @@ Both outputs fully decode; separate visual checks confirm clean archive and live
 score overlay. This uses 30 fps SDR normalization and a scheduled bitrate change,
 not automatic adaptation, HDR/60 fps, camera capture or relay qualification.
 
-**Next local work:** investigate the intermittent 4K VideoToolbox publishing failure
-before broader reliability claims. One earlier case stopped after 84 proxy-decoded
-frames while its independent archive retained all 360. New bounded health diagnostics
-are installed; two later VideoToolbox cases passed without reproducing the failure.
-The historical startup-audio and narrow-readiness failures also remain open.
-The [4K plan](2026-09-24-native-4k-match.md) and
-[representative-match evidence](../../representative-match-testing.md) retain the
-passing and failed cases. Keep the instrumented fixture for independent frame
-identity and recovery proof.
+**Next local work:** isolate the intermittent 4K VideoToolbox publishing failure.
+It now reproduces with `queueCapacityExceeded(boundary: "transport muxer")`.
+On frozen `9f108d4`, a bounded trace batch stopped at case3:83 proxy-decoded frames,
+while the independent archive retained all360 frames and576000 audio samples.
+Complete send-call brackets grow to36–50ms even for tiny audio payloads as pending
+muxed payloads reach32. The brackets include actor scheduling; they do not establish
+slow native socket calls. Five other trace cases passed, which does not fix this
+failure. The next diagnostic distinguishes the awaited socket call from resuming
+the stream actor. No buffer limits or pacing behavior have been changed.
+See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
+[4K plan](2026-09-24-native-4k-match.md) and
+[representative-match evidence](../../representative-match-testing.md).
+Keep the instrumented fixture for independent frame identity and recovery proof.
 
 Historical failures remain preserved: `3ynqcN` began its second probe before shared
 recovery; `q6s6KU` misattributed a saved probe snapshot and retained a separate policy

@@ -317,9 +317,13 @@ finite campaign limits are not the final long-session recovery policy. See the
 [native staged probe plan](../../docs/superpowers/plans/2026-09-17-native-staged-probes.md).
 
 `SRTStream` optionally accepts an immutable `transportSendObserver`. It records
-scalar FIFO send-start/return observations: publishing generation, sequence,
+scalar FIFO send observations with outer start/return and inner socket-call
+start/return phases: publishing generation, sequence,
 byte count, pending muxed-payload count and monotonic time. A returned call may
 have failed or closed the connection; it is not proof of acceptance or delivery.
+The inner bracket includes socket-actor scheduling and datagram yields; it does
+not measure only native calls. Its return precedes error handling; early stale or
+disconnected guards omit the inner pair. Outer return still closes the attempt.
 Observers must do bounded synchronous work without I/O, waits or tasks. Nil adds
 no timestamps or callback work. The current media queue limits, socket yielding,
 shutdown and failure decisions are unchanged by observation.

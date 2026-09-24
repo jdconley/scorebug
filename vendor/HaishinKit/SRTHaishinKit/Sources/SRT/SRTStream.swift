@@ -10,7 +10,10 @@ public actor SRTStream {
     /// Scalar diagnostic of one FIFO payload's send call. Returned does not mean
     /// socket acceptance or receiver delivery. Observers must not wait or do I/O.
     public struct TransportSendObservation: Sendable {
-        public enum Phase: String, Sendable { case started, returned }
+        /// Outer phases execute on this stream actor; inner phases bracket the
+        /// awaited socket.send on its connection actor, before error handling.
+        /// Early connection guards may omit both inner phases.
+        public enum Phase: String, Sendable { case started, socketStarted, socketReturned, returned }
         public let publishingGeneration: UInt64
         public let sequence: UInt64
         public let phase: Phase
@@ -599,7 +602,18 @@ public actor SRTStream {
                                 phase: .started, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
                                 observedAt: ProcessInfo.processInfo.systemUptime))
                         }
-                        await connection.send(data, generation: connectionSession)
+                        if let transportSendObserver {
+                            let sequence = sendSequence
+                            let byteCount = data.count
+                            await connection.send(data, generation: connectionSession, socketSendObserver: { phase in
+                                transportSendObserver(.init(publishingGeneration: session, sequence: sequence,
+                                    phase: phase == .started ? .socketStarted : .socketReturned,
+                                    byteCount: byteCount, pendingPacketCount: transportAccounting.pending,
+                                    observedAt: ProcessInfo.processInfo.systemUptime))
+                            })
+                        } else {
+                            await connection.send(data, generation: connectionSession)
+                        }
                         // Keep the captured generation even if send failed/closed it.
                         if let transportSendObserver {
                             transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,

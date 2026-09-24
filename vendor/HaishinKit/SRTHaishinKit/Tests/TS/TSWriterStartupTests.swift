@@ -140,11 +140,14 @@ import Testing
         #expect(Set(rows.map(\.publishingGeneration)) == Set(generations))
         for generation in generations {
             let own = rows.filter { $0.publishingGeneration == generation }
-            #expect(own.count >= 4 && own.count.isMultiple(of: 2))
-            for index in stride(from: 0, to: own.count - 1, by: 2) {
-                let start = own[index], end = own[index + 1]
+            #expect(own.count >= 8 && own.count.isMultiple(of: 4))
+            for index in stride(from: 0, to: own.count - 3, by: 4) {
+                let start = own[index], socketStart = own[index + 1], socketEnd = own[index + 2], end = own[index + 3]
                 #expect(start.phase == .started && end.phase == .returned)
-                #expect(start.sequence == UInt64(index / 2 + 1) && end.sequence == start.sequence)
+                #expect(start.sequence == UInt64(index / 4 + 1) && end.sequence == start.sequence)
+                #expect(socketStart.phase == .socketStarted && socketEnd.phase == .socketReturned)
+                #expect([socketStart, socketEnd].allSatisfy { $0.sequence == start.sequence && $0.byteCount == start.byteCount })
+                #expect(start.observedAt <= socketStart.observedAt && socketStart.observedAt <= socketEnd.observedAt && socketEnd.observedAt <= end.observedAt)
                 #expect(start.byteCount > 0 && end.byteCount == start.byteCount)
                 #expect(start.pendingPacketCount >= 0 && end.pendingPacketCount >= 0)
                 #expect(start.observedAt.isFinite && start.observedAt <= end.observedAt)
@@ -164,11 +167,25 @@ import Testing
         await stream.append(audio(), when: time(10))
         await stream.finish()
         let rows = observed.rows
-        #expect(rows.count == 2)
+        #expect(rows.count == 4)
+        #expect(rows.map(\.phase) == [.started, .socketStarted, .socketReturned, .returned])
         #expect(rows.first?.phase == .started && rows.last?.phase == .returned)
         #expect(rows.first?.sequence == rows.last?.sequence)
         #expect(await connection.publishingError == .transportWriteFailed)
         await connection.close()
+    }
+
+    @Test func socketSendObserverIsAbsentForDisconnectedAndStaleGuards() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        await connection.send(Data([1]), generation: 0, socketSendObserver: { _ in
+            Issue.record("Disconnected calls do not enter the socket")
+        })
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        let session = try #require(await connection.publishingSession())
+        await connection.close()
+        await connection.send(Data([1]), generation: session, socketSendObserver: { _ in
+            Issue.record("Stale calls do not enter the socket")
+        })
     }
 
     private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {

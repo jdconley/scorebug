@@ -766,7 +766,7 @@
      }
 
      /// Gets a SRTSocketOption.
-@@ -79,91 +99,132 @@
+@@ -79,91 +99,144 @@
          guard let url = SRTSocketURL(uri) else {
              throw Error.unsupportedUri(uri)
          }
@@ -924,12 +924,24 @@
 +        await close()
 +    }
 +
-+    func send(_ data: Data, generation session: UInt64) async {
++    enum SocketSendPhase: Sendable { case started, returned }
++
++    /// Inner bracket includes socket-actor scheduling and datagram yields. Return
++    /// is emitted on success or throw before failure handling; it is not delivery.
++    func send(_ data: Data, generation session: UInt64,
++              socketSendObserver: (@Sendable (SocketSendPhase) -> Void)? = nil) async {
 +        guard generation == session else { return }
          do {
 -            try await socket?.send(data)
 +            guard connected, let socket else { return }
-+            try await socket.send(data)
++            socketSendObserver?(.started)
++            do {
++                try await socket.send(data)
++            } catch {
++                socketSendObserver?(.returned)
++                throw error
++            }
++            socketSendObserver?(.returned)
          } catch {
 -            await close()
 +            guard generation == session else { return }
@@ -1336,14 +1348,17 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,411 @@
+@@ -7,7 +7,414 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
 +    /// Scalar diagnostic of one FIFO payload's send call. Returned does not mean
 +    /// socket acceptance or receiver delivery. Observers must not wait or do I/O.
 +    public struct TransportSendObservation: Sendable {
-+        public enum Phase: String, Sendable { case started, returned }
++        /// Outer phases execute on this stream actor; inner phases bracket the
++        /// awaited socket.send on its connection actor, before error handling.
++        /// Early connection guards may omit both inner phases.
++        public enum Phase: String, Sendable { case started, socketStarted, socketReturned, returned }
 +        public let publishingGeneration: UInt64
 +        public let sequence: UInt64
 +        public let phase: Phase
@@ -1748,7 +1763,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +426,7 @@
+@@ -22,7 +429,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1757,7 +1772,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +436,57 @@
+@@ -32,8 +439,57 @@
      }
 
      /// Creates a new stream object.
@@ -1816,7 +1831,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +498,7 @@
+@@ -45,7 +501,7 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -1825,7 +1840,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +510,37 @@
+@@ -57,8 +513,37 @@
              }
              return
          }
@@ -1864,7 +1879,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +550,77 @@
+@@ -68,26 +553,88 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -1937,7 +1952,18 @@
 +                                phase: .started, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
 +                                observedAt: ProcessInfo.processInfo.systemUptime))
 +                        }
-+                        await connection.send(data, generation: connectionSession)
++                        if let transportSendObserver {
++                            let sequence = sendSequence
++                            let byteCount = data.count
++                            await connection.send(data, generation: connectionSession, socketSendObserver: { phase in
++                                transportSendObserver(.init(publishingGeneration: session, sequence: sequence,
++                                    phase: phase == .started ? .socketStarted : .socketReturned,
++                                    byteCount: byteCount, pendingPacketCount: transportAccounting.pending,
++                                    observedAt: ProcessInfo.processInfo.systemUptime))
++                            })
++                        } else {
++                            await connection.send(data, generation: connectionSession)
++                        }
 +                        // Keep the captured generation even if send failed/closed it.
 +                        if let transportSendObserver {
 +                            transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,
@@ -1962,7 +1988,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +649,90 @@
+@@ -116,16 +663,90 @@
          readyState = .playing
      }
 
@@ -2058,7 +2084,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +753,33 @@
+@@ -146,23 +767,33 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2094,7 +2120,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +789,36 @@
+@@ -172,16 +803,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {

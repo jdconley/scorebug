@@ -29,6 +29,12 @@ final class TransportSendTraceTests: XCTestCase {
         XCTAssertEqual(value.rows.count, 1)
         XCTAssertEqual(value.openAttempts, ["7:1"])
     }
+    func testInnerSocketReturnDoesNotCloseTheOuterAttempt() {
+        let trace = TransportSendTrace(capacity: 4, now: { 10 })
+        trace.record(row("started", 1)); trace.record(row("socketStarted", 2))
+        trace.record(row("socketReturned", 3))
+        XCTAssertEqual(trace.seal().openAttempts, ["7:1"])
+    }
     private func row(_ phase: String, _ at: Double, generation: String = "7") -> TransportSendTrace.Row {
         .init(publishingGeneration: generation, sequence: "1", phase: phase,
               byteCount: 1316, pendingPacketCount: 0, observedAt: at)
