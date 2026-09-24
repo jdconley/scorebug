@@ -39,12 +39,19 @@ highest sustainable quality. See the [endurance contract and evidence](2026-09-2
 | Streaming proxy                         | Native Mac CPU/VideoToolbox and Linux arm64 CPU have local evidence; 1080p CPU now passes thirty minutes with real match footage.                   | Co-located 4K hardware-proxy reliability, installation and qualification on other hosts.                                       |
 | Progressive streaming                   | Repeated laboratory 240p/360p increases, controlled faults, minimum resets and recoveries pass.                                                     | Production automatic upgrades remain disabled; realistic network and device qualification stays open.                          |
 | Native Watch scoring                    | Direct scoring/relaunch UI passes across tested Watch sizes and OS generations; model tests cover companion routing and uncertain-command recovery. | Actual paired setup still fails in Simulator with ACX43/WC7018. Physical Wi-Fi, cellular and companion routes remain untested. |
+| OS compatibility                        | Historical tests cover iOS 17/18/26 and watchOS 10/11/26; lower deployment targets remain iOS 17 and watchOS 10.                                    | Current iOS 27/watchOS 27 qualification is pending. Preserve Series 7 coverage on its supported older OS.                      |
 | Physical devices and external streaming | Local foundations and test procedures exist.                                                                                                        | Phone/Watch acceptance, destination playback, home GPU and cloud hosts remain required.                                        |
 
-Next, prepare and qualify the thirty-minute 4K CPU case under the same declared
-contract. A separate Watch diagnostic can launch the existing installed apps
+The thirty-minute 4K source is prepared and independently verified: all 54,000
+frame identities, 86,400,000 audio samples and continuous timestamps pass; all 1,190
+frozen preparation hashes match. Next, qualify the 4K CPU streaming/archive case
+under the same declared contract. A separate Watch diagnostic can launch the existing installed apps
 directly, without XCTest reinstallation, to isolate the companion-registration
-failure; it is not a replacement for the complete paired workflow. Continue the
+failure; it is not a replacement for the complete paired workflow. After the media
+jobs, install the missing stable 27 simulator runtimes and qualify native iPhone
+and Ultra 2 workflows with the installed Xcode 27, using a scoped toolchain selection.
+Keep the existing Series 7/older-OS evidence and do not infer a WatchConnectivity
+fix from the newer OS. Continue the
 remaining adaptive/network gates before enabling production upgrades, then physical
 phone/Watch and additional-host acceptance. Original private match videos stay local
 and untouched.
@@ -256,8 +263,14 @@ required; clean local recording is mandatory; favor sustainable image quality ab
 24 fps motion floor; include watch scoring; validate locally before phone and new hosts.
 
 Confirmed hardware policy: iPhone 14 and newer, plus older capable phones when practical;
-current stable OS plus two previous release generations (currently iOS 17/18/26 and
-watchOS 10/11/26). Required watch tests: Ultra 2 and Series 7 41 mm, with layouts that
+current stable OS plus two previous release generations (as of September 24, 2026,
+iOS 18/26/27 and watchOS 11/26/27). Existing iOS 17/watchOS 10 deployment targets
+remain additional older-device compatibility; the new matrix does not raise them.
+Apple lists iOS 27/watchOS 27 as released September 14 in its
+[release history](https://support.apple.com/en-us/100100). Its
+[watchOS 27 compatibility list](https://www.apple.com/os/watchos/) includes Ultra 2
+and excludes Series 7, so retain Series 7 testing on its supported older OS.
+Required watch tests: Ultra 2 and Series 7 41 mm, with layouts that
 also accommodate other supported watches. Support phone-routed, Wi-Fi, and cellular
 networking, including route changes. Reliability takes priority.
 

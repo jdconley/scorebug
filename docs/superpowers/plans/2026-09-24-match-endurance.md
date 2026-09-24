@@ -98,4 +98,20 @@ maximum sustainable quality or whole-video perceptual qualification.
 The high-ID/long-timeline verifier has 20 passing tests and the complete tooling
 suite has 3,483 passes. Detailed media, audio, hash/cleanup and visual results are
 retained in `result.json`, `post-run-assessment.json`, `preview-extraction.json`,
-`visual-assessment.json` and the final `acceptance.json`. The 4K case remains pending.
+`visual-assessment.json` and the final `acceptance.json`. The 4K streaming/archive case remains pending.
+
+## 4K source preparation
+
+Frozen `ab1534b`, the resumed preparation exits zero and is joined. All **1,190**
+repository/input/script/executable hashes remain unchanged, including both original
+private videos. The normalized source independently decodes all **54,000 IDs
+0–53,999** and contains **86,400,000 audio samples**. Every video/audio timestamp
+passes; maximum video gap is 33.334 ms and maximum audio timeline error is 0.334 µs.
+Evidence is in `endurance/4k-preparation-assessment.json` and its referenced source
+validation files. This qualifies the derived input, not the streaming/archive case.
+
+The earlier preparation was interrupted by a turn abort before its MOV finalized.
+Its partial movie and logs remain in `endurance/interrupted-4k-preparation/`, with
+the failed probe and missing process/exit-handle assessment. It is incomplete
+preparation, not a native streaming failure. The successful resumed preparation
+uses separate execution evidence and does not relabel the interrupted attempt.
