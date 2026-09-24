@@ -1,9 +1,8 @@
 # Independently prove source-expiry invalidation during minimum recovery
 
-Status: implementation and independent review complete; 3,415 JavaScript tests
-pass, including raw preserved-run reconstruction. A fresh frozen full native
-fixture is still required. User authorization for autonomous local work remains
-in force; continue in the existing isolated checkout.
+Status: complete. Independent review, all 3,415 JavaScript tests, raw preserved-run
+reconstruction and a fresh frozen full native fixture pass. User authorization for
+autonomous local work remains in force; continue in the existing isolated checkout.
 
 ## Reproduced boundary
 
@@ -62,9 +61,9 @@ health continuity. Preserve all existing cadence invalidation checks.
 - [x] Reconstruct the preserved run as a separately labelled diagnostic using the
       new verifier; never overwrite its original failed result or claim that a
       changed verifier was the frozen original harness.
-- [ ] Commit/freeze source and run a fresh strict complete native fixture, joining
+- [x] Commit/freeze source and run a fresh strict complete native fixture, joining
       all owned processes and auditing unchanged source plus cleanup.
-- [ ] Update the main plan honestly. A fresh complete pass remains laboratory
+- [x] Update the main plan honestly. A fresh complete pass remains laboratory
       qualification only; production upgrades, physical devices and remote hosts
       retain their existing gates.
 
@@ -92,7 +91,35 @@ recovery covers 14.999996 seconds after fresh availability. Its archived synthet
 raw fixture is `scripts/test/fixtures/repeated-source-expiry-aPqApF.json.gz`, with
 all 16 raw-export provenance hashes checked independently. This contains no real
 match footage. Original harness exit 1 remains unchanged; production upgrades
-remain unauthorized. Full A/V, owned backend and cleanup gates require a fresh run.
+remain unauthorized. At that reconstruction checkpoint, full A/V, owned backend
+and cleanup gates still required the fresh run documented below.
+
+## Fresh frozen complete qualification
+
+`23f0479` / `native-app-Gx1pcB` passes the complete strict repeated route, harness
+exit 0. Native scoring, clean archive/export, both measured admissions, all five
+240p/360p phases, two owned decoder faults, minimum resets and both whole recoveries
+qualify. UI takes 257.764 seconds. This run has no rejected quality events; the
+preserved raw source-expiry fixture provides the rejection-path regression.
+
+The archive has 6,546 contiguous frames (0–6545); live has 6,139 contiguous frames
+(192–6330). Both MP4s fully decode. Archive finishes with 13,092 written samples,
+zero queue drops/rejections. All 108 archive audio markers and 102 expected live
+markers match; maximum live offset is 65.25 ms, drift −0.103 ppm. All 276 deadline
+rows replay with zero unknown rows; 30 missing deadline observations from controlled
+faults remain in the evidence. Whole recoveries cover 10.001922 and 10.000339 seconds.
+
+All 1,162 tracked hashes remain unchanged with a clean working tree. Worker,
+encoder and recorder exit zero naturally; the owned simulator and ingest container
+are removed, with no known owned processes remaining. Candidate-wait evidence is
+closed/valid with 1,005 events and zero omission/overflow. Evidence:
+`native-app-Gx1pcB/source-expiry-assessment.json`,
+`repeated-measured-recovery-qualification.json`, `results.json`, and
+`artifacts/qa/source-expiry-source-verification.json`.
+
+Production upgrades, physical phone/watch, sustained representative 4K, impaired
+networks and remote hosts remain unqualified. Next:
+[observe actual native encoder selection](2026-09-24-native-hardware-selection.md).
 
 Related files: `scripts/repeated-recovery-invalidation.mjs`,
 `scripts/repeated-measured-policy.mjs`, `scripts/repeated-measured-native-recovery.mjs`,

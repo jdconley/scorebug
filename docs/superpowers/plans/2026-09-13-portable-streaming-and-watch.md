@@ -24,9 +24,19 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-**A complete repeated native recovery route passed on an earlier source; the latest
-regression is incomplete.** On frozen
-source `89926f4`, `native-app-cbBvJb` passed native iPhone scoring, independent clean
+**The latest complete repeated native recovery test passes.** Frozen `23f0479` /
+`native-app-Gx1pcB` passes native iPhone scoring, clean recording/export, both measured
+admissions, all five 240p/360p phases, two controlled decoder failures, minimum resets
+and whole recoveries. The harness exits zero; UI takes 257.764 seconds. All 1,162
+tracked hashes stay unchanged, and owned processes, simulator and ingest clean up.
+The archive has 6,546 contiguous frames; live has 6,139. Both MP4s fully decode;
+108 archive and 102 expected live audio markers match, with at most 65.25 ms live
+offset and negligible drift. Archive queue loss/rejection is zero. All 276 deadline
+rows replay; the 30 missing deadline observations from intentional faults remain
+visible. Independent review and 3,415 tooling tests pass. This remains laboratory
+qualification; production upgrades and physical/remote testing retain their gates.
+
+**Earlier baseline:** on frozen `89926f4`, `native-app-cbBvJb` passed native iPhone scoring, independent clean
 recording/export, both measured admissions, all five 240p/360p profile phases,
 two owned decoder faults, minimum resets and independently reconstructed recoveries.
 The full harness exited zero; native UI took 257.729 seconds. All 924 source hashes
@@ -122,11 +132,13 @@ tests pass. The narrow typed proof consumes the rejected source once, grants no
 policy sequence or health credit, and preserves independent source/cadence freshness
 limits. Readiness also invalidates by evaluation time. A separately labelled raw
 reconstruction of `aPqApF` passes with renewed whole recovery; the original full run
-remains failed. See the [source-expiry plan](2026-09-24-source-expiry-invalidation.md).
+remains failed. The subsequent fresh `23f0479` / `Gx1pcB` full run passes as described
+above. See the [source-expiry plan](2026-09-24-source-expiry-invalidation.md).
 
-**Next local work:** freeze this verifier and run a fresh strict complete native
-fixture. Separately measure actual selected native hardware acceleration before
-changing encoder preferences or attributing the remaining 4K throughput limit.
+**Next local work:** implement the reviewed [native encoder selection diagnostic](2026-09-24-native-hardware-selection.md),
+then measure actual selected acceleration before changing encoder preferences or
+attributing the remaining 4K throughput limit. Keep sustainable 4K unqualified until
+the representative campaign meets its frame/audio/archive gates.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and
