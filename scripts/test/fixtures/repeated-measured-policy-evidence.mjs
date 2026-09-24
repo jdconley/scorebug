@@ -10,7 +10,7 @@ const processingID = 'eeeeeeee-eeee-4eee-8eee-000000000001';
  * contracts. It retains the original five encoder phases and global revisions. */
 export function repeatedMeasuredPolicyFixture(
   base = repeatedMeasuredRecoveryFaultFixture(),
-  { recoveryDeliverySeconds = 10 } = {},
+  { recoveryDeliverySeconds = 10, captureBoundaryJitter = false } = {},
 ) {
   const f = base;
   const original = f.quality.events;
@@ -315,6 +315,7 @@ export function repeatedMeasuredPolicyFixture(
         // Builder reads the cadence owner from rows[0].
         f.cadenceReports.rows = [template];
         const { row, report } = repeatedFaultDeliveryRow(f, {
+          captureBoundaryJitter,
           revision,
           start: at,
           end: at + duration,

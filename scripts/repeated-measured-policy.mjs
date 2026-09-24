@@ -1,3 +1,4 @@
+import { qualifyRecoveryDeliveryBucket } from './recovery-delivery-bucket.mjs';
 import { qualifyRepeatedRecoveryInvalidations } from './repeated-recovery-invalidation.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
@@ -651,7 +652,7 @@ export function qualifyRepeatedMeasuredPolicy(input) {
         assert.equal(row.reason, null);
         for (const key of ['uncertainFrames', 'lateFrames', 'missingFrames'])
           assert.equal(row.result[key], 0);
-        assert(row.result.onTimeFrames / duration >= 30);
+        qualifyRecoveryDeliveryBucket(row.result, duration);
       }
       return { duration, start: rows[0].start, end, rowCount: rows.length };
     });

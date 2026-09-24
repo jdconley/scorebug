@@ -192,3 +192,35 @@ These are short direct-loopback SRT → production proxy → RTMP checks. They b
 MediaMTX and do not qualify impaired networks, relay startup, full matches,
 phone hardware/thermals or production 4K adaptive eligibility. See the
 [native 4K plan](superpowers/plans/2026-09-24-native-4k-match.md).
+
+
+## Transport isolation regression, 2026-09-24
+
+Four-phase socket/worker observations plus native submission timing establish that
+synchronous video conversion can monopolize the shared stream actor. One failed
+case has 49.301 ms of conversion inside a 50.357 ms transport resumption delay,
+while the socket interval is 0.014 ms. The reviewed transport fix in `582a339`
+moves the sole FIFO consumer to its own worker and preserves bounded queues,
+publication ownership, failure handling and probe revocation.
+
+The first new 4K case (`network-native-pump-1-4k-videotoolbox`) fails later at the
+64-item audio codec queue. The six-case campaign stops immediately; no remaining
+cases run. All 1,153 tracked source hashes are unchanged. Its 619 sends have complete
+four-phase brackets, maximum total send time 0.908333 ms, and at most two observed
+pending muxed payloads. There are 260 native submission/completion observations,
+253 proxy-decoded frames and a maximum synchronous conversion of 64.748792 ms.
+Conversion occupies about 98% of the final four seconds, leaving other stream-actor
+consumers at risk of starvation. Actual hardware encoder selection is unmeasured.
+
+The independent archive still preserves every one of its 360 frames and 576,000
+audio samples, in eight segments with zero archive rejection. Live drops 13 samples
+and rejects 69 after failure. Both owned ports are released. This is evidence of
+recording independence and improved transport scheduling, not a complete 4K pass.
+The next native design isolates one immutable video submission operation while
+keeping configuration writes, retirement and accepted-tail ownership explicit.
+
+The same source passes 297 vendor / 170 Streaming / 10 clean SDKProbe / 499 native
+model tests and simulator build. Its separate repeated adaptive simulator route
+`native-app-gN2v2o` fails before the second probe starts, despite a passing UI
+workflow and first minimum reset. That readiness regression is being investigated;
+the prior complete adaptive pass on `89926f4` does not qualify the newer source.

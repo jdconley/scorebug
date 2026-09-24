@@ -24,7 +24,8 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-**The complete repeated native recovery route now passes locally.** On frozen
+**A complete repeated native recovery route passed on an earlier source; the latest
+regression is incomplete.** On frozen
 source `89926f4`, `native-app-cbBvJb` passed native iPhone scoring, independent clean
 recording/export, both measured admissions, all five 240p/360p profile phases,
 two owned decoder faults, minimum resets and independently reconstructed recoveries.
@@ -62,16 +63,37 @@ Both outputs fully decode; separate visual checks confirm clean archive and live
 score overlay. This uses 30 fps SDR normalization and a scheduled bitrate change,
 not automatic adaptation, HDR/60 fps, camera capture or relay qualification.
 
-**Next local work:** isolate the intermittent 4K VideoToolbox publishing failure.
-It now reproduces with `queueCapacityExceeded(boundary: "transport muxer")`.
-On frozen `9f108d4`, a bounded trace batch stopped at case3:83 proxy-decoded frames,
-while the independent archive retained all360 frames and576000 audio samples.
-Complete send-call brackets grow to36–50ms even for tiny audio payloads as pending
-muxed payloads reach32. The brackets include actor scheduling; they do not establish
-slow native socket calls. Five other trace cases passed, which does not fix this
-failure. The next diagnostic distinguishes the awaited socket call from resuming
-the stream actor. No buffer limits or pacing behavior have been changed.
+**Transport starvation fixed; 4K audio starvation remains.** Diagnostics measured
+synchronous video conversion blocking the stream actor for about 49 ms while the
+socket call took 0.014 ms. The transport consumer now drains on its own serial
+worker, with publication ownership and cancellation fences. On frozen `582a339`,
+the real 4K failure moves to `queueCapacityExceeded(boundary: "audio codec")`:
+253 proxy frames, while the clean archive retains all 360 frames and 576,000 audio
+samples with zero rejection. All 619 transport sends have complete timing brackets;
+maximum send time is 0.909 ms and observed pending payloads never exceed two.
+Synchronous conversion occupies about 98% of the final four seconds. This fixes
+the measured transport bottleneck but does not establish reliable 4K publishing.
+
+The runtime change passes 297 vendor, 170 Streaming, 10 clean SDKProbe and 499
+native model tests, plus the simulator build. The repeated adaptive regression
+`native-app-gN2v2o` nevertheless **fails the full harness**: its UI workflow passes
+in 260.326 seconds, but only the first increase/fault/minimum reset occurs. The
+second bandwidth campaign reports `readinessUnavailable`, and the fault scheduler
+times out. Only three of the required five profile phases occur. All 1,153 frozen
+tracked file hashes remain unchanged. No second-cycle qualification or full media
+qualification is claimed for this failed run; the earlier `89926f4` pass is retained.
+
+**Next local work:** re-run the complete adaptive fixture after the reviewed
+[readiness correction](2026-09-24-shared-delivery-readiness.md). It permits one frame
+of short-bucket boundary tolerance for lossless 29/31 or 59/61 delivery counts while
+retaining stronger source health. All 502 native model and 3,353 JS tool tests plus
+the simulator build pass; this is not yet a new complete native qualification.
+Then isolate native video submission from the stream actor with one
+bounded in-flight operation and explicit configuration/lifecycle gates. Preserve
+queue bounds, recording independence and strict recovery thresholds. Re-run the
+real 4K and complete repeated routes after the corresponding deterministic fixes.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
+[transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and
 [representative-match evidence](../../representative-match-testing.md).
 Keep the instrumented fixture for independent frame identity and recovery proof.

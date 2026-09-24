@@ -92,6 +92,7 @@ export function qualifyRepeatedMeasuredNativeRecovery(input) {
       end: confirmation.probation.end,
     }),
     recovery: qualifyMeasuredDeliveryCoverage(input.deliveryAudit, {
+      recovery: true,
       revision: String(index * 2 + 2),
       start: policy.recoveries[index].sharedCoverage.start,
       end: policy.recoveries[index].sharedCoverage.end,

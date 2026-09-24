@@ -46,6 +46,7 @@ export function qualifyMeasuredNativeRecovery(input) {
     deliveryAudit: input.deliveryAudit,
   });
   const recoveryDelivery = qualifyMeasuredDeliveryCoverage(input.deliveryAudit, {
+    recovery: true,
     revision: '2',
     start: recovery.sharedCoverage.start,
     end: recovery.sharedCoverage.end,

@@ -38,6 +38,16 @@ final class PublishingCandidateRecoveryCoverage: @unchecked Sendable {
             sources.append(.init(start: start, end: end, sequence: sequence))
         }
     }
+    /// Capture timestamps may place a boundary frame in the adjacent host-clock
+    /// bucket. This prerequisite still needs independent fresh Core source health
+    /// (>=29.7fps), both contiguous lanes and a whole ten-second shared prefix.
+    static func acceptsDelivery(_ result: DeliveryDeadlineResult) -> Bool {
+        [1.0, 2.0].contains(result.duration)
+            && (1...240).contains(result.expectedFrames)
+            && result.onTimeFrames == result.expectedFrames
+            && result.uncertainFrames == 0 && result.lateFrames == 0 && result.missingFrames == 0
+            && Double(result.onTimeFrames) >= 30 * result.duration - 1
+    }
     func recordDelivery(start: Double, end: Double, result: DeliveryDeadlineResult) {
         lock.withLock {
             guard !invalid else { return }
@@ -48,8 +58,7 @@ final class PublishingCandidateRecoveryCoverage: @unchecked Sendable {
                     .allSatisfy({ (0...240).contains($0) }),
                   result.onTimeFrames + result.lateFrames + result.missingFrames + result.uncertainFrames == result.expectedFrames
             else { invalid = true; return }
-            guard result.uncertainFrames == 0, result.lateFrames == 0, result.missingFrames == 0,
-                  Double(result.onTimeFrames) / duration >= 30 else { clear(); return }
+            guard Self.acceptsDelivery(result) else { clear(); return }
             let lane = Int(duration)
             if var previous = lanes[lane] {
                 guard previous.end == start else { clear(); return }

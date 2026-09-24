@@ -673,3 +673,40 @@ test('owned-stall allowance cannot refresh the unchanged last-fresh arrival', ()
     /Inconsistent global decoder last-fresh time/,
   );
 });
+
+test('lossless capture-boundary jitter retains strong source and shared recovery proof', () => {
+  const f = repeatedMeasuredPolicyFixture(undefined, { captureBoundaryJitter: true });
+  const rows = f.deliveryAudit.rows.filter((r) => ['2', '4'].includes(r.appliedRevision));
+  for (const count of [29, 31, 59, 61]) assert(rows.some((r) => r.result.expectedFrames === count));
+  for (const r of rows) {
+    assert.equal(r.result.onTimeFrames, r.result.expectedFrames);
+    assert.equal(r.result.missingFrames + r.result.lateFrames + r.result.uncertainFrames, 0);
+  }
+  const q = qualifyRepeatedMeasuredPolicy(f);
+  assert.equal(q.repeatedPolicyQualified, true);
+  assert.equal(q.productionUpgradeAuthorized, false);
+  for (const r of q.recoveries) assert(r.sharedCoverage.coverageSeconds >= 10);
+});
+
+import { qualifyMeasuredDeliveryCoverage } from '../measured-native-trial.mjs';
+test('complete recovery coverage accepts boundary jitter only with explicit recovery mode', () => {
+  const f = repeatedMeasuredPolicyFixture(undefined, { captureBoundaryJitter: true });
+  const q = qualifyRepeatedMeasuredPolicy(f);
+  for (const [index, recovery] of q.recoveries.entries()) {
+    const window = {
+      revision: String(index * 2 + 2),
+      start: recovery.sharedCoverage.start,
+      end: recovery.sharedCoverage.end,
+    };
+    assert.throws(
+      () => qualifyMeasuredDeliveryCoverage(f.deliveryAudit, window),
+      /Unhealthy delivery/,
+    );
+    const coverage = qualifyMeasuredDeliveryCoverage(f.deliveryAudit, {
+      ...window,
+      recovery: true,
+    });
+    assert(coverage.coverageSeconds >= 10);
+    assert.equal(coverage.lanes.length, 2);
+  }
+});

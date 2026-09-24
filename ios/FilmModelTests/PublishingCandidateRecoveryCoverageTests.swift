@@ -40,11 +40,35 @@ final class PublishingCandidateRecoveryCoverageTests: XCTestCase {
             case 0: coverage.recordDelivery(start: 11, end: 12, result: result(1, uncertain: 1))
             case 1: coverage.recordDelivery(start: 11, end: 12, result: result(1, missing: 1))
             case 2: coverage.recordDelivery(start: 11, end: 12, result: result(1, late: 1))
-            case 3: coverage.recordDelivery(start: 11, end: 12, result: result(1, onTime: 29))
+            case 3: coverage.recordDelivery(start: 11, end: 12, result: result(1, onTime: 28))
             case 4: coverage.recordDelivery(start: 12, end: 13, result: result(1))
             default: coverage.recordSource(start: 12, end: 17, sequence: 3)
             }
             XCTAssertFalse(coverage.permits(healthySince: 1, healthyThrough: 17, healthSequence: 3), "fault \(fault)")
+        }
+    }
+    func testLosslessBoundaryCountsKeepBothLanesAndWholeSourcePrefix() {
+        let coverage = PublishingCandidateRecoveryCoverage()
+        coverage.resume(at: 0)
+        coverage.recordSource(start: 1, end: 6, sequence: 1)
+        coverage.recordSource(start: 6, end: 11, sequence: 2)
+        for index in 0..<10 {
+            coverage.recordDelivery(start: Double(index + 1), end: Double(index + 2),
+                result: result(1, onTime: index.isMultiple(of: 2) ? 31 : 29))
+        }
+        for index in 0..<5 {
+            coverage.recordDelivery(start: Double(index * 2 + 1), end: Double(index * 2 + 3),
+                result: result(2, onTime: index.isMultiple(of: 2) ? 61 : 59))
+        }
+        XCTAssertTrue(coverage.permits(healthySince: 1, healthyThrough: 11, healthSequence: 2))
+        XCTAssertFalse(coverage.permits(healthySince: 6, healthyThrough: 11, healthSequence: 2),
+            "Lossless delivery does not invent sufficient Core source health")
+    }
+    func testMoreThanOneFrameBelowNominalCannotKeepRecovery() {
+        for (duration, frames) in [(1.0, 28), (2.0, 58), (1.0, 24), (2.0, 48)] {
+            let coverage = ready()
+            coverage.recordDelivery(start: 11, end: 11 + duration, result: result(duration, onTime: frames))
+            XCTAssertFalse(coverage.permits(healthySince: 1, healthyThrough: 11, healthSequence: 2))
         }
     }
     func testExplicitInvalidationNeedsFreshResumptionAndNewWholePrefix() {

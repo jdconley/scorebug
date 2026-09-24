@@ -170,8 +170,7 @@ enum PublishingDeliveryMonitor {
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
                     row["history"] = Self.history(input.history, start: window.start, anchor: observation.source.anchorSourcePTS)
                     let result = observation.result
-                    if result.uncertainFrames != 0 || result.lateFrames != 0 || result.missingFrames != 0 ||
-                        Double(result.onTimeFrames) / (window.end - window.start) < 30 { onUnavailable?() }
+                    if !PublishingCandidateRecoveryCoverage.acceptsDelivery(result) { onUnavailable?() }
                     row["result"] = ["expectedFrames": result.expectedFrames, "onTimeFrames": result.onTimeFrames,
                         "lateFrames": result.lateFrames, "missingFrames": result.missingFrames,
                         "uncertainFrames": result.uncertainFrames, "onTimeFPS": Self.optional(result.onTimeFPS),

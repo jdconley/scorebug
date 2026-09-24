@@ -241,6 +241,7 @@ export function repeatedFaultDeliveryRow(
     evaluatedAt,
     lastDecodedFrame = Math.floor((evaluatedAt - 100 - 0.15) * 30),
     cadenceAgeMs = 10,
+    captureBoundaryJitter = false,
   },
 ) {
   const event = f.quality.events.find(
@@ -308,7 +309,14 @@ export function repeatedFaultDeliveryRow(
     const frame = first + i;
     return {
       sourcePTS: f.format.compressedFrames[frame].sourcePTS,
-      observedAt: 100 + frame / 30,
+      observedAt:
+        100 +
+        frame / 30 +
+        (captureBoundaryJitter && frame % 30 === 0
+          ? Math.floor(frame / 60) % 2 === 0
+            ? -0.001
+            : 0.001
+          : 0),
       encoding: null,
     };
   });

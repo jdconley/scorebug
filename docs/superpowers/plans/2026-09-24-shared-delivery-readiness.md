@@ -118,3 +118,48 @@ and compact `complete-assessment.json` remain in ignored
 `artifacts/qa/native-app-cbBvJb`. The preceding failed runs remain unchanged. This
 passes the repeated local laboratory milestone; production upgrades, network-loss
 recovery, physical devices and other proxy hosts remain unqualified.
+
+
+## September 24 regression: frame buckets at capture-clock boundaries
+
+Frozen `582a339`, `native-app-gN2v2o`, fails before campaign two. A lossless
+one-second delivery bucket has 29 expected/on-time frames while its neighbor has
+31; two-second buckets likewise vary 59/61. Source PTS remains continuous at 1/30s
+and surrounding five-second source windows contain 150 captured/encoded/received
+frames. For example, the last capture before uptime 1905000 is 1904999.9989603334;
+the next is 1905000.0315604168, and the frame near the following boundary is
+1905001.0004223334. No frame is missing, late or uncertain.
+
+Both the monitor and coverage helper currently invalidate recovery whenever a
+bucket falls below exactly 30 fps, repeatedly destroying the shared prefix. The
+second probe reports `readinessUnavailable`. This is a measured readiness-contract
+problem, not evidence that native probe allocation failed.
+
+Reviewed correction: allow **at most one frame below nominal** in only the existing
+one/two-second delivery buckets (29/59), with every expected frame delivered on time.
+Preserve zero loss/uncertainty, contiguous lanes, ten seconds of whole shared source
+windows, current ownership and fresh Core strong health (at least 29.7 fps). A
+29-frame delivery bucket alone never qualifies recovery; the 24 fps operating floor
+is not the recovery threshold. Apply the same contract to monitor invalidation,
+native coverage and independent single/repeated recovery replay. Do not alter source
+FPS, timestamps, raw counts, deadlines, loss gates or unrelated 30 fps assertions.
+
+Implementation sequence: timestamp-backed native audit and independent replay
+regressions plus bounded-coverage tests must fail against the current strict rule.
+Then apply the small rule change and verify positives for 29/31 and 59/61, negatives
+for 28/58, loss, uncertainty, gaps, ownership and insufficient source health. Run
+native and JS checks, then freeze and run the complete repeated fixture. Preserve
+`gN2v2o` as failed regardless of the corrected replay rule.
+
+
+The correction is implemented. Tests-first native verification fails at the coverage
+helper and monitor invalidation assertions (45 tests, two expected failures), then
+passes all 45 after the change. Timestamp-backed repeated-policy replay first fails
+its strict 30 fps check; the corrected affected suites pass 178 tests. Review found
+an additional final coverage gate: it now uses the corrected predicate only for an
+explicit recovery mode; probation and the earlier deadline baseline stay unchanged.
+Its separate failing-first regression passes after correction. Native 28/58-frame,
+24 fps, loss, uncertainty, discontinuity and insufficient source-prefix tests remain
+negative. Full native model verification passes 502 tests (66.902 seconds). Independent
+review approves the runtime and replay correction, including explicit recovery-only
+final coverage. All 3,353 JS tool tests and the simulator build pass. A fresh frozen repeated run follows.

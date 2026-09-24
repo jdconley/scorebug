@@ -1,3 +1,4 @@
+import { qualifyRecoveryDeliveryBucket } from './recovery-delivery-bucket.mjs';
 import assert from 'node:assert/strict';
 import { fixtureFrameID, qualifyVideoObservation } from './video-observation-qualification.mjs';
 import { qualifyPublishingClockObservation } from './publishing-clock-qualification.mjs';
@@ -352,7 +353,8 @@ export function qualifyMeasuredDeliveryOwnership(input, { profile, nativeLifecyc
 }
 
 /** Each lane must independently cover the interval; overlap never adds credit. */
-export function qualifyMeasuredDeliveryCoverage(audit, { revision, start, end }) {
+export function qualifyMeasuredDeliveryCoverage(audit, { revision, start, end, recovery = false }) {
+  assert.equal(typeof recovery, 'boolean');
   assert(Number.isFinite(start) && Number.isFinite(end) && end > start);
   const lanes = [];
   for (const duration of [1, 2]) {
@@ -371,14 +373,18 @@ export function qualifyMeasuredDeliveryCoverage(audit, { revision, start, end })
         'Gap or overlap in delivery coverage',
       );
       const result = row.result;
-      assert(
-        result &&
-          result.uncertainFrames === 0 &&
-          result.missingFrames === 0 &&
-          result.lateFrames === 0 &&
-          result.onTimeFPS >= 30,
-        'Unhealthy delivery coverage',
-      );
+      // The independently replayed recovery already requires strong source
+      // cadence. Keep probation's existing stricter bucket rule unchanged.
+      if (recovery) qualifyRecoveryDeliveryBucket(result, duration);
+      else
+        assert(
+          result &&
+            result.uncertainFrames === 0 &&
+            result.missingFrames === 0 &&
+            result.lateFrames === 0 &&
+            result.onTimeFPS >= 30,
+          'Unhealthy delivery coverage',
+        );
       cursor = row.end;
     }
     assert(cursor >= end, 'Insufficient delivery coverage');

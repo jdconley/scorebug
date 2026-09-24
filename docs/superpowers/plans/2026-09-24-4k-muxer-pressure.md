@@ -123,7 +123,49 @@ The initial failing suite is preserved. After this fix all297 vendor tests pass,
 as do all10 tests from a clean SDKProbe build. Independent review approves the change;
 the maintained patch verifies162 upstream hashes and exact round trip.
 
-The preceding diagnostic source passed170 Streaming and499 native model tests plus
-the simulator build. Those must be repeated for the runtime change. Next freeze
-source and run bounded real4K regression, then native checks and the repeated
-adaptive route because transport/probe scheduling changed.
+The runtime source `582a339` also passes 170 Streaming and 499 native model tests
+plus the simulator build. All commands joined; the clean SDKProbe suite has ten
+passing tests. The runtime source was frozen for both regressions below.
+
+### Real-match and repeated-route regressions
+
+`network-native-pump-1-4k-videotoolbox` fails at the audio codec queue after 260
+submissions/completions and 253 proxy-decoded frames. The cap was six cases, but
+cases 2–6 did not run after this first failure. All 1,153 tracked hashes remain
+unchanged. The full archive retains 360 frames / 576,000 audio samples in eight
+segments with no rejection; live drops 13 samples and rejects 69. Both owned
+SRT/RTMP ports are released. Preserve the failed artifact.
+
+Its 2,476 trace rows form 619 complete four-phase sends with no overflow or
+unmatched attempts. Maximum outer send time is 0.908333 ms, inner socket interval
+0.899542 ms, and maximum observed pending payload count is two. The longest
+synchronous conversion is 64.748792 ms. Summed conversion intersections occupy
+98.14%, 98.14% and 98.02% of the final 1/2/4-second windows. The audio output task
+still needs the same stream actor. Transport isolation resolves the measured
+transport starvation, while sustainable 4K publishing remains unqualified.
+
+Next design: prepare one immutable native video operation on the stream actor,
+run only conversion outside it, and commit bookkeeping under matching session and
+generation ownership. Keep one in-flight operation and the existing bounded raw
+queue. Configuration writes must close admission before awaiting that operation;
+finish drains it, and close retains retirement ownership. Do not move the mutable
+codec off actor, increase audio queue limits or add timing sleeps as a substitute.
+Require deterministic audio-drain, mutation-order, finish and lifetime regressions
+before real media verification.
+
+The complete repeated adaptive regression `native-app-gN2v2o` also fails (joined
+harness exit 1). UI recording/scoring/stop passes in 260.326 seconds. First admission,
+fault and minimum reset occur, but the second probe campaign never starts:
+`native-bandwidth-probe.json` reports `readinessUnavailable`, the owned-fault
+scheduler times out, and only 240p → 360p → 240p phases exist. Its closed candidate
+wait trace is valid and bounded (1,790 events, no omissions/overflow); the second
+candidate operation never starts. Source quality remains healthy at revision 2,
+but source health alone is insufficient to authorize a new probe. The exact
+rejected shared-readiness condition is now identified: lossless 29/59-frame buckets
+clear coverage under the strict 30 fps bucket rule, despite continuous 30 fps source
+PTS. The [readiness correction](2026-09-24-shared-delivery-readiness.md) retains strong
+Core source health and permits only one frame of short-bucket boundary tolerance. All 1,153 source hashes
+remain unchanged. Worker and recorder exit zero; simulator deletion completes.
+The harness also reports a secondary cleanup failure related to its failed owned
+fault task. Do not claim full cleanup success or a complete media pass from UI
+success. Preserve the earlier complete `89926f4` qualification separately.

@@ -308,11 +308,11 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     private func history(capacity: Int = 256, captureRange: ClosedRange<Int> = 0...120,
                          missing: Set<Int> = [], encodedThrough: Int = 120,
                          badConfiguration: Int? = nil, noMetadata: Int? = nil,
-                         offset: Int64 = 0, equalCaptureTimes: Bool = false,
+                         offset: Int64 = 0, equalCaptureTimes: Bool = false, captureOffsets: [Int: Double] = [:],
                          extraEncoded: Bool = false, unmatchedTail: Bool = false, closed: Bool = false) throws -> VideoSourceHistorySnapshot {
         var history = try VideoSourceHistory(scope: scope, capacity: capacity)
         for i in captureRange {
-            let time = equalCaptureTimes && i == 31 ? 1 : Double(i) / 30
+            let time = (equalCaptureTimes && i == 31 ? 1 : Double(i) / 30) + (captureOffsets[i] ?? 0)
             let pts = CMTime(value: Int64(i) * 3000 + offset, timescale: 90_000)
             XCTAssertTrue(history.observe(.captureVideo, sourcePTS: pts, at: time))
             if !missing.contains(i), i <= encodedThrough {
@@ -620,6 +620,23 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         audit.close(); unavailable = false
         audit.record(input: input, applied: applied, at: 5, instant: instant, onUnavailable: { unavailable = true })
         XCTAssertTrue(unavailable)
+    }
+
+    func testLosslessTimestampBoundaryReassignmentDoesNotInvalidateRecovery() throws {
+        for (offsets, expected) in [([30: -0.001], [29, 59]), ([60: -0.001, 90: -0.001], [31, 61])] {
+            let (original, applied) = try auditFixture()
+            let input = PublishingDeliveryMonitor.Input(history: try history(captureOffsets: offsets),
+                clock: original.clock, diagnostics: original.diagnostics, delivery: original.delivery)
+            let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+            audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+            var unavailable = false
+            let rows = audit.record(input: input, applied: applied, at: 4.5, instant: instant,
+                onUnavailable: { unavailable = true })
+            XCTAssertEqual(rows.map { $0.result.expectedFrames }, expected)
+            XCTAssertEqual(rows.map { $0.result.onTimeFrames }, expected)
+            XCTAssertTrue(rows.allSatisfy { $0.result.lateFrames == 0 && $0.result.missingFrames == 0 && $0.result.uncertainFrames == 0 })
+            XCTAssertFalse(unavailable, "Continuous 30fps source PTS can cross host-clock bucket boundaries")
+        }
     }
 
     func testAuditClassifiedUncertaintyInvalidatesEntireMixedBatchBeforeReturning() throws {

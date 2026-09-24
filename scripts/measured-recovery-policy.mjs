@@ -1,3 +1,4 @@
+import { qualifyRecoveryDeliveryBucket } from './recovery-delivery-bucket.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure } from './native-quality-pressure.mjs';
@@ -501,7 +502,7 @@ export function qualifyMeasuredRecoveryPolicy({
       assert.equal(row.result.uncertainFrames, 0);
       assert.equal(row.result.lateFrames, 0);
       assert.equal(row.result.missingFrames, 0);
-      assert(row.result.onTimeFrames / duration >= 30, 'Unhealthy recovery delivery');
+      qualifyRecoveryDeliveryBucket(row.result, duration);
       for (const frame of row.frames) {
         const id = fixtureFrameID(frame.sourcePTS);
         assert(

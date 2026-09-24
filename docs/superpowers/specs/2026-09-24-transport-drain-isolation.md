@@ -1,6 +1,11 @@
 # Transport drain isolation
 
-Status: reviewed implementation passes focused/vendor tests; real-media regression pending. Autonomous continuation is authorized.
+Status: implemented in `582a339`; deterministic transport isolation, vendor,
+Streaming, SDKProbe, model and simulator checks pass. The real 4K regression shows
+transport draining within bounds but fails later at the audio codec queue. The
+repeated adaptive regression times out before campaign two. See the
+[investigation results](../plans/2026-09-24-4k-muxer-pressure.md).
+Autonomous continuation is authorized.
 
 ## Measured problem
 
