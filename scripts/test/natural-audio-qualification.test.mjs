@@ -128,3 +128,30 @@ test('fractional PCM origins retain independently generated sub-sample A/V offse
   assert.ok(result.probes.every((p) => Math.abs(p.audioVideoLagSeconds - 0.00337) < 0.00001));
   assert.ok(result.probes.some((p) => Math.abs(p.roundingOffsetSeconds) > 0.00001));
 });
+
+test('additional source anchors retain all default probes and expose a missed local audio defect', () => {
+  const input = fixture();
+  const base = qualifyNaturalAudio(input);
+  const extra = qualifyNaturalAudio({ ...input, additionalSourceFrames: [150] });
+  assert.equal(extra.probes.length, 4);
+  for (const probe of base.probes)
+    assert(extra.probes.some((p) => p.sourceFrame === probe.sourceFrame));
+  assert(extra.probes.some((p) => p.sourceFrame === 150));
+  input.targetSamples.fill(0, 24000, 29600); // source5.0..5.7s, between the default probes
+  assert.equal(qualifyNaturalAudio(input).passed, true);
+  assert.throws(() => qualifyNaturalAudio({ ...input, additionalSourceFrames: [150] }));
+});
+test('additional audio anchors cannot request absent, malformed or unsupported source coverage', () => {
+  for (const additionalSourceFrames of [
+    null,
+    '150',
+    [149.5],
+    [-1],
+    [65536],
+    [NaN],
+    [30],
+    [269],
+    Array(257).fill(150),
+  ])
+    assert.throws(() => qualifyNaturalAudio({ ...fixture(), additionalSourceFrames }));
+});

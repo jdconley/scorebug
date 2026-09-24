@@ -92,7 +92,8 @@ public struct PublishingCandidateCost: Sendable {
                   [96_000.0, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350].contains(packet.sampleRate),
                   (1...6).contains(packet.channelCount) || packet.channelCount == 8,
                   (1...8184).contains(packet.byteCount), clock(packet.observedAt), clock(packet.consumedAt),
-                  transportStart <= packet.observedAt, packet.observedAt <= packet.consumedAt,
+                  start <= packet.observedAt, transportStart <= packet.consumedAt,
+                  packet.observedAt <= packet.consumedAt,
                   packet.consumedAt <= transport.endedAt,
                   packet.sampleRate == firstAudio.sampleRate, packet.channelCount == firstAudio.channelCount else { return nil }
             if index > 0 {

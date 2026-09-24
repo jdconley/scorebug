@@ -1,3 +1,4 @@
+import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import assert from 'node:assert/strict';
 import { qualifyMeasuredProbeRetirement } from './measured-probe-retirement.mjs';
 import { nativeMeasuredTrial } from './native-measured-trial.mjs';
@@ -43,7 +44,9 @@ export function nativeBandwidthProbe({
       liveProfile === (combined ? '240p30' : '540p30') &&
       environment.SCOREBUG_TEST_LIVE_PROFILE === liveProfile &&
       (combined || environment.SCOREBUG_TEST_CANDIDATE_PROFILE === undefined) &&
-      environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
+      (environment.SCOREBUG_TEST_FILE_INPUT !== undefined
+        ? nativeMeasuredFileSource(environment)
+        : environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16') &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
       [
         'SCOREBUG_TEST_NATIVE_QUALITY',

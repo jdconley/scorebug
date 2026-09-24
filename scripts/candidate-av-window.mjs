@@ -88,7 +88,8 @@ export function qualifyCandidateAVTransport(p, expected) {
     assert.ok(
       finite(a.observedAt) &&
         finite(a.consumedAt) &&
-        a.observedAt >= p.startedAt &&
+        a.observedAt >= expected.startedAt &&
+        a.consumedAt >= p.startedAt &&
         a.consumedAt >= a.observedAt &&
         a.consumedAt <= p.endedAt &&
         a.consumedAt <= p.closedAt + 1,

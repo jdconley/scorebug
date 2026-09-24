@@ -317,3 +317,127 @@ and failure/recovery phase, beyond the present three whole-recording samples.
 Independent final evidence review finds no actionable issue. This native case qualifies
 240p only; the 360p/540p route tests and template rasters are not native media
 qualification at those profiles.
+
+## Measured file adaptation batch
+
+Extend the existing complete measured route to file input, with two explicitly
+validated combinations: staged candidate360 from live240 (optional controlled
+single decoder recovery), and repeated candidate360/recovery with an exact180s
+hold. Require the same full-pipeline/direct recorder flags, candidate headroom,
+1500ms delivery budget, canonical hold and exclusive source. Host selection must
+validate the whole combination without recursive calls between option parsers.
+The native DEBUG route validates the forwarded combination separately; recovery
+fault selection remains host-owned. Other candidate-only, arbitrary profile,
+legacy adaptive, cadence-only and uplink experiments remain excluded for file input.
+
+- [x] Add failing host composition/native tests for complete valid combinations,
+      each missing prerequisite, mixed sources and unsupported experiment options.
+- [x] Implement the nonrecursive file route contract and wire existing selectors,
+      native DEBUG routing and UI forwarding without changing policy/admission gates.
+- [x] Extend natural-audio qualification with bounded extra source-frame anchors;
+      retain the original three windows and all correlation/alignment requirements.
+      Check actual encoded phase boundaries and post-fault/recovery spans in addition
+      to the whole-recording samples; missing requested support must fail.
+- [x] Run tooling/native tests, review source changes, prepare270s of normalized input
+      and execute the frozen repeated real-file native route with both causal faults.
+- [x] Review full raw admission/policy/recovery evidence, decoded media and score,
+      cleanup and unchanged hashes. Update the main plan with actual results and
+      limitations before production integration or real network qualification.
+
+Measured-route preflight passes all 3,636 tooling tests and 521 native model tests;
+16 focused native selector tests and 32 focused natural-audio/phase-selection tests
+also pass. Behavioral failing/passing runs are retained for host/native routing
+and the added audio anchors. The audio regression injects a real waveform defect
+between original baseline windows: the unchanged baseline passes, while explicitly
+requesting that source window rejects the defect.
+
+Additional windows retain all three original baseline anchors and may overlap them;
+they are not reported as independent observations. The phase selector consumes
+already-qualified phase identities, checks at least two seconds of visible phase
+coverage, samples head/tail positions and adds a five-second source grid. Every
+requested anchor must exist in the decoded output and retain complete audio search
+support. Both archive and live audio must pass all requested windows and the global
+20-ms lag-spread limit. This is expanded sampling, not continuous waveform fidelity.
+
+### First repeated real-file attempt: audio opening failure
+
+Frozen case `native-app-i5bM9a` / `file-measured-freeze-90177b0t` is a **failed**
+qualification attempt. The native UI test passed in 259.179s, but campaign 2 never
+became ready and the harness joined with exit 1. Actual profiles were 240→360→240;
+only the first controlled decoder fault completed. All 1,203 frozen source/input
+hashes were unchanged. The owned simulator, relay container, API listener and
+case-associated processes were absent after completion. Failure exports are
+retained in `failure-app-data-KBiO0g/QA` inside the case.
+
+Campaign 2's outer task completed, but its nested measurement failed `inputRejected`
+after one raw input, with transport `audioOpeningCoverage`. Admission correctly
+withheld the second upgrade. The packet-level callback ordering was not exported,
+so the exact lost packet cannot be proven from this case alone.
+
+A regression reproduces a concrete vulnerability: one-shot AAC callbacks arriving
+before the first raw frame were discarded even if their source PTS belonged in
+the selected window. The new transport retains those callbacks after arming within
+the existing 16-packet/128KiB budget, then filters against the first raw source PTS.
+Original observation timestamps remain intact. Native and independent host cost
+validation require observations after measurement start and consumption after raw
+opening; observation need not follow the independently scheduled first raw callback.
+Source cadence, opening/following coverage, format, generation, deadlines and byte
+limits remain unchanged. Pre-campaign, stale, gapped and cancelled inputs still fail.
+Behavioral red/green tests and all 174 streaming package tests pass; a new frozen
+native repeated run remains required before claiming this resolves the full route.
+
+### Repeated real-file route passes after bounded audio fix
+
+**`native-app-wN1QH9` passes the complete maintained native harness** using the
+270-second normalized 1080p match excerpt. Freeze `file-measured-freeze-oueu99aa`
+contains 1,203 unchanged source/input hashes; the harness and all assessment/visual
+commands joined with exit 0. The UI case passed in 257.664s. Owned simulator, relay
+container, API listener and case-associated processes are absent afterward.
+
+Both candidates were independently measured and admitted, both upgrades confirmed,
+and each subsequent owned decoder pause caused a return to minimum. Actual native
+profiles were **240→360→240→360→240**, with separate encoder sessions. The local
+proxy kept a 360p output. Every phase has 30fps source cadence; intentional pauses
+still create late delivery and exercise the deadline reset. This does not claim
+24fps on-time delivery during the injected failure itself.
+
+The independent 1080p archive contains 6,576 consecutive identities 0–6575 (219.2s).
+The scored live output contains 6,134 consecutive identities 229–6362; there are no
+missing identities inside that saved span. Recording continues 213 frames/7.1s after
+the stream's final frame. Score checks have 20 discriminating pixels, 100% expected
+agreement and 0% alternative agreement for both 0-0 and 1-0 states. Independent visual
+inspection of source/archive/live frame 746 confirms matching action, an archive
+without the score, and the correct live score. The small score crops agree visually.
+
+Expanded natural-audio checks pass 54 archive windows and 53 live windows, combining
+all baseline probes with 51 phase/grid anchors. Minimum correlation is 0.99903 for
+the archive and 0.99418 for live; maximum sampled live interior A/V offset is 65.95ms,
+with 0.667ms global lag spread. Full AAC timestamp continuity has maximum cumulative
+error 0.000334ms for archive and 0.205ms for live. These are sampled waveform fidelity
+checks plus complete timestamp continuity, not continuous waveform proof.
+
+**Startup remains open:** 60 acquisition frames 169–228 are absent from the saved
+live file, and audio precedes the first saved video by 899ms. The separate 2.1s GOP
+startup allowance admits this; interior audio alignment does not establish instant
+startup. This pass uses a local controlled decoder stall, not packet loss, cellular,
+physical camera/thermal stress, HDR60, remote hosting or production automatic upgrades.
+
+Both candidate transports completed with 188/187 selected AAC packets and at most
+three pending packets. Neither successful candidate selected a packet observed
+before its first raw callback. Therefore the one-shot unit regression proves the
+buffered ordering fix, while this native run proves the complete route now passes;
+it does not establish the exact callback history of the earlier failed run.
+
+Final verification: **3,637 tooling tests, 174 streaming package tests, 521 app-model
+tests**, complete native workflow, decoded A/V/score checks and cleanup pass.
+Independent code review found no actionable issues. Failure evidence remains intact;
+private originals were not modified or uploaded. Runtime production upgrades remain
+gated. Next qualify the same route with representative 4K-derived input, then actual
+network impairment before wiring production providers and expanding the profile
+ladder; physical camera/Watch and remote proxy deployment retain their separate gates.
+
+Independent final evidence review also found no actionable qualification issue:
+candidate/admission/fault ownership, phase totals, all requested audio anchors,
+staging hashes and source/archive counts agree. Expanded audio values above include
+all requested windows; baseline-only fields in the assessment remain separately
+reported and must not replace the expanded maximum/spread.

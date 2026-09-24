@@ -321,3 +321,11 @@ test('rejects decode timestamps differing from presentation time in a no-reorder
   p.mux.transportMessageCount = replay.transportMessageCount;
   assert.throws(() => qualifyCandidateAVTransport(p, expected));
 });
+
+test('opening AAC may precede first raw arrival within the active measurement', () => {
+  const p = fixture();
+  p.audio[0].observedAt = 99.995;
+  assert.doesNotThrow(() => qualifyCandidateAVTransport(p, expected));
+  p.audio[0].observedAt = 99.98;
+  assert.throws(() => qualifyCandidateAVTransport(p, expected));
+});

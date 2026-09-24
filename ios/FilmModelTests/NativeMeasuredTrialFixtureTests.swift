@@ -9,6 +9,35 @@ final class NativeMeasuredTrialFixtureTests: XCTestCase {
         "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
     ] }
 
+    func testFileMeasuredRouteRetainsFullAdmissionAndExactRepeatedSelection() throws {
+        for probe in ["staged", "repeated"] {
+            var environment = valid
+            environment.removeValue(forKey: "SCOREBUG_TEST_MOTION_FIXTURE")
+            environment["SCOREBUG_TEST_FILE_CAPTURE"] = "1"
+            environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
+            environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = probe == "repeated" ? "180" : "90"
+            XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+            XCTAssertTrue(WorkerCadenceReportAudit.requested(environment: environment))
+            XCTAssertEqual(try NativeCandidateFixture.requested(environment: environment), .low360)
+            XCTAssertEqual(try NativeBandwidthProbePublisher.requested(environment: environment)?.rawValue, probe)
+            for key in environment.keys where key != "SCOREBUG_TEST_MEASURED_TRIAL" {
+                var missing = environment; missing.removeValue(forKey: key)
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: missing), key)
+            }
+            for (key, value) in [("SCOREBUG_TEST_MOTION_FIXTURE", "blocks16"), ("SCOREBUG_TEST_FILE_CAPTURE", "true"),
+                ("SCOREBUG_TEST_CANDIDATE_PROFILE", "540p30"), ("SCOREBUG_TEST_DELIVERY_DEADLINE_MS", "1000"),
+                ("SCOREBUG_TEST_NATIVE_QUALITY", "1"), ("SCOREBUG_TEST_UPLINK_PROXY_PORT", "1234"),
+                ("SCOREBUG_TEST_CADENCE_REPORTS", "1"), ("SCOREBUG_TEST_SOURCE_CADENCE_PACING", "1")] {
+                var invalid = environment; invalid[key] = value
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: invalid), key)
+            }
+            if probe == "repeated" {
+                environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = "90"
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: environment))
+            }
+        }
+    }
+
     func testExplicitMeasuredRouteAndOrdinaryRouteIsolation() throws {
         XCTAssertFalse(try NativeMeasuredTrialFixture.requested(environment: [:]))
         XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: valid))

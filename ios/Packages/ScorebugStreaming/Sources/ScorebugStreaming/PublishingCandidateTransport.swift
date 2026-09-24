@@ -112,7 +112,7 @@ private final class CandidateTransportState: @unchecked Sendable {
     private let continuation: AsyncStream<Void>.Continuation
     private var id: UUID?, generation: UInt64?
     private var firstPTS: CMTime?, lastPTS: CMTime?
-    private var startedAt: Double?, closedAt: Double?
+    private var armedAt: Double?, startedAt: Double?, closedAt: Double?
     private var count = 0, pendingBytes = 0, maximumPendingCount = 0, maximumPendingBytes = 0
     private var pending: [Owner.AudioSnapshot] = []
     private var audio: [Owner.AudioReceipt] = []
@@ -146,7 +146,8 @@ private final class CandidateTransportState: @unchecked Sendable {
         lock.withLock {
             guard active else { return false }
             guard id != nil, generation == nil, value > 0 else { fail("publishingGeneration"); return false }
-            generation = value; return true
+            guard let at = clock() else { return false }
+            armedAt = at; generation = value; return true
         }
     }
     private func valid(_ pts: CMTime) -> Bool {
@@ -154,7 +155,7 @@ private final class CandidateTransportState: @unchecked Sendable {
     }
     private func clock() -> Double? {
         let at = now()
-        let minimum = max(startedAt ?? 0, max(closedAt ?? 0, following?.consumedAt ?? audio.last?.consumedAt ?? 0))
+        let minimum = max(startedAt ?? armedAt ?? 0, max(closedAt ?? 0, following?.consumedAt ?? audio.last?.consumedAt ?? 0))
         guard at.isFinite, at >= minimum else { fail("invalidClock"); return nil }
         return at
     }
@@ -171,7 +172,18 @@ private final class CandidateTransportState: @unchecked Sendable {
                 fail("rawInput"); return false
             }
             guard let at = clock() else { return false }
+            let opening = firstPTS == nil
             startedAt = startedAt ?? at; firstPTS = firstPTS ?? pts; lastPTS = pts; count += 1
+            if opening {
+                // AAC and raw video have independent callback ordering. Retain
+                // one bounded pre-opening queue, then select by source PTS.
+                let queued = pending
+                pending.removeAll(); pendingBytes = 0
+                for frame in queued {
+                    acceptAudio(frame)
+                    guard active else { return false }
+                }
+            }
             while let frame = pending.first, CMTimeCompare(frame.sourcePTS, pts) <= 0 {
                 pending.removeFirst(); pendingBytes -= frame.payload.count
                 guard appendAudio(frame) else { return false }
@@ -181,7 +193,7 @@ private final class CandidateTransportState: @unchecked Sendable {
     }
     func observeAudio(_ frame: Owner.AudioSnapshot) {
         lock.withLock {
-            guard active, let firstPTS, let lastPTS, let startedAt, following == nil else { return }
+            guard active, let armedAt, following == nil else { return }
             guard let at = clock(), withinAudioDeadline(at) else { return }
             let hostPTS = CMTime(seconds: AVAudioTime.seconds(forHostTime: frame.hostTime), preferredTimescale: 1_000_000_000)
             guard frame.valid, frame.wasEncoded, frame.publishingGeneration == generation,
@@ -191,37 +203,41 @@ private final class CandidateTransportState: @unchecked Sendable {
                   [96_000.0, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350].contains(frame.sampleRate),
                   (1...6).contains(frame.channelCount) || frame.channelCount == 8,
                   frame.framesPerPacket == 1024, frame.audioObjectType == 2 else { fail("invalidAudio"); return }
-            // An otherwise valid packet can wait for this lock while the first
-            // raw frame establishes a later source anchor. It is outside the
-            // selected window, so its earlier observation is not stale evidence.
-            if CMTimeCompare(frame.sourcePTS, firstPTS) < 0 { return }
-            guard frame.observedAt >= startedAt else { fail("invalidAudio"); return }
-            if let previousAudio {
-                let delta = CMTimeSubtract(frame.sourcePTS, previousAudio.sourcePTS).seconds
-                // Host ticks are 41.67 ns on measured Apple Silicon; allow two
-                // ticks plus nanosecond projection rounding, never a packet gap.
-                guard frame.sampleRate == previousAudio.sampleRate, frame.channelCount == previousAudio.channelCount,
-                      frame.observedAt >= previousAudio.observedAt,
-                      delta > 0, abs(delta - 1024 / frame.sampleRate) <= 0.000000100 else { fail("audioCadence"); return }
-            } else {
-                guard CMTimeSubtract(frame.sourcePTS, firstPTS).seconds <= 1024 / frame.sampleRate + 0.000000100 else {
-                    fail("audioOpeningCoverage"); return
-                }
-            }
-            // Keep only the scalar cadence anchor, never a second retained payload.
-            previousAudio = .init(sourcePTS: frame.sourcePTS, hostTime: frame.hostTime,
-                publishingGeneration: frame.publishingGeneration, wasEncoded: frame.wasEncoded, valid: frame.valid,
-                observedAt: frame.observedAt, sampleRate: frame.sampleRate, channelCount: frame.channelCount,
-                framesPerPacket: frame.framesPerPacket, audioObjectType: frame.audioObjectType, payload: Data())
-            if CMTimeCompare(frame.sourcePTS, lastPTS) <= 0 { _ = appendAudio(frame) }
-            else if closedAt != nil { selectFollowing(frame) }
-            else {
-                guard pending.count < 16, frame.payload.count <= 128 * 1024 - pendingBytes else { fail("pendingAudioLimit"); return }
-                pending.append(frame); pendingBytes += frame.payload.count
-                maximumPendingCount = max(maximumPendingCount, pending.count)
-                maximumPendingBytes = max(maximumPendingBytes, pendingBytes)
+            if let firstPTS, CMTimeCompare(frame.sourcePTS, firstPTS) < 0 { return }
+            guard frame.observedAt >= armedAt else { fail("invalidAudio"); return }
+            if firstPTS == nil { enqueue(frame) }
+            else { acceptAudio(frame) }
+        }
+    }
+    private func enqueue(_ frame: Owner.AudioSnapshot) {
+        guard pending.count < 16, frame.payload.count <= 128 * 1024 - pendingBytes else { fail("pendingAudioLimit"); return }
+        pending.append(frame); pendingBytes += frame.payload.count
+        maximumPendingCount = max(maximumPendingCount, pending.count)
+        maximumPendingBytes = max(maximumPendingBytes, pendingBytes)
+    }
+    private func acceptAudio(_ frame: Owner.AudioSnapshot) {
+        guard let firstPTS, let lastPTS else { return }
+        if CMTimeCompare(frame.sourcePTS, firstPTS) < 0 { return }
+        if let previousAudio {
+            let delta = CMTimeSubtract(frame.sourcePTS, previousAudio.sourcePTS).seconds
+            // Host ticks are 41.67 ns on measured Apple Silicon; allow two
+            // ticks plus nanosecond projection rounding, never a packet gap.
+            guard frame.sampleRate == previousAudio.sampleRate, frame.channelCount == previousAudio.channelCount,
+                  frame.observedAt >= previousAudio.observedAt,
+                  delta > 0, abs(delta - 1024 / frame.sampleRate) <= 0.000000100 else { fail("audioCadence"); return }
+        } else {
+            guard CMTimeSubtract(frame.sourcePTS, firstPTS).seconds <= 1024 / frame.sampleRate + 0.000000100 else {
+                fail("audioOpeningCoverage"); return
             }
         }
+        // Keep only the scalar cadence anchor, never a second retained payload.
+        previousAudio = .init(sourcePTS: frame.sourcePTS, hostTime: frame.hostTime,
+            publishingGeneration: frame.publishingGeneration, wasEncoded: frame.wasEncoded, valid: frame.valid,
+            observedAt: frame.observedAt, sampleRate: frame.sampleRate, channelCount: frame.channelCount,
+            framesPerPacket: frame.framesPerPacket, audioObjectType: frame.audioObjectType, payload: Data())
+        if CMTimeCompare(frame.sourcePTS, lastPTS) <= 0 { _ = appendAudio(frame) }
+        else if closedAt != nil { selectFollowing(frame) }
+        else { enqueue(frame) }
     }
     private func receipt(_ frame: Owner.AudioSnapshot, consumedAt: Double) -> Owner.AudioReceipt {
         .init(sourcePTS: frame.sourcePTS, publishingGeneration: frame.publishingGeneration,

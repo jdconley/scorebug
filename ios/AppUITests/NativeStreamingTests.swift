@@ -73,7 +73,8 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(liveProfile, "240p30")
             XCTAssertTrue(["staged", "repeated"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""))
             XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""))
-            XCTAssertTrue((90...600).contains(holdSeconds)); XCTAssertEqual(motionFlag, "blocks16")
+            XCTAssertTrue((90...600).contains(holdSeconds))
+            XCTAssertTrue((fileFlag == "1" && motionFlag.isEmpty) || (fileFlag.isEmpty && motionFlag == "blocks16"))
             for key in ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
                 "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL"] {
                 XCTAssertTrue((ProcessInfo.processInfo.environment[key] ?? "").isEmpty)

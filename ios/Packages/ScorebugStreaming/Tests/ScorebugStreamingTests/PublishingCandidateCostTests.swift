@@ -20,7 +20,7 @@ final class PublishingCandidateCostTests: XCTestCase {
         case audioDecodeTime, audioParameters, audioNotSync, combinedInputBytes
     }
     private func fixture(_ fault: Fault? = nil, videoPayloadBytes: Int? = nil,
-                         videoDecodePTS: CMTime? = nil, parameterSetBytes: Int = 24) -> PublishingCandidateMeasurement.Result {
+                         videoDecodePTS: CMTime? = nil, parameterSetBytes: Int = 24, earlyOpeningAudio: Bool = false) -> PublishingCandidateMeasurement.Result {
         let id = UUID(), encoderID = UUID()
         let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match", broadcastGeneration: 1,
             publishingAttemptID: UUID(), appliedProfileRevision: 1)
@@ -45,6 +45,7 @@ final class PublishingCandidateCostTests: XCTestCase {
             let packetIndex = changed && fault == .audioReordered ? 59 : changed && fault == .audioGap ? 61 : n
             let pts = CMTime(value: Int64(packetIndex * 1024), timescale: 48000)
             var observedAt = 10 + pts.seconds
+            if n == 0 && earlyOpeningAudio { observedAt = 9.995 }
             var consumedAt = (fault == .followingBeforeClose ? 10.005 : 10.025) + pts.seconds
             if n == 0 && fault == .audioBeforeWindow { observedAt = 9.99 }
             if changed && fault == .audioObservedInFuture { observedAt = 15 }
@@ -112,7 +113,7 @@ final class PublishingCandidateCostTests: XCTestCase {
         let encoding = PublishingCandidateEncoder.Result(scope: fault == .wrongScope ? otherScope : scope,
             profile: fault == .wrongProfile ? .sd540 : .low360, encoding: encoded, transport: transport)
         return .init(id: id, scope: scope, profile: .low360, reason: fault == .cancelled ? .cancelled : .completed,
-            startedAt: fault == .invalidTime ? .nan : 10,
+            startedAt: fault == .invalidTime ? .nan : earlyOpeningAudio ? 9.99 : 10,
             endedAt: fault == .followingAfterDeadline ? 15.06 : 14.06, acceptedInputCount: 121,
             firstInputPTS: fault == .missingRawPTS ? nil : .zero, lastInputPTS: CMTime(value: 4, timescale: 1),
             encoding: fault == .missingEncoding ? nil : encoding)
@@ -126,6 +127,10 @@ final class PublishingCandidateCostTests: XCTestCase {
         XCTAssertEqual(cost.applicationPayloadBitsPerSecond, 752000, accuracy: 1e-6)
         XCTAssertEqual(cost.firstInputAt, 10); XCTAssertEqual(cost.lastInputAt, 14)
         XCTAssertEqual(cost.startedAt, 10); XCTAssertEqual(cost.endedAt, 14.06)
+    }
+    func testOpeningAudioMayArriveAfterMeasurementStartBeforeFirstRaw() {
+        XCTAssertNotNil(PublishingCandidateCost(fixture(earlyOpeningAudio: true)))
+        XCTAssertNil(PublishingCandidateCost(fixture(.audioBeforeWindow)))
     }
     func testIncompleteMismatchedOrUnusableMeasurementsCannotBecomeCostEvidence() {
         for fault in Fault.allCases { XCTAssertNil(PublishingCandidateCost(fixture(fault)), "\(fault)") }

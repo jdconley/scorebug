@@ -1,3 +1,4 @@
+import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import assert from 'node:assert/strict';
 
 export const candidateHeadroomStageRates = [500_000, 2_000_000, 12_000_000];
@@ -17,7 +18,9 @@ export function nativeCandidateHeadroom(environment) {
         : environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'staged' &&
           environment.SCOREBUG_TEST_MEASURED_RECOVERY !== 'repeated') &&
       environment.SCOREBUG_TEST_LIVE_PROFILE === '240p30' &&
-      environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
+      (environment.SCOREBUG_TEST_FILE_INPUT !== undefined
+        ? nativeMeasuredFileSource(environment)
+        : environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16') &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
     'Combined headroom requires explicit minimum-live, staged-probe, candidate and full-pipeline opt-ins',
   );

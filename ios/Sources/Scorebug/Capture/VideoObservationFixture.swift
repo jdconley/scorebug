@@ -26,15 +26,31 @@ enum VideoObservationFixture {
             guard fileFlag == "1", motionFlag.isEmpty,
                   ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION",
                    "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
-                   "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_CANDIDATE_PROFILE",
-                   "SCOREBUG_TEST_CANDIDATE_HEADROOM", "SCOREBUG_TEST_MEASURED_TRIAL",
-                   "SCOREBUG_TEST_MEASURED_RECOVERY", "SCOREBUG_TEST_BANDWIDTH_PROBE",
-                   "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_DECODER_STALL",
+                   "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_MEASURED_RECOVERY",
+                   "SCOREBUG_TEST_UPLINK_PROXY_PORT", "SCOREBUG_TEST_UPLINK_PROFILE", "SCOREBUG_TEST_DECODER_STALL",
                    "SCOREBUG_TEST_CADENCE_REPORTS", "SCOREBUG_TEST_DEADLINE_RESETS",
-                   "SCOREBUG_TEST_DELIVERY_DEADLINE_MS", "SCOREBUG_TEST_DECODER_THREADING",
-                   "SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS", "SCOREBUG_TEST_PUBLISH_PACING",
-                   "SCOREBUG_FIXTURE_FAIL_AFTER"].allSatisfy({ (environment[$0] ?? "").isEmpty })
+                   "SCOREBUG_TEST_DECODER_THREADING", "SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS",
+                   "SCOREBUG_TEST_PUBLISH_PACING", "SCOREBUG_FIXTURE_FAIL_AFTER"]
+                    .allSatisfy({ (environment[$0] ?? "").isEmpty })
             else { throw UplinkError.invalidFixtureRoute }
+            // Nonrecursive validation of the complete forwarded measured route.
+            // Fault/recovery selection remains in the host harness, not the app.
+            let measured = environment["SCOREBUG_TEST_MEASURED_TRIAL"] ?? ""
+            if measured.isEmpty {
+                guard ["SCOREBUG_TEST_CANDIDATE_PROFILE", "SCOREBUG_TEST_CANDIDATE_HEADROOM",
+                       "SCOREBUG_TEST_BANDWIDTH_PROBE", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS"]
+                        .allSatisfy({ (environment[$0] ?? "").isEmpty })
+                else { throw UplinkError.invalidFixtureRoute }
+            } else {
+                let probe = environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
+                guard measured == "1", raw == "240p30",
+                      environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] == "1",
+                      environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] == "360p30",
+                      environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] == "1",
+                      environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == "1500",
+                      probe == "staged" || (probe == "repeated" && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180")
+                else { throw UplinkError.invalidFixtureRoute }
+            }
         }
         guard let profile = PublishingVideoProfile(rawValue: raw), [.low240, .low360, .sd540].contains(profile), requested(environment: environment),
               fileFlag == "1" || motionFlag == "blocks16",

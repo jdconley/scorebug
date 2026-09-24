@@ -1,3 +1,4 @@
+import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import assert from 'node:assert/strict';
 import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -42,7 +43,9 @@ export function nativeCandidateProfile({
       Number.isSafeInteger(holdSeconds) &&
       holdSeconds >= 90 &&
       holdSeconds <= 600 &&
-      environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16' &&
+      (environment.SCOREBUG_TEST_FILE_INPUT !== undefined
+        ? nativeMeasuredFileSource(environment)
+        : environment.SCOREBUG_TEST_MOTION_FIXTURE === 'blocks16') &&
       environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1' &&
       (combined || environment.SCOREBUG_TEST_BANDWIDTH_PROBE === undefined) &&
       [

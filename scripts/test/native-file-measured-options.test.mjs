@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { nativeFileFixtureOptions } from '../native-file-fixture.mjs';
+import { nativeLiveProfile } from '../native-live-profile.mjs';
+import { nativeCandidateHeadroom } from '../native-candidate-headroom.mjs';
+import { nativeCandidateProfile } from '../native-candidate-measurement.mjs';
+import { nativeBandwidthProbe } from '../native-bandwidth-probe.mjs';
+import { nativeMeasuredTrial } from '../native-measured-trial.mjs';
+import { nativeMeasuredRecovery, nativeRepeatedRecovery } from '../native-measured-recovery.mjs';
+const valid = () => ({
+  SCOREBUG_TEST_FILE_INPUT: '/local/input.mov',
+  SCOREBUG_TEST_STREAM_HOLD_SECONDS: '90',
+  SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
+  SCOREBUG_TEST_RELAY_PUBLICATION: '1',
+  SCOREBUG_TEST_WORKER_PROCESSING: '1',
+  SCOREBUG_TEST_LIVE_PROFILE: '240p30',
+  SCOREBUG_TEST_CANDIDATE_PROFILE: '360p30',
+  SCOREBUG_TEST_CANDIDATE_HEADROOM: '1',
+  SCOREBUG_TEST_MEASURED_TRIAL: '1',
+  SCOREBUG_TEST_BANDWIDTH_PROBE: 'staged',
+  SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
+});
+function options(environment) {
+  return {
+    environment,
+    streaming: true,
+    requirePublication: true,
+    requireProcessing: true,
+    holdSeconds: Number(environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS),
+    liveProfile: '240p30',
+  };
+}
+function qualify(environment) {
+  const args = options(environment);
+  assert.equal(nativeFileFixtureOptions(args).minimumDurationSeconds, args.holdSeconds + 90);
+  assert.equal(nativeLiveProfile(args), '240p30');
+  assert.equal(nativeCandidateHeadroom(environment), true);
+  assert.equal(nativeCandidateProfile(args), '360p30');
+  assert.equal(nativeBandwidthProbe(args), environment.SCOREBUG_TEST_BANDWIDTH_PROBE);
+  assert.equal(nativeMeasuredTrial(args), true);
+  const recovery = { ...args, measuredTrial: true };
+  assert.equal(
+    nativeMeasuredRecovery(recovery),
+    environment.SCOREBUG_TEST_MEASURED_RECOVERY !== undefined,
+  );
+  assert.equal(
+    nativeRepeatedRecovery(recovery),
+    environment.SCOREBUG_TEST_MEASURED_RECOVERY === 'repeated',
+  );
+}
+for (const recovery of [undefined, 'decoder-stall', 'repeated'])
+  test(`complete file measured route accepts ${recovery ?? 'trial'} only with its original gates`, () => {
+    const env = valid();
+    if (recovery !== undefined) env.SCOREBUG_TEST_MEASURED_RECOVERY = recovery;
+    if (recovery === 'repeated') {
+      env.SCOREBUG_TEST_BANDWIDTH_PROBE = 'repeated';
+      env.SCOREBUG_TEST_STREAM_HOLD_SECONDS = '180';
+    }
+    qualify(env);
+  });
+for (const key of Object.keys(valid()))
+  test(`file measured route rejects absent or malformed ${key}`, () => {
+    for (const value of [undefined, '', 'true', '0']) {
+      const env = { ...valid(), [key]: value };
+      if (key === 'SCOREBUG_TEST_FILE_INPUT' && value === undefined) continue; // This is the separate synthetic route.
+      assert.throws(() => nativeFileFixtureOptions(options(env)));
+    }
+  });
+for (const key of [
+  'SCOREBUG_TEST_MOTION_FIXTURE',
+  'SCOREBUG_TEST_NATIVE_QUALITY',
+  'SCOREBUG_TEST_NATIVE_CONFIRMATION',
+  'SCOREBUG_TEST_PROFILE_TRANSITIONS',
+  'SCOREBUG_TEST_ADAPTIVE_PROFILES',
+  'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
+  'SCOREBUG_TEST_UPLINK_PROFILE',
+  'SCOREBUG_TEST_UPLINK_PROXY_PORT',
+  'SCOREBUG_TEST_DECODER_STALL',
+  'SCOREBUG_TEST_CADENCE_REPORTS',
+  'SCOREBUG_TEST_DEADLINE_RESETS',
+  'SCOREBUG_TEST_DECODER_THREADING',
+  'SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS',
+  'SCOREBUG_TEST_PUBLISH_PACING',
+])
+  test(`file measured route rejects conflicting ${key} through every source selector`, () => {
+    for (const value of ['', '1', 'blocks16']) {
+      const env = { ...valid(), [key]: value };
+      const args = options(env);
+      for (const select of [
+        () => nativeFileFixtureOptions(args),
+        () => nativeLiveProfile(args),
+        () => nativeCandidateHeadroom(env),
+        () => nativeCandidateProfile(args),
+        () => nativeBandwidthProbe(args),
+        () => nativeMeasuredTrial(args),
+      ])
+        assert.throws(select);
+    }
+  });
+test('repeated file mode cannot be selected partially or with a different hold', () => {
+  for (const patch of [
+    { SCOREBUG_TEST_MEASURED_RECOVERY: 'repeated' },
+    { SCOREBUG_TEST_BANDWIDTH_PROBE: 'repeated' },
+    { SCOREBUG_TEST_MEASURED_RECOVERY: 'repeated', SCOREBUG_TEST_BANDWIDTH_PROBE: 'repeated' },
+    {
+      SCOREBUG_TEST_MEASURED_RECOVERY: 'decoder-stall',
+      SCOREBUG_TEST_BANDWIDTH_PROBE: 'repeated',
+      SCOREBUG_TEST_STREAM_HOLD_SECONDS: '180',
+    },
+    { SCOREBUG_TEST_MEASURED_RECOVERY: 'other' },
+    { SCOREBUG_TEST_CANDIDATE_PROFILE: '540p30' },
+    { SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1000' },
+    { SCOREBUG_TEST_STREAM_HOLD_SECONDS: '090' },
+  ])
+    assert.throws(() => nativeFileFixtureOptions(options({ ...valid(), ...patch })));
+});

@@ -2818,3 +2818,27 @@ sources. All 269,407 earlier evidence files and both supplied original videos
 were verified unchanged. Evidence is under `artifacts/qa/repeated-live-checkpoint-*`.
 This is a harness foundation checkpoint; full repeated native A/V qualification
 and the real-match network test remain open.
+
+### 2026-09-24: representative native file capture and adaptation
+
+The supplied footage now runs through the native file capture path with independent
+local recording, real audio and the local proxy. Fixed 1080p and fixed 240p native
+routes pass decoded frame identity, clean 1080p archive, scored stream and natural
+audio checks. Local recording continues after streaming stops. Both runs still
+lose 60 acquisition frames before the saved live span and have about 1s of startup
+A/V lead; they do not establish instant startup.
+
+Measured repeated adaptation is the current task. Its first real-file run reached
+240→360→240 and recovered from one controlled decoder fault, but a second candidate
+failed audio opening coverage. A bounded callback-ordering fix has regression
+coverage. The subsequent complete native run passes both measured increases and
+both controlled recoveries: 240→360→240→360→240. The clean 1080p archive continues
+7.1s after streaming stops; expanded audio and score checks pass. This remains a
+local laboratory route, with 60 startup acquisition frames missing and 899ms of
+initial audio lead. See the
+[real-file implementation and evidence plan](2026-09-24-real-file-streaming.md)
+for current test counts, retained artifacts, detailed limitations and next steps.
+Production automatic upgrades remain gated. Physical phone/camera/Watch concurrency,
+paired WatchConnectivity, actual network impairments and remote proxy deployment
+remain separate qualification work. Existing installed simulator runtimes are reused;
+no missing runtimes are restored merely because the user removed them for disk space.

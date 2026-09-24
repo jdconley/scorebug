@@ -34,22 +34,44 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     'SCOREBUG_TEST_PROFILE_TRANSITIONS',
     'SCOREBUG_TEST_ADAPTIVE_PROFILES',
     'SCOREBUG_TEST_SOURCE_CADENCE_PACING',
-    'SCOREBUG_TEST_CANDIDATE_PROFILE',
-    'SCOREBUG_TEST_CANDIDATE_HEADROOM',
-    'SCOREBUG_TEST_MEASURED_TRIAL',
-    'SCOREBUG_TEST_MEASURED_RECOVERY',
-    'SCOREBUG_TEST_BANDWIDTH_PROBE',
     'SCOREBUG_TEST_UPLINK_PROFILE',
     'SCOREBUG_TEST_UPLINK_PROXY_PORT',
     'SCOREBUG_TEST_DECODER_STALL',
     'SCOREBUG_TEST_CADENCE_REPORTS',
     'SCOREBUG_TEST_DEADLINE_RESETS',
-    'SCOREBUG_TEST_DELIVERY_DEADLINE_MS',
     'SCOREBUG_TEST_DECODER_THREADING',
     'SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS',
     'SCOREBUG_TEST_PUBLISH_PACING',
   ])
     assert.equal(environment[key], undefined, `File baseline conflicts with ${key}`);
+  const measured = environment.SCOREBUG_TEST_MEASURED_TRIAL !== undefined;
+  if (measured) {
+    for (const [key, value] of Object.entries({
+      SCOREBUG_TEST_MEASURED_TRIAL: '1',
+      SCOREBUG_TEST_CANDIDATE_HEADROOM: '1',
+      SCOREBUG_TEST_CANDIDATE_PROFILE: '360p30',
+      SCOREBUG_TEST_LIVE_PROFILE: '240p30',
+      SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
+      SCOREBUG_TEST_STREAM_HOLD_SECONDS: String(holdSeconds),
+    }))
+      assert.equal(environment[key], value, `Measured file route requires ${key}=${value}`);
+    const probe = environment.SCOREBUG_TEST_BANDWIDTH_PROBE;
+    const recovery = environment.SCOREBUG_TEST_MEASURED_RECOVERY;
+    assert(
+      (probe === 'staged' && (recovery === undefined || recovery === 'decoder-stall')) ||
+        (probe === 'repeated' && recovery === 'repeated' && holdSeconds === 180),
+      'Measured file route requires a complete staged or repeated recovery selection',
+    );
+  } else {
+    for (const key of [
+      'SCOREBUG_TEST_CANDIDATE_PROFILE',
+      'SCOREBUG_TEST_CANDIDATE_HEADROOM',
+      'SCOREBUG_TEST_MEASURED_RECOVERY',
+      'SCOREBUG_TEST_BANDWIDTH_PROBE',
+      'SCOREBUG_TEST_DELIVERY_DEADLINE_MS',
+    ])
+      assert.equal(environment[key], undefined, `Fixed file route conflicts with ${key}`);
+  }
   if (environment.SCOREBUG_TEST_LIVE_PROFILE !== undefined)
     assert(
       ['240p30', '360p30', '540p30'].includes(environment.SCOREBUG_TEST_LIVE_PROFILE) &&
@@ -57,6 +79,24 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
       'Reduced file profile requires an explicit supported profile and at least ninety seconds',
     );
   return { path, minimumDurationSeconds: holdSeconds + 90, sourceOriginSeconds: 123.25 };
+}
+
+/** Nonrecursive source guard for measured option parsers; never fabricates a motion opt-in. */
+export function nativeMeasuredFileSource(environment) {
+  if (environment.SCOREBUG_TEST_FILE_INPUT === undefined) return false;
+  assert.equal(
+    environment.SCOREBUG_TEST_MEASURED_TRIAL,
+    '1',
+    'Complete measured file route required',
+  );
+  const raw = environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS;
+  assert(
+    typeof raw === 'string' && /^[1-9][0-9]{1,2}$/.test(raw),
+    'Canonical measured file hold required',
+  );
+  return (
+    nativeFileFixtureOptions({ environment, streaming: true, holdSeconds: Number(raw) }) !== null
+  );
 }
 
 /** Prepared input contract; every frame must preserve the existing rational observation clock. */

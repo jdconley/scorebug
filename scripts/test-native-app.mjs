@@ -5,7 +5,7 @@ import {
   stageNativeFileFixture,
   verifyNativeFileFixtureHash,
 } from './native-file-fixture.mjs';
-import { qualifyNaturalAudio } from './natural-audio-qualification.mjs';
+import { qualifyNaturalAudio, measuredAudioProbeFrames } from './natural-audio-qualification.mjs';
 import { qualifyNativeFileRecording } from './native-file-recording.mjs';
 import { qualifyScoreTemplate } from './score-template-qualification.mjs';
 import { nativeScoreTemplate } from './native-score-template.mjs';
@@ -274,6 +274,8 @@ await writeFile(
 const { ffmpeg, ffprobe, font } = mediaTools();
 let fileInputEvidence, sourcePCM, fileRecordingQualification;
 const scoreTemplates = [];
+const fileAudioContexts = new Map();
+let measuredFileAudioQualification;
 let simulator;
 let liveContainer;
 const execute = promisify(execFile);
@@ -501,6 +503,15 @@ async function analyze(path, index, live = false) {
     const raw = await readFile(pcmPath);
     const samples = new Float32Array(raw.length / 4);
     for (let i = 0; i < samples.length; i++) samples[i] = raw.readFloatLE(i * 4);
+    if (fileFixture && measuredTrial)
+      fileAudioContexts.set(index, {
+        sourceSamples: sourcePCM,
+        targetSamples: samples,
+        codes,
+        videoTimes: times,
+        audioStartTime: Number(pcm[0].best_effort_timestamp_time),
+        sourceAudioStartTime: fileInputEvidence.audioStartSeconds,
+      });
     sync = fileFixture
       ? qualifyNaturalAudio({
           sourceSamples: sourcePCM,
@@ -1417,6 +1428,33 @@ try {
               fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
             })
           : qualifyMeasuredNativeTrial(measuredInput);
+      if (fileFixture) {
+        assert.equal(live.length, 1, 'Measured file audio requires one complete saved stream');
+        const liveAudio = fileAudioContexts.get('live-0');
+        assert(liveAudio && fileAudioContexts.has(0), 'Missing measured audio context');
+        const anchors = measuredAudioProbeFrames({
+          phases: qualification.profile.phases,
+          codes: liveAudio.codes,
+        });
+        await writeFile(
+          join(artifact, 'measured-file-audio-anchors.json'),
+          JSON.stringify({ phases: qualification.profile.phases, anchors }, null, 2),
+          { flag: 'wx' },
+        );
+        measuredFileAudioQualification = {
+          anchors,
+          archive: qualifyNaturalAudio({
+            ...fileAudioContexts.get(0),
+            additionalSourceFrames: anchors,
+          }),
+          live: qualifyNaturalAudio({ ...liveAudio, additionalSourceFrames: anchors }),
+        };
+        await writeFile(
+          join(artifact, 'measured-file-audio-qualification.json'),
+          JSON.stringify(measuredFileAudioQualification, null, 2),
+          { flag: 'wx' },
+        );
+      }
       if (repeatedRecovery) {
         const terminalPath = join(artifact, 'quality-control-live.json');
         await cp(
@@ -1491,6 +1529,7 @@ try {
         fileFixture,
         fileInputEvidence,
         fileRecordingQualification,
+        measuredFileAudioQualification,
         streamingOptions,
         fixtureWorkload,
         liveProfile,

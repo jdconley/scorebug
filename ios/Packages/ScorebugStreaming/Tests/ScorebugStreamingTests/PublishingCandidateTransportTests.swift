@@ -20,8 +20,8 @@ final class PublishingCandidateTransportTests: XCTestCase {
 
     func testAlignedAudioVideoProducesActualMuxCostAndImmutableReceipts() async throws {
         let clock = TransportTestClock(), window = owner(clock: clock)
+        window.observeAudio(audio(0, clock: clock)) // ignored before campaign arming
         let id = prepare(window)
-        window.observeAudio(audio(0, clock: clock)) // ignored before raw admission
         XCTAssertTrue(window.advanceRaw(pts(0)))
         window.observeAudio(audio(0, clock: clock))
         window.observeAudio(audio(1, clock: clock)) // ahead, bounded pending
@@ -45,6 +45,60 @@ final class PublishingCandidateTransportTests: XCTestCase {
         XCTAssertEqual(repeated.endedAt, result.endedAt)
         XCTAssertFalse(window.advanceRaw(pts(2)))
         XCTAssertFalse(window.observeVideo(try video(2)))
+    }
+
+    func testOneShotAudioBeforeFirstRawIsRetainedForItsSourceWindow() async throws {
+        let clock = TransportTestClock(), window = owner(clock: clock)
+        prepare(window)
+        window.observeAudio(audio(0, clock: clock)) // before the eventual source anchor
+        window.observeAudio(audio(1, clock: clock)) // one-shot opening packet
+        clock.now = 10.01
+        XCTAssertTrue(window.advanceRaw(pts(1)))
+        XCTAssertTrue(window.observeVideo(try video(1, sync: true)))
+        window.observeAudio(audio(2, clock: clock))
+        clock.now = 10.02
+        XCTAssertTrue(window.advanceRaw(pts(2)))
+        XCTAssertTrue(window.observeVideo(try video(2)))
+        window.closeRawWindow()
+        window.observeAudio(audio(3, clock: clock))
+        let result = await window.finish()
+        XCTAssertEqual(result.outcome, .completed, result.failure ?? "")
+        XCTAssertEqual(result.audio.map(\.sourcePTS), [pts(1), pts(2)])
+        XCTAssertEqual(result.audio.first?.observedAt, 10)
+        XCTAssertEqual(result.startedAt, 10.01)
+        XCTAssertEqual(result.followingAudio?.sourcePTS, pts(3))
+        XCTAssertEqual(result.maximumPendingCount, 2)
+    }
+
+    func testPreRawAudioUsesTheSameFinitePendingBudget() async {
+        let clock = TransportTestClock(), window = owner(clock: clock)
+        prepare(window)
+        for index in 0..<17 { window.observeAudio(audio(index, clock: clock, bytes: 8184)) }
+        let result = await window.finish()
+        XCTAssertEqual(result.outcome, .failed)
+        XCTAssertEqual(result.failure, "pendingAudioLimit")
+        XCTAssertEqual(result.maximumPendingCount, 16)
+        XCTAssertEqual(result.maximumPendingBytes, 16 * 8184)
+    }
+
+    func testPreRawBufferStillRejectsWrongGenerationStaleAudioAndCadenceGaps() async {
+        for fault in ["generation", "stale", "gap", "opening", "cancel"] {
+            let clock = TransportTestClock(), window = owner(clock: clock)
+            prepare(window)
+            if fault == "opening" { window.observeAudio(audio(2, clock: clock)) }
+            else {
+                window.observeAudio(audio(0, clock: clock, generation: fault == "generation" ? 8 : 7,
+                                          observed: fault == "stale" ? 9.99 : nil))
+                window.observeAudio(audio(fault == "gap" ? 2 : 1, clock: clock))
+            }
+            if fault == "cancel" { window.cancel() }
+            XCTAssertFalse(window.advanceRaw(pts(0)), fault)
+            let result = await window.finish()
+            XCTAssertEqual(result.outcome, fault == "cancel" ? .cancelled : .failed, fault)
+            XCTAssertTrue(result.audio.isEmpty || fault == "gap", fault)
+            XCTAssertEqual(result.failure, fault == "cancel" ? nil : fault == "gap" ? "audioCadence"
+                           : fault == "opening" ? "audioOpeningCoverage" : "invalidAudio", fault)
+        }
     }
 
     func testPreRangeAudioObservedBeforeRawAnchorIsIgnoredAfterWaitingForWindowLock() async throws {
