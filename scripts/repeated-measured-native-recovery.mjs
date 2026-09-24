@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   qualifyMeasuredNativeMedia,
+  measuredTrialArtifacts,
   qualifyMeasuredDeliveryOwnership,
   qualifyMeasuredDeliveryCoverage,
 } from './measured-native-trial.mjs';
@@ -9,6 +10,11 @@ import { qualifyMeasuredNativeLifecycle } from './measured-native-lifecycle.mjs'
 import { qualifyRepeatedNativeAdmissions } from './repeated-native-admission.mjs';
 import { qualifyRepeatedMeasuredPolicy } from './repeated-measured-policy.mjs';
 import { qualifyRepeatedNativeReadiness } from './repeated-native-readiness.mjs';
+
+export const repeatedMeasuredArtifacts = {
+  ...measuredTrialArtifacts,
+  candidateProof: ['native-candidate-measurement.json', 512 * 1024],
+};
 
 /** Complete repeated laboratory policy/media replay from raw exports. The native
  * harness must additionally decode full A/V and verify durable recording,

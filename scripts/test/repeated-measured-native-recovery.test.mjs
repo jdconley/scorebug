@@ -42,3 +42,14 @@ test('complete admission component cannot stand in for full source, cadence and 
   assert.throws(() => implementation.qualifyRepeatedMeasuredNativeRecovery(input));
   assert.equal(JSON.stringify(input), before);
 });
+
+test('repeated artifact bound admits the complete two-candidate native export', () => {
+  const f = repeatedReceiverIntervalFixture();
+  const bytes = Buffer.byteLength(JSON.stringify(f.candidateProof));
+  assert(bytes > 256 * 1024, 'Fixture must expose the legacy one-candidate limit');
+  assert(
+    implementation.repeatedMeasuredArtifacts?.candidateProof?.[1] >= bytes,
+    'Repeated native candidate proof is truncated by legacy bound',
+  );
+  assert.equal(implementation.repeatedMeasuredArtifacts.candidateProof[1], 512 * 1024);
+});

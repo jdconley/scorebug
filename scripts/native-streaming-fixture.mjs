@@ -1,6 +1,12 @@
 import { nativeRelayImageTag } from './native-relay-image.mjs';
 import { fixtureWorkerReportInterval } from './native-streaming-options.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
+import { runRepeatedOwnedDecoderStalls } from './repeated-owned-decoder-stall.mjs';
+import {
+  RepeatedQualityPolling,
+  repeatedFaultStatusReady,
+  repeatedFaultOwnerMatches,
+} from './repeated-quality-polling.mjs';
 import assert from 'node:assert/strict';
 import { recordReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
@@ -36,6 +42,8 @@ export async function nativeStreamingFixture({
   workerOutputProfile = liveProfile,
   measuredTrial = false,
   measuredRecovery = false,
+  repeatedRecovery = false,
+  readQualityCheckpoint,
   cadenceReports = false,
   decoderStall = false,
   deadlineResets = false,
@@ -43,6 +51,11 @@ export async function nativeStreamingFixture({
   publishPeerLatencyMs,
   publishPacing,
 }) {
+  assert.equal(typeof repeatedRecovery, 'boolean');
+  assert.ok(
+    !repeatedRecovery || (measuredRecovery && typeof readQualityCheckpoint === 'function'),
+    'Repeated recovery requires its live checkpoint reader',
+  );
   assert.equal(typeof measuredRecovery, 'boolean');
   assert.ok(!measuredRecovery || measuredTrial, 'Measured recovery requires measured trial');
   assert.equal(typeof deadlineResets, 'boolean');
@@ -84,12 +97,13 @@ export async function nativeStreamingFixture({
     requireReceiverProbe,
     stagedReceiverProbe,
     candidateHeadroom,
+    repeatedReceiverProbe: repeatedRecovery,
   });
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
   let matchID;
-  let statusTask, statusAbort, statusError, faultTask, faultError;
+  let statusTask, statusAbort, statusError, faultTask, faultError, repeatedQuality;
   const decodedWindows = new Map();
   const publications = new Map();
   const receiverProbes = new Map();
@@ -99,7 +113,7 @@ export async function nativeStreamingFixture({
     statusAbort?.abort();
     await statusTask;
     await faultTask;
-    if (faultError) throw new Error('Owned decoder stall failed');
+    if (faultError) throw new Error('Owned decoder stall failed', { cause: faultError });
   }
   async function saveStatus() {
     await saveNativeStatusEvidence({
@@ -275,6 +289,11 @@ export async function nativeStreamingFixture({
       get matchID() {
         return matchID;
       },
+      reconcileRepeatedQuality(terminal, quality) {
+        assert(repeatedRecovery && repeatedQuality, 'Missing repeated live campaign');
+        if (faultError) throw new Error('Repeated fault campaign failed', { cause: faultError });
+        return repeatedQuality.reconcile(terminal, quality);
+      },
       environment: {
         RELAY_API_URL: `http://127.0.0.1:${relayPort}`,
         RELAY_API_USERNAME: 'qa-admin',
@@ -328,7 +347,8 @@ export async function nativeStreamingFixture({
               (decoderStall || measuredRecovery) &&
               !faultTask &&
               worker &&
-              status.state === 'producing_output'
+              status.state === 'producing_output' &&
+              (!repeatedRecovery || repeatedFaultStatusReady(status, matchID))
             ) {
               // Sample the same scoped decoder before and during the owned pause.
               // Only scalar status is exported; request credentials stay in the closure.
@@ -351,7 +371,8 @@ export async function nativeStreamingFixture({
                           sample.workerId === status.workerId &&
                           sample.workerEpoch === status.workerEpoch &&
                           sample.publication &&
-                          sample.observation?.decoderCadence,
+                          sample.observation?.decoderCadence &&
+                          (!repeatedRecovery || repeatedFaultOwnerMatches(sample, status)),
                         'Owned fault decoder context changed',
                       );
                       return {
@@ -370,18 +391,52 @@ export async function nativeStreamingFixture({
                       };
                     }
                   : undefined;
-              faultTask = runOwnedDecoderStall({
-                delayBeforePauseMs: measuredRecovery ? 70000 : 20000,
-                observeBeforePause: observeFault,
-                observePaused: observeFault,
-                worker,
-                signal: statusAbort.signal,
-                save: (value) =>
-                  writeFile(
-                    join(artifact, 'owned-decoder-stall.json'),
-                    JSON.stringify(value, null, 2),
-                  ),
-              }).catch((error) => {
+              const runFaults = async () => {
+                if (repeatedRecovery) {
+                  repeatedQuality = new RepeatedQualityPolling({
+                    publishingAttemptID: status.publication.publishingAttemptId,
+                    sourceOwner: {
+                      workerID: status.workerId,
+                      workerEpoch: status.workerEpoch,
+                      workerAttempt: status.observation.attempt,
+                      readerID: status.publication.readerId,
+                    },
+                    matchID,
+                    broadcastGeneration: status.generation,
+                    signal: statusAbort.signal,
+                    read: () => readQualityCheckpoint(statusAbort.signal),
+                  });
+                  const first = await repeatedQuality.awaitReady('1');
+                  return runRepeatedOwnedDecoderStalls({
+                    worker,
+                    signal: statusAbort.signal,
+                    scope: repeatedQuality.scope,
+                    awaitReady: (campaign) =>
+                      campaign === '1' ? first : repeatedQuality.awaitReady(campaign),
+                    validateReady: (claim) => repeatedQuality.validateReady(claim),
+                    observeBeforePause: observeFault,
+                    observePaused: observeFault,
+                    save: (value) =>
+                      writeFile(
+                        join(artifact, 'owned-decoder-stalls.json'),
+                        JSON.stringify(value, null, 2),
+                      ),
+                  });
+                }
+                return runOwnedDecoderStall({
+                  delayBeforePauseMs: measuredRecovery ? 70000 : 20000,
+                  observeBeforePause: observeFault,
+                  observePaused: observeFault,
+                  worker,
+                  signal: statusAbort.signal,
+                  save: (value) =>
+                    writeFile(
+                      join(artifact, 'owned-decoder-stall.json'),
+                      JSON.stringify(value, null, 2),
+                    ),
+                });
+              };
+              faultTask = runFaults().catch((error) => {
                 faultError = error;
               });
             }

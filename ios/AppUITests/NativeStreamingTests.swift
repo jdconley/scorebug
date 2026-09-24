@@ -64,7 +64,7 @@ final class NativeStreamingTests: XCTestCase {
         if !candidateHeadroom.isEmpty {
             XCTAssertEqual(candidateHeadroom, "1")
             XCTAssertEqual(liveProfile, "240p30")
-            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], "staged")
+            XCTAssertTrue(["staged", "repeated"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""))
             XCTAssertTrue(["360p30", "540p30", "1080p30"].contains(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""))
             XCTAssertTrue((90...600).contains(holdSeconds)); XCTAssertEqual(motionFlag, "blocks16")
             for key in ["SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
@@ -75,8 +75,14 @@ final class NativeStreamingTests: XCTestCase {
         }
         let probe = ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] ?? ""
         if !probe.isEmpty {
-            XCTAssertTrue(["renew", "expire", "staged"].contains(probe)); XCTAssertEqual(liveProfile, candidateHeadroom == "1" ? "240p30" : "540p30")
+            XCTAssertTrue(["renew", "expire", "staged", "repeated"].contains(probe)); XCTAssertEqual(liveProfile, candidateHeadroom == "1" ? "240p30" : "540p30")
             XCTAssertTrue(qualityFlag.isEmpty && transitions.isEmpty && adaptive.isEmpty && pacing.isEmpty)
+            if probe == "repeated" {
+                XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(holdSeconds, 180)
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"], "1")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"], "360p30")
+                XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"], "1500")
+            }
             app.launchEnvironment["SCOREBUG_TEST_BANDWIDTH_PROBE"] = probe
         }
         let candidate = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] ?? ""
@@ -92,7 +98,7 @@ final class NativeStreamingTests: XCTestCase {
         if !measuredTrial.isEmpty {
             XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(candidateHeadroom, "1")
             XCTAssertEqual(candidate, "360p30"); XCTAssertEqual(liveProfile, "240p30")
-            XCTAssertEqual(probe, "staged"); XCTAssertTrue(cadenceReports.isEmpty)
+            XCTAssertTrue(["staged", "repeated"].contains(probe)); XCTAssertTrue(cadenceReports.isEmpty)
             XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"], "1")
             app.launchEnvironment["SCOREBUG_TEST_MEASURED_TRIAL"] = measuredTrial
             app.launchEnvironment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] = "1"

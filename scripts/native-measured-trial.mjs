@@ -11,6 +11,17 @@ export function nativeMeasuredTrial({
   liveProfile,
 }) {
   const flag = environment.SCOREBUG_TEST_MEASURED_TRIAL;
+  const repeated =
+    environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'repeated' ||
+    environment.SCOREBUG_TEST_MEASURED_RECOVERY === 'repeated';
+  if (repeated)
+    assert.ok(
+      flag === '1' &&
+        environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'repeated' &&
+        environment.SCOREBUG_TEST_MEASURED_RECOVERY === 'repeated' &&
+        holdSeconds === 180,
+      'Repeated measured trial requires paired repeated recovery/probe opt-ins and exactly 180 seconds',
+    );
   if (flag === undefined) return false;
   assert.ok(
     flag === '1' &&
@@ -36,7 +47,7 @@ export function nativeMeasuredTrial({
         'SCOREBUG_TEST_CADENCE_REPORTS',
         'SCOREBUG_TEST_DEADLINE_RESETS',
       ].every((key) => environment[key] === undefined),
-    'Measured trial requires exclusive candidate360, minimum-live, staged-probe full-pipeline qualification',
+    'Measured trial requires exclusive candidate360, minimum-live, staged or repeated probe full-pipeline qualification',
   );
   return true;
 }

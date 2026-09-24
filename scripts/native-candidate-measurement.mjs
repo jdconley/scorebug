@@ -3,6 +3,7 @@ import { nativeMediaGeometry } from './native-live-profile.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 import { qualifyCandidateAVTransport } from './candidate-av-window.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
+import { nativeMeasuredTrial } from './native-measured-trial.mjs';
 const rates = { '240p30': 350000, '360p30': 600000, '540p30': 1500000, '1080p30': 6000000 };
 export function nativeCandidateProfile({
   environment,
@@ -12,6 +13,21 @@ export function nativeCandidateProfile({
   holdSeconds,
   liveProfile,
 }) {
+  if (
+    environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'repeated' ||
+    environment.SCOREBUG_TEST_MEASURED_RECOVERY === 'repeated'
+  )
+    assert.equal(
+      nativeMeasuredTrial({
+        environment,
+        streaming,
+        requireProcessing,
+        requirePublication,
+        holdSeconds,
+        liveProfile,
+      }),
+      true,
+    );
   const combined = nativeCandidateHeadroom(environment);
   const profile = environment.SCOREBUG_TEST_CANDIDATE_PROFILE;
   if (profile === undefined) return null;

@@ -22,6 +22,30 @@ intentionally does not invent unverified Swift media method signatures. The medi
 compatibility experiment must establish those before detailed implementation of its
 adapters. No runtime code was changed while preparing this plan.
 
+## Current assessment — September 23
+
+The native app, scoring/Watch work, clean recording, and portable proxy now have
+substantial implementation and local evidence; the original baseline below is
+historical. Production automatic quality increases remain disabled until their
+full validation gates pass. The current focus is two independently verified
+upgrade → fault → minimum reset → recovery cycles in one native publication.
+
+Live native checkpoints, causal two-pause orchestration, and the complete raw
+repeated verifier are connected. The repeated route is explicitly limited to a
+180-second simulator experiment with its own campaign-capable relay image.
+All 3,167 tool tests pass. The iPhone 14/iOS 26.2 workflow passed native scoring
+and recording export, but repeated recovery failed: no candidate was admitted
+before the bounded readiness deadline. Probe retirement raced measurement
+completion; the next fix addresses that test scheduling. Production qualification
+remains open.
+
+Both supplied volleyball videos are preserved unchanged. Short 1080p and 4K
+proxy processing checks passed with software and macOS VideoToolbox encoding.
+The real-footage network tests exposed tail-frame loss and a failed drain
+experiment, so that end-to-end test remains open. See
+[representative match testing](../../representative-match-testing.md) for results
+and limits. Physical iPhone/Watch tests and other proxy systems remain later gates.
+
 ## Baseline and owner decisions
 
 The May implementation builds, and its 20 small tests pass, but streaming is incomplete.

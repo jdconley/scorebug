@@ -96,7 +96,7 @@ test('new lower fixed profiles do not inherit the fixed540 probe admission', () 
   }
 });
 
-test('single-campaign harness rejects repeated mode until multi-cycle replay exists', () => {
+test('legacy probe options and single-campaign replay reject repeated mode', () => {
   const o = options();
   o.environment.SCOREBUG_TEST_BANDWIDTH_PROBE = 'repeated';
   assert.throws(() => nativeBandwidthProbe(o));

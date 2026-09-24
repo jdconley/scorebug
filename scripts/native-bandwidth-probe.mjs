@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { qualifyMeasuredProbeRetirement } from './measured-probe-retirement.mjs';
+import { nativeMeasuredTrial } from './native-measured-trial.mjs';
 import {
   nativeCandidateHeadroom,
   candidateHeadroomStageRates,
@@ -13,11 +14,26 @@ export function nativeBandwidthProbe({
   holdSeconds,
   liveProfile,
 }) {
+  if (
+    environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'repeated' ||
+    environment.SCOREBUG_TEST_MEASURED_RECOVERY === 'repeated'
+  )
+    assert.equal(
+      nativeMeasuredTrial({
+        environment,
+        streaming,
+        requireProcessing,
+        requirePublication,
+        holdSeconds,
+        liveProfile,
+      }),
+      true,
+    );
   const combined = nativeCandidateHeadroom(environment);
   const mode = environment.SCOREBUG_TEST_BANDWIDTH_PROBE;
   if (mode === undefined) return null;
   assert.ok(
-    ['renew', 'expire', 'staged'].includes(mode) &&
+    ['renew', 'expire', 'staged', 'repeated'].includes(mode) &&
       streaming &&
       requireProcessing &&
       requirePublication &&

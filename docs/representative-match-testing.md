@@ -58,8 +58,13 @@ as a fixture or used to qualify the application. Neither attempt ran the planned
 An upstream [SRT live-close issue](https://github.com/Haivision/srt/issues/2760)
 describes buffered receiver delivery stopping at socket closure. This is a
 plausible contributor to the first result, not a proven complete diagnosis.
-The second diagnostic also needs separate inspection of its forwarding and
-decoder buffering. Do not lower the 360-frame requirement or reclassify either
+The first receiver's 355 decoded PTS values are contiguous, and its output count
+matches that decoder count: the shortage is at the tail, upstream of the overlay
+output. The second diagnostic used the `srt-live-transmit file://con` bridge that
+`scripts/test-relay-clock.mjs` already avoids because ConsoleSource short-read
+padding can corrupt the byte stream. Its final 360 count appears during failure
+cleanup after the pre-close assertion; it is not successful live drain evidence.
+Decoder buffering and transport shutdown still need separate measurement. Do not lower the 360-frame requirement or reclassify either
 failure as a passing end-to-end test.
 
 Next use the already validated native/SRT sender and receiver telemetry to

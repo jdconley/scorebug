@@ -495,3 +495,83 @@ sources. All 269,407 earlier evidence files and both supplied original videos
 were verified unchanged. Evidence is under `artifacts/qa/repeated-live-checkpoint-*`.
 This is a harness foundation checkpoint; full repeated native A/V qualification
 and the real-match network test remain open.
+
+
+## Task 6 wiring checkpoint — September 23
+
+The harness now preserves the literal repeated probe mode and selects the fresh
+`scorebug/ingest:campaign-probe-v3` image, leaving legacy image selection unchanged.
+The paired repeated-recovery flags require a measured trial, 240p live output,
+360p candidate, 1500 ms delivery budget, all existing full-pipeline opt-ins, and
+exactly 180 seconds. Repeated candidate exports permit the native 512 KiB bound;
+the legacy bound remains 256 KiB.
+
+The live reader rejects oversized/nonregular/symlink inputs and validates an
+immutable original event prefix. Its shared deadline bounds both campaigns.
+Ready source identity joins the correlated fixture worker, epoch, attempt and
+reader; UUID comparison handles native casing without rewriting raw scope.
+Both the re-read checkpoint and pre-pause status must retain their original
+ownership. The runner pauses only its discovered child decoder after scoped
+process revalidation, resumes it in finally, and joins before a second campaign.
+Cancellation or persistence failure records failure and cannot authorize a pass.
+
+All 3,163 tool tests pass, including legacy schedules and the new ownership,
+cancellation, terminal-save and native-boundary regressions. Independent reviews
+approved the wiring after the documented regressions were corrected. The pinned
+campaign relay image builds on this Mac. The first complete native attempt failed as documented below; all original archive, scoring, ingress, A/V, direct-recorder and
+raw repeated-policy gates remain required.
+
+Reproduce the explicit route on an installed simulator runtime:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+SCOREBUG_IOS_RUNTIME=26.2 \
+SCOREBUG_TEST_STREAM_HOLD_SECONDS=180 SCOREBUG_TEST_DIRECT_RTMP_RECORDER=1 \
+SCOREBUG_TEST_MOTION_FIXTURE=blocks16 SCOREBUG_TEST_RELAY_PUBLICATION=1 \
+SCOREBUG_TEST_WORKER_PROCESSING=1 SCOREBUG_TEST_LIVE_PROFILE=240p30 \
+SCOREBUG_TEST_BANDWIDTH_PROBE=repeated SCOREBUG_TEST_CANDIDATE_PROFILE=360p30 \
+SCOREBUG_TEST_CANDIDATE_HEADROOM=1 SCOREBUG_TEST_MEASURED_TRIAL=1 \
+SCOREBUG_TEST_MEASURED_RECOVERY=repeated SCOREBUG_TEST_DELIVERY_DEADLINE_MS=1500 \
+node scripts/test-native-app.mjs --streaming
+```
+
+Build the relay first with the pinned recipe in `vendor/MediaMTX/README.md`.
+Do not infer a physical-device or production upgrade pass from this command's
+unit tests or build alone.
+
+
+### Native run and original-scope correction
+
+`native-app-fNvViE` stopped before app launch because the UI-test boundary still
+required the legacy staged mode. That failed run is preserved. The corrected
+boundary explicitly admits repeated only with its 180-second measured route.
+
+`native-app-9da4Oo` passed the iPhone 14/iOS 26.2 UI workflow (native scoring,
+publish/stop and recording export), and archive analysis completed. The overall
+harness failed waiting for the first qualified upgrade; no decoder fault was
+injected. The final raw history contains only bootstrap, baseline evaluations
+and stop. A component/UI pass is not a repeated-media pass.
+
+The first candidate encoded all 121 accepted frames with nominal pressure, but
+its final-stage probe retired at 1882493.540205 and measurement ended at
+1882493.548302, 8.1 ms later. The next eligible healthy source decision arrived
+another 851 ms after retirement. Five-second source windows arrived about 1.74s
+after their ends, leaving narrow intervals inside the unchanged two-second
+freshness gate. The eight-second final-stage schedule missed measurement and
+admission; simply weakening the freshness gate is not acceptable.
+
+Next regression: permit a repeated-only final-stage scheduling ceiling of
+12 seconds / 120 default polls while preserving the native cumulative 16 MiB,
+60-second campaign limits, 0.5-second probe maturity and all independent
+receiver/admission gates. Real terminal/profile withdrawal still ends it early.
+The legacy route keeps eight seconds. Budget exhaustion without admission remains
+a failure; additional fixture time never grants capacity evidence.
+
+The real export also confirmed that original capture scope revision `1` and
+controller bootstrap revision `0` are different domains. The polling/owned-fault
+code now preserves a canonical UInt64 original scope and binds its first queue
+checkpoint, rejecting later scope changes. Trial revisions remain exactly `1`
+and `3`; raw media replay still requires the actual fixed source revision.
+All 3,167 tool tests pass after this correction, and independent scope review
+approved it. Source hashes and diagnostic evidence use `repeated-harness-*`;
+failed run artifacts are retained unchanged.

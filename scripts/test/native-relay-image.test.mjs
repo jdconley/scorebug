@@ -29,3 +29,32 @@ for (const options of [
   test(`rejects invalid relay selector ${JSON.stringify(options)}`, () => {
     assert.throws(() => nativeRelayImageTag(options));
   });
+
+const repeated = {
+  requirePublication: true,
+  requireReceiverProbe: true,
+  stagedReceiverProbe: true,
+  candidateHeadroom: true,
+  repeatedReceiverProbe: true,
+};
+test('repeated receiver probes use the fresh campaign-v3 image without changing legacy tags', () => {
+  assert.equal(nativeRelayImageTag(repeated), 'scorebug/ingest:campaign-probe-v3');
+  assert.equal(
+    nativeRelayImageTag({ ...repeated, repeatedReceiverProbe: false }),
+    'scorebug/ingest:staged-probe-hd-v2',
+  );
+});
+for (const key of [
+  'requirePublication',
+  'requireReceiverProbe',
+  'stagedReceiverProbe',
+  'candidateHeadroom',
+]) {
+  test(`repeated relay requires ${key}`, () => {
+    assert.throws(() => nativeRelayImageTag({ ...repeated, [key]: false }));
+  });
+}
+test('repeated relay selection requires an actual boolean', () => {
+  for (const value of [null, 0, 1, 'true', 'false'])
+    assert.throws(() => nativeRelayImageTag({ ...repeated, repeatedReceiverProbe: value }));
+});

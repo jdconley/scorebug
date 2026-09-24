@@ -4,7 +4,12 @@ import {
 } from './native-candidate-measurement.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
 import { nativeMeasuredTrial } from './native-measured-trial.mjs';
-import { nativeMeasuredRecovery } from './native-measured-recovery.mjs';
+import { nativeMeasuredRecovery, nativeRepeatedRecovery } from './native-measured-recovery.mjs';
+import {
+  qualifyRepeatedMeasuredNativeRecovery,
+  repeatedMeasuredArtifacts,
+} from './repeated-measured-native-recovery.mjs';
+import { readRepeatedCheckpoint } from './repeated-quality-polling.mjs';
 import { measuredTrialArtifacts, qualifyMeasuredNativeTrial } from './measured-native-trial.mjs';
 import { qualifyMeasuredNativeRecovery } from './measured-native-recovery.mjs';
 import { qualifyCandidateProbeHeadroom } from './candidate-probe-headroom.mjs';
@@ -29,9 +34,10 @@ import { nativeLiveProfile, nativeMediaGeometry } from './native-live-profile.mj
 import { qualifyNativeFormat, parseNativeFormatEvidence } from './native-format-qualification.mjs';
 import { validateArchiveDiagnostics } from './archive-diagnostics-validation.mjs';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { cp, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { mediaTools } from './media-tools.mjs';
@@ -173,6 +179,11 @@ const measuredRecovery = nativeMeasuredRecovery({
   measuredTrial,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const repeatedRecovery = nativeRepeatedRecovery({
+  environment: process.env,
+  measuredTrial,
+  holdSeconds: streamingOptions.holdSeconds,
+});
 const workerOutputProfile = measuredTrial ? '360p30' : liveProfile;
 const deliveryLatencyBudget = fixtureDeliveryDeadline({
   environment: process.env,
@@ -229,6 +240,7 @@ await writeFile(
       workerOutputProfile,
       measuredTrial,
       measuredRecovery,
+      repeatedRecovery,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -241,6 +253,26 @@ await writeFile(
 );
 const { ffmpeg, ffprobe } = mediaTools();
 let simulator;
+let liveContainer;
+const execute = promisify(execFile);
+async function readLiveQualityCheckpoint(signal) {
+  assert(simulator, 'Owned simulator is not created');
+  signal.throwIfAborted();
+  if (!liveContainer) {
+    const { stdout } = await execute(
+      'xcrun',
+      ['simctl', 'get_app_container', simulator, 'live.scorebug.app', 'data'],
+      { timeout: 3000, maxBuffer: 8192, signal },
+    );
+    liveContainer = stdout.trim();
+    assert(isAbsolute(liveContainer), 'Invalid owned app container');
+  }
+  const value = await readRepeatedCheckpoint(
+    join(liveContainer, 'Library/Application Support/Scorebug/QA/quality-control-live.json'),
+  );
+  signal.throwIfAborted();
+  return value;
+}
 let api;
 let proxy;
 let active;
@@ -521,7 +553,7 @@ try {
     proxy = await nativeStreamingFixture({
       requirePublication,
       requireReceiverProbe: bandwidthProbe !== null,
-      stagedReceiverProbe: bandwidthProbe === 'staged',
+      stagedReceiverProbe: ['staged', 'repeated'].includes(bandwidthProbe),
       candidateHeadroom,
       uplinkProfile,
       liveProfile,
@@ -529,6 +561,8 @@ try {
       cadenceReports,
       measuredTrial,
       measuredRecovery,
+      repeatedRecovery,
+      readQualityCheckpoint: repeatedRecovery ? readLiveQualityCheckpoint : undefined,
       decoderStall,
       deadlineResets,
       decoderThreading,
@@ -725,7 +759,8 @@ try {
       states.some((item) => item.completedAt == null),
       'No interrupted recording status',
     );
-  let measuredRecoveryQualification,
+  let repeatedRecoveryQualification,
+    measuredRecoveryQualification,
     measuredTrialQualification,
     candidateQualification,
     candidateHeadroomQualification,
@@ -824,7 +859,9 @@ try {
         );
       }
       measuredRaw = {};
-      for (const [key, [name, maximum]] of Object.entries(measuredTrialArtifacts))
+      for (const [key, [name, maximum]] of Object.entries(
+        repeatedRecovery ? repeatedMeasuredArtifacts : measuredTrialArtifacts,
+      ))
         measuredRaw[key] = await readBoundedJSON(join(artifact, name), maximum);
     }
     const decodedEvidence =
@@ -1093,20 +1130,42 @@ try {
         liveIDs: liveSegments.flat(),
         completedWindowLimit: streamingOptions.completedWindowLimit,
       };
-      const qualification = measuredRecovery
-        ? qualifyMeasuredNativeRecovery({
+      const qualification = repeatedRecovery
+        ? qualifyRepeatedMeasuredNativeRecovery({
             ...measuredInput,
-            fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
+            faults: await readBoundedJSON(join(artifact, 'owned-decoder-stalls.json'), 512 * 1024),
           })
-        : qualifyMeasuredNativeTrial(measuredInput);
-      if (measuredRecovery) measuredRecoveryQualification = qualification;
+        : measuredRecovery
+          ? qualifyMeasuredNativeRecovery({
+              ...measuredInput,
+              fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
+            })
+          : qualifyMeasuredNativeTrial(measuredInput);
+      if (repeatedRecovery) {
+        const terminalPath = join(artifact, 'quality-control-live.json');
+        await cp(
+          join(container, 'Library/Application Support/Scorebug/QA/quality-control-live.json'),
+          terminalPath,
+          { errorOnExist: true, force: false },
+        );
+        const terminal = await readBoundedJSON(terminalPath, measuredTrialArtifacts.quality[1]);
+        const reconciliation = proxy.reconcileRepeatedQuality(terminal, qualitySnapshot);
+        await writeFile(
+          join(artifact, 'repeated-live-reconciliation.json'),
+          JSON.stringify(reconciliation, null, 2),
+          { flag: 'wx' },
+        );
+        repeatedRecoveryQualification = qualification;
+      } else if (measuredRecovery) measuredRecoveryQualification = qualification;
       else measuredTrialQualification = qualification;
       await writeFile(
         join(
           artifact,
-          measuredRecovery
-            ? 'measured-recovery-qualification.json'
-            : 'measured-trial-qualification.json',
+          repeatedRecovery
+            ? 'repeated-measured-recovery-qualification.json'
+            : measuredRecovery
+              ? 'measured-recovery-qualification.json'
+              : 'measured-trial-qualification.json',
         ),
         JSON.stringify(qualification, null, 2),
         { flag: 'wx' },
@@ -1159,8 +1218,10 @@ try {
         workerOutputProfile,
         measuredTrial,
         measuredRecovery,
+        repeatedRecovery,
         measuredTrialQualification,
         measuredRecoveryQualification,
+        repeatedRecoveryQualification,
         nativeFormatQualification,
         nativeVideoCostQualification,
         candidateProfile,
@@ -1194,11 +1255,13 @@ try {
       2,
     ),
   );
-  if (measuredRecovery)
+  if (repeatedRecovery)
+    assert.equal(repeatedRecoveryQualification?.measuredRepeatedRecoveryQualified, true);
+  else if (measuredRecovery)
     assert.equal(measuredRecoveryQualification?.measuredRecoveryQualified, true);
   else if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
   console.log(
-    `${measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${repeatedRecovery ? 'REPEATED MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

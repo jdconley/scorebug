@@ -5,6 +5,7 @@ import { basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 const execute = promisify(execFile);
+const inventory = inventoryDecoderProcesses;
 export function resolveDecoderIdentity(rows, workerPID) {
   const worker = rows.find((r) => r.pid === workerPID);
   assert(worker && basename(worker.command) === 'node' && worker.start, 'Owned worker missing');
@@ -18,7 +19,7 @@ export function resolveDecoderIdentity(rows, workerPID) {
   assert(decoder.start && guardian.start);
   return structuredClone({ worker, guardian, decoder });
 }
-async function inventory(workerPID) {
+export async function inventoryDecoderProcesses(workerPID) {
   assert.equal(
     process.platform,
     'darwin',
