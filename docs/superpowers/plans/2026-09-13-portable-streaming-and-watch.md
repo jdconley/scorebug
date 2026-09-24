@@ -24,68 +24,62 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The native app, scoring/Watch work, clean recording, and portable proxy now have
-substantial implementation and local evidence; the original baseline below is
-historical. Production automatic quality increases remain disabled until their
-full validation gates pass. The current focus is two independently verified
-upgrade → fault → minimum reset → recovery cycles in one native publication.
+The native app, scoring/Watch work, clean recording, and portable proxy have
+substantial implementation and local evidence. Production automatic quality
+increases remain disabled until full validation passes. The current focus is two
+independently verified upgrade → fault → minimum reset → recovery cycles in one
+native publication. The repeated experiment remains bounded to 180 seconds.
 
-Live native checkpoints, causal two-pause orchestration, and the complete raw
-repeated verifier are connected. The repeated route remains limited to a
-180-second simulator experiment with its own campaign-capable relay image.
-All 3,306 tool tests and 485 FilmModel tests pass, and the arm64 simulator
-build succeeds. Independent specification and quality reviews approve the
-repeated deadline-audit correction.
+All 459 Core tests, 3,306 tools tests and 485 FilmModel tests pass; the arm64
+simulator build succeeds. Independent specification and quality reviews approve
+the new bounded candidate-wait diagnostic. The latest frozen iPhone 14/iOS 26.2
+run (`native-app-q6s6KU`, source `b8a0609`) passed native scoring/recording export
+in 259.120 seconds. Both candidate measurements, upgrades, confirmations, owned
+faults and resets completed. All 919 source hashes stayed unchanged.
 
-The latest frozen iPhone 14/iOS 26.2 run (`native-app-yB8xre`, source `6d55083`)
-passed native scoring/recording export in 260.869 seconds. Its clean archive has
-6,538 contiguous 1080p frames; live has 6,131 contiguous source frames at about
-30 fps, with maximum 34 ms gap. Separate analysis after the failed run fully
-decoded both tracks, passed media coverage and direct delivery, and matched all
-102 live A/V markers with maximum offset 64.917 ms and negligible drift. All
-918 frozen source hashes remained unchanged. The worker joined successfully,
-and the owned simulator and container were removed.
+**Full qualification still failed:** a candidate binding was attributed to a
+later instant than its saved native probe snapshot. The new trace establishes
+the cause: campaign two read its probe, then awaited health for 30.215 ms. The
+same probe owner renewed during that await, 1.636 ms before binding. The older
+snapshot still had 198.202 ms of lease remaining, but the export assigned it the
+binding time, and the verifier correctly rejected the contradictory history.
+This is an evidence-attribution defect; it is not proof of withdrawal, and the
+failed run is not reclassified as a pass.
 
-The delivery-audit correction now has real native evidence: its explicit repeated
-format2 export retained all 283 rows (18,452,702 bytes), closed without overflow
-or invalidity, and every row passed independent deadline replay. Cadence retained
-2,053 valid rows. Legacy limits and the 100 ms missing-audio coverage gate remain
-unchanged. Earlier truncated native runs remain failed historical evidence.
+The trace closed with 1,052 events / 365,482 bytes, no overflow, invalidity or
+omissions. Both candidate starts and post-start context checks succeeded. The
+prior `native-app-yB8xre` readiness timeout remains unresolved: its first eligible
+health evaluation left only 9.409 ms freshness. A deterministic test proves one
+100 ms polling phase can miss that window while another catches it. This latest
+run had enough freshness to bind both candidates, so it does not prove the older
+run's exact failed predicate. A separate `time` rejection during recovery is
+retained for strict policy replay; later recovery succeeded in the native app.
 
-Full qualification still failed because campaign two never produced a candidate
-measurement before its probe exhausted the unchanged 16 MiB budget. Only the
-first upgrade/confirmation/fault/minimum-reset cycle completed. The previous
-`native-app-L9jBCE` completed both controller cycles but overflowed its legacy
-audit; neither run is a full pass. Current evidence suggests a narrow health-
-readiness opportunity can be missed by the candidate's 100 ms polling: the first
-eligible evaluation in campaign two had only 9.409 ms of its two-second freshness
-allowance remaining. The next came nearly ten seconds into high-rate probing,
-leaving too little budget for four seconds of candidate measurement. Actual
-poll outcomes are not exported, so that exact causal predicate is unproven.
+Independent analysis of the latest run fully decoded both A/V tracks. The clean
+archive retains 6,539 contiguous 1080p frames; live retains 6,131 contiguous source
+frames, both at 30 fps. Live maximum frame gap is 34 ms. All 102 live audio markers
+match within 64.583 ms with negligible drift. Audio starts 420 ms before video;
+coverage and direct-recorder delivery checks pass. The native acquisition prefix
+is 33 frames. The repeated delivery audit retains 269 rows / 17,563,116 bytes,
+all independently replayed with no unknown rows; cadence retains 2,054 valid rows.
+The worker and recorder exited successfully, and owned simulator/container cleanup
+completed. These component results do not grant production upgrade permission.
 
-A separate startup issue remains open. `native-app-LeTozN` lost the first
-395.011 ms of live audio relative to video. The three subsequent traced runs did
-not reproduce it: audio led video by 605 ms, 279 ms and 517 ms. The first two traced worker inputs
-already excluded 28 and 37 initial native AAC packets, respectively, and worker
-outputs preserved the relative timing. Relay code has no replay of media sent
-before a reader attaches, while H.264 waits independently for a usable keyframe.
-That supports an acquisition hypothesis, but the old run has no worker packet
-trace, so its exact loss boundary remains unproven. Preserve the 100 ms
-missing-audio gate; do not retry merely to obtain favorable timing.
+**Next:** export explicit native probe-read intervals separately from binding
+and completion times, then validate causal ordering across overlapping reads.
+Keep strict counter/lease consistency, no future evidence, withdrawal rejection,
+the two-second freshness rule and 16 MiB cap. Audit every binding consumer and add
+regressions before another native run. The
+[diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) and
+[repeated verification log](2026-09-17-repeated-native-verification.md) retain the
+exact evidence and next-step constraints.
 
-The deterministic scheduling experiment now reproduces both a missed 9.409 ms
-readiness opportunity and a successful alternate 100 ms polling phase, with all
-459 Core tests passing. A separate DEBUG diagnostic records actual repeated
-candidate polls and operation outcomes, including campaigns that never start.
-It retains at most 4,096 scalar events / 4 MiB and exports after joined teardown.
-The [diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) tracks verification.
-Next: one instrumented native run to identify the actual failed guard before
-choosing a fix; preserve the two-second freshness rule and 16 MiB cap.
-The strict policy replay also has separately documented startup-ownership and
-interrupted-recovery cases. Production automatic quality increases remain
-disabled until the full gates pass. The earlier 1080p real-match CPU/VideoToolbox
-streaming tests and 4K local transcode tests remain useful evidence; physical
-devices, full 4K network streaming and other proxy hosts are still pending.
+Startup audio coverage also remains open: `native-app-LeTozN` lost the first
+395.011 ms of live audio relative to video. Subsequent traced runs have audio
+leading video, so they do not resolve that earlier failure. Preserve the 100 ms
+missing-audio gate. The real-match 1080p CPU/VideoToolbox streaming and 4K local
+transcode checks remain useful separate evidence. Physical devices, paired-watch
+hardware networking, full 4K network streaming and other proxy hosts are pending.
 
 ## Baseline and owner decisions
 

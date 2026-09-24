@@ -65,3 +65,55 @@ or qualification gate changed.
 The arm64 iPhone simulator Debug build also passes. Next is the unchanged
 180-second repeated route with the new trace, preserved source hashes, and one
 joined result; independent component analysis must not relabel a failed full run.
+
+## Native result: q6s6KU
+
+Source `b8a0609`, all 919 frozen hashes unchanged. Native UI passed in 259.120 s;
+full harness joined with exit 1: `binding predates observed native ownership`.
+Both candidate measurements and both owned fault cycles completed. The trace
+closed with 1,052 events / 365,482 bytes, no omissions, invalidity or overflow.
+
+The sole failing ownership-history comparison is campaign two initial binding
+against raw probe event 210. Probe read was
+1895702.543272875–1895702.5432826667. Context read then lasted 30.215208 ms.
+A same-owner renewal at 1895702.5718719584 preceded binding at 1895702.573508125
+by 1.636167 ms, advancing 35,532 bytes and the lease by 100.147542 ms. The saved
+snapshot's original lease still covered binding by 198.202167 ms. Assigning this
+older snapshot the later binding instant made its exported chronology incorrect.
+There is no observed withdrawal/replacement in that interval. Independent review
+confirmed this exact predicate and the distinction from runtime ownership loss.
+
+Archive/live full decodes pass: 6,539 / 6,131 contiguous frames at 30 fps, live
+maximum gap 34 ms. All 102 live markers match within 64.583 ms, negligible drift;
+coverage and direct delivery pass. All 269 deadline rows independently replay
+with zero unknowns, and cadence retains 2,054 valid rows. The `time` rejection at
+quality event 24 and interrupted recovery remain explicit later policy concerns.
+The original failed full run remains failed. Evidence is in
+`diagnostic-complete-assessment.json`, `diagnostic-candidate-wait-assessment.json`,
+`diagnostic-components-assessment.json`, and `diagnostic-media-assessment.json`
+inside `artifacts/qa/native-app-q6s6KU/`.
+
+## Next bounded change
+
+1. Audit all binding consumers, including repeated candidate measurement,
+   repeated probe retirement and measured candidate witness qualification.
+2. Record explicit probe read start/return times for initial and final snapshots;
+   keep binding/completion instants separate. Do not simply move the observation
+   timestamp to await return, since the native snapshot may precede that return.
+3. Establish a strict schema contract for the new evidence. Missing/malformed
+   brackets fail closed. Preserve historical artifacts and legacy routing.
+4. TDD a renewal after the probe read but during the context await. Require
+   native observations completed before read-start to be reflected in counters
+   and lease; prohibit acceptance or renewal borrowed from after read-end.
+   Ambiguous overlapping reads need a consistent snapshot ordering, with no
+   relaxed time tolerance. Keep original snapshot lease valid at binding and
+   reject retirement/withdrawal before binding or measurement completion.
+5. Preserve synchronous runtime ownership checks, readiness, poll delays,
+   campaign deadlines and 16 MiB. Add cancellation/late-read and mutation tests,
+   perform independent specification then quality review, run targeted/full
+   checks, freeze source, and run one fresh native experiment.
+
+The readiness-window race is still a separate possibility. If an actual later
+trace implicates it, inspect advisory event wakeups and delayed complete-report
+availability; immediate driver ticks on worker reports already exist. A wakeup
+cannot create freshness or guarantee native startup before a 9.409 ms expiry.

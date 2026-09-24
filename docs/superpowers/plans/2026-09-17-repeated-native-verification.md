@@ -1160,3 +1160,39 @@ operation/context records. Independent specification and quality reviews approve
 See [bounded diagnostic plan](2026-09-24-candidate-wait-diagnostics.md). Next is one
 fresh frozen instrumented repeated native run. Freshness, leases and 16 MiB remain
 unchanged, and the prior failed native run remains failed evidence.
+
+#### Instrumented native run — September 24, `native-app-q6s6KU`
+
+Source `b8a0609` stayed frozen across 919 files. UI passed in 259.120 seconds;
+full harness joined exit 1 at repeated candidate binding qualification. Both
+candidate measurements and owned fault campaigns completed; applied revisions
+are 1, 2, 3 and 4. Quality has 48 events, including a retained `time` rejection at
+event 24. The new wait trace closed with 1,052 events / 365,482 bytes, no omitted
+rows, invalidity or overflow. It shows both starts and post-start contexts passing.
+
+Independent review identifies one exact chronology contradiction: campaign two
+initial binding against raw probe event 210. The probe read completed at
+1895702.5432826667; a 30.215208 ms context await followed. The same owner renewed
+at 1895702.5718719584, advancing 35,532 bytes and 100.147542 ms lease. Binding
+at 1895702.573508125 incorrectly became the saved older snapshot's observation
+time. The original snapshot still had 198.202167 ms lease remaining. This explains
+the verifier's `binding predates observed native ownership` failure without
+claiming withdrawal or replacement. It is separate from yB8xre's unresolved short
+readiness window; this run successfully caught its available candidate windows.
+
+Independent media replay fully decodes archive and live: 6,539 contiguous archive
+frames and 6,131 contiguous live frames (192–6322), both 30 fps; live maximum gap
+34 ms. All 102 live markers match within 64.583 ms with negligible drift. Live
+audio leads by 420 ms; media coverage and direct delivery pass. Native startup
+frame 159 to saved frame 192 is a 33-frame acquisition prefix. Worker and recorder
+exit 0. Delivery audit retains 269 rows / 17,563,116 bytes; every row independently
+replays, with zero unknown rows. Cadence retains 2,054 valid rows. Owned simulator
+and container cleanup completed. Full run remains failed, not production-qualified.
+
+Evidence: `diagnostic-complete-assessment.json`,
+`diagnostic-candidate-wait-assessment.json`, `diagnostic-components-assessment.json`,
+`diagnostic-media-assessment.json` and original exports in the run directory.
+Next: explicit native read intervals, separate from binding time, with strict
+causal counter/lease validation and downstream-consumer audit. See the
+[bounded diagnostic plan](2026-09-24-candidate-wait-diagnostics.md) for the TDD
+sequence. Do not remove the ownership check or extend freshness/probe budgets.
