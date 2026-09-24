@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreMedia
-import HaishinKit
+@testable import HaishinKit
 import Testing
 @testable import SRTHaishinKit
 
@@ -186,6 +186,96 @@ import Testing
         await connection.send(Data([1]), generation: session, socketSendObserver: { _ in
             Issue.record("Stale calls do not enter the socket")
         })
+    }
+
+    @Test func transportDrainsQueuedMediaWhileSynchronousVideoConversionIsBlocked() async throws {
+        let conversion = PumpSynchronousGate(), firstSend = PumpSynchronousGate(), sent = PumpCounter()
+        defer { conversion.release(); firstSend.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in PumpBlockedSession(gate: conversion) })
+        let connection = SRTConnection(socket: SRTSocket(sender: { data in
+            let count = sent.increment()
+            if count == 1 { firstSend.block() }
+            return Int32(data.count)
+        }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        for index in 0..<3 { await stream.append(try video(Double(index) / 30)) }
+        let enteredSend = await pumpWait { firstSend.entered }
+        try #require(enteredSend)
+        await stream.append(try pumpRawVideo())
+        let enteredConversion = await pumpWait { conversion.entered }
+        try #require(enteredConversion)
+        firstSend.release()
+        let drainedWhileBlocked = await pumpWait { sent.count >= 4 }
+        let conversionStillBlocked = !conversion.released && !conversion.timedOut
+        conversion.release()
+        await stream.finish()
+        #expect(drainedWhileBlocked && conversionStillBlocked,
+                "Prequeued transport must drain without resuming the blocked stream actor")
+        #expect(!firstSend.timedOut && !conversion.timedOut)
+        #expect(await stream.publishingError == nil)
+        await connection.close()
+    }
+
+    @Test(arguments: [false, true])
+    func republishWaitsForCancelledTransportBeforeReusingConnection(closeWhileWaiting: Bool) async throws {
+        let firstSend = PumpSynchronousGate(), returned = PumpCounter()
+        defer { firstSend.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { data in
+            firstSend.block(); return Int32(data.count)
+        }))
+        let stream = SRTStream(connection: connection)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try video(0))
+        let entered = await pumpWait { firstSend.entered }
+        try #require(entered)
+        await stream.close()
+        await stream.setExpectedMedias([.video])
+        let publishing = Task { await stream.publish(); _ = returned.increment() }
+        try await Task.sleep(for: .milliseconds(50))
+        let returnedBeforeOldSend = returned.count
+        if closeWhileWaiting { await stream.close() }
+        firstSend.release()
+        await publishing.value
+        #expect(returnedBeforeOldSend == 0, "New publication must join the retired transport")
+        #expect(await stream.publishingGeneration == nil, "Cancelled entered socket send closes its connection")
+        #expect(!firstSend.timedOut)
+        await connection.close()
+    }
+
+    @Test(arguments: [false, true])
+    func retiredWorkerCannotOverlapOrResurrectHealthyConnection(closeWhileWaiting: Bool) async throws {
+        let returnedSend = PumpSynchronousGate(), observations = PumpCounter(), returnedPublish = PumpCounter()
+        defer { returnedSend.release() }
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, transportSendObserver: { event in
+            // Deliberately gate the test worker after a successful socket return;
+            // production observers must never block. This keeps the connection healthy.
+            if event.phase == .returned, observations.increment() == 1 { returnedSend.block() }
+        })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try video(0))
+        let entered = await pumpWait { returnedSend.entered }
+        try #require(entered)
+        await stream.close()
+        await stream.setExpectedMedias([.video])
+        let publishing = Task { await stream.publish(); _ = returnedPublish.increment() }
+        try await Task.sleep(for: .milliseconds(50))
+        let returnedBeforeRetirement = returnedPublish.count
+        if closeWhileWaiting { await stream.close() }
+        returnedSend.release()
+        await publishing.value
+        #expect(returnedBeforeRetirement == 0)
+        #expect(await connection.connected)
+        #expect((await stream.publishingGeneration != nil) == !closeWhileWaiting)
+        #expect(!returnedSend.timedOut)
+        await stream.close(); await connection.close()
     }
 
     private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {
@@ -608,4 +698,58 @@ private final class TransportSendFrames: @unchecked Sendable {
     private var stored: [SRTStream.TransportSendObservation] = []
     var rows: [SRTStream.TransportSendObservation] { lock.withLock { stored } }
     func record(_ frame: SRTStream.TransportSendObservation) { lock.withLock { stored.append(frame) } }
+}
+
+private final class PumpCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func increment() -> Int { lock.withLock { value += 1; return value } }
+}
+private final class PumpSynchronousGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var isEntered = false, isReleased = false, expired = false
+    var entered: Bool { condition.withLock { isEntered } }
+    var released: Bool { condition.withLock { isReleased } }
+    var timedOut: Bool { condition.withLock { expired } }
+    func block() {
+        condition.lock(); defer { condition.unlock() }
+        isEntered = true
+        let deadline = Date().addingTimeInterval(5)
+        while !isReleased {
+            if !condition.wait(until: deadline) { expired = true; return }
+        }
+    }
+    func release() { condition.withLock { isReleased = true; condition.broadcast() } }
+}
+private final class PumpBlockedSession: VTSessionConvertible {
+    let gate: PumpSynchronousGate
+    init(gate: PumpSynchronousGate) { self.gate = gate }
+    func setOption(_ option: VTSessionOption) -> OSStatus { noErr }
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) { (noErr, nil) }
+    func setOptions(_ options: Set<VTSessionOption>) -> OSStatus { noErr }
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?,
+                 encoderCompletionObserver: VideoEncoderCompletionObserver?) throws { gate.block() }
+    func completeFrames() -> OSStatus { noErr }
+    func invalidate() {}
+}
+private func pumpWait(_ predicate: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(1)
+    while !predicate() && ContinuousClock.now < deadline { await Task.yield() }
+    return predicate()
+}
+private func pumpRawVideo() throws -> CMSampleBuffer {
+    var image: CVPixelBuffer?
+    #expect(CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        nil, &image) == kCVReturnSuccess)
+    let buffer = try #require(image)
+    var format: CMVideoFormatDescription?
+    #expect(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+        imageBuffer: buffer, formatDescriptionOut: &format) == noErr)
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: CMTime(value: 3, timescale: 30), decodeTimeStamp: .invalid)
+    var sample: CMSampleBuffer?
+    #expect(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
+        formatDescription: try #require(format), sampleTiming: &timing, sampleBufferOut: &sample) == noErr)
+    return try #require(sample)
 }

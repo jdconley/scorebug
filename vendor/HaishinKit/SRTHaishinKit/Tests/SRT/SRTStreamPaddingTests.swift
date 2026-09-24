@@ -481,6 +481,7 @@ extension SRTStreamPaddingTests {
         await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
         let generation = try #require(await stream.publishingGeneration)
         let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        #expect(first.reason == nil, "Installation captures the initial receipt before exposing the probe")
         var end = ContinuousClock.now + .seconds(1)
         while !gate.entered && ContinuousClock.now < end { await Task.yield() }
         try #require(gate.entered)
@@ -509,6 +510,7 @@ extension SRTStreamPaddingTests {
         await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
         let generation = try #require(await stream.publishingGeneration)
         let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        #expect(first.reason == nil, "Installation captures the initial receipt before exposing the probe")
         var end = ContinuousClock.now + .seconds(1)
         while !gate.entered && ContinuousClock.now < end { await Task.yield() }
         try #require(gate.entered)
@@ -648,6 +650,7 @@ extension SRTStreamPaddingTests {
         let generation = try #require(await stream.publishingGeneration)
         gate.arm()
         let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+        #expect(first.reason == nil, "Installation captures the initial receipt before exposing the probe")
         var end = ContinuousClock.now + .seconds(1)
         while !gate.entered && ContinuousClock.now < end { await Task.yield() }
         try #require(gate.entered)

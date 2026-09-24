@@ -10,7 +10,7 @@ public actor SRTStream {
     /// Scalar diagnostic of one FIFO payload's send call. Returned does not mean
     /// socket acceptance or receiver delivery. Observers must not wait or do I/O.
     public struct TransportSendObservation: Sendable {
-        /// Outer phases execute on this stream actor; inner phases bracket the
+        /// Outer phases execute on the transport worker; inner phases bracket the
         /// awaited socket.send on its connection actor, before error handling.
         /// Early connection guards may omit both inner phases.
         public enum Phase: String, Sendable { case started, socketStarted, socketReturned, returned }
@@ -171,12 +171,16 @@ public actor SRTStream {
     }
 
     private func installBandwidthProbe(_ probe: SRTBandwidthProbe, at: Double) -> SRTBandwidthProbeSnapshot {
+        // Once exposed, the independent pump may advance the probe clock.
+        // Capture the initial receipt before publishing its pointer.
+        let initial = probe.snapshot(now: { at })
         bandwidthProbe = probe
         let accounting = writer.outputAccounting
+        accounting.probe = probe
         probeWakeTask = Task {
             await probeWakeRunner(probe, accounting)
         }
-        return probe.snapshot(now: { at })
+        return initial
     }
     public func renewBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
@@ -412,6 +416,9 @@ public actor SRTStream {
         var all: [Task<Void, Never>] { [video, audio, input, transport, errors] }
     }
     private var publishingTasks: PublishingTasks?
+    // close cannot join a worker that may be closing us through connection.send.
+    // Re-publication owns that join before it can reuse the connection.
+    private var retiredTransport: Task<Void, Never>?
     private var finishingGeneration: UInt64?
     private var finishTask: Task<Void, Never>?
     private var closeTask: Task<Void, Never>?
@@ -503,7 +510,9 @@ public actor SRTStream {
     ///
     /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
     public func publish(_ name: String? = "") async {
-        guard let connection, let connectionSession = await connection.publishingSession() else {
+        let requestGeneration = generation
+        guard let connection, await connection.publishingSession() != nil,
+              generation == requestGeneration else {
             return
         }
         guard name != nil else {
@@ -515,7 +524,15 @@ public actor SRTStream {
             }
             return
         }
+        if let retiredTransport {
+            await retiredTransport.value
+            guard generation == requestGeneration else { return }
+            self.retiredTransport = nil
+        }
         guard readyState == .idle, closeTask == nil, finishingGeneration == nil, videoReplacement == nil, !probeStarting else { return }
+        guard let connectionSession = await connection.publishingSession(),
+              generation == requestGeneration, readyState == .idle, closeTask == nil,
+              finishingGeneration == nil, videoReplacement == nil, !probeStarting else { return }
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
         bandwidthProbe = nil
@@ -587,47 +604,10 @@ public actor SRTStream {
                     await consumeVideoInput(buffer, generation: session)
                 }
             },
-            transport: Task {
-                var iterator = transportOutput.makeAsyncIterator()
-                var sendSequence: UInt64 = 0
-                for await _ in transportAccounting.wakes {
-                    guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    // Exactly one consumer owns all media and optional sends.
-                    // A wake may coalesce freely; data stays in the bounded queue.
-                    while transportAccounting.pending > 0 {
-                        guard let data = await iterator.next() else { return }
-                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                        writer.didDequeueOutput()
-                        if let transportSendObserver {
-                            sendSequence &+= 1
-                            transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,
-                                phase: .started, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
-                                observedAt: ProcessInfo.processInfo.systemUptime))
-                        }
-                        if let transportSendObserver {
-                            let sequence = sendSequence
-                            let byteCount = data.count
-                            await connection.send(data, generation: connectionSession, socketSendObserver: { phase in
-                                transportSendObserver(.init(publishingGeneration: session, sequence: sequence,
-                                    phase: phase == .started ? .socketStarted : .socketReturned,
-                                    byteCount: byteCount, pendingPacketCount: transportAccounting.pending,
-                                    observedAt: ProcessInfo.processInfo.systemUptime))
-                            })
-                        } else {
-                            await connection.send(data, generation: connectionSession)
-                        }
-                        // Keep the captured generation even if send failed/closed it.
-                        if let transportSendObserver {
-                            transportSendObserver(.init(publishingGeneration: session, sequence: sendSequence,
-                                phase: .returned, byteCount: data.count, pendingPacketCount: transportAccounting.pending,
-                                observedAt: ProcessInfo.processInfo.systemUptime))
-                        }
-                        guard generation == session, !Task.isCancelled, failure.error == nil else { return }
-                    }
-                    if publishingGeneration == session, let probe = bandwidthProbe {
-                        await connection.sendPadding(probe, pendingMedia: transportAccounting, generation: connectionSession)
-                    }
-                }
+            transport: Task.detached { [failure, transportSendObserver] in
+                await SRTTransportPump.run(output: transportOutput, accounting: transportAccounting,
+                    failure: failure, connection: connection, connectionSession: connectionSession,
+                    publishingGeneration: session, observer: transportSendObserver)
             },
             errors: Task { [failure] in
                 for await error in failure.events {
@@ -735,6 +715,7 @@ public actor SRTStream {
         sourceCadenceClock = SourceCadenceClock()
         videoInputIsRaw = false
         for task in publishingTasks?.all ?? [] { task.cancel() }
+        if let transport = publishingTasks?.transport { retiredTransport = transport }
         publishingTasks = nil
         outgoing.stopRunning()
         failure.finish()

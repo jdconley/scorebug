@@ -336,3 +336,14 @@ wrapper. Session creation and asynchronous output completion are outside this
 bracket. Both successful and throwing calls report; compressed conversion does
 not. Nil avoids clock reads and callback work. This diagnostic neither moves
 encoding off its actor nor changes media admission, errors or lifecycle.
+
+
+The sole mux-output consumer now runs outside the stream actor, so synchronous
+video submissions cannot prevent already-muxed payloads from draining. Queue,
+byte, timeout and datagram-yield limits remain unchanged. The worker captures its
+publication's accounting and failure latch; its optional probe pointer is copied
+under a separate short lock, with existing revocation and empty-queue admission
+still authoritative. Close cancels and retains its worker without self-joining;
+re-publication joins retirement and rechecks stream/connection state. Normal finish
+still joins the current worker. Outer send timing now measures worker resumption,
+not stream-actor resumption.

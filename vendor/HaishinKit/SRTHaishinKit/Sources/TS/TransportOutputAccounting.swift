@@ -4,6 +4,12 @@ import Foundation
 /// nonblocking write; an empty-queue observation cannot go stale across actors.
 final class TransportOutputAccounting: @unchecked Sendable {
     private let lock = NSLock()
+    private var installedProbe: SRTBandwidthProbe?
+    /// Copy under the holder lock; never retain this lock across probe/socket work.
+    var probe: SRTBandwidthProbe? {
+        get { lock.withLock { installedProbe } }
+        set { lock.withLock { installedProbe = newValue } }
+    }
     private var count = 0
     private var closed = false
     let wakes: AsyncStream<Void>

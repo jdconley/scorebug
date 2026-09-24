@@ -94,3 +94,36 @@ clean build of all10 SDKProbe tests. Maintained vendor provenance verifies162
 upstream hashes and exact patch round trip. Independent review approves the change.
 Submission observations are emitted on return; absent rows do not prove a native
 call is still blocked. The measured wrapper includes synchronous callback work.
+
+
+### Measured cause and implementation
+
+On frozen `a8099bf`, `network-native-submission-trace-1-4k-videotoolbox` failed:
+102 synchronous submissions, maximum49.371ms; a50.357ms transport resumption gap
+contains49.301ms of conversion work while its socket call takes0.014ms. All1151
+hashes are unchanged. The archive retains360frames/576000audio samples with0rejection;
+the proxy receives81frames. All10 owned ports across recent diagnostic cases were
+released. This establishes the shared stream actor as the drain bottleneck.
+Hardware encoder selection/contention is not established.
+
+The [transport-isolation design](../specs/2026-09-24-transport-drain-isolation.md)
+extracts a sole detached FIFO worker with captured per-publication accounting,
+failure and probe ownership. Close cancels and retains the worker; the next publish
+joins retirement and rechecks generation/state/connection. No queue limits, socket
+timeouts or datagram yielding changed. Outer timing now measures worker resumption.
+
+Two regressions failed against the old implementation: prequeued media could not
+drain during blocked synchronous conversion, and re-publication returned before
+old transport retired. Both pass with isolation. A further gated successful-return
+test proves healthy same-connection re-publication and rejection after an intervening
+close. Full vendor testing exposed a probe publication race: the new worker can
+advance probe time before install returns a historical timestamp snapshot. Capture
+that initial receipt before publishing its pointer; keep monotonic validation strict.
+The initial failing suite is preserved. After this fix all297 vendor tests pass,
+as do all10 tests from a clean SDKProbe build. Independent review approves the change;
+the maintained patch verifies162 upstream hashes and exact round trip.
+
+The preceding diagnostic source passed170 Streaming and499 native model tests plus
+the simulator build. Those must be repeated for the runtime change. Next freeze
+source and run bounded real4K regression, then native checks and the repeated
+adaptive route because transport/probe scheduling changed.
