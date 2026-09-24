@@ -18,12 +18,12 @@ Work only in the existing isolated checkout. Parent owns heavy commands serially
       maintained vendor patch from verified baseline files; verify exact round trip.
 - [x] Run affected vendor tests, clean SDKProbe and Streaming, native models and
       simulator build. Broaden only where dependencies or new failures require it.
-- [ ] Commit and freeze tracked source hashes. Run a capped real 4K campaign that
+- [x] Commit and freeze tracked source hashes. Run a capped real 4K campaign that
       stops at its first failure; verify archive completeness and live behavior.
-- [ ] Run the strict repeated adaptive native fixture, join all owned jobs, audit
+- [x] Run the strict repeated adaptive native fixture, join all owned jobs, audit
       unchanged source and cleanup, and retain every failed artifact. Never replace
       a failed outcome with a rerun or relax its freshness/media gates to obtain PASS.
-- [ ] Update the main plan with qualified behavior, remaining limitations and next
+- [x] Update the main plan with qualified behavior, remaining limitations and next
       physical-device/portable-worker work. Production upgrades remain disabled.
 
 Starting runtime source: `d73461b`. Its focused/full model and JS checks pass, but
@@ -59,3 +59,49 @@ was relaxed. The maintained patch verifies all 162 original hashes and exact rou
 Clean SDKProbe (10 tests) and Streaming (170 tests), all 502 native model tests,
 and the arm64 iPhone simulator build also pass. All owned commands have joined.
 Real-media checks are next.
+
+## Frozen-source media results
+
+Runtime source `f35cbd0`; all 1,158 tracked source hashes remain unchanged across
+both campaigns. Every owned command joined before this documentation update.
+
+Real 4K: cases 1 and 2 of the six-case capped VideoToolbox campaign pass all gates.
+Case 3 finishes publishing with 350 native/receiver/output frames from 360 ingress
+frames, so cases 4–6 do not run. Missing source IDs are 94, 98, 102, 105, 108, 112,
+116, 120, 124 and 128. One aligned source second contains 23 frames; maximum native
+conversion is 65.576 ms. This is no longer the reproduced audio-queue failure, but
+it does not qualify sustainable 4K. The original failed result remains preserved.
+
+All three independent archives contain 360 frames and 576,000 audio samples with
+zero rejection. All six media files fully decode. Diagnostic audio correlation at
+1/5/9 seconds passes: zero measured archive lag, stable 67.25 ms live lag, no measured
+drift. Cases 1/2 have 33–34 ms frame gaps and all 210 post-change frames match the
+accepted 8 Mbps receipt. All six owned SRT/RTMP ports are released. This remains a
+12-second SDR30 normalized replay with a forced bitrate change, not automatic 4K
+adaptation, camera/HDR60, physical thermal or remote-host qualification.
+
+Strict repeated native case `native-app-aPqApF` fails the full harness despite a
+passing UI workflow (260.773 seconds), both controlled faults and all five profile
+phases. Event 42 at minimum revision 4 rejects a source window with reason `time`:
+source age is 1.983599 s at selection and 2.001052 s at session evaluation, beyond
+the unchanged two-second gate. The verifier supports only independently proved
+cadence-freshness invalidations and rejects this different source-expiry event.
+Do not remove its `source` field, relabel it as cadence, or allow arbitrary time
+rejections. A separate source-expiry proof and recovery-reset contract is needed.
+
+The archive has 6,529 contiguous frame IDs and live has 6,124 contiguous IDs
+192–6315; native archive diagnostics end finished with zero queue loss/rejection.
+Worker and recorder exit zero, and simulator deletion completes. The candidate
+wait audit closes valid with 1,007 events and no omission/overflow. These are useful
+partial results, not full repeated qualification. Prior complete source `89926f4`
+remains the earlier complete laboratory pass.
+
+Private evidence: `native-video-submission-assessment.json`,
+`native-video-submission-audio-correlation.json`, `native-video-submission-cleanup.json`
+in the representative-match artifact directory; `video-submission-assessment.json`
+in `native-app-aPqApF`; and `video-submission-source-verification.json`.
+
+Next: independently qualify the precise source-expiry invalidation/recovery behavior,
+and measure actual selected native hardware acceleration before attributing 4K
+throughput limits or changing encoder preferences. Preserve strict freshness,
+frame-loss, recording and production-admission gates.

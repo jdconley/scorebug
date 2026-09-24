@@ -229,3 +229,30 @@ a 261.974 ms cadence sample revokes the first trial under the strict 250 ms fres
 limit before any owned fault. The prior complete adaptive pass on `89926f4` does
 not qualify either newer source. The next reviewed runtime work isolates native
 video conversion to prevent the independently measured 4K audio queue starvation.
+
+
+## Native video submission isolation, 2026-09-24
+
+Source `f35cbd0` moves only the retained synchronous conversion off the stream actor;
+settings and lifetime remain actor-owned. Reviewed blocked-conversion tests prove
+audio drains without increasing queue bounds. Full vendor, clean consumers, native
+models and simulator builds pass.
+
+The capped `network-native-submission-*` campaign passes its first two 4K cases.
+Case 3 finishes streaming but has 350 native/proxy/output frames rather than 360,
+so the remaining three cases do not run. Missing source IDs span 94–128, with ten
+individual omissions and a 23-frame aligned second. The longest conversion is
+65.576 ms. The audio-queue failure does not recur, but 4K reliability remains open.
+
+Every archive retains 360 frames / 576,000 audio samples and has zero rejection.
+All six files fully decode. Correlation at 1/5/9 seconds shows zero archive lag,
+stable 67.25 ms live lag and no measured drift. All six ports are released; all
+1,158 tracked hashes remain unchanged. Preserve case 3's failure; diagnostic media
+checks do not turn it into a pass. This is still short SDR30 normalized footage
+with a forced bitrate write, not full-match or physical-device qualification.
+
+The separate repeated simulator case `native-app-aPqApF` completes both faults and
+five profile phases but fails strict reconstruction on a source-age rejection at
+2.001052 seconds. It is distinct from cadence freshness. A dedicated source-expiry
+proof is required before this event can be accepted as a recovery invalidation.
+See the [full checkpoint](superpowers/plans/2026-09-24-video-submission-isolation.md).

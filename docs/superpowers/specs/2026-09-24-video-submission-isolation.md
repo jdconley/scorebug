@@ -1,6 +1,7 @@
 # Isolate native video submission from the stream actor
 
-Status: implemented and independently reviewed; local verification in progress.
+Status: implemented and independently reviewed in `f35cbd0`; package/model/build
+checks pass. Real-media limitations are retained in the implementation plan.
 Autonomous continuation is authorized.
 
 ## Evidence and scope

@@ -94,12 +94,33 @@ unchanged; UI passes in 262.682 seconds. Retain this failed run and the freshnes
 limit. Recovered readiness is reachable, but the full repeated route is unqualified
 on current source.
 
-**Next local work:** implement the reviewed
-[video-submission isolation plan](2026-09-24-video-submission-isolation.md) to keep
-native 4K video conversion from starving audio. Use one bounded in-flight operation,
-configuration/lifecycle gates and exact receipt ordering. Preserve recording
-independence. Follow deterministic regression and package/native checks with bounded
-real-match tests and the strict complete adaptive fixture.
+**Latest native submission isolation (`f35cbd0`):** audio can now drain while a
+single native video conversion runs independently. Settings, replacement, finish
+and close retain bounded ownership and session lifetime. Independent review and
+306 vendor / 170 Streaming / 10 clean SDKProbe / 502 native model tests plus the
+simulator build pass. The maintained vendor patch verifies all 162 upstream hashes.
+
+Two consecutive real 4K cases pass completely. The third finishes streaming but
+encodes/delivers only 350 of 360 frames; one aligned second has 23 frames, so the
+capped campaign stops. All three clean archives retain all 360 frames and 576,000
+audio samples with zero rejection. Audio correlation and full decoding pass in all
+six outputs. This resolves the reproduced audio-starvation mechanism; sustainable
+4K remains unqualified. No queue or acceptance limits were enlarged.
+
+The strict repeated native run `native-app-aPqApF` completes both owned faults and
+all five profile phases, with UI success in 260.773 seconds, but **fails the full
+verifier**. At minimum revision 4, a source window crosses its two-second lifetime
+between selection (1.983599 s) and evaluation (2.001052 s) and is safely rejected.
+The independent verifier currently proves only cadence-freshness invalidations;
+this distinct source/time rejection is unsupported. Preserve the failed outcome,
+exact raw event and both freshness limits. All 1,158 frozen source hashes remain
+unchanged. Native recording finishes cleanly; worker/recorder and simulator cleanup
+complete. See the [submission implementation and evidence](2026-09-24-video-submission-isolation.md).
+
+**Next local work:** execute the [source-expiry invalidation plan](2026-09-24-source-expiry-invalidation.md)
+to prove renewed recovery without granting healthy credit or accepting arbitrary time
+errors. Separately measure actual selected native hardware acceleration before
+changing encoder preferences or attributing the remaining 4K throughput limit.
 See the [muxer-pressure investigation](2026-09-24-4k-muxer-pressure.md),
 [transport design](../specs/2026-09-24-transport-drain-isolation.md),
 [4K plan](2026-09-24-native-4k-match.md) and
