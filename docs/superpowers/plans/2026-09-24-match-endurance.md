@@ -65,8 +65,8 @@ physical-device thermal, camera, HDR60, GPU/cloud or automatic-upgrade qualifica
 - [x] Prepare and independently validate the 1080p source with versioned scripts;
       inspect the runner changes and freeze sources before the first network case.
 - [x] Run and assess the complete 1080p case. Preserve failure if any.
-- [ ] If the first case passes, prepare/validate and run the 4K case serially.
-- [ ] Review exact evidence and update the main plan; retain all outstanding gates.
+- [x] If the first case passes, prepare/validate and run the 4K case serially.
+- [x] Review exact evidence and update the main plan; retain all outstanding gates.
 
 ## 1080p result
 
@@ -98,7 +98,7 @@ maximum sustainable quality or whole-video perceptual qualification.
 The high-ID/long-timeline verifier has 20 passing tests and the complete tooling
 suite has 3,483 passes. Detailed media, audio, hash/cleanup and visual results are
 retained in `result.json`, `post-run-assessment.json`, `preview-extraction.json`,
-`visual-assessment.json` and the final `acceptance.json`. The 4K streaming/archive case remains pending.
+`visual-assessment.json` and the final `acceptance.json`. The 4K result follows below.
 
 ## 4K source preparation
 
@@ -115,3 +115,40 @@ Its partial movie and logs remain in `endurance/interrupted-4k-preparation/`, wi
 the failed probe and missing process/exit-handle assessment. It is incomplete
 preparation, not a native streaming failure. The successful resumed preparation
 uses separate execution evidence and does not relabel the interrupted attempt.
+
+## 4K result
+
+Frozen `303c89f`, `artifacts/qa/match-footage-n6n1f13m/endurance/4k-cpu`,
+passes the complete declared case. The wrapper exits zero and is joined; sender,
+proxy and recorder exit zero naturally. Both owned ports are bindable, sender/proxy
+PIDs are gone, and all **1,201** frozen source/input/runner/executable hashes match.
+The real-time capture/stream phase ran in isolation. Lightweight Watch diagnostics
+and OS runtime preparation ran during subsequent offline immutable-file verification;
+whole-case machine exclusivity is not claimed.
+
+Both outputs fully decode and retain **54,000 frames, IDs 0–53,999**. Maximum video
+gaps are 33.334 ms (archive) and 34 ms (live). Every audio frame passes continuity
+and cumulative-timeline checks. Native archive and publisher counts are exactly
+54,000 video / 86,400,000 audio samples, with zero archive rejection or live queue
+loss/rejection. Maximum source scheduling lag is **58.605 ms**, and sender elapsed
+time is **1,803.041 seconds**. These do not establish viewer latency or every-frame
+wall-clock delivery deadlines.
+
+All seven audio windows pass. Minimum archive/live correlation is
+**0.999827 / 0.999537**. Archive A/V lag is zero; live lag is **65.219 ms**, with no
+sampled drift beyond numerical rounding. PCM padding is 20 ms / 34.125 ms. Bounded
+encoder/submission and transport histories overflow at 512 / 4,096 rows; 53,488
+source history rows are explicitly omitted. These are incomplete diagnostic prefixes.
+
+All six source/archive/live PNG identities are independently verified. Images at
+900 seconds show an airborne server and ball; 1,200 seconds shows a pause between
+plays. The archive is clean and the live overlay is readable, without obvious gross
+corruption in these sampled views. Original 3840×2160 images were displayed at
+2048×1152; this is not native-pixel or whole-video perceptual qualification. The
+sender used the scheduled reduction to 8 Mbps, not automatic adaptation.
+
+The final `acceptance.json` joins `result.json`, `audio-correlation.json`, the two
+media verification files, `post-run-assessment.json`, `preview-extraction.json` and
+`visual-assessment.json`. Earlier partial image/assessment files remain preserved.
+Physical camera, HDR60, actual network adaptation, relay/viewer delivery, sustained
+co-located GPU proxy performance and other-host qualification remain open.

@@ -24,37 +24,45 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The **30-minute 1080p real-match CPU-proxy replay passes**: both clean archive and
-stream retain all 54,000 frames, continuous audio and stable sampled A/V alignment.
-The native sender reports zero archive rejection or live queue loss/rejection.
-All 1,191 frozen file hashes match, normal process exits and port cleanup pass, and
-matched images confirm a clean archive and readable live score overlay. The scheduled
-2 Mbps live bitrate visibly reduces image quality; this does not establish the
-highest sustainable quality. See the [endurance contract and evidence](2026-09-24-match-endurance.md).
+The **30-minute 1080p and 4K real-match CPU-proxy replays both pass**: each clean
+archive and stream retains all 54,000 frames, continuous audio and stable sampled
+A/V alignment. Both native senders report zero archive rejection or live queue
+loss/rejection. Frozen hashes, normal exits, port cleanup and matched-image checks
+pass. These are file-driven SDR30 tests with a scheduled bitrate reduction, not
+camera, automatic adaptation or maximum sustainable quality qualification. See the
+[endurance contract and evidence](2026-09-24-match-endurance.md).
 
-| Area                                    | Current evidence                                                                                                                                    | Remaining qualification                                                                                                        |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Native iPhone scoring                   | Create/join, takeover, recovery and two-phone UI workflows pass locally.                                                                            | Physical concurrent use and remaining adversarial integration audit.                                                           |
-| Clean recording                         | Thirty-minute 1080p file-driven native archive passes while streaming; shorter 4K checks pass.                                                      | Thirty-minute 4K, real camera, interruptions and long device thermal runs.                                                     |
-| Streaming proxy                         | Native Mac CPU/VideoToolbox and Linux arm64 CPU have local evidence; 1080p CPU now passes thirty minutes with real match footage.                   | Co-located 4K hardware-proxy reliability, installation and qualification on other hosts.                                       |
-| Progressive streaming                   | Repeated laboratory 240p/360p increases, controlled faults, minimum resets and recoveries pass.                                                     | Production automatic upgrades remain disabled; realistic network and device qualification stays open.                          |
-| Native Watch scoring                    | Direct scoring/relaunch UI passes across tested Watch sizes and OS generations; model tests cover companion routing and uncertain-command recovery. | Actual paired setup still fails in Simulator with ACX43/WC7018. Physical Wi-Fi, cellular and companion routes remain untested. |
-| OS compatibility                        | Historical tests cover iOS 17/18/26 and watchOS 10/11/26; lower deployment targets remain iOS 17 and watchOS 10.                                    | Current iOS 27/watchOS 27 qualification is pending. Preserve Series 7 coverage on its supported older OS.                      |
-| Physical devices and external streaming | Local foundations and test procedures exist.                                                                                                        | Phone/Watch acceptance, destination playback, home GPU and cloud hosts remain required.                                        |
+| Area                                    | Current evidence                                                                                                                                       | Remaining qualification                                                                                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native iPhone scoring                   | Create/join, takeover, recovery and two-phone UI workflows pass locally.                                                                               | Physical concurrent use and remaining adversarial integration audit.                                                                                                                                                         |
+| Clean recording                         | Thirty-minute 1080p and 4K file-driven native archives pass while streaming.                                                                           | Real camera, interruptions and long device thermal runs.                                                                                                                                                                     |
+| Streaming proxy                         | Native Mac CPU/VideoToolbox and Linux arm64 CPU have local evidence; CPU passes thirty minutes at both 1080p and 4K with real match footage.           | Co-located 4K hardware-proxy reliability, installation and qualification on other hosts.                                                                                                                                     |
+| Progressive streaming                   | Repeated laboratory 240p/360p increases, controlled faults, minimum resets and recoveries pass.                                                        | Production needs the quality-controller/provider integration: it currently starts and stays at the minimum. Realistic network and device qualification stays open.                                                           |
+| Native Watch scoring                    | Direct scoring/relaunch UI passes across tested Watch sizes and OS generations; model tests cover companion routing and uncertain-command recovery.    | Actual paired setup still fails in Simulator. Direct launch without XCTest also fails to activate the Watch session; it does not isolate XCTest as the cause. Physical Wi-Fi, cellular and companion routes remain untested. |
+| OS compatibility                        | Historical tests cover iOS 17/18/26 and watchOS 10/11/26; lower deployment targets remain iOS 17 and watchOS 10. Stable 27 runtimes are now installed. | Current iOS 27/watchOS 27 app qualification is pending. Preserve Series 7 coverage on its supported older OS.                                                                                                                |
+| Physical devices and external streaming | Local foundations and test procedures exist.                                                                                                           | Phone/Watch acceptance, destination playback, home GPU and cloud hosts remain required.                                                                                                                                      |
 
-The thirty-minute 4K source is prepared and independently verified: all 54,000
-frame identities, 86,400,000 audio samples and continuous timestamps pass; all 1,190
-frozen preparation hashes match. Next, qualify the 4K CPU streaming/archive case
-under the same declared contract. A separate Watch diagnostic can launch the existing installed apps
-directly, without XCTest reinstallation, to isolate the companion-registration
-failure; it is not a replacement for the complete paired workflow. After the media
-jobs, install the missing stable 27 simulator runtimes and qualify native iPhone
-and Ultra 2 workflows with the installed Xcode 27, using a scoped toolchain selection.
-Keep the existing Series 7/older-OS evidence and do not infer a WatchConnectivity
-fix from the newer OS. Continue the
-remaining adaptive/network gates before enabling production upgrades, then physical
-phone/Watch and additional-host acceptance. Original private match videos stay local
-and untouched.
+Next, qualify native iPhone and Ultra 2 workflows on the installed 27 runtimes with
+scoped Xcode 27 selection. The user removed older simulators to recover disk space;
+reuse the available 26.2/27 runtimes and remove owned temporary devices. Restore an
+older runtime only for a concrete compatibility check. Runtime download commands
+also registered the 27 runtimes; no global toolchain change or device OS upgrade was
+performed. Current-plus-two coverage is iOS 18/26/27 and watchOS 11/26/27; lower
+deployment targets and older Series 7 support remain intact.
+
+The direct-launch Watch diagnostic preserved 18 existing app-file hashes but never
+observed Watch activation completion. An explicit pair-activation follow-up stopped
+before launch because the fresh pair was already active (exit 37); this does not
+support missing active-pair selection as the cause. These diagnostic outcomes are
+not paired scoring passes. Evidence is retained in
+`artifacts/qa/watch-direct-launch-assessment-2026-09-24.json`.
+
+A read-only production audit confirms that the measured quality driver and candidate
+publisher currently exist only in the DEBUG simulator route. Continue by integrating
+representative footage with that app route and qualifying real network impairment,
+then implement the production controller/providers with their admission gates.
+Enabling a flag alone is insufficient. Physical phone/Watch and additional-host
+acceptance remain required. Original private match videos stay local and untouched.
 
 ## Earlier checkpoint evidence
 
