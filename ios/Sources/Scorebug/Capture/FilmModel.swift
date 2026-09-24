@@ -34,7 +34,7 @@ struct CurrentCapture: Sendable {
     var canStop: Bool { state == .starting || state == .recording }
     private let library: RecordingLibrary
     private let profile: ArchiveProfile
-    private let sourceFactory: () -> any CaptureSource
+    private let sourceFactory: () throws -> any CaptureSource
     private let sinkFactory: RecordingLibrary.SinkFactory
     private let durationReader: @Sendable (any RecordingArchiveSink) -> Double?
     private var draft: RecordingDraft?
@@ -64,7 +64,7 @@ struct CurrentCapture: Sendable {
     #endif
 
     init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
-         sourceFactory: @escaping () -> any CaptureSource,
+         sourceFactory: @escaping () throws -> any CaptureSource,
          sinkFactory: @escaping RecordingLibrary.SinkFactory = RecordingLibrary.defaultSinkFactory,
          durationReader: @escaping @Sendable (any RecordingArchiveSink) -> Double? = {
              ($0 as? SegmentedArchiveSink)?.writer.acceptedDuration
@@ -89,8 +89,16 @@ struct CurrentCapture: Sendable {
         let pending = Task {
             let created = try await library.begin(profile: profile, sinkFactory: sinkFactory)
             draft = created
-            guard state == .starting else { throw RecordingSessionError.cancelled }
-            let source = sourceFactory()
+            let source: any CaptureSource
+            do {
+                // Do not construct a source after cancellation during archive setup.
+                guard state == .starting else { throw RecordingSessionError.cancelled }
+                source = try sourceFactory()
+            } catch {
+                // No RecordingSession has taken ownership of this sink yet.
+                created.sink.cancel()
+                throw error
+            }
             #if os(iOS)
             captureSession = (source as? IOSCameraCaptureSource)?.previewSession
             #endif

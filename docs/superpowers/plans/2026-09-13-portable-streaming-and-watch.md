@@ -102,22 +102,30 @@ support missing active-pair selection as the cause. These diagnostic outcomes ar
 not paired scoring passes. Evidence is retained in
 `artifacts/qa/watch-direct-launch-assessment-2026-09-24.json`.
 
-The DEBUG file-capture adapter now feeds decoded local H.264/SDR30 video and
-48-kHz mono PCM into the existing native capture/archive contract. Its ten focused
-tests cover real decoded samples, exact counts, source timestamps, independent
-track starts, pacing, EOF, invalid input and joined cancellation. The archive
-integration retains every delivered video frame with zero queue drops/rejections.
-It is not yet selected in the app: simulator staging, source diagnostics and
-natural-audio verification remain the next checkpoint before real-match adaptive
-qualification. See the [file-source plan](2026-09-24-file-capture-source.md) for
-preserved failures, review findings and validation boundaries. All 512 model tests
-and the arm64 simulator build pass. An earlier full-suite attempt failed one
-existing admission test; its focused and full-suite follow-ups pass unchanged,
-and the original rejection remains unexplained and preserved.
+**Real footage now passes a short native-app recording/export/playback test.**
+The DEBUG simulator can select a staged local movie; malformed/missing input fails
+explicitly. Frozen `file-app-s08q8lyb` records and exports 251 consecutive 1080p
+frames (IDs 0–250), with full A/V decode, 33.334-ms maximum frame gap and continuous
+audio. Natural-audio correlation at 1 and 4 seconds exceeds 0.9993, with zero sampled
+A/V offset/drift. Matching frame-90 images preserve the serve scene and clean video.
+The staged input survives XCTest's container-ID change; all 1,189 frozen hashes
+match and the owned simulator is deleted. UI takes 33.748 seconds; UI/media wrappers
+exit zero and are joined.
+
+The first app case passed UI but failed media acceptance: audio outlasted video by
+158.667 ms. AVAssetReader delivered PCM chunks up to 171 ms long. The file source
+now splits them to at most one video period before pacing, preserving every PCM
+value and timestamp; the fresh app case's audio tail is 16.000 ms within the unchanged
+100-ms allowance. The failed case remains preserved. All 516 model tests, DEBUG
+simulator test build and unsigned iPhone/embedded-Watch Release build pass. See the
+[file-app plan and exact evidence](2026-09-24-file-app-recording.md). This is short
+file-driven recording evidence; source pressure/lag diagnostics, maintained streaming
+harness integration and real-match adaptive/network tests remain next.
 
 A read-only production audit confirms that the measured quality driver and candidate
-publisher currently exist only in the DEBUG simulator route. Continue by integrating
-representative footage with that app route and qualifying real network impairment,
+publisher currently exist only in the DEBUG simulator route. Continue by connecting
+the staged file source and natural-audio verification to that adaptive app route
+and qualifying real network impairment,
 then implement the production controller/providers with their admission gates.
 Enabling a flag alone is insufficient. Physical phone/Watch and additional-host
 acceptance remain required. Original private match videos stay local and untouched. A scoped Xcode 27 device

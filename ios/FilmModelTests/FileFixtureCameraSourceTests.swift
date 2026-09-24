@@ -33,6 +33,15 @@ final class FileFixtureCameraSourceTests: XCTestCase {
         XCTAssertEqual(ledger.events, [.interrupted])
         XCTAssertEqual(source.statistics.videoFrames, 12)
         XCTAssertEqual(source.statistics.audioSamples, 19_200)
+        let audio = rows.filter { $0.kind == .audio }
+        var audioSamples = 0
+        for row in audio {
+            XCTAssertLessThanOrEqual(row.samples, 1600, "Pacing must not send over one video period of future audio")
+            XCTAssertEqual(row.pts - origin.seconds, Double(audioSamples) / 48_000, accuracy: 0.000_002)
+            audioSamples += row.samples
+        }
+        let expected = (0..<19_200).map { FixtureCameraSource.markerPCM(at: Double($0) / 48_000) }
+        XCTAssertEqual(ledger.audioPCM, expected.withUnsafeBytes { Data($0) }, "Splitting must preserve every PCM value")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(video.last).wall - XCTUnwrap(video.first).wall, 0.33)
         do { try await source.start(); XCTFail("One-use source restarted") } catch {}
         do { _ = try await source.prepare(callbacks: .init(sample: { _ in }, event: { _ in })); XCTFail("Prepared twice") } catch {}
@@ -102,6 +111,9 @@ final class FileFixtureCameraSourceTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(ledger.rows.count, count)
         XCTAssertLessThan(ledger.videoCount, 30)
+        let lastVideo = try XCTUnwrap(ledger.rows.last { $0.kind == .video })
+        let lastAudio = try XCTUnwrap(ledger.rows.last { $0.kind == .audio })
+        XCTAssertLessThanOrEqual(lastAudio.pts + Double(lastAudio.samples) / 48_000 - (lastVideo.pts + 1.0 / 30), 1.0 / 30 + 0.000_002)
         XCTAssertTrue(ledger.events.isEmpty)
         await source.stop()
     }
@@ -201,12 +213,23 @@ private final class FileSourceLedger: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [Row] = []
     private var notices: [CaptureSourceEvent] = []
+    private var pcm = Data()
+    var audioPCM: Data { lock.withLock { pcm } }
     var rows: [Row] { lock.withLock { stored } }
     var videoCount: Int { lock.withLock { stored.filter { $0.kind == .video }.count } }
     var events: [CaptureSourceEvent] { lock.withLock { notices } }
     func append(_ sample: CapturedMediaSample) {
-        lock.withLock { stored.append(.init(kind: sample.kind, pts: sample.sampleBuffer.presentationTimeStamp.seconds,
-            samples: sample.sampleBuffer.numSamples, wall: ProcessInfo.processInfo.systemUptime, mainThread: Thread.isMainThread)) }
+        lock.withLock {
+            stored.append(.init(kind: sample.kind, pts: sample.sampleBuffer.presentationTimeStamp.seconds,
+                samples: sample.sampleBuffer.numSamples, wall: ProcessInfo.processInfo.systemUptime, mainThread: Thread.isMainThread))
+            if sample.kind == .audio, let block = sample.sampleBuffer.dataBuffer {
+                var bytes = Data(count: sample.sampleBuffer.numSamples * 2)
+                let count = bytes.count
+                let status = bytes.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count, destination: $0.baseAddress!) }
+                XCTAssertEqual(status, noErr)
+                pcm.append(bytes)
+            }
+        }
     }
     func event(_ event: CaptureSourceEvent) { lock.withLock { notices.append(event) } }
 }

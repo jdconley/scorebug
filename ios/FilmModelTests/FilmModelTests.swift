@@ -4,6 +4,37 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
+    func testSourceFactoryFailureCancelsUnusedSinkAndAllowsRetry() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = RecordingLibrary(rootDirectory: root)
+        var reject = true
+        let cancellations = SourceFactoryCancellationCounter()
+        let model = FilmModel(library: library, sourceFactory: {
+            if reject { throw CocoaError(.fileReadCorruptFile) }
+            return FilmTestSource()
+        }, sinkFactory: { directory, profile in
+            SourceFactoryTestSink(wrapped: try testArchiveSink(directory, profile), cancellations: cancellations)
+        })
+        await model.start()
+        XCTAssertEqual(model.state, .failed)
+        XCTAssertNotNil(model.message)
+        XCTAssertNil(model.currentCapture)
+        XCTAssertTrue(model.canStart)
+        let entries = try await library.list()
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.status, .recoverable)
+        XCTAssertEqual(cancellations.count, 1)
+        reject = false
+        await model.start()
+        XCTAssertEqual(model.state, .recording)
+        await model.stop()
+        XCTAssertEqual(model.state, .idle)
+        XCTAssertEqual(model.recordings.count, 2)
+        XCTAssertEqual(model.recordings.filter { $0.status == .completed }.count, 1)
+        XCTAssertEqual(cancellations.count, 1)
+    }
+
     func testCaptureContextExistsOnlyWhileRecordingAndClearsBeforeShutdown() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -269,4 +300,19 @@ final class FilmScanStorageGate: @unchecked Sendable {
         let result = permit.wait(timeout: .now() + 3)
         lock.withLock { expired = result == .timedOut }
     }
+}
+
+private final class SourceFactoryCancellationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func cancelled() { lock.withLock { value += 1 } }
+}
+private struct SourceFactoryTestSink: RecordingArchiveSink {
+    let wrapped: any RecordingArchiveSink
+    let cancellations: SourceFactoryCancellationCounter
+    func start(at timestamp: CMTime) throws { try wrapped.start(at: timestamp) }
+    func append(_ sample: CapturedMediaSample) throws -> Bool { try wrapped.append(sample) }
+    func finish() async throws -> RecoveredArchive { try await wrapped.finish() }
+    func cancel() { cancellations.cancelled(); wrapped.cancel() }
 }

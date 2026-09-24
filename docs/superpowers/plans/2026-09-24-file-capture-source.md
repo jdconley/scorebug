@@ -94,8 +94,8 @@ Boundaries: reader-failure-after-prepare and internal-edit rejection are impleme
 but do not yet have deterministic fault-injection integration cases. EOF requires
 both readers to report completed; it does not separately compare decoded totals
 with track metadata. These are follow-up coverage items, not claims of exercised
-failures. This source has not yet read the private normalized footage inside the
-app, and is not yet selectable by App.swift.
+failures. At this checkpoint the source had not yet read the private normalized footage inside the
+app, and was not yet selectable by App.swift.
 
 The first full FilmModel run (`file-source-full-models`, joined exit 65) executed
 512 tests with one failure: the existing later-revision candidate-admission test
@@ -115,3 +115,13 @@ destination (`file-source-simulator`, joined exit zero); no simulator was create
 and no runtime was downloaded for this checkpoint. Existing concurrency warnings
 in CaptureStreamingModel and the AppIntents metadata notice remain visible in the
 build log. App source selection and production adaptation remain unchanged.
+
+## Subsequent app integration
+
+The [file-app checkpoint](2026-09-24-file-app-recording.md) now selects this source
+in the DEBUG simulator and passes a short real-match recording/export/playback case.
+That integration exposed oversized reader PCM chunks extending the audio tail at
+stop. The source now splits them into at most 1,600 samples before pacing. Extended
+tests preserve every PCM value, continuous PTS and bounded audio lead at stop; the
+fresh real-match export passes the original 100-ms tail limit. The earlier failed
+native case remains preserved. Production camera selection is unchanged.

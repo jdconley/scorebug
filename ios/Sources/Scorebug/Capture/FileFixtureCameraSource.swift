@@ -221,7 +221,7 @@ private final class FileFixtureReader: @unchecked Sendable {
             return nil
         }
         let isVideo = nextAudio == nil || (nextVideo != nil && nextVideo!.presentationTimeStamp <= nextAudio!.presentationTimeStamp)
-        let buffer = isVideo ? nextVideo! : nextAudio!
+        var buffer = isVideo ? nextVideo! : nextAudio!
         let pts = buffer.presentationTimeStamp
         guard pts.isNumeric, pts.epoch == 0 else { throw FileFixtureError.invalidTimeline }
         let expected = isVideo ? videoOrigin + CMTime(value: videoCount, timescale: 30)
@@ -242,11 +242,27 @@ private final class FileFixtureReader: @unchecked Sendable {
                   pcm.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0,
                   pcm.mFormatFlags & (kAudioFormatFlagIsFloat | kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagIsBigEndian) == 0
             else { throw FileFixtureError.invalidMedia }
-            audioCount += Int64(buffer.numSamples)
-            nextAudio = audio.copyNextSampleBuffer()
+            // AVAssetReader can return 8192 PCM samples (~171 ms). Delivering
+            // them at their first PTS lets audio run ahead of a requested stop.
+            // Split to one video period, preserving timing and every PCM value.
+            let count = min(buffer.numSamples, 1600)
+            if count < buffer.numSamples {
+                let whole = buffer
+                buffer = try Self.audioSlice(whole, start: 0, count: count)
+                nextAudio = try Self.audioSlice(whole, start: count, count: whole.numSamples - count)
+            } else { nextAudio = audio.copyNextSampleBuffer() }
+            audioCount += Int64(count)
         }
         if [videoReader.status, audioReader.status].contains(where: { $0 == .failed || $0 == .cancelled }) { throw FileFixtureError.readerFailed }
         return try CapturedMediaSample(sampleBuffer: buffer, kind: isVideo ? .video : .audio)
+    }
+
+    private static func audioSlice(_ buffer: CMSampleBuffer, start: Int, count: Int) throws -> CMSampleBuffer {
+        var output: CMSampleBuffer?
+        guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+            sampleRange: CFRange(location: start, length: count), sampleBufferOut: &output) == noErr,
+              let output else { throw FileFixtureError.invalidMedia }
+        return output
     }
 }
 #endif
