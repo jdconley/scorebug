@@ -41,3 +41,17 @@ Unsigned phone/embedded-Watch build joined exit 0. Signed phone/embedded-Watch b
 Direct installation of the embedded Watch app failed with profile error `0xe8008012`; a Watch-destination-specific signed build is the next attempt. No Watch installation or physical media pass claimed yet. Dedicated physical UI smoke test is being added without changing simulator assertions. An owned LAN lab (`device-lab-57c8N3`) is active for the test; it must be stopped and joined when finished.
 
 Phone: iPhone 16 Pro, iOS 26.7; Watch: Ultra 2, watchOS 26.6. Both previously reported Developer Mode enabled. Physical permissions, camera behavior, Watch pairing/scoring, and all exported device media remain to be checked.
+
+### Hardware follow-up
+
+The first Watch destination build timed out with an unlock/preparation error; both devices subsequently reported unlocked. The next build reached provisioning and failed because Xcode lacked a signed-in Conley Chaos account and the saved profile excluded the Watch. User signed in; `physical-watch-signed-build-account-20260925` then joined exit 0. Watch installation is being retried with this build.
+
+Phone UI run 1 (`physical-phone-smoke-20260925`, exit 65) failed before test execution while enabling UI automation. User enabled it. Run 2 (`physical-phone-smoke-02-20260925`, exit 65) executed native setup, but the test's cursor-sensitive replacement corrupted the endpoint (`hthttp…`). This does not prove a LAN or app defect. Captured hierarchy and screen recording are under `device-lab-57c8N3/phone-smoke-02-attachments`. A secondary absent-element query in final test evidence is also being corrected.
+
+Physical test specification review fixed two preservation issues before run 2: use `activate()` rather than terminating an already running app, and reserve recording cleanup separately from stream cleanup. Quality review independently found the text replacement problem confirmed by the physical run. These failures remain preserved; no hardware media pass is claimed.
+
+Watch-specific signing, installation and launch now pass after the user signed into the selected team. `physical-watch-install-account-20260925.json` and `physical-watch-launch-20260925.json` retain results.
+
+Phone run 3 (`physical-phone-smoke-03-20260925`, exit 65) stopped before the Film readiness gate. Its screen recording shows a 1Password/Face ID sheet covering the app. User was asked to dismiss it; no authentication bypass or unrelated app changes were attempted. The field-replacement and missing-element fixes received quality approval but have not yet completed a hardware workflow.
+
+The Watch UI test runner also builds with valid signing (`physical-watch-test-build-20260925`, joined exit 0). Its paired scoring test has not been executed against the real phone yet.

@@ -15,7 +15,7 @@ This document tracks goals, current evidence, delivery tasks and acceptance gate
 - Current device observations and the selected Conley Chaos LLC signing team are in [NEXT](../../session-logs/NEXT.md). Historical evidence and failures remain in the [lossless legacy archive](../../session-logs/README.md#legacy-provenance).
 
 - The complete local three-output vertical now passes (`native-app-k1oNme`): clean app archive, mock RTMP destination MP4 and proxy overlay MP4, native score changes, full A/V decode and frame checks. Phone/Watch hardware acceptance remains open. See the [device runbook](../../device-testing.md).
-- The iPhone app and embedded Watch app build with Conley Chaos LLC signing; the iPhone app is installed. Watch provisioning and actual device workflow validation are in progress.
+- The iPhone app and embedded Watch app build with Conley Chaos LLC signing; both apps are installed and launch on the real devices. Actual camera/media and paired scoring workflow validation remain in progress.
 
 ## Baseline and owner decisions
 
