@@ -624,3 +624,210 @@ test('recovery-budget prefix accepts recovered retries but rejects actual transp
     assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(bad));
   }
 });
+
+// Synthetic startup pressure prepended to the existing recorded policy fixture.
+// The fixture's first policy sequence is5, leaving1/2 for these unknown windows.
+function startupPressureInput() {
+  const f = recoveryBudgetPrefixInput(fixture());
+  f.startupPressurePolicy = 'minimum-before-source-v1';
+  const boot = f.quality.events[0];
+  const rows = [1, 2].map((n) => {
+    const start = boot.at + n,
+      end = start + 0.25;
+    return {
+      ...structuredClone(boot),
+      kind: 'localPressure',
+      at: end + 0.02,
+      evaluatedAt: end + 0.01,
+      state: 'unknown',
+      reasons: [
+        ...(n === 2 ? ['telemetryGap'] : []),
+        'unknownConnectivity',
+        'missingCapture',
+        'missingEncoded',
+        'missingReceiver',
+        'missingSourceLoss',
+        'missingCapacity',
+        'unknownPressure',
+        'transportPressure',
+        'minimumProfileInsufficient',
+      ],
+      window: {
+        start,
+        end,
+        sequence: String(n),
+        revision: '0',
+        captured: null,
+        encoded: null,
+        received: null,
+        observedAt: null,
+        expected: null,
+        lost: null,
+        capacity: null,
+        connectivity: 'unknown',
+        worker: 'unknown',
+        thermal: 'nominal',
+        transport: 'elevated',
+        queue: 0,
+      },
+      evidence: {
+        local: {
+          isPublishing: true,
+          ingressClosed: false,
+          clockGeneration: boot.receipt.generation,
+          receipt: structuredClone(boot.receipt),
+        },
+        processing: null,
+        thermal: {
+          isClosed: false,
+          isQuarantined: false,
+          samples: [start, end].map((sampledAt) => ({ sampledAt, state: 0 })),
+        },
+        transport: {
+          isClosed: false,
+          isQuarantined: false,
+          samples: [start, end].map((sampledAt, i) => ({
+            sampledAt,
+            generation: boot.receipt.generation,
+            elapsedMilliseconds: String(n * 1000 + i * 250),
+            sentBytes: String(n * 10000 + i * 1000),
+            retransmittedBytes: '0',
+            droppedPackets: 0,
+            senderBufferMilliseconds: 40,
+            rttMilliseconds: 125,
+            senderDeliveryDelayMilliseconds: 400,
+          })),
+        },
+        queue: {
+          isClosed: false,
+          isQuarantined: false,
+          scope: structuredClone(f.snapshot.scope),
+          coveredThrough: end,
+          states: [{ at: start, phase: 'admitting', itemFraction: 0, byteFraction: 0 }],
+        },
+      },
+    };
+  });
+  f.quality.events.splice(1, 0, ...rows);
+  f.quality.events.find((e) => e.kind === 'evaluated').reasons.unshift('telemetryGap');
+  return f;
+}
+for (const replay of [qualifyMeasuredTrialPolicy, qualifyMeasuredTrialConfirmedPrefix])
+  test(`explicit startup pressure grants no healthy duration in ${replay.name}`, () => {
+    const f = startupPressureInput(),
+      before = structuredClone(f);
+    const result = replay(f);
+    assert.equal(result.confirmed, 1);
+    assert.equal(result.upgradeAuthorized, false);
+    assert.deepEqual(
+      result.probation,
+      qualifyMeasuredTrialPolicy(recoveryBudgetPrefixInput(fixture())).probation,
+    );
+    assert.deepEqual(result.startupPressure, {
+      policy: f.startupPressurePolicy,
+      events: 2,
+      healthyCreditSeconds: 0,
+      lastWindowEnd: f.quality.events[2].window.end,
+    });
+    assert.deepEqual(f, before);
+  });
+for (const [name, mutate] of Object.entries({
+  default: (f) => delete f.startupPressurePolicy,
+  unknownOption: (f) => (f.startupPressurePolicy = 'ignore'),
+  nullOption: (f) => (f.startupPressurePolicy = null),
+  falseOption: (f) => (f.startupPressurePolicy = false),
+  unsupportedTransport: (f) => (f.transportPolicy = 'sender-delay-v1'),
+  forgedHealth: (f) => (f.quality.events[1].state = 'healthy'),
+  missingReason: (f) => f.quality.events[1].reasons.pop(),
+  duplicateReason: (f) => f.quality.events[1].reasons.push('transportPressure'),
+  stalePressure: (f) => (f.quality.events[1].evaluatedAt = f.quality.events[1].window.end + 2.01),
+  futureEvaluation: (f) => (f.quality.events[1].evaluatedAt = f.quality.events[1].at + 0.01),
+  receiptMismatch: (f) => f.quality.events[1].receipt.bitRate++,
+  profileMismatch: (f) => (f.quality.events[1].profileID = '360p30'),
+  revisionMismatch: (f) => (f.quality.events[1].revision = '1'),
+  missingAck: (f) => delete f.quality.events[1].acknowledgedAt,
+  replayedSequence: (f) => (f.quality.events[2].window.sequence = '1'),
+  overlappingPressure: (f) => (f.quality.events[2].window.start = f.quality.events[1].window.start),
+  contradictorySamples: (f) =>
+    f.quality.events[1].evidence.transport.samples.forEach((s) => (s.rttMilliseconds = 50)),
+  foreignQueue: (f) => (f.quality.events[1].evidence.queue.scope.recordingID = 'foreign'),
+  missingEvidence: (f) => delete f.quality.events[1].evidence,
+  receiverClaim: (f) => (f.quality.events[1].window.received = 8),
+  applicationAuthority: (f) => (f.quality.events[1].application = {}),
+  actionAuthority: (f) => (f.quality.events[1].action = {}),
+  candidateAuthority: (f) => (f.quality.events[1].candidate = {}),
+  admissionAuthority: (f) => (f.quality.events[1].candidateAdmission = {}),
+  profileReceipt: (f) => (f.quality.events[1].profileReceipt = {}),
+  unknownRowField: (f) => (f.quality.events[1].unrecognized = true),
+  windowBeforeBootstrap: (f) =>
+    (f.quality.events[1].window.start = f.quality.events[0].acknowledgedAt - 1),
+  hiddenGap: (f) => f.quality.events[2].reasons.shift(),
+  sourceSequenceReused: (f) =>
+    (f.quality.events.find((e) => e.kind === 'evaluated').window.sequence = '2'),
+  sourceMissingGap: (f) => f.quality.events.find((e) => e.kind === 'evaluated').reasons.shift(),
+  latePressure: (f) => {
+    const local = f.quality.events.splice(2, 1)[0];
+    const first = f.quality.events.findIndex((e) => e.kind === 'evaluated');
+    local.at = f.quality.events[first].at;
+    f.quality.events.splice(first + 1, 0, local);
+  },
+}))
+  test(`startup pressure rejects ${name}`, () => {
+    const f = startupPressureInput();
+    mutate(f);
+    assert.throws(() => qualifyMeasuredTrialPolicy(f));
+    assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(f));
+  });
+test('explicit startup mode without pressure preserves baseline qualification', () => {
+  const f = recoveryBudgetPrefixInput(fixture());
+  f.startupPressurePolicy = 'minimum-before-source-v1';
+  assert.deepEqual(qualifyMeasuredTrialPolicy(f).startupPressure, {
+    policy: f.startupPressurePolicy,
+    events: 0,
+    healthyCreditSeconds: 0,
+  });
+});
+
+test('startup replay verifies queue and thermal pressure reasons independently', () => {
+  for (const metric of ['queue', 'thermal']) {
+    const f = startupPressureInput();
+    for (const row of f.quality.events.filter((e) => e.kind === 'localPressure')) {
+      row.evidence.transport.samples.forEach((s) => (s.rttMilliseconds = 50));
+      row.window.transport = 'nominal';
+      row.reasons[row.reasons.indexOf('transportPressure')] = metric + 'Pressure';
+      if (metric === 'queue') {
+        row.window.queue = 0.8;
+        row.evidence.queue.states.forEach((s) => (s.byteFraction = 0.8));
+      } else {
+        row.window.thermal = 'elevated';
+        row.evidence.thermal.samples.forEach((s) => (s.state = 2));
+      }
+    }
+    assert.equal(qualifyMeasuredTrialPolicy(f).startupPressure.events, 2);
+  }
+});
+test('startup replay retains missing queue and unknown transport with independent thermal pressure', () => {
+  const f = startupPressureInput();
+  for (const row of f.quality.events.filter((e) => e.kind === 'localPressure')) {
+    row.window.thermal = 'elevated';
+    row.evidence.thermal.samples.forEach((s) => (s.state = 2));
+    row.window.transport = 'unknown';
+    row.evidence.transport.isQuarantined = true;
+    row.window.queue = null;
+    row.evidence.queue.isQuarantined = true;
+    row.reasons.splice(row.reasons.indexOf('missingCapacity'), 0, 'missingQueue');
+    row.reasons.splice(
+      row.reasons.indexOf('transportPressure'),
+      1,
+      'unknownTransportPressure',
+      'thermalPressure',
+    );
+  }
+  assert.equal(qualifyMeasuredTrialPolicy(f).startupPressure.events, 2);
+});
+test('startup evidence cannot move evaluation time backwards', () => {
+  const f = startupPressureInput();
+  f.quality.events[1].evaluatedAt = f.quality.events[2].at;
+  f.quality.events[1].at = f.quality.events[2].at;
+  assert.throws(() => qualifyMeasuredTrialPolicy(f));
+});

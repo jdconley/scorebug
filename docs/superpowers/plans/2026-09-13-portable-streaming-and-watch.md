@@ -24,15 +24,20 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The measured probe now coordinates its final stage with fresh source readiness
-and keeps it active for a bounded12s, subject to the original native limits.
-Review caught and fixed readiness expiry across actor returns. The new real-match
-run `native-app-pyWflj` passed UI/file-recording checks and completed the candidate,
-but failed the missing-upgrade check: its prematurely bound cost sample violated
-admission's existing half-second warmup. That warmup is restored; the next frozen
-native run must establish that measurement and admission fit in the available
-probe lifetime. No capacity/recovery gate is cleared by these changes. See the
-[coordination evidence and correction](2026-09-24-measured-capacity-uplink.md#native-coordination-test-and-admission-contract-correction).
+The new real-match run `native-app-CLof0G` achieved and confirmed its native
+240p→360p upgrade. Its original full harness result remains **failed** because
+strict policy replay rejects two observed startup pressure events. A separate,
+explicit startup replay now verifies those minimum-only events from raw evidence,
+credits no healthy time, and retains all later admission/probation checks. The
+default verifier and live harness remain strict.
+
+Offline replay of the unchanged artifacts passes all152 delivery windows (including
+30fps), the complete contiguous archive3,852frames and live3,402frames, both score
+glyph checks, and phase audio at27 additional anchors. Maximum live A/V lag is
+65.198ms, with0.333ms spread. These are saved-artifact results, not a new native
+harness pass or capacity/recovery qualification. All4,230 tooling tests pass; review
+found no actionable issues. No simulator runtime was installed and the owned
+simulator was deleted. See the [startup checkpoint](2026-09-24-measured-capacity-uplink.md#startup-replay-and-media-checkpoint).
 
 Earlier capacity experiment:
 
@@ -58,8 +63,9 @@ for evidence, limits and next steps.
 The timestamp replay now explains the missed upgrade: the prior source report was
 stale before the final probe became usable, and the next overlapping report arrived
 766ms after probe retirement. Single measured trials now export the same bounded
-readiness trace as repeated trials. Scheduling still needs correction; no freshness
-limit was relaxed. All4,188 tooling tests and555 app-model tests pass.
+readiness trace as repeated trials. Scheduling and the required half-second warmup are now corrected and demonstrated
+by `CLof0G`; no freshness limit was relaxed. The last native checkpoint passed566
+app-model tests and the arm64 simulator build.
 
 Earlier harness checkpoint:
 

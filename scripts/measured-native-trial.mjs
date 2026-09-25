@@ -276,10 +276,15 @@ export function qualifyMeasuredTrialDelivery(delivery, profile = 'strict30-v1') 
   return profile;
 }
 
-/** Full successful laboratory trial; recovery uses a separately required verifier. */
+/** Laboratory trial; explicit startup pressure earns no health credit. Later
+ * failure/recovery episodes still require a separately qualified route. */
 export function qualifyMeasuredNativeTrial(
   input,
-  { probePolicy = 'local-zero-loss-v1', deliveryProfile = 'strict30-v1' } = {},
+  {
+    probePolicy = 'local-zero-loss-v1',
+    deliveryProfile = 'strict30-v1',
+    startupPressurePolicy = 'reject',
+  } = {},
 ) {
   validateDeliveryProfile(deliveryProfile);
   input = { ...input, quality: expandQualityEvidence(input.quality) };
@@ -310,6 +315,7 @@ export function qualifyMeasuredNativeTrial(
     lifecycleQualification: nativeLifecycle,
     candidateWitnessQualification: witness,
     transportPolicy: probePolicy === 'recovery-budget-v1' ? probePolicy : 'sender-delay-v1',
+    startupPressurePolicy,
     cadenceReports,
   });
 

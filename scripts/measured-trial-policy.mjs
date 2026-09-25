@@ -1,6 +1,6 @@
 import { cadenceAuditRowLimit, qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
-import { replayNativePressure } from './native-quality-pressure.mjs';
+import { replayNativePressure, replayNativeLocalPressure } from './native-quality-pressure.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 const finite = (n) => Number.isFinite(n) && n >= 0;
 const uuid = (n) =>
@@ -214,7 +214,8 @@ export function qualifyMeasuredCadenceContinuity({
  * witness inputs from bounded raw artifacts. This module also replays raw pressure
  * and joins raw cadence identities; it does not independently decode media or
  * qualify delivery lanes, probe capacity, or production upgrade authorization.
- * Rejection/reset/local-pressure episodes are deliberately unsupported successes.
+ * Rejection/reset episodes remain unsupported. Explicit startup pressure replay
+ * retains unknown minimum-only windows before source evaluation, with no credit.
  */
 function replayMeasuredTrialPolicy(
   {
@@ -227,6 +228,7 @@ function replayMeasuredTrialPolicy(
     cadenceReports,
     transportPolicy = 'sender-delay-v1',
     cadenceAuditMode = 'legacy',
+    startupPressurePolicy = 'reject',
   },
   confirmedPrefix = false,
 ) {
@@ -235,6 +237,12 @@ function replayMeasuredTrialPolicy(
     'Unknown measured transport policy',
   );
   const recoveryPolicy = transportPolicy === 'recovery-budget-v1';
+  assert(
+    startupPressurePolicy === 'reject' ||
+      (startupPressurePolicy === 'minimum-before-source-v1' && recoveryPolicy),
+    'Unsupported startup pressure policy',
+  );
+  const startupPressure = startupPressurePolicy !== 'reject';
   assert(
     cadenceAuditMode === 'legacy' ||
       (cadenceAuditMode === 'capacity' && confirmedPrefix && recoveryPolicy),
@@ -405,7 +413,10 @@ function replayMeasuredTrialPolicy(
     probationWindows = 0,
     confirmation,
     transitions = 0,
-    evaluated = 0;
+    evaluated = 0,
+    startupPressureEvents = 0,
+    startupPressureEnd,
+    startupEvaluatedAt = ack;
   const sourceFor = (row) => {
     const s = row.source;
     assert(s);
@@ -441,6 +452,70 @@ function replayMeasuredTrialPolicy(
     const row = events[eventIndex];
     assert(finite(row.at) && row.at >= now, 'Event clock reversal');
     now = row.at;
+    if (startupPressure && row.kind === 'localPressure') {
+      assert(evaluated === 0 && !trial && revision === '0', 'Pressure after source evaluation');
+      assert.deepEqual(
+        Object.keys(row).sort(),
+        [
+          'acknowledgedAt',
+          'at',
+          'closed',
+          'evaluatedAt',
+          'evidence',
+          'kind',
+          'profileID',
+          'reasons',
+          'receipt',
+          'revision',
+          'state',
+          'window',
+        ].sort(),
+        'Unexpected startup pressure authority or fields',
+      );
+      assert.equal(row.revision, revision);
+      assert.equal(row.profileID, profile);
+      assert.deepEqual(row.receipt, current);
+      assert.equal(row.acknowledgedAt, ack);
+      assert.equal(row.closed, false);
+      assert.equal(row.state, 'unknown');
+      const w = row.window;
+      assert(w && finite(w.start) && finite(w.end));
+      assert.equal(w.revision, revision);
+      assert(sequence(w.sequence) > lastPolicy, 'Reused startup policy sequence');
+      assert(w.start >= ack && (lastEnd === undefined || w.start >= lastEnd));
+      assert(
+        finite(row.evaluatedAt) &&
+          row.evaluatedAt >= w.end &&
+          row.evaluatedAt <= row.at &&
+          row.evaluatedAt - w.end <= 2 &&
+          row.evaluatedAt >= startupEvaluatedAt,
+      );
+      replayNativeLocalPressure(row, snapshot, { after: lastEnd, duration: 0.25, transportPolicy });
+      const reasons = [
+        ...(lastEnd !== undefined && w.start !== lastEnd ? ['telemetryGap'] : []),
+        'unknownConnectivity',
+        'missingCapture',
+        'missingEncoded',
+        'missingReceiver',
+        'missingSourceLoss',
+        ...(w.queue === null ? ['missingQueue'] : []),
+        'missingCapacity',
+        'unknownPressure',
+        ...(w.transport === 'unknown' ? ['unknownTransportPressure'] : []),
+        ...(w.queue !== null && w.queue >= 0.75 ? ['queuePressure'] : []),
+        ...(w.thermal === 'elevated' ? ['thermalPressure'] : []),
+        ...(w.transport === 'elevated' ? ['transportPressure'] : []),
+        'minimumProfileInsufficient',
+      ];
+      assert.deepEqual(row.reasons, reasons, 'Startup decision disagrees with raw pressure');
+      lastPolicy = Number(w.sequence);
+      lastEnd = w.end;
+      startupPressureEnd = w.end;
+      startupEvaluatedAt = row.evaluatedAt;
+      startupPressureEvents++;
+      // No baseline, owner or healthy duration is established by this row.
+      continue;
+    }
     assert(
       ['evaluated', 'applied', 'candidate', 'transition', 'stopped'].includes(row.kind),
       'Invalidated, reset, missing, or unsupported policy evidence',
@@ -566,6 +641,14 @@ function replayMeasuredTrialPolicy(
     assert.equal(w.start, s.start);
     assert.equal(w.end, s.end);
     assert(w.start >= ack && (lastEnd === undefined || w.start >= lastEnd));
+    if (startupPressureEvents > 0 && evaluated === 0) {
+      assert(row.evaluatedAt >= startupEvaluatedAt, 'Startup evaluation clock reversal');
+      assert.equal(
+        row.reasons.includes('telemetryGap'),
+        w.start !== lastEnd,
+        'First source decision disagrees with startup pressure watermark',
+      );
+    }
     const duration = w.end - w.start;
     assert(duration >= 1 && duration <= 5.25);
     assert(
@@ -704,6 +787,16 @@ function replayMeasuredTrialPolicy(
   assert.equal(candidateCount, 1);
   assert(confirmation && !trial, 'Need completed healthy measured probation');
   return {
+    ...(startupPressure
+      ? {
+          startupPressure: {
+            policy: startupPressurePolicy,
+            events: startupPressureEvents,
+            healthyCreditSeconds: 0,
+            ...(startupPressureEnd === undefined ? {} : { lastWindowEnd: startupPressureEnd }),
+          },
+        }
+      : {}),
     ...(confirmedPrefix
       ? {
           proofExtent: 'confirmed-prefix',

@@ -170,3 +170,24 @@ for (const [name, mutate] of Object.entries(mutations))
     mutate(f);
     assert.throws(() => module.qualifyMeasuredNativeTrial(f, { deliveryProfile: 'floor24-v1' }));
   });
+
+test('full trial forwards explicit startup policy without granting recovery or production authority', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = recoveryPolicyInput(fixture(), addSyntheticRecoveryProbeEvidence);
+  const result = module.qualifyMeasuredNativeTrial(f, {
+    probePolicy: 'recovery-budget-v1',
+    startupPressurePolicy: 'minimum-before-source-v1',
+  });
+  assert.equal(result.measuredTrialQualified, true);
+  assert.equal(result.productionUpgradeAuthorized, false);
+  assert.deepEqual(result.policy.startupPressure, {
+    policy: 'minimum-before-source-v1',
+    events: 0,
+    healthyCreditSeconds: 0,
+  });
+});
+for (const startupPressurePolicy of ['ignore', null, false, 'minimum-before-source-v1'])
+  test(`full trial rejects startup policy without recovery transport ${startupPressurePolicy}`, () => {
+    assert.throws(() => module.qualifyMeasuredNativeTrial(fixture(), { startupPressurePolicy }));
+  });

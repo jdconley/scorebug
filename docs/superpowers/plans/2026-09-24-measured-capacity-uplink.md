@@ -458,3 +458,76 @@ all566 app-model tests, and the arm64 iOS simulator UI test build. Logs are
 `repeated-live-checkpoint-capacity-warmup-restored-ios-build.log`; all joined exit0.
 Read-only review confirmed sender/admission warmup consistency and no further
 findings, while explicitly leaving native timing viability unproven.
+
+## Startup pressure replay prerequisite
+
+The frozen `native-app-CLof0G` run at `0019079` joined with exit1 after its UI
+workflow passed and the native240p→360p trial was applied and confirmed. The strict
+policy replay rejected two `localPressure` rows0.764s and1.035s after bootstrap,
+before the first source evaluation16.686s after bootstrap. Their retained SRT
+samples include124.944ms RTT against the400ms recovery delay (the existing
+quarter-delay pressure threshold is100ms). This is real observed startup pressure;
+it must not be removed, mislabeled healthy, or bypassed by changing thresholds.
+All1,244 frozen source/input hashes stayed unchanged. This is still a failed full
+experiment and does not establish capacity recovery.
+
+Implement a separate explicit `startupPressurePolicy: minimum-before-source-v1`
+replay option, defaulting to `reject`, available only with recovery-budget policy.
+Retain the complete input and every raw pressure row. Before the first evaluated
+source window only, require unchanged acknowledged minimum receipt/revision,
+monotonic policy sequence and nonoverlapping bounded quarter-second windows,
+fresh evaluation times, exact native unknown/missing/pressure reasons and no
+application/candidate/reset authority. Reconstruct thermal/transport/queue endpoint
+selection with the existing independent local-pressure replay. Give these rows
+zero healthy duration. Subsequent source windows must begin after the pressure
+watermark and establish all the existing fresh baseline, candidate admission,
+cadence, probation and delivery gates. No local pressure after source evaluation
+begins is accepted, including probation or post-confirmation events.
+
+- [x] Test opt-in, defaults/unknown modes, raw mutations, ownership, timing,
+  sequence, reasons, authority fields, after-source events and unchanged input.
+- [x] Implement the narrow replay and propagate its explicit option through the
+  pure full-trial helper. Leave the live harness/default route strict.
+- [x] Replay the unchanged real artifacts under both contracts, preserving the
+  original failure. Qualify media/audio independently where possible; report any
+  additional failures rather than widening this contract. Review before commit.
+
+
+## Startup replay and media checkpoint
+
+All4,230 tooling tests passed, including the new explicit startup policy contract.
+The positive tests failed before implementation, and an evaluation-clock reversal
+mutation reproduced before its guard was added. Independent read-only review found
+no actionable issues. The confirmed-prefix helper still qualifies only through
+its reported confirmation boundary: any suffix, including later pressure, remains
+unqualified. Full-trial replay rejects later pressure outright.
+
+Final offline replay in `artifacts/qa/startup-pressure-replay-FFFQLI` retains the
+strict-policy failure and separately passes explicit startup policy, confirmed
+prefix and full native trial/media-delivery helper. All152 reconstructed delivery
+windows are healthy, with zero late/missing/uncertain/below24/below30 rows. The
+original source/input freeze still contains1,244 unchanged hashes. Replay source
+and artifact hashes are saved separately and verified after replay.
+
+`artifacts/qa/startup-pressure-media-mV08WO` independently verifies complete source
+identity and A/V coverage: archive3,852consecutive frames0–3851, live3,402consecutive
+frames236–3637. It verifies both score glyph states and27 phase/grid audio anchors
+in addition to baseline checks (30 unique archive probes,29 live). Maximum absolute
+live A/V lag is65.198ms; its spread is0.333ms. Archive alignment is within0.001ms.
+The saved archive completion report is finished, has no first failure and valid
+timing. The original harness had already completed full FFmpeg A/V decoding before
+its policy rejection. This offline replay uses the saved decoded PCM, frame probes,
+barcodes and crops; it does not claim a second decode or complete audio fidelity.
+
+The native scheduling evidence is saved in `native-app-CLof0G/diagnostic-coordination-inspection.json`.
+Candidate binding age was4.891s, satisfying the unchanged0.5s admission warmup.
+Stage3 accepted padding through9.884s, and retirement preserved14,660,240 total
+accepted bytes with reason`cancelled` during trial application, below16MiB. The
+native trial admitted/applied/confirmed; no stale capacity was reused.
+
+The original live harness remains failed under its strict contract. The new mode
+is explicitly selected only by the pure offline helper; no production behavior or
+live default changed. Capacity reduction/restoration, a reconnectable recorder,
+fresh post-recovery ramp, true outage, physical camera/Watch and other hosts remain
+open. Next, provide a session-aware reconnectable test recorder and choose a fault
+rate from measured full wire costs before a new capacity experiment.
