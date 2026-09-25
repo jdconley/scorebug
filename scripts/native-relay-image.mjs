@@ -6,6 +6,7 @@ export function nativeRelayImageTag({
   stagedReceiverProbe = false,
   candidateHeadroom = false,
   repeatedReceiverProbe = false,
+  ownedReceiverProbe = false,
 }) {
   for (const flag of [
     requirePublication,
@@ -13,13 +14,15 @@ export function nativeRelayImageTag({
     stagedReceiverProbe,
     candidateHeadroom,
     repeatedReceiverProbe,
+    ownedReceiverProbe,
   ])
     assert.equal(typeof flag, 'boolean');
   assert.ok(!requireReceiverProbe || requirePublication);
   assert.ok(!stagedReceiverProbe || (requireReceiverProbe && requirePublication));
   assert.ok(!candidateHeadroom || stagedReceiverProbe);
   assert.ok(!repeatedReceiverProbe || candidateHeadroom);
-  if (repeatedReceiverProbe) return 'scorebug/ingest:campaign-probe-v3';
+  assert.ok(!ownedReceiverProbe || (candidateHeadroom && !repeatedReceiverProbe));
+  if (repeatedReceiverProbe || ownedReceiverProbe) return 'scorebug/ingest:campaign-probe-v3';
   if (candidateHeadroom) return 'scorebug/ingest:staged-probe-hd-v2';
   if (stagedReceiverProbe) return 'scorebug/ingest:staged-probe-v2';
   if (requireReceiverProbe) return 'scorebug/ingest:receiver-probe-v1';

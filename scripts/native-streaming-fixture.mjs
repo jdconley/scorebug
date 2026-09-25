@@ -171,6 +171,9 @@ export async function nativeStreamingFixture({
     stagedReceiverProbe,
     candidateHeadroom,
     repeatedReceiverProbe: repeatedRecovery,
+    // Owned operations emit campaign-v3 packets even though each measurement
+    // uses the staged three-rate sequence. The v2 relay discards those packets.
+    ownedReceiverProbe: capacityRecovery && uplinkProfile === 'capacity750k-retry',
   });
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink, stopUplinkEvidence;
