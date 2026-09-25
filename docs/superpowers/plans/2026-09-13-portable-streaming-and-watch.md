@@ -24,6 +24,18 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The measured probe now coordinates its final stage with fresh source readiness
+and keeps it active for a bounded12s, subject to the original native limits.
+Review caught and fixed readiness expiry across actor returns. The new real-match
+run `native-app-pyWflj` passed UI/file-recording checks and completed the candidate,
+but failed the missing-upgrade check: its prematurely bound cost sample violated
+admission's existing half-second warmup. That warmup is restored; the next frozen
+native run must establish that measurement and admission fit in the available
+probe lifetime. No capacity/recovery gate is cleared by these changes. See the
+[coordination evidence and correction](2026-09-24-measured-capacity-uplink.md#native-coordination-test-and-admission-contract-correction).
+
+Earlier capacity experiment:
+
 **The first native capacity experiment failed; recovery remains unqualified.**
 `native-app-rQQICD` preserved a 237.9-second clean local archive whose video and
 audio fully decode. The app remained at 240p and never admitted its completed

@@ -1315,7 +1315,7 @@ extension NativeCandidateFixtureTests {
         await f.owner.stop()
     }
 
-    func testSingleMeasuredCandidateUsesFreshReadinessWithoutWaitingForProbeAge() async throws {
+    func testSingleMeasuredCandidateRetainsWarmupRequiredByAdmission() async throws {
         let f = try await CandidateQualityFixture.make()
         let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
         let context = try XCTUnwrap(value)
@@ -1329,8 +1329,8 @@ extension NativeCandidateFixtureTests {
             await wrapper.setDiagnostics { fake.pressure }
             if measured { _ = await wrapper.setMeasurementContextProvider { context } }
             try await wrapper.start(); await wrapper.waitForMeasurement(); await wrapper.stop()
-            XCTAssertEqual(fake.events.contains("candidateStart"), measured,
-                "Fresh coordinated readiness may start measurement immediately; legacy probe warmup remains unchanged")
+            XCTAssertFalse(fake.events.contains("candidateStart"),
+                "Admission requires binding at least half a second after probe startup, including measured trials")
         }
         await f.owner.stop()
     }

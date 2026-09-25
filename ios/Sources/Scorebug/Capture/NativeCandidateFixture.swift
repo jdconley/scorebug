@@ -526,16 +526,12 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 event.outcome = stopped || invalidReason != nil ? .cancelled : .deadline
                 break
             }
-            // The coordinated single trial already waited for fresh source
-            // readiness before opening stage three. Aging that probe another
-            // half-second can consume the remaining source freshness window.
-            // This starts cost measurement only; admission still requires real
-            // delivered probe evidence and a fresh overlapping source report.
-            let minimumProbeAge = requiresMeasurementReadiness && !repeated ? 0.0 : 0.5
+            // Admission independently requires this warmup at binding. Fresh
+            // readiness alone cannot make an earlier cost sample admissible.
             if let value, value.stage == 3, value.bitRate == 12_000_000,
                !repeated || value.campaign == measurementCampaign,
                publisher.videoStartup?.publishingGeneration == value.publishingGeneration,
-               value.isActive(at: now), now - value.startedAt >= minimumProbeAge {
+               value.isActive(at: now), now - value.startedAt >= 0.5 {
                 if requiresMeasurementReadiness {
                     event.contextReadStartedAt = ProcessInfo.processInfo.systemUptime
                     let context = await measurementContext.read()

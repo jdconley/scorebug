@@ -370,15 +370,12 @@ byte budget,60-second campaign budget and terminal withdrawal remain authoritati
 Waiting for readiness never renews the retired stage-two owner. The candidate's
 existing wait deadline and all admission freshness/overlap rules remain unchanged.
 
-Phase review exposed a second scheduling condition: after coordinated stage-three
-startup, the candidate must not impose the legacy half-second probe warmup before
-asking for current readiness. In the failed run only about0.24s of source freshness
-remained when its report was evaluated. A fixed half-second delay would miss that
-report again. Single measured trials may therefore begin cost measurement on a
-current active final probe immediately, after querying current readiness and
-rechecking the lease after that query. This grants no upgrade permission; completed
-cost, delivered probe intervals and a fresh overlapping source report are still
-required for admission. Legacy and repeated paths retain their existing warmup.
+The candidate retains the existing half-second final-probe warmup. An initial
+implementation removed it for single measured trials to catch the first freshness
+window, but the native run below showed this conflicts with admission's independent
+warmup requirement. That removal is reverted; current readiness cannot make a
+premature cost sample admissible. The longer bounded active probe must span the
+next original readiness/overlap report while retaining all admission requirements.
 
 Simply relaxing source freshness would admit stale evidence; shortening the
 measurement would change its cost evidence. Neither addresses the observed
@@ -395,7 +392,7 @@ resource limits. A withdrawn/expired/byte-limited probe still fails admission.
 - [ ] Re-run a frozen capacity diagnostic only after the reconnectable sink and capacity
   test assumptions are addressed. No unit-test result qualifies live recovery.
 
-The first coordination regression run failed20 assertions in six tests: it
+The first coordination regression run failed20 assertions in five tests: it
 allocated without readiness, stopped stage three too early, and omitted the
 additional poll allowance. The implementation fixes those cases. A separate
 measurement-start regression failed because the half-second delay prevented
@@ -417,3 +414,47 @@ reconnect. Its result must not be described as capacity recovery.
 All4,188 tooling tests also pass (`repeated-live-checkpoint-capacity-coordination-tools.log`),
 and the arm64 iOS simulator UI test target builds with Xcode26.2
 (`repeated-live-checkpoint-capacity-coordination-ios-build.log`). Both joined exit0.
+
+## Native coordination test and admission-contract correction
+
+The first frozen attempt, `native-app-n3pDrZ` / `measurement-coordination-freeze-dvucg_p2`,
+failed before simulator creation when the Docker engine returned500 for relay image
+inspection. Docker Desktop claimed to be running but the engine's`_ping` timed out.
+A normal Docker Desktop restart restored`_ping` and image inspection. The image
+remains `sha256:ca29df4c78ce6c0b3cda955bda17ec32c576d1894eb839110561f3c794a30d47`.
+The startup failure is preserved separately; all1,244 frozen hashes are unchanged.
+
+The retry, `native-app-pyWflj` / `measurement-coordination-freeze-akghm_hx`, ran
+commit308221e with the same prepared source and fixed30ms/0.2% impairment. Its
+native UI test passed in169.394s. File-recording qualification passed with3,888
+delivered video frames; local and live full-decode commands succeeded. However,
+the measured-trial verifier failed `profile.phases.length`: one native profile,
+not the required two. Twenty healthy evaluations still reported`missingCapacity`;
+there was no candidate admission or native profile request. This run is a failed
+measured trial, not successful adaptation or recovery. All1,244 hashes are unchanged
+and owned simulator cleanup completed.
+
+The new closed wait trace explains the failure precisely. The candidate bound
+26.49ms after stage3 began and encoded121 frames successfully. But admission has
+always required `binding.startedAt + 0.5 <= boundAt`, so immediate binding could
+never qualify. The final probe remained active for11.643s and withdrew at the
+unchanged16MiB native byte budget (16,776,368 bytes), demonstrating that the
+longer scheduling allowance did not bypass that limit. The compact inspection is
+`native-app-pyWflj/diagnostic-coordination-inspection.json`; the bounded wait trace
+is retained in `failure-app-data-TSI5yO/QA/native-candidate-wait.json`.
+
+Restore the half-second measurement warmup, retaining coordinated readiness,
+post-await expiry checks and the bounded final-probe lifetime. The corrected
+regression first failed on the premature measured start, then passes after the
+restoration. An admission-boundary test separately checks an active binding at
+0.500s is accepted and at0.499s rejected. A new frozen run is required to show the
+longer probe spans the next fresh measurement/admission opportunity; this failed
+run remains unchanged. Reconnectable sink, suitable capacity stimulus and actual
+capacity/outage recovery remain separate open work.
+The restored implementation passes all118 focused probe/candidate/admission tests,
+all566 app-model tests, and the arm64 iOS simulator UI test build. Logs are
+`repeated-live-checkpoint-capacity-admission-warmup-reviewed.log`,
+`repeated-live-checkpoint-capacity-warmup-restored-models.log`, and
+`repeated-live-checkpoint-capacity-warmup-restored-ios-build.log`; all joined exit0.
+Read-only review confirmed sender/admission warmup consistency and no further
+findings, while explicitly leaving native timing viability unproven.

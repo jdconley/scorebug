@@ -89,6 +89,17 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         if fault == .wrongRevision { f.applied.revision = 1 }
         return f
     }
+    func testCandidateBindingMustRespectHalfSecondProbeWarmup() throws {
+        var f = try fixture()
+        f.binding.lastAcceptedAt = 109.49
+        f.binding.leaseDeadline = 109.7
+        f.boundAt = 109.5
+        XCTAssertNotNil(f.admit(), "The exact warmup boundary remains admissible")
+        f.boundAt = 109.499
+        XCTAssertTrue(f.binding.isActive(at: f.boundAt))
+        XCTAssertNil(f.admit(), "An active probe alone cannot admit a prematurely bound measurement")
+    }
+
     func testRecoveryPolicyCannotChangeAcrossCandidateBindingAndAuditRetainsEvidence() throws {
         var f = try fixture()
         func recovery(_ value: PublishingProbeObservation, at: Double) -> PublishingProbeObservation {
