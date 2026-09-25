@@ -1422,7 +1422,7 @@ struct CandidateQualityFixture: Sendable {
     private var admissionMeasurementScope: VideoFrameObservationScope {
         .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1)
     }
-    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording") async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording", unhealthy: Bool = false) async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
@@ -1431,7 +1431,7 @@ struct CandidateQualityFixture: Sendable {
             settings: try XCTUnwrap(state.applied), receipt: try XCTUnwrap(state.receipt), acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
         let afterReceipt = applied.receipt.lastSubmittedSourcePTS.map { Int64((CMTimeGetSeconds($0) * 30).rounded(.up)) + 1 } ?? 300
         let firstFrame = max(300 + Int64(max(0, start - 110) * 30), afterReceipt)
-        return try Self.source(native: native, template: template, applied: applied, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame)
+        return try Self.source(native: native, template: template, applied: applied, unhealthy: unhealthy, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame)
     }
     private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
                                applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {

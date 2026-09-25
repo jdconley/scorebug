@@ -252,6 +252,7 @@ public struct QualityController: Sendable {
     private struct TransferredMeasurement: Sendable {
         let attempt: CandidateMeasurementAttempt
         let application: Application
+        var rejectionRecorded = false
     }
     private var transferredMeasurement: TransferredMeasurement?
     private var lastNow: Double
@@ -384,6 +385,23 @@ public struct QualityController: Sendable {
         latestStrongHealth = nil; recoveryStart = nil
         healthyNotBefore = max(healthyNotBefore, now)
         if let recommendation = owned.recommendation, pending == recommendation { pending = nil }
+    }
+
+    /// Record the exact guarded rejection after its native call has proved no
+    /// effect. Measurement cleanup remains outstanding: retain its transfer and
+    /// failure episode until joined settlement, but stop treating the write as
+    /// an uncertain in-flight effect when fresh telemetry arrives.
+    public mutating func noteCandidateApplicationRejection(_ admitted: Application,
+        for attempt: CandidateMeasurementAttempt) throws {
+        guard attempt.controllerID == controllerID, var transferred = transferredMeasurement,
+              transferred.attempt == attempt, transferred.application == admitted,
+              !transferred.rejectionRecorded, attempt.readiness.attemptID == attemptID,
+              attempt.readiness.appliedRevision == appliedRevision,
+              attempt.readiness.baseline == applied else { throw ValidationError.staleMeasurement }
+        transferred.rejectionRecorded = true
+        transferredMeasurement = transferred
+        if application == admitted { application = nil }
+        if pending == admitted.recommendation { pending = nil }
     }
 
     /// Session calls this only after a guarded rejection with no earlier native

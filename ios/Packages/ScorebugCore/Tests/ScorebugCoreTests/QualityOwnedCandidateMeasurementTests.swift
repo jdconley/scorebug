@@ -173,6 +173,39 @@ final class QualityOwnedCandidateMeasurementTests: XCTestCase {
         XCTAssertEqual(policy.appliedRevision, 1)
     }
 
+    func testKnownNoEffectRejectionReleasesApplicationButRetainsJoinedSettlement() throws {
+        for settleBeforeDownward in [false, true] {
+            var policy = try qualified(rate: 800_000)
+            let token = try policy.beginCandidateMeasurement(at: 4)
+            _ = try policy.evaluate(window(4, sequence: 2), at: 5)
+            let advice = try XCTUnwrap(policy.evaluateCandidate(candidate(base: token.readiness.baseline,
+                target: token.readiness.settings), for: token, at: 5).recommendation)
+            let application = try policy.beginApplication(advice, for: token, at: 5)
+            var foreign = try qualified()
+            let foreignToken = try foreign.beginCandidateMeasurement(at: 4)
+            XCTAssertThrowsError(try policy.noteCandidateApplicationRejection(application, for: foreignToken))
+            try policy.noteCandidateApplicationRejection(application, for: token)
+            XCTAssertThrowsError(try policy.noteCandidateApplicationRejection(application, for: token))
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.consecutiveFailures, 0)
+            let healthy = try policy.evaluate(window(5, sequence: 3), at: 6)
+            XCTAssertNil(healthy.recommendation, "Known no-effect rejection must not latch a reset")
+            XCTAssertThrowsError(try policy.beginCandidateMeasurement(at: 6))
+            let downward = try XCTUnwrap(policy.evaluate(window(6, sequence: 4, queue: 0.8), at: 7).recommendation)
+            XCTAssertEqual(downward.kind, .decrease)
+            XCTAssertThrowsError(try policy.noteCandidateApplicationRejection(application, for: token))
+            if settleBeforeDownward {
+                try policy.settleCandidateApplicationRejection(application, for: token, at: 7)
+                XCTAssertEqual(policy.candidateMeasurementDiagnostic.consecutiveFailures, 1)
+                XCTAssertNil(policy.candidateMeasurementDiagnostic.strongHealthSequence)
+                XCTAssertThrowsError(try policy.settleCandidateApplicationRejection(application, for: token, at: 7))
+            }
+            let lower = try policy.beginApplication(downward, at: 7)
+            try policy.acknowledge(lower, applied: downward.settings, at: 7)
+            XCTAssertThrowsError(try policy.noteCandidateApplicationRejection(application, for: token))
+            if !settleBeforeDownward { try policy.retireObsoleteCandidateMeasurement(token) }
+        }
+    }
+
     func testNoOpAdmissionStillBindsAndNeedsFailureSettlement() throws {
         var policy = try qualified()
         let token = try policy.beginCandidateMeasurement(at: 4)

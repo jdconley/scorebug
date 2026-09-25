@@ -39,10 +39,18 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testOwnedNativeContextExpiryBeforeTransferSkipsWithoutStopping() async throws {
         try await exerciseOwnedApplication(.contextRejected)
     }
-    private enum ApplicationOutcome { case accepted, profileRejected, rateRejected, contextRejected }
-    private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
+    func testDriverHandlesFreshDownwardTickWhileRejectedMeasurementCleanupIsHeld() async throws {
+        try await exerciseOwnedApplication(.heldProfileRejection)
+    }
+    func testDriverStopJoinsRejectedMeasurementBeforeClosingAudit() async throws {
+        try await exerciseOwnedApplication(.heldRejectionStop)
+    }
+    private enum ApplicationOutcome { case accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
-        let f = try await CandidateQualityFixture.make(guarded: router.guarded)
+        let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
+        let baseline: PublishingVideoProfile = heldRejection ? .low360 : .low240
+        let f = try await CandidateQualityFixture.make(initialProfile: baseline, guarded: router.guarded)
         let start = ProcessInfo.processInfo.systemUptime
         f.native.useActualInstant()
         f.native.setNow(start)
@@ -54,7 +62,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         var nativeOperations = await fixture.operations()
         nativeOperations.validateVideoMutationExpectation = { _ in }
         nativeOperations.setProfileExpecting = { profile, _ in
-            if outcome == .profileRejected { throw PublishingVideoMutationAdmissionError.stale }
+            if outcome == .profileRejected || (heldRejection && profile != .low240) { throw PublishingVideoMutationAdmissionError.stale }
             return try await f.native.operations.setProfile!(profile, f.native.now + 2)
         }
         nativeOperations.setBitRateExpecting = { rate, _ in
@@ -95,7 +103,58 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
         let finalValue = await wrapper.candidateSnapshot()
         let final = try XCTUnwrap(finalValue)
-        let admission = try ownedAdmission(final, f: f)
+        let admission = try ownedAdmission(final, f: f, baseline: baseline)
+        if heldRejection {
+            await fixture.hold(.retire)
+            let driver = PublishingQualityDriver(owner: f.owner,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now })
+            driver.candidateInputProvider = { _ in admission }
+            let applying = driver.tick(encoderReady: true, source: nil, diagnostics: covered.1)
+            await fixture.waitForEntry()
+            var applyingFinished = false
+            let completion = Task { await applying?.value; applyingFinished = true }
+            let completionDeadline = ContinuousClock.now + .seconds(1)
+            while !applyingFinished, ContinuousClock.now < completionDeadline { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertTrue(applyingFinished, "No-effect rejection must release Driver tick before measurement cleanup")
+            XCTAssertEqual(try auditRows(wrapper).filter { $0["kind"] as? String == "applicationTransferred" }.count, 1)
+            if outcome == .heldRejectionStop {
+                let stopping = Task { await driver.stop() }
+                while !(await f.owner.snapshot).isClosed { await Task.yield() }
+                let before = try XCTUnwrap(try JSONSerialization.jsonObject(with: wrapper.audit.data()) as? [String: Any])
+                XCTAssertEqual(before["isClosed"] as? Bool, false)
+                await fixture.release(); await stopping.value; await completion.value
+                let after = try XCTUnwrap(try JSONSerialization.jsonObject(with: wrapper.audit.data()) as? [String: Any])
+                XCTAssertEqual(after["isClosed"] as? Bool, true)
+                let rows = try auditRows(wrapper)
+                XCTAssertEqual(rows.filter { $0["kind"] as? String == "cleanupJoined" }.count, 1)
+                XCTAssertFalse(rows.contains { $0["kind"] as? String == "settledApplicationRejection" })
+                await wrapper.stop()
+                return
+            }
+            f.native.setNow(start + 10.2)
+            let unhealthy = try await f.freshSource(start: start + 5.1, sequence: 5, unhealthy: true)
+            let downward = driver.tick(encoderReady: true, source: unhealthy.0, diagnostics: unhealthy.1)
+            let deadline = ContinuousClock.now + .seconds(1)
+            while (await f.owner.snapshot).revision == 0, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let beforeJoin = await f.owner.snapshot
+            XCTAssertEqual(beforeJoin.revision, 1, "Fresh downward Driver work must finish before old measurement cleanup")
+            XCTAssertEqual(beforeJoin.applied?.profileID, "240p30")
+            XCTAssertFalse(driver.isClosed)
+            let beforeRows = try auditRows(wrapper)
+            XCTAssertFalse(beforeRows.contains { $0["kind"] as? String == "cleanupJoined" })
+            await fixture.release(); await applying?.value; await completion.value; await downward?.value
+            await f.owner.joinOwnedMeasurement()
+            let rows = try auditRows(wrapper)
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "retiredObsolete" }.count, 1)
+            XCTAssertFalse(rows.contains { $0["kind"] as? String == "settledApplicationRejection" })
+            XCTAssertEqual(f.native.calls, ["rate:600000", "profile:240p30", "rate:350000"])
+            await driver.stop(); await wrapper.stop()
+            return
+        }
         let decision = try await f.owner.evaluateCandidate(admission, instant: admissionClockInstant)
         let advice = try XCTUnwrap(decision.recommendation)
         if outcome == .contextRejected { await fixture.invalidateContext() }
@@ -125,6 +184,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
+        case .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])
@@ -134,7 +194,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         await f.owner.stop(); await wrapper.stop()
     }
     private var admissionClockInstant = ContinuousClock.now
-    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture) throws -> PublishingCandidateAdmission {
+    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture, baseline: PublishingVideoProfile = .low240) throws -> PublishingCandidateAdmission {
         let templateURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: templateURL))
@@ -160,7 +220,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         }
         let pair = try XCTUnwrap(tracker.latestPair), receipt = try XCTUnwrap(f.native.receipt)
         let applied = PublishingQualityTelemetry.Applied(attemptID: f.attempt, revision: 0,
-            settings: .init(profileID: "240p30", videoBitrate: 350_000), receipt: receipt, acknowledgedAt: 100)
+            settings: .init(profileID: baseline.rawValue, videoBitrate: baseline.bitRate), receipt: receipt, acknowledgedAt: 100)
         return try XCTUnwrap(.laboratoryIPv4(measurement: .init(value.cost), applied: applied, binding: value.binding,
             boundAt: value.boundAt, completedAt: value.completedAt, probe: value.probe, pair: pair,
             authority: .init(pair.newer.end), clock: clock,
@@ -606,27 +666,28 @@ private final class OwnedMutationRouter: @unchecked Sendable {
 private final class OwnedCandidateResult: @unchecked Sendable {
     let id = UUID()
     private let scope: VideoFrameObservationScope, generation: UInt64
+    private let profile: PublishingVideoProfile
     private let lock = NSLock()
     private var startedAt = 0.0, reason: PublishingCandidateMeasurement.Reason = .completed
-    init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile, generation: UInt64) { self.scope = scope; self.generation = generation }
+    init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile, generation: UInt64) { self.scope = scope; self.generation = generation; self.profile = profile }
     func start() { lock.withLock { startedAt = ProcessInfo.processInfo.systemUptime } }
     func cancel(_ value: PublishingCandidateMeasurement.Reason) { lock.withLock { reason = value } }
     func result() async -> PublishingCandidateMeasurement.Result {
         try? await Task.sleep(for: .seconds(2.8))
         let (start, reason) = lock.withLock { (startedAt, self.reason) }
         return ownedCandidateResult(id: id, scope: scope, start: start, end: ProcessInfo.processInfo.systemUptime,
-            generation: generation, reason: reason)
+            generation: generation, profile: profile, reason: reason)
     }
 }
 private func ownedCandidateResult(id: UUID, scope: VideoFrameObservationScope, start: Double, end: Double,
-                           generation: UInt64 = 7, reason: PublishingCandidateMeasurement.Reason = .completed) -> PublishingCandidateMeasurement.Result {
+                           generation: UInt64 = 7, profile: PublishingVideoProfile = .low360, reason: PublishingCandidateMeasurement.Reason = .completed) -> PublishingCandidateMeasurement.Result {
     let session = UUID()
     let frames: [VideoCandidateEncoder.Frame] = (0...120).map { index in
         let pts = CMTime(value: Int64(index), timescale: 30)
         let at = start + Double(index) / 120 * 2.7
         return .init(sourcePTS: pts, outputPTS: pts, encoderSessionID: session,
             admittedAt: at, rawByteCount: 16384, submittedAt: at, completedAt: at, dequeuedAt: at,
-            byteCount: 1000, width: 640, height: 360, isSync: index == 0)
+            byteCount: 1000, width: Int32(profile.width), height: Int32(profile.height), isSync: index == 0)
     }
     let audio: [PublishingCandidateTransport.AudioReceipt] = (0..<188).map { index in
         .init(sourcePTS: CMTime(value: Int64(index * 1024), timescale: 48000), publishingGeneration: generation,
@@ -646,16 +707,16 @@ private func ownedCandidateResult(id: UUID, scope: VideoFrameObservationScope, s
         firstVideoPTS: .zero, lastVideoPTS: CMTime(value: 4, timescale: 1),
         firstAudioPTS: audio.first!.sourcePTS, lastAudioPTS: audio.last!.sourcePTS,
         transportBytes: 376000, transportMessageCount: 400)
-    let transport = PublishingCandidateTransport.Result(scope: scope, profile: .low360, id: id,
+    let transport = PublishingCandidateTransport.Result(scope: scope, profile: profile, id: id,
         outcome: .completed, failure: nil, publishingGeneration: generation, startedAt: start,
         closedAt: end, endedAt: end, rawInputCount: 121, firstRawPTS: .zero,
         lastRawPTS: CMTime(value: 4, timescale: 1), audio: audio, followingAudio: following, openingAudioFailure: nil,
         maximumPendingCount: 2, maximumPendingBytes: 200, mux: mux)
-    let native = VideoCandidateEncoder.Result(id: id, settings: PublishingVideoProfile.low360.settings,
+    let native = VideoCandidateEncoder.Result(id: id, settings: profile.settings,
         outcome: .completed, failure: nil, nativeFailure: nil, encoderSessionID: session,
         acceptedInputCount: 121, outputCount: 121, frames: frames)
-    let encoding = PublishingCandidateEncoder.Result(scope: scope, profile: .low360, encoding: native, transport: transport)
-    return .init(id: id, scope: scope, profile: .low360, reason: reason,
+    let encoding = PublishingCandidateEncoder.Result(scope: scope, profile: profile, encoding: native, transport: transport)
+    return .init(id: id, scope: scope, profile: profile, reason: reason,
         startedAt: start, endedAt: end, acceptedInputCount: 121,
         firstInputPTS: .zero, lastInputPTS: CMTime(value: 4, timescale: 1), encoding: encoding)
 }

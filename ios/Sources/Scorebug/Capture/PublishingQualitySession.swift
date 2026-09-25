@@ -113,6 +113,8 @@ actor PublishingQualitySession {
     private var ownedDiagnostics: (@Sendable () -> PublishingQualityTelemetry.Diagnostics)?
     private var ownedAcknowledged: PublishingOwnedMeasurementLease?
     private var ownedTransferred: QualityController.Application?
+    private var ownedRejected: QualityController.Application?
+    private var ownedSettlement: Task<Void, Never>?
     private var ownedProbePolicy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss
 
     func installOwnedMeasurementPublisher(_ publisher: NativeOwnedCandidatePublisher,
@@ -138,7 +140,16 @@ actor PublishingQualitySession {
         await lease.start(policy: ownedProbePolicy) { [weak self] lease in await self?.ownedMeasurementFinished(lease) }
         return true
     }
-    func joinOwnedMeasurement() async { await ownedMeasurement?.join() }
+    func joinOwnedMeasurement() async {
+        await ownedMeasurement?.join()
+        await ownedSettlement?.value
+    }
+    private func scheduleOwnedSettlement(_ lease: PublishingOwnedMeasurementLease) {
+        ownedSettlement = Task { [weak self] in
+            await lease.join()
+            await self?.ownedMeasurementFinished(lease)
+        }
+    }
     func ownedCandidateSnapshot() async -> NativeCandidatePublisher.CandidateSnapshot? {
         guard let ownedMeasurement else { return nil }
         return await ownedMeasurement.snapshot()
@@ -148,7 +159,8 @@ actor PublishingQualitySession {
     }
     private func ownedMeasurementFinished(_ lease: PublishingOwnedMeasurementLease) async {
         let (joined, predecessor) = await lease.joinedRetirement()
-        guard joined, ownedMeasurement === lease, !closed, ownedTransferred == nil,
+        guard joined, ownedMeasurement === lease, !closed,
+              ownedTransferred == nil || (ownedRejected != nil && ownedTransferred == ownedRejected),
               var current = policy else { return }
         do {
             if ownedAcknowledged === lease {
@@ -158,13 +170,18 @@ actor PublishingQualitySession {
                 try current.retireObsoleteCandidateMeasurement(lease.token)
                 lease.record("retiredObsolete", fields: ["currentAppliedRevision": String(current.appliedRevision),
                     "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+            } else if let rejected = ownedRejected {
+                try current.settleCandidateApplicationRejection(rejected, for: lease.token, at: time())
+                lease.record("settledApplicationRejection", fields: ["applicationID": rejected.id.uuidString.lowercased(),
+                    "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                candidateHealthSource = nil
             } else {
                 try current.settleCandidateMeasurementFailure(lease.token, at: time())
                 lease.record("settledFailure", fields: ["policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
                 candidateHealthSource = nil
             }
             policy = current; ownedPredecessor = predecessor
-            ownedMeasurement = nil; ownedSource = nil
+            ownedMeasurement = nil; ownedSource = nil; ownedTransferred = nil; ownedRejected = nil
         } catch { /* Retain an unsettled exact owner; it cannot authorize another allocation. */ }
     }
     #endif
@@ -773,10 +790,7 @@ actor PublishingQualitySession {
                 measurement.record("acknowledged", fields: ["applicationID": admitted.id.uuidString.lowercased(),
                     "receipt": PublishingOwnedMeasurementAudit.receipt(result), "currentAppliedRevision": String(current.appliedRevision),
                     "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
-                Task { [weak self] in
-                    await measurement.join()
-                    await self?.ownedMeasurementFinished(measurement)
-                }
+                scheduleOwnedSettlement(measurement)
             }
             #endif
         } catch {
@@ -791,29 +805,22 @@ actor PublishingQualitySession {
                 // The guarded call has joined its cleanup. Settle the exact
                 // application against the current authoritative policy after
                 // its measurement cleanup also joins.
-                var settledOwned = false
+                var retainedOwnedRejection = false
                 #if DEBUG
-                if let measurement {
+                if let measurement, var current = self.policy {
+                    try current.noteCandidateApplicationRejection(admitted, for: measurement.token)
+                    self.policy = current
+                    ownedRejected = admitted
+                    measurement.record("applicationRejected", fields: ["applicationID": admitted.id.uuidString.lowercased()])
                     measurement.revoke()
-                    busy = false
-                    await measurement.join()
-                    let (joined, predecessor) = await measurement.joinedRetirement()
-                    guard joined, ownedMeasurement === measurement, var current = self.policy else { throw error }
-                    if current.appliedRevision == measurement.token.readiness.appliedRevision {
-                        try current.settleCandidateApplicationRejection(admitted, for: measurement.token, at: time())
-                        measurement.record("settledApplicationRejection", fields: ["applicationID": admitted.id.uuidString.lowercased(),
-                            "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
-                    } else {
-                        try current.retireObsoleteCandidateMeasurement(measurement.token)
-                        measurement.record("retiredObsolete", fields: ["currentAppliedRevision": String(current.appliedRevision),
-                            "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
-                    }
-                    self.policy = current; ownedTransferred = nil; ownedMeasurement = nil
-                    ownedPredecessor = predecessor; ownedSource = nil; candidateHealthSource = nil
-                    settledOwned = true
+                    // The native call has joined. Track the measurement join
+                    // separately so Driver telemetry remains available, including
+                    // when native cleanup finished before its rejection returned.
+                    scheduleOwnedSettlement(measurement)
+                    retainedOwnedRejection = true
                 }
                 #endif
-                if !settledOwned, var current = self.policy {
+                if !retainedOwnedRejection, var current = self.policy {
                     do { try current.acknowledge(admitted, applied: nil, at: time()) }
                     catch { current.invalidateTelemetry() }
                     self.policy = current
@@ -830,7 +837,7 @@ actor PublishingQualitySession {
     /// All callers join one shielded stop, even if their own task is cancelled.
     func stop() async {
         #if DEBUG
-        let measurement = ownedMeasurement
+        let measurement = ownedMeasurement, settlement = ownedSettlement
         measurement?.revoke()
         #endif
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
@@ -843,6 +850,7 @@ actor PublishingQualitySession {
                 await stop()
                 #if DEBUG
                 await measurement?.join()
+                await settlement?.value
                 #endif
             }
             shutdown = task
