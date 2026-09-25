@@ -144,3 +144,37 @@ test('native harness stops unintegrated capacity qualification before artifacts 
     before,
   );
 });
+
+test('750k native host selection requires its exact210s complete route', async () => {
+  const environment = {
+    ...capacityEnvironment(),
+    SCOREBUG_TEST_UPLINK_PROFILE: 'capacity750k',
+    SCOREBUG_TEST_STREAM_HOLD_SECONDS: '210',
+  };
+  assert.equal(select(environment, { holdSeconds: 210 }), true);
+  for (const holdSeconds of [180, 209, 211])
+    assert.throws(() => select(environment, { holdSeconds }));
+  assert.throws(() =>
+    select({ ...environment, SCOREBUG_TEST_STREAM_HOLD_SECONDS: '180' }, { holdSeconds: 210 }),
+  );
+  assert.throws(() =>
+    select({ ...environment, SCOREBUG_TEST_CAPACITY_RECOVERY: undefined }, { holdSeconds: 210 }),
+  );
+  const { nativeFileFixtureOptions } = await import('../native-file-fixture.mjs');
+  const { nativeUplinkOptions } = await import('../native-streaming-options.mjs');
+  const { nativeMeasuredTrial } = await import('../native-measured-trial.mjs');
+  const args = {
+    environment,
+    streaming: true,
+    holdSeconds: 210,
+    requirePublication: true,
+    requireProcessing: true,
+    requireQuality: false,
+    requireConfirmation: false,
+    fixtureWorkload: 'real-file',
+    liveProfile: '240p30',
+  };
+  assert.equal(nativeFileFixtureOptions(args).minimumDurationSeconds, 300);
+  assert.equal(nativeUplinkOptions(args), 'capacity750k');
+  assert.equal(nativeMeasuredTrial(args), true);
+});

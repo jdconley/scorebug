@@ -16,15 +16,19 @@ enum VideoObservationFixture {
 
     enum UplinkError: Error { case invalidFixtureRoute }
 
+    private static let capacityHolds = ["capacity550k": "180", "capacity750k": "210"]
+
     /// Complete forwarded capacity experiment. Leaf validation avoids recursive selectors.
     static func capacityFileUplink(environment: [String: String]) -> Bool {
+        guard let profile = environment["SCOREBUG_TEST_UPLINK_PROFILE"],
+              let hold = capacityHolds[profile] else { return false }
         let required = [
-            "SCOREBUG_TEST_CAPACITY_RECOVERY": "1", "SCOREBUG_TEST_UPLINK_PROFILE": "capacity550k",
+            "SCOREBUG_TEST_CAPACITY_RECOVERY": "1", "SCOREBUG_TEST_UPLINK_PROFILE": profile,
             "SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1", "SCOREBUG_TEST_FILE_CAPTURE": "1",
             "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
             "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged",
             "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1",
-            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180",
+            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": hold,
             "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
         ]
         guard required.allSatisfy({ environment[$0.key] == $0.value }),
@@ -44,7 +48,7 @@ enum VideoObservationFixture {
     /// Leaf predicate: never calls other fixture selectors or changes production routing.
     static func measuredFileUplink(environment: [String: String]) -> Bool {
         if !(environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? "").isEmpty ||
-            environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity550k" {
+            capacityHolds[environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""] != nil {
             return capacityFileUplink(environment: environment)
         }
         guard environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", requested(environment: environment),
@@ -134,7 +138,7 @@ enum VideoObservationFixture {
               let originalPort = components.port, (1...65535).contains(originalPort),
               components.user == nil, components.password == nil, components.fragment == nil
         else { throw UplinkError.invalidFixtureRoute }
-        if ["loss0p2-delay30", "capacity550k"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
+        if ["loss0p2-delay30", "capacity550k", "capacity750k"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
             let recovery = (components.queryItems ?? []).filter { $0.name == "peerlatency" }
             guard recovery.count == 1, recovery.first?.value == "400" else { throw UplinkError.invalidFixtureRoute }
         }

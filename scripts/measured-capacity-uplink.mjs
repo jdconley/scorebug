@@ -3,7 +3,26 @@ import { isDeepStrictEqual } from 'node:util';
 import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
 import { qualifyDatagramTimeline } from './datagram-timeline-qualification.mjs';
 
-const rate = 550000;
+export const measuredCapacityProfiles = Object.freeze(['capacity550k', 'capacity750k']);
+const profiles = Object.freeze({
+  capacity550k: Object.freeze({
+    rateBitsPerSecond: 550000,
+    limitedAtMilliseconds: 60000,
+    restoredAtMilliseconds: 120000,
+    holdSeconds: 180,
+  }),
+  capacity750k: Object.freeze({
+    rateBitsPerSecond: 750000,
+    limitedAtMilliseconds: 90000,
+    restoredAtMilliseconds: 150000,
+    holdSeconds: 210,
+  }),
+});
+/** Trusted caller selection, never inferred from a raw artifact's claimed rate. */
+export function measuredCapacityProfile(profile) {
+  assert(measuredCapacityProfiles.includes(profile), 'Unknown measured capacity profile');
+  return profiles[profile];
+}
 const burst = 16384;
 const counters = [
   'received',
@@ -19,13 +38,14 @@ const time = (n) => Number.isFinite(n) && n >= 0 && n <= 1e12;
 
 /** Transport fixture only. Deliberately not an enabled native trial profile. */
 export function measuredCapacityUplinkConfiguration(profile) {
-  assert.equal(profile, 'capacity550k', 'Unknown measured capacity profile');
+  const { rateBitsPerSecond, limitedAtMilliseconds, restoredAtMilliseconds } =
+    measuredCapacityProfile(profile);
   return {
     ...measuredUplinkConfiguration('loss0p2-delay30'),
     forwardRateSchedule: [
       { atMilliseconds: 0, rateBitsPerSecond: null },
-      { atMilliseconds: 60000, rateBitsPerSecond: rate },
-      { atMilliseconds: 120000, rateBitsPerSecond: null },
+      { atMilliseconds: limitedAtMilliseconds, rateBitsPerSecond },
+      { atMilliseconds: restoredAtMilliseconds, rateBitsPerSecond: null },
     ],
   };
 }
@@ -163,18 +183,19 @@ function trafficCoverage(queue, start, end) {
 
 /** Applied packet fault only: no receiver receipt, native clock, media quality,
  * archive or adaptation/recovery claim follows from this accounting. */
-export function qualifyMeasuredCapacityUplink(snapshot) {
+export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550k' } = {}) {
+  const { rateBitsPerSecond: rate, holdSeconds } = measuredCapacityProfile(profile);
   assert.equal(snapshot.formatVersion, 1);
   assert.equal(snapshot.closed, true);
   assert.equal(snapshot.foreignPeerPackets, 0);
   assert.deepEqual(snapshot.errors, []);
-  const expected = measuredCapacityUplinkConfiguration('capacity550k').forwardRateSchedule;
+  const expected = measuredCapacityUplinkConfiguration(profile).forwardRateSchedule;
   const schedule = snapshot.forwardRateSchedule;
   assert.deepEqual(schedule?.requested, expected);
   assert(
     time(schedule.startedAt) &&
       time(schedule.stoppedAt) &&
-      schedule.stoppedAt >= schedule.startedAt + 180000,
+      schedule.stoppedAt >= schedule.startedAt + holdSeconds * 1000,
   );
   assert.equal(schedule.phases.length, 3, 'Incomplete capacity schedule');
   let previous;
@@ -276,7 +297,7 @@ export function qualifyMeasuredCapacityUplink(snapshot) {
       );
   }
   return {
-    profile: 'capacity550k',
+    profile,
     limitedDurationMilliseconds,
     limitedForwardWireBytes,
     maximumOfferedBitsPerSecond,

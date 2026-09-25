@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import {
+  measuredCapacityProfile,
+  measuredCapacityUplinkConfiguration,
+} from './measured-capacity-uplink.mjs';
 
 const time = (value) =>
   assert(
@@ -34,7 +38,13 @@ export function capacityClockScope(value) {
 /** Timing correspondence only. The caller independently qualifies the exact raw
  * proxy accounting and native media/policy. Samples bracket each fault using
  * causally ordered messages; no shared epoch, equal clock rate or offset is assumed. */
-export function qualifyCapacityClockBrackets({ scope, schedule, nativeAudit, exchanges }) {
+export function qualifyCapacityClockBrackets({
+  scope,
+  schedule,
+  nativeAudit,
+  exchanges,
+  profile = 'capacity550k',
+}) {
   const expectedScope = capacityClockScope(scope);
   keys(nativeAudit, [
     'formatVersion',
@@ -53,15 +63,13 @@ export function qualifyCapacityClockBrackets({ scope, schedule, nativeAudit, exc
   assert.equal(nativeAudit.overflow, false);
   assert(Array.isArray(nativeAudit.samples) && nativeAudit.samples.length === 4);
   assert(Array.isArray(exchanges) && exchanges.length === 4);
-  const requested = [
-    { atMilliseconds: 0, rateBitsPerSecond: null },
-    { atMilliseconds: 60000, rateBitsPerSecond: 550000 },
-    { atMilliseconds: 120000, rateBitsPerSecond: null },
-  ];
+  const requested = measuredCapacityUplinkConfiguration(profile).forwardRateSchedule;
   assert.deepEqual(schedule.requested, requested);
   time(schedule.startedAt);
   time(schedule.stoppedAt);
-  assert(schedule.stoppedAt - schedule.startedAt >= 180000);
+  assert(
+    schedule.stoppedAt - schedule.startedAt >= measuredCapacityProfile(profile).holdSeconds * 1000,
+  );
   assert(Array.isArray(schedule.phases) && schedule.phases.length === 3);
   for (const [i, phase] of schedule.phases.entries()) {
     assert.equal(phase.atMilliseconds, requested[i].atMilliseconds);

@@ -586,15 +586,15 @@ preparing longer representative footage.
 
 Implementation/verification sequence:
 
-- [ ] Add a trusted named-profile table and explicit profile option to transport
+- [x] Add a trusted named-profile table and explicit profile option to transport
   configuration/qualification, preserving the default historical contract. Test
   both complete schedules with the real synthetic queue, wrong selection,
   incomplete duration, rate/timing/counter mutations and unchanged old fixtures.
-- [ ] Propagate the selected trusted profile to clock scheduling, host route
+- [x] Propagate the selected trusted profile to clock scheduling, host route
   validation and the independent Swift fixture leaf. Exactly210s is required for
   `capacity750k`; exactly180s remains required for`capacity550k`. The clock verifier
   must still join actual requested/applied phases and bounded native brackets.
-- [ ] Test and build the native fixture with the existing installed iOS26.2 runtime.
+- [x] Test and build the native fixture with the existing installed iOS26.2 runtime.
   Keep normal capacity success denied; select the reconnectable recorder only via
   explicit diagnostics. Verify larger hold fits existing evidence budgets.
 - [ ] Prepare/hash at least330s of representative footage using the existing
@@ -604,3 +604,22 @@ Implementation/verification sequence:
   limit, an owned reduction occurred and minimum media recovered after restoration.
 - [ ] Only after those facts are established, implement full causal recovery and
   fresh post-recovery measured ramp qualification. A true outage remains separate.
+
+
+### 750kbps profile implementation checkpoint
+
+The explicit `capacity750k` laboratory route is implemented with a 210-second
+hold and 90/150-second limit/restoration boundaries. Transport and clock
+qualifiers take a trusted explicit profile; their default remains the historical
+550kbps contract. Cross-profile evidence is rejected. Host, worker callback,
+independent Swift selector and UI checks carry the same exact configuration.
+The longer hold uses 128 source windows within the existing capacity evidence
+budgets. Normal capacity success remains denied; this route is diagnostic only.
+
+Verification: all 4,285 tooling tests and 567 app-model tests pass, and the arm64
+iOS simulator build-for-testing succeeds with Xcode 26.2. The new native fixture
+regression failed before implementation and passes afterward. Read-only review
+found no actionable issues. Evidence is saved in
+`artifacts/qa/repeated-live-checkpoint-capacity750-*`.
+The 330-second fixture preparation and frozen native experiment are next;
+no new capacity downshift or recovery claim follows from these checks.

@@ -10,6 +10,7 @@ const time = (n) =>
 /** Observe the owned proxy; never control or delay its rate changes. This returns
  * raw exchanges only. Final native audit and transport/media replay are required. */
 export async function collectCapacityClockExchanges({
+  profile = 'capacity550k',
   scope,
   snapshot,
   write,
@@ -21,7 +22,7 @@ export async function collectCapacityClockExchanges({
   const expectedScope = capacityClockScope(scope);
   assert(signal instanceof AbortSignal);
   assert([snapshot, write, read, now, wait].every((f) => typeof f === 'function'));
-  const requested = measuredCapacityUplinkConfiguration('capacity550k').forwardRateSchedule;
+  const requested = measuredCapacityUplinkConfiguration(profile).forwardRateSchedule;
   let previousTime = -1,
     origin,
     previousPhases = [];

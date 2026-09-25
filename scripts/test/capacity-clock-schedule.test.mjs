@@ -5,7 +5,7 @@ const implementation = await import('../capacity-clock-schedule.mjs').catch((err
   if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
   return {};
 });
-function fixture() {
+function fixture(profile = 'capacity550k') {
   let time = 1000,
     latest;
   const scope = {
@@ -17,8 +17,11 @@ function fixture() {
   };
   const requested = [
     { atMilliseconds: 0, rateBitsPerSecond: null },
-    { atMilliseconds: 60000, rateBitsPerSecond: 550000 },
-    { atMilliseconds: 120000, rateBitsPerSecond: null },
+    {
+      atMilliseconds: profile === 'capacity750k' ? 90000 : 60000,
+      rateBitsPerSecond: profile === 'capacity750k' ? 750000 : 550000,
+    },
+    { atMilliseconds: profile === 'capacity750k' ? 150000 : 120000, rateBitsPerSecond: null },
   ];
   const phases = requested.map((phase, index) => ({
     ...phase,
@@ -35,6 +38,7 @@ function fixture() {
   };
   const abort = new AbortController();
   const options = {
+    profile,
     scope,
     signal: abort.signal,
     now: () => time,
@@ -212,4 +216,24 @@ test('stationary or regressing host clocks cannot create unbounded waits', async
     assert(waits <= 256);
     assert.equal(f.audit.samples.length, 0);
   }
+});
+
+test('explicit750k clock scheduler and independent replay bracket90/150s changes', async () => {
+  const f = fixture('capacity750k'),
+    result = await collect(f.options);
+  assert.equal(result.exchanges[0].requestAt, 90500);
+  assert.equal(result.exchanges[2].requestAt, 150500);
+  const args = {
+    profile: 'capacity750k',
+    scope: f.options.scope,
+    exchanges: result.exchanges,
+    nativeAudit: f.audit,
+    schedule: { requested: f.requested, startedAt: 1000, stoppedAt: 211100, phases: f.phases },
+  };
+  assert.equal(qualifyCapacityClockBrackets(args).clockBracketsQualified, true);
+  assert.throws(() => qualifyCapacityClockBrackets({ ...args, profile: undefined }));
+  assert.throws(() =>
+    qualifyCapacityClockBrackets({ ...args, schedule: { ...args.schedule, stoppedAt: 181000 } }),
+  );
+  await assert.rejects(() => collect({ ...fixture('capacity750k').options, profile: undefined }));
 });

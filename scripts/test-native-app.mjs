@@ -334,13 +334,13 @@ async function readLiveQualityCheckpoint(signal) {
   signal.throwIfAborted();
   return value;
 }
-async function collectOwnedCapacityClock({ scope, snapshot, signal }) {
+async function collectOwnedCapacityClock({ profile, scope, snapshot, signal }) {
   const container = await ownedLiveContainer(signal);
   const files = await capacityClockFiles(
     join(container, 'Library/Application Support/Scorebug/QA'),
   );
   signal.throwIfAborted();
-  return collectCapacityClockExchanges({ scope, snapshot, signal, ...files });
+  return collectCapacityClockExchanges({ profile, scope, snapshot, signal, ...files });
 }
 let api;
 let proxy;

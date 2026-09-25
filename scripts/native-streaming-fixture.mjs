@@ -1,5 +1,8 @@
 import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
-import { measuredCapacityUplinkConfiguration } from './measured-capacity-uplink.mjs';
+import {
+  measuredCapacityUplinkConfiguration,
+  measuredCapacityProfiles,
+} from './measured-capacity-uplink.mjs';
 import { capacityClockScope } from './capacity-clock-brackets.mjs';
 import { collectCapacityDiagnostics } from './capacity-diagnostics.mjs';
 import { nativeRelayImageTag } from './native-relay-image.mjs';
@@ -67,7 +70,7 @@ export async function nativeStreamingFixture({
   );
   if (capacityRecovery) {
     assert(
-      uplinkProfile === 'capacity550k' &&
+      measuredCapacityProfiles.includes(uplinkProfile) &&
         measuredTrial &&
         requirePublication &&
         requireReceiverProbe &&
@@ -88,7 +91,7 @@ export async function nativeStreamingFixture({
     );
   } else {
     assert(
-      uplinkProfile !== 'capacity550k' && collectCapacityClock === undefined,
+      !measuredCapacityProfiles.includes(uplinkProfile) && collectCapacityClock === undefined,
       'Capacity proxy and collector require explicit capacity recovery',
     );
   }
@@ -131,7 +134,7 @@ export async function nativeStreamingFixture({
         'rate4m',
         'rate3m',
         'loss0p2-delay30',
-        ...(capacityRecovery ? ['capacity550k'] : []),
+        ...(capacityRecovery ? measuredCapacityProfiles : []),
       ].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
@@ -585,6 +588,7 @@ export async function nativeStreamingFixture({
                     });
                     faultTask = (async () => {
                       const result = await collectCapacityClock({
+                        profile: uplinkProfile,
                         scope,
                         snapshot: uplink.snapshot,
                         signal: statusAbort.signal,

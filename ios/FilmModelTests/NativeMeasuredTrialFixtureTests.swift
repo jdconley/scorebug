@@ -236,3 +236,40 @@ extension NativeMeasuredTrialFixtureTests {
         }
     }
 }
+
+extension NativeMeasuredTrialFixtureTests {
+    func testDelayed750CapacityRouteRequires210SecondsAndPreservesBoundedExports() throws {
+        var env = nativeCapacityTestEnvironment()
+        env["SCOREBUG_TEST_UPLINK_PROFILE"] = "capacity750k"
+        env["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = "210"
+        XCTAssertTrue(VideoObservationFixture.capacityFileUplink(environment: env))
+        XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: env))
+        XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: env), .recoveryBudget)
+        XCTAssertEqual(try NativeCandidateFixture.requested(environment: env), .low360)
+        XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: env), .low240)
+        XCTAssertEqual(VideoObservationFixture.completedWindowLimit(environment: env), 128)
+        let url = URL(string: "srt://127.0.0.1:9999?peerlatency=400")!
+        XCTAssertEqual(try VideoObservationFixture.publishingURL(url, environment: env).port, 12345)
+        let cadence = WorkerCadenceReportAudit(environment: env)
+        let cadenceData = try XCTUnwrap(JSONSerialization.jsonObject(with: cadence.data()) as? [String: Any])
+        XCTAssertEqual(cadenceData["formatVersion"] as? Int, 2)
+        XCTAssertEqual(cadenceData["mode"] as? String, "capacity")
+        XCTAssertEqual(cadenceData["maximumRows"] as? Int, 3072)
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1.5, maximumSampleAge: 0.25, environment: env)
+        let data = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(data["formatVersion"] as? Int, 2)
+        XCTAssertEqual(data["mode"] as? String, "capacity")
+        XCTAssertEqual(data["maximumRows"] as? Int, 512)
+        for value in ["180", "209", "211", "0210", "300"] {
+            var wrong = env; wrong["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = value
+            XCTAssertFalse(VideoObservationFixture.capacityFileUplink(environment: wrong))
+            XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: wrong))
+            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(url, environment: wrong))
+        }
+        for key in env.keys {
+            var missing = env; missing.removeValue(forKey: key)
+            XCTAssertFalse(VideoObservationFixture.capacityFileUplink(environment: missing), key)
+            XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: missing), key)
+        }
+    }
+}

@@ -94,3 +94,24 @@ test('reconnecting capacity diagnostics cannot be selected on a normal fixture',
   );
   assert.equal(calls, 0);
 });
+
+test('complete750k diagnostic worker route reaches resource setup', async (t) => {
+  const artifact = await mkdtemp(join(tmpdir(), 'capacity750-fixture-'));
+  t.after(() => rm(artifact, { recursive: true, force: true }));
+  recorderEnvironment(t);
+  const calls = [];
+  await assert.rejects(() =>
+    nativeStreamingFixture({
+      ...options(),
+      capacityDiagnostics: true,
+      uplinkProfile: 'capacity750k',
+      artifact,
+      run: async (...args) => {
+        calls.push(args);
+        throw Error('Stop before resource creation');
+      },
+    }),
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], 'publication-relay-image');
+});

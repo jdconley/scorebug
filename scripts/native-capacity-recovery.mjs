@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
+import { measuredCapacityProfile, measuredCapacityProfiles } from './measured-capacity-uplink.mjs';
 
 /** Complete host selection only; no resources or native recovery qualification. */
 export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) {
   if (
     environment.SCOREBUG_TEST_CAPACITY_RECOVERY === undefined &&
-    environment.SCOREBUG_TEST_UPLINK_PROFILE !== 'capacity550k'
+    !measuredCapacityProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE)
   )
     return false;
   assert.equal(streaming, true, 'Capacity recovery requires streaming');
-  assert.equal(holdSeconds, 180, 'Capacity recovery requires exactly180seconds');
+  const profile = environment.SCOREBUG_TEST_UPLINK_PROFILE;
+  const settings = measuredCapacityProfile(profile);
+  assert.equal(
+    holdSeconds,
+    settings.holdSeconds,
+    'Capacity recovery requires its exact profile duration',
+  );
   assert(
     typeof environment.SCOREBUG_TEST_FILE_INPUT === 'string' &&
       isAbsolute(environment.SCOREBUG_TEST_FILE_INPUT),
@@ -17,9 +24,9 @@ export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) 
   );
   const required = {
     SCOREBUG_TEST_CAPACITY_RECOVERY: '1',
-    SCOREBUG_TEST_UPLINK_PROFILE: 'capacity550k',
+    SCOREBUG_TEST_UPLINK_PROFILE: profile,
     SCOREBUG_TEST_PROBE_POLICY: 'recovery-budget-v1',
-    SCOREBUG_TEST_STREAM_HOLD_SECONDS: '180',
+    SCOREBUG_TEST_STREAM_HOLD_SECONDS: String(settings.holdSeconds),
     SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '1',
     SCOREBUG_TEST_RELAY_PUBLICATION: '1',
     SCOREBUG_TEST_WORKER_PROCESSING: '1',

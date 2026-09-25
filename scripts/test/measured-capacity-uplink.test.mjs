@@ -20,7 +20,12 @@ const requested = [
   { atMilliseconds: 60000, rateBitsPerSecond: 550000 },
   { atMilliseconds: 120000, rateBitsPerSecond: null },
 ];
-function simulation({ rate = 550000, forwardEvery = 10 } = {}) {
+function simulation({
+  rate = 550000,
+  forwardEvery = 10,
+  schedule = requested,
+  duration = 180000,
+} = {}) {
   const forward = new DatagramImpairmentQueue(configuration),
     reverse = new DatagramImpairmentQueue(configuration);
   const direction = (q) => ({
@@ -31,9 +36,9 @@ function simulation({ rate = 550000, forwardEvery = 10 } = {}) {
     peakPendingPayloadBytes: q.snapshot().forwarded.packets ? (q === forward ? 1316 : 100) : 0,
   });
   const phases = [];
-  for (let elapsed = 0; elapsed <= 180100; elapsed += 10) {
+  for (let elapsed = 0; elapsed <= duration + 100; elapsed += 10) {
     const now = 1000 + elapsed;
-    const phase = requested.find((p) => p.atMilliseconds === elapsed);
+    const phase = schedule.find((p) => p.atMilliseconds === elapsed);
     if (phase) {
       forward.setRate(phase.rateBitsPerSecond === null ? null : rate, now);
       phases.push({
@@ -43,14 +48,14 @@ function simulation({ rate = 550000, forwardEvery = 10 } = {}) {
         reverse: direction(reverse),
       });
     }
-    if (elapsed <= 180000) {
+    if (elapsed <= duration) {
       if (elapsed % forwardEvery === 0) forward.enqueue(Buffer.alloc(1316), now);
       if (elapsed % 50 === 0) reverse.enqueue(Buffer.alloc(100), now);
     }
     for (const q of [forward, reverse]) while (q.takeReady(now) !== null) {}
   }
-  forward.close(181100);
-  reverse.close(181100);
+  forward.close(1000 + duration + 100);
+  reverse.close(1000 + duration + 100);
   return {
     formatVersion: 1,
     closed: true,
@@ -59,9 +64,9 @@ function simulation({ rate = 550000, forwardEvery = 10 } = {}) {
     forward: direction(forward),
     reverse: direction(reverse),
     forwardRateSchedule: {
-      requested: structuredClone(requested),
+      requested: structuredClone(schedule),
       startedAt: 1000,
-      stoppedAt: 181100,
+      stoppedAt: 1000 + duration + 100,
       phases,
     },
   };
@@ -185,3 +190,61 @@ test('every forwarding bin retains the configured30ms delay after restoration', 
   w.maximumForwardResidenceMilliseconds = 0;
   assert.throws(() => qualify(f), /delay|residence/i);
 });
+
+const delayed750Schedule = [
+  { atMilliseconds: 0, rateBitsPerSecond: null },
+  { atMilliseconds: 90000, rateBitsPerSecond: 750000 },
+  { atMilliseconds: 150000, rateBitsPerSecond: null },
+];
+const delayed750 = simulation({ rate: 750000, schedule: delayed750Schedule, duration: 210000 });
+test('explicit750k profile preserves impairment and extends baseline and total observation', () => {
+  assert.deepEqual(module.measuredCapacityUplinkConfiguration('capacity750k'), {
+    forward: configuration,
+    reverse: configuration,
+    forwardRateSchedule: delayed750Schedule,
+  });
+  assert.deepEqual(module.measuredCapacityProfile('capacity750k'), {
+    rateBitsPerSecond: 750000,
+    limitedAtMilliseconds: 90000,
+    restoredAtMilliseconds: 150000,
+    holdSeconds: 210,
+  });
+  const before = structuredClone(delayed750);
+  const r = module.qualifyMeasuredCapacityUplink(delayed750, { profile: 'capacity750k' });
+  assert.equal(r.profile, 'capacity750k');
+  assert.equal(r.limitedDurationMilliseconds, 60000);
+  assert.equal(r.nativeAdaptationQualified, false);
+  assert.equal(r.networkLossRecoveryQualified, false);
+  assert.deepEqual(delayed750, before);
+  assert.throws(() => module.qualifyMeasuredCapacityUplink(delayed750));
+  assert.throws(() => module.qualifyMeasuredCapacityUplink(original, { profile: 'capacity750k' }));
+});
+for (const [name, mutate] of Object.entries(mutations))
+  test(`750k evidence rejects ${name}`, () => {
+    const f = structuredClone(delayed750);
+    mutate(f);
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(f, { profile: 'capacity750k' }));
+  });
+test('750k profile cannot inherit obsolete180s duration or weak offered traffic', () => {
+  assert.throws(() =>
+    module.qualifyMeasuredCapacityUplink(
+      simulation({ rate: 750000, schedule: delayed750Schedule, duration: 180000 }),
+      { profile: 'capacity750k' },
+    ),
+  );
+  assert.throws(() =>
+    module.qualifyMeasuredCapacityUplink(
+      simulation({
+        rate: 750000,
+        forwardEvery: 50,
+        schedule: delayed750Schedule,
+        duration: 210000,
+      }),
+      { profile: 'capacity750k' },
+    ),
+  );
+});
+for (const profile of [null, false, 'capacity750K', 'capacity800k'])
+  test(`capacity replay rejects unsupported profile ${profile}`, () => {
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(original, { profile }));
+  });
