@@ -319,3 +319,57 @@ pass. A read-only review found no issues. Logs are the joined
 the preceding passes; no native transport rules or host qualification rules changed.
 The diagnostic does not fix either observed failure. The next frozen experiment
 uses `artifacts/qa/native-measured-opening-audio-run.py` with the same route/limits.
+
+
+## Candidate startup routing repair design
+
+The second diagnostic run (`native-app-x7dq7N`, frozen `opening-audio-freeze-cqyq035t`)
+completed the121-frame candidate and confirmed240→360. It did not reproduce opening
+failure or the severe capture slowdown. The full benchmark still failed because
+152/154 delivery rows met its stricter30fps count; the other overlapping rows had
+29 and59 frames, all on time with zero late/missing/uncertain frames. No timing limit
+is changed and this attempt remains failed. Independent native/receiver/lifecycle/
+candidate/policy replay passes; this is not full-trial qualification.
+
+Read-only review found a concrete owner startup omission independent of whether it
+caused the first attempt: audio routing remains disabled after transport arming until
+encoder startup completes. Also, the startup task can run before its router entry is
+installed. The transport already has a bounded16-packet/128KiB pre-raw queue, but
+these packets never reach it. A new real-transport/real-candidate-encoder regression
+holds startup after arming, injects an opening packet through the owner, then admits
+two video frames and the following audio packet. It reproduces `audioOpeningCoverage`
+with the current implementation. The original owner test also assumed early audio
+must be discarded; it now expects raw admission to remain withheld while armed audio
+can reach its transport.
+
+Repair: gate the existing one startup task until the reserved entry is installed
+and its identity validated. Enable only audio routing immediately before releasing
+that gate; the transport still ignores unarmed/wrong-generation input and enforces
+its existing finite queue. Raw video admission waits for encoder startup as before.
+Cancellation, terminal completion and stale identity disable both routes and retain
+the original shared shutdown join. No per-packet task, payload history, gate
+relaxation or production quality promotion is introduced. Verify focused/full
+Streaming and app suites and review cancellation/startup ordering before another
+frozen network experiment.
+
+
+## Startup routing repair verification
+
+The real encoder/transport regression first reproduced missing opening coverage
+through the owner. With the repair, that packet reaches the existing pre-raw queue
+and the mux completes; its original source timestamp and observed time survive.
+Fifteen focused owner tests pass, including stale identity, held startup, cancellation
+and shared stop/retirement. Full Streaming181 and app-model535 pass. Read-only
+review found no new race, lock inversion, unbounded retention or cleanup issue.
+Joined red/green and full logs use `repeated-live-checkpoint-candidate-startup-audio-*`.
+This proves the startup ordering fix, not its causal role in the first native run.
+
+The second run's independent component replay, three baseline audio windows per
+output and27 phase audio anchors pass. Archive IDs0–3856 and live IDs200–3638 are
+continuous; archive extends7.267s beyond live. All154 delivery rows contain zero
+late/missing/uncertain frames, with the strict laboratory30fps count failing only
+the overlapping29/59-frame rows. The user24fps floor is maintained; no verifier
+threshold was changed or failed benchmark retroactively promoted.1216 frozen inputs
+and owned simulator/relay/API/process cleanup were verified. The next actual
+experiment uses `artifacts/qa/native-measured-startup-audio-repair-run.py` with the
+same source, static link, SRT budget and delivery criteria.

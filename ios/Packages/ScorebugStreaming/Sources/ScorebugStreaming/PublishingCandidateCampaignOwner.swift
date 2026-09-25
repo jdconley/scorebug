@@ -53,6 +53,7 @@ public actor PublishingCandidateCampaignOwner {
                     entry.cancel(reason: .ownerChanged)
                     throw OwnerError.staleIdentity
                 }
+                guard entry.permitStartup() else { throw OwnerError.closed }
                 try await entry.startup.value
                 try Task.checkCancellation()
                 guard entry.activate() else { throw OwnerError.closed }
@@ -78,7 +79,7 @@ public actor PublishingCandidateCampaignOwner {
     /// Retains routing through raw closure so the paired transport can select its
     /// bounded following AAC packet. Terminal completion or revocation closes it.
     public nonisolated func observeAudio(_ frame: SRTPublisher.CompressedAudioFrame) {
-        guard let entry = router.entry(), entry.isRouting else { return }
+        guard let entry = router.entry(), entry.isAudioRouting else { return }
         entry.operations.observeAudio(frame)
     }
 
@@ -158,13 +159,19 @@ private final class CandidateCampaignEntry: Sendable {
     let startup: Task<Void, Error>
     let terminal: Task<PublishingCandidateMeasurement.Result, Never>
     private let state: CandidateCampaignEntryState
+    private let startupPermit: AsyncStream<Void>.Continuation
 
     init(handle: PublishingCandidateCampaignOwner.Handle, operations: PublishingCandidateCampaignOwner.Operations) {
         self.handle = handle
         self.operations = operations
         let state = CandidateCampaignEntryState(operations: operations)
         self.state = state
+        let (permitted, permit) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        startupPermit = permit
         let startup = Task {
+            // The owner installs and validates this exact entry before native
+            // arming can begin. Cancellation also ends this bounded wait.
+            for await _ in permitted {}
             try Task.checkCancellation()
             try await operations.start()
             try Task.checkCancellation()
@@ -180,6 +187,12 @@ private final class CandidateCampaignEntry: Sendable {
         }
     }
     var isRouting: Bool { state.isRouting }
+    var isAudioRouting: Bool { state.isAudioRouting }
+    func permitStartup() -> Bool {
+        guard state.beginAudioRouting() else { return false }
+        startupPermit.finish()
+        return true
+    }
     func activate() -> Bool { state.activate() }
     func cancel(reason: PublishingCandidateMeasurement.Reason) { state.cancel(reason: reason) }
 }
@@ -188,7 +201,7 @@ private final class CandidateCampaignEntryState: @unchecked Sendable {
     private let lock = NSLock()
     private let operations: PublishingCandidateCampaignOwner.Operations
     private var startup: Task<Void, Error>?
-    private var ready = false, revoked = false, finished = false
+    private var ready = false, audioReady = false, revoked = false, finished = false
 
     init(operations: PublishingCandidateCampaignOwner.Operations) { self.operations = operations }
     func install(_ task: Task<Void, Error>) {
@@ -196,9 +209,17 @@ private final class CandidateCampaignEntryState: @unchecked Sendable {
         if cancelled { task.cancel() }
     }
     var isRouting: Bool { lock.withLock { ready && !revoked && !finished } }
+    var isAudioRouting: Bool { lock.withLock { audioReady && !revoked && !finished } }
+    func beginAudioRouting() -> Bool {
+        lock.withLock {
+            guard !audioReady, !revoked, !finished else { return false }
+            audioReady = true
+            return true
+        }
+    }
     func activate() -> Bool {
         lock.withLock {
-            guard !revoked, !finished else { return false }
+            guard audioReady, !revoked, !finished else { return false }
             ready = true
             return true
         }

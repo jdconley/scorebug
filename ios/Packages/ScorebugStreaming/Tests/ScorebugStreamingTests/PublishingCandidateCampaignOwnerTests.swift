@@ -114,14 +114,61 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         await owner.stop()
     }
 
-    func testStartupReservesSlotAndDoesNotRouteUntilReady() async throws {
+    func testOpeningAACDuringArmedStartupReachesRealCandidateTransport() async throws {
+        let scope = scope()
+        let transport = PublishingCandidateTransport(scope: scope, profile: .low240)
+        let encoder = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)
+        let armed = CampaignGate(), startupGate = CampaignGate(), finishGate = CampaignGate()
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let owner = PublishingCandidateCampaignOwner(factory: { _, _, generation in
+            .init(id: encoder.id, start: {
+                guard transport.arm(publishingGeneration: generation) else { throw CampaignFakeError.startup }
+                armed.open()
+                await startupGate.wait()
+                try await encoder.start()
+            }, offer: { encoder.offer($0.sampleBuffer) }, observeAudio: { transport.observeAudio($0) },
+            cancel: { _ in transport.cancel(); finishGate.open() }, result: {
+                await finishGate.wait()
+                let result = await encoder.finish()
+                return .init(id: encoder.id, scope: scope, profile: .low240, reason: .completed,
+                    startedAt: startedAt, endedAt: ProcessInfo.processInfo.systemUptime, acceptedInputCount: 2,
+                    firstInputPTS: CMTime(value: 10, timescale: 1), lastInputPTS: CMTime(value: 301, timescale: 30),
+                    encoding: result)
+            })
+        })
+        let starting = Task { try await owner.begin(scope: scope, profile: .low240, publishingGeneration: 7) }
+        await armed.wait()
+        let first = try sample(at: CMTime(value: 10, timescale: 1))
+        XCTAssertFalse(owner.offer(first, id: encoder.id), "Raw admission must still wait for encoder startup")
+        let opening = try audio(at: 10.014187458)
+        owner.observeAudio(opening)
+        startupGate.open()
+        let handle = try await starting.value
+        XCTAssertTrue(owner.offer(first, id: handle.id))
+        XCTAssertTrue(owner.offer(try sample(at: CMTime(value: 301, timescale: 30)), id: handle.id))
+        owner.observeAudio(try audio(at: 10.014187458 + 1024.0 / 48000))
+        finishGate.open()
+        let value = await owner.result(id: handle.id)
+        let measurement = try XCTUnwrap(value)
+        let result = try XCTUnwrap(measurement.encoding?.transport)
+        XCTAssertEqual(result.outcome, .completed, result.failure ?? "")
+        XCTAssertNil(result.openingAudioFailure)
+        XCTAssertEqual(result.audio.count, 1)
+        XCTAssertEqual(result.audio.first?.sourcePTS, opening.sourcePTS)
+        XCTAssertEqual(result.audio.first?.observedAt, opening.observedAt)
+        XCTAssertGreaterThanOrEqual(result.maximumPendingCount, 1)
+        XCTAssertEqual(result.mux?.videoInputCount, 2)
+        await owner.stop()
+    }
+
+    func testStartupReservesRawAdmissionButRoutesAudioToArmedTransport() async throws {
         let first = CampaignPair(startOpen: false)
         let factory = CampaignFactory(first: first), owner = PublishingCandidateCampaignOwner(factory: factory.make)
         let starting = Task { try await owner.begin(scope: scope(), profile: .low240, publishingGeneration: 7) }
         await first.started.wait()
         XCTAssertFalse(owner.offer(try sample(), id: first.id))
         owner.observeAudio(try audio())
-        XCTAssertEqual(first.audioCount, 0)
+        XCTAssertEqual(first.audioCount, 1)
         await assertBeginError(.busy, owner: owner)
         XCTAssertEqual(factory.count, 1)
         XCTAssertEqual(first.resultCalls, 0, "result must never close an unstarted measurement")
@@ -129,7 +176,7 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         let handle = try await starting.value
         XCTAssertTrue(owner.offer(try sample(), id: handle.id))
         owner.observeAudio(try audio())
-        XCTAssertEqual(first.audioCount, 1)
+        XCTAssertEqual(first.audioCount, 2)
         await owner.stop()
     }
 
@@ -328,7 +375,7 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         catch { XCTAssertEqual(error as? PublishingCandidateCampaignOwner.OwnerError, expected, file: file, line: line) }
     }
 
-    private func sample() throws -> CapturedMediaSample {
+    private func sample(at pts: CMTime = .zero) throws -> CapturedMediaSample {
         var pixel: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
@@ -337,7 +384,7 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         XCTAssertEqual(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
             imageBuffer: image, formatDescriptionOut: &format), noErr)
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
-            presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+            presentationTimeStamp: pts, decodeTimeStamp: .invalid)
         var buffer: CMSampleBuffer?
         XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
             imageBuffer: image, formatDescription: try XCTUnwrap(format), sampleTiming: &timing,
@@ -345,7 +392,7 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         return try .init(sampleBuffer: XCTUnwrap(buffer), kind: .video)
     }
 
-    private func audio() throws -> SRTPublisher.CompressedAudioFrame {
+    private func audio(at seconds: Double? = nil) throws -> SRTPublisher.CompressedAudioFrame {
         var asbd = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
             mChannelsPerFrame: 1, mBitsPerChannel: 0, mReserved: 0)
@@ -354,7 +401,7 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         buffer.byteLength = 4; buffer.packetCount = 1
         buffer.packetDescriptions?.pointee = .init(mStartOffset: 0, mVariableFramesInPacket: 1024, mDataByteSize: 4)
         memset(buffer.data, 0, 4)
-        return .init(buffer: buffer, when: AVAudioTime(hostTime: 1_000_000), generation: 7, wasEncoded: true)
+        return .init(buffer: buffer, when: AVAudioTime(hostTime: seconds.map(AVAudioTime.hostTime(forSeconds:)) ?? 1_000_000), generation: 7, wasEncoded: true)
     }
 }
 

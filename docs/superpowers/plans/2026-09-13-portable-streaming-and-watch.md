@@ -24,6 +24,19 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+A second impaired-match run completed candidate measurement and **confirmed an
+automatic240p→360p upgrade**, with at least29.8fps in each steady capture window.
+Every measured frame met the1.5s deadline; the full lab benchmark still failed its
+stricter30fps count in two overlapping29/59-frame windows. Archive/live identities,
+score changes, sampled audio and27 audio anchors across the quality change pass.
+This is component evidence, not a complete benchmark or production qualification.
+
+A separate deterministic real-encoder regression reproduced an owner startup race
+that discards AAC after transport arming. The repair installs/validates the entry
+before arming and permits bounded audio routing during startup while raw video waits.
+Full Streaming181 and app-model535 tests pass; read-only review found no issues.
+The next run will verify the repaired startup path under the same impaired link.
+
 The first actual run with the new recovery policy completed all three native probe
 stages (12.35MB accepted padding) and removed retransmission-only pressure failures,
 but **full adaptation qualification still fails**. The candidate stopped at its
