@@ -1,3 +1,4 @@
+import { qualifyCapacityPressureDecrease } from './capacity-pressure-decrease.mjs';
 import {
   assertRecoveryProbeObservation,
   assertRecoveryProbeAcceptanceHistory,
@@ -51,7 +52,7 @@ function sameObservation(a, b, policy = 'local-zero-loss-v1') {
  * created here; terminal read provenance remains separate from probe events. */
 export function qualifyMeasuredProbeRetirement(
   proof,
-  { lifecycle, quality, recovery = false } = {},
+  { lifecycle, quality, recovery = false, capacityDecrease = false, snapshot } = {},
   { policy = 'local-zero-loss-v1' } = {},
 ) {
   check(['local-zero-loss-v1', 'recovery-budget-v1'].includes(policy), 'unknown transport policy');
@@ -69,6 +70,15 @@ export function qualifyMeasuredProbeRetirement(
     );
   }
   check(typeof recovery === 'boolean', 'recovery context must be boolean');
+  check(typeof capacityDecrease === 'boolean', 'capacity decrease must be boolean');
+  check(
+    !capacityDecrease || (recovery && recoveryPolicy),
+    'capacity decrease requires recovery-budget retirement',
+  );
+  if (capacityDecrease) {
+    assert.deepEqual(snapshot?.scope, lifecycle?.scope);
+    qualifyCapacityPressureDecrease({ quality, snapshot });
+  }
   check(proof.result === 'operationFailed', 'requires raw operationFailed result');
   check(
     lifecycle?.formatVersion === 1 &&
@@ -381,6 +391,7 @@ export function qualifyMeasuredProbeRetirement(
       applications[1],
       final.sample,
       policy,
+      capacityDecrease,
     );
   return {
     retirementKind: 'profile-request-terminal-read',
@@ -402,6 +413,7 @@ function qualifyLaterReset(
   reset,
   final,
   policy,
+  capacityDecrease,
 ) {
   const request = lifecycle.profileRequests[1],
     app = reset.application,
@@ -414,7 +426,7 @@ function qualifyLaterReset(
     reset.closed === false &&
       reset.revision === '2' &&
       reset.profileID === '240p30' &&
-      action?.kind === 'reset' &&
+      action?.kind === (capacityDecrease ? 'decrease' : 'reset') &&
       action.profileID === '240p30' &&
       action.bitRate === 350000 &&
       action.fromRevision === '1' &&

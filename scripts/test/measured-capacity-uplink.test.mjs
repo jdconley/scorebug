@@ -25,6 +25,10 @@ function simulation({
   forwardEvery = 10,
   schedule = requested,
   duration = 180000,
+  trafficUntil = duration,
+  trafficGaps = {},
+  sendPauses = {},
+  appliedOffsets = [0, 0, 0],
 } = {}) {
   const forward = new DatagramImpairmentQueue(configuration),
     reverse = new DatagramImpairmentQueue(configuration);
@@ -38,7 +42,7 @@ function simulation({
   const phases = [];
   for (let elapsed = 0; elapsed <= duration + 100; elapsed += 10) {
     const now = 1000 + elapsed;
-    const phase = schedule.find((p) => p.atMilliseconds === elapsed);
+    const phase = schedule.find((p, i) => p.atMilliseconds + appliedOffsets[i] === elapsed);
     if (phase) {
       forward.setRate(phase.rateBitsPerSecond === null ? null : rate, now);
       phases.push({
@@ -47,12 +51,17 @@ function simulation({
         forward: direction(forward),
         reverse: direction(reverse),
       });
+      for (const q of [forward, reverse]) while (q.takeReady(now) !== null) {}
     }
-    if (elapsed <= duration) {
-      if (elapsed % forwardEvery === 0) forward.enqueue(Buffer.alloc(1316), now);
-      if (elapsed % 50 === 0) reverse.enqueue(Buffer.alloc(100), now);
+    for (const [name, q, every, bytes] of [
+      ['forward', forward, forwardEvery, 1316],
+      ['reverse', reverse, 50, 100],
+    ]) {
+      const within = (ranges) => ranges?.some(([start, end]) => elapsed >= start && elapsed < end);
+      if (elapsed <= trafficUntil && elapsed % every === 0 && !within(trafficGaps[name]))
+        q.enqueue(Buffer.alloc(bytes), now);
+      if (!within(sendPauses[name])) while (q.takeReady(now) !== null) {}
     }
-    for (const q of [forward, reverse]) while (q.takeReady(now) !== null) {}
   }
   forward.close(1000 + duration + 100);
   reverse.close(1000 + duration + 100);
@@ -247,4 +256,141 @@ test('750k profile cannot inherit obsolete180s duration or weak offered traffic'
 for (const profile of [null, false, 'capacity750K', 'capacity800k'])
   test(`capacity replay rejects unsupported profile ${profile}`, () => {
     assert.throws(() => module.qualifyMeasuredCapacityUplink(original, { profile }));
+  });
+
+for (const [profile, rate, schedule, hold] of [
+  ['capacity550k', 550000, requested, 180000],
+  ['capacity750k', 750000, delayed750Schedule, 210000],
+]) {
+  const options = { profile, coveragePolicy: 'scheduled-hold-v1' };
+  const simulate = (extra = {}) => simulation({ rate, schedule, duration: hold + 40000, ...extra });
+  const cleanup = simulate({ trafficUntil: hold });
+  test(`${profile} scheduled coverage permits silent cleanup without changing raw evidence`, () => {
+    const before = structuredClone(cleanup);
+    const r = module.qualifyMeasuredCapacityUplink(cleanup, options);
+    assert.equal(r.coveragePolicy, 'scheduled-hold-v1');
+    assert.deepEqual(r.trafficCoverageWindows, {
+      baseline: { start: 1000, end: 1000 + schedule[1].atMilliseconds },
+      restored: { start: 1000 + schedule[2].atMilliseconds, end: 1000 + hold },
+    });
+    assert.equal(r.nativeAdaptationQualified, false);
+    assert.equal(r.networkLossRecoveryQualified, false);
+    assert.deepEqual(cleanup, before);
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(cleanup, { profile }), /coverage/);
+    assert.throws(
+      () =>
+        module.qualifyMeasuredCapacityUplink(cleanup, {
+          profile,
+          coveragePolicy: 'through-close-v1',
+        }),
+      /coverage/,
+    );
+    cleanup.coveragePolicy = 'scheduled-hold-v1';
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(cleanup, { profile }), /coverage/);
+    delete cleanup.coveragePolicy;
+  });
+  test(`${profile} default coverage explicitly reports the original through-close scope`, () => {
+    const f = simulate();
+    const result = module.qualifyMeasuredCapacityUplink(f, { profile });
+    assert.equal(result.coveragePolicy, 'through-close-v1');
+    assert.equal(result.trafficCoverageWindows.restored.end, f.forwardRateSchedule.stoppedAt);
+    assert.deepEqual(
+      result,
+      module.qualifyMeasuredCapacityUplink(f, { profile, coveragePolicy: 'through-close-v1' }),
+    );
+  });
+  test(`${profile} scheduled endpoint follows actual restoration and cannot exceed closure`, () => {
+    const f = simulate({ appliedOffsets: [0, 1000, 1000], trafficUntil: hold + 1000 });
+    const result = module.qualifyMeasuredCapacityUplink(f, options);
+    assert.equal(result.trafficCoverageWindows.restored.end, 1000 + hold + 1000);
+    assert.throws(
+      () =>
+        module.qualifyMeasuredCapacityUplink(
+          simulate({
+            appliedOffsets: [0, 1000, 1000],
+            duration: hold,
+          }),
+          options,
+        ),
+      /observation.*clos|restored.*span/i,
+    );
+  });
+  for (const name of ['forward', 'reverse']) {
+    test(`${profile} scheduled coverage rejects ${name} gaps inside the restored minute`, () => {
+      const f = simulate({
+        trafficUntil: hold,
+        trafficGaps: { [name]: [[hold - 30000, hold - 15000]] },
+      });
+      assert.throws(() => module.qualifyMeasuredCapacityUplink(f, options), /coverage/);
+    });
+    test(`${profile} scheduled final20s rejects real ${name} queue delay even after healthy cleanup`, () => {
+      const f = simulate({ sendPauses: { [name]: [[hold - 10000, hold - 9400]] } });
+      assert.throws(
+        () => module.qualifyMeasuredCapacityUplink(f, options),
+        /queue remains delayed/,
+      );
+    });
+    test(`${profile} scheduled coverage retains closure final20s ${name} queue checks`, () => {
+      const f = simulate({ sendPauses: { [name]: [[hold + 30000, hold + 30600]] } });
+      assert.throws(
+        () => module.qualifyMeasuredCapacityUplink(f, options),
+        /queue remains delayed/,
+      );
+    });
+  }
+  test(`${profile} scheduled coverage retains the last-forwarded endpoint requirement`, () => {
+    const f = simulate({ trafficUntil: hold - 100 });
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(f, options), /restored traffic span/);
+  });
+  test(`${profile} scheduled coverage retains minimum profile hold`, () => {
+    assert.throws(() =>
+      module.qualifyMeasuredCapacityUplink(simulate({ duration: hold - 1000 }), options),
+    );
+  });
+  test(`${profile} scheduled coverage rejects real cleanup overflow`, () => {
+    const f = simulate({ sendPauses: { forward: [[hold + 10000, hold + 14000]] } });
+    assert.throws(
+      () => module.qualifyMeasuredCapacityUplink(f, options),
+      /Overflow after restoration/,
+    );
+  });
+  for (const [name, mutate] of Object.entries(mutations))
+    test(`${profile} scheduled coverage retains full-lifetime ${name} validation`, () => {
+      const f = structuredClone(cleanup);
+      mutate(f);
+      assert.throws(() => module.qualifyMeasuredCapacityUplink(f, options));
+    });
+  for (const [name, mutate] of Object.entries({
+    lateCounter: (f) => f.forward.queue.timeline.windows.at(-1).received.wireBytes++,
+    lateResidence: (f) => {
+      const row = f.forward.queue.timeline.windows.find(
+        (w) => w.start > hold + 10000 && w.forwarded.packets,
+      );
+      row.maximumForwardResidenceMilliseconds = 0;
+    },
+    lateErrors: (f) => f.errors.push('cleanup send failure'),
+    latePending: (f) => {
+      f.reverse.pendingPackets = 1;
+      f.reverse.pendingPayloadBytes = 100;
+    },
+  }))
+    test(`${profile} scheduled coverage rejects ${name} after the observation endpoint`, () => {
+      const f = simulate();
+      mutate(f);
+      assert.throws(() => module.qualifyMeasuredCapacityUplink(f, options));
+    });
+}
+
+for (const options of [
+  { coveragePolicy: 'scheduled' },
+  { coveragePolicy: null },
+  { coveragePolicy: false },
+  { coveragePolicy: 'scheduled-hold-v1', restoredUntil: 180000 },
+  { coveragePolciy: 'scheduled-hold-v1' },
+])
+  test(`capacity qualifier rejects unknown options ${JSON.stringify(options)}`, () => {
+    assert.throws(
+      () => module.qualifyMeasuredCapacityUplink(original, options),
+      /coverage policy|option/i,
+    );
   });

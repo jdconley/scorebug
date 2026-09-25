@@ -701,3 +701,93 @@ regressions, then replay the unchanged artifacts. Full causal recovery, a fresh
 post-restoration ramp, a true outage, production ladder integration and physical
 phone/Watch tests remain open. A repeat native run requires a changed implementation
 or distinct experiment, not an attempt to erase these recorded failures.
+
+## Explicit observation and transport-pressure replay design
+
+Routine autonomous design and implementation remain authorized. Two independent
+prerequisites are next; neither grants a full causal recovery verdict.
+
+### Scheduled transport observation
+
+Preserve the current through-close traffic coverage as the default. Add an explicit
+`coveragePolicy: 'scheduled-hold-v1'` option to the transport qualifier. Its restored
+traffic window ends exactly 60,000ms after the *actual* restored phase application,
+not at the last traffic packet or a caller-selected timestamp. Require that endpoint
+within the original closed schedule and retain the profile's total hold requirement.
+Baseline and limited phase boundaries remain actual applied timestamps. Require
+traffic in every existing five-second coverage bucket of the scheduled restored
+minute, plus the existing last-forwarded timestamp requirement. No raw artifact
+can select this policy, and unknown policy names must fail.
+
+Retain full-lifetime configuration, phase/prefix, timeline, packet/byte conservation,
+closed queue/pending-send, deterministic loss, rate budget, congestion and error checks.
+No overflow after restoration is allowed, including cleanup. Require healthy queue
+residence at the scheduled restored window's final twenty seconds as well as the
+existing final twenty seconds before closure. Return the selected coverage scope
+and explicit false native/recovery permission. Post-window silence can be harmless;
+post-window corruption or unjoined work cannot be ignored.
+
+Use the real synthetic queue to test 60 seconds of restored traffic followed by
+silent export time, default rejection of that same raw artifact, both profiles,
+gaps/early stop inside the scheduled minute, altered late counters/errors/queue
+state, insufficient close duration, and unknown policy. Replay unchanged `5UYvcA`
+after tests/review. Never trim the saved timeline or replace its stopped timestamp.
+
+### Capacity-only native pressure decrease
+
+The existing recovery-budget decoder-reset route retains its exact semantics.
+Investigate the complete `localPressure` event preceding the second native write:
+raw local samples, prior evaluated window endpoint/sequence, active revision and
+receipt, decision time/expiry, application ID/window sequence, request/ack times,
+and native profile/bitrate receipts. The capacity route must explicitly select
+this decrease variant and independently reconstruct the local pressure that
+motivated it. Preserve retired candidate/probe snapshots without granting them
+fresh authority. A blind `reset || decrease` acceptance is not the design.
+
+Implement the bounded receipt/lifecycle prerequisite only after that join is
+specified from native code and frozen evidence. Follow it with complete causal
+policy replay against the qualified clock/transport bounds; first-confirmation,
+post-limit pressure and stable post-restoration delivery remain separate gates.
+
+The native source and raw run establish a quarter-second `localPressure` window,
+using the same policy sequence as receiver windows. The next profile write names
+that window sequence; its recommendation expires at window.end + 2s. The pressure
+row retains the active trial's receipt/application metadata, and the subsequent
+minimum write has null candidate authority. Add explicit boolean `capacityDecrease`
+to lifecycle/native-evidence/retirement replay, requiring recovery-budget recovery
+(and the capacity audit route in the outer evidence helper). Reconstruct local
+pressure from expanded raw histories, require elevated transport and exact reasons,
+join the prior policy endpoint/sequence, current receipt and original trial metadata,
+and require the following owned write to use that same sequence before expiry.
+Keep the later write's inactive probe/candidate history and every existing receipt
+and completion check. Return local-decrease correspondence with recovery false.
+The known source-confirmation log alone never proves confirmed policy; the later
+full policy replay must establish that separately.
+
+### Explicit transport/decrease checkpoint
+
+Both prerequisites are implemented and reviewed. All 4,403 tooling tests pass
+(`repeated-live-checkpoint-capacity-observation-pressure-tools.log`). Focused tests
+were observed failing before implementation; pressure tests first needed a test-only
+clone of immutable expanded sample entries before their mutations were valid.
+The checked-in compressed regression fixture contains frozen metadata and frame
+identity lists from `5UYvcA`, with source hashes and provenance; it contains no video.
+
+Unchanged-artifact replay now passes scheduled transport, raw native media, native
+profile transitions, raw local transport decrease, native lifecycle/retirement and
+candidate witness joins. Strict through-close transport still fails as expected;
+neither the original native harness result nor timeline is rewritten. Sources and
+input hashes are recorded in `diagnostic-native750-explicit-capacity-replay.json`.
+The first offline invocation omitted the already-required capacity cadence selector
+and failed on that envelope; its result is separately preserved. With that explicit
+selector, confirmed-prefix policy replay reaches an unsupported earlier rejection.
+
+That rejection is `delivery-freshness` at 19.054s after bootstrap on revision 0,
+before the trial. The native session rejects stale delivery observations and clears
+recovery/pending candidate evidence. Its log has the current receipt but no original
+rejected delivery sample. This cannot prove why that delivery sample was stale.
+The next policy work must either conservatively model this invalidation without
+healthy credit and independently validate all subsequent recovery/admission, or
+capture additional diagnostic evidence for a new run. It must never silently drop
+this event, infer a healthy sample, or accept such a rejection during probation.
+Complete fault causality, restored policy/delivery and fresh ramp remain open.

@@ -183,7 +183,18 @@ function trafficCoverage(queue, start, end) {
 
 /** Applied packet fault only: no receiver receipt, native clock, media quality,
  * archive or adaptation/recovery claim follows from this accounting. */
-export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550k' } = {}) {
+export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
+  assert(
+    options !== null && typeof options === 'object' && !Array.isArray(options),
+    'Invalid capacity qualifier options',
+  );
+  for (const key of Reflect.ownKeys(options))
+    assert(['profile', 'coveragePolicy'].includes(key), 'Unknown capacity qualifier option');
+  const { profile = 'capacity550k', coveragePolicy = 'through-close-v1' } = options;
+  assert(
+    ['through-close-v1', 'scheduled-hold-v1'].includes(coveragePolicy),
+    'Unknown capacity coverage policy',
+  );
   const { rateBitsPerSecond: rate, holdSeconds } = measuredCapacityProfile(profile);
   assert.equal(snapshot.formatVersion, 1);
   assert.equal(snapshot.closed, true);
@@ -221,6 +232,15 @@ export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550
     previous = phase;
   }
   const [baseline, limited, restored] = schedule.phases;
+  // Only trusted caller options select coverage. Never derive the endpoint from
+  // observed traffic: stopped publishers still owe the full restored minute.
+  const restoredObservationEnd =
+    coveragePolicy === 'scheduled-hold-v1' ? restored.appliedAt + 60000 : schedule.stoppedAt;
+  assert(restoredObservationEnd <= schedule.stoppedAt, 'Restored observation exceeds closure');
+  const trafficCoverageWindows = {
+    baseline: { start: baseline.appliedAt, end: limited.appliedAt },
+    restored: { start: restored.appliedAt, end: restoredObservationEnd },
+  };
   for (const name of ['forward', 'reverse']) {
     direction(snapshot[name], {
       appliedRate: null,
@@ -239,7 +259,7 @@ export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550
       restored[name].queue.overflowDrop.wireBytes,
     );
     trafficCoverage(snapshot[name].queue, baseline.appliedAt, limited.appliedAt);
-    trafficCoverage(snapshot[name].queue, restored.appliedAt, schedule.stoppedAt);
+    trafficCoverage(snapshot[name].queue, restored.appliedAt, restoredObservationEnd);
     assert(
       snapshot[name].queue.lastForwardedAt >= restored.appliedAt + 60000,
       'Missing restored traffic span',
@@ -289,6 +309,9 @@ export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550
     const q = snapshot[name].queue;
     for (const w of [
       ...bins(q, baseline.appliedAt, limited.appliedAt),
+      ...(coveragePolicy === 'scheduled-hold-v1'
+        ? bins(q, restoredObservationEnd - 20000, restoredObservationEnd)
+        : []),
       ...bins(q, schedule.stoppedAt - 20000, schedule.stoppedAt),
     ])
       assert(
@@ -298,6 +321,8 @@ export function qualifyMeasuredCapacityUplink(snapshot, { profile = 'capacity550
   }
   return {
     profile,
+    coveragePolicy,
+    trafficCoverageWindows,
     limitedDurationMilliseconds,
     limitedForwardWireBytes,
     maximumOfferedBitsPerSecond,

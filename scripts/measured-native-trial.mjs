@@ -119,7 +119,12 @@ export function qualifyMeasuredNativeMedia(
  */
 export function qualifyMeasuredNativeEvidence(
   input,
-  { recovery = false, probePolicy = 'local-zero-loss-v1', capacityRecovery = false } = {},
+  {
+    recovery = false,
+    probePolicy = 'local-zero-loss-v1',
+    capacityRecovery = false,
+    capacityDecrease = false,
+  } = {},
 ) {
   input = { ...input, quality: expandQualityEvidence(input.quality) };
   assert.ok(
@@ -128,6 +133,11 @@ export function qualifyMeasuredNativeEvidence(
   );
   assert.equal(typeof recovery, 'boolean');
   assert.equal(typeof capacityRecovery, 'boolean');
+  assert.equal(typeof capacityDecrease, 'boolean');
+  assert(
+    !capacityDecrease || capacityRecovery,
+    'Local decrease requires the explicit capacity route',
+  );
   assert(
     !capacityRecovery || (recovery && probePolicy === 'recovery-budget-v1'),
     'Capacity evidence requires explicit recovery and recovery-budget policy',
@@ -169,6 +179,7 @@ export function qualifyMeasuredNativeEvidence(
     profileQualification: profile,
     probePolicy,
     recovery,
+    capacityDecrease,
   });
   const phase = profile.phases[0];
   const baseline = {
@@ -201,7 +212,12 @@ export function qualifyMeasuredNativeEvidence(
   }
   assert.equal(nativeLifecycle.applications.length, recovery ? 2 : 1);
   assert(candidateProof.measurement.endedAt <= nativeLifecycle.applications[0].requestedAt);
-  const measuredRetirement = { lifecycle, quality, ...(recovery ? { recovery: true } : {}) };
+  const measuredRetirement = {
+    lifecycle,
+    quality,
+    ...(recovery ? { recovery: true } : {}),
+    ...(capacityDecrease ? { capacityDecrease: true, snapshot } : {}),
+  };
   const probe = qualifyNativeBandwidthProbe(nativeProbe, {
     mode: 'staged',
     candidateHeadroom: true,

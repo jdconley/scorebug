@@ -1,3 +1,4 @@
+import { qualifyCapacityPressureDecrease } from './capacity-pressure-decrease.mjs';
 import { assertRecoveryProbeAcceptanceHistory } from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -35,6 +36,7 @@ export function qualifyMeasuredNativeLifecycle({
   liveIDs,
   probePolicy = 'local-zero-loss-v1',
   recovery = false,
+  capacityDecrease = false,
 }) {
   assert.ok(
     ['measured240', 'repeated240'].includes(sequence),
@@ -45,6 +47,15 @@ export function qualifyMeasuredNativeLifecycle({
     'Unknown lifecycle probe policy',
   );
   assert.equal(typeof recovery, 'boolean', 'Recovery context must be boolean');
+  assert.equal(typeof capacityDecrease, 'boolean');
+  assert(
+    !capacityDecrease ||
+      (recovery && probePolicy === 'recovery-budget-v1' && sequence === 'measured240'),
+    'Capacity decrease requires explicit recovery-budget lifecycle',
+  );
+  const decrease = capacityDecrease
+    ? qualifyCapacityPressureDecrease({ quality, snapshot })
+    : undefined;
   const recoveryPolicy = probePolicy === 'recovery-budget-v1';
   assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
   if (recoveryPolicy) {
@@ -293,7 +304,7 @@ export function qualifyMeasuredNativeLifecycle({
     if (repeated || recoveryPolicy) {
       const trial = index % 2 === 0;
       assert.equal(event.closed, false);
-      assert.equal(event.action.kind, trial ? 'trial' : 'reset');
+      assert.equal(event.action.kind, trial ? 'trial' : capacityDecrease ? 'decrease' : 'reset');
       assert.equal(event.profileID, trial ? '360p30' : '240p30');
       assert.equal(event.action.bitRate, trial ? 600000 : 350000);
       assert.equal(application.fromRevision, String(index), 'Skipped original applied revision');
@@ -348,7 +359,7 @@ export function qualifyMeasuredNativeLifecycle({
     assert.equal(application.fromRevision, event.action.fromRevision);
     assert.equal(event.revision, String(BigInt(application.fromRevision) + 1n));
     assert.equal(application.candidateID, event.action.candidateID);
-    if (event.action.kind === 'reset') {
+    if (event.action.kind === 'reset' || (capacityDecrease && event.action.kind === 'decrease')) {
       assert.equal(application.candidateID, null);
       assert.equal(event.action.candidateID, null);
       assert.ok(index > 0, 'Reset requires prior measured trial');
@@ -425,6 +436,7 @@ export function qualifyMeasuredNativeLifecycle({
     bootstrap,
     applications,
     ...(recoveryPolicy ? { probePolicy } : {}),
+    ...(capacityDecrease ? { capacityDecrease: decrease } : {}),
     nativeLifecycleReceiptsMatched: true,
     upgradeAuthorized: false,
   };
