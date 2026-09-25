@@ -34,9 +34,12 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       anchors, changing score, continued local recording and both final outputs.
       Preserve the 3,072 cadence / 512 delivery row and 16/32 MiB evidence limits;
       stop with explicit failure if exhausted rather than dropping history.
-- [ ] Resolve the observed live-frame identity damage following late packet
-      retransmission. Capture pre-decoder input and decoder diagnostics before
-      choosing a fix; retain strict media checks.
+- [x] Reproduce missing-reference damage offline with retained compressed input
+      and decoder diagnostics; compare identities and pixels at original PTS.
+- [ ] Resolve the observed live-frame damage following late packet retransmission.
+      Verify actual SRT/relay boundary capture and recovery timing before choosing
+      a fix; decoder flags alone failed the controlled reproduction. Retain strict
+      media checks and the complete failed evidence.
 - [ ] Review specification and quality, retain failures, and update the delivery
       plan from actual evidence before production enablement or hardware claims.
 

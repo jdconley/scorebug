@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 reference-loss reproduction](2026-09-25-reference-loss-reproduction.md) — controlled compressed-frame loss, decoder-option checks and remux diagnostics.
+
 - [September 25 owned measurement app integration](2026-09-25-owned-measurement-app.md) — native lease, application and retry integration with four-phase preparation.
 - [September 25 progressive vertical continuation](2026-09-25-progressive-vertical-resume.md) — paired hardware retry and guarded app application ownership.
 - [September 25 three-output vertical](2026-09-25-three-output-vertical.md) — proxy recording, full native simulator route, device lab and physical installation.
