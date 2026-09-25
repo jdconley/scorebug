@@ -18,6 +18,38 @@ final class PublishingCandidateTransportTests: XCTestCase {
         let id = UUID(); XCTAssertTrue(owner.bind(id: id)); XCTAssertTrue(owner.arm(publishingGeneration: 7)); return id
     }
 
+    func testOpeningReadinessFloorIsImmutableAndOnlyDefersValidUnopenedWindow() async {
+        let clock = TransportTestClock(), window = owner(clock: clock)
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(0)))
+        prepare(window)
+        XCTAssertTrue(window.isWaitingForOpeningAudio(at: pts(0)))
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: .invalid))
+        window.observeAudio(audio(1, clock: clock))
+        XCTAssertTrue(window.isWaitingForOpeningAudio(at: pts(0)))
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(1)))
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(2)))
+        window.observeAudio(audio(2, clock: clock))
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(1)), "Later audio cannot move the floor")
+        XCTAssertTrue(window.advanceRaw(pts(1)))
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(0)), "Opened windows never defer invalid later input")
+        window.cancel()
+        XCTAssertFalse(window.isWaitingForOpeningAudio(at: pts(0)))
+        _ = await window.finish()
+    }
+
+    func testFailedOrCancelledOpeningCannotTurnIntoAnIndefiniteWait() async {
+        let clock = TransportTestClock(), failed = owner(clock: clock), cancelled = owner(clock: clock)
+        prepare(failed); prepare(cancelled)
+        for n in 0...16 { failed.observeAudio(audio(n, clock: clock)) }
+        XCTAssertFalse(failed.isWaitingForOpeningAudio(at: pts(0)))
+        XCTAssertFalse(failed.advanceRaw(pts(0)))
+        let result = await failed.finish()
+        XCTAssertEqual(result.failure, "pendingAudioLimit")
+        cancelled.cancel()
+        XCTAssertFalse(cancelled.isWaitingForOpeningAudio(at: pts(0)))
+        _ = await cancelled.finish()
+    }
+
     func testAlignedAudioVideoProducesActualMuxCostAndImmutableReceipts() async throws {
         let clock = TransportTestClock(), window = owner(clock: clock)
         window.observeAudio(audio(0, clock: clock)) // ignored before campaign arming

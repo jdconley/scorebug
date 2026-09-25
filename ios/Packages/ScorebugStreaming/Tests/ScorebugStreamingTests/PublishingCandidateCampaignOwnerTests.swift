@@ -169,6 +169,76 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         await owner.stop()
     }
 
+    func testColdStartDefersRawUntilObservedAACAnchorThenProducesValidCost() async throws {
+        let owner = PublishingCandidateCampaignOwner()
+        let handle = try await owner.begin(scope: scope(), profile: .low240, publishingGeneration: 7)
+        let earlyAccepted = owner.offer(try sample(at: CMTime(value: 10, timescale: 1)), id: handle.id)
+        XCTAssertFalse(earlyAccepted, "No raw admission before the first post-arm AAC")
+        if earlyAccepted { await owner.stop(); return }
+        let opening = try audio(at: 10.025583291)
+        owner.observeAudio(opening)
+        let beforeAnchor = owner.offer(try sample(at: CMTime(value: 10017, timescale: 1000)), id: handle.id)
+        XCTAssertFalse(beforeAnchor, "Raw before the audio floor must remain unadmitted")
+        if beforeAnchor { await owner.stop(); return }
+        var nextAudio = 1
+        for n in 0...120 {
+            let pts = CMTimeAdd(opening.sourcePTS, CMTime(value: Int64(n), timescale: 30))
+            XCTAssertTrue(owner.offer(try sample(at: pts), id: handle.id))
+            while opening.sourcePTS.seconds + Double(nextAudio) * 1024 / 48000 <= pts.seconds {
+                owner.observeAudio(try audio(at: opening.sourcePTS.seconds + Double(nextAudio) * 1024 / 48000))
+                nextAudio += 1
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        owner.observeAudio(try audio(at: opening.sourcePTS.seconds + Double(nextAudio) * 1024 / 48000))
+        let value = await owner.result(id: handle.id)
+        let result = try XCTUnwrap(value)
+        XCTAssertEqual(result.reason, .completed)
+        XCTAssertEqual(result.acceptedInputCount, 121)
+        XCTAssertEqual(result.firstInputPTS, opening.sourcePTS)
+        XCTAssertNotNil(PublishingCandidateCost(result))
+        await owner.stop()
+    }
+
+    func testMissingOpeningAACExpiresOriginalMeasurementWithoutRawAdmission() async throws {
+        let owner = PublishingCandidateCampaignOwner()
+        let handle = try await owner.begin(scope: scope(), profile: .low240, publishingGeneration: 7)
+        XCTAssertFalse(owner.offer(try sample(at: CMTime(value: 10, timescale: 1)), id: handle.id))
+        let value = await owner.result(id: handle.id)
+        let result = try XCTUnwrap(value)
+        XCTAssertEqual(result.reason, .deadline)
+        XCTAssertEqual(result.acceptedInputCount, 0)
+        XCTAssertNil(result.firstInputPTS)
+        XCTAssertNil(result.encoding?.transport?.firstRawPTS)
+        await owner.stop()
+    }
+
+    func testOpeningAudioWaitDoesNotHideTransportFailure() async throws {
+        let owner = PublishingCandidateCampaignOwner()
+        let handle = try await owner.begin(scope: scope(), profile: .low240, publishingGeneration: 8)
+        owner.observeAudio(try audio(at: 10)) // helper carries generation 7
+        XCTAssertFalse(owner.offer(try sample(at: CMTime(value: 10, timescale: 1)), id: handle.id))
+        let value = await owner.result(id: handle.id)
+        let result = try XCTUnwrap(value)
+        XCTAssertEqual(result.reason, .inputRejected)
+        XCTAssertEqual(result.encoding?.transport?.failure, "invalidAudio")
+        await owner.stop()
+    }
+
+    func testOpeningAudioAnchorDoesNotHideLaterMissingAAC() async throws {
+        let owner = PublishingCandidateCampaignOwner()
+        let handle = try await owner.begin(scope: scope(), profile: .low240, publishingGeneration: 7)
+        owner.observeAudio(try audio(at: 10))
+        XCTAssertTrue(owner.offer(try sample(at: CMTime(value: 10, timescale: 1)), id: handle.id))
+        owner.observeAudio(try audio(at: 10 + 2 * 1024.0 / 48000))
+        XCTAssertFalse(owner.offer(try sample(at: CMTime(value: 301, timescale: 30)), id: handle.id))
+        let value = await owner.result(id: handle.id)
+        let result = try XCTUnwrap(value)
+        XCTAssertEqual(result.reason, .inputRejected)
+        XCTAssertEqual(result.encoding?.transport?.failure, "audioCadence")
+        await owner.stop()
+    }
+
     func testStartupReservesRawAdmissionButRoutesAudioToArmedTransport() async throws {
         let first = CampaignPair(startOpen: false)
         let factory = CampaignFactory(first: first), owner = PublishingCandidateCampaignOwner(factory: factory.make)

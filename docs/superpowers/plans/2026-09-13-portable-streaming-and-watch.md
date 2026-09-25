@@ -29,10 +29,11 @@ there is no upgrade request. Capture steady windows stayed at 30 fps, archive/li
 identities are consecutive, sampled audio and score changes pass, and the clean
 archive continues 7.3 seconds after live output. Its new packet diagnostic isolates
 a 25.583 ms opening source gap, beyond the unchanged 21.333 ms AAC allowance.
-A separate startup-clock regression is now repaired using the real measurement,
-encoder, transport and cost validator; all 183 Streaming and 535 app-model tests pass; read-only review found no
-actionable issues. Next: establish an opening audio
-anchor before admitting raw, preserving every existing continuity/deadline gate.
+The startup clock now precedes arming, and cold-start raw admission waits for a
+valid post-arm AAC source anchor. Real measurement/encoder/transport regressions
+pass the unchanged cost validator; all 189 Streaming and 535 app-model tests pass,
+with read-only review finding no issues. Next: frozen impaired-match verification
+of both repairs. Production upgrades remain disabled pending the full gates.
 
 Earlier evidence:
 

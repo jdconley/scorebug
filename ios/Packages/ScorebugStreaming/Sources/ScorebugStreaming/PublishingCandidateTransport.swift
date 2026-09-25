@@ -81,6 +81,10 @@ public final class PublishingCandidateTransport: @unchecked Sendable {
     deinit { state.cancel() }
     @discardableResult public func bind(id: UUID) -> Bool { state.bind(id) }
     @discardableResult public func arm(publishingGeneration: UInt64) -> Bool { state.arm(publishingGeneration) }
+    /// Monotonic preflight for the measurement's serialized raw offers. Once an
+    /// opening AAC floor permits a PTS it never moves; concurrent terminal failure
+    /// remains a strict rejection in advanceRaw, not an indefinite opening wait.
+    func isWaitingForOpeningAudio(at pts: CMTime) -> Bool { state.isWaitingForOpeningAudio(at: pts) }
     /// Releases the window lock before the caller enters the candidate encoder.
     @discardableResult public func advanceRaw(_ pts: CMTime) -> Bool { state.advanceRaw(pts) }
     public func observeAudio(_ frame: SRTPublisher.CompressedAudioFrame) {
@@ -118,6 +122,7 @@ private final class CandidateTransportState: @unchecked Sendable {
     private let continuation: AsyncStream<Void>.Continuation
     private var id: UUID?, generation: UInt64?
     private var firstPTS: CMTime?, lastPTS: CMTime?
+    private var openingAudioFloor: CMTime?
     private var armedAt: Double?, startedAt: Double?, closedAt: Double?
     private var count = 0, pendingBytes = 0, maximumPendingCount = 0, maximumPendingBytes = 0
     private var pending: [Owner.AudioSnapshot] = []
@@ -170,6 +175,13 @@ private final class CandidateTransportState: @unchecked Sendable {
         if following == nil, let closedAt, at - closedAt > 1 { fail("audioDeadline"); return false }
         return true
     }
+    func isWaitingForOpeningAudio(at pts: CMTime) -> Bool {
+        lock.withLock {
+            guard active, armedAt != nil, closedAt == nil, firstPTS == nil, valid(pts) else { return false }
+            guard let openingAudioFloor else { return true }
+            return CMTimeCompare(pts, openingAudioFloor) < 0
+        }
+    }
     func advanceRaw(_ pts: CMTime) -> Bool {
         lock.withLock {
             guard active, closedAt == nil else { return false }
@@ -212,7 +224,10 @@ private final class CandidateTransportState: @unchecked Sendable {
                   frame.framesPerPacket == 1024, frame.audioObjectType == 2 else { fail("invalidAudio"); return }
             if let firstPTS, CMTimeCompare(frame.sourcePTS, firstPTS) < 0 { return }
             guard frame.observedAt >= armedAt else { fail("invalidAudio"); return }
-            if firstPTS == nil { enqueue(frame) }
+            if firstPTS == nil {
+                enqueue(frame)
+                if active { openingAudioFloor = openingAudioFloor ?? frame.sourcePTS }
+            }
             else { acceptAudio(frame) }
         }
     }

@@ -28,6 +28,7 @@ public final class PublishingCandidateMeasurement: Sendable {
         let cancel: @Sendable () async -> PublishingCandidateEncoder.Result?
         var rawClosed: @Sendable (Reason) -> Void = { _ in }
         var requiresTransport: Bool = false
+        var deferRaw: @Sendable (CMTime) -> Bool = { _ in false }
     }
     public let id: UUID
     public let scope: VideoFrameObservationScope
@@ -50,7 +51,8 @@ public final class PublishingCandidateMeasurement: Sendable {
             finish: { await encoder.finish() }, cancel: { await encoder.cancel() },
             rawClosed: { reason in
                 if reason == .completed { transport?.closeRawWindow() } else { transport?.cancel() }
-            }, requiresTransport: transport != nil))
+            }, requiresTransport: transport != nil,
+            deferRaw: { transport?.isWaitingForOpeningAudio(at: $0) ?? false }))
     }
     init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile, operations: Operations,
          now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
@@ -209,6 +211,9 @@ private final class MeasurementState: @unchecked Sendable {
                   lastPTS.map({ CMTimeCompare($0, pts) < 0 }) ?? true else {
                 close(.inputRejected); return false
             }
+            // An unopened A/V window may wait for its first observed AAC anchor.
+            // This consumes the same deadline without recording a raw admission.
+            if operations.deferRaw(pts) { return false }
             let span = firstPTS.map { CMTimeSubtract(pts, $0) } ?? .zero
             guard span.isNumeric, CMTimeCompare(span, CMTime(value: 17, timescale: 4)) <= 0,
                   operations.offer(sample) else { close(.inputRejected); return false }
