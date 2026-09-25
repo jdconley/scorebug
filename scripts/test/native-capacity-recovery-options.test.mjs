@@ -123,7 +123,7 @@ test('capacity selection composes existing native file and measured source parse
   }
 });
 
-test('native harness stops unintegrated capacity qualification before artifacts or resources', async () => {
+test('native harness rejects incomplete capacity qualification before artifacts or resources', async () => {
   const { spawnSync } = await import('node:child_process');
   const { readdirSync } = await import('node:fs');
   const before = readdirSync(new URL('../../artifacts/qa/', import.meta.url)).filter((name) =>
@@ -131,12 +131,12 @@ test('native harness stops unintegrated capacity qualification before artifacts 
   );
   const result = spawnSync(process.execPath, ['scripts/test-native-app.mjs', '--streaming'], {
     cwd: new URL('../../', import.meta.url),
-    env: { ...process.env, ...capacityEnvironment() },
+    env: { ...process.env, ...capacityEnvironment(), SCOREBUG_TEST_DIRECT_RTMP_RECORDER: '0' },
     encoding: 'utf8',
     timeout: 10000,
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Capacity recovery causal qualification is not yet integrated/);
+  assert.match(result.stderr, /Extended hold requires native streaming and the direct RTMP recorder/);
   assert.deepEqual(
     readdirSync(new URL('../../artifacts/qa/', import.meta.url)).filter((name) =>
       name.startsWith('native-app-'),

@@ -1,3 +1,5 @@
+import { qualifyMeasuredCapacityPolicy } from './measured-capacity-policy.mjs';
+import { qualifyMeasuredCapacityUplink } from './measured-capacity-uplink.mjs';
 import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
 import {
   nativeCapacityDiagnostics,
@@ -135,16 +137,12 @@ const capacityRecovery = nativeCapacityRecovery({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
-// Do not let the new fault route fall through to a steady successful-trial verdict.
-// Remove this guard only when the complete causal native qualifier is connected.
+// Diagnostic collection remains non-passing; the explicit capacity route below
+// joins raw policy evidence with the same full media gates as the native runner.
 const capacityDiagnostics = nativeCapacityDiagnostics({
   args: process.argv.slice(2),
   capacityRecovery,
 });
-assert(
-  !capacityRecovery || capacityDiagnostics,
-  'Capacity recovery causal qualification is not yet integrated',
-);
 const fileFixture = nativeFileFixtureOptions({
   environment: process.env,
   streaming,
@@ -1066,16 +1064,21 @@ try {
   if (proxy)
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
-  const uplinkQualification = uplinkProfile
-    ? (uplinkProfile === 'loss0p2-delay30'
-        ? qualifyMeasuredUplink
-        : uplinkProfile === 'passthrough'
-          ? qualifyNativeUplinkProxy
-          : qualifyNativeUplinkSchedule)(
-        JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'), 'utf8')),
-        uplinkProfile,
-      )
+  const uplinkSnapshot = uplinkProfile
+    ? await readBoundedJSON(join(artifact, 'uplink-proxy.json'), 64 * 1024 * 1024)
     : undefined;
+  const uplinkQualification = capacityRecovery
+    ? qualifyMeasuredCapacityUplink(uplinkSnapshot, {
+        profile: uplinkProfile,
+        coveragePolicy: 'scheduled-hold-v1',
+      })
+    : uplinkProfile
+      ? (uplinkProfile === 'loss0p2-delay30'
+          ? qualifyMeasuredUplink
+          : uplinkProfile === 'passthrough'
+            ? qualifyNativeUplinkProxy
+            : qualifyNativeUplinkSchedule)(uplinkSnapshot, uplinkProfile)
+      : undefined;
   if (streaming) {
     assert.equal(media.length, 1, 'Streaming fixture must export its single clean recording');
     for (const output of live) {
@@ -1122,7 +1125,8 @@ try {
       { flag: 'wx' },
     );
   }
-  let repeatedRecoveryQualification,
+  let capacityPolicyQualification,
+    repeatedRecoveryQualification,
     measuredRecoveryQualification,
     measuredTrialQualification,
     candidateQualification,
@@ -1499,28 +1503,55 @@ try {
         liveIDs: liveSegments.flat(),
         completedWindowLimit: streamingOptions.completedWindowLimit,
       };
-      const qualification = repeatedRecovery
-        ? qualifyRepeatedMeasuredNativeRecovery({
-            ...measuredInput,
-            faults: await readBoundedJSON(join(artifact, 'owned-decoder-stalls.json'), 512 * 1024),
-          })
-        : measuredRecovery
-          ? qualifyMeasuredNativeRecovery({
+      const qualification = capacityRecovery
+        ? qualifyMeasuredCapacityPolicy(
+            {
               ...measuredInput,
-              fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
+              uplink: uplinkSnapshot,
+              capacityClockAudit: await readBoundedJSON(
+                join(artifact, 'capacity-clock.json'),
+                16384,
+              ),
+              capacityClockExchanges: await readBoundedJSON(
+                join(artifact, 'capacity-clock-exchanges.json'),
+                65536,
+              ),
+            },
+            {
+              profile: uplinkProfile,
+              preTrialRejectionPolicy: 'invalidate-delivery-freshness-v1',
+            },
+          )
+        : repeatedRecovery
+          ? qualifyRepeatedMeasuredNativeRecovery({
+              ...measuredInput,
+              faults: await readBoundedJSON(
+                join(artifact, 'owned-decoder-stalls.json'),
+                512 * 1024,
+              ),
             })
-          : qualifyMeasuredNativeTrial(measuredInput, { probePolicy, deliveryProfile });
+          : measuredRecovery
+            ? qualifyMeasuredNativeRecovery({
+                ...measuredInput,
+                fault: await readBoundedJSON(
+                  join(artifact, 'owned-decoder-stall.json'),
+                  256 * 1024,
+                ),
+              })
+            : qualifyMeasuredNativeTrial(measuredInput, { probePolicy, deliveryProfile });
       if (fileFixture) {
         assert.equal(live.length, 1, 'Measured file audio requires one complete saved stream');
         const liveAudio = fileAudioContexts.get('live-0');
         assert(liveAudio && fileAudioContexts.has(0), 'Missing measured audio context');
+        const phases = (capacityRecovery ? qualification.nativeProfile : qualification.profile)
+          .phases;
         const anchors = measuredAudioProbeFrames({
-          phases: qualification.profile.phases,
+          phases,
           codes: liveAudio.codes,
         });
         await writeFile(
           join(artifact, 'measured-file-audio-anchors.json'),
-          JSON.stringify({ phases: qualification.profile.phases, anchors }, null, 2),
+          JSON.stringify({ phases, anchors }, null, 2),
           { flag: 'wx' },
         );
         measuredFileAudioQualification = {
@@ -1552,16 +1583,19 @@ try {
           { flag: 'wx' },
         );
         repeatedRecoveryQualification = qualification;
-      } else if (measuredRecovery) measuredRecoveryQualification = qualification;
+      } else if (capacityRecovery) capacityPolicyQualification = qualification;
+      else if (measuredRecovery) measuredRecoveryQualification = qualification;
       else measuredTrialQualification = qualification;
       await writeFile(
         join(
           artifact,
-          repeatedRecovery
-            ? 'repeated-measured-recovery-qualification.json'
-            : measuredRecovery
-              ? 'measured-recovery-qualification.json'
-              : 'measured-trial-qualification.json',
+          capacityRecovery
+            ? 'capacity-policy-qualification.json'
+            : repeatedRecovery
+              ? 'repeated-measured-recovery-qualification.json'
+              : measuredRecovery
+                ? 'measured-recovery-qualification.json'
+                : 'measured-trial-qualification.json',
         ),
         JSON.stringify(qualification, null, 2),
         { flag: 'wx' },
@@ -1623,6 +1657,7 @@ try {
         measuredRecovery,
         repeatedRecovery,
         capacityRecovery,
+        capacityPolicyQualification,
         measuredTrialQualification,
         measuredRecoveryQualification,
         repeatedRecoveryQualification,
@@ -1659,13 +1694,14 @@ try {
       2,
     ),
   );
-  if (repeatedRecovery)
+  if (capacityRecovery) assert.equal(capacityPolicyQualification?.capacityPolicyQualified, true);
+  else if (repeatedRecovery)
     assert.equal(repeatedRecoveryQualification?.measuredRepeatedRecoveryQualified, true);
   else if (measuredRecovery)
     assert.equal(measuredRecoveryQualification?.measuredRecoveryQualified, true);
   else if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
   console.log(
-    `${repeatedRecovery ? 'REPEATED MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${capacityRecovery ? 'MEASURED CAPACITY RECOVERY PASS (local laboratory route; fresh ramp not qualified)' : repeatedRecovery ? 'REPEATED MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

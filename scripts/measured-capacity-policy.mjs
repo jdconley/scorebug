@@ -466,6 +466,7 @@ export function qualifyMeasuredCapacityPolicy(
   return {
     capacityPolicyQualified: true,
     profile,
+    nativeProfile: native.profile,
     scope: snapshot.scope,
     transport,
     clock,

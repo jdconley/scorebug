@@ -44,6 +44,8 @@ test('joins raw capacity fault, confirmed prefix, owned decrease and post-restor
     before = JSON.stringify(f),
     r = qualify(f);
   assert.equal(r.capacityPolicyQualified, true);
+  assert.equal(r.nativeProfile?.phases.length, 3);
+  assert.equal(r.profile, 'capacity750k');
   assert.equal(r.freshRampQualified, false);
   assert.equal(r.mediaFilesQualified, false);
   assert.equal(r.productionUpgradeAuthorized, false);

@@ -945,3 +945,25 @@ current harness guard; capacity evidence must not fall through to steady-trial o
 decoder-pause qualification. Freeze and run a fresh native experiment only after the
 routing and failure cases pass local tooling tests. Fresh measured ramp-up after
 restoration remains a subsequent experiment.
+
+
+### Native capacity success-route implementation
+
+The explicit non-diagnostic capacity route now dispatches scheduled-window transport
+and the complete capacity policy before reporting native success. It preserves all
+existing A/V decode, archive, ingress, score glyph, direct-recorder terminal/frame,
+and natural-audio requirements. Native profile phases are returned separately from
+the trusted capacity profile label for phase/grid audio anchors. Raw capacity clock
+exports and transport data are bounded on read. Capacity evidence has its own output
+artifact, results field and final assertion; it cannot satisfy the steady-trial or
+decoder-pause success route. `--capacity-diagnostics` retains its reconnecting recorder
+and unconditional non-passing behavior. Normal capacity validation uses the existing
+strict single-session recorder.
+
+The old native preflight guard failure was reproduced before edits in
+`capacity750-qualified-freeze-fo6nor8f`. The positive native profile regression also
+failed before the return field was added. The now-obsolete test requiring all
+capacity runs to stop at that guard is replaced with an incomplete-route rejection
+before any artifacts/resources. Independent integration review found no actionable
+issues. A fresh frozen native run is required to establish this route's actual
+end-to-end outcome; this wiring alone is not a passing media experiment.
