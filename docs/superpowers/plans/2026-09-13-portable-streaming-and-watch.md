@@ -72,9 +72,13 @@ approve the change, and all **162 original upstream hashes** still verify. The
 publishing adapters now pass **202 tests**, including cancellation during a late
 allocation, duplicate retirement, held cleanup and shutdown. Both layers retain
 and join rejected allocations without granting them authority to change quality.
-Task 1 is complete and independently reviewed. Next come the owned terminal
-receipt/restart path and Core/Session retry lifecycle; automatic post-restoration
-increases remain unqualified.
+Task 1 is complete and independently reviewed. The Core retry lifecycle now
+passes **476 tests**, including 17 new token, backoff and failure-accounting cases.
+Its observed-health waits increase through 10/20/40/60 seconds; only a confirmed
+trial clears the count. Session integration and the
+[owned operation/context path](2026-09-25-owned-probe-operations.md) remain next.
+The latter must restart after downshift on the same publisher using a fresh
+verified encoder context. Automatic post-restoration increases remain unqualified.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

@@ -155,7 +155,7 @@ cannot supply the missing ownership proof.
       recoverable without a global snapshot; malformed, foreign and unjoined
       receipts cannot authorize another campaign. Test canceled initial and
       replacement allocations through both adapter layers.
-- [ ] Implement the complete lifecycle: begin, bound candidate admission,
+- [x] Implement the complete Core policy lifecycle: begin, bound candidate admission,
       unsuccessful settlement and verified ownership retirement. Token creation
       is private. Preserve ordinary admission when no owned attempt exists;
       reject competing unregistered admission while the owned route is active.
@@ -174,6 +174,23 @@ cannot supply the missing ownership proof.
       UUIDs, foreign snapshot rejection, cancellation during allocation and
       replacement, pending-candidate renewal, expected profile-write revocation,
       held cleanup with immediate downward action, and unchanged default callers.
+
+Core checkpoint: **17 focused / 476 full tests pass** with all processes joined.
+The new opaque attempt supports registration, transactional bound admission,
+application transfer, unsuccessful settlement and revision-only obsolete
+retirement. Tests reproduce the missing protections before implementation and
+verify 10/20/40/60/60 seconds of actual recovery, both failure orderings, counter
+preservation through application/probation, reset only after confirmed trial,
+stale/foreign callbacks, and intact downward advice/application and replay
+watermarks. Specification and code-quality reviews approve the Core-only change.
+Logs: `artifacts/qa/owned-measurement-core-{focused-final,full}.log` and the
+`red`, `episode-red`, `malformed-red`, `application-red` logs. Session enforcement
+of actual native cleanup and scheduling remains unimplemented.
+
+The [owned probe operation plan](2026-09-25-owned-probe-operations.md) resolves
+initial allocations without returned UUIDs and same-connection restart after a
+downshift. A cleanup receipt survives an encoder change; a fresh verified
+configuration context and new Core/Session attempt are required to restart.
 
 ### Core lifecycle implementation notes
 
