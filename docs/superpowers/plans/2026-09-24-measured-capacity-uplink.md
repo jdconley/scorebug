@@ -547,3 +547,60 @@ This removes the one-connection sink limitation seen in`rQQICD`, but the native
 capacity campaign has not yet been rerun. Full wire-cost measurement and an
 appropriate capacity stimulus remain prerequisites; capacity adaptation, causal
 recovery, fresh re-ramp and outage qualification remain incomplete.
+
+## Measured next-stimulus design
+
+`artifacts/qa/capacity-rate-calibration-fdthAF` independently replays complete proxy
+packet timelines for both existing runs. Counts include IPv4/UDP28-byte overhead,
+SRT/MPEG-TS traffic, audio and video. It requires a same-probe receiver report that
+accounts for every final accepted padding byte with zero pending packets; selected
+windows begin at least5s after that host receipt. All raw artifact/script hashes
+are unchanged. This is diagnostic rate selection, not delivery/recovery proof.
+
+For the single-profile240p run, nine5s windows (45s total) offer560.704–643.949kbps,
+mean606.209kbps; its45 one-second windows peak736.800kbps. Selection includes one
+pre-limit window and40s after unrestricted capacity was restored. Every selected
+window has zero proxy overflow. Post-restoration sender traffic does not imply
+worker recovery—the failed worker/recorder history remains failed.
+
+For the confirmed360p run, twelve5s windows (60s total) offer835.430–957.421kbps,
+mean878.490kbps; its60 one-second windows peak1,081.120kbps. The complete final
+profile and raw post-padding traffic support this engineering choice. Calibration
+does not independently bind each host bin to a native profile clock; the next
+causal native experiment must still perform that join.
+
+Choose a **750,000bps** laboratory limit: above the observed minimum-profile
+one-second maximum and below every upgraded-profile five-second average. This
+is a new test stimulus, not a production upload requirement or a guarantee for
+other clips, devices or networks. Keep delay30ms, deterministic every500th-packet
+loss,16KiB burst, queue bounds and all application pressure/freshness thresholds.
+
+The new native run must also delay the fault: `CLof0G` confirmed at61.769s after
+bootstrap, so the old60s schedule cannot reliably establish confirmation before
+the fault. Add explicit profile`capacity750k` with limit at90s, restoration at150s,
+and a210s hold to retain60s restored observation. Keep historical`capacity550k`
+(60/120s,180s hold) intact so existing artifacts and tests remain reproducible.
+Use at least330s prepared content; the earlier270s file is too close to the prior
+archive-duration overhead for a210s hold. Do not reuse/truncate identities when
+preparing longer representative footage.
+
+Implementation/verification sequence:
+
+- [ ] Add a trusted named-profile table and explicit profile option to transport
+  configuration/qualification, preserving the default historical contract. Test
+  both complete schedules with the real synthetic queue, wrong selection,
+  incomplete duration, rate/timing/counter mutations and unchanged old fixtures.
+- [ ] Propagate the selected trusted profile to clock scheduling, host route
+  validation and the independent Swift fixture leaf. Exactly210s is required for
+  `capacity750k`; exactly180s remains required for`capacity550k`. The clock verifier
+  must still join actual requested/applied phases and bounded native brackets.
+- [ ] Test and build the native fixture with the existing installed iOS26.2 runtime.
+  Keep normal capacity success denied; select the reconnectable recorder only via
+  explicit diagnostics. Verify larger hold fits existing evidence budgets.
+- [ ] Prepare/hash at least330s of representative footage using the existing
+  frame-identity/audio integrity workflow. Run one frozen210s native diagnostic
+  campaign, join every owned process, and preserve all session evidence and
+  original failures. Independently determine whether confirmation preceded the
+  limit, an owned reduction occurred and minimum media recovered after restoration.
+- [ ] Only after those facts are established, implement full causal recovery and
+  fresh post-recovery measured ramp qualification. A true outage remains separate.

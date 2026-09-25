@@ -24,6 +24,14 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+Saved proxy traffic now supports the next diagnostic stimulus:750kbps falls above
+the observed minimum-profile one-second maximum736.8kbps and below every measured
+higher-profile five-second average (minimum835.4kbps). The next experiment will
+apply the limit at90s and restore at150s, with a210s hold; the latest upgrade was
+confirmed61.8s after bootstrap, too late for the old60s fault. This is a measured
+experiment design, not an implemented or passed recovery route. See the
+[rate evidence and next steps](2026-09-24-measured-capacity-uplink.md#measured-next-stimulus-design).
+
 The diagnostic output recorder now accepts reconnections through one persistent
 loopback endpoint and preserves each session separately. Two real publishers using
 excerpts of the prepared match produced complete90-frame recordings with audio;
