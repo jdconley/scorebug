@@ -86,3 +86,39 @@ Next: finish both timing reviews, run fresh comparisons, and finish the complete
 - Native applications after bootstrap:360p at27.82s,240p at90.89s,360p at182.99s. Two failed measurement attempts under restriction remain in original history. All four phases retain30freshfps and zero source loss in their acquired spans.
 - Sampled all four phases visually in `owned-recording-diagnostic/four-phase-preview.png`: representative volleyball imagery and score overlay visible. This is sampled visual inspection, not a full perceptual-quality metric.
 - Native runner completed owned simulator shutdown/deletion (empty successful logs), and all root analysis handles joined. The2000 experiment provides clean media and four-phase evidence; complete receiver/witness/policy replay remains unfinished. The3000 comparison has not run. No real-camera progressive streaming claim follows from this simulator result.
+
+## Continuation: comparison and complete receiver conservation
+
+- Previous turn is progress: reviewed advice-expiry fix, explicit2000 native experiment, complete recorded-media checks and updated current plan/handoff. Goal remains active; production camera adaptation, full recovery replay and paired hardware are unfinished.
+- Fresh3000 comparison launched at f3fc7bb under handle8807, artifact `native-app-pzZozK`. Same source/SRT/fault settings; only explicit timing profile/budget differs. Simulator build passed; live hold running.
+- Delegated only the approved receiver-conservation slice to `owned_receiver_conservation`: new helper/tests/raw fixture provenance, no existing runner/runtime/Swift edits. It must preserve every failed campaign and exact native/receiver byte conservation; higher-level qualification remains false. Parent owns native comparison and subsequent reviews.
+- Both physical devices freshly report `passcodeRequired:false` and `unlockedSinceBoot:true`. Given earlier successful phone-active automation ordering, a coordinated retry is now a concrete hypothesis. Await simulator completion to avoid competing live runs; use the same eff8465 physical products and record the changed launch ordering explicitly.
+
+### Real-camera integration audit
+
+Read-only audit confirms production enabling is more than removing one fixture selector. `CaptureStreamingModel` currently constructs a minimum-only SRT publisher outside DEBUG simulator, installs candidate readers only in that fixture route, and defaults its quality factory to the simulator-only Driver fixture. `NativeOwnedCandidatePublisher` and `NativeCandidateAttempt` are DEBUG-only; Session's owned measurement implementation is also DEBUG-gated.
+
+The long-running runtime must be separated from finite laboratory evidence storage: the delivery audit stops accepting windows on overflow, owned Session registration caps attempts at16, and Driver diagnostic storage caps events at512. Preserve these limits for complete lab qualification, while giving production bounded current-window state that continues operating throughout a match. Do not silently drop lab history or simply increase all caps. The fixture's VideoToolbox-specific worker limits and fixed two-rung ladder also need explicit production construction appropriate to the selected worker and supported camera/encoder profiles. These are concrete integration requirements, not changes implemented in this turn.
+
+### Receiver conservation reviewed
+
+- `d59fdcd` adds direct whole-history owned receiver conservation, preserving failed campaigns, original attempt/event/receiver indices, exact native acceptance/pending/cumulative delivery and one global receiver clock interval. Complete real551-row fixtures/provenance retained; no existing runtime/runner/Swift changes.
+- Implementer50focused/296scoped tests pass. Spec reviewer independently50pass and exact fixture byte/hash checks; quality reviewer independently50pass and approves. Zero-accepted native stages with no receiver row explicitly report unsupported conservation, not missing-delivery failure. Higher-level qualification flags remain false.
+- Root independently applied the reviewed API to complete LvDNAy and fresh pzZozK raw evidence:2s551records/4campaigns/10stages/14,940,548bytes;3s549records/4campaigns/10stages/14,876,064bytes. Saved `owned-receiver-conservation.json` under each artifact. No full recovery qualification follows.
+
+### 3-second comparison exposes remaining recovery risk
+
+- pzZozK/8807 joined intentional diagnosticexit1; UI1/0, collectionerrors[], coherent3000metadata. Native four phases and3applications recur at27.61/90.69/182.82seconds afterbootstrap.
+- Full decode25572 passes all files, archive9287sequentialframes0–9286; live8833frames228–9061 with one absent timestamp and identity reversals4327→4327→4326 around index4100. Three unique source IDs missing from decoded barcode span represent one lost frame plus two identity-corrupted frames. Both live files match this failure. Maximum live timestamp gap~67ms.
+- Trusted leaves pass timing/native probes/compressed frames/capacityclock but reject profile transitions/accountedmedia for duplicate/reordered decoded identity. A/V helper20472 passes64archivewaveformprobes and rejects both live identities before live audio/score checks. Phase-audio verification is not reached because its valid-identity/four-phase prerequisite fails. Failed output and checks remain retained.
+- Delivery has374overlappingwindows:372on-time, two contain the SAME absent sourceframe4328 (1s29fps and2s29.5fps), no late/uncertain frames. Receiver arrival maxupper~1660ms, comfortably below3000ms. Extra decoder budget cannot repair an already missing/damaged decoded frame. This run does not establish that the larger deadline caused transport loss.
+- The retained uplink audit has120injected packet drops and no overflow/close discards. Given earlier controlled SRT recovery evidence and the analogous reference-frame pattern, the next bounded experiment is the2s profile with1000msSRT. This tests retransmission margin directly; it is not a silent relaxation of decoded media checks or a guaranteed diagnosis of the exact missing packet.
+
+### Coordinated hardware retry joined
+
+- Fresh device-lab-uh4flR, lab64234, phone66746, Watch43473. Both unlocked-state preflights succeeded. Same eff8465 products, phone/watch runners started concurrently with phonefirst.
+- Phone automation started and actual camera recording/live publishing reached producing_output. Watch joinedexit70 during180-second destination preparation, requesting unlocked nearbydevice despite preflight. Watch runner neverlaunched, so phone-active automation hypothesis was not tested.
+- Phone joinedexit65 after Watch identity wait expired. Cleanup/final-observation attachments show localidle and176.01seconds recording; no native export was reached. Lab terminated via recordedPID21070 after phonecleanup, joinedexit0, noforcedworkerstop orcleanupfailures.
+- Both live MP4s fully decode5038frames~30encodedfps/~169.37seconds with no nonincreasing/gap>50ms. All three sampled live images are black; no representative visible-camera or Watch scoring pass is claimed.
+- Copied only the newly created phone recording378035D3-F9DE-4963-904C-4358C1B607CF. Native completedAt exists; all89segmentmetadata/payload lengths/SHA256 agree. Concatenated unchanged fragments into diagnostic-only `phone-fragment-diagnostic.mp4`; fullA/V decodeexit0. This is not a native export or complete paired acceptance. Phone originalrecordings retained.
+- Do not attempt another physical retry until a useful device-readiness change/userreply. Pending question about additional prompts remains unanswered; no password requested or collected.

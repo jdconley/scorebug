@@ -56,12 +56,14 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [ ] Extend that qualification to realistic networks, physical devices and remote workers before enabling production automatic adaptation.
 - [ ] Measure startup, collapse/reset and recovery on this Mac, then physical phone/watch and portable remote workers, preserving independent local A/V.
 - [ ] Integrate the qualified controller, candidate measurement and delivery feedback into the real-camera app path without fixture/environment selectors. Verify start-low, increase, congestion fallback and recovery on the actual phone while its clean archive and paired Watch scoring remain active.
+- [ ] Separate long-running adaptation state from finite lab audit storage and attempt caps. Preserve complete bounded lab evidence, but verify that production adaptation continues through a full match without audit exhaustion disabling feedback or further recovery. Construct worker limits and the supported quality ladder explicitly for the selected backend and device.
 
 ## Remaining integration and vertical work
 
 - [x] Research published live-platform adaptation and timing; see [platform findings](../../research/2026-09-25-live-platform-adaptation.md).
 - [x] Define explicit, versioned strict 1.5-second and diagnostic 2/3-second ingest timing profiles. Separate capture age from receiver-report age; preserve independent stall, advice-expiry and local-pressure limits. Implementation and expiry fix passed both reviews. These are experimental product settings, not industry standards.
-- [ ] Compare the diagnostic profiles on identical footage and network faults; require complete media and recovery checks before selecting a production policy.
+- [x] Compare explicit 2/3-second diagnostic profiles on identical footage and faults. Both complete four native phases, but the 3-second run still suffers one lost frame and subsequent decoded identity damage at 700 ms SRT; retain the failed result.
+- [ ] Verify retransmission margin using the 2-second profile with 1000 ms SRT, then select a production timing policy only after complete media/recovery checks. A larger decoder deadline cannot recover packets already lost upstream.
 
 - [x] Pass the short physical iPhone route through clean archive, native scoring, proxy overlay and both MP4 outputs; retain the startup-profile, sync and sustained-operation limits in the current assessment.
 - [ ] Complete the authorized physical vertical and record all three artifacts: clean phone archive, mock-destination MP4 and configurable proxy final-overlay MP4.
