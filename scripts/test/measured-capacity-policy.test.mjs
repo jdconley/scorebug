@@ -74,6 +74,7 @@ test('native capacity evidence explicitly propagates bounded loss conservation w
 });
 test('ledger capacity policy cannot reuse historical evidence without a newly observed ledger', () => {
   assert.throws(() => qualify(fixture(), { capacityEvidencePolicy: 'rate-ledger-v1' }), /ledger/i);
+  assert.throws(() => qualify(fixture(), { capacityEvidencePolicy: 'token-budget-v1' }), /ledger/i);
 });
 test('raw metadata cannot change the caller-selected capacity contract', () => {
   const f = fixture();

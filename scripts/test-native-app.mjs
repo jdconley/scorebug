@@ -144,7 +144,7 @@ const capacityEvidencePolicy = nativeCapacityEvidencePolicy({
   environment: process.env,
   capacityRecovery,
 });
-const rateLedgerSelected = capacityEvidencePolicy === 'rate-ledger-v1';
+const rateLedgerSelected = capacityEvidencePolicy !== 'congestion-v1';
 // Diagnostic collection remains non-passing; the explicit capacity route below
 // joins raw policy evidence with the same full media gates as the native runner.
 const capacityDiagnostics = nativeCapacityDiagnostics({
@@ -1084,7 +1084,7 @@ try {
     ? qualifyMeasuredCapacityUplink(uplinkSnapshot, {
         profile: uplinkProfile,
         coveragePolicy: 'scheduled-hold-v1',
-        ...(rateLedgerSelected ? { stimulusPolicy: 'rate-ledger-v1', rateLedger } : {}),
+        ...(rateLedgerSelected ? { stimulusPolicy: capacityEvidencePolicy, rateLedger } : {}),
       })
     : uplinkProfile
       ? (uplinkProfile === 'loss0p2-delay30'

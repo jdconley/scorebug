@@ -9,7 +9,7 @@ export function createUplinkEvidenceStopper({
   capacityEvidencePolicy = 'congestion-v1',
 }) {
   assert(
-    ['congestion-v1', 'rate-ledger-v1'].includes(capacityEvidencePolicy),
+    ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(capacityEvidencePolicy),
     'Unsupported capacity evidence policy',
   );
   let stopped;
@@ -30,7 +30,7 @@ export function createUplinkEvidenceStopper({
       } catch (error) {
         errors.push(error);
       }
-      if (capacityEvidencePolicy === 'rate-ledger-v1') {
+      if (capacityEvidencePolicy !== 'congestion-v1') {
         try {
           const evidence = JSON.stringify(uplink.rateLedgerSnapshot());
           assert(Buffer.byteLength(evidence) <= 32 * 1024 * 1024, 'Rate ledger exceeds 32 MiB');

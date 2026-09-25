@@ -37,7 +37,9 @@ test('rate-ledger evidence needs explicit complete capacity selection and defaul
   assert.equal(evidence({}), 'congestion-v1');
   assert.equal(evidence({}, false), 'congestion-v1');
   assert.equal(evidence({ SCOREBUG_TEST_CAPACITY_EVIDENCE: 'rate-ledger-v1' }), 'rate-ledger-v1');
+  assert.equal(evidence({ SCOREBUG_TEST_CAPACITY_EVIDENCE: 'token-budget-v1' }), 'token-budget-v1');
   assert.throws(() => evidence({ SCOREBUG_TEST_CAPACITY_EVIDENCE: 'rate-ledger-v1' }, false));
+  assert.throws(() => evidence({ SCOREBUG_TEST_CAPACITY_EVIDENCE: 'token-budget-v1' }, false));
   for (const value of [null, false, '', '1', 'congestion-v1', 'rate-ledger', ' rate-ledger-v1'])
     assert.throws(() => evidence({ SCOREBUG_TEST_CAPACITY_EVIDENCE: value }));
 });

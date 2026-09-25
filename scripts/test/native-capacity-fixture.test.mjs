@@ -116,7 +116,7 @@ test('complete750k diagnostic worker route reaches resource setup', async (t) =>
   assert.equal(calls[0][2], 'publication-relay-image');
 });
 
-for (const policy of ['congestion-v1', 'rate-ledger-v1'])
+for (const policy of ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'])
   test(`capacity evidence ${policy} reaches resource setup on its complete route`, async (t) => {
     recorderEnvironment(t);
     const artifact = await mkdtemp(join(tmpdir(), 'capacity-policy-fixture-'));

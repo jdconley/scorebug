@@ -7,7 +7,10 @@ export function nativeCapacityEvidencePolicy({ environment, capacityRecovery }) 
   assert.equal(typeof capacityRecovery, 'boolean');
   const selected = environment.SCOREBUG_TEST_CAPACITY_EVIDENCE;
   if (selected === undefined) return 'congestion-v1';
-  assert.equal(selected, 'rate-ledger-v1', 'Unknown capacity evidence policy');
+  assert(
+    ['rate-ledger-v1', 'token-budget-v1'].includes(selected),
+    'Unknown capacity evidence policy',
+  );
   assert.equal(capacityRecovery, true, 'Rate-ledger evidence requires complete capacity recovery');
   return selected;
 }

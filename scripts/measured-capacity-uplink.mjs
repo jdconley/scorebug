@@ -201,12 +201,12 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
     rateLedger,
   } = options;
   assert(
-    ['congestion-v1', 'rate-ledger-v1'].includes(stimulusPolicy),
+    ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(stimulusPolicy),
     'Unknown capacity stimulus policy',
   );
   assert(
-    stimulusPolicy === 'rate-ledger-v1' || !Object.hasOwn(options, 'rateLedger'),
-    'Rate ledger requires explicit rate-ledger-v1 stimulus policy',
+    stimulusPolicy !== 'congestion-v1' || !Object.hasOwn(options, 'rateLedger'),
+    'Rate ledger requires explicit rate-ledger-v1 or token-budget-v1 stimulus policy',
   );
   assert(
     ['through-close-v1', 'scheduled-hold-v1'].includes(coveragePolicy),
@@ -311,7 +311,10 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
       maximumOfferedBitsPerSecond,
       bins(snapshot.forward.queue, at, at + 1000).reduce((n, w) => n + w.received.wireBytes * 8, 0),
     );
-  assert(maximumOfferedBitsPerSecond > rate, 'Insufficient offered load');
+  // Token replay includes carry-in FIFO work and sub-second pressure, which a
+  // fixed whole-second count of newly received packets cannot establish.
+  if (stimulusPolicy !== 'token-budget-v1')
+    assert(maximumOfferedBitsPerSecond > rate, 'Insufficient offered load');
   const limitedOverflowPackets =
     restored.forward.queue.overflowDrop.packets - limited.forward.queue.overflowDrop.packets;
   const maximumLimitedResidenceMilliseconds = Math.max(
@@ -319,7 +322,7 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
     ...limitedBins.map((w) => w.maximumForwardResidenceMilliseconds),
   );
   let rateLedgerProof;
-  if (stimulusPolicy === 'rate-ledger-v1') {
+  if (stimulusPolicy !== 'congestion-v1') {
     // The selected profile authorizes the exact finite configuration. Raw ledger
     // headers cannot authorize a different queue, burst, rate or loss policy.
     const { recordTimeline, ...configuration } =
@@ -354,7 +357,8 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
   return {
     profile,
     coveragePolicy,
-    ...(stimulusPolicy === 'rate-ledger-v1' ? { stimulusPolicy, rateLedgerProof } : {}),
+    ...(stimulusPolicy !== 'congestion-v1' ? { stimulusPolicy, rateLedgerProof } : {}),
+    ...(stimulusPolicy === 'token-budget-v1' ? { offeredLoadRequired: false } : {}),
     trafficCoverageWindows,
     limitedDurationMilliseconds,
     limitedForwardWireBytes,

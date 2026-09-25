@@ -213,3 +213,52 @@ suite passes 4,642 tests, joined exit 0 in
 `artifacts/qa/repeated-live-checkpoint-rate-native-integration-tools-20260925-exit.json`.
 Specification and code-quality reviews found no actionable issues. Fresh native execution is still
 pending and must use new frozen evidence; no previous result is relabeled.
+
+## Fresh integration run and prospective token-budget contract
+
+The frozen `native-app-YnfAvU` run at `f256bab` failed its original
+`rate-ledger-v1` contract on `Insufficient offered load`. That verdict remains
+unchanged. The complete 66,107-operation ledger is 4,800,411 bytes, has no overflow
+or invalid history, and independently proves an actual ready-head token deficit
+18.253 ms after limiting begins. Initial FIFO occupancy is 30 packets / 35,920
+wire bytes. Before that denial, 16,368 bytes have been forwarded, only 70.234 bytes
+of refill were admitted into the capped bucket, and the head needs 1,360 tokens
+while only 86.234 remain. This is direct evidence of active shaping.
+
+The historical statistic uses only whole clock-aligned seconds fully inside the
+limited phase and reports 700,992 bps. Independent diagnostic calculations find
+873,984 bps in the first phase-relative second and an exact sliding one-second
+maximum of 882,208 bps. Those are explanations, not replacement thresholds.
+Packet budgets depend on burst timing and carry-in queues; an average above the
+configured rate is neither necessary nor sufficient for token denial. This follows
+the packetwise model in [RFC 3290 Appendix A.3–A.4](https://www.rfc-editor.org/rfc/rfc3290.html#appendix-A.4),
+which also discusses short-term video bursts that differ from long-term averages.
+
+Add a prospective, explicitly named `token-budget-v1` stimulus contract. It
+requires the same fully reconstructed, independently anchored actual ready-head
+deficit, with no new empirical severity/duration threshold. The fixed-second
+offered-load statistic stays diagnostic (`offeredLoadRequired: false`). Both
+`congestion-v1` and `rate-ledger-v1` preserve their existing offered-load criteria
+and outputs. All other transport, causal pressure/decrease, media and recovery
+gates remain required. One denial proves active limiting, not sustained overload,
+healthy delivery or successful adaptation by itself.
+
+Test a fully observed queue with carry-in traffic that causes actual denial while
+new arrivals during the finite phase stay below the average rate. Reject truly
+underloaded queues with no denial, prediction-only waits, forged witnesses, missing
+closure and all existing transport faults. Extend only explicit host/fixture/
+export/policy selection, review and rerun the complete suite, then freeze the new
+contract before a fresh native experiment. A replay of YnfAvU under this new
+contract must remain separately labeled; it cannot change the original result.
+
+The prospective selector is implemented and passes 4,692 tooling tests, joined
+exit 0 in `repeated-live-checkpoint-token-budget-tools-20260925-exit.json`.
+Specification and quality reviews found no actionable issues. A separately named
+offline replay, `diagnostic-native750-token-budget-replay.json`, passes transport
+and raw media/native/prefix/clock components but still rejects the full policy:
+the last delivery evaluation is 5.903 ms after the final cadence audit timestamp.
+Its window ends before that timestamp and its independently reconstructed sample
+age remains about 93.5 ms, inside the original 250 ms freshness limit. The native
+poll records cadence before evaluating delivery, so timestamp order alone is not
+an expired report. Investigate this terminal ownership/freshness gate before the
+next frozen native run; do not alter the underlying freshness budget.

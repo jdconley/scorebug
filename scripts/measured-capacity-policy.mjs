@@ -108,10 +108,10 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     capacityEvidencePolicy = 'congestion-v1',
   } = options;
   assert(
-    ['congestion-v1', 'rate-ledger-v1'].includes(capacityEvidencePolicy),
+    ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(capacityEvidencePolicy),
     'Unknown capacity evidence policy',
   );
-  const rateLedgerSelected = capacityEvidencePolicy === 'rate-ledger-v1';
+  const rateLedgerSelected = capacityEvidencePolicy !== 'congestion-v1';
   measuredCapacityProfile(profile);
   const input = { ...raw, quality: expandQualityEvidence(raw.quality) };
   const { quality, snapshot, cadenceReports, deliveryAudit } = input;
@@ -119,7 +119,7 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     profile,
     coveragePolicy: 'scheduled-hold-v1',
     ...(rateLedgerSelected
-      ? { stimulusPolicy: 'rate-ledger-v1', rateLedger: input.rateLedger }
+      ? { stimulusPolicy: capacityEvidencePolicy, rateLedger: input.rateLedger }
       : {}),
   });
   const exchanges = input.capacityClockExchanges;

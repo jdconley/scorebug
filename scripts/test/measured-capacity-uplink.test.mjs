@@ -32,6 +32,7 @@ function simulation({
   appliedOffsets = [0, 0, 0],
   recordRateLedger = false,
   forwardBursts = [],
+  forwardInjections = [],
 } = {}) {
   const forward = new DatagramImpairmentQueue({ ...configuration, recordRateLedger }),
     reverse = new DatagramImpairmentQueue(configuration);
@@ -64,6 +65,9 @@ function simulation({
       const interval = name === 'forward' && within(forwardBursts) ? 10 : every;
       if (elapsed <= trafficUntil && elapsed % interval === 0 && !within(trafficGaps[name]))
         q.enqueue(Buffer.alloc(bytes), now);
+      if (name === 'forward')
+        for (const [at, count] of forwardInjections)
+          if (elapsed === at) for (let i = 0; i < count; i++) q.enqueue(Buffer.alloc(bytes), now);
       if (!within(sendPauses[name])) while (q.takeReady(now) !== null) {}
     }
   }
@@ -581,4 +585,163 @@ test('ledger stimulus composes with scheduled coverage during silent cleanup', (
     true,
   );
   assert.throws(() => qualifyLedger(f), /coverage/);
+});
+
+const carryInLedgerOptions = { forwardBursts: [], forwardInjections: [[89990, 30]] };
+const carryInLedger = ledgerSimulation(carryInLedgerOptions);
+function qualifyTokenBudget(f = carryInLedger, options = {}) {
+  return qualifyLedger(f, { stimulusPolicy: 'token-budget-v1', ...options });
+}
+test('token budget proves a real carry-in denial despite all limited-phase new input below rate', () => {
+  const before = structuredClone(carryInLedger);
+  const [, limited, restored] = carryInLedger.snapshot.forwardRateSchedule.phases;
+  assert(carryInLedger.rateLedger.header.initialFIFO.length >= 30);
+  assert(carryInLedger.rateLedger.denial.at >= limited.appliedAt);
+  for (const bin of restored.forward.queue.timeline.windows)
+    if (bin.start >= limited.appliedAt && bin.end <= restored.appliedAt)
+      assert((bin.received.wireBytes * 8000) / (bin.end - bin.start) < 750000);
+  const result = qualifyTokenBudget();
+  assert.equal(result.stimulusPolicy, 'token-budget-v1');
+  assert.equal(result.offeredLoadRequired, false);
+  assert.equal(result.maximumOfferedBitsPerSecond, 537600);
+  assert.equal(result.limitedOverflowPackets, 0);
+  assert(result.maximumLimitedResidenceMilliseconds < 500);
+  const { recordTimeline, ...finiteConfiguration } = configuration;
+  assert.deepEqual(
+    result.rateLedgerProof,
+    qualifyRateLedger(
+      {
+        ledger: carryInLedger.rateLedger,
+        limited: { appliedAt: limited.appliedAt, queue: limited.forward.queue },
+        restored: { appliedAt: restored.appliedAt, queue: restored.forward.queue },
+      },
+      { configuration: { ...finiteConfiguration, rateBitsPerSecond: 750000 } },
+    ),
+  );
+  assert.equal(result.nativeAdaptationQualified, false);
+  assert.equal(result.networkLossRecoveryQualified, false);
+  assert.deepEqual(carryInLedger, before);
+});
+test('carry-in proof does not relax either earlier policy or attach new fields to its result', () => {
+  assert.throws(() => qualifyLedger(carryInLedger), /offered load/);
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityUplink(carryInLedger.snapshot, {
+        profile: 'capacity750k',
+      }),
+    /offered load/,
+  );
+  for (const result of [qualify(), qualifyLedger()])
+    assert(!Object.hasOwn(result, 'offeredLoadRequired'));
+  assert.equal(qualifyTokenBudget(boundLedger).rateLedgerProof.rateBoundQualified, true);
+});
+test('raw token policy cannot bypass historical offered-load requirement', () => {
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityUplink(
+        {
+          ...carryInLedger.snapshot,
+          stimulusPolicy: 'token-budget-v1',
+          offeredLoadRequired: false,
+          rateLedger: carryInLedger.rateLedger,
+        },
+        { profile: 'capacity750k' },
+      ),
+    /offered load/,
+  );
+});
+test('token budget rejects an underload with no actual ready-head denial', () => {
+  const f = ledgerSimulation({ forwardBursts: [] });
+  assert.equal(f.rateLedger.denial, null);
+  assert.throws(() => qualifyTokenBudget(f), /denial/i);
+});
+for (const rateLedger of [undefined, null, {}])
+  test(`token budget requires complete ledger ${JSON.stringify(rateLedger)}`, () => {
+    assert.throws(() => qualifyTokenBudget(carryInLedger, { rateLedger }), /ledger/i);
+  });
+for (const [name, mutate] of Object.entries({
+  limitOrdinal: (f) =>
+    f.snapshot.forwardRateSchedule.phases[1].forward.queue.rateLedgerOperationOrdinal++,
+  restoredOrdinal: (f) =>
+    f.snapshot.forwardRateSchedule.phases[2].forward.queue.rateLedgerOperationOrdinal++,
+  independentDenial: (f) =>
+    f.snapshot.forwardRateSchedule.phases[2].forward.queue.rateLedgerFirstDenial.ordinal++,
+  forgedDenial: (f) => f.rateLedger.denial.tokens++,
+  limitTime: (f) => f.rateLedger.header.limit.at++,
+  restorationTime: (f) => f.rateLedger.footer.restoration.at++,
+  configuration: (f) => f.rateLedger.header.configuration.burstBytes++,
+  omittedOperation: (f) => f.rateLedger.operations.splice(10, 1),
+  incomplete: (f) => (f.rateLedger.footer.closed = false),
+  overflow: (f) => (f.rateLedger.overflow = true),
+}))
+  test(`token budget rejects ${name}`, () => {
+    const f = structuredClone(carryInLedger);
+    mutate(f);
+    assert.throws(() => qualifyTokenBudget(f));
+  });
+for (const [name, mutate] of Object.entries(mutations))
+  test(`token budget retains ${name} transport gate`, () => {
+    const f = structuredClone(carryInLedger);
+    mutate(f.snapshot);
+    assert.throws(() => qualifyTokenBudget(f));
+  });
+test('token budget retains traffic coverage and baseline/restored delay limits', () => {
+  for (const name of ['forward', 'reverse']) {
+    assert.throws(
+      () =>
+        qualifyTokenBudget(
+          ledgerSimulation({
+            ...carryInLedgerOptions,
+            trafficGaps: { [name]: [[180000, 195000]] },
+          }),
+        ),
+      /coverage/,
+    );
+    assert.throws(
+      () =>
+        qualifyTokenBudget(
+          ledgerSimulation({
+            ...carryInLedgerOptions,
+            sendPauses: { [name]: [[200000, 200600]] },
+          }),
+        ),
+      /queue remains delayed/,
+    );
+  }
+});
+test('token budget retains the finite rate ceiling despite its offered-load diagnostic', () => {
+  const f = ledgerSimulation({ ...carryInLedgerOptions, rate: 1100000 });
+  f.snapshot.forwardRateSchedule.phases[1].forward.queue.configuration.rateBitsPerSecond = 750000;
+  assert.throws(() => qualifyTokenBudget(f), /ceiling|budget/i);
+});
+test('token budget applies the selected 550k profile to carry-in work', () => {
+  const f = ledgerSimulation({
+    rate: 550000,
+    schedule: requested,
+    duration: 180000,
+    forwardBursts: [],
+    forwardInjections: [[59990, 20]],
+  });
+  const result = qualifyTokenBudget(f, { profile: 'capacity550k' });
+  assert.equal(result.rateLedgerProof.rateBoundQualified, true);
+  assert(result.maximumOfferedBitsPerSecond < 550000);
+  assert.equal(result.offeredLoadRequired, false);
+});
+test('token budget composes with scheduled coverage and still rejects silent early termination', () => {
+  const f = ledgerSimulation({ ...carryInLedgerOptions, duration: 250000, trafficUntil: 210000 });
+  assert.equal(
+    qualifyTokenBudget(f, { coveragePolicy: 'scheduled-hold-v1' }).rateLedgerProof
+      .rateBoundQualified,
+    true,
+  );
+  assert.throws(() => qualifyTokenBudget(f), /coverage/);
+});
+test('caller cannot replace the token policy with an offered-load override', () => {
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityUplink(original, {
+        offeredLoadRequired: false,
+      }),
+    /Unknown capacity qualifier option/,
+  );
 });

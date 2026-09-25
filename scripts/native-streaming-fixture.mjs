@@ -66,11 +66,11 @@ export async function nativeStreamingFixture({
 }) {
   assert.equal(typeof capacityRecovery, 'boolean');
   assert(
-    ['congestion-v1', 'rate-ledger-v1'].includes(capacityEvidencePolicy),
+    ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(capacityEvidencePolicy),
     'Unsupported capacity evidence policy',
   );
   assert(
-    capacityEvidencePolicy !== 'rate-ledger-v1' || capacityRecovery,
+    capacityEvidencePolicy === 'congestion-v1' || capacityRecovery,
     'Rate ledger evidence requires capacity recovery',
   );
   assert.equal(typeof capacityDiagnostics, 'boolean');
@@ -351,7 +351,7 @@ export async function nativeStreamingFixture({
             }
           : {}),
       };
-      if (capacityEvidencePolicy === 'rate-ledger-v1')
+      if (capacityEvidencePolicy !== 'congestion-v1')
         uplinkConfiguration.forward = { ...uplinkConfiguration.forward, recordRateLedger: true };
       uplink = await createUDPImpairmentProxy(uplinkConfiguration);
     }
