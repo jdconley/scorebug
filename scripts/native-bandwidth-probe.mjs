@@ -1,6 +1,6 @@
 import {
   assertRecoveryProbeObservation,
-  assertRecoveryProbeHistory,
+  assertRecoveryProbeAcceptanceHistory,
 } from './recovery-probe-observation.mjs';
 import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -112,7 +112,6 @@ export function qualifyNativeBandwidthProbe(
       'Recovery proof requires staged candidate headroom',
     );
     assert.equal(proof.policy, policy);
-    assert.equal(measuredRetirement, undefined, 'Recovery retirement replay is not yet supported');
   } else assert.ok(!Object.hasOwn(proof, 'policy'), 'Legacy proof contains recovery policy');
   assert.equal(typeof candidateHeadroom, 'boolean');
   assert.ok(!candidateHeadroom || mode === 'staged');
@@ -275,12 +274,12 @@ function qualifyStagedNativeBandwidthProbe(
     'event count outside bounds',
   );
 
-  assertRecoveryProbeHistory(proof.events, { policy });
+  assertRecoveryProbeAcceptanceHistory(proof.events, { policy });
 
   const retirement =
     measuredRetirement === undefined
       ? null
-      : qualifyMeasuredProbeRetirement(proof, measuredRetirement);
+      : qualifyMeasuredProbeRetirement(proof, measuredRetirement, { policy });
   const stages = [];
   let cursor = 0,
     priorTime = -1,
@@ -366,32 +365,6 @@ function qualifyStagedNativeBandwidthProbe(
             (value.lastAcceptedAt - value.startedAt) * bitRate + 1,
           'acceptance exceeds paced accounting budget',
         );
-      }
-      if (policy === 'recovery-budget-v1') {
-        const raw = value.recoveryObservation;
-        if (accepted === 0n)
-          check(raw.checkedAt === value.startedAt, 'empty stage must retain its admission check');
-        else {
-          check(raw.checkedAt <= value.lastAcceptedAt, 'successful preflight follows acceptance');
-          check(
-            Number(accepted / 1316n) * 1360 * 8 <= (raw.checkedAt - value.startedAt) * bitRate + 1,
-            'preflight has insufficient pacing credit for acceptance',
-          );
-        }
-        if (prior) {
-          if (accepted === priorBytes)
-            assert.deepEqual(
-              raw,
-              prior.recoveryObservation,
-              'Staged probe: successful check changed without acceptance',
-            );
-          else
-            check(
-              raw.checkedAt > prior.recoveryObservation.checkedAt &&
-                raw.checkedAt >= (prior.lastAcceptedAt ?? prior.startedAt),
-              'new acceptance requires a later preflight after prior completion',
-            );
-        }
       }
       check(
         value.reason === (retired ? 'cancelled' : null),

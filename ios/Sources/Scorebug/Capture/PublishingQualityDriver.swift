@@ -313,11 +313,15 @@ import ScorebugMedia
         shutdown = finish
         await finish.value
     }
-    /// Live checkpoints and the final export share the exact original v4 object.
+    /// Live checkpoints and final export share the original policy-versioned object.
     private var qualityObject: [String: Any] {
-        ["formatVersion": 4, "overflow": overflow, "deadlineFailuresEnabled": enableDeliveryFailures,
-         "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation,
-         "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events]
+        let recovery = transportLimits?.policy == .recoveryBudget
+        var object: [String: Any] = ["formatVersion": recovery ? 5 : 4, "overflow": overflow,
+            "deadlineFailuresEnabled": enableDeliveryFailures,
+            "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation,
+            "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events]
+        if recovery { object["transportPolicy"] = "recovery-budget-v1" }
+        return object
     }
     /// Retain only one in-flight write and the newest complete original prefix.
     /// In particular, disk I/O must never delay the short reset/candidate lease.

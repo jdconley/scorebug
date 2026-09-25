@@ -1,3 +1,4 @@
+import { assertRecoveryProbeAcceptanceHistory } from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 import { qualifyRepeatedNativeBandwidthProbe } from './repeated-native-bandwidth-probe.mjs';
 import { qualifyNativeProbeReadInterval } from './native-probe-read-interval.mjs';
@@ -33,6 +34,8 @@ function sameReceipt(a, b) {
     assert.deepEqual(a[key], b[key]);
 }
 function sameProbe(a, b) {
+  assert.equal(a.policy, b.policy, 'Witness probe policy mismatch');
+  assert.deepEqual(a.recoveryObservation, b.recoveryObservation, 'Witness raw preflight mismatch');
   sameUUID(a.id, b.id);
   for (const key of [
     'publishingGeneration',
@@ -54,11 +57,27 @@ function sameProbe(a, b) {
  * the admission-time witness/load relation, not media health, application or upgrade.
  */
 export function qualifyMeasuredCandidateWitness(args) {
-  assert.equal(args.nativeProof.formatVersion, 2, 'Legacy witness requires v2 native proof');
+  const { policy = 'local-zero-loss-v1' } = args;
+  assert.ok(
+    ['local-zero-loss-v1', 'recovery-budget-v1'].includes(policy),
+    'Unknown witness probe policy',
+  );
+  assert.equal(
+    args.nativeProof.formatVersion,
+    policy === 'recovery-budget-v1' ? 4 : 2,
+    'Witness native policy format mismatch',
+  );
+  if (policy === 'recovery-budget-v1') assert.equal(args.nativeProof.policy, policy);
+  else
+    assert.ok(
+      !Object.hasOwn(args.nativeProof, 'policy'),
+      'Historical witness contains recovery policy',
+    );
   for (const probe of [
     args.witness.binding,
     args.witness.probe,
     args.candidateProof.probeBinding.initial,
+    args.candidateProof.probeBinding.final,
   ])
     assert.ok(!Object.hasOwn(probe, 'campaign'), 'Legacy witness cannot carry campaign authority');
   return replayCandidateWitness(args);
@@ -68,6 +87,10 @@ export function qualifyMeasuredCandidateWitness(args) {
  * complete admission gate supplies independently qualified media and coverage.
  * No revision, event index or native envelope is rewritten for legacy replay. */
 export function qualifyRepeatedCandidateWitness(args) {
+  assert.ok(
+    args.policy === undefined || args.policy === 'local-zero-loss-v1',
+    'Repeated witness requires historical probe policy',
+  );
   const { nativeProof, candidate, campaign, quality, witness, intervalQualification } = args;
   const candidateEnvelopeVersion = args.candidateEnvelopeVersion ?? 4;
   assert.ok([4, 5].includes(candidateEnvelopeVersion));
@@ -144,11 +167,17 @@ function replayCandidateWitness(
     intervals,
     intervalQualification,
     nativeProof,
+    policy = 'local-zero-loss-v1',
   },
   repeated,
 ) {
-  assert.equal(w.formatVersion, 1);
-  assert.equal(w.convention, 'measured-candidate-ipv4-v1');
+  assert.equal(w.formatVersion, policy === 'recovery-budget-v1' ? 2 : 1);
+  assert.equal(
+    w.convention,
+    policy === 'recovery-budget-v1'
+      ? 'measured-candidate-ipv4-recovery-v1'
+      : 'measured-candidate-ipv4-v1',
+  );
   const m = w.measurement,
     raw = candidateProof.measurement,
     a = w.applied;
@@ -249,6 +278,22 @@ function replayCandidateWitness(
   assert.equal(w.completedAt, binding.completedAt);
   sameProbe(w.binding, binding.initial);
   assert.equal(binding.initial.observedAt, w.boundAt);
+  const final = binding.final;
+  sameUUID(final.id, w.binding.id);
+  for (const key of ['publishingGeneration', 'campaign', 'stage', 'bitRate', 'startedAt', 'policy'])
+    assert.equal(final[key], w.binding[key], `Final candidate probe ${key} mismatch`);
+  assert.ok(
+    time(final.observedAt) &&
+      m.endedAt <= final.observedAt &&
+      final.observedAt <= binding.completedAt,
+    'Final candidate observation outside completion bracket',
+  );
+  assert.ok(
+    counter(final.acceptedPayloadBytes) >= counter(w.binding.acceptedPayloadBytes) &&
+      final.leaseDeadline >= w.binding.leaseDeadline &&
+      final.lastAcceptedAt >= w.binding.lastAcceptedAt,
+    'Final candidate probe regressed',
+  );
   const probe = w.probe;
   sameUUID(probe.id, w.binding.id);
   for (const key of ['publishingGeneration', 'stage', 'bitRate', 'startedAt'])
@@ -259,6 +304,16 @@ function replayCandidateWitness(
   assert.ok(probe.startedAt + 0.5 <= w.boundAt && w.boundAt <= m.startedAt);
   const nativeEvents = repeated?.events ?? nativeProof.events;
   assert.ok(Array.isArray(nativeEvents) && nativeEvents.length > 0 && nativeEvents.length <= 2000);
+  assertRecoveryProbeAcceptanceHistory(
+    [
+      ...nativeEvents,
+      { sample: w.binding, observedAt: w.boundAt },
+      { sample: probe, observedAt: now },
+      { sample: binding.initial, observedAt: binding.initial.observedAt },
+      { sample: binding.final, observedAt: binding.final.observedAt },
+    ],
+    { policy },
+  );
   const events = nativeEvents.filter((e) => e.sample.stage === 3);
   assert.ok(events.length > 0);
   if (repeated?.candidateEnvelopeVersion === 5) {
@@ -266,6 +321,12 @@ function replayCandidateWitness(
       readStartedAt: binding.initial.readStartedAt,
       readFinishedAt: binding.initial.readFinishedAt,
       usedAt: w.boundAt,
+      events,
+    });
+    qualifyNativeProbeReadInterval(final, {
+      readStartedAt: final.readStartedAt,
+      readFinishedAt: final.readFinishedAt,
+      usedAt: final.observedAt,
       events,
     });
   }
@@ -280,6 +341,7 @@ function replayCandidateWitness(
   }
   for (const [p, at] of [
     [w.binding, w.boundAt],
+    [final, final.observedAt],
     [probe, now],
   ]) {
     for (const key of ['startedAt', 'leaseDeadline', 'lastAcceptedAt']) assert.ok(time(p[key]));
@@ -526,6 +588,7 @@ function replayCandidateWitness(
   close(w.deliveredPaddingBitsPerSecond, padding, 0.001);
   return {
     convention: w.convention,
+    ...(policy === 'recovery-budget-v1' ? { policy } : {}),
     witnessQualified: true,
     headroomQualified: padding >= cost * 1.25,
     candidateTransportBitsPerSecond: cost,

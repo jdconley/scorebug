@@ -24,14 +24,16 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The native test fixture and host replay now have a distinct recovery-policy proof
-format. It verifies both raw SRT budgets and their relationship to accepted traffic;
-older proof formats reject mixed policy metadata. Review exposed and tests reproduced
-a missing byte-growth/preflight join, which is now fixed. App-model tests pass532
-and tooling passes3782.
-Automatic profile-change retirement and the remaining host joins are still pending,
-so the recovery route is not yet enabled. See the
-[latest integration checkpoint](2026-09-24-recovery-policy-app-integration.md).
+Recovery-policy evidence is now joined across profile-change retirement, receiver
+revalidation, candidate headroom and frozen admission witnesses. Final candidate
+snapshots are pinned to the same probe identity and checked against native counters
+and completion timing. Quality exports identify the actual recovery pressure policy
+with a distinct version; historical formats reject mixed metadata. The complete
+trial/lifecycle orchestration and explicit debug route selection remain pending,
+so the app still selects the historical policy. The
+[latest integration checkpoint](2026-09-24-recovery-policy-app-integration.md)
+records the observed failures, fixes and remaining work. Full app-model533 and
+tooling3840 tests pass for this checkpoint.
 
 Recovery-policy evidence now reaches app ownership, candidate pinning/admission and
 exported diagnostics. Changing policy revokes old receiver authority. Frozen recovery
@@ -39,7 +41,7 @@ admissions have a distinct format, and a new independent raw-SRT replay helper c
 successful preflight evidence without refreshing its original timestamps. Native321,
 Streaming179, app-model530 and tooling3758 tests pass. The
 [app integration plan](2026-09-24-recovery-policy-app-integration.md) tracks the
-remaining native fixture/host schema joins and explicit route selection. Those are
+remaining complete-trial host joins and explicit route selection. Those are
 still required before another impaired-match run; production remains at minimum.
 
 The native probe and publisher adapters now support an **explicit recovery-budget

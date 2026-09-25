@@ -209,3 +209,37 @@ test('latest eligible contiguous pair controls the result even if an earlier pai
   assert.deepEqual(result.selectedIntervalIndexes, [1, 2]);
   assert.equal(result.sufficient, false);
 });
+
+test('recovery headroom join requires matching policy and independently consistent raw evidence', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = fixture();
+  f.nativeProof.formatVersion = 4;
+  f.nativeProof.policy = 'recovery-budget-v1';
+  f.accepted.policy = 'recovery-budget-v1';
+  addSyntheticRecoveryProbeEvidence(f.candidateProof);
+  addSyntheticRecoveryProbeEvidence(f.nativeProof);
+  const input = { ...f, policy: 'recovery-budget-v1' },
+    before = structuredClone(input);
+  assert.equal(qualifyCandidateProbeHeadroom(input).sufficient, true);
+  assert.deepEqual(input, before);
+  assert.throws(() => qualifyCandidateProbeHeadroom(f));
+  for (const change of [
+    (x) => (x.accepted.policy = 'local-zero-loss-v1'),
+    (x) => (x.nativeProof.policy = 'local-zero-loss-v1'),
+    (x) => (x.nativeProof.formatVersion = 2),
+    (x) => (x.candidateProof.probeBinding.initial.policy = 'local-zero-loss-v1'),
+    (x) => (x.candidateProof.probeBinding.final.recoveryObservation.rttMilliseconds += 1),
+    (x) => (x.policy = 'future-v1'),
+  ]) {
+    const changed = structuredClone(input);
+    change(changed);
+    assert.throws(() => qualifyCandidateProbeHeadroom(changed));
+  }
+});
+for (const position of ['initial', 'final'])
+  test(`historical headroom rejects recovery metadata on ${position}`, () => {
+    const f = fixture();
+    f.candidateProof.probeBinding[position].policy = 'recovery-budget-v1';
+    assert.throws(() => qualifyCandidateProbeHeadroom(f));
+  });

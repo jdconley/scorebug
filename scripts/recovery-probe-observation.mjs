@@ -143,3 +143,76 @@ export function assertRecoveryProbeHistory(entries, { policy = 'local-zero-loss-
     }
   }
 }
+
+/** Join successful active/cancelled snapshots to actual accepted traffic, including
+ * overlapping asynchronous reads. Other terminal reasons require a separate gate. */
+export function assertRecoveryProbeAcceptanceHistory(
+  entries,
+  { policy = 'local-zero-loss-v1' } = {},
+) {
+  assertRecoveryProbeHistory(entries, { policy });
+  if (policy === 'local-zero-loss-v1') return;
+  const owners = new Map();
+  for (const { sample, observedAt } of entries) {
+    const accepted = counter(sample.acceptedPayloadBytes, 16777216n);
+    check(accepted % 1316n === 0n, 'unaligned acceptance');
+    check(
+      sample.reason === null || sample.reason === 'cancelled',
+      'unsupported acceptance terminal reason',
+    );
+    check(
+      Number.isSafeInteger(sample.bitRate) && sample.bitRate > 0 && sample.bitRate <= 12000000,
+      'invalid offered rate',
+    );
+    const raw = sample.recoveryObservation;
+    if (accepted === 0n)
+      check(
+        sample.lastAcceptedAt === null && raw.checkedAt === sample.startedAt,
+        'empty stage must retain admission check',
+      );
+    else {
+      check(
+        time(sample.lastAcceptedAt) &&
+          raw.checkedAt <= sample.lastAcceptedAt &&
+          sample.lastAcceptedAt <= observedAt,
+        'preflight or acceptance clock out of order',
+      );
+      check(
+        Number(accepted / 1316n) * 10880 <= (raw.checkedAt - sample.startedAt) * sample.bitRate + 1,
+        'preflight has insufficient total pacing credit',
+      );
+    }
+    const key = sample.id.toLowerCase(),
+      group = owners.get(key) ?? [];
+    group.push({ sample, accepted });
+    owners.set(key, group);
+  }
+  for (const group of owners.values()) {
+    group.sort((a, b) => Number(a.accepted - b.accepted));
+    let prior;
+    for (const current of group) {
+      const sample = current.sample,
+        raw = sample.recoveryObservation;
+      if (prior) {
+        check(sample.bitRate === prior.sample.bitRate, 'offered rate changed within owner');
+        if (current.accepted === prior.accepted) {
+          check(
+            sample.lastAcceptedAt === prior.sample.lastAcceptedAt,
+            'unchanged acceptance time changed',
+          );
+          assert.deepEqual(
+            raw,
+            prior.sample.recoveryObservation,
+            'Recovery probe observation: check changed without acceptance',
+          );
+        } else
+          check(
+            raw.checkedAt > prior.sample.recoveryObservation.checkedAt &&
+              raw.checkedAt >= (prior.sample.lastAcceptedAt ?? prior.sample.startedAt),
+            'new acceptance requires later preflight after prior completion',
+          );
+      }
+      prior = current;
+    }
+  }
+}

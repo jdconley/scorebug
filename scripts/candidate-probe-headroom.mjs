@@ -1,3 +1,4 @@
+import { assertRecoveryProbeAcceptanceHistory } from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 
 const time = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
@@ -25,9 +26,32 @@ export function qualifyCandidateProbeHeadroom({
   nativeProof,
   intervals,
   intervalQualification,
+  policy = 'local-zero-loss-v1',
 }) {
   const m = candidateProof.measurement,
     binding = candidateProof.probeBinding;
+  assert.ok(
+    ['local-zero-loss-v1', 'recovery-budget-v1'].includes(policy),
+    'Unknown headroom probe policy',
+  );
+  if (policy === 'recovery-budget-v1') {
+    assert.equal(nativeProof.formatVersion, 4);
+    assert.equal(nativeProof.policy, policy);
+    assert.equal(accepted.policy, policy);
+  } else {
+    assert.ok(
+      !Object.hasOwn(nativeProof, 'policy') && !Object.hasOwn(accepted, 'policy'),
+      'Historical headroom contains recovery policy',
+    );
+  }
+  assertRecoveryProbeAcceptanceHistory(
+    [
+      ...nativeProof.events,
+      { sample: binding?.initial, observedAt: binding?.initial?.observedAt },
+      { sample: binding?.final, observedAt: binding?.final?.observedAt },
+    ],
+    { policy },
+  );
   for (const scope of [candidate.scope, m.scope, nativeProof.scope, intervals.scope])
     assert.deepEqual(scope, candidateProof.scope);
   assert.equal(candidate.frames, 121);
@@ -218,6 +242,7 @@ export function qualifyCandidateProbeHeadroom({
     candidateAccountedBitsPerSecond,
     requiredPaddingPayloadBitsPerSecond,
     minimumDeliveredPayloadBitsPerSecond,
+    ...(policy === 'recovery-budget-v1' ? { policy } : {}),
     sufficient: minimumDeliveredPayloadBitsPerSecond >= requiredPaddingPayloadBitsPerSecond,
     mediaHealthQualified: false,
     upgradeAuthorized: false,

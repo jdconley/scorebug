@@ -64,7 +64,7 @@ by this laboratory selection.
   observations require absent recovery evidence. Compare policy at app owner,
   candidate pinning and binding/admission boundaries. Red/green tests must reject
   wrong policy, missing/malformed evidence and changed policy across suspension.
-- [ ] Export policy and raw observation through probe events, candidate bindings,
+- [x] Export policy and raw observation through probe events, candidate bindings,
   frozen admission witnesses and lifecycle diagnostics. Preserve legacy field
   omission and formats. Add a new explicit native proof/admission format for the
   recovery policy; add a shared JS raw-observation validator with canonical bounded
@@ -159,10 +159,67 @@ passes3782 tests; verification is recorded in `repeated-live-checkpoint-recovery
 Red/green app proof-format logs, repeated-policy rejection logs and all four
 acceptance-mutant failures are preserved under `artifacts/qa/recovery-*`.
 
-**Next:** implement the recovery-aware automatic profile-change retirement join,
-quality format and admission/candidate/lifecycle host joins. The recovery native
-qualifier currently explicitly rejects `measuredRetirement`; it must not be removed
-until that join has matching raw-policy coverage. App environment selection remains
+**Next at this checkpoint:** implement the recovery-aware automatic profile-change
+retirement join, quality format and admission/candidate/lifecycle host joins. At
+this checkpoint the recovery native qualifier explicitly rejected
+`measuredRetirement`; the following checkpoint supplies matching raw-policy coverage. App environment selection remains
 legacy, so no new real-match run or production adaptation pass is claimed. Existing
 repeated/outage formats and pressure policy remain unchanged. Then freeze the full
 source and prepared input and run the actual400ms/slice impaired-match experiment.
+
+## Retirement and candidate join checkpoint
+
+The recovery-aware native qualifier now accepts automatic profile-change retirement
+only with matching versioned context: quality5 / `transportPolicy=recovery-budget-v1`,
+native4 / recovery policy, and admission2 / recovery convention. The actual
+quality exporter selects that envelope from the same immutable transport limits
+used by pressure classification. Legacy settings still export the original v4
+object, and the app environment factory still selects the historical policy.
+
+Retirement joins exact raw observations across the frozen admission, candidate
+binding, pre-request owner and terminal read, then independently validates their
+combined native acceptance history. The receiver interval gate explicitly forwards
+the selected policy when recomputing native qualification. Candidate headroom and
+frozen witness replay require matching policy/native format and join all initial,
+final, admission and native probe observations. Legacy defaults reject the new
+metadata rather than silently interpreting it with historical rules. Later reset
+and repeated recovery-budget routes remain explicitly unsupported.
+
+The reusable acceptance-history helper preserves the raw check-time ordering and
+also compares accepted-byte progress per owner independently of async read return
+order. It does not make different native collections have equal gauges. One initial
+negative test incorrectly required that; a diagnostic identified the distinct
+collection, and the corrected test now rejects frozen initial evidence while a
+positive case preserves legitimate gauge changes at a distinct collection time.
+No verifier bound was relaxed.
+
+Review found that candidate final observations had not been pinned to the candidate
+owner: a changed final UUID could form an unrelated valid raw history. New legacy
+and recovery mutants reproduced the gap. Final identity, generation, campaign,
+stage, rate, start and policy now match the binding, its observation lies between
+measurement end and completion, and its active lease/counters are checked against
+native history. Repeated envelope5 also replays the final native read interval.
+Final and later-returned admission reads may overlap; their counters are not ordered
+merely by return time. Follow-up review found the gap closed and no new findings.
+The receiver-completion boundary test was updated with a valid final snapshot at
+its deliberately moved completion, preserving that test's original target.
+
+**Next:** thread explicit policy through the complete measured native evidence and
+successful-trial pressure replay, the remaining lifecycle gate, and the harness.
+Add complete DEBUG file/measured/staged/network route validation and select the
+native probe and pressure policy together. Keep repeated/outage routes historical.
+Then freeze and run the prepared real-match400ms/slice experiment. The pure replay
+unit fixtures attach synthetic raw metadata to recorded scalar chronologies;
+they are not a new real native/network qualification. Production remains at the
+minimum and no simulator runtime was installed.
+
+Verification for this checkpoint: full app-model533 and tooling3840 tests pass.
+The focused quality-driver suite passes30, and legacy/repeated plus recovery witness
+checks pass103 after the final-owner repair. The initial full tooling run passed3820
+before those20 new ownership mutants. Red logs retain the missing implementation,
+policy mixing, detached final-owner and quality-envelope failures; the completed
+full checks are joined under `repeated-live-checkpoint-recovery-retirement-quality-models-full`
+and `repeated-live-checkpoint-recovery-retirement-candidate-final-tools-full`.
+The native321/Streaming179 suites remain the preceding verified baseline; their
+runtime libraries were not changed in this checkpoint. Read-only review and its
+follow-up found no remaining actionable findings in this slice.

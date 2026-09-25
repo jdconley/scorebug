@@ -1,3 +1,4 @@
+import { addSyntheticRecoveryProbeEvidence } from './fixtures/recovery-policy-evidence.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -307,4 +308,94 @@ test('receiver revalidation preserves the explicit recovery context', async () =
       measuredRetirement: { ...options(f).measuredRetirement, recovery: true },
     }).intervalCount > 0,
   );
+});
+
+// Synthetic policy/raw evidence on the recorded scalar chronology. These unit
+// fixtures are not a newly qualified native run or a network capacity claim.
+function recoveryPolicyFixture() {
+  const f = fixture();
+  f.probe.formatVersion = 4;
+  f.probe.policy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = 'recovery-budget-v1';
+  addSyntheticRecoveryProbeEvidence(f);
+  return f;
+}
+const qualifyRecoveryPolicy = (f) =>
+  qualifyNativeBandwidthProbe(f.probe, {
+    ...options(f),
+    policy: 'recovery-budget-v1',
+  });
+test('explicit recovery policy joins actual retirement chronology and raw preflight evidence', () => {
+  const f = recoveryPolicyFixture(),
+    before = structuredClone(f);
+  const result = qualifyRecoveryPolicy(f);
+  assert.equal(result.policy, 'recovery-budget-v1');
+  assert.equal(result.stages[2].retirementKind, 'profile-request-terminal-read');
+  assert.equal(result.receiverCapacityQualified, false);
+  assert.deepEqual(f, before);
+  assert.throws(() => qualify(f));
+});
+for (const [name, mutate] of Object.entries({
+  oldQuality: (f) => (f.quality.formatVersion = 4),
+  missingPressurePolicy: (f) => delete f.quality.transportPolicy,
+  wrongPressurePolicy: (f) => (f.quality.transportPolicy = 'sender-delay-v1'),
+  oldWitness: (f) => (candidate(f).candidateAdmission.formatVersion = 1),
+  wrongWitnessConvention: (f) =>
+    (candidate(f).candidateAdmission.convention = 'measured-candidate-ipv4-v1'),
+  wrongCurrentPolicy: (f) => (request(f).currentProbe.policy = 'local-zero-loss-v1'),
+  missingBindingRaw: (f) => delete request(f).probeBinding.observation.recoveryObservation,
+  wrongTerminalRaw: (f) =>
+    (request(f).terminalProbeRead.observation.recoveryObservation.rttMilliseconds += 1),
+  wrongAdmissionRaw: (f) =>
+    (candidate(f).candidateAdmission.probe.recoveryObservation.rttMilliseconds += 1),
+  wrongAdmissionBindingRaw: (f) =>
+    (candidate(f).candidateAdmission.binding.recoveryObservation.rttMilliseconds += 1),
+  detachedCurrentChecks: (f) => {
+    const raw = request(f).currentProbe.recoveryObservation;
+    raw.checkedAt = request(f).currentProbe.startedAt;
+    raw.sampledAt = raw.checkedAt;
+    candidate(f).candidateAdmission.probe.recoveryObservation = structuredClone(raw);
+  },
+}))
+  test(`recovery retirement rejects ${name}`, () => {
+    const f = recoveryPolicyFixture();
+    mutate(f);
+    assert.throws(() => qualifyRecoveryPolicy(f));
+  });
+for (const path of ['current', 'binding', 'terminal', 'admission', 'admissionBinding'])
+  test(`historical retirement rejects recovery metadata on ${path}`, () => {
+    const f = fixture();
+    const sample = {
+      current: request(f).currentProbe,
+      binding: request(f).probeBinding.observation,
+      terminal: request(f).terminalProbeRead.observation,
+      admission: candidate(f).candidateAdmission.probe,
+      admissionBinding: candidate(f).candidateAdmission.binding,
+    }[path];
+    sample.policy = 'recovery-budget-v1';
+    assert.throws(() => qualify(f));
+  });
+test('receiver interval replay requires explicit matching recovery policy and retirement context', async () => {
+  const { qualifyNativeReceiverIntervals } = await import('../native-receiver-intervals.mjs');
+  const f = recoveryPolicyFixture(),
+    accepted = qualifyRecoveryPolicy(f);
+  const args = [
+    f.receiverIntervals,
+    f.receiverRecords,
+    f.probe.scope,
+    accepted,
+    f.workerRecords,
+    f.probe,
+  ];
+  const context = {
+    measuredRetirement: options(f).measuredRetirement,
+    policy: 'recovery-budget-v1',
+  };
+  const result = qualifyNativeReceiverIntervals(...args, context);
+  assert.ok(result.intervalCount > 0);
+  assert.throws(() =>
+    qualifyNativeReceiverIntervals(...args, { measuredRetirement: context.measuredRetirement }),
+  );
+  assert.throws(() => qualifyNativeReceiverIntervals(...args, { ...context, policy: 'future-v1' }));
 });

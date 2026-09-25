@@ -1,3 +1,7 @@
+import {
+  assertRecoveryProbeObservation,
+  assertRecoveryProbeAcceptanceHistory,
+} from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 
 const check = (condition, message) => assert.ok(condition, `Measured probe retirement: ${message}`);
@@ -22,7 +26,18 @@ const observationKeys = [
   'stage',
   'startedAt',
 ];
-function sameObservation(a, b) {
+function sameObservation(a, b, policy = 'local-zero-loss-v1') {
+  if (policy === 'local-zero-loss-v1') {
+    assertRecoveryProbeObservation(a);
+    assertRecoveryProbeObservation(b);
+  } else {
+    check(a?.policy === policy && b?.policy === policy, 'probe policy mismatch');
+    assert.deepEqual(
+      a.recoveryObservation,
+      b.recoveryObservation,
+      'Measured probe retirement: raw preflight mismatch',
+    );
+  }
   for (const key of observationKeys)
     check(
       key === 'id' ? sameID(a?.[key], b?.[key]) : a?.[key] === b?.[key],
@@ -37,7 +52,23 @@ function sameObservation(a, b) {
 export function qualifyMeasuredProbeRetirement(
   proof,
   { lifecycle, quality, recovery = false } = {},
+  { policy = 'local-zero-loss-v1' } = {},
 ) {
+  check(['local-zero-loss-v1', 'recovery-budget-v1'].includes(policy), 'unknown transport policy');
+  const recoveryPolicy = policy === 'recovery-budget-v1';
+  check(proof.formatVersion === (recoveryPolicy ? 4 : 2), 'wrong native policy format');
+  if (recoveryPolicy) {
+    check(
+      proof.policy === policy && quality?.transportPolicy === policy,
+      'native and pressure policy mismatch',
+    );
+    check(recovery === false, 'recovery-budget later reset requires separate qualification');
+  } else {
+    check(
+      !Object.hasOwn(proof, 'policy') && quality && !Object.hasOwn(quality, 'transportPolicy'),
+      'historical evidence contains new policy',
+    );
+  }
   check(typeof recovery === 'boolean', 'recovery context must be boolean');
   check(proof.result === 'operationFailed', 'requires raw operationFailed result');
   check(
@@ -58,7 +89,7 @@ export function qualifyMeasuredProbeRetirement(
     'requires exactly the expected profile requests',
   );
   check(
-    quality?.formatVersion === 4 &&
+    quality?.formatVersion === (recoveryPolicy ? 5 : 4) &&
       quality.overflow === false &&
       quality.measuredSourceEvaluationEnabled === true,
     'invalid measured quality context',
@@ -224,7 +255,7 @@ export function qualifyMeasuredProbeRetirement(
       terminal.completedAt <= final.observedAt,
     'terminal evidence does not bracket native final',
   );
-  sameObservation(terminal.observation, final.sample);
+  sameObservation(terminal.observation, final.sample, policy);
   check(terminal.observation.reason === 'cancelled', 'terminal probe was not profile-cancelled');
   for (const key of ['id', 'stage', 'bitRate', 'publishingGeneration', 'startedAt']) {
     for (const value of [current, binding.observation])
@@ -260,8 +291,23 @@ export function qualifyMeasuredProbeRetirement(
   );
   const admission = trial.candidateAdmission;
   check(admission, 'missing raw admission witness');
-  sameObservation(admission.probe, current);
-  sameObservation(admission.binding, binding.observation);
+  check(
+    admission.formatVersion === (recoveryPolicy ? 2 : 1) &&
+      admission.convention ===
+        (recoveryPolicy ? 'measured-candidate-ipv4-recovery-v1' : 'measured-candidate-ipv4-v1'),
+    'admission policy format mismatch',
+  );
+  sameObservation(admission.probe, current, policy);
+  sameObservation(admission.binding, binding.observation, policy);
+  assertRecoveryProbeAcceptanceHistory(
+    [
+      ...proof.events,
+      { sample: binding.observation, observedAt: binding.boundAt },
+      { sample: current, observedAt: candidate.evaluatedAt },
+      { sample: terminal.observation, observedAt: terminal.completedAt },
+    ],
+    { policy },
+  );
   check(
     admission.boundAt === binding.boundAt &&
       admission.completedAt === binding.candidateCompletedAt &&

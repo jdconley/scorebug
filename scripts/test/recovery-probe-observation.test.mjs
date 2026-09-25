@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   assertRecoveryProbeObservation,
   assertRecoveryProbeHistory,
+  assertRecoveryProbeAcceptanceHistory,
 } from '../recovery-probe-observation.mjs';
 
 const policy = 'recovery-budget-v1';
@@ -174,4 +175,58 @@ for (const field of [
     b.sample.recoveryObservation[field] += 1;
     validate(b); // Each check is valid in isolation; the cached collection is inconsistent.
     assert.throws(() => assertRecoveryProbeHistory([a, b], { policy }));
+  });
+
+function acceptedEntry(at = 101, bytes = '1316') {
+  const e = entry(at);
+  Object.assign(e.sample, {
+    acceptedPayloadBytes: bytes,
+    lastAcceptedAt: bytes === '0' ? null : at + 0.01,
+    bitRate: 500000,
+    reason: null,
+  });
+  return e;
+}
+test('acceptance history joins unordered intermediate reads and allows unchanged terminal snapshots', () => {
+  const initial = acceptedEntry(100, '0'),
+    first = acceptedEntry(),
+    second = acceptedEntry(102, '2632');
+  const terminal = structuredClone(second);
+  terminal.sample.reason = 'cancelled';
+  terminal.observedAt += 10;
+  const entries = [terminal, first, second, initial],
+    before = structuredClone(entries);
+  assertRecoveryProbeAcceptanceHistory(entries, { policy });
+  assert.deepEqual(entries, before);
+});
+for (const [name, mutate] of Object.entries({
+  frozenCheck: (a, b) =>
+    (b.sample.recoveryObservation = structuredClone(a.sample.recoveryObservation)),
+  checkAfterAcceptance: (a, b) => (b.sample.lastAcceptedAt = 101.999),
+  sameBytesNewCheck: (a, b) => {
+    b.sample.acceptedPayloadBytes = a.sample.acceptedPayloadBytes;
+    b.sample.lastAcceptedAt = a.sample.lastAcceptedAt;
+  },
+  counterTooLarge: (a, b) => (b.sample.acceptedPayloadBytes = '18446744073709551615'),
+  counterUnaligned: (a, b) => (b.sample.acceptedPayloadBytes = '2633'),
+  counterNoncanonical: (a, b) => (b.sample.acceptedPayloadBytes = '02632'),
+  missingAcceptanceTime: (a, b) => (b.sample.lastAcceptedAt = null),
+  futureAcceptanceTime: (a, b) => (b.sample.lastAcceptedAt = b.observedAt + 1),
+  unsupportedReason: (a, b) => (b.sample.reason = 'transportFailed'),
+  changedRate: (a, b) => (b.sample.bitRate = 1000000),
+  impossiblePacing: (a, b) => {
+    a.sample.bitRate = 1;
+    b.sample.bitRate = 1;
+  },
+  previousSendUnfinished: (a, b) => (a.sample.lastAcceptedAt = 102.001),
+  emptyCheckRefreshed: (a, b) => {
+    a.sample.acceptedPayloadBytes = '0';
+    a.sample.lastAcceptedAt = null;
+  },
+}))
+  test(`acceptance history rejects ${name}`, () => {
+    const a = acceptedEntry(),
+      b = acceptedEntry(102, '2632');
+    mutate(a, b);
+    assert.throws(() => assertRecoveryProbeAcceptanceHistory([b, a], { policy }));
   });

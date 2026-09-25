@@ -259,8 +259,12 @@ test('newest receiver end must be strictly after candidate completion', () => {
     Number(w.intervals[1].end.snapshot.observedAtNanoseconds) / 1e9 +
     w.clock.receiverClockOffsetUptimeBounds[0];
   f.candidateProof.measurement.endedAt = w.measurement.endedAt;
-  w.completedAt = w.measurement.endedAt + 0.01;
+  w.completedAt = w.clock.after;
   f.candidateProof.probeBinding.completedAt = w.completedAt;
+  // Moving candidate completion also needs a valid final snapshot at that
+  // completion. Reuse the already captured admission snapshot to isolate the
+  // strict receiver-end boundary rather than fail the earlier final-read gate.
+  f.candidateProof.probeBinding.final = { ...w.probe, observedAt: w.completedAt };
   assert.throws(() => qualify(f), /Receiver completion chronology/);
 });
 
@@ -341,3 +345,82 @@ test('rejects old counters paired with a newer native renewal lease', () => {
   f.witness.probe.lastAcceptedAt = 1326232.4601614168;
   assert.throws(() => qualify(f), /renewal floor/);
 });
+
+test('recovery witness requires explicit policy and joins all frozen raw observations', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = fixture();
+  f.policy = 'recovery-budget-v1';
+  f.nativeProof.formatVersion = 4;
+  f.nativeProof.policy = f.policy;
+  addSyntheticRecoveryProbeEvidence(f.nativeProof);
+  addSyntheticRecoveryProbeEvidence(f.candidateProof);
+  addSyntheticRecoveryProbeEvidence(f.witness);
+  const before = structuredClone(f),
+    result = qualify(f);
+  assert.equal(result.witnessQualified, true);
+  assert.equal(result.upgradeAuthorized, false);
+  assert.deepEqual(f, before);
+  // The final read has its own collection time. A valid changed gauge there
+  // need not equal gauges in distinct earlier/later native collections.
+  const changedGauge = structuredClone(f);
+  changedGauge.candidateProof.probeBinding.final.recoveryObservation.rttMilliseconds += 1;
+  assert.equal(qualify(changedGauge).witnessQualified, true);
+  for (const change of [
+    (x) => delete x.policy,
+    (x) => (x.policy = 'future-v1'),
+    (x) => (x.nativeProof.policy = 'local-zero-loss-v1'),
+    (x) => (x.nativeProof.formatVersion = 2),
+    (x) => (x.witness.formatVersion = 1),
+    (x) => (x.witness.binding.policy = 'local-zero-loss-v1'),
+    (x) => (x.witness.binding.recoveryObservation.rttMilliseconds += 1),
+    (x) => (x.witness.probe.recoveryObservation.checkedAt = x.witness.probe.startedAt),
+    (x) =>
+      (x.candidateProof.probeBinding.final.recoveryObservation = structuredClone(
+        x.candidateProof.probeBinding.initial.recoveryObservation,
+      )),
+  ]) {
+    const changed = structuredClone(f);
+    change(changed);
+    assert.throws(() => qualify(changed), undefined, change.toString());
+  }
+});
+for (const path of ['binding', 'probe'])
+  test(`historical witness rejects recovery metadata on ${path}`, () => {
+    const f = fixture();
+    f.witness[path].policy = 'recovery-budget-v1';
+    assert.throws(() => qualify(f));
+  });
+
+for (const recovery of [false, true])
+  for (const [name, mutate] of Object.entries({
+    foreignOwner: (f) =>
+      (f.candidateProof.probeBinding.final.id = '12345678-1234-1234-1234-123456789abc'),
+    wrongGeneration: (f) => (f.candidateProof.probeBinding.final.publishingGeneration = '99'),
+    wrongStage: (f) => (f.candidateProof.probeBinding.final.stage = 2),
+    wrongRate: (f) => (f.candidateProof.probeBinding.final.bitRate = 500000),
+    wrongStart: (f) => (f.candidateProof.probeBinding.final.startedAt -= 1),
+    wrongCampaign: (f) => (f.candidateProof.probeBinding.final.campaign = '1'),
+    beforeMeasurementEnd: (f) =>
+      (f.candidateProof.probeBinding.final.observedAt = f.witness.measurement.endedAt - 0.1),
+    afterCompletion: (f) =>
+      (f.candidateProof.probeBinding.final.observedAt =
+        f.candidateProof.probeBinding.completedAt + 0.1),
+    retired: (f) => (f.candidateProof.probeBinding.final.reason = 'cancelled'),
+    unobservedLease: (f) => (f.candidateProof.probeBinding.final.leaseDeadline += 0.0001),
+  }))
+    test(`${recovery ? 'recovery' : 'historical'} witness binds final candidate snapshot: ${name}`, async () => {
+      const f = fixture();
+      if (recovery) {
+        const { addSyntheticRecoveryProbeEvidence } =
+          await import('./fixtures/recovery-policy-evidence.mjs');
+        f.policy = 'recovery-budget-v1';
+        f.nativeProof.formatVersion = 4;
+        f.nativeProof.policy = f.policy;
+        addSyntheticRecoveryProbeEvidence(f.nativeProof);
+        addSyntheticRecoveryProbeEvidence(f.candidateProof);
+        addSyntheticRecoveryProbeEvidence(f.witness);
+      }
+      mutate(f);
+      assert.throws(() => qualify(f));
+    });

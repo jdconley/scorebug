@@ -5,6 +5,24 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testQualityExportVersionsTheSelectedRecoveryPressurePolicy() async throws {
+        for policy in [PublishingQualityTelemetry.TransportLimits.Policy.legacyThreshold, .senderDelay, .recoveryBudget] {
+            let f = try await CandidateQualityFixture.make()
+            var final: Data?
+            let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil,
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,
+                    maximumRetransmittedFraction: 0.01, policy: policy),
+                uptime: { f.native.now }, enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true,
+                export: { final = $0 })
+            await driver.stop()
+            let quality = try checkpointObject(XCTUnwrap(final))
+            XCTAssertEqual(quality["formatVersion"] as? Int, policy == .recoveryBudget ? 5 : 4)
+            XCTAssertEqual(quality["transportPolicy"] as? String, policy == .recoveryBudget ? "recovery-budget-v1" : nil)
+            XCTAssertEqual(quality["measuredSourceEvaluationEnabled"] as? Bool, true)
+            XCTAssertEqual(quality["overflow"] as? Bool, false)
+        }
+    }
+
     func testRejectedSourceDiagnosticsPreserveTickSelectionAndOriginalSourceKey() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
         let source = try XCTUnwrap(f.source)
