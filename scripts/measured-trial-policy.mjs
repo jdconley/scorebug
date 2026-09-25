@@ -214,8 +214,9 @@ export function qualifyMeasuredCadenceContinuity({
  * witness inputs from bounded raw artifacts. This module also replays raw pressure
  * and joins raw cadence identities; it does not independently decode media or
  * qualify delivery lanes, probe capacity, or production upgrade authorization.
- * Rejection/reset episodes remain unsupported. Explicit startup pressure replay
- * retains unknown minimum-only windows before source evaluation, with no credit.
+ * Reset episodes remain unsupported. Explicit prefix-only delivery rejection
+ * invalidates baseline credit before trial; rejected-sample freshness is unproven.
+ * Explicit startup pressure retains unknown minimum-only windows with no credit.
  */
 function replayMeasuredTrialPolicy(
   {
@@ -229,6 +230,7 @@ function replayMeasuredTrialPolicy(
     transportPolicy = 'sender-delay-v1',
     cadenceAuditMode = 'legacy',
     startupPressurePolicy = 'reject',
+    preTrialRejectionPolicy = 'reject',
   },
   confirmedPrefix = false,
 ) {
@@ -243,6 +245,14 @@ function replayMeasuredTrialPolicy(
     'Unsupported startup pressure policy',
   );
   const startupPressure = startupPressurePolicy !== 'reject';
+  assert(
+    preTrialRejectionPolicy === 'reject' ||
+      (preTrialRejectionPolicy === 'invalidate-delivery-freshness-v1' &&
+        recoveryPolicy &&
+        confirmedPrefix),
+    'Unsupported pre-trial rejection policy',
+  );
+  const preTrialRejection = preTrialRejectionPolicy !== 'reject';
   assert(
     cadenceAuditMode === 'legacy' ||
       (cadenceAuditMode === 'capacity' && confirmedPrefix && recoveryPolicy),
@@ -395,6 +405,7 @@ function replayMeasuredTrialPolicy(
   const evaluatedRows = [];
   let appliedCount = 0,
     candidateCount = 0,
+    preTrialRejections = 0,
     confirmedEventIndex;
   let now = boot.at,
     current = boot.receipt,
@@ -452,6 +463,41 @@ function replayMeasuredTrialPolicy(
     const row = events[eventIndex];
     assert(finite(row.at) && row.at >= now, 'Event clock reversal');
     now = row.at;
+    if (preTrialRejection && row.kind === 'rejected') {
+      assert(
+        appliedCount === 0 && candidateCount === 0 && !trial && !confirmation && revision === '0',
+        'Delivery rejection during or after a trial',
+      );
+      assert.deepEqual(
+        Object.keys(row).sort(),
+        [
+          'acknowledgedAt',
+          'at',
+          'closed',
+          'kind',
+          'profileID',
+          'reason',
+          'receipt',
+          'revision',
+        ].sort(),
+        'Unexpected rejection authority or fields',
+      );
+      assert.equal(row.reason, 'delivery-freshness');
+      assert.equal(row.closed, false);
+      assert.equal(row.revision, revision);
+      assert.equal(row.profileID, profile);
+      assert.equal(profile, '240p30');
+      assert.deepEqual(row.receipt, current);
+      assert.equal(row.acknowledgedAt, ack);
+      assert(row.at >= ack);
+      // The rejected delivery sample was not recorded. Model only the native
+      // invalidation, never its unknown freshness or any healthy observation.
+      // Consumed watermarks remain intact; later evidence must be fresh again.
+      recoveryStart = undefined;
+      baseline = undefined;
+      preTrialRejections++;
+      continue;
+    }
     if (startupPressure && row.kind === 'localPressure') {
       assert(evaluated === 0 && !trial && revision === '0', 'Pressure after source evaluation');
       assert.deepEqual(
@@ -787,6 +833,16 @@ function replayMeasuredTrialPolicy(
   assert.equal(candidateCount, 1);
   assert(confirmation && !trial, 'Need completed healthy measured probation');
   return {
+    ...(preTrialRejection
+      ? {
+          preTrialRejections: {
+            policy: preTrialRejectionPolicy,
+            events: preTrialRejections,
+            healthyCreditSeconds: 0,
+            rejectedSampleFreshnessQualified: false,
+          },
+        }
+      : {}),
     ...(startupPressure
       ? {
           startupPressure: {

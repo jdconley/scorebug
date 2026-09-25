@@ -791,3 +791,56 @@ healthy credit and independently validate all subsequent recovery/admission, or
 capture additional diagnostic evidence for a new run. It must never silently drop
 this event, infer a healthy sample, or accept such a rejection during probation.
 Complete fault causality, restored policy/delivery and fresh ramp remain open.
+
+### Conservative pre-trial delivery rejection
+
+Choose explicit `preTrialRejectionPolicy: 'invalidate-delivery-freshness-v1'` for
+recovery-budget confirmed-prefix replay only; default `reject` is unchanged.
+This models the observed rejection's effect, not the unrecorded sample's actual age.
+Accept only the exact baseline revision-0/minimum-profile receipt-bound log shape
+and reason `delivery-freshness`, before any trial application/admission. It cannot
+contain a window, source, candidate, application or action. Clear accumulated
+recovery and the selected baseline; preserve consumed source/policy watermarks
+just as `QualityController.invalidateTelemetry` does. The rejected event itself
+consumes no policy window and earns zero healthy credit. Subsequent source windows
+must independently pass their existing scope, monotonicity, ownership, pressure,
+receipt age, cadence and admission checks. A rejection after the last healthy
+window therefore cannot reuse that window to admit an upgrade. Reject during or
+after trial/probation, changed receipts, unknown reasons/policies, extra authority
+fields and clock regressions. Return an explicit invalidation count and zero
+healthy credit; the suffix and complete recovery remain unqualified.
+
+
+### Confirmed-prefix invalidation replay checkpoint
+
+The explicit pre-trial invalidation policy is implemented. Its positive regression
+failed on the unsupported rejection before implementation, then passed with all
+negative cases. Review confirmed native invalidation semantics and prompted a
+more specific assertion that rejection after the final healthy window fails the
+healthy-baseline admission gate. All 4,418 tooling tests pass; the strengthened
+15-test rejection suite also passes. Logs are
+`repeated-live-checkpoint-capacity-prefix-rejection-*`.
+
+`diagnostic-native750-prefix-replay.json` replays the same frozen `5UYvcA` artifacts.
+Raw media/profile components, explicit scheduled transport, native lifecycle/probe
+retirement/candidate joins and confirmed-prefix policy all pass. The default
+through-close transport failure remains unchanged. Eighteen artifact hashes and
+146 replay-source hashes were unchanged during this offline replay. It introduces
+no new native run, physical device claim, or complete recovery result.
+
+The first confirmed trial is independently reconstructed at event 14. Its decision
+time is 22.421s before the conservative lower clock bound for the actual limit.
+The qualified local transport-pressure window starts 1.956s after the conservative
+upper bound for that limit. These component timestamps are now available for a
+full causal join. The pre-trial rejection count is one, healthy credit is zero,
+and the rejected delivery sample's own freshness remains explicitly unqualified.
+
+Next implement the complete capacity suffix replay: keep separate source and policy
+watermarks through short local-pressure windows and the native format transition;
+verify every subsequent evaluated window against its original source, receiver,
+pressure, receipt and cadence evidence; credit no recovery before the conservative
+restoration boundary. Require independently covered healthy source and one-/two-
+second delivery lanes after restoration, then join the preserved archive/audio/score
+results. The original source and native histories must remain complete, including
+all minimum-profile pressure events. A later fresh measured re-ramp and real outage
+still need their own native campaigns. Production upgrades remain disabled.
