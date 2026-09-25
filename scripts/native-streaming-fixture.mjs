@@ -88,7 +88,11 @@ export async function nativeStreamingFixture({
         candidateHeadroom &&
         liveProfile === '240p30' &&
         workerOutputProfile === '360p30' &&
-        publishPeerLatencyMs === 400 &&
+        (publishPeerLatencyMs === 400 ||
+          (publishPeerLatencyMs === 1000 &&
+            capacityDiagnostics &&
+            uplinkProfile === 'capacity750k-retry' &&
+            capacityEvidencePolicy === 'token-budget-v1')) &&
         typeof collectCapacityClock === 'function' &&
         !measuredRecovery &&
         !repeatedRecovery &&

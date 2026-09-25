@@ -169,3 +169,59 @@ test('rate ledger evidence cannot be selected outside capacity recovery', async 
   );
   assert.equal(calls, 0);
 });
+
+for (const latency of [400, 1000])
+  test(`owned retry diagnostic${latency}ms route reaches resource setup`, async (t) => {
+    recorderEnvironment(t);
+    const artifact = await mkdtemp(join(tmpdir(), 'owned-retry-latency-'));
+    t.after(() => rm(artifact, { recursive: true, force: true }));
+    const calls = [];
+    await assert.rejects(
+      nativeStreamingFixture({
+        ...options(),
+        artifact,
+        capacityDiagnostics: true,
+        uplinkProfile: 'capacity750k-retry',
+        capacityEvidencePolicy: 'token-budget-v1',
+        publishPeerLatencyMs: latency,
+        run: async (...args) => {
+          calls.push(args);
+          throw Error('Stop before resource creation');
+        },
+      }),
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][2], 'publication-relay-image');
+  });
+
+for (const patch of [
+  { capacityDiagnostics: false },
+  { uplinkProfile: 'capacity550k' },
+  { uplinkProfile: 'capacity750k' },
+  { capacityEvidencePolicy: 'congestion-v1' },
+  { capacityEvidencePolicy: 'rate-ledger-v1' },
+  { publishPeerLatencyMs: '1000' },
+  { publishPeerLatencyMs: 1001 },
+  { measuredTrial: false },
+  { collectCapacityClock: undefined },
+])
+  test(`1000ms retry worker rejects incompatible route before resources${JSON.stringify(patch)}`, async (t) => {
+    recorderEnvironment(t);
+    let calls = 0;
+    await assert.rejects(
+      nativeStreamingFixture({
+        ...options(),
+        capacityDiagnostics: true,
+        uplinkProfile: 'capacity750k-retry',
+        capacityEvidencePolicy: 'token-budget-v1',
+        publishPeerLatencyMs: 1000,
+        ...patch,
+        run: async () => {
+          calls++;
+          throw Error('Unexpected resource setup');
+        },
+      }),
+      /complete exclusive route/,
+    );
+    assert.equal(calls, 0);
+  });

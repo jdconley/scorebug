@@ -70,11 +70,13 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
         environment.SCOREBUG_TEST_DECODER_THREADING === 'slice'),
     'Explicit slice decoding requires the impaired measured file route',
   );
-  assert.equal(
-    environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS,
-    capacity || environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' ? '400' : undefined,
-    'Delayed measured link requires explicit400ms SRT peer recovery budget',
-  );
+  // Complete capacity selection above already validates its exact peer recovery budget.
+  if (!capacity)
+    assert.equal(
+      environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS,
+      environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' ? '400' : undefined,
+      'Delayed measured link requires explicit400ms SRT peer recovery budget',
+    );
   const measured = environment.SCOREBUG_TEST_MEASURED_TRIAL !== undefined;
   if (measured) {
     for (const [key, value] of Object.entries({

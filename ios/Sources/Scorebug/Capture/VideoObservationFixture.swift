@@ -142,7 +142,13 @@ enum VideoObservationFixture {
         else { throw UplinkError.invalidFixtureRoute }
         if ["loss0p2-delay30", "capacity550k", "capacity750k", "capacity750k-retry"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
             let recovery = (components.queryItems ?? []).filter { $0.name == "peerlatency" }
-            guard recovery.count == 1, recovery.first?.value == "400" else { throw UplinkError.invalidFixtureRoute }
+            // The complete native route was validated above; host selection also gates
+            // this owned retry experiment on token-budget diagnostics.
+            let ownedRetry = environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity750k-retry" &&
+                environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] == "1"
+            guard recovery.count == 1,
+                  recovery.first?.value == "400" || (ownedRetry && recovery.first?.value == "1000")
+            else { throw UplinkError.invalidFixtureRoute }
         }
         let query = components.percentEncodedQuery
         components.port = port
