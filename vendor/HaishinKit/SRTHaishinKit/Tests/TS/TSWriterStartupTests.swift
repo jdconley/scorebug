@@ -432,6 +432,92 @@ import libsrt
         await connection.close()
     }
 
+    @Test(arguments: ["settings", "invalidation", "failure", "passthrough", "finish", "close"])
+    func verifiedReceiptReadsExistingConfigurationAndRejectsInvalidation(action: String) async throws {
+        let native = PumpTrackedSession()
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let invalidation = PumpCodecInvalidation(codec)
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        await stream.append(try pumpRawVideo())
+        let submitted = await pumpWait { native.frames.count == 1 }; try #require(submitted)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        let written = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        let writes = native.propertyWrites, reads = native.propertyReads
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let writtenSettings = try encoder.encode(written.change.settings)
+        for _ in 0..<3 {
+            let current = try #require(await stream.verifiedVideoBitRateReceipt)
+            #expect(current.publishingGeneration == written.publishingGeneration)
+            #expect(current.change.configuration == written.change.configuration)
+            #expect(try encoder.encode(current.change.settings) == writtenSettings)
+            #expect(current.change.acceptedAt == written.change.acceptedAt)
+            #expect(current.change.lastSubmittedSourcePTS == written.change.lastSubmittedSourcePTS)
+        }
+        #expect(native.propertyWrites == writes && native.propertyReads == reads)
+        switch action {
+        case "settings": try await stream.setVideoSettings(.init(bitRate: 800_000))
+        case "invalidation": invalidation.request()
+        case "failure":
+            native.failPropertyWrites()
+            await #expect(throws: (any Swift.Error).self) {
+                try await stream.setVerifiedVideoBitRateWithReceipt(800_000, publishingGeneration: generation)
+            }
+        case "passthrough": await stream.append(try video(0.2))
+        case "finish": await stream.finish()
+        default: await stream.close()
+        }
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        if action == "invalidation" {
+            #expect(await stream.publishingGeneration == generation,
+                "An implicit encoder invalidation must revoke the receipt even while publication remains healthy")
+        }
+        await connection.close()
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func pendingMutationHidesEarlierVerifiedReceipt(cancel: Bool) async throws {
+        let gate = PumpSynchronousGate(), native = PumpTrackedSession()
+        native.gate = gate; native.gatedFrameCount = 2
+        defer { gate.release() }
+        let codec = VideoCodec(sessionFactory: { _, _ in native })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec))
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try pumpRawVideo())
+        let submitted = await pumpWait { native.frames.count == 1 }; try #require(submitted)
+        let old = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        await stream.append(try pumpRawVideo(4))
+        let entered = await pumpWait { gate.entered }; try #require(entered)
+        let change = Task { try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000, publishingGeneration: generation) }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !(await stream.isVideoMutationPending) && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await stream.isVideoMutationPending)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        if cancel { change.cancel() }
+        gate.release()
+        if cancel {
+            await #expect(throws: CancellationError.self) { try await change.value }
+            #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration == old.change.configuration)
+        } else {
+            let written = try await change.value
+            #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration == written.change.configuration)
+            #expect(written.change.configuration != old.change.configuration)
+        }
+        await connection.close()
+        #expect(!gate.timedOut)
+    }
+
     @Test(arguments: [false, true])
     func bitrateMutationJoinsLastOldFrameAndRejectsOvertaking(cancel: Bool) async throws {
         let gate = PumpSynchronousGate(), native = PumpTrackedSession()
@@ -1104,20 +1190,31 @@ private final class PumpEarlyOutputSession: VTSessionConvertible {
 
 private final class PumpTrackedSession: VTSessionConvertible, @unchecked Sendable {
     var gate: PumpSynchronousGate?
+    var gatedFrameCount = 1
     private let lock = NSLock()
     private var sourceFrames: [Int64] = [], sourceRates: [Int] = []
     private var properties: [String: CFTypeRef] = [:]
     private var active = 0, maximum = 0, drains = 0, retired = 0
+    private var writes = 0, reads = 0
+    private var propertyWriteFails = false
+    var propertyWrites: Int { lock.withLock { writes } }
+    var propertyReads: Int { lock.withLock { reads } }
+    func failPropertyWrites() { lock.withLock { propertyWriteFails = true } }
     var frames: [Int64] { lock.withLock { sourceFrames } }
     var rates: [Int] { lock.withLock { sourceRates } }
     var maximumConcurrent: Int { lock.withLock { maximum } }
     var completed: Int { lock.withLock { drains } }
     var invalidations: Int { lock.withLock { retired } }
     func setOption(_ option: VTSessionOption) -> OSStatus {
-        lock.withLock { #expect(active == 0); properties[option.key.CFString as String] = option.value }; return noErr
+        lock.withLock {
+            #expect(active == 0); writes += 1
+            guard !propertyWriteFails else { return -77 }
+            properties[option.key.CFString as String] = option.value
+            return noErr
+        }
     }
     func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) {
-        lock.withLock { #expect(active == 0); return (noErr, properties[key.CFString as String]) }
+        lock.withLock { #expect(active == 0); reads += 1; return (noErr, properties[key.CFString as String]) }
     }
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus {
         for option in options { _ = setOption(option) }; return noErr
@@ -1128,11 +1225,18 @@ private final class PumpTrackedSession: VTSessionConvertible, @unchecked Sendabl
             active += 1; maximum = max(maximum, active)
             sourceFrames.append(CMTimeConvertScale(sampleBuffer.presentationTimeStamp, timescale: 30, method: .default).value)
             sourceRates.append((properties[VTSessionOptionKey.averageBitRate.CFString as String] as? NSNumber)?.intValue ?? 640_000)
-            return sourceFrames.count == 1
+            return sourceFrames.count == gatedFrameCount
         }
         if first { gate?.block() }
         lock.withLock { active -= 1 }
     }
     func completeFrames() -> OSStatus { lock.withLock { #expect(active == 0); drains += 1 }; return noErr }
     func invalidate() { lock.withLock { #expect(active == 0); retired += 1 } }
+}
+
+/// Only calls the codec's thread-safe external invalidation entry point.
+private final class PumpCodecInvalidation: @unchecked Sendable {
+    private weak var codec: VideoCodec?
+    init(_ codec: VideoCodec) { self.codec = codec }
+    func request() { codec?.requestSessionInvalidation() }
 }

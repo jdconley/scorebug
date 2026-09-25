@@ -18,6 +18,8 @@ import Testing
         let readyDeadline = ContinuousClock.now + .seconds(2)
         while observed.frames.isEmpty && ContinuousClock.now < readyDeadline { await Task.yield() }
         #expect(observed.frames.count == 1)
+        _ = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        #expect(await stream.verifiedVideoBitRateReceipt != nil)
         let change = Task {
             try await stream.replaceVideoSettings(.init(videoSize: CGSize(width: 32, height: 32),
                 allowFrameReordering: false), publishingGeneration: generation)
@@ -25,6 +27,7 @@ import Testing
         let stagedDeadline = ContinuousClock.now + .seconds(1)
         while await stream.videoSettings.videoSize.width != 32, ContinuousClock.now < stagedDeadline { await Task.yield() }
         #expect(await stream.videoSettings.videoSize.width == 32)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
         // Commit by itself cannot produce a receipt: no new frame exists yet.
         #expect(observed.frames.count == 1)
         let firstNewFrame = paces ? 15 : 1
@@ -39,6 +42,10 @@ import Testing
         #expect(receipt.firstNewSourcePTS == CMTime(value: Int64(firstNewFrame), timescale: 30))
         #expect(receipt.width == 32 && receipt.height == 32)
         #expect(receipt.rawVideoFramesDropped == 0)
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
+        let verified = try await stream.setVerifiedVideoBitRateWithReceipt(800_000, publishingGeneration: generation)
+        #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration == verified.change.configuration)
+        #expect(verified.change.configuration.encoderSessionID == receipt.encoderSessionID)
         await stream.finish()
         #expect(await stream.publishingError == nil)
         #expect(observed.frames.map(\.width) == [64, 32, 32, 32, 32])
@@ -89,8 +96,10 @@ import Testing
         let gate = ReplacementGate(), observed = ReplacementFrames()
         let (connection, stream, generation) = try await gatedStream(gate, observed: observed)
         defer { gate.open() }
+        _ = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
         let change = Task { try await stream.replaceVideoSettings(reduced, publishingGeneration: generation) }
         try await gate.waitForEntry()
+        #expect(await stream.verifiedVideoBitRateReceipt == nil)
         await #expect(throws: SRTStream.VideoReplacementError.busy) {
             try await stream.replaceVideoSettings(reduced, publishingGeneration: generation)
         }

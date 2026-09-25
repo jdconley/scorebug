@@ -154,6 +154,12 @@ check native writes and readback of bitrate plus effective data-rate limits, and
 commit settings only after verification. Uncertain native application fails live
 publishing explicitly. A lock-protected invalidation revision preserves notifications
 that overlap session creation or property writes. The ordinary settings acknowledgment does not prove achieved bitrate/capacity.
+`SRTStream.verifiedVideoBitRateReceipt` returns the existing verified write paired
+with its current healthy publishing generation, only while the raw encoder remains
+current and no video mutation, replacement, finish, or close is pending. Encoder
+invalidation and failure revoke this view. Reading it performs no native write or
+property readback; its timestamp and source PTS remain historical configuration
+evidence, not fresh delivery, achieved rate, or capacity proof.
 The optional configuration observer and receipt described below identify native
 submission boundaries. See the
 [implementation plan](../../docs/superpowers/plans/2026-09-15-verified-live-bitrate.md).

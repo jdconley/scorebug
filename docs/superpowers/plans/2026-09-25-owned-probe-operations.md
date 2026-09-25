@@ -52,6 +52,23 @@ requires fresh source/delivery/configuration diagnostics; this read is not fresh
 capacity evidence. Do not use immutable first-frame startup or an adapter's cached
 old write as a substitute for current encoder identity.
 
+Context is verified at a native read; it is not a continuously valid encoder
+permit. Input-format changes and system notifications can invalidate
+`VideoCodecInvalidation` without changing the adapter epoch or revoking a probe's
+authority. Before native dispatch and after allocation/renewal or any intervening
+health await, compare the actual native receipt again and recheck local ownership
+after suspension. Capture a raw allocation before these checks so rejection can
+still revoke and join it. Never upgrade cleanup lineage into current configuration
+authority.
+
+Session transfer must freshly check native configuration and then recheck its
+token, applied revision/receipt, source/delivery diagnostics, candidate and probe
+authority after suspension. A read alone cannot close the later read-to-write
+race. Before enabling owned application transfer, add either a revocable native
+configuration permit or an expected-configuration check at native mutation
+admission. This is a separate application gate, not a reason to expose new probe
+allocation authority in the read-only accessor checkpoint.
+
 Joined native cleanup lineage survives encoder changes in the same publication.
 An old context and its Session lease do not. After a downshift and verified write,
 Session registers a new Core attempt from fresh readiness, captures a context for
@@ -74,6 +91,13 @@ aligned, nondecreasing bounded counters, preserved prior-stage carry and consist
 cumulative growth, plus historical time/last-acceptance relationships. An expired
 terminal lease is expected; do not impose live freshness on cleanup. Never obtain
 missing ownership from a global probe snapshot.
+
+For valid late returns, authority may already be revoked. Their lineage must come
+from the lowest handle's direct trusted SDK result and the upper handle's retained
+private lower owner. Requiring the identical terminal authority then preserves
+provenance without interpreting `permits == false` as proof of identity. Arbitrary
+externally supplied snapshots cannot establish that trust root. If an interface
+ever accepts them, an immutable native identity matcher would also be required.
 
 Each retirement receipt has one-shot continuation state bound to its issuer and
 retained native predecessor. Validate request/context before consuming it,
@@ -105,7 +129,7 @@ owned factories to injected operations with disabled defaults, not fake receipts
 
 ## Verification
 
-- [ ] Native current-receipt read: absent before verified write, exact after it,
+- [x] Native current-receipt read: absent before verified write, exact after it,
       nil during/after invalidation, replacement, failure, finish and close; no
       write side effect. Verify maintained SDK patch and original hashes.
 - [ ] Canceled initial operation before dispatch and after a late valid return;
@@ -122,8 +146,28 @@ owned factories to injected operations with disabled defaults, not fake receipts
       restart, renew or replace even if numeric bitrate/profile values match.
 - [ ] Context acquisition racing mutation, profile-before-bitrate interval,
       implicit native encoder invalidation and stop rejects; cleanup still joins.
+- [ ] Actual native context checks surround allocation/renewal and health awaits;
+      same numeric settings with a changed encoder identity reject live admission.
+      Session transfer additionally closes the native read-to-write race before
+      the owned application route can be enabled.
 - [ ] Exclusive owned routing, unchanged legacy tests, focused/full SDK and
       Streaming suites, independent specification and code-quality review.
 
 Session token/lease integration and a fresh four-phase media experiment remain
 separate gates. These components must not enable production upgrades by themselves.
+
+### Native current-receipt checkpoint
+
+`SRTStream.verifiedVideoBitRateReceipt` now reads the existing actual native
+receipt without an encoder write or property readback. It rejects unverified and
+passthrough input, pending mutation/replacement, implicit encoder invalidation,
+active encoder failure, finish and close. A canceled mutation before its write
+can expose the unchanged prior receipt again; the pending interval cannot.
+
+Verification passes **65 focused tests / 335 full SDK tests**, with all jobs
+joined. The maintained patch verifies **162 original upstream hashes** and an
+exact round trip. Logs:
+`artifacts/qa/verified-bitrate-receipt-focused-4-20260925.log` and
+`artifacts/qa/verified-bitrate-receipt-full-20260925.log`.
+This is a point-in-time configuration read. Adapter contexts, owned operation
+handles and Session transfer protections remain separate implementation gates.

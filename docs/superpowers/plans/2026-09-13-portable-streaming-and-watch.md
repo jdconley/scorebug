@@ -80,6 +80,13 @@ trial clears the count. Session integration and the
 The latter must restart after downshift on the same publisher using a fresh
 verified encoder context. Automatic post-restoration increases remain unqualified.
 
+The native current-configuration accessor is implemented and passes **335 SDK
+tests**, including pending mutation/replacement, implicit encoder invalidation,
+failure, finish and close. It reads the existing verified receipt without writing
+or measuring encoder properties. The maintained patch still verifies all 162
+upstream hashes. Adapter context/operation wiring remains next; application
+transfer must also guard against configuration changes between its read and write.
+
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains
 strict. See the [evidence contract and prior checkpoints](2026-09-25-capacity-rate-ledger.md#fresh-integration-run-and-prospective-token-budget-contract).

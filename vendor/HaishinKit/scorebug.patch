@@ -1395,7 +1395,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,525 @@
+@@ -7,7 +7,535 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
@@ -1674,6 +1674,16 @@
 +        public let publishingGeneration: UInt64
 +        public let change: VideoBitRateChange
 +    }
++    /// Existing verified write for the current raw encoder and healthy publication.
++    /// This performs no native write or property readback; its timestamp and source
++    /// PTS remain historical, not fresh delivery, achieved rate, or capacity proof.
++    public var verifiedVideoBitRateReceipt: VideoBitRateReceipt? {
++        guard let generation = publishingGeneration, videoInputIsRaw,
++              videoMutation == nil, videoReplacement == nil,
++              finishingGeneration == nil, closeTask == nil,
++              let change = outgoing.lastVideoBitRateChange else { return nil }
++        return .init(publishingGeneration: generation, change: change)
++    }
 +    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) async throws -> VideoBitRateReceipt {
 +        try Task.checkCancellation()
 +        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
@@ -1921,7 +1931,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +540,7 @@
+@@ -22,7 +550,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1930,7 +1940,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +550,59 @@
+@@ -32,8 +560,59 @@
      }
 
      /// Creates a new stream object.
@@ -1991,7 +2001,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +614,9 @@
+@@ -45,7 +624,9 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -2002,7 +2012,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +628,46 @@
+@@ -57,8 +638,46 @@
              }
              return
          }
@@ -2050,7 +2060,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +677,55 @@
+@@ -68,26 +687,55 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -2126,7 +2136,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +754,99 @@
+@@ -116,16 +764,99 @@
          readyState = .playing
      }
 
@@ -2231,7 +2241,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +867,43 @@
+@@ -146,23 +877,43 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2278,7 +2288,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +913,36 @@
+@@ -172,16 +923,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {

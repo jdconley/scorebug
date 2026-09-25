@@ -282,6 +282,16 @@ public actor SRTStream {
         public let publishingGeneration: UInt64
         public let change: VideoBitRateChange
     }
+    /// Existing verified write for the current raw encoder and healthy publication.
+    /// This performs no native write or property readback; its timestamp and source
+    /// PTS remain historical, not fresh delivery, achieved rate, or capacity proof.
+    public var verifiedVideoBitRateReceipt: VideoBitRateReceipt? {
+        guard let generation = publishingGeneration, videoInputIsRaw,
+              videoMutation == nil, videoReplacement == nil,
+              finishingGeneration == nil, closeTask == nil,
+              let change = outgoing.lastVideoBitRateChange else { return nil }
+        return .init(publishingGeneration: generation, change: change)
+    }
     public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) async throws -> VideoBitRateReceipt {
         try Task.checkCancellation()
         guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
