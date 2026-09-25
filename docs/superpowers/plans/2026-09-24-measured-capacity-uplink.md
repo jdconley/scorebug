@@ -351,3 +351,69 @@ configuration. `diagnostic-native-video-rate-inspection.json` preserves those
 scalars. These are late, video-only intervals; neither matched audio cost nor a
 full transport decomposition is established. They cannot determine a new fault
 capacity by themselves.
+
+## Single measured-trial coordination implementation
+
+Use the already implemented repeated-campaign timing policy for single measured
+trials through an explicit `coordinatesMeasurement` opt-in on the staged probe.
+The native factory selects it only for a measured staged route. Legacy staged
+probes retain three eight-second stages. The measured route joins stage two,
+waits for current matching readiness within the original60-second campaign
+deadline, starts stage three, then rechecks readiness/configuration after the
+native await. Candidate wiring forwards the existing readiness provider to both
+measured probe routes. This does not grant candidate admission.
+
+Only coordinated stage three gets the existing repeated path's twelve-second
+absolute ceiling and bounded extra polls. Earlier stages remain eight seconds;
+total poll validation includes the extra allowance. Native leases,16MiB cumulative
+byte budget,60-second campaign budget and terminal withdrawal remain authoritative.
+Waiting for readiness never renews the retired stage-two owner. The candidate's
+existing wait deadline and all admission freshness/overlap rules remain unchanged.
+
+Phase review exposed a second scheduling condition: after coordinated stage-three
+startup, the candidate must not impose the legacy half-second probe warmup before
+asking for current readiness. In the failed run only about0.24s of source freshness
+remained when its report was evaluated. A fixed half-second delay would miss that
+report again. Single measured trials may therefore begin cost measurement on a
+current active final probe immediately, after querying current readiness and
+rechecking the lease after that query. This grants no upgrade permission; completed
+cost, delivered probe intervals and a fresh overlapping source report are still
+required for admission. Legacy and repeated paths retain their existing warmup.
+
+Simply relaxing source freshness would admit stale evidence; shortening the
+measurement would change its cost evidence. Neither addresses the observed
+schedule. Coordination plus the existing bounded active-probe allowance gives
+the measured route time for an original overlapping report, subject to native
+resource limits. A withdrawn/expired/byte-limited probe still fails admission.
+
+- [x] Add failing tests for staged readiness wait, changed readiness after native
+  replacement, cancellation joining, final-stage lifetime/terminal limits and
+  total poll budget, retaining legacy stage timing.
+- [x] Implement opt-in coordination and readiness-provider wiring.
+- [x] Run focused and full app-model tests, tooling tests as relevant, and the
+  arm64 iOS simulator build; obtain read-only review.
+- [ ] Re-run a frozen capacity diagnostic only after the reconnectable sink and capacity
+  test assumptions are addressed. No unit-test result qualifies live recovery.
+
+The first coordination regression run failed20 assertions in six tests: it
+allocated without readiness, stopped stage three too early, and omitted the
+additional poll allowance. The implementation fixes those cases. A separate
+measurement-start regression failed because the half-second delay prevented
+starting in the current readiness window; it passes with immediate measured
+allocation while the legacy path keeps its warmup.
+
+Read-only review found a real expiry race across the new readiness awaits. Both
+sites now check the current clock against the original `validUntil` after return.
+Before allocation, expired readiness waits for another report within the unchanged
+campaign deadline. After allocation, expired or changed readiness cancels the owned
+probe. Both expiry cases failed before the correction and pass afterward; review
+confirmed the finding resolved. All565 app-model tests pass with joined exit0
+(`repeated-live-checkpoint-capacity-coordination-reviewed-models.log`).
+
+Before repairing/running the capacity fixture, re-run the previously passing
+90-second fixed-impairment real-match route with frozen sources and the new
+coordination. This tests the scheduling correction without depending on a sink
+reconnect. Its result must not be described as capacity recovery.
+All4,188 tooling tests also pass (`repeated-live-checkpoint-capacity-coordination-tools.log`),
+and the arm64 iOS simulator UI test target builds with Xcode26.2
+(`repeated-live-checkpoint-capacity-coordination-ios-build.log`). Both joined exit0.

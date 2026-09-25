@@ -965,6 +965,173 @@ extension NativeBandwidthProbeFixtureTests {
         return (f, first, recovered)
     }
 
+    func testCoordinatedProbeRejectsUnsupportedRoutesBeforePrimaryStartup() async throws {
+        for (mode, headroom) in [(NativeBandwidthProbePublisher.Mode.renew, true), (.expire, true), (.repeated, true), (.staged, false)] {
+            let fake = ProbeFixtureOperations()
+            let publisher = NativeBandwidthProbePublisher(publisher: fake, scope: scope(), mode: mode,
+                operations: await fake.operations(), timing: .init(delay: .zero),
+                candidateHeadroom: headroom, coordinatesMeasurement: true)
+            do { try await publisher.start(); XCTFail("Unsupported coordination route started") } catch {}
+            await publisher.stop()
+            let counts = await fake.counts()
+            XCTAssertEqual(counts.start, 0); XCTAssertEqual(counts.renew, 0)
+        }
+    }
+
+    func testCoordinatedStagedReadinessCannotOutliveOriginalCampaignDeadline() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations()
+        let publisher = coordinatedStagedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider { fake.advance(60); return context }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(fake.stageThreeAllocations, 0)
+        XCTAssertEqual(fake.stageRenewals, [1, 1])
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["result"] as? String, "readinessUnavailable")
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedRejectsReadinessExpiringDuringContextReturn() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        for expiryAfterAllocation in [false, true] {
+            let fake = RepeatedProbeOperations()
+            let publisher = coordinatedStagedPublisher(fake, scope: context.scope)
+            _ = await publisher.setMeasurementContextProvider {
+                if !expiryAfterAllocation || fake.currentStage == 3 { fake.advance(3) }
+                return context
+            }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            XCTAssertEqual(fake.stageThreeAllocations, expiryAfterAllocation ? 1 : 0)
+            XCTAssertEqual(fake.stageRenewals, [1, 1])
+            XCTAssertTrue(fake.lastOwnerJoined)
+            XCTAssertEqual(try fake.object()["result"] as? String,
+                expiryAfterAllocation ? "invalidEvidence" : "readinessUnavailable")
+        }
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedWaitsAfterJoinedStageTwoAndRechecksReplacement() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(), reads = RepeatedProbeCounter()
+        let publisher = coordinatedStagedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider {
+            XCTAssertTrue(fake.currentStage == 2 || fake.currentStage == 3)
+            if fake.currentStage == 2 {
+                XCTAssertTrue(fake.lastOwnerJoined)
+                XCTAssertEqual(fake.stageThreeAllocations, 0)
+            }
+            return reads.increment() <= 3 ? nil : context
+        }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(reads.value, 5)
+        XCTAssertEqual(fake.stageRenewals, [1, 1, 2])
+        XCTAssertEqual(fake.stageThreeAllocations, 1)
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedUnavailableReadinessNeverAllocatesFinalProbe() async throws {
+        let fake = RepeatedProbeOperations(), reads = RepeatedProbeCounter()
+        let publisher = coordinatedStagedPublisher(fake, scope: scope(), maximumPolls: 4)
+        _ = await publisher.setMeasurementContextProvider { _ = reads.increment(); return nil }
+        try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+        XCTAssertEqual(reads.value, 4)
+        XCTAssertEqual(fake.stageThreeAllocations, 0)
+        XCTAssertEqual(fake.stageRenewals, [1, 1])
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(try fake.object()["result"] as? String, "readinessUnavailable")
+    }
+
+    func testCoordinatedStagedRejectsReadinessChangedDuringReplacementAndJoinsOwner() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        var applied = context.applied; applied.acknowledgedAt += 0.01
+        let changed = PublishingQualitySession.CandidateMeasurementContext(readiness: context.readiness,
+            applied: applied, scope: context.scope, clock: context.clock)
+        for after in [nil, changed] {
+            let fake = RepeatedProbeOperations()
+            let publisher = coordinatedStagedPublisher(fake, scope: context.scope)
+            _ = await publisher.setMeasurementContextProvider { fake.currentStage == 3 ? after : context }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            XCTAssertEqual(fake.stageThreeAllocations, 1)
+            XCTAssertEqual(fake.stageRenewals, [1, 1])
+            XCTAssertTrue(fake.lastOwnerJoined)
+            XCTAssertEqual(fake.cancellations.last, fake.currentID)
+            XCTAssertEqual(try fake.object()["invalid"] as? Bool, true)
+        }
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedStopJoinsSuspendedFinalAllocation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        let fake = RepeatedProbeOperations(blockStageThreeReplace: true)
+        let publisher = coordinatedStagedPublisher(fake, scope: context.scope)
+        _ = await publisher.setMeasurementContextProvider { context }
+        try await publisher.start(); await repeatedWait { fake.stageThreeReplaceCalls == 1 }
+        let stop = Task { await publisher.stop() }
+        await repeatedWait { fake.hasStopped }
+        XCTAssertEqual(fake.exports, 0)
+        fake.replaceGate.open(); await stop.value
+        XCTAssertEqual(fake.stageRenewals, [1, 1])
+        XCTAssertTrue(fake.lastOwnerJoined)
+        XCTAssertEqual(fake.cancellations.last, fake.currentID)
+        XCTAssertEqual(try fake.object()["result"] as? String, "cancelled")
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedKeepsFinalProbeThroughLateReportButHonorsAbsoluteAndNativeLimits() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        for (terminal, reason, expected) in [(Double?.none, "cancelled", 48), (8.75, "cancelled", 35), (1, "byteLimit", 4), (1, "timeLimit", 4)] {
+            let fake = RepeatedProbeOperations(renewalStep: 0.25, finalTerminalAfter: terminal, finalTerminalReason: reason)
+            // Earlier stages spend 16s; align final readiness with this fixture's
+            // original healthy report rather than giving an old report a new age.
+            fake.advance(-16)
+            let publisher = coordinatedStagedPublisher(fake, scope: context.scope, maximumPolls: 600, stagePolls: 80)
+            _ = await publisher.setMeasurementContextProvider { context }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            XCTAssertEqual(fake.stageRenewals, [32, 32, expected])
+            XCTAssertEqual(fake.renewalsAfterTerminal, 0)
+            XCTAssertTrue(fake.lastOwnerJoined)
+            XCTAssertEqual(try fake.object()["invalid"] as? Bool, false)
+            let events = try XCTUnwrap(try fake.object()["events"] as? [[String: Any]])
+            let final = try XCTUnwrap(events.last?["sample"] as? [String: Any])
+            XCTAssertEqual(final["reason"] as? String, reason)
+        }
+        await f.owner.stop()
+    }
+
+    func testCoordinatedStagedCountsFinalPollAllowanceBeforeAllocation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let context = try XCTUnwrap(awaitContext: await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics)))
+        for (polls, budget, expected) in [(1, 3, [Int]()), (1, 4, [1, 1, 2]), (80, 279, []), (80, 280, [80, 80, 120])] {
+            let fake = RepeatedProbeOperations()
+            let publisher = coordinatedStagedPublisher(fake, scope: context.scope, maximumPolls: budget, stagePolls: polls)
+            _ = await publisher.setMeasurementContextProvider { context }
+            try await publisher.start(); await publisher.waitForProbe(); await publisher.stop()
+            XCTAssertEqual(fake.stageRenewals, expected)
+            XCTAssertEqual(fake.begins, expected.isEmpty ? 0 : 1)
+            XCTAssertEqual(try fake.object()["invalid"] as? Bool, expected.isEmpty)
+        }
+        await f.owner.stop()
+    }
+
+    private func coordinatedStagedPublisher(_ fake: RepeatedProbeOperations, scope: VideoFrameObservationScope,
+                                            maximumPolls: Int = 12, stagePolls: Int = 1) -> NativeBandwidthProbePublisher {
+        let base = fake.operations
+        let operations = NativeBandwidthProbePublisher.Operations(clock: base.clock, begin: base.begin,
+            renew: base.renew, cancel: base.cancel, snapshot: base.snapshot, export: base.export,
+            beginStaged: base.beginRepeatable, replace: base.replace)
+        return NativeBandwidthProbePublisher(publisher: fake, scope: scope, mode: .staged,
+            operations: operations, timing: .init(delay: .zero, poll: .zero, maximumPolls: maximumPolls,
+                stagePolls: stagePolls, now: fake.now), candidateHeadroom: true, coordinatesMeasurement: true)
+    }
+
     private func repeatedPublisher(_ fake: RepeatedProbeOperations, scope: VideoFrameObservationScope,
                                    maximumPolls: Int = 12, stagePolls: Int = 1) -> NativeBandwidthProbePublisher {
         NativeBandwidthProbePublisher(publisher: fake, scope: scope, mode: .repeated,

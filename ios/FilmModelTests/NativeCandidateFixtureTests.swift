@@ -1315,6 +1315,26 @@ extension NativeCandidateFixtureTests {
         await f.owner.stop()
     }
 
+    func testSingleMeasuredCandidateUsesFreshReadinessWithoutWaitingForProbeAge() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value)
+        for measured in [false, true] {
+            let fake = CandidateFixtureFake()
+            fake.setProbe(stage: 3, age: 0); fake.finish()
+            let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+                operations: fake.operations,
+                timing: .init(delay: .zero, poll: .milliseconds(1), maximumProbeWaitPolls: 1),
+                candidateHeadroom: true, requiresMeasurementReadiness: measured, measurementProfile: .low360)
+            await wrapper.setDiagnostics { fake.pressure }
+            if measured { _ = await wrapper.setMeasurementContextProvider { context } }
+            try await wrapper.start(); await wrapper.waitForMeasurement(); await wrapper.stop()
+            XCTAssertEqual(fake.events.contains("candidateStart"), measured,
+                "Fresh coordinated readiness may start measurement immediately; legacy probe warmup remains unchanged")
+        }
+        await f.owner.stop()
+    }
+
     func testWaitTraceSingleMeasuredTrialExportsUnavailableReadinessAfterJoinedRetirement() async throws {
         let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
         fake.setProbe(stage: 3); fake.finish()

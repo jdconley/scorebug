@@ -242,6 +242,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  primary = NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope,
                      mode: probeMode, candidateHeadroom: candidateHeadroom,
+                     coordinatesMeasurement: measuredTrial && probeMode == .staged,
                      policy: try NativeMeasuredTrialFixture.probePolicy(environment: environment))
              } else { primary = publisher }
              if let candidateProfile {

@@ -76,6 +76,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private let operations: Operations
     private let timing: Timing
     private let candidateHeadroom: Bool
+    private let coordinatesMeasurement: Bool
     private var starting = false, started = false, stopped = false, closed = false, invalid = false
     private var result = "notStarted"
     private var generation: UInt64?
@@ -119,10 +120,11 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     private var work: Task<Void, Never>?
     private var shutdown: Task<Void, Never>?
 
-    init(publisher: SRTMediaPublisher, scope: VideoFrameObservationScope, mode: Mode, candidateHeadroom: Bool = false,
+    init(publisher: SRTMediaPublisher, scope: VideoFrameObservationScope, mode: Mode, candidateHeadroom: Bool = false, coordinatesMeasurement: Bool = false,
          policy: PublishingProbeObservation.Policy = .localZeroLoss) {
         self.publisher = publisher; self.scope = scope; self.mode = mode; self.policy = policy; timing = Timing()
         self.candidateHeadroom = candidateHeadroom
+        self.coordinatesMeasurement = coordinatesMeasurement
         operations = .init(clock: { await publisher.transportClock() },
             begin: { NativeBandwidthProbeSample(try await publisher.beginBandwidthProbe(bitRate: 1_000_000)) },
             renew: { NativeBandwidthProbeSample(try await publisher.renewBandwidthProbe(id: $0, publishingGeneration: $1)) },
@@ -143,10 +145,11 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             })
     }
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope, mode: Mode,
-         operations: Operations, timing: Timing, candidateHeadroom: Bool = false,
+         operations: Operations, timing: Timing, candidateHeadroom: Bool = false, coordinatesMeasurement: Bool = false,
          policy: PublishingProbeObservation.Policy = .localZeroLoss) {
         self.publisher = publisher; self.scope = scope; self.mode = mode
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom; self.policy = policy
+        self.coordinatesMeasurement = coordinatesMeasurement
     }
     @discardableResult func setMeasurementContextProvider(_ read: @escaping NativeCandidateContextReader.Provider) -> Bool {
         measurementContext.install(read)
@@ -154,6 +157,9 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func start() async throws {
         guard !starting, !started, !stopped else { throw FixtureError.lifecycle }
+        guard !coordinatesMeasurement || (mode == .staged && candidateHeadroom) else {
+            throw FixtureError.invalidEvidence
+        }
         guard policy == .localZeroLoss || (mode == .staged && candidateHeadroom) else {
             throw FixtureError.invalidEvidence
         }
@@ -208,7 +214,7 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
                   !candidateHeadroom || mode == .staged || mode == .repeated,
                   mode != .repeated || candidateHeadroom,
                   (mode != .staged && mode != .repeated) || ((1...200).contains(timing.stagePolls) &&
-                    (mode == .repeated ? timing.stagePolls * 2 + repeatedFinalStagePolls : timing.stagePolls * 3) <= timing.maximumPolls) else {
+                    (mode == .repeated || coordinatesMeasurement ? timing.stagePolls * 2 + repeatedFinalStagePolls : timing.stagePolls * 3) <= timing.maximumPolls) else {
                 throw FixtureError.invalidEvidence
             }
             try await Task.sleep(for: timing.delay)
@@ -518,6 +524,31 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
 
     private var repeatedFinalStagePolls: Int { min(200, timing.stagePolls + (timing.stagePolls + 1) / 2) }
     private var stagedBitRates: [Int] { candidateHeadroom ? [500_000, 2_000_000, 12_000_000] : [500_000, 1_000_000, 2_000_000] }
+    private func stagedMeasurementReadiness(deadline: Double) async throws -> PublishingQualitySession.CandidateMeasurementContext? {
+        for _ in 0..<timing.maximumPolls {
+            try Task.checkCancellation()
+            let before = timing.now()
+            guard before.isFinite else { throw FixtureError.invalidEvidence }
+            guard before < deadline else { return nil }
+            let context = await measurementContext.read()
+            try Task.checkCancellation()
+            let after = timing.now()
+            guard after.isFinite, after >= before else { throw FixtureError.invalidEvidence }
+            guard after < deadline else { return nil }
+            if let context {
+                guard NativeCandidateAttempt.valid(context, scope: scope, candidate: .low360),
+                      context.readiness.validUntil.isFinite,
+                      context.readiness.healthyThrough <= after,
+                      context.clock.publishingGeneration == generation else { throw FixtureError.invalidEvidence }
+                // The provider evaluated before returning across actors. Read
+                // current time after that await; an expired result must wait for
+                // a new report, not acquire a newly dated probe owner.
+                if after <= context.readiness.validUntil { return context }
+            }
+            try await Task.sleep(for: timing.poll)
+        }
+        return nil
+    }
     private func runStaged() async throws {
         var current = try await operations.beginStaged()
         handle = current
@@ -526,8 +557,10 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
         result = "completed"
         for (index, _) in stagedBitRates.enumerated() {
             if current.reason != nil { result = "withdrawn"; return }
-            let stageDeadline = current.startedAt + 8
-            for _ in 0..<timing.stagePolls {
+            let finalMeasuredStage = coordinatesMeasurement && index == 2
+            let stageDeadline = current.startedAt + (finalMeasuredStage ? 12 : 8)
+            let polls = finalMeasuredStage ? repeatedFinalStagePolls : timing.stagePolls
+            for _ in 0..<polls {
                 if candidateHeadroom, timing.now() >= stageDeadline { break }
                 try await Task.sleep(for: timing.poll)
                 try Task.checkCancellation()
@@ -551,12 +584,36 @@ actor NativeBandwidthProbePublisher: MediaPublisher, PublishingProbeObserving {
             }
             if retired.reason != "cancelled" { result = "withdrawn"; return }
             if index == stagedBitRates.count - 1 { return }
-            guard let stage = retired.stage else { throw FixtureError.invalidEvidence }
+            guard let stage = retired.stage, let origin = retired.campaignStartedAt else { throw FixtureError.invalidEvidence }
+            let campaignDeadline = origin + 60
+            let stageContext: PublishingQualitySession.CandidateMeasurementContext?
+            if coordinatesMeasurement, index == 1 {
+                // Stage two is already joined. Waiting does not keep an old
+                // lease alive or reuse its authority for the final stage.
+                guard let context = try await stagedMeasurementReadiness(deadline: campaignDeadline) else {
+                    result = "readinessUnavailable"; return
+                }
+                stageContext = context
+            } else { stageContext = nil }
             let replacement = try await operations.replace(retired.id, retired.publishingGeneration, stage,
                 stagedBitRates[index + 1])
             handle = replacement
             try Task.checkCancellation()
             guard record(replacement, phase: "replaced") else { throw FixtureError.invalidEvidence }
+            if let stageContext {
+                let before = timing.now()
+                guard before.isFinite, before < campaignDeadline else { throw FixtureError.invalidEvidence }
+                let after = await measurementContext.read()
+                try Task.checkCancellation()
+                let now = timing.now()
+                guard now.isFinite, now >= before, now < campaignDeadline,
+                      let after, NativeCandidateAttempt.valid(after, scope: scope, candidate: .low360),
+                      after.readiness.validUntil.isFinite, after.readiness.healthyThrough <= now,
+                      now <= after.readiness.validUntil,
+                      NativeCandidateAttempt.sameConfiguration(stageContext, after) else {
+                    throw FixtureError.invalidEvidence
+                }
+            }
             current = replacement
         }
     }
