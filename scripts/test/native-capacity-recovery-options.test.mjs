@@ -277,116 +277,128 @@ test('native runner fails before resources until whole-history owned qualificati
   assert.match(result.stderr, /Owned recovery runner awaits its whole-history qualifier/);
 });
 
-test('owned retry permits exact1000ms through composed host parsers without qualifying recovery', async () => {
-  const environment = { ...ownedEnvironment(), SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '1000' };
-  const before = structuredClone(environment);
-  assert.equal(select(environment, { holdSeconds: 270 }), true);
-  const { nativeFileFixtureOptions } = await import('../native-file-fixture.mjs');
-  const { nativeUplinkOptions, fixturePublishPeerLatency } =
-    await import('../native-streaming-options.mjs');
-  const { nativeCapacityDiagnostics, runCapacityDiagnosticWorkflow } =
-    await import('../capacity-diagnostics.mjs');
-  assert.equal(
-    nativeFileFixtureOptions({ environment, streaming: true, holdSeconds: 270 })
-      .minimumDurationSeconds,
-    360,
-  );
-  assert.equal(
-    nativeUplinkOptions({
-      environment,
-      streaming: true,
-      holdSeconds: 270,
-      requirePublication: true,
-      requireProcessing: true,
-      requireQuality: false,
-      requireConfirmation: false,
-      fixtureWorkload: 'real-file',
-      liveProfile: '240p30',
-    }),
-    'capacity750k-retry',
-  );
-  assert.equal(fixturePublishPeerLatency(environment), 1000);
-  const diagnostics = { capacityRecovery: true, ownedMeasurement: '1' };
-  assert.throws(
-    () => nativeCapacityDiagnostics({ ...diagnostics, args: [] }),
-    /whole-history qualifier/,
-  );
-  assert.equal(
-    nativeCapacityDiagnostics({ ...diagnostics, args: ['--capacity-diagnostics'] }),
-    true,
-  );
-  await assert.rejects(
-    runCapacityDiagnosticWorkflow({
-      workflow: async () => {},
-      collect: async () => ({}),
-      save: async () => {},
-    }),
-    /NOT qualified/,
-  );
-  assert.deepEqual(environment, before);
-});
-
-test('1000ms owned host route rejects missing prerequisites and malformed latency', () => {
-  const environment = { ...ownedEnvironment(), SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '1000' };
-  for (const key of Object.keys(environment))
-    assert.throws(() => select({ ...environment, [key]: undefined }, { holdSeconds: 270 }), key);
-  for (const value of ['01000', '1000.0', ' 1000', '1000 ', '+1000', '999', '1001', 1000])
-    assert.throws(() =>
-      select(
-        { ...environment, SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: value },
-        { holdSeconds: 270 },
-      ),
+for (const latency of ['700', '1000'])
+  test(`owned retry permits exact${latency}ms through composed host parsers without qualifying recovery`, async () => {
+    const environment = { ...ownedEnvironment(), SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: latency };
+    const before = structuredClone(environment);
+    assert.equal(select(environment, { holdSeconds: 270 }), true);
+    const { nativeFileFixtureOptions } = await import('../native-file-fixture.mjs');
+    const { nativeUplinkOptions, fixturePublishPeerLatency } =
+      await import('../native-streaming-options.mjs');
+    const { nativeCapacityDiagnostics, runCapacityDiagnosticWorkflow } =
+      await import('../capacity-diagnostics.mjs');
+    assert.equal(
+      nativeFileFixtureOptions({ environment, streaming: true, holdSeconds: 270 })
+        .minimumDurationSeconds,
+      360,
     );
-  for (const [profile, holdSeconds] of [
-    ['capacity550k', 180],
-    ['capacity750k', 210],
-  ])
-    assert.throws(() =>
-      select(
-        {
-          ...capacityEnvironment(),
-          SCOREBUG_TEST_UPLINK_PROFILE: profile,
-          SCOREBUG_TEST_STREAM_HOLD_SECONDS: String(holdSeconds),
-          SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '1000',
+    assert.equal(
+      nativeUplinkOptions({
+        environment,
+        streaming: true,
+        holdSeconds: 270,
+        requirePublication: true,
+        requireProcessing: true,
+        requireQuality: false,
+        requireConfirmation: false,
+        fixtureWorkload: 'real-file',
+        liveProfile: '240p30',
+      }),
+      'capacity750k-retry',
+    );
+    assert.equal(fixturePublishPeerLatency(environment), Number(latency));
+    const diagnostics = { capacityRecovery: true, ownedMeasurement: '1' };
+    assert.throws(
+      () => nativeCapacityDiagnostics({ ...diagnostics, args: [] }),
+      /whole-history qualifier/,
+    );
+    assert.equal(
+      nativeCapacityDiagnostics({ ...diagnostics, args: ['--capacity-diagnostics'] }),
+      true,
+    );
+    await assert.rejects(
+      runCapacityDiagnosticWorkflow({
+        workflow: async () => {},
+        collect: async () => ({}),
+        save: async () => {},
+      }),
+      /NOT qualified/,
+    );
+    assert.deepEqual(environment, before);
+  });
+
+for (const latency of ['700', '1000'])
+  test(`${latency}ms owned host route rejects missing prerequisites and malformed latency`, () => {
+    const environment = { ...ownedEnvironment(), SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: latency };
+    for (const key of Object.keys(environment))
+      assert.throws(() => select({ ...environment, [key]: undefined }, { holdSeconds: 270 }), key);
+    for (const value of [
+      `0${latency}`,
+      `${latency}.0`,
+      ` ${latency}`,
+      `${latency} `,
+      `+${latency}`,
+      String(Number(latency) - 1),
+      String(Number(latency) + 1),
+      Number(latency),
+    ])
+      assert.throws(() =>
+        select(
+          { ...environment, SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: value },
+          { holdSeconds: 270 },
+        ),
+      );
+    for (const [profile, holdSeconds] of [
+      ['capacity550k', 180],
+      ['capacity750k', 210],
+    ])
+      assert.throws(() =>
+        select(
+          {
+            ...capacityEnvironment(),
+            SCOREBUG_TEST_UPLINK_PROFILE: profile,
+            SCOREBUG_TEST_STREAM_HOLD_SECONDS: String(holdSeconds),
+            SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: latency,
+          },
+          { holdSeconds },
+        ),
+      );
+  });
+
+for (const latency of ['700', '1000'])
+  test(`${latency}ms owned runner still rejects passing qualification before resources`, async () => {
+    const { spawnSync } = await import('node:child_process');
+    const { readdirSync } = await import('node:fs');
+    const directory = new URL('../../artifacts/qa/', import.meta.url);
+    const names = () => readdirSync(directory).filter((name) => name.startsWith('native-app-'));
+    const before = names();
+    const inherited = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith('SCOREBUG_TEST_')),
+    );
+    for (const patch of [
+      {},
+      { SCOREBUG_TEST_OWNED_MEASUREMENT: undefined },
+      { SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: `0${latency}` },
+    ]) {
+      const result = spawnSync(process.execPath, ['scripts/test-native-app.mjs', '--streaming'], {
+        cwd: new URL('../..', import.meta.url),
+        env: {
+          ...inherited,
+          ...ownedEnvironment(),
+          SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: latency,
+          ...patch,
+          SCOREBUG_IOS_RUNTIME: '00.0',
         },
-        { holdSeconds },
-      ),
-    );
-});
-
-test('1000ms owned runner still rejects passing qualification before resources', async () => {
-  const { spawnSync } = await import('node:child_process');
-  const { readdirSync } = await import('node:fs');
-  const directory = new URL('../../artifacts/qa/', import.meta.url);
-  const names = () => readdirSync(directory).filter((name) => name.startsWith('native-app-'));
-  const before = names();
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('SCOREBUG_TEST_')),
-  );
-  for (const patch of [
-    {},
-    { SCOREBUG_TEST_OWNED_MEASUREMENT: undefined },
-    { SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '01000' },
-  ]) {
-    const result = spawnSync(process.execPath, ['scripts/test-native-app.mjs', '--streaming'], {
-      cwd: new URL('../..', import.meta.url),
-      env: {
-        ...inherited,
-        ...ownedEnvironment(),
-        SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS: '1000',
-        ...patch,
-        SCOREBUG_IOS_RUNTIME: '00.0',
-      },
-      encoding: 'utf8',
-      timeout: 10000,
-    });
-    assert.equal(result.status, 1);
-    assert.match(
-      result.stderr,
-      Object.keys(patch).length
-        ? /Owned recovery requires|Capacity recovery requires|Unsupported fixture publish peer latency/
-        : /Owned recovery runner awaits its whole-history qualifier/,
-    );
-    assert.deepEqual(names(), before);
-  }
-});
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      assert.equal(result.status, 1);
+      assert.match(
+        result.stderr,
+        Object.keys(patch).length
+          ? /Owned recovery requires|Capacity recovery requires|Unsupported fixture publish peer latency/
+          : /Owned recovery runner awaits its whole-history qualifier/,
+      );
+      assert.deepEqual(names(), before);
+    }
+  });

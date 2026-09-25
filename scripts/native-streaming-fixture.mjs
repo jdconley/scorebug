@@ -89,7 +89,7 @@ export async function nativeStreamingFixture({
         liveProfile === '240p30' &&
         workerOutputProfile === '360p30' &&
         (publishPeerLatencyMs === 400 ||
-          (publishPeerLatencyMs === 1000 &&
+          ([700, 1000].includes(publishPeerLatencyMs) &&
             capacityDiagnostics &&
             uplinkProfile === 'capacity750k-retry' &&
             capacityEvidencePolicy === 'token-budget-v1')) &&

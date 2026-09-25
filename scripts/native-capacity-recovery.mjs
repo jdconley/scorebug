@@ -61,7 +61,9 @@ export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) 
     SCOREBUG_TEST_BANDWIDTH_PROBE: 'staged',
     SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
     SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS:
-      retry && environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS === '1000' ? '1000' : '400',
+      retry && ['700', '1000'].includes(environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS)
+        ? environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS
+        : '400',
   };
   for (const [key, value] of Object.entries(required))
     assert.equal(environment[key], value, `Capacity recovery requires ${key}=${value}`);

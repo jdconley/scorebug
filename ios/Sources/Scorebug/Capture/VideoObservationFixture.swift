@@ -147,7 +147,7 @@ enum VideoObservationFixture {
             let ownedRetry = environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity750k-retry" &&
                 environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] == "1"
             guard recovery.count == 1,
-                  recovery.first?.value == "400" || (ownedRetry && recovery.first?.value == "1000")
+                  recovery.first?.value == "400" || (ownedRetry && ["700", "1000"].contains(recovery.first?.value ?? ""))
             else { throw UplinkError.invalidFixtureRoute }
         }
         let query = components.percentEncodedQuery

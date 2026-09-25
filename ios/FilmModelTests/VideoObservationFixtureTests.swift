@@ -60,7 +60,7 @@ final class VideoObservationFixtureTests: XCTestCase {
         environment["SCOREBUG_TEST_UPLINK_PROFILE"] = "capacity750k-retry"
         environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = "270"
         environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] = "1"
-        for latency in ["400", "1000"] {
+        for latency in ["400", "700", "1000"] {
             let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:9999?streamid=publish%3Alive%2Fowned&passphrase=a%2Bb%26c%3Dd&peerlatency=\(latency)&mode=caller"))
             let routed = try VideoObservationFixture.publishingURL(original, environment: environment)
             XCTAssertEqual(routed.absoluteString, original.absoluteString.replacingOccurrences(of: ":9999?", with: ":12345?"))
@@ -71,28 +71,30 @@ final class VideoObservationFixtureTests: XCTestCase {
         XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment), 1.5)
     }
 
-    func testOwnedRetry1000msPublishingURLRejectsIncompleteRouteAndMalformedQuery() throws {
+    func testOwnedRetryPublishingURLRejectsIncompleteRouteAndMalformedQuery() throws {
         var environment = nativeCapacityTestEnvironment()
         environment["SCOREBUG_TEST_UPLINK_PROFILE"] = "capacity750k-retry"
         environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = "270"
         environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] = "1"
-        let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:9999?peerlatency=1000"))
-        for key in environment.keys {
-            var missing = environment; missing.removeValue(forKey: key)
-            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: missing), key)
-        }
-        for query in ["", "peerlatency", "peerlatency=", "peerlatency=01000", "peerlatency=1000.0",
-                      "peerlatency=+1000", "peerlatency=%201000", "peerlatency=1000%20", "peerlatency=999",
-                      "peerlatency=1001", "peerlatency=1000&peerlatency=1000", "peerlatency=400&peerlatency=1000"] {
-            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(
-                XCTUnwrap(URL(string: "srt://127.0.0.1:9999?\(query)")), environment: environment), query)
-        }
-        for (profile, hold) in [("capacity550k", "180"), ("capacity750k", "210"), ("loss0p2-delay30", "90")] {
-            var other = nativeCapacityTestEnvironment()
-            other["SCOREBUG_TEST_UPLINK_PROFILE"] = profile
-            other["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = hold
-            if profile == "loss0p2-delay30" { other.removeValue(forKey: "SCOREBUG_TEST_CAPACITY_RECOVERY") }
-            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: other), profile)
+        for latency in ["700", "1000"] {
+            let original = try XCTUnwrap(URL(string: "srt://127.0.0.1:9999?peerlatency=\(latency)"))
+            for key in environment.keys {
+                var missing = environment; missing.removeValue(forKey: key)
+                XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: missing), key)
+            }
+            for query in ["", "peerlatency", "peerlatency=", "peerlatency=0\(latency)", "peerlatency=\(latency).0",
+                          "peerlatency=+\(latency)", "peerlatency=%20\(latency)", "peerlatency=\(latency)%20", "peerlatency=699", "peerlatency=701", "peerlatency=999",
+                          "peerlatency=1001", "peerlatency=\(latency)&peerlatency=\(latency)", "peerlatency=400&peerlatency=\(latency)"] {
+                XCTAssertThrowsError(try VideoObservationFixture.publishingURL(
+                    XCTUnwrap(URL(string: "srt://127.0.0.1:9999?\(query)")), environment: environment), query)
+            }
+            for (profile, hold) in [("capacity550k", "180"), ("capacity750k", "210"), ("loss0p2-delay30", "90")] {
+                var other = nativeCapacityTestEnvironment()
+                other["SCOREBUG_TEST_UPLINK_PROFILE"] = profile
+                other["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] = hold
+                if profile == "loss0p2-delay30" { other.removeValue(forKey: "SCOREBUG_TEST_CAPACITY_RECOVERY") }
+                XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: other), profile)
+            }
         }
     }
 
