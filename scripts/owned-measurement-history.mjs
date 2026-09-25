@@ -33,6 +33,9 @@ const kinds = new Set([
   'applicationTransferred',
   'applicationRejected',
   'policyState',
+  'sourceWaitStarted',
+  'sourceReady',
+  'sourceWaitTimedOut',
   'acknowledged',
   ...settlements,
 ]);

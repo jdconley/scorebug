@@ -99,6 +99,18 @@ test('policy observations cannot authorize work after settlement', () => {
   raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
   assert.throws(() => index(raw), /event outside active Session owner/);
 });
+for (const kind of ['sourceWaitStarted', 'sourceReady', 'sourceWaitTimedOut'])
+  test(`indexes ${kind} as observation without source or policy authority`, () => {
+    const raw = fixture();
+    raw.events[2].kind = kind;
+    const result = index(raw);
+    assert.equal(result.eventCount, raw.events.length);
+    assert.equal(result.retryPolicyQualified, false);
+    assert.equal(result.nativeProbeQualified, false);
+    raw.events.splice(6, 0, { ...raw.events[5], kind, at: raw.events[5].at + 0.001 });
+    raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+    assert.throws(() => index(raw), /event outside active Session owner/);
+  });
 for (const cleanupFirst of [false, true])
   test(`indexes rejected application with cleanup ${cleanupFirst ? 'before' : 'after'} rejection`, () => {
     const raw = fixture();
