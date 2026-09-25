@@ -57,6 +57,9 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 
 ## Remaining integration and vertical work
 
+- [x] Research published live-platform adaptation and timing; see [platform findings](../../research/2026-09-25-live-platform-adaptation.md).
+- [ ] Define and compare a reliability-first latency profile with separate per-stage budgets before further relay-buffer tuning. Retain the 1.5-second benchmark; compare explicit 2/3-second ingest experiments, preserving media, stall, archive and freshness checks. These are proposed test values, not industry standards.
+
 - [x] Pass the short physical iPhone route through clean archive, native scoring, proxy overlay and both MP4 outputs; retain the startup-profile, sync and sustained-operation limits in the current assessment.
 - [ ] Complete the authorized physical vertical and record all three artifacts: clean phone archive, mock-destination MP4 and configurable proxy final-overlay MP4.
 - [x] Add reviewed, opt-in guarded app application ownership; preserve publication on pre-effect rejection and join shutdown after partial profile application (`064e555`).
