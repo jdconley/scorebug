@@ -155,6 +155,8 @@ struct PublishingClockObservation: Equatable, Sendable {
         return (setup.endpoint, setup.installationToken)
     }
     private var restored = false
+    // Transient sheet state only; never changes or clears the saved connection.
+    var isSetupPresented = false
     private var current: CurrentCapture?
     private var publishing: (context: CurrentCapture, session: PublishingSession, generation: Int, attempt: UUID, observations: VideoFrameObservationOwner?, probeObserver: (any PublishingProbeObserving)?)?
     private var coordinator: BroadcastCommandCoordinator?
@@ -564,6 +566,16 @@ struct PublishingClockObservation: Equatable, Sendable {
 
     /// A separate modest timer drives this method. A delayed request never blocks
     /// camera health. Local state and observation expiry use pollLocalHealth().
+    func pollBackgroundControl() async {
+        await restore()
+        // Let an in-flight poll settle under the existing controlBusy guard.
+        // Once idle and clean, keep the form enabled until editing finishes.
+        // Pending commands/reports, stop ownership and storage failures retain
+        // normal recovery because they make canChangeSetup false.
+        if isSetupPresented && current == nil && canChangeSetup { return }
+        await pollControl(includeWorkerStatus: false)
+    }
+
     func pollControl(includeWorkerStatus: Bool = true) async {
         let controlStartedUptime = ProcessInfo.processInfo.systemUptime
         if needsStorageRetry && setup == nil { restored = false }

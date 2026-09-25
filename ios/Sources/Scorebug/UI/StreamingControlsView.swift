@@ -38,7 +38,11 @@ struct StreamingControlsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding()
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-        .sheet(isPresented: $showSetup) { setup }
+        .sheet(isPresented: $showSetup) {
+            setup
+                .onAppear { model.isSetupPresented = true }
+                .onDisappear { model.isSetupPresented = false }
+        }
     }
     private var localStatus: String {
         switch model.localState {

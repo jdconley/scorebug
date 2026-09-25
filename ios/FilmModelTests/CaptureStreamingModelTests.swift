@@ -6,6 +6,127 @@ import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testSetupEditingPausesBackgroundControlAndDismissalResumesIt() async throws {
+        let server = CaptureTestServer(), model = makeModel(server: server)
+        await server.setOffline(true)
+        await model.restore()
+        model.isSetupPresented = true
+        await model.pollBackgroundControl()
+        await model.pollBackgroundControl()
+        let pausedCalls = await server.requestCount
+        XCTAssertEqual(pausedCalls, 0)
+        XCTAssertTrue(model.canChangeSetup)
+        XCTAssertNil(model.message)
+
+        model.isSetupPresented = false
+        await model.pollBackgroundControl()
+        let resumedCalls = await server.requestCount
+        XCTAssertEqual(resumedCalls, 1)
+        XCTAssertNotNil(model.message)
+    }
+
+    func testSetupEditingWaitsForInFlightControlBeforeAllowingScopeChange() async throws {
+        let server = CaptureTestServer(), storage = CaptureMemoryStorage(captureSetup())
+        let model = makeModel(server: server, storage: storage), gate = FilmTestGate()
+        await model.restore()
+        await server.setSnapshotGate(gate)
+        let polling = Task { await model.pollBackgroundControl() }
+        await gate.waitUntilEntered()
+        model.isSetupPresented = true
+        XCTAssertFalse(model.canChangeSetup)
+        let oldEndpoint = storage.value?.endpoint
+        model.endpoint = "http://localhost:18888"
+        await model.connect()
+        XCTAssertEqual(storage.value?.endpoint, oldEndpoint, "An old-scope request must settle before setup changes")
+        await gate.release()
+        await polling.value
+        XCTAssertTrue(model.canChangeSetup)
+        let settledCalls = await server.requestCount
+        await model.pollBackgroundControl()
+        let callsAfterEditing = await server.requestCount
+        XCTAssertEqual(callsAfterEditing, settledCalls)
+    }
+
+    func testSetupEditingStillAllowsExplicitRetryAndConnect() async throws {
+        let server = CaptureTestServer(), storage = CaptureMemoryStorage(captureSetup())
+        let model = makeModel(server: server, storage: storage)
+        await model.restore()
+        model.isSetupPresented = true
+        await server.setOffline(true)
+        await model.pollControl()
+        let retryCalls = await server.requestCount
+        XCTAssertEqual(retryCalls, 1)
+        await server.setOffline(false)
+        model.endpoint = "http://localhost:18888"
+        await model.connect()
+        XCTAssertEqual(storage.value?.endpoint, "http://localhost:18888")
+        XCTAssertEqual(model.connectedGameID, "game-1")
+        let connectedCalls = await server.requestCount
+        XCTAssertGreaterThan(connectedCalls, retryCalls)
+        await model.pollBackgroundControl()
+        let pausedCalls = await server.requestCount
+        XCTAssertEqual(pausedCalls, connectedCalls)
+    }
+
+    func testSetupEditingDoesNotPauseActiveCaptureOrItsTerminalReport() async throws {
+        let server = CaptureTestServer(), storage = CaptureMemoryStorage(captureSetup())
+        let model = makeModel(server: server, storage: storage)
+        await model.restore()
+        model.isSetupPresented = true
+        model.captureChanged(captureContext())
+        await model.pollBackgroundControl()
+        let liveReports = await server.reports.map(\.status)
+        XCTAssertEqual(liveReports, [.recording])
+        XCTAssertFalse(model.canChangeSetup)
+        model.captureChanged(nil)
+        await model.pollBackgroundControl()
+        let endedReports = await server.reports.map(\.status)
+        XCTAssertEqual(endedReports, [.recording, .stopped])
+        XCTAssertTrue(storage.value?.reports.isEmpty == true)
+        XCTAssertTrue(model.canChangeSetup)
+    }
+
+    func testSetupEditingPreservesAndAttemptsEveryDurableRecoveryKind() async throws {
+        for kind in ["report", "stop-ownership", "command"] {
+            let server = CaptureTestServer(), pending = CaptureMemoryPending()
+            var saved = captureSetup()
+            if kind == "report" {
+                saved.reports = [.init(credential: try XCTUnwrap(saved.credential),
+                    report: .init(recordingId: "recording-1", sequence: 2, status: .stopped,
+                                  startedAt: "2026-09-14T00:00:00Z"), delivered: false)]
+            } else if kind == "stop-ownership" { saved.stopRecordingIDs = ["recording-1"] }
+            else {
+                pending.value = .init(endpointScope: saved.endpointScope,
+                    command: .init(commandId: "pending-1", gameId: "game-1", expectedGeneration: 1,
+                                   issuedAt: "2026-09-14T00:00:00Z", operation: .stop), captureDeviceId: saved.deviceId)
+            }
+            let storage = CaptureMemoryStorage(saved), originalPending = pending.value
+            let model = makeModel(server: server, storage: storage, pending: pending)
+            await server.setOffline(true)
+            await model.restore()
+            model.isSetupPresented = true
+            XCTAssertFalse(model.canChangeSetup, kind)
+            await model.pollBackgroundControl()
+            let calls = await server.requestCount
+            XCTAssertGreaterThan(calls, 0, kind)
+            XCTAssertEqual(storage.value?.reports.count, saved.reports.count, kind)
+            XCTAssertEqual(storage.value?.stopRecordingIDs, saved.stopRecordingIDs, kind)
+            XCTAssertEqual(pending.value, originalPending, kind)
+            XCTAssertFalse(model.canChangeSetup, kind)
+        }
+    }
+
+    func testSetupEditingDoesNotHideUnreadablePendingStorage() async throws {
+        let server = CaptureTestServer(), pending = CaptureMemoryPending()
+        let model = makeModel(server: server, pending: pending)
+        await model.restore()
+        pending.fails = true
+        model.isSetupPresented = true
+        await model.pollBackgroundControl()
+        XCTAssertTrue(model.needsStorageRetry)
+        XCTAssertFalse(model.canChangeSetup)
+    }
+
     func testWorkerStatusRefreshDoesNotWaitForCoordinatorRecovery() async throws {
         let server = CaptureTestServer(), model = makeModel(server: server)
         await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
@@ -2560,8 +2681,9 @@ import XCTest
                            publisher: CaptureTestPublisher = CaptureTestPublisher(),
                            publisherFactory: ((URL, VideoFrameObservationOwner?) throws -> any MediaPublisher)? = nil,
                            observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) },
-                           qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = { _, _ in nil }) -> CaptureStreamingModel {
-        CaptureStreamingModel(storage: storage ?? CaptureMemoryStorage(saved), pendingStore: CaptureMemoryPending(),
+                           qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = { _, _ in nil },
+                           pending: CaptureMemoryPending = CaptureMemoryPending()) -> CaptureStreamingModel {
+        CaptureStreamingModel(storage: storage ?? CaptureMemoryStorage(saved), pendingStore: pending,
                               clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
                               publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory, qualityFactory: qualityFactory)
     }

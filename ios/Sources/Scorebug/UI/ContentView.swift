@@ -55,7 +55,7 @@ struct ContentView: View {
         guard scenePhase == .active else { return }
         await streaming.restore()
         await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
-            poll: { await streaming.pollControl(includeWorkerStatus: false) })
+            poll: { await streaming.pollBackgroundControl() })
     }
     @MainActor private func monitorWorkerStatus() async {
         guard scenePhase == .active else { return }
