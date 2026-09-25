@@ -37,8 +37,8 @@ those windows precede restored recovery and receive no healthy credit.
 The raw timing audit locates a 300.8 ms delay in control maintenance before the
 next worker-status request. That request itself takes 19.5 ms. Worker health
 polling currently waits behind persistence, report flushing and broadcast-command
-recovery. Investigate an independently owned status polling path with the same
-scope, receipt and freshness checks. Do not relabel the failed run or retry a
+recovery. The [independent status polling plan](2026-09-25-independent-worker-status.md)
+keeps the same scope, receipt and freshness checks. Do not relabel the failed run or retry a
 historical window after its live consumption deadline.
 
 All 4,702 tooling tests pass; the latest native model checkpoint is 576 tests.

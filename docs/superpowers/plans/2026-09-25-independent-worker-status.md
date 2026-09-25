@@ -96,3 +96,45 @@ need one owned measurement lifecycle spanning registration, native allocation,
 joined failure, successful admission and revocation. Reuse the approved
 10/20/40/60-second observed-health backoff; do not use a host restoration signal
 or probe/candidate ordinal equality to authorize a new attempt.
+
+## Preserved follow-on design: measured attempt ownership
+
+Read-only review found no existing Core API for failed probes before admission.
+`QualityController.evaluateCandidate` receives only completed admission evidence;
+`invalidateTelemetry` clears health without advancing backoff. Reusing
+`acknowledge(nil)` or synthesizing delivery failure would invent events. Native
+SRT start/restart already supports `recovery-budget-v1` with fresh UUID, authority,
+stage-one allocation and zeroed per-campaign counters; retain its 60-second,
+16 MiB and 300 ms lease bounds.
+
+The follow-on lifecycle must cover registration, successful admission, failure and
+revocation together. Session first validates actual current readiness and pins
+publication/clock/encoder ownership; Core mints one opaque measurement token.
+Only the owning scheduler may register native allocation and join it. Keep advisory
+readiness readable during an active probe because stage-three refresh needs it;
+reject duplicate allocation at registration instead.
+
+A joined failure consumes its token once, clears source and shared delivery health,
+and advances the monotonic earliest-health boundary. Factor failure-episode counting
+out of `latchMinimumReset` rather than invoking its encoder-reset and application
+revocation side effects. Registration begins the new episode without clearing the
+failure count; a delivery failure during the same episode must not count twice.
+Only confirmed trial success clears consecutive failures. Reject duplicate, foreign
+and obsolete completions before clock/health mutation; they must not revoke newer
+applications. Revocation prevents policy work immediately while cleanup still joins.
+
+Successful admission must identify the same measurement token and actual probe
+handle, with measurement timestamps inside that attempt. A separate generic
+`measured` success callback would leave admission unbound. Remove candidate/probe
+ordinal equality: failed probes before candidate allocation consume no candidate
+ordinal. Every allocation still needs a distinct bounded audit and total attempt
+ceiling, with failed attempts retained. The four-phase capacity experiment needs
+its own export/qualification route; existing three-phase capacity and five-phase
+repeated-decoder-fault routes keep their contracts.
+
+A probe can fail while the lowest profile remains healthy before restoration. It
+must retire, wait for the approved observed-health hold, and retry on the same
+applied revision with new ownership. Neither the host restoration clock nor an
+elapsed timer may authorize it. Offline clock brackets subsequently prove that a
+successful fresh measurement and trial followed actual restoration. This design
+is not implemented or qualified by the independent polling work.
