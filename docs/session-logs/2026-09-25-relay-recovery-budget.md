@@ -32,3 +32,29 @@ Add exact1000ms as an explicit laboratory selection through the existing peer-la
 Implemented in `c2e0973`. Focused JavaScript237/237 and full FilmModel618/618 pass; both sequential specification and quality reviews approve. Red/green logs and hashes are retained by `artifacts/qa/c2e0973-imported-verification-logs.json`. The media-leaf replay helper was checked against the original failed `mAluZi` run: native probe/compressed-frame/clock leaves still pass, and profile/media leaves still reject the damaged identity.
 
 The full native1000ms diagnostic started under wrapper session9675, log `repeated-live-checkpoint-owned-diagnostic-latency1000-20260925.log`. Exact environment is retained in `owned-latency1000-native-environment-20260925.json`; launch script `run-owned-latency1000-native-20260925.py`. Result pending. Inspect all three recordings and delivery evidence after the process joins. A short relay success alone does not justify production enablement.
+
+
+## Native1000ms result: clean media, failed timing/progression
+
+`native-app-siloC2` and wrapper9675 joined with intentional diagnostic exit1; collection errors are empty, owned simulator/services cleaned. All three recordings decode. Archive has9276 sequential IDs0–9275; both live outputs have8845 identical sequential IDs221–9065, max video gap34ms. No missing/reversed IDs occur within any recorded span. Detailed probes, frame tables, raw barcode bytes, hashes and results are under `owned-recording-diagnostic/`.
+
+The app remained240p with no measurement registrations or applications. Complete quality history contains344 events: bootstrap,286 delivery failures,56 stale-source rejections, and stop. Source ages are about2.03s, exceeding the unchanged2s freshness bound. The bounded429-row delivery audit stays within its limit. The common media and clock leaves pass, while four-phase checks fail1≠4; the diagnostic native-probe helper also reports no registration (its original missing-first-receipt error is retained). None of these leaf results grants complete recovery qualification.
+
+Actual native encoded-frame observations explain most of the missing budget: median435.37ms and maximum438.54ms submission-to-completion across the final1024 observations. The raw relay experiment used preencoded input and omitted this cost. Earlier native experiments also observed13-frame encoder buffering; MaxFrameDelayCount3 and low-latency encoder creation were unsupported in their tested simulator configurations. Do not repeat those settings as presumed fixes or infer physical hardware support from simulator results.
+
+The AVIO32KiB-fill hypothesis is unsupported: FFmpeg SRT reads return messages and the read loop requires only progress, not a full32KiB. No buffering flag or freshness/deadline change was made.
+
+##700ms candidate
+
+The measured600ms retransmission and roughly435ms encoder delay suggest a700ms recovery buffer could fit below the same1500ms end-to-end deadline. This is an experiment, not a production recommendation. `reference-loss-relay-700-20260925` confirms299 captured frames match source pixels/IDs exactly after the controlled delayed retransmission.298 complete PES ingress upper bounds range900.1–960.1ms; median918.2ms,95th percentile930.0ms. All processes/owned containers joined and hashes verified.
+
+The same explicit owned diagnostic option is being extended to exact700ms, retaining400/1000, all legacy contracts and unchanged deadlines. Focused tests/reviews precede another complete native experiment. The original1000ms failure is retained.
+
+
+##700ms native run started
+
+Committed `85bc29e` passes250 focused JS tests and14 Swift fixture tests; both specification and quality reviews approve. The full618-test result remains the `c2e0973` baseline, not a rerun claim. Red/green logs and hashes are retained in `85bc29e-imported-verification-logs.json`.
+
+Full native700ms experiment `native-app-7JYkdI` is active under wrapper86509, log `repeated-live-checkpoint-owned-diagnostic-latency700-20260925.log`. Exact environment and launcher use unique700 filenames. No phone test was started. Result pending; source/frame/deadline limits remain unchanged.
+
+A read-only audit of the original four-owner history found the telemetry needed for full owned qualification already exists. The next complete verifier must join original owner/campaign/revision indices across receiver, candidate, witness, application and retry policy evidence. A shared raw candidate validator is being extracted as a bounded prerequisite, preserving existing legacy envelope checks and adding no recovery authority or normal-runner bypass.

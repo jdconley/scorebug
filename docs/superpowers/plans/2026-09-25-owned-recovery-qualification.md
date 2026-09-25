@@ -41,8 +41,9 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       all captured video frames; complete native A/V and delivery remain unqualified.
 - [x] Permit exact1000ms only on the explicit owned diagnostic retry route,
       preserving400ms and1500ms delivery limits; specification/quality reviews pass.
-- [ ] Rerun the full native cycle at1000ms and qualify complete A/V, timing and
-      all three recordings before selecting production recovery behavior.
+- [ ] Qualify recovery latency on the complete native cycle with A/V, timing and
+      all three recordings.1000ms produces clean media but fails1500ms delivery and
+     2s source freshness; the measured700ms candidate requires full native testing.
 - [ ] Resolve the observed live-frame damage following late packet retransmission.
       Verify actual SRT/relay boundary capture and recovery timing before choosing
       a fix; decoder flags alone failed the controlled reproduction. Retain strict
