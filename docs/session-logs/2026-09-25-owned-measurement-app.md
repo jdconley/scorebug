@@ -236,3 +236,26 @@ After diagnostic/relay changes, full`pnpm test:tools` passes4852tests, joinedexi
 of the unmodified real958-event audit passes all six attempts after recognizing
 actual`policyState` observations. This grants no receiver capacity,retry policy
 or media qualification.
+
+## Source scheduling fix and second diagnostic
+
+Reviewed commit `4122bb6` waits in the 2 Mbps probe stage for the next actual
+strong source window owned by the same token, baseline and revision. The wait
+has a 7.25-second deadline from lease creation. Freshness stays at two seconds;
+native campaign limits remain 60 seconds / 16 MiB. The new regression uses
+121 timed frame observations collected over four seconds, five-second source
+windows and 1.8-second report lag. Its candidate result is still a deterministic
+fixture; actual VideoToolbox and network behavior require the native run.
+
+Verification: all 16 focused owned tests and the full 616-test FilmModel suite
+pass; arm64 simulator build passes. Both reviewers approve. Imported logs and
+hashes are in `4122bb6-imported-verification-logs.json`. Commit `de1510e` retains
+three actual source-wait event kinds; 81 history/native replay tests pass.
+
+Second diagnostic `native-app-mAluZi` started on the same prepared source and
+capacity schedule with both reviewed fixes. Wrapper process20749, log
+`repeated-live-checkpoint-owned-diagnostic-cadence-20260925.log`. Outcome pending.
+The prior run's five candidate A/V transport payloads also pass the existing
+transport leaf validator directly from their actual measurements; results are
+`native-app-6M1CiA/candidate-transport-leaf-results.json`. That is neither an
+admission nor media qualification.
