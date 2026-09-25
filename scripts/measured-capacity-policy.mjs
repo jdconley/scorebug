@@ -432,12 +432,14 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
       healthyCreditSeconds: 0,
     };
   }
-  // Every receipt is independently reconstructed before these lane checks.
-  for (const row of deliveryAudit.rows)
-    assert(
-      row.evaluatedAt <= cadenceEnd && row.end <= cadenceEnd,
-      'Delivery decision outside cadence audit',
-    );
+  // The native poll records cadence before evaluating delivery. Every receipt
+  // and its original freshness budget are independently reconstructed above;
+  // the later evaluation must still belong to the validated, closed session.
+  // Coverage remains bounded by the cadence audit, not the stop timestamp.
+  for (const row of deliveryAudit.rows) {
+    assert(row.end <= cadenceEnd, 'Delivery window outside cadence audit');
+    assert(row.evaluatedAt <= events.at(-1).at, 'Delivery decision outside owned session');
+  }
   qualifyMeasuredCadenceContinuity({
     reports,
     start: confirmed.at,

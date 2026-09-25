@@ -24,38 +24,35 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 25
 
-The native success route is connected, but the fresh end-to-end run remains
-**unqualified**. Two concrete scheduling fixes now pass 576 app-model tests:
-candidate measurement wakes when fresh health arrives, and lab clock replies run
-independently of network control polling. The frozen repeat `native-app-YAQo8F`
-measures and applies 360p, decreases to 240p, has no freshness rejections, and passes
-all four causal clock exchanges in 12.6–22.8 ms. Its UI workflow and both complete
-A/V decodes pass. The clean archive contains 7,481 consecutive frames.
+The latest frozen native run, `native-app-YnfAvU`, performs 240p → 360p → 240p
+with no freshness rejections. Its UI workflow and both complete A/V decodes pass.
+The clean archive has 7,455 consecutive frames; the saved stream has 7,029
+consecutive frames. Raw lossless media, native application/admission, confirmed
+prefix and causal clock checks pass independently. All four clock exchanges take
+11.5–23.2 ms. The original end-to-end result remains **failed** on its selected
+whole-second offered-load gate.
 
-Two acceptance issues remain explicit: the proxy reaches 480.596 ms queue residence
-with no overflow, below the existing 500 ms congestion gate; the saved stream has
-one missing source frame (7,023 decoded frames, missing identity 2877). Raw receiver
-and worker-processing counts agree on that missing frame. The default media verifier still
-requires zero loss. A new explicit offline conservation check now reconciles this
-loss against the raw receiver and completed worker counts, at 29.8 fps and 0.667%
-loss in the affected interval. It keeps the clean archive strict and grants no
-healthy recovery credit. A new explicit queue audit and independent replay now
-prove actual token-limit denial in controlled tests, including FIFO order, all
-token advances and phase-counter conservation. An explicit native laboratory
-selection now exports that audit and composes it with bounded live-loss checks.
-All 4,642 tooling tests pass. The next task is a fresh native experiment;
-complete capacity recovery and a fresh subsequent ramp-up remain unqualified.
-Physical camera, phone/Watch concurrency and remote proxy tests remain open.
+The new 66,107-operation audit independently proves actual bandwidth limiting,
+including a ready-packet deficit 18.3 ms after the cap begins. The old statistic
+misses a boundary burst. A prospective, explicit `token-budget-v1` contract now
+uses the fully reconstructed packet budget while keeping both earlier contracts
+unchanged. All 4,702 tooling tests pass; the latest native model checkpoint is
+576 tests. The terminal timing check now accepts delivery evaluation after its
+still-fresh cadence sample only within the validated owned session. Freshness
+and coverage budgets remain unchanged. Separate offline replay passes the complete
+prospective capacity policy; full media qualification still requires a fresh native
+run. Complete capacity recovery and a subsequent fresh ramp-up remain unqualified.
 
-No simulator runtime was installed, only the experiment's temporary simulator was
-removed, and the frozen input/code hashes were unchanged. See the
-[latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#frozen-independent-clock-native-repeat).
+Earlier `native-app-YAQo8F` had one missing live frame; the explicit bounded-loss
+component reconciles it at 29.8 fps and 0.667% loss in the affected interval. The
+clean archive remains strict, and loss accounting grants no healthy recovery time.
+No old native verdict is relabeled. See the
+[current evidence contract and next steps](2026-09-25-capacity-rate-ledger.md#fresh-integration-run-and-prospective-token-budget-contract).
 
-The [direct rate-limit proof component](2026-09-25-capacity-rate-ledger.md)
-keeps the historical congestion gate unchanged. It requires evidence that the
-old runs did not record, and cannot retrospectively qualify them. Bounded
-live-loss conservation passes the saved-artifact replay. The default native route
-remains strict; the new laboratory selection still needs fresh observed evidence.
+The latest run reused installed iOS 26.2, preserved all 1,262 frozen file hashes,
+and removed only its owned temporary simulator. Physical camera, phone/Watch
+concurrency, fresh post-restoration ramp-up, true outage and remote proxy tests
+remain open.
 
 Earlier saved evidence from `native-app-5UYvcA` passed its separate transport,
 confirmed-upgrade, native pressure-decrease, and media checks. The observed upload

@@ -98,23 +98,23 @@ and cannot acquire this new qualification retroactively.
 ## Test-first implementation sequence
 
 - [x] Review the proof shape and resolve initial history, FIFO ownership, complete
-  floating-point advances, same-time boundaries, partial bins and phase closure.
+      floating-point advances, same-time boundaries, partial bins and phase closure.
 - [x] Set fixed row/byte budgets and prove overflow cannot affect queue behavior
-  before enabling the recorder.
+      before enabling the recorder.
 - [x] Add queue observer tests: a finite cap with actual token denial; an underload
-  with no denial; a delayed host timer whose replenished bucket can forward;
-  delay-only waiting; packet drops; phase boundaries; immutable snapshots; caps;
-  unchanged queue behavior with and without observation.
+      with no denial; a delayed host timer whose replenished bucket can forward;
+      delay-only waiting; packet drops; phase boundaries; immutable snapshots; caps;
+      unchanged queue behavior with and without observation.
 - [x] Implement the bounded audit without enabling it in any native run.
 - [x] Add independent replay tests with missing/extra/reordered charges, forged
-  denial, wrong ready time, incorrect wire accounting and incomplete terminal
-  evidence. Keep the historical500ms gate tests unchanged.
+      denial, wrong ready time, incorrect wire accounting and incomplete terminal
+      evidence. Keep the historical500ms gate tests unchanged.
 - [x] Review and run focused/full tooling checks.
 - [x] Implement only an explicit laboratory selector and bounded separate export.
 - [ ] Retain raw input/source hashes and run the new native experiment.
 - [ ] Compose actual token limiting with causal native pressure, bounded live-loss
-  conservation, strict clean recording and fresh recovery. No evidence can be
-  retroactively added to YAQo8F or substituted into its frozen failed result.
+      conservation, strict clean recording and fresh recovery. No evidence can be
+      retroactively added to YAQo8F or substituted into its frozen failed result.
 
 Review additionally requires tests for an initially finite or previously depleted
 bucket, same-time boundary operations, denial followed immediately by restoration,
@@ -262,3 +262,26 @@ age remains about 93.5 ms, inside the original 250 ms freshness limit. The nativ
 poll records cadence before evaluating delivery, so timestamp order alone is not
 an expired report. Investigate this terminal ownership/freshness gate before the
 next frozen native run; do not alter the underlying freshness budget.
+
+## Terminal delivery ordering correction
+
+The final delivery evaluation may naturally follow the final cadence report in
+one native control poll. The capacity checker now bounds every delivery window
+by the cadence audit and every evaluation by the validated owned session stop.
+Independent raw receipt reconstruction still enforces the original 250 ms sample
+freshness, report identity and ownership. No health, source, delivery or recovery
+coverage extends beyond the cadence audit.
+
+A portable metadata-only fixture from YnfAvU preserves the original failed result
+and raw-file hashes. Regression tests cover the genuine 5.903 ms ordering, stale
+and foreign receipts, unknown classification, evaluation after owned closure,
+windows outside the audit, and missing terminal source/delivery lanes. The old
+rate-ledger offered-load failure remains unchanged; successful prospective replay
+cannot qualify media files, a fresh ramp or production behavior.
+
+Fresh verification passes all 4,702 tooling tests (joined exit 0 in
+`repeated-live-checkpoint-terminal-delivery-tools-20260925-exit.json`). The separate
+`diagnostic-native750-token-budget-terminal-replay.json` now passes the complete
+prospective capacity policy from the immutable YnfAvU raw evidence. Its
+`mediaFilesQualified`, `freshRampQualified` and `productionUpgradeAuthorized`
+flags remain false. A new native run is still required.

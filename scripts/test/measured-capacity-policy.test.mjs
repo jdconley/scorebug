@@ -223,3 +223,110 @@ for (const duration of [1, 2])
     f.deliveryAudit.rows.splice(index, 1);
     assert.throws(() => qualify(f), /Gap or overlap in delivery coverage/);
   });
+
+// Genuine native poll ordering: cadence is recorded before delivery is evaluated.
+// The original rate-ledger-v1 native run failed; token-budget-v1 is only an
+// explicitly selected offline replay of the frozen raw metadata and decoded IDs.
+const terminalRaw = gunzipSync(
+  readFileSync(new URL('./fixtures/measured-capacity-YnfAvU.json.gz', import.meta.url)),
+).toString();
+function terminalFixture() {
+  const f = JSON.parse(terminalRaw).input;
+  f.quality = structuredClone(expandQualityEvidence(f.quality));
+  return f;
+}
+function qualifyTerminal(f) {
+  return qualify(f, { capacityEvidencePolicy: 'token-budget-v1' });
+}
+test('fresh terminal delivery after its final cadence poll remains inside the owned session', () => {
+  const f = terminalFixture(),
+    cadenceEnd = f.cadenceReports.rows.at(-1).evaluatedUptime,
+    row = f.deliveryAudit.rows.at(-1),
+    stopped = f.quality.events.at(-1);
+  assert.equal(stopped.kind, 'stopped');
+  assert(row.evaluatedAt > cadenceEnd);
+  assert(row.evaluatedAt - cadenceEnd < 0.006);
+  assert(row.end < cadenceEnd);
+  assert(row.evaluatedAt < stopped.at);
+  assert.equal(f.deliveryAudit.maximumSampleAge, 0.25);
+  assert(row.evaluatedAt - row.sampleTimeBounds.lower < 0.1);
+  const result = qualifyTerminal(f);
+  assert.equal(result.capacityPolicyQualified, true);
+  assert.equal(result.cadenceCheckedThrough, cadenceEnd);
+  assert(result.deliveryLanes.every((lane) => lane.end <= cadenceEnd));
+  assert(result.recovery.end <= cadenceEnd);
+  assert.equal(result.mediaFilesQualified, false);
+  assert.equal(result.freshRampQualified, false);
+  assert.equal(result.productionUpgradeAuthorized, false);
+  assert.equal(result.mediaConservation.healthyCreditSeconds, 0);
+});
+test('terminal replay preserves the original rate-ledger offered-load failure', () => {
+  assert.throws(
+    () => qualify(terminalFixture(), { capacityEvidencePolicy: 'rate-ledger-v1' }),
+    /Insufficient offered load/,
+  );
+});
+for (const [name, mutate, error] of [
+  [
+    'stale report despite a claimed fresh age',
+    (f) => {
+      const row = f.deliveryAudit.rows.at(-1);
+      row.evaluatedAt = row.sampleTimeBounds.lower + 0.251;
+      row.classifiedAt = row.evaluatedAt;
+    },
+    /sample bounds are future or stale/,
+  ],
+  [
+    'foreign report receipt',
+    (f) => (f.deliveryAudit.rows.at(-1).deliveryReceiptID = 'foreign'),
+    /does not own current report receipt/,
+  ],
+  [
+    'evaluation after owned closure while its report remains fresh',
+    (f) => (f.quality.events.at(-1).at = f.cadenceReports.rows.at(-1).evaluatedUptime),
+    /Delivery decision outside owned session/,
+  ],
+  [
+    'delivery window beyond the cadence audit',
+    (f) => {
+      const row = f.deliveryAudit.rows.at(-1);
+      row.end = f.cadenceReports.rows.at(-1).evaluatedUptime + 0.001;
+      row.start = row.end - 1;
+    },
+    /Incomplete capture window/,
+  ],
+  [
+    'unknown terminal classification',
+    (f) => {
+      const row = f.deliveryAudit.rows.at(-1);
+      row.result = null;
+      row.reason = 'missingReceipt';
+      delete row.frames;
+      delete row.anchorSourcePTS;
+    },
+    /Incomplete delivery classification/,
+  ],
+  [
+    'missing terminal source decision',
+    (f) => {
+      const last = min(f).at(-1);
+      f.quality.events.splice(f.quality.events.indexOf(last), 1);
+    },
+    /Unconsumed capacity source/,
+  ],
+  ...[1, 2].map((duration) => [
+    `missing terminal delivery lane ${duration}`,
+    (f) => {
+      const last = f.deliveryAudit.rows.findLast(
+        (r) => r.appliedRevision === '2' && r.end - r.start === duration,
+      );
+      f.deliveryAudit.rows.splice(f.deliveryAudit.rows.indexOf(last), 1);
+    },
+    /Incomplete terminal delivery lane/,
+  ]),
+])
+  test(`terminal capacity replay rejects ${name}`, () => {
+    const f = terminalFixture();
+    mutate(f);
+    assert.throws(() => qualifyTerminal(f), error);
+  });
