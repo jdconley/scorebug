@@ -185,3 +185,21 @@ the transferred token, and do not count failure, grant health or fabricate reset
 Actual failure settlement still requires joined cleanup. Review and all affected
 verification must pass after this fix. Production enablement and the complete
 four-phase experiment remain open.
+
+## Driver rejection fix reviewed; native diagnostic started
+
+Commit `a278c0c` resolves the Driver cleanup blocker. Specification re-review and
+independent Swift quality review approve the integration. Verification: 614
+FilmModel tests, 492 Core tests and arm64 simulator build passed. Existing run
+logs were imported from `/tmp` with SHA256 provenance in
+`artifacts/qa/a278c0c-imported-verification-logs.json`; these are not new reruns.
+
+Root enabled the existing explicitly non-passing `--capacity-diagnostics` workflow
+for exact owned mode and forwarded its flag through Xcode/UI launch. Normal owned
+qualification remains rejected until whole-history replay exists. The audit index
+accepts actual `applicationRejected` records before or after cleanup, without
+granting policy or media qualification. 145 focused script tests pass after red
+regressions. Diagnostic `native-app-6M1CiA` is running on iOS26.2 with the prepared
+390-second source, a 270-second hold, 750 kbps restriction/restoration and proxy
+recording. Its outcome is pending; success collecting raw artifacts will still
+produce an intentional nonzero verdict.

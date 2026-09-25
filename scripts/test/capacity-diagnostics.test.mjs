@@ -16,6 +16,15 @@ test('diagnostics require a unique explicit flag and the complete independently 
   assert.throws(() => select(['--capacity-diagnostics', '--capacity-diagnostics'], true));
   assert.throws(() => select(['--capacity-diagnostics'], 'true'));
 });
+test('owned measurement can collect diagnostics but cannot enter the passing runner', () => {
+  const selectOwned = (args, ownedMeasurement = '1', capacityRecovery = true) =>
+    implementation.nativeCapacityDiagnostics({ args, ownedMeasurement, capacityRecovery });
+  assert.equal(selectOwned(['--capacity-diagnostics']), true);
+  assert.throws(() => selectOwned([]), /Owned recovery runner awaits its whole-history qualifier/);
+  for (const invalid of ['', 'true', '0', 1, null])
+    assert.throws(() => selectOwned(['--capacity-diagnostics'], invalid), /exact opt-in/);
+  assert.throws(() => selectOwned(['--capacity-diagnostics'], '1', false), /complete capacity route/);
+});
 const stages = ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink', 'finishRecorder'];
 async function workflow(operations) {
   assert.equal(typeof implementation.runCapacityDiagnosticWorkflow, 'function');

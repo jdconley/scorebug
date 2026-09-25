@@ -142,13 +142,6 @@ const capacityRecovery = nativeCapacityRecovery({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
-// Fail before any simulator or service allocation until the new route has its
-// own complete policy/lifecycle replay. Three phases cannot certify recovery.
-assert.equal(
-  process.env.SCOREBUG_TEST_OWNED_MEASUREMENT,
-  undefined,
-  'Owned recovery runner awaits its whole-history qualifier',
-);
 const capacityEvidencePolicy = nativeCapacityEvidencePolicy({
   environment: process.env,
   capacityRecovery,
@@ -159,6 +152,9 @@ const rateLedgerSelected = capacityEvidencePolicy !== 'congestion-v1';
 const capacityDiagnostics = nativeCapacityDiagnostics({
   args: process.argv.slice(2),
   capacityRecovery,
+  // Owned mode may collect raw diagnostics only until complete replay exists.
+  // The diagnostic workflow always rejects, even after successful collection.
+  ownedMeasurement: process.env.SCOREBUG_TEST_OWNED_MEASUREMENT,
 });
 const fileFixture = nativeFileFixtureOptions({
   environment: process.env,
@@ -307,6 +303,7 @@ await writeFile(
       repeatedRecovery,
       capacityRecovery,
       capacityDiagnostics,
+      ownedMeasurement: process.env.SCOREBUG_TEST_OWNED_MEASUREMENT === '1',
       capacityEvidencePolicy,
       profileTransitions,
       profileTransitionSequence,
@@ -902,6 +899,7 @@ try {
     `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
     `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
     `SCOREBUG_TEST_CAPACITY_RECOVERY=${capacityRecovery ? '1' : ''}`,
+    `SCOREBUG_TEST_OWNED_MEASUREMENT=${process.env.SCOREBUG_TEST_OWNED_MEASUREMENT ?? ''}`,
     `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
     `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
     `SCOREBUG_TEST_PROBE_POLICY=${probePolicy === 'recovery-budget-v1' ? probePolicy : ''}`,

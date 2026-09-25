@@ -80,6 +80,21 @@ test('a final stopped owner can join without settling discarded policy', () => {
   raw.events.pop();
   assert.equal(index(raw).attempts.at(-1).terminal, 'stopped');
 });
+for (const cleanupFirst of [false, true])
+  test(`indexes rejected application with cleanup ${cleanupFirst ? 'before' : 'after'} rejection`, () => {
+    const raw = fixture();
+    raw.events = raw.events.slice(0, 1);
+    const kinds = ['applicationTransferred',
+      ...(cleanupFirst ? ['cleanupJoined', 'applicationRejected'] : ['applicationRejected', 'cleanupJoined']),
+      'settledApplicationRejection'];
+    for (const kind of kinds)
+      raw.events.push({ ...raw.events[0], kind, ordinal: String(raw.events.length + 1),
+        at: 21 + raw.events.length,
+        applicationID: '30000000-0000-0000-0000-000000000001' });
+    const result = index(raw);
+    assert.equal(result.attempts[0].terminal, 'settledApplicationRejection');
+    assert.equal(result.retryPolicyQualified, false);
+  });
 test('preserves native operation and candidate events at original global indices', () => {
   const raw = fixture();
   const row = raw.events[2];

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 
-export function nativeCapacityDiagnostics({ args, capacityRecovery }) {
+export function nativeCapacityDiagnostics({ args, capacityRecovery, ownedMeasurement }) {
   assert(Array.isArray(args) && args.every((arg) => typeof arg === 'string'));
   assert.equal(typeof capacityRecovery, 'boolean');
   const count = args.filter((arg) => arg === '--capacity-diagnostics').length;
   assert(count <= 1, 'Duplicate capacity diagnostics flag');
   assert(!count || capacityRecovery, 'Capacity diagnostics require the complete capacity route');
+  if (ownedMeasurement !== undefined) {
+    assert.equal(ownedMeasurement, '1', 'Owned diagnostics require exact opt-in 1');
+    assert.equal(count, 1, 'Owned recovery runner awaits its whole-history qualifier');
+  }
   return count === 1;
 }
 

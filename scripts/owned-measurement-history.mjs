@@ -31,6 +31,7 @@ const kinds = new Set([
   'cleanupFailed',
   'cleanupJoined',
   'applicationTransferred',
+  'applicationRejected',
   'acknowledged',
   ...settlements,
 ]);
@@ -124,7 +125,7 @@ export function indexOwnedMeasurementHistory(raw, options = {}) {
     } else {
       check(
         current.cleanupEventIndex === null ||
-          ['acknowledged', 'applicationTransferred'].includes(event.kind),
+          ['acknowledged', 'applicationTransferred', 'applicationRejected'].includes(event.kind),
         'new measurement work after cleanup join',
       );
     }

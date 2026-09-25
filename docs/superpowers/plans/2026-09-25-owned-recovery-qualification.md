@@ -14,7 +14,7 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
 - [x] Prepare and fully qualify at least 360 seconds of timestamped source media.
       Keep the existing `holdSeconds + 90` input guard. Retain original source and
       hashes, full decode, frame identity and audio continuity evidence.
-- [ ] Wire the actual owned app route and bounded lifecycle artifact. Native
+- [x] Wire the actual owned app route and bounded lifecycle artifact. Native
       operations, final candidate binding, guarded application and exact cleanup
       must be real; exported booleans cannot create authority.
 - [ ] Add whole-history owned lifecycle, witness and policy replay. Reuse complete
@@ -26,6 +26,8 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       restoration upper clock bound, revision-3 application and confirmed trial.
       Preserve all failed attempts, cleanup/settlement and 10/20/40/60-second fresh
       healthy holds; classify the complete terminal suffix.
+- [ ] Collect an explicit diagnostic native run with all three recordings before
+      final qualification; diagnostic collection must never report a passing verdict.
 - [ ] Run the full native experiment with all archive/live frames, phase audio
       anchors, changing score, continued local recording and both final outputs.
       Preserve the 3,072 cadence / 512 delivery row and 16/32 MiB evidence limits;
