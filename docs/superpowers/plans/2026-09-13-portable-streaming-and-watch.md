@@ -29,9 +29,14 @@ upload is limited to 550 kbps for one minute, produces measured congestion, then
 returns to unrestricted traffic. Packet counts, configured loss, overflow, queue
 delay and callback cleanup are independently checked. This is transport evidence;
 **the native app's response to this capacity fault is not yet qualified**.
-All 3,957 tooling tests pass. Recovery-policy replay can now prove the first
-confirmed upgrade without crediting later reset/recovery behavior. The next step
-is the guarded three-phase native lifecycle and causal fault integration; see the
+All 4,009 tooling tests pass. Recovery-policy replay can prove the first
+confirmed upgrade and independently join an explicit three-phase native
+240p→360p→240p lifecycle. Downward changes retain historical probe records with
+no renewed upgrade authority. Three-phase tests use recorded media with synthetic
+policy metadata; they do not qualify a new capacity-recovery run. Replaying the
+unchanged successful real-match baseline still passes all154 delivery windows.
+Next are the explicit capacity route, bounded180-second audits and causal fault
+integration; see the
 [capacity recovery plan](2026-09-24-measured-capacity-uplink.md).
 
 **The fresh native impaired-link trial passes.** `native-app-G0kJLr` uses the real

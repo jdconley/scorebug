@@ -34,6 +34,7 @@ export function qualifyMeasuredNativeLifecycle({
   sequence = 'measured240',
   liveIDs,
   probePolicy = 'local-zero-loss-v1',
+  recovery = false,
 }) {
   assert.ok(
     ['measured240', 'repeated240'].includes(sequence),
@@ -43,6 +44,7 @@ export function qualifyMeasuredNativeLifecycle({
     ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
     'Unknown lifecycle probe policy',
   );
+  assert.equal(typeof recovery, 'boolean', 'Recovery context must be boolean');
   const recoveryPolicy = probePolicy === 'recovery-budget-v1';
   assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
   if (recoveryPolicy) {
@@ -79,10 +81,36 @@ export function qualifyMeasuredNativeLifecycle({
   assert.equal(audit.bitRateRequestLimit, 48);
   assert.ok(Array.isArray(audit.profileRequests) && audit.profileRequests.length <= 16);
   assert.ok(Array.isArray(audit.bitRateRequests) && audit.bitRateRequests.length <= 48);
-  if (recoveryPolicy)
-    assert.equal(audit.profileRequests.length, 1, 'Recovery-budget lifecycle requires one trial');
+  if (recoveryPolicy) {
+    assert.equal(
+      audit.profileRequests.length,
+      recovery ? 2 : 1,
+      'Recovery-budget lifecycle requires the selected trial/reset sequence',
+    );
+    assert.equal(profileQualification.phases.length, recovery ? 3 : 2);
+  }
   const probeEntries = [];
-  for (const row of audit.profileRequests) {
+  for (const [index, row] of audit.profileRequests.entries()) {
+    if (recoveryPolicy && index === 1) {
+      // A downward reset retains the first trial's closed audit snapshots.
+      // Their old preflight times are not renewed authority or fresh capacity.
+      const firstRequest = audit.profileRequests[0];
+      assert.deepEqual(
+        row.probeBinding,
+        firstRequest.probeBinding,
+        'Reset changed historical probe binding',
+      );
+      assert.deepEqual(
+        row.currentProbe,
+        firstRequest.currentProbe,
+        'Reset changed historical current probe',
+      );
+      assert.deepEqual(
+        row.terminalProbeRead?.observation,
+        firstRequest.terminalProbeRead?.observation,
+        'Reset changed historical terminal probe',
+      );
+    }
     const values = [
       [row.probeBinding?.observation, row.probeBinding?.boundAt],
       [row.currentProbe, row.requestedAt],
@@ -117,8 +145,8 @@ export function qualifyMeasuredNativeLifecycle({
   };
   assert.equal(quality.overflow, false);
   assert.ok(Array.isArray(quality.events) && quality.events.length <= 512);
-  if (repeated) {
-    assert.equal(quality.formatVersion, 4);
+  if (repeated || recoveryPolicy) {
+    if (repeated) assert.equal(quality.formatVersion, 4);
     assert.equal(quality.measuredSourceEvaluationEnabled, true);
     for (const [index, event] of quality.events.entries()) {
       time(event.at);
@@ -127,13 +155,13 @@ export function qualifyMeasuredNativeLifecycle({
     }
     assert.equal(
       audit.profileRequests.length,
-      4,
-      'Repeated lifecycle requires four profile writes',
+      repeated ? 4 : recovery ? 2 : 1,
+      'Lifecycle requires the selected profile writes',
     );
     assert.equal(
       audit.bitRateRequests.length,
-      5,
-      'Repeated lifecycle requires five bitrate writes',
+      repeated ? 5 : recovery ? 3 : 2,
+      'Lifecycle requires the selected bitrate writes',
     );
   }
   const boot = quality.events.filter((e) => e.kind === 'bootstrap');
@@ -229,7 +257,7 @@ export function qualifyMeasuredNativeLifecycle({
     assert.equal(row.targetBitRate, row.receipt.bitRate);
     assert.equal(row.receipt.publishingGeneration, format.publishingGeneration);
     uuid(row.receipt.configurationID);
-    if (repeated) {
+    if (repeated || recoveryPolicy) {
       const id = uuid(row.receipt.configurationID);
       assert.ok(!configurations.has(id), 'Reused native bitrate configuration');
       configurations.add(id);
@@ -239,7 +267,7 @@ export function qualifyMeasuredNativeLifecycle({
   }
   const initialRates = audit.bitRateRequests.filter((r) => r.profileRequestID === null);
   assert.equal(initialRates.length, 1);
-  if (repeated) assert.equal(initialRates[0], audit.bitRateRequests[0]);
+  if (repeated || recoveryPolicy) assert.equal(initialRates[0], audit.bitRateRequests[0]);
   assert.deepEqual(normalizeRate(initialRates[0].receipt), bootstrap.receipt);
   boundedTime(bootstrap.acknowledgedAt);
   boundedTime(bootstrap.at);
@@ -251,13 +279,18 @@ export function qualifyMeasuredNativeLifecycle({
   assert.equal(applied.length, audit.profileRequests.length);
   assert.equal(format.receipts.length, applied.length);
   const candidates = quality.events.filter((e) => e.kind === 'candidate');
-  if (repeated) assert.equal(candidates.length, 2, 'Repeated lifecycle requires two owned trials');
+  if (repeated || recoveryPolicy)
+    assert.equal(
+      candidates.length,
+      repeated ? 2 : 1,
+      'Lifecycle requires the selected owned trials',
+    );
   const candidateIDs = new Set();
   const applications = audit.profileRequests.map((row, index) => {
     unique(row.requestID);
     const event = applied[index],
       application = event.application;
-    if (repeated) {
+    if (repeated || recoveryPolicy) {
       const trial = index % 2 === 0;
       assert.equal(event.closed, false);
       assert.equal(event.action.kind, trial ? 'trial' : 'reset');
@@ -292,7 +325,12 @@ export function qualifyMeasuredNativeLifecycle({
         assert.ok(candidate.evaluatedAt <= application.admittedAt);
         const candidateIndex = quality.events.indexOf(candidate);
         assert.ok(candidateIndex > quality.events.indexOf(event));
-        assert.ok(candidateIndex < quality.events.indexOf(applied[index + 1]));
+        assert.ok(
+          candidateIndex <
+            (applied[index + 1]
+              ? quality.events.indexOf(applied[index + 1])
+              : quality.events.length),
+        );
       } else {
         assert.equal(row.authorityPermitted, false);
         assert.equal(row.probeAuthorityPermitted, false);
@@ -345,7 +383,7 @@ export function qualifyMeasuredNativeLifecycle({
     const rates = audit.bitRateRequests.filter((r) => r.profileRequestID === row.requestID);
     assert.equal(rates.length, 1);
     const rate = rates[0];
-    if (repeated)
+    if (repeated || recoveryPolicy)
       assert.equal(rate, audit.bitRateRequests[index + 1], 'Native bitrate writes reordered');
     assert.ok(terminal.completedAt <= rate.requestedAt && rate.completedAt <= event.acknowledgedAt);
     assert.ok(

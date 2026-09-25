@@ -62,7 +62,6 @@ export function qualifyMeasuredProbeRetirement(
       proof.policy === policy && quality?.transportPolicy === policy,
       'native and pressure policy mismatch',
     );
-    check(recovery === false, 'recovery-budget later reset requires separate qualification');
   } else {
     check(
       !Object.hasOwn(proof, 'policy') && quality && !Object.hasOwn(quality, 'transportPolicy'),
@@ -373,7 +372,16 @@ export function qualifyMeasuredProbeRetirement(
     'acceptance outside terminal read or lease',
   );
   if (recovery)
-    qualifyLaterReset(lifecycle, quality, request, trial, applied, applications[1], final.sample);
+    qualifyLaterReset(
+      lifecycle,
+      quality,
+      request,
+      trial,
+      applied,
+      applications[1],
+      final.sample,
+      policy,
+    );
   return {
     retirementKind: 'profile-request-terminal-read',
     profileRequestID: request.requestID,
@@ -385,7 +393,16 @@ export function qualifyMeasuredProbeRetirement(
 // This proves only that the second write cannot be mistaken for the first
 // probe's retirement. Failure causality, native reset media and recovered health
 // still require independent full-lifecycle and recovery qualification.
-function qualifyLaterReset(lifecycle, quality, firstRequest, trial, firstApplied, reset, final) {
+function qualifyLaterReset(
+  lifecycle,
+  quality,
+  firstRequest,
+  trial,
+  firstApplied,
+  reset,
+  final,
+  policy,
+) {
   const request = lifecycle.profileRequests[1],
     app = reset.application,
     action = reset.action;
@@ -494,5 +511,28 @@ function qualifyLaterReset(lifecycle, quality, firstRequest, trial, firstApplied
       !sameID(rate.configurationID, firstApplied.receipt.configurationID),
     'reset rate receipt ownership mismatch',
   );
-  sameObservation(terminal.observation, final);
+  if (policy === 'recovery-budget-v1') {
+    check(
+      request.authorityPermitted === false &&
+        request.probeAuthorityPermitted === false &&
+        request.currentProbeActive === false,
+      'reset retains active trial authority',
+    );
+    assert.deepEqual(
+      request.probeBinding,
+      firstRequest.probeBinding,
+      'Measured probe retirement: reset changed historical binding',
+    );
+    assert.deepEqual(
+      request.currentProbe,
+      firstRequest.currentProbe,
+      'Measured probe retirement: reset changed historical current probe',
+    );
+    assert.deepEqual(
+      terminal.observation,
+      firstRequest.terminalProbeRead.observation,
+      'Measured probe retirement: reset changed historical terminal probe',
+    );
+  }
+  sameObservation(terminal.observation, final, policy);
 }

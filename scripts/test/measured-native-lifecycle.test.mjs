@@ -109,3 +109,82 @@ test('historical lifecycle rejects recovery policy metadata', () => {
   f.lifecycle.profileRequests[0].currentProbe.policy = 'recovery-budget-v1';
   assert.throws(() => qualify(f));
 });
+
+// Recorded three-phase media/lifecycle, with synthetic recovery preflight metadata.
+// This exercises the verifier contract; it is not a recovery-policy network run.
+const recoveryFixture = async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = JSON.parse(
+    gunzipSync(
+      fs.readFileSync(new URL('./fixtures/measured-recovery-mnaRRb.json.gz', import.meta.url)),
+    ),
+  ).input;
+  f.recovery = true;
+  f.probePolicy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = f.probePolicy;
+  addSyntheticRecoveryProbeEvidence(f.lifecycle);
+  return f;
+};
+test('explicit recovery lifecycle joins three raw phases with an inactive historical probe', async () => {
+  const f = await recoveryFixture(),
+    before = structuredClone(f);
+  const result = qualify(f);
+  assert.equal(result.nativeLifecycleReceiptsMatched, true);
+  assert.equal(result.upgradeAuthorized, false);
+  assert.deepEqual(
+    result.applications.map((a) => a.target),
+    ['360p30', '240p30'],
+  );
+  assert.equal(result.applications[1].candidateID, null);
+  assert.equal(result.probePolicy, 'recovery-budget-v1');
+  assert.deepEqual(f, before);
+});
+for (const [name, mutate] of Object.entries({
+  'implicit recovery': (f) => delete f.recovery,
+  'nonboolean recovery': (f) => (f.recovery = 'true'),
+  'missing reset': (f) => f.lifecycle.profileRequests.pop(),
+  'reset trial authority': (f) => (f.lifecycle.profileRequests[1].authorityPermitted = true),
+  'reset probe authority': (f) => (f.lifecycle.profileRequests[1].probeAuthorityPermitted = true),
+  'active reset probe': (f) => (f.lifecycle.profileRequests[1].currentProbeActive = true),
+  'foreign historical candidate': (f) =>
+    (f.lifecycle.profileRequests[1].candidateMeasurementID =
+      f.lifecycle.profileRequests[1].requestID),
+  'missing historical probe': (f) => (f.lifecycle.profileRequests[1].currentProbe = null),
+  'renewed historical lease': (f) =>
+    (f.lifecycle.profileRequests[1].currentProbe.leaseDeadline += 1),
+  'freshened historical binding': (f) => (f.lifecycle.profileRequests[1].probeBinding.boundAt += 1),
+  'altered historical preflight': (f) =>
+    (f.lifecycle.profileRequests[1].terminalProbeRead.observation.recoveryObservation.rttMilliseconds += 1),
+  'live historical terminal': (f) =>
+    (f.lifecycle.profileRequests[1].terminalProbeRead.observation.reason = null),
+  'missing trial preflight': (f) =>
+    delete f.lifecycle.profileRequests[0].currentProbe.recoveryObservation,
+  'withdrawn trial authority': (f) => (f.lifecycle.profileRequests[0].authorityPermitted = false),
+  'reset before trial': (f) => f.lifecycle.profileRequests.reverse(),
+  'reset bitrate misbound': (f) =>
+    (f.lifecycle.bitRateRequests[2].profileRequestID = f.lifecycle.profileRequests[0].requestID),
+  'late reset terminal': (f) => (f.lifecycle.profileRequests[1].terminalProbeRead.completedAt += 3),
+  'skipped reset revision': (f) => {
+    const e = f.quality.events.filter((e) => e.kind === 'applied')[1];
+    e.action.fromRevision = e.application.fromRevision = '2';
+    e.revision = '3';
+  },
+  'reset candidate authority': (f) => {
+    const e = f.quality.events.filter((e) => e.kind === 'applied')[1];
+    e.action.candidateID = e.application.candidateID =
+      f.lifecycle.profileRequests[0].candidateMeasurementID;
+  },
+  'wrong reset kind': (f) =>
+    (f.quality.events.filter((e) => e.kind === 'applied')[1].action.kind = 'trial'),
+  'changed trial candidate receipt': (f) =>
+    f.quality.events.find((e) => e.kind === 'candidate').receipt.bitRate++,
+  'missing trial candidate': (f) =>
+    (f.quality.events = f.quality.events.filter((e) => e.kind !== 'candidate')),
+}))
+  test(`recovery lifecycle rejects ${name}`, async () => {
+    const f = await recoveryFixture();
+    mutate(f);
+    assert.throws(() => qualify(f));
+  });

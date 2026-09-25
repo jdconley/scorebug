@@ -126,10 +126,6 @@ export function qualifyMeasuredNativeEvidence(
     ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
     'Unknown measured probe policy',
   );
-  assert.ok(
-    !recovery || probePolicy === 'local-zero-loss-v1',
-    'Recovery-budget later reset requires separate qualification',
-  );
   assert.equal(typeof recovery, 'boolean');
   const {
     snapshot,
@@ -159,6 +155,7 @@ export function qualifyMeasuredNativeEvidence(
     startupFormat,
     profileQualification: profile,
     probePolicy,
+    recovery,
   });
   const phase = profile.phases[0];
   const baseline = {
