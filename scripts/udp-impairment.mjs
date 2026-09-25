@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createSocket } from 'node:dgram';
 import { once } from 'node:events';
 import { RateLedgerObserver } from './rate-ledger-observer.mjs';
+import { SRTPacketDiagnostics } from './srt-packet-diagnostics.mjs';
 
 const defaults = Object.freeze({
   rateBitsPerSecond: null,
@@ -117,6 +118,8 @@ export class DatagramImpairmentQueue {
   #configuration;
   #timeline;
   #rateLedger;
+  #packetObserver;
+  #packetDiagnosticErrors = 0;
   #operationOrdinal = 0;
   #storage;
   #head = 0;
@@ -134,7 +137,9 @@ export class DatagramImpairmentQueue {
       (k) => [k, counters()],
     ),
   );
-  constructor(configuration = {}) {
+  constructor(configuration = {}, packetObserver) {
+    assert.ok(packetObserver === undefined || typeof packetObserver === 'function');
+    this.#packetObserver = packetObserver;
     assert.ok(configuration && typeof configuration === 'object' && !Array.isArray(configuration));
     for (const key of Object.keys(configuration))
       assert.ok(
@@ -221,6 +226,17 @@ export class DatagramImpairmentQueue {
   rateLedgerSnapshot() {
     return this.#rateLedger?.snapshot() ?? null;
   }
+  get packetDiagnosticErrors() {
+    return this.#packetDiagnosticErrors;
+  }
+  #observePacket(data, disposition, ordinal = this.#counts.received.packets) {
+    if (!this.#packetObserver) return;
+    try {
+      this.#packetObserver({ data, disposition, ordinal, at: this.#lastTime });
+    } catch {
+      this.#packetDiagnosticErrors++;
+    }
+  }
   #account(kind, bytes, residence = 0) {
     this.#counts[kind].packets++;
     this.#counts[kind].wireBytes += bytes;
@@ -235,18 +251,21 @@ export class DatagramImpairmentQueue {
     this.#account('received', bytes);
     if (data.length > c.maxDatagramBytes) {
       this.#account('oversizeDrop', bytes);
+      this.#observePacket(data, 'oversizeDrop');
       if (this.#rateLedger?.recording)
         this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'oversizeDrop']);
       return false;
     }
     if (c.dropEvery && this.#counts.received.packets % c.dropEvery === 0) {
       this.#account('injectedDrop', bytes);
+      this.#observePacket(data, 'injectedDrop');
       if (this.#rateLedger?.recording)
         this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'injectedDrop']);
       return false;
     }
     if (this.#count === c.maxQueuePackets || this.#bytes + bytes > c.maxQueueBytes) {
       this.#account('overflowDrop', bytes);
+      this.#observePacket(data, 'overflowDrop');
       if (this.#rateLedger?.recording)
         this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'overflowDrop']);
       return false;
@@ -263,6 +282,7 @@ export class DatagramImpairmentQueue {
     this.#peakPackets = Math.max(this.#peakPackets, this.#count);
     this.#peakBytes = Math.max(this.#peakBytes, this.#bytes);
     this.#timeline?.queued(now, this.#count, this.#bytes);
+    this.#observePacket(data, 'queued');
     if (this.#rateLedger?.recording)
       this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'queued']);
     return true;
@@ -304,6 +324,7 @@ export class DatagramImpairmentQueue {
     this.#account('forwarded', item.bytes, now - item.enqueuedAt);
     this.#firstForwardedAt ??= now;
     this.#lastForwardedAt = now;
+    this.#observePacket(item.data, 'forwarded', item.receivedOrdinal);
     return item.data;
   }
   nextDelay(now) {
@@ -331,6 +352,11 @@ export class DatagramImpairmentQueue {
     for (let i = 0; i < this.#count; i++) {
       const index = (this.#head + i) % this.#storage.length;
       this.#account('closeDiscard', this.#storage[index].bytes);
+      this.#observePacket(
+        this.#storage[index].data,
+        'closeDiscard',
+        this.#storage[index].receivedOrdinal,
+      );
       this.#storage[index] = undefined;
     }
     this.#count = 0;
@@ -374,25 +400,74 @@ export async function createUDPImpairmentProxy(configuration) {
   assert.ok(configuration && typeof configuration === 'object');
   for (const key of Object.keys(configuration))
     assert.ok(
-      ['receiverPort', 'forward', 'reverse', 'forwardRateSchedule'].includes(key),
+      [
+        'receiverPort',
+        'forward',
+        'reverse',
+        'forwardRateSchedule',
+        'recordPacketDiagnostics',
+        'packetDiagnosticsWindow',
+      ].includes(key),
       'Unknown proxy option',
     );
   const { receiverPort, forward = {}, reverse = {}, forwardRateSchedule = null } = configuration;
+  const { recordPacketDiagnostics = false, packetDiagnosticsWindow = null } = configuration;
+  assert.equal(typeof recordPacketDiagnostics, 'boolean', 'Invalid packet diagnostic selection');
+  assert.equal(
+    recordPacketDiagnostics,
+    packetDiagnosticsWindow !== null,
+    'Packet diagnostics require an explicit capture window',
+  );
+  if (packetDiagnosticsWindow !== null) {
+    const w = packetDiagnosticsWindow;
+    assert.ok(
+      w &&
+        typeof w === 'object' &&
+        !Array.isArray(w) &&
+        Object.keys(w).length === 2 &&
+        Number.isSafeInteger(w.startAfterMilliseconds) &&
+        Number.isSafeInteger(w.endAfterMilliseconds) &&
+        w.startAfterMilliseconds >= 0 &&
+        w.endAfterMilliseconds > w.startAfterMilliseconds &&
+        w.endAfterMilliseconds <= 600000,
+      'Invalid packet diagnostic window',
+    );
+  }
+  const packetDiagnostics = recordPacketDiagnostics ? new SRTPacketDiagnostics() : null;
+  const captureWindow = packetDiagnostics
+    ? { ...packetDiagnosticsWindow, originAt: null, excludedBefore: 0, excludedAfter: 0 }
+    : null;
+  const observePacket = (direction) =>
+    packetDiagnostics
+      ? (event) => {
+          if (captureWindow.originAt === null) return;
+          const elapsed = event.at - captureWindow.originAt;
+          if (elapsed < captureWindow.startAfterMilliseconds) {
+            captureWindow.excludedBefore++;
+            return;
+          }
+          if (elapsed >= captureWindow.endAfterMilliseconds) {
+            captureWindow.excludedAfter++;
+            return;
+          }
+          packetDiagnostics.observe({ direction, ...event });
+        }
+      : undefined;
   const schedule = validateSchedule(forwardRateSchedule, forward.rateBitsPerSecond ?? null);
   assert.ok(
     Number.isInteger(receiverPort) && receiverPort > 0 && receiverPort <= 65535,
     'Invalid loopback receiver port',
   );
-  const makeDirection = (options) => ({
-    queue: new DatagramImpairmentQueue(options),
+  const makeDirection = (options, direction) => ({
+    queue: new DatagramImpairmentQueue(options, observePacket(direction)),
     timer: null,
     pending: 0,
     peakPending: 0,
     pendingBytes: 0,
     peakPendingBytes: 0,
   });
-  const outgoing = makeDirection(forward),
-    incoming = makeDirection(reverse);
+  const outgoing = makeDirection(forward, 'forward'),
+    incoming = makeDirection(reverse, 'reverse');
   const frontend = createSocket('udp4'),
     backend = createSocket('udp4');
   let peer = null,
@@ -467,6 +542,7 @@ export async function createUDPImpairmentProxy(configuration) {
       .then(() => Promise.all([closeSocket(frontend), closeSocket(backend)]))
       .then(() => {
         closed = true;
+        packetDiagnostics?.close();
       });
     return closePromise;
   }
@@ -519,6 +595,7 @@ export async function createUDPImpairmentProxy(configuration) {
     }
     if (!peer) {
       peer = { address: rinfo.address, port: rinfo.port };
+      if (captureWindow) captureWindow.originAt = performance.now();
       if (schedule) {
         scheduleStartedAt = performance.now();
         applyDuePhases();
@@ -550,6 +627,17 @@ export async function createUDPImpairmentProxy(configuration) {
       port,
       close,
       rateLedgerSnapshot: () => outgoing.queue.rateLedgerSnapshot(),
+      packetDiagnosticsSnapshot: () =>
+        packetDiagnostics
+          ? {
+              ...packetDiagnostics.snapshot(),
+              captureWindow: { ...captureWindow },
+              observerErrors: {
+                forward: outgoing.queue.packetDiagnosticErrors,
+                reverse: incoming.queue.packetDiagnosticErrors,
+              },
+            }
+          : null,
       snapshot: () => ({
         formatVersion: 1,
         closed,

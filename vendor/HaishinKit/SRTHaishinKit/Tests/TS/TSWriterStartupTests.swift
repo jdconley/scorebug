@@ -7,6 +7,82 @@ import libsrt
 
 // These tests deliberately block native calls; concurrent gates can exhaust the cooperative pool.
 @Suite(.serialized) struct TSWriterStartupTests {
+    @Test func videoFormatChangesKeepPayloadContinuityThroughWraparound() throws {
+        var writes: [Data] = []
+        let writer = TSWriter(outputSink: { writes.append($0); return true })
+        writer.expectedMedias = [.video]
+        var index = 0
+        // Both boundaries avoid zero: 240p ends at 14, 360p spans 15, 0, 1.
+        for (width, height, count) in [(426, 240, 15), (640, 360, 3), (426, 240, 2)] {
+            for _ in 0..<count {
+                let sample = try video(Double(index) / 30, width: Int32(width), height: Int32(height))
+                writer.videoFormat = sample.formatDescription
+                writer.append(sample)
+                index += 1
+            }
+        }
+        #expect(writer.error == nil)
+        #expect(payloadCounters(writes, pid: TSWriter.defaultVideoPID) == (0..<20).map { UInt8($0 % 16) })
+    }
+
+    @Test func audioFormatChangesKeepPayloadContinuityThroughWraparound() {
+        var writes: [Data] = []
+        let writer = TSWriter(outputSink: { writes.append($0); return true })
+        writer.expectedMedias = [.audio]
+        var index = 0
+        for (sampleRate, count) in [(48_000.0, 15), (44_100.0, 3), (48_000.0, 2)] {
+            for _ in 0..<count {
+                let sample = audio(sampleRate: sampleRate)
+                writer.audioFormat = sample.format
+                writer.append(sample, when: time(Double(index) / 30))
+                index += 1
+            }
+        }
+        #expect(writer.error == nil)
+        #expect(payloadCounters(writes, pid: TSWriter.defaultAudioPID) == (0..<20).map { UInt8($0 % 16) })
+    }
+
+    @Test func clearStartsNewPublicationWithZeroAudioAndVideoCounters() throws {
+        var writes: [Data] = []
+        let writer = TSWriter(outputSink: { writes.append($0); return true })
+        for publication in 0..<2 {
+            writer.expectedMedias = [.audio, .video]
+            for index in 0..<3 {
+                let timestamp = Double(publication * 100) + Double(index) / 30
+                let sample = audio()
+                writer.audioFormat = sample.format
+                writer.append(sample, when: time(timestamp))
+                let frame = try video(timestamp, width: 426, height: 240)
+                writer.videoFormat = frame.formatDescription
+                writer.append(frame)
+            }
+            #expect(writer.error == nil)
+            #expect(payloadCounters(writes, pid: TSWriter.defaultAudioPID) == [0, 1, 2])
+            #expect(payloadCounters(writes, pid: TSWriter.defaultVideoPID) == [0, 1, 2])
+            writer.clear()
+            writes.removeAll()
+        }
+    }
+
+    // Inspect serialized TS headers, independently of the writer's packet decoder.
+    private func payloadCounters(_ writes: [Data], pid: UInt16) -> [UInt8] {
+        var counters: [UInt8] = []
+        for data in writes {
+            #expect(data.count.isMultiple(of: 188))
+            for offset in stride(from: 0, to: data.count, by: 188) {
+                let bytes = Array(data[offset..<(offset + 188)])
+                #expect(bytes[0] == 0x47)
+                let packetPID = UInt16(bytes[1] & 0x1f) << 8 | UInt16(bytes[2])
+                guard packetPID == pid, bytes[3] & 0x10 != 0 else { continue }
+                if bytes[3] & 0x20 != 0, bytes[4] > 0 {
+                    #expect(bytes[5] & 0x80 == 0, "Format replacement keeps one continuous transport timeline")
+                }
+                counters.append(bytes[3] & 0x0f)
+            }
+        }
+        return counters
+    }
+
     @Test func compressedSRTPassthroughDoesNotNotifyEncoderObserver() async throws {
         let bytes = PassthroughTransport()
         let connection = SRTConnection(socket: SRTSocket(sender: { bytes.append($0); return Int32($0.count) }))
@@ -522,8 +598,8 @@ import libsrt
         await stream.close(); await connection.close()
     }
 
-    private func audio(_ marker: UInt8 = 42) -> AVAudioCompressedBuffer {
-        var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
+    private func audio(_ marker: UInt8 = 42, sampleRate: Double = 48_000) -> AVAudioCompressedBuffer {
+        var description = AudioStreamBasicDescription(mSampleRate: sampleRate, mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
             mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
         let format = AVAudioFormat(streamDescription: &description)!
@@ -539,10 +615,11 @@ import libsrt
         AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: seconds))
     }
 
-    private func video(_ seconds: Double, dts: CMTime = .invalid, payloadBytes: Int = 6) throws -> CMSampleBuffer {
+    private func video(_ seconds: Double, dts: CMTime = .invalid, payloadBytes: Int = 6,
+                       width: Int32 = 16, height: Int32 = 16) throws -> CMSampleBuffer {
         var format: CMVideoFormatDescription?
         #expect(CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_H264,
-            width: 16, height: 16, extensions: nil, formatDescriptionOut: &format) == noErr)
+            width: width, height: height, extensions: nil, formatDescriptionOut: &format) == noErr)
         let bytes: [UInt8] = [0, 0, 0, 2, 0x65, 0x7a] + Array(repeating: 0, count: payloadBytes - 6)
         var block: CMBlockBuffer?
         #expect(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,

@@ -39,6 +39,21 @@ export function createUplinkEvidenceStopper({
           errors.push(error);
         }
       }
+      try {
+        const diagnostics = uplink.packetDiagnosticsSnapshot?.();
+        if (diagnostics !== undefined && diagnostics !== null) {
+          const evidence = JSON.stringify(diagnostics);
+          assert(
+            Buffer.byteLength(evidence) <= 32 * 1024 * 1024,
+            'Packet diagnostics exceed 32 MiB',
+          );
+          await writeFile(join(artifact, 'uplink-packet-diagnostics.json'), evidence, {
+            flag: 'wx',
+          });
+        }
+      } catch (error) {
+        errors.push(error);
+      }
       if (errors.length)
         throw new AggregateError(errors, 'Uplink shutdown or evidence export failed');
     })();

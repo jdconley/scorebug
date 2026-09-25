@@ -44,7 +44,6 @@ final class TSWriter {
             data.elementaryPID = Self.defaultAudioPID
             pmt.elementaryStreamSpecificData.removeAll { $0.elementaryPID == data.elementaryPID }
             pmt.elementaryStreamSpecificData.append(data)
-            audioContinuityCounter = 0
             writeProgramIfNeeded()
         }
     }
@@ -59,7 +58,6 @@ final class TSWriter {
             data.elementaryPID = Self.defaultVideoPID
             pmt.elementaryStreamSpecificData.removeAll { $0.elementaryPID == data.elementaryPID }
             pmt.elementaryStreamSpecificData.append(data)
-            videoContinuityCounter = 0
             writeProgramIfNeeded()
         }
     }

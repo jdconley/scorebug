@@ -16,7 +16,8 @@ actual_sources = {str(p.relative_to(root)) for name in ["HaishinKit/Sources", "S
 added.extend(['HaishinKit/Sources/Codec/VideoSubmission.swift',
               'SRTHaishinKit/Sources/SRT/SRTTransportPump.swift',
               'SRTHaishinKit/Sources/TS/CandidateTransportMeasurement.swift',
-              'SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift'])
+              'SRTHaishinKit/Sources/SRT/CompressedAudioFrame.swift',
+              'SRTHaishinKit/Sources/SRT/SRTProbeTransportGuard.swift'])
 unlisted = actual_sources - set(manifest) - set(added)
 if unlisted:
     raise SystemExit(f"Source files missing from provenance inventory: {sorted(unlisted)}")

@@ -6,7 +6,7 @@ This directory contains the HaishinKit and SRTHaishinKit source modules from
 `LICENSE.md`. `upstream-files.json` records the SHA-256 of every copied source/test
 file before Scorebug modifications.
 `scorebug.patch` is the diff against that revision for the 18 modified upstream
-files and sixteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
+files and nineteen added publishing/bitrate/clock/replacement/probe/candidate source primitives. Original upstream hashes
 remain unchanged. Added regression tests live alongside the SRT tests and in
 `ScorebugPatchTests`. The patch was reconstructed from those original hashes,
 then applied to a clean reconstructed baseline and compared byte for byte.
@@ -357,3 +357,11 @@ still authoritative. Close cancels and retains its worker without self-joining;
 re-publication joins retirement and rechecks stream/connection state. Normal finish
 still joins the current worker. Outer send timing now measures worker resumption,
 not stream-actor resumption.
+
+Format changes within one publication retain the audio/video PID continuity
+counters. Byte-level regression tests cover video resolution and audio sample-rate
+changes, modulo-16 wraparound and the intentional new-publication reset in
+`TSWriter.clear()`. This repairs invalid MPEG-TS continuity; it does not establish
+that a particular impaired-network GOP loss was caused by the muxer. The maintained
+patch also includes the previously implemented `SRTProbeTransportGuard`; all 162
+original upstream hashes and the complete current source round trip are verified.

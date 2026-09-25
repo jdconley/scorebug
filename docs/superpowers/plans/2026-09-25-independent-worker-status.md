@@ -84,14 +84,14 @@ Files:
 
 ## Task 2: Fresh laboratory qualification
 
-- [ ] Freeze the reviewed commit and all source/input hashes. Reuse installed
+- [x] Freeze the reviewed commit and all source/input hashes. Reuse installed
       iOS 26.2, the prepared representative match file and the explicit
       `token-budget-v1` route in
       `artifacts/qa/native-capacity750-token-budget-run.py`.
-- [ ] Run the complete joined native workflow. Inspect full A/V decodes, archive
+- [x] Run the complete joined native workflow. Inspect full A/V decodes, archive
       and live frame IDs, score/audio checks, raw capacity policy and causal clock
       brackets. Preserve any failure and its original evidence.
-- [ ] Verify unchanged frozen hashes and deletion of only the owned simulator.
+- [x] Verify unchanged frozen hashes and deletion of only the owned simulator.
       Update the main plan with the actual result. Fresh post-restoration ramp,
       physical phone/Watch and remote host qualification remain separate gates.
 
@@ -174,3 +174,17 @@ The full tooling suite also passes all 4,702 tests, joined exit 0 in
 `repeated-live-checkpoint-independent-worker-status-tools-20260925-exit.json`.
 The next native execution freezes this reviewed source before compiling the full
 app and collecting new evidence; source/docs must not change during that run.
+
+## Fresh native result
+
+The full app compiles and runs at frozen `1c311f0`. Run `native-app-kEQWC0`
+joins with exit 1 after its UI workflow and both complete A/V decodes. All 1,264
+frozen hashes are unchanged, and simulator `1C60DC48-D69F-41FB-8666-4D98F9829AFF`
+is absent from the post-cleanup inventory. No runtime was installed.
+
+All 331 delivery windows have a result, with maximum sample age 155.987 ms.
+Thus this run does not reproduce the prior freshness failure. The full native
+qualification nevertheless fails: 60 locally compressed frames disappear at the
+first downshift GOP, while the clean archive remains consecutive (7,518 frames).
+See the [next investigation](2026-09-25-transition-gop-loss.md). Passing this
+polling-specific observation does not qualify media recovery or the next ramp.

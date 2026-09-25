@@ -351,8 +351,17 @@ export async function nativeStreamingFixture({
             }
           : {}),
       };
-      if (capacityEvidencePolicy !== 'congestion-v1')
+      if (capacityEvidencePolicy !== 'congestion-v1') {
         uplinkConfiguration.forward = { ...uplinkConfiguration.forward, recordRateLedger: true };
+        // Explicit partial diagnostic capture around the scheduled bandwidth
+        // reduction. Packet headers never authorize health or change the fault.
+        const limitedAt = uplinkConfiguration.forwardRateSchedule[1].atMilliseconds;
+        uplinkConfiguration.recordPacketDiagnostics = true;
+        uplinkConfiguration.packetDiagnosticsWindow = {
+          startAfterMilliseconds: limitedAt - 5000,
+          endAfterMilliseconds: limitedAt + 20000,
+        };
+      }
       uplink = await createUDPImpairmentProxy(uplinkConfiguration);
     }
     if (useDirectRecorder)
