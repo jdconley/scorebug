@@ -105,3 +105,7 @@ Stable setup implementation adds transient sheet presentation state, a backgroun
 - UI phase evidence confirms publishing plus worker output during native scoring and recording advancing after live returns idle. Server accepted terminal recording report sequence 2/status stopped before shutdown. The lab then stopped and joined exit 0; worker exited 0 without force, receiver finished and shutdown has no failures. All owned lab/reconciliation processes are stopped. Phone recordings and local evidence are retained.
 
 Watch status remains separate: signed build/install/launch succeeded earlier, but no physical paired scoring test has executed successfully. The latest runner timed out enabling automation; a subsequent install also hit a network-tunnel timeout. User has been asked to check the Watch automation prompt/settings. Do not infer the timeout proves a specific switch is off. Watch scoring, route changes, wrist lowering/reopen, sustained capture, adaptive increases and remote hosts remain open.
+
+### Owner clarification: session authentication
+
+The user explained that the first automation attempt in a new session prompts for the phone passcode, and the unnoticed prompt caused the timeout. The earlier suggestion to check a Watch automation setting was not a confirmed diagnosis. Updated the delivery plan, handoff and device runbook: announce a new device-testing session in advance so the owner can approve the prompt directly on the phone. No device test was started for this clarification, and paired Watch acceptance remains unverified.

@@ -61,6 +61,8 @@ Use an installed runtime; do not download deleted runtimes or delete unrelated s
 
 ## Opt-in physical UI tests
 
+On this device setup, the first automation attempt in a new session prompts for the passcode on the **phone**. Announce the session before starting so the owner can notice and approve it. An unattended prompt can cause an automation-enablement timeout; that error alone does not establish that Watch automation is disabled. The owner enters the passcode directly on the phone; never request it in chat.
+
 Build and install the current signed phone app while it is idle. The physical UI test uses `activate()` to inspect and preserve any existing capture; it does not kill a running recording to update the app. This also means a running old app must not be mistaken for verification of a newly built binary.
 
 Read the private lab setup into the test process environment (do not place the token in a shell argument or a shared log): `SCOREBUG_DEVICE_API_URL` and `SCOREBUG_DEVICE_TOKEN`. Select only `ScorebugAppUITests/PhysicalStreamingTests/testPhysicalIPhoneCameraPublishScoreStopAndExport` in the Scorebug scheme. It requires a seeded HOME/AWAY 0–0 match and exercises the real camera, permissions, scoring, streaming, independent recording continuation and a new export. Keep the rear camera uncovered and pointed at a lit scene. Existing recordings and Keychain data are retained.
