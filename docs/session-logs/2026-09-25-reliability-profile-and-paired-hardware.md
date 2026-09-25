@@ -64,3 +64,25 @@ Next: finish both timing reviews, run fresh comparisons, and finish the complete
 
 - User explicitly confirmed the automation prompt was approved and both devices ready. Announced the new session and lit-camera requirement.
 - Fresh `device-lab-3RCYtU` started with VideoToolbox proxy and both recording destinations. Watch runner starts first; phone waits for the actual Watch test case. Same installed `eff8465` products are retained and provenance copied with an explicit statement that they are not the experimental `c4c30cd` binary.
+
+### User-ready retry result
+
+- Watch runner 57085 joined exit 65: the same 61-second automation-enablement timeout occurred before any test case. Phone was not started. Lab 33719 joined exit 0 after SIGTERM to its recorded PID92372; worker exited0 without force, recorder had no sessions, cleanup failures empty.
+- Fresh read-only Watch details showed connected tunnel and Developer Mode enabled. Subsequent lock-state query timed out establishing the network tunnel; a later details query reconnected. This does not establish the automation failure's root cause.
+- Exported runner diagnostics retained under `device-lab-3RCYtU/watch-diagnostics`; they add no more specific explanation. Asked whether another prompt appeared on either device; answer pending.
+- Comparison with successful `paired-resume` logs shows the phone's automation test started10:56:49 and Watch test started10:57:12. The recent Watch-first guard may matter: simultaneous/phone-active automation is a testable coordination hypothesis, not a confirmed fix. Avoid attributing this pre-test failure to Scorebug behavior.
+
+### First 2-second native experiment
+
+- Launched the reviewed source checkpoint `086ff94` using the prepared2000 launcher; root handle51098 joined intentional diagnostic exit1. Artifact `native-app-LvDNAy`.
+- UI workflow passed1test/0failures in356seconds. Collection errors empty; one uninterrupted mock recorder session. All six timing envelopes agree on `broadcast-reliability2000-v1`; this metadata check explicitly grants no media or recovery qualification.
+- Native audit shows240p→360p→240p→360p, three applications, two acknowledged measurements, and two settled failed measurements. Full decoded-media and leaf checks are still running; do not label this complete recovery yet.
+
+- Full A/V decode/frame-ID analysis7728 joinedexit0: clean archive9313frames0–9312; both live outputs8860frames227–9086, with no identity reversal or missing frame in each span. Archive tail226frames. Diagnostic results preserve hashes and per-file timing.
+- Trusted2000 leaf replay passes timing envelopes, all540 owned-native events, compressed frames, four-phase profile transitions, accounted media, and capacity clocks. Whole-history policy/witness/receiver qualification remains separate and does not gain authority from these leaf passes. Natural audio/overlay verification is in progress.
+
+- Natural A/V and overlay helper62889 joinedexit0:64archive and61per-live waveform probes,30freshfps,score0–0→1–0 in both outputs,226archive-tailframes. Additional phase-audio helper87689 passed11probes per live output including eight anchors bracketing all four phases, using the reviewed phase-anchor validator and retained PCM.
+- Diagnostic timing summary:410/410 delivery windows on time;0late/missing/uncertain and0unmatched arrivals. These overlapping windows contain16,380 frame observations, not16,380unique frames. Median arrival lower/upper bounds1440.6/1514.0ms; maximum upper1603.8ms. Encoder median435.7ms; source-evaluation age median2013.7ms.
+- Native applications after bootstrap:360p at27.82s,240p at90.89s,360p at182.99s. Two failed measurement attempts under restriction remain in original history. All four phases retain30freshfps and zero source loss in their acquired spans.
+- Sampled all four phases visually in `owned-recording-diagnostic/four-phase-preview.png`: representative volleyball imagery and score overlay visible. This is sampled visual inspection, not a full perceptual-quality metric.
+- Native runner completed owned simulator shutdown/deletion (empty successful logs), and all root analysis handles joined. The2000 experiment provides clean media and four-phase evidence; complete receiver/witness/policy replay remains unfinished. The3000 comparison has not run. No real-camera progressive streaming claim follows from this simulator result.
