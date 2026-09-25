@@ -6,6 +6,156 @@ import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testWorkerStatusRefreshDoesNotWaitForCoordinatorRecovery() async throws {
+        let server = CaptureTestServer(), model = makeModel(server: server)
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        let recovery = FilmTestGate()
+        await server.setSnapshotGate(recovery)
+        let maintenance = Task { await model.pollControl(includeWorkerStatus: false) }
+        await recovery.waitUntilEntered()
+        await model.pollWorkerStatus()
+        let queries = await server.deliveryQueries
+        XCTAssertEqual(queries.count, 1, "Worker acquisition must progress while recovery is suspended")
+        XCTAssertNotNil(model.workerDecodedVideoFreshness)
+        await recovery.release(); await maintenance.value
+        await model.stopStreaming()
+    }
+
+    func testConcurrentManualAndForegroundStatusPollsShareDeliveryRequest() async throws {
+        let server = CaptureTestServer(), model = makeModel(server: server)
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let gate = FilmTestGate()
+        await server.setStatusOverride(workerAgeResponse()); await server.setStatusGate(gate)
+        let manual = Task { await model.pollControl() }
+        await gate.waitUntilEntered()
+        var foregroundStarted = false, anotherStarted = false
+        let foreground = Task { foregroundStarted = true; await model.pollWorkerStatus() }
+        let another = Task { anotherStarted = true; await model.pollWorkerStatus() }
+        while !foregroundStarted || !anotherStarted { await Task.yield() }
+        let heldQueries = await server.deliveryQueries
+        XCTAssertEqual(heldQueries, ["decoderDelivery=decoder-delivery-delta-v1"])
+        await gate.release()
+        await foreground.value; await manual.value; await another.value
+        let queries = await server.deliveryQueries
+        XCTAssertEqual(queries, ["decoderDelivery=decoder-delivery-delta-v1"])
+        await model.stopStreaming()
+    }
+
+    func testHeldWorkerStatusAllowsMaintenanceAndImmediateDetachButJoinsBeforeExport() async throws {
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        var exported: Data?
+        model.cadenceReportFixtureWriter = { exported = $0 }
+        await model.restore(); let context = captureContext(); model.captureChanged(context); await model.startStreaming()
+        let gate = FilmTestGate()
+        await server.setStatusOverride(workerAgeResponse()); await server.setStatusGate(gate)
+        let polling = Task { await model.pollWorkerStatus() }
+        await gate.waitUntilEntered()
+        await server.selectAnotherCapture()
+        await model.pollControl(includeWorkerStatus: false)
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertFalse(context.tap.offer(try streamingVideo(0)), "Capture must detach before status returns")
+        XCTAssertEqual(model.commandState?.snapshot?.broadcast.selection?.captureDeviceId, "another-device")
+        XCTAssertNil(model.workerDecodedVideoFreshness)
+        var stopCompleted = false
+        let stopping = Task { await model.stopStreaming(); stopCompleted = true }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !(await publisher.terminated), ContinuousClock.now < deadline { await Task.yield() }
+        let publisherStopped = await publisher.terminated
+        XCTAssertTrue(publisherStopped)
+        XCTAssertFalse(stopCompleted)
+        XCTAssertNil(exported, "Audit must stay open until the held status request has joined")
+        await server.setStatusGate(nil); await gate.release()
+        await polling.value; await stopping.value
+        XCTAssertTrue(stopCompleted)
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual(audit["closed"] as? Bool, true)
+        XCTAssertEqual((audit["rows"] as? [[String: Any]])?.count, 0, "Revoked response cannot append before or after close")
+    }
+
+    func testForegroundCancellationDuringNativeProbeReadDoesNotFailPublisherOrAppendAudit() async throws {
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        var exported: Data?
+        model.cadenceReportFixtureWriter = { exported = $0 }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusOverride(workerAgeResponse())
+        let gate = FilmTestGate(); await publisher.setProbeGate(gate)
+        let polling = Task { await model.pollWorkerStatus() }
+        await gate.waitUntilEntered()
+        polling.cancel()
+        await gate.release(); await polling.value
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertNil(model.workerDecodedVideoFreshness)
+        await publisher.setProbeGate(nil)
+        await model.stopStreaming()
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported)) as? [String: Any])
+        XCTAssertEqual((audit["rows"] as? [[String: Any]])?.count, 0)
+    }
+
+    func testOldStatusSuccessOrFailureCannotMutateNewPublishingOwner() async throws {
+        for fails in [false, true] {
+            let server = CaptureTestServer(), model = makeModel(server: server)
+            await model.restore(); model.captureChanged(captureContext())
+            // Establish a stopped broadcast snapshot before acquiring status.
+            await model.pollControl(includeWorkerStatus: false)
+            let gate = FilmTestGate()
+            await server.setStatusGate(gate); await server.setStatusFailure(fails)
+            let old = Task { await model.pollWorkerStatus() }
+            await gate.waitUntilEntered()
+            await model.startStreaming()
+            XCTAssertEqual(model.localState, .publishing)
+            let message = model.message
+            await server.setStatusGate(nil); await server.setStatusFailure(false)
+            await gate.release(); await old.value
+            XCTAssertEqual(model.localState, .publishing)
+            XCTAssertEqual(model.message, message)
+            XCTAssertNil(model.workerDecodedVideoFreshness)
+            await server.setStatusOverride(workerAgeResponse())
+            await model.pollWorkerStatus()
+            XCTAssertNotNil(model.workerDecodedVideoFreshness, "Old completion must release only its request slot")
+            let operations = await server.operations
+            XCTAssertEqual(operations, ["start"])
+            await model.stopStreaming()
+        }
+    }
+
+    func testCurrentStatusFailureCanCompleteBeforeItsJoinedTeardown() async throws {
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        var exported: Data?
+        model.cadenceReportFixtureWriter = { exported = $0 }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setStatusFailure(true)
+        await model.pollWorkerStatus()
+        XCTAssertEqual(model.localState, .failed)
+        await model.stopStreaming()
+        XCTAssertNotNil(exported, "Error handling must not form a status → teardown → status await cycle")
+    }
+
+    func testIndependentStatusFailureEndsStartQueuedDuringMaintenance() async throws {
+        let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+        let model = makeModel(server: server, publisher: publisher)
+        await model.restore(); model.captureChanged(captureContext())
+        await model.pollControl(includeWorkerStatus: false)
+        let recovery = FilmTestGate()
+        await server.setSnapshotGate(recovery)
+        let maintenance = Task { await model.pollControl(includeWorkerStatus: false) }
+        await recovery.waitUntilEntered()
+        model.requestStartStreaming()
+        XCTAssertEqual(model.localState, .starting)
+        await server.setStatusFailure(true)
+        await model.pollWorkerStatus()
+        XCTAssertEqual(model.localState, .failed)
+        await recovery.release(); await maintenance.value
+        while model.busy { await Task.yield() }
+        let starts = await publisher.startCount
+        XCTAssertEqual(starts, 0, "Maintenance completion cannot revive a start ended by the current status failure")
+        await server.setStatusFailure(false)
+        await model.stopStreaming()
+    }
+
     func testReceiverEvidenceWriterIncludesRepeatedModeAndRetainsLegacySelection() {
         for mode in ["renew", "expire", "staged", "repeated"] {
             XCTAssertNotNil(ReceiverProbeFixtureHistory.writer(environment: ["SCOREBUG_TEST_BANDWIDTH_PROBE": mode]), mode)
@@ -1377,13 +1527,15 @@ import XCTest
         await server.setStatusFailure(true)
         let polling = Task { await model.pollControl() }
         await gate.waitUntilEntered()
-        await model.stopStreaming()
+        let stopping = Task { await model.stopStreaming() }
+        while model.localState == .publishing { await Task.yield() }
         let messageAfterStop = model.message
         await model.startStreaming()
         XCTAssertEqual(publishers.count, 1, "A pending control request blocks replacement startup")
         XCTAssertEqual(model.localState, .idle)
         await gate.release()
         await polling.value
+        await stopping.value
         XCTAssertEqual(model.localState, .idle)
         XCTAssertEqual(model.message, messageAfterStop, "An obsolete worker failure must not overwrite current status")
         XCTAssertEqual(model.workerState, .unknown)
@@ -1397,7 +1549,7 @@ import XCTest
         let replacementPublishing = await publishers.last?.isPublishing
         XCTAssertEqual(replacementPublishing, true)
         let operations = await server.operations
-        XCTAssertEqual(operations, ["start"], "Obsolete failure must not trigger a stop of the replacement")
+        XCTAssertEqual(operations, ["start", "stop", "start"], "Joined stop ends the old broadcast; obsolete failure must not stop the replacement")
         await model.stopStreaming()
     }
 

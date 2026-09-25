@@ -35,13 +35,15 @@ freshness limit. Two neighboring observations retain three uncertain frames;
 those windows precede restored recovery and receive no healthy credit.
 
 The raw timing audit locates a 300.8 ms delay in control maintenance before the
-next worker-status request. That request itself takes 19.5 ms. Worker health
-polling currently waits behind persistence, report flushing and broadcast-command
-recovery. The [independent status polling plan](2026-09-25-independent-worker-status.md)
-keeps the same scope, receipt and freshness checks. Do not relabel the failed run or retry a
+next worker-status request. That request itself takes 19.5 ms. In that run, worker health
+polling waited behind persistence, report flushing and broadcast-command recovery.
+The [independent status polling implementation](2026-09-25-independent-worker-status.md)
+now separates those schedules while preserving scope, receipt and freshness checks.
+All 583 native model tests pass, including seven new concurrency regressions;
+fresh full app qualification remains pending. Do not relabel the failed run or retry a
 historical window after its live consumption deadline.
 
-All 4,702 tooling tests pass; the latest native model checkpoint is 576 tests.
+All 4,702 tooling tests pass; the latest native model checkpoint is 583 tests.
 The earlier terminal delivery-ordering fix and explicit `token-budget-v1` transport
 contract pass separate offline replay of YnfAvU. Its original offered-load failure
 remains unchanged. Fresh complete capacity recovery and a subsequent autonomous

@@ -31,6 +31,19 @@ lane that consumes a response immediately, after validating its current owner.
 Do not widen the 250 ms freshness or two-second live consumption limits. Do not
 replace the unknown row from the saved run with a historical classification.
 
+Independent timing review also finds a coincident proxy dispatch gap: host bins
+260000–260199 ms contain no forward/reverse events, followed by roughly
+299/290 ms maximum queue residence. The harness/proxy and control-plane API run
+in separate Node processes. Restoration and its clock response precede this gap;
+no existing observation identifies GC or a particular maintenance operation as
+its cause. Native delivery evaluation occurs during the maintenance interval, so
+the native actor is not continuously blocked for all 301 ms. Preserve this
+uncertainty: the split removes a proven sequencing dependency, not every possible
+host scheduling interruption. If it recurs, separately sample bounded event-loop
+and GC timing in the harness/API and record maintenance substage durations;
+[Node performance hooks](https://nodejs.org/api/perf_hooks.html) provide those
+measurements. Such diagnostics must not supply qualification or healthy credit.
+
 ## Task 1: Owned status lane and native regressions
 
 Files:
@@ -40,32 +53,32 @@ Files:
 - Test `ios/FilmModelTests/CaptureStreamingModelTests.swift` (existing
   `CaptureTestServer` and `FilmTestGate` can hold individual requests).
 
-- [ ] Write failing tests demonstrating that a held coordinator recovery does
+- [x] Write failing tests demonstrating that a held coordinator recovery does
       not prevent independent current worker status acquisition, and that a held
       status request does not prevent maintenance or immediate publisher detach.
-- [ ] Extract the existing request-through-quality-tick body into
+- [x] Extract the existing request-through-quality-tick body into
       `pollWorkerStatus()`. Preserve `pollControl()` as the compatibility entry
       point; a maintenance-only selection lets the foreground control schedule
       avoid double polling. Keep existing queued-start failure behavior.
-- [ ] Capture request identity, worker epoch, endpoint/credential identity,
+- [x] Capture request identity, worker epoch, endpoint/credential identity,
       broadcast selection and publishing owner. Validate them after every await
       before status mutation, quality work, or error handling. An obsolete result
       must not clear or stop a newer owner. Reuse existing scope checks.
-- [ ] Keep a single-flight slot. Concurrent manual/foreground callers coalesce or
+- [x] Keep a single-flight slot. Concurrent manual/foreground callers coalesce or
       skip, never issue overlapping delivery-cursor reads. Old completion can
       release only its own slot. Propagate cancellation explicitly for any stored
       unstructured task; cancellation is not a publisher network failure.
-- [ ] Add a foreground worker-status schedule using the existing selected poll
+- [x] Add a foreground worker-status schedule using the existing selected poll
       interval. It must neither check `controlBusy` nor await control maintenance.
       Preserve truthfully sampled request, receipt and native-probe timing.
-- [ ] Revoke status authority and detach capture synchronously on stop. Join the
+- [x] Revoke status authority and detach capture synchronously on stop. Join the
       captured request before closing/exporting its evidence. Avoid a cycle where
       status error waits for teardown which waits for the same status request.
-- [ ] Test concurrent callers, old success/error after owner replacement,
+- [x] Test concurrent callers, old success/error after owner replacement,
       cancellation during a native probe read, no cursor duplication, and no
       post-close audit rows. Do not hide deadlocks by dropping joins or accepting
       stale ownership. Suspended mock requests must be explicitly released.
-- [ ] Run the focused FilmModel target, then the complete existing native model
+- [x] Run the focused FilmModel target, then the complete existing native model
       target and tooling suite. Review ownership/cancellation independently.
       Commit only verified source and plan changes.
 
@@ -138,3 +151,26 @@ applied revision with new ownership. Neither the host restoration clock nor an
 elapsed timer may authorize it. Offline clock brackets subsequently prove that a
 successful fresh measurement and trial followed actual restoration. This design
 is not implemented or qualified by the independent polling work.
+
+## Implementation checkpoint
+
+The independent foreground lane and compatibility polling are implemented.
+Seven new model tests cover the held coordinator, shared single-flight status,
+held request with immediate detach/joined export, cancellation during native
+probe read, obsolete success/error, current failure without self-deadlock, and
+queued-start failure during maintenance. Both the original blocking regression
+and the queued-start race were reproduced before their fixes. The latter now
+ends only the currently queued start after a current owned status failure;
+obsolete or canceled failures cannot poison a later intent.
+
+All 99 capture-model tests and all 583 FilmModel tests pass. The complete model
+run is joined in `artifacts/qa/independent-worker-status-models-full.log`.
+Independent specification and concurrency reviews found no actionable issues.
+The full native app build is still required to compile the SwiftUI schedule and
+qualify the real workflow. No simulator was created or runtime installed for
+these model tests. The saved DhjMLB failure remains unchanged.
+
+The full tooling suite also passes all 4,702 tests, joined exit 0 in
+`repeated-live-checkpoint-independent-worker-status-tools-20260925-exit.json`.
+The next native execution freezes this reviewed source before compiling the full
+app and collecting new evidence; source/docs must not change during that run.

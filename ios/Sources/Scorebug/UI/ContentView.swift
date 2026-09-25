@@ -19,6 +19,7 @@ struct ContentView: View {
                 phoneWatch.resume(); connectivity.activate()
             }
             .task(id: scenePhase) { await monitorStreamingControl() }
+            .task(id: scenePhase) { await monitorWorkerStatus() }
             .task(id: scenePhase) { await monitorStreamingHealth() }
             .onChange(of: film.state) { _, state in updateIdleTimer(state) }
             .onChange(of: scenePhase) { _, phase in stopIfBackgrounded(phase) }
@@ -54,7 +55,12 @@ struct ContentView: View {
         guard scenePhase == .active else { return }
         await streaming.restore()
         await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
-            poll: { await streaming.pollControl() })
+            poll: { await streaming.pollControl(includeWorkerStatus: false) })
+    }
+    @MainActor private func monitorWorkerStatus() async {
+        guard scenePhase == .active else { return }
+        await ControlPollSchedule.run(interval: { streaming.controlPollInterval },
+            poll: { await streaming.pollWorkerStatus() })
     }
     @MainActor private func monitorStreamingHealth() async {
         guard scenePhase == .active else { return }

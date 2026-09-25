@@ -146,6 +146,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var diagnosticAttemptID: UUID?
     @Published private(set) var activeRecordingID: String?
     private var workerEpoch = UUID()
+    private var workerStatusRequest: (id: UUID, task: Task<Bool, Never>)?
     private var workerFreshness: WorkerStatusFreshness?
     private var workerSourceTracker = WorkerSourceIntervalTracker()
     private var setup: SavedCaptureSetup?
@@ -563,10 +564,8 @@ struct PublishingClockObservation: Equatable, Sendable {
 
     /// A separate modest timer drives this method. A delayed request never blocks
     /// camera health. Local state and observation expiry use pollLocalHealth().
-    func pollControl() async {
-        #if DEBUG
+    func pollControl(includeWorkerStatus: Bool = true) async {
         let controlStartedUptime = ProcessInfo.processInfo.systemUptime
-        #endif
         if needsStorageRetry && setup == nil { restored = false }
         await restore()
         // Defer the owned broadcast stop until publisher finish settles. Each
@@ -614,113 +613,173 @@ struct PublishingClockObservation: Equatable, Sendable {
                     message = "Streaming selection ended or changed. Recording continues on this device."
                 }
             }
-            guard let credential = setup.credential else { return }
-            let observedEpoch = workerEpoch
-            let requestStartedAtUptime = ProcessInfo.processInfo.systemUptime
-            let requestStart = ContinuousClock.now
-            let response: WorkerMediaStatusResponse
-            do {
-                let deliveryRequest: DecoderDeliveryRequest? = publishing == nil ? nil :
-                    workerDeliveryTracker.cursor.map(DecoderDeliveryRequest.after) ?? .full
-                response = try await clientForSetup().workerStatus(credential: credential, delivery: deliveryRequest)
-            } catch {
-                // A stopped attempt no longer owns either successes or failures.
-                guard observedEpoch == workerEpoch else { return }
-                throw error
+            if includeWorkerStatus {
+                controlFailed = await pollWorkerStatus(controlStartedUptime: controlStartedUptime)
             }
-            let received = ContinuousClock.now
-            let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
-            guard observedEpoch == workerEpoch else { return }
-            guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
-                  response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return }
-            let requestDuration = requestStart.duration(to: received)
-            // Read sender acceptance after the receiver response; earlier local
-            // counts could legitimately lag bytes already observed by the relay.
-            let probeReadStartedAt = ProcessInfo.processInfo.systemUptime
-            let readSequence = nextProbeReadSequence()
-            let observedProbe = await publishing?.probeObserver?.probeObservation()
-            let probeReadFinishedAt = ProcessInfo.processInfo.systemUptime
-            guard observedEpoch == workerEpoch else { return }
-            let probe = acceptProbeObservation(observedProbe, sequence: readSequence)
-            // A response whose native join was overtaken has no truthful native
-            // read bracket for the newer proof. Preserve current evidence and
-            // wait for the next control response instead of relabelling it.
-            guard acceptedProbeReadSequence == readSequence else { return }
-            updateReceiverProbe(response: response, probe: probe, receivedAt: received, requestDuration: requestDuration,
-                requestStartedAtUptime: requestStartedAtUptime, responseReceivedAtUptime: responseReceivedAtUptime,
-                probeReadStartedAt: probeReadStartedAt, probeReadFinishedAt: probeReadFinishedAt)
-            workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
-            workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
-            if let publishing, localState == .publishing,
-               publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
-               current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
-                if let timing = DeliveryRequestTiming(startedAt: requestStartedAtUptime, receivedAt: responseReceivedAtUptime) {
-                    workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
-                        expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration, requestTiming: timing)
-                } else {
-                    workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
-                }
-                workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
-                    expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
-                if let history = publishing.observations?.sourceHistorySnapshot {
-                    workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
-                        clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
-                        receivedAt: received, requestDuration: requestDuration)
-                } else { workerSourceTracker.clear(); workerSourceInterval = nil }
-            } else {
-                workerDecoderCadenceFreshness = nil
-                workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
-                workerSourceTracker.clear()
-                workerSourceInterval = nil
-            }
-            #if DEBUG
-            if let publishing, localState == .publishing, publishing.attempt == diagnosticAttemptID {
-                let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
-                cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
-                    helper: workerDecoderCadenceFreshness, delivery: workerDecoderDeliveryFreshness, receivedAt: received, requestDuration: requestDuration,
-                    receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime,
-                    timing: .init(controlStartedUptime: controlStartedUptime, statusRequestStartedUptime: requestStartedAtUptime,
-                        responseReceivedUptime: responseReceivedAtUptime, probeReadStartedUptime: probeReadStartedAt,
-                        probeReadFinishedUptime: probeReadFinishedAt, auditEvaluatedUptime: evaluatedUptime))
-            }
-            if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
-                let previous = workerSourceIntervalHistory.last
-                if previous?.sequence != interval.sequence || previous?.workerEpoch != interval.workerEpoch ||
-                    previous?.workerAttempt != interval.workerAttempt || previous?.publication != interval.publication {
-                    workerSourceIntervalHistory.append(interval)
-                    if workerSourceIntervalHistory.count > 128 { workerSourceIntervalHistory.removeFirst() }
-                } else if !workerSourceIntervalHistory.isEmpty {
-                    // Keep the original source/age anchor while recording later completion evidence.
-                    workerSourceIntervalHistory[workerSourceIntervalHistory.count - 1].processing = interval.processing
-                }
-            }
-            if workerReportAgeProofsEnabled, let publishing, localState == .publishing,
-               publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
-               let scope = publishing.observations?.snapshot.scope {
-                // One evaluation instant, one call to the actual helper. Preserve
-                // its return; export must never recompute or imply current age.
-                let evaluated = ContinuousClock.now
-                let actualAge = workerDecodedVideoFreshness?.ageUpperBound(at: evaluated)
-                workerReportAgeProofHistory.record(WorkerReportAgeProof(scope: scope,
-                    helper: workerDecodedVideoFreshness,
-                    serverUpperBoundMs: response.status.decodedVideoAgeUpperBoundMs,
-                    requestDuration: requestDuration, residenceDuration: received.duration(to: evaluated),
-                    helperAgeUpperBound: actualAge))
-            } else { workerReportAgeProofHistory.clear() }
-            #endif
-            // A newly completed worker report need not wait for the next health
-            // tick. The driver coalesces both callers into the same owned task.
-            if let publishing, let qualityDriver {
-                qualityDriver.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
-                    source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: publishing.session.snapshot))
-            }
-            workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
         } catch {
             controlFailed = true
             clearWorker()
             if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
             if let coordinator { commandState = await coordinator.state() }
             fail(error)
+        }
+    }
+
+    /// Worker acquisition has its own foreground schedule. It never awaits
+    /// persistence, report flushing or broadcast-command recovery.
+    func pollWorkerStatus() async {
+        _ = await pollWorkerStatus(controlStartedUptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func pollWorkerStatus(controlStartedUptime: Double) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        let request: Task<Bool, Never>
+        if let inFlight = workerStatusRequest {
+            request = inFlight.task
+        } else {
+            guard !busy, !stopping, !publisherStopping,
+                  let setup, let credential = setup.credential else { return false }
+            let id = UUID(), observedEpoch = workerEpoch
+            let observedBroadcast = commandState?.snapshot?.broadcast
+            let observedPublishing = publishing
+            let requestTask = Task { [self] in
+                defer {
+                    // An obsolete completion can release only its own slot.
+                    if workerStatusRequest?.id == id { workerStatusRequest = nil }
+                }
+                @MainActor func ownsRequest() -> Bool {
+                    !Task.isCancelled && workerStatusRequest?.id == id && workerEpoch == observedEpoch &&
+                    self.setup?.endpoint == setup.endpoint && self.setup?.credential == credential &&
+                    commandState?.snapshot?.broadcast == observedBroadcast &&
+                    publishing?.attempt == observedPublishing?.attempt &&
+                    publishing?.session === observedPublishing?.session &&
+                    (observedPublishing == nil || (activeRecordingID == observedPublishing?.context.id &&
+                        current?.tap === observedPublishing?.context.tap && diagnosticAttemptID == observedPublishing?.attempt))
+                }
+                guard ownsRequest() else { return false }
+                do {
+                    let requestStartedAtUptime = ProcessInfo.processInfo.systemUptime
+                    let requestStart = ContinuousClock.now
+                    let response: WorkerMediaStatusResponse
+                    do {
+                        let deliveryRequest: DecoderDeliveryRequest? = publishing == nil ? nil :
+                            workerDeliveryTracker.cursor.map(DecoderDeliveryRequest.after) ?? .full
+                        response = try await clientForSetup().workerStatus(credential: credential, delivery: deliveryRequest)
+                    } catch {
+                        // A stopped attempt no longer owns either successes or failures.
+                        guard ownsRequest() else { return false }
+                        throw error
+                    }
+                    let received = ContinuousClock.now
+                    let responseReceivedAtUptime = ProcessInfo.processInfo.systemUptime
+                    guard ownsRequest() else { return false }
+                    guard response.status.gameId == credential.gameId, response.status.generation == commandState?.snapshot?.broadcast.generation,
+                          response.status.workerId == commandState?.snapshot?.broadcast.selection?.workerId else { clearWorker(); return false }
+                    let requestDuration = requestStart.duration(to: received)
+                    // Read sender acceptance after the receiver response; earlier local
+                    // counts could legitimately lag bytes already observed by the relay.
+                    let probeReadStartedAt = ProcessInfo.processInfo.systemUptime
+                    let readSequence = nextProbeReadSequence()
+                    let observedProbe = await observedPublishing?.probeObserver?.probeObservation()
+                    let probeReadFinishedAt = ProcessInfo.processInfo.systemUptime
+                    guard ownsRequest() else { return false }
+                    let probe = acceptProbeObservation(observedProbe, sequence: readSequence)
+                    // A response whose native join was overtaken has no truthful native
+                    // read bracket for the newer proof. Preserve current evidence and
+                    // wait for the next control response instead of relabelling it.
+                    guard acceptedProbeReadSequence == readSequence else { return false }
+                    updateReceiverProbe(response: response, probe: probe, receivedAt: received, requestDuration: requestDuration,
+                        requestStartedAtUptime: requestStartedAtUptime, responseReceivedAtUptime: responseReceivedAtUptime,
+                        probeReadStartedAt: probeReadStartedAt, probeReadFinishedAt: probeReadFinishedAt)
+                    workerFreshness = WorkerStatusFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+                    workerDecodedVideoFreshness = WorkerDecodedVideoFreshness(response: response, receivedAt: received, requestDuration: requestDuration)
+                    if let publishing, localState == .publishing,
+                       publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+                       current?.tap === publishing.context.tap, response.status.validatedPublication != nil {
+                        if let timing = DeliveryRequestTiming(startedAt: requestStartedAtUptime, receivedAt: responseReceivedAtUptime) {
+                            workerDecoderDeliveryFreshness = workerDeliveryTracker.observe(response: response,
+                                expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration, requestTiming: timing)
+                        } else {
+                            workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
+                        }
+                        workerDecoderCadenceFreshness = WorkerDecoderCadenceFreshness(response: response,
+                            expectedPublishingAttemptID: publishing.attempt, receivedAt: received, requestDuration: requestDuration)
+                        if let history = publishing.observations?.sourceHistorySnapshot {
+                            workerSourceInterval = workerSourceTracker.observe(response: response, history: history,
+                                clock: clockObservation(publishing.session.snapshot.transportClock, scope: history.scope, isClosed: false),
+                                receivedAt: received, requestDuration: requestDuration)
+                        } else { workerSourceTracker.clear(); workerSourceInterval = nil }
+                    } else {
+                        workerDecoderCadenceFreshness = nil
+                        workerDeliveryTracker.unavailable(); workerDecoderDeliveryFreshness = nil
+                        workerSourceTracker.clear()
+                        workerSourceInterval = nil
+                    }
+                    #if DEBUG
+                    if let publishing, localState == .publishing, publishing.attempt == diagnosticAttemptID {
+                        let evaluatedUptime = ProcessInfo.processInfo.systemUptime, evaluated = ContinuousClock.now
+                        cadenceReportAudit?.record(response: response, expectedAttempt: publishing.attempt,
+                            helper: workerDecoderCadenceFreshness, delivery: workerDecoderDeliveryFreshness, receivedAt: received, requestDuration: requestDuration,
+                            receivedUptime: responseReceivedAtUptime, instant: evaluated, evaluatedUptime: evaluatedUptime,
+                            timing: .init(controlStartedUptime: controlStartedUptime, statusRequestStartedUptime: requestStartedAtUptime,
+                                responseReceivedUptime: responseReceivedAtUptime, probeReadStartedUptime: probeReadStartedAt,
+                                probeReadFinishedUptime: probeReadFinishedAt, auditEvaluatedUptime: evaluatedUptime))
+                    }
+                    if workerReportAgeProofsEnabled, let interval = workerSourceInterval {
+                        let previous = workerSourceIntervalHistory.last
+                        if previous?.sequence != interval.sequence || previous?.workerEpoch != interval.workerEpoch ||
+                            previous?.workerAttempt != interval.workerAttempt || previous?.publication != interval.publication {
+                            workerSourceIntervalHistory.append(interval)
+                            if workerSourceIntervalHistory.count > 128 { workerSourceIntervalHistory.removeFirst() }
+                        } else if !workerSourceIntervalHistory.isEmpty {
+                            // Keep the original source/age anchor while recording later completion evidence.
+                            workerSourceIntervalHistory[workerSourceIntervalHistory.count - 1].processing = interval.processing
+                        }
+                    }
+                    if workerReportAgeProofsEnabled, let publishing, localState == .publishing,
+                       publishing.attempt == diagnosticAttemptID, activeRecordingID == publishing.context.id,
+                       let scope = publishing.observations?.snapshot.scope {
+                        // One evaluation instant, one call to the actual helper. Preserve
+                        // its return; export must never recompute or imply current age.
+                        let evaluated = ContinuousClock.now
+                        let actualAge = workerDecodedVideoFreshness?.ageUpperBound(at: evaluated)
+                        workerReportAgeProofHistory.record(WorkerReportAgeProof(scope: scope,
+                            helper: workerDecodedVideoFreshness,
+                            serverUpperBoundMs: response.status.decodedVideoAgeUpperBoundMs,
+                            requestDuration: requestDuration, residenceDuration: received.duration(to: evaluated),
+                            helperAgeUpperBound: actualAge))
+                    } else { workerReportAgeProofHistory.clear() }
+                    #endif
+                    // A newly completed worker report need not wait for the next health
+                    // tick. The driver coalesces both callers into the same owned task.
+                    if let publishing, let qualityDriver {
+                        qualityDriver.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
+                            source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: publishing.session.snapshot))
+                    }
+                    workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
+                    return false
+                } catch {
+                    // Cancellation and revoked ownership are not network failures.
+                    guard ownsRequest(), !(error is CancellationError),
+                          (error as? URLError)?.code != .cancelled else { return false }
+                    // Maintenance may still be suspended with a queued button tap.
+                    // End that intent now; its later completion cannot revive it.
+                    requestedStart = nil
+                    clearWorker()
+                    if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
+                    // Teardown joins this request; this request must never await teardown.
+                    fail(error)
+                    return true
+                }
+            }
+            workerStatusRequest = (id, requestTask)
+            request = requestTask
+        }
+        // SwiftUI cancellation does not automatically cancel an unstructured task.
+        return await withTaskCancellationHandler {
+            await request.value
+        } onCancel: {
+            request.cancel()
         }
     }
 
@@ -950,6 +1009,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     private func detachPublisher() {
+        let statusRequest = workerStatusRequest?.task
+        statusRequest?.cancel()
         candidateAuthority?.revoke()
         if let publishing {
             publishing.context.tap.detach(publishing.session)
@@ -958,8 +1019,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             let capacityClock = capacityClockFixture; capacityClockFixture = nil
             let capacityClockTask = capacityClockPolling; capacityClockPolling = nil
             capacityClockTask?.cancel()
-            cadenceReportAudit?.close()
-            let cadenceData = try? cadenceReportAudit?.data()
+            var cadenceAudit = cadenceReportAudit
             let cadenceWriter = cadenceReportFixtureWriter
             cadenceReportAudit = nil
             let transitions = transitionDriver; transitionDriver = nil; transitions?.cancel()
@@ -996,8 +1056,10 @@ struct PublishingClockObservation: Equatable, Sendable {
                 await transitions?.stop()
                 #endif
                 await session.stop()
+                _ = await statusRequest?.value
                 #if DEBUG
-                if let cadenceData, let cadenceWriter { await cadenceWriter(cadenceData) }
+                cadenceAudit?.close()
+                if let cadenceData = try? cadenceAudit?.data(), let cadenceWriter { await cadenceWriter(cadenceData) }
                 if let probeData, let probeWriter { await probeWriter(probeData) }
                 if let adaptiveProof {
                     adaptiveProof.close()
@@ -1029,6 +1091,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         publishing = nil; localState = .idle; sentSamples = 0; clearWorker()
     }
     private func clearWorker() {
+        workerStatusRequest?.task.cancel()
         candidateAuthority?.revoke(); candidateAuthority = nil
         acceptedProbeReadSequence = nextProbeReadSequence()
         workerEpoch = UUID(); workerState = .unknown; workerFreshness = nil; workerDecodedVideoFreshness = nil; workerDecoderCadenceFreshness = nil
