@@ -64,6 +64,12 @@ export function nativeCandidateProfile({
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e12;
 const uuid = (s) =>
   typeof s === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(s);
+const candidateResourceLimits = Object.freeze({
+  rawQueueCount: 4,
+  unresolvedInputCount: 16,
+  unresolvedRawBytes: 64 * 1024 * 1024,
+  rawBytesPerInput: 16 * 1024 * 1024,
+});
 /** v1/v2 measure video only; v3 also replays complete A/V transport payload cost.
  * Neither asserts decoded candidate quality, spare capacity or device safety. */
 export function qualifyNativeCandidateMeasurement(
@@ -73,13 +79,7 @@ export function qualifyNativeCandidateMeasurement(
   assert.ok([1, 2, 3].includes(requiredFormatVersion));
   assert.equal(proof.formatVersion, requiredFormatVersion);
   const resources = proof.formatVersion >= 2;
-  if (resources)
-    assert.deepEqual(proof.resourceLimits, {
-      rawQueueCount: 4,
-      unresolvedInputCount: 16,
-      unresolvedRawBytes: 64 * 1024 * 1024,
-      rawBytesPerInput: 16 * 1024 * 1024,
-    });
+  if (resources) assert.deepEqual(proof.resourceLimits, candidateResourceLimits);
   assert.equal(proof.isClosed, true);
   assert.equal(proof.invalidReason, null);
   assert.deepEqual(proof.scope, scope);
@@ -87,12 +87,161 @@ export function qualifyNativeCandidateMeasurement(
   assert.ok(uuid(scope.publishingAttemptID));
   assert.equal(proof.liveProfile, liveProfile);
   assert.ok(rates[profile] > rates[liveProfile]);
-  const geometry = nativeMediaGeometry(profile, true),
-    live = nativeMediaGeometry(liveProfile, true);
+  const live = nativeMediaGeometry(liveProfile, true);
   assert.equal(format.width, live.width);
   assert.equal(format.height, live.height);
-  const m = proof.measurement,
+  const m = proof.measurement;
+  const cost = replayCandidateEncoding(m, {
+    scope,
+    profile,
+    liveProfile,
+    startedNotBefore: proof.publisherStartedAt,
+    endedNotAfter: proof.closedAt,
+    baselineFirstFrame: format.firstFrame,
+    baselineLastFrame: format.lastFrame,
+    resources,
+  });
+  for (const p of [proof.pressureBaseline, proof.pressureFinal]) {
+    assert.ok(
+      finite(p.observedAt) &&
+        finite(p.sampledAt) &&
+        p.observedAt >= p.sampledAt &&
+        p.observedAt - p.sampledAt <= 2,
+    );
+    assert.ok([0, 1].includes(p.thermal));
+    assert.equal(p.publishing, true);
+    assert.ok(
+      Number.isSafeInteger(p.dropped) &&
+        p.dropped >= 0 &&
+        Number.isSafeInteger(p.rejected) &&
+        p.rejected >= 0,
+    );
+  }
+  const baseline = proof.pressureBaseline,
+    final = proof.pressureFinal;
+  assert.ok(
+    baseline.observedAt >= proof.publisherStartedAt &&
+      baseline.observedAt <= m.startedAt &&
+      m.startedAt - baseline.observedAt <= 0.5,
+  );
+  assert.ok(
+    final.observedAt >= m.endedAt &&
+      final.observedAt <= proof.closedAt &&
+      final.observedAt - m.endedAt <= 0.5,
+  );
+  assert.equal(final.dropped, baseline.dropped);
+  assert.equal(final.rejected, baseline.rejected);
+  assert.ok(
+    Number.isSafeInteger(proof.pressurePolls) &&
+      proof.pressurePolls > 0 &&
+      proof.pressurePolls <= 50,
+  );
+  assert.ok(
+    [0, 1].includes(proof.maximumThermal) &&
+      proof.maximumThermal >= Math.max(baseline.thermal, final.thermal),
+  );
+  return {
+    ...(proof.formatVersion === 3
+      ? {
+          transport: replayCandidateTransport(m, {
+            scope,
+            profile,
+            publishingGeneration: format.publishingGeneration,
+          }),
+        }
+      : {}),
+    ...cost,
+  };
+}
+
+/** Replays original candidate encoding, raw resource lifetimes and A/V cost.
+ * Expected bindings come from the caller's independently validated owner/source
+ * history; resourceLimits are the pinned SDK contract, not observed telemetry.
+ * Session checks establish internal consistency and exclude the live encoder;
+ * this does not independently establish candidate session provenance.
+ * Returns structural/cost evidence only: no pressure, admission, decoded quality,
+ * capacity or recovery qualification. Whole-history joins remain the caller's job.
+ */
+export function qualifyRawNativeCandidateMeasurement(measurement, expected) {
+  assert.deepEqual(
+    Object.keys(expected).sort(),
+    [
+      'scope',
+      'profile',
+      'liveProfile',
+      'publishingGeneration',
+      'measurementID',
+      'baselineEncoderSessionID',
+      'startedNotBefore',
+      'endedNotAfter',
+      'baselineFirstFrame',
+      'baselineLastFrame',
+      'resourceLimits',
+    ].sort(),
+  );
+  const {
+    scope,
+    profile,
+    liveProfile,
+    measurementID,
+    baselineEncoderSessionID,
+    startedNotBefore,
+    endedNotAfter,
+    baselineFirstFrame,
+    baselineLastFrame,
+    resourceLimits,
+  } = expected;
+  assert.ok(uuid(scope.publishingAttemptID));
+  assert.ok(rates[profile] > rates[liveProfile]);
+  assert.ok(uuid(measurementID));
+  assert.ok(uuid(measurement.id));
+  assert.equal(measurement.id.toLowerCase(), measurementID.toLowerCase());
+  assert.ok(uuid(baselineEncoderSessionID));
+  assert.ok(uuid(measurement.encoding.encoderSessionID));
+  assert.notEqual(
+    measurement.encoding.encoderSessionID.toLowerCase(),
+    baselineEncoderSessionID.toLowerCase(),
+  );
+  assert.ok(finite(startedNotBefore) && finite(endedNotAfter) && endedNotAfter >= startedNotBefore);
+  for (const frame of [baselineFirstFrame, baselineLastFrame])
+    assert.ok(Number.isSafeInteger(frame) && frame >= 0 && frame <= 65535);
+  assert.ok(baselineLastFrame >= baselineFirstFrame);
+  assert.deepEqual(resourceLimits, candidateResourceLimits);
+  const cost = replayCandidateEncoding(measurement, { ...expected, resources: true });
+  return { transport: replayCandidateTransport(measurement, expected), ...cost };
+}
+
+function replayCandidateTransport(m, { scope, profile, publishingGeneration }) {
+  return qualifyCandidateAVTransport(m.transport, {
+    scope,
+    profile,
+    id: m.id,
+    publishingGeneration,
+    frames: m.encoding.frames,
+    firstInputPTS: m.firstInputPTS,
+    lastInputPTS: m.lastInputPTS,
+    acceptedInputCount: m.acceptedInputCount,
+    startedAt: m.startedAt,
+    endedAt: m.endedAt,
+  });
+}
+
+function replayCandidateEncoding(
+  measurement,
+  {
+    scope,
+    profile,
+    liveProfile,
+    startedNotBefore,
+    endedNotAfter,
+    baselineFirstFrame,
+    baselineLastFrame,
+    resources,
+  },
+) {
+  const m = measurement,
     e = m.encoding;
+  const geometry = nativeMediaGeometry(profile, true);
   assert.deepEqual(m.scope, scope);
   assert.equal(m.profile, profile);
   assert.ok(uuid(m.id));
@@ -111,12 +260,9 @@ export function qualifyNativeCandidateMeasurement(
     maxKeyFrameIntervalDuration: 2,
     allowFrameReordering: false,
   });
-  for (const n of [proof.publisherStartedAt, proof.closedAt, m.startedAt, m.endedAt])
-    assert.ok(finite(n));
+  for (const n of [startedNotBefore, endedNotAfter, m.startedAt, m.endedAt]) assert.ok(finite(n));
   assert.ok(
-    m.startedAt >= proof.publisherStartedAt &&
-      m.endedAt >= m.startedAt &&
-      proof.closedAt >= m.endedAt,
+    m.startedAt >= startedNotBefore && m.endedAt >= m.startedAt && endedNotAfter >= m.endedAt,
   );
   assert.ok(Array.isArray(e.frames) && e.frames.length === 121);
   assert.equal(m.acceptedInputCount, 121);
@@ -125,7 +271,7 @@ export function qualifyNativeCandidateMeasurement(
   const firstFrame = fixtureFrameID(m.firstInputPTS),
     lastFrame = fixtureFrameID(m.lastInputPTS);
   assert.equal(lastFrame - firstFrame, 120);
-  assert.ok(firstFrame >= format.firstFrame && lastFrame <= format.lastFrame);
+  assert.ok(firstFrame >= baselineFirstFrame && lastFrame <= baselineLastFrame);
   let outstanding = [];
   const resourceEvents = [];
   let bytes = 0,
@@ -204,62 +350,7 @@ export function qualifyNativeCandidateMeasurement(
   const submissionDuration = e.frames.at(-1).submittedAt - e.frames[0].submittedAt;
   assert.ok(submissionDuration > 0 && 120 / submissionDuration >= 24 && maximumLatency <= 1.5);
   assert.ok(bytes <= 121 * 2 * 1024 * 1024);
-  for (const p of [proof.pressureBaseline, proof.pressureFinal]) {
-    assert.ok(
-      finite(p.observedAt) &&
-        finite(p.sampledAt) &&
-        p.observedAt >= p.sampledAt &&
-        p.observedAt - p.sampledAt <= 2,
-    );
-    assert.ok([0, 1].includes(p.thermal));
-    assert.equal(p.publishing, true);
-    assert.ok(
-      Number.isSafeInteger(p.dropped) &&
-        p.dropped >= 0 &&
-        Number.isSafeInteger(p.rejected) &&
-        p.rejected >= 0,
-    );
-  }
-  const baseline = proof.pressureBaseline,
-    final = proof.pressureFinal;
-  assert.ok(
-    baseline.observedAt >= proof.publisherStartedAt &&
-      baseline.observedAt <= m.startedAt &&
-      m.startedAt - baseline.observedAt <= 0.5,
-  );
-  assert.ok(
-    final.observedAt >= m.endedAt &&
-      final.observedAt <= proof.closedAt &&
-      final.observedAt - m.endedAt <= 0.5,
-  );
-  assert.equal(final.dropped, baseline.dropped);
-  assert.equal(final.rejected, baseline.rejected);
-  assert.ok(
-    Number.isSafeInteger(proof.pressurePolls) &&
-      proof.pressurePolls > 0 &&
-      proof.pressurePolls <= 50,
-  );
-  assert.ok(
-    [0, 1].includes(proof.maximumThermal) &&
-      proof.maximumThermal >= Math.max(baseline.thermal, final.thermal),
-  );
   return {
-    ...(proof.formatVersion === 3
-      ? {
-          transport: qualifyCandidateAVTransport(m.transport, {
-            scope,
-            profile,
-            id: m.id,
-            publishingGeneration: format.publishingGeneration,
-            frames: e.frames,
-            firstInputPTS: m.firstInputPTS,
-            lastInputPTS: m.lastInputPTS,
-            acceptedInputCount: m.acceptedInputCount,
-            startedAt: m.startedAt,
-            endedAt: m.endedAt,
-          }),
-        }
-      : {}),
     ...(resources ? { maximumUnresolvedInputs, maximumUnresolvedRawBytes } : {}),
     profile,
     liveProfile,

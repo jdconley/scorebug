@@ -1,0 +1,58 @@
+{
+  "description": "Complete original failed native audit, retained without event filtering or rebasing. Candidate structure/cost fixture only; original media remains unqualified.",
+  "source": "artifacts/qa/native-app-mAluZi/failure-app-data-IzVzCv/QA/owned-measurement-lifecycle.json",
+  "sha256": "f430d17b0a6f70757cf9ae624cb875e330757bd6860daf45de32526294099345",
+  "bytes": 756725,
+  "compressedBytes": 53066,
+  "events": 514,
+  "baselineSource": "artifacts/qa/native-app-mAluZi/failure-app-data-IzVzCv/QA/native-profile-transitions.json",
+  "baselineSHA256": "c6baba1e366a1a91d0c5850a6ff2abe178944b342857564d10477b78c8442f0d",
+  "resourceContractSource": "vendor/HaishinKit/HaishinKit/Sources/Codec/VideoCandidateEncoder.swift",
+  "resourceContractSHA256": "3f3927f05baca7805ac297ad8df990e6da1257d1588c3c5377625a89507a8c98",
+  "cases": [
+    {
+      "ownerID": "ec896bd0-bccb-44d8-951e-13d22ab00009",
+      "measurementEventOrdinal": "208",
+      "startEventOrdinal": "126",
+      "transferEventOrdinal": "218",
+      "appliedRevision": "0",
+      "encoderSessionID": "FEA91F92-3945-48DC-8218-E556B45D5AFD",
+      "baselineFirstSourcePTS": {
+        "epoch": "0",
+        "flags": 1,
+        "timescale": 384000,
+        "value": "49542400"
+      },
+      "baselineLastSourcePTS": {
+        "epoch": "0",
+        "flags": 1,
+        "timescale": 384000,
+        "value": "59884800"
+      },
+      "transportBytes": 421308,
+      "transportMessageCount": 503
+    },
+    {
+      "ownerID": "66960afc-a69a-4040-b4bf-11ab0363e79e",
+      "measurementEventOrdinal": "491",
+      "startEventOrdinal": "409",
+      "transferEventOrdinal": "503",
+      "appliedRevision": "2",
+      "encoderSessionID": "751563D4-0F32-4CE3-85DC-8181D3131EA2",
+      "baselineFirstSourcePTS": {
+        "epoch": "0",
+        "flags": 1,
+        "timescale": 384000,
+        "value": "84857600"
+      },
+      "baselineLastSourcePTS": {
+        "epoch": "0",
+        "flags": 1,
+        "timescale": 384000,
+        "value": "115577600"
+      },
+      "transportBytes": 417924,
+      "transportMessageCount": 502
+    }
+  ]
+}
