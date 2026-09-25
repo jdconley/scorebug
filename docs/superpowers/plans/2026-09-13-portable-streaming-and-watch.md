@@ -24,24 +24,30 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 25
 
-The latest frozen native run, `native-app-YnfAvU`, performs 240p → 360p → 240p
-with no freshness rejections. Its UI workflow and both complete A/V decodes pass.
-The clean archive has 7,455 consecutive frames; the saved stream has 7,029
-consecutive frames. Raw lossless media, native application/admission, confirmed
-prefix and causal clock checks pass independently. All four clock exchanges take
-11.5–23.2 ms. The original end-to-end result remains **failed** on its selected
-whole-second offered-load gate.
+The latest frozen native run, `native-app-DhjMLB` at `8b013ab`, performs
+240p → 360p → 240p. Its UI workflow and both full A/V decodes pass. The clean
+archive contains 7,450 consecutive frames and the saved stream 7,016 consecutive
+frames. Raw lossless media, native admission, confirmed prefix, direct token-budget
+transport and causal clock checks pass independently. All four clock exchanges
+take 10.9–22.6 ms. The full result remains **failed**: one of 325 delivery windows
+is unclassified because its report is 290.1 ms old, beyond the unchanged 250 ms
+freshness limit. Two neighboring observations retain three uncertain frames;
+those windows precede restored recovery and receive no healthy credit.
 
-The new 66,107-operation audit independently proves actual bandwidth limiting,
-including a ready-packet deficit 18.3 ms after the cap begins. The old statistic
-misses a boundary burst. A prospective, explicit `token-budget-v1` contract now
-uses the fully reconstructed packet budget while keeping both earlier contracts
-unchanged. All 4,702 tooling tests pass; the latest native model checkpoint is
-576 tests. The terminal timing check now accepts delivery evaluation after its
-still-fresh cadence sample only within the validated owned session. Freshness
-and coverage budgets remain unchanged. Separate offline replay passes the complete
-prospective capacity policy; full media qualification still requires a fresh native
-run. Complete capacity recovery and a subsequent fresh ramp-up remain unqualified.
+The raw timing audit locates a 300.8 ms delay in control maintenance before the
+next worker-status request. That request itself takes 19.5 ms. Worker health
+polling currently waits behind persistence, report flushing and broadcast-command
+recovery. Investigate an independently owned status polling path with the same
+scope, receipt and freshness checks. Do not relabel the failed run or retry a
+historical window after its live consumption deadline.
+
+All 4,702 tooling tests pass; the latest native model checkpoint is 576 tests.
+The earlier terminal delivery-ordering fix and explicit `token-budget-v1` transport
+contract pass separate offline replay of YnfAvU. Its original offered-load failure
+remains unchanged. Fresh complete capacity recovery and a subsequent autonomous
+ramp-up remain unqualified. The latter also needs explicit failed-measurement
+ownership and retry accounting; the current two-attempt fixture can spend its
+last probe before bandwidth returns.
 
 Earlier `native-app-YAQo8F` had one missing live frame; the explicit bounded-loss
 component reconciles it at 29.8 fps and 0.667% loss in the affected interval. The
@@ -49,7 +55,7 @@ clean archive remains strict, and loss accounting grants no healthy recovery tim
 No old native verdict is relabeled. See the
 [current evidence contract and next steps](2026-09-25-capacity-rate-ledger.md#fresh-integration-run-and-prospective-token-budget-contract).
 
-The latest run reused installed iOS 26.2, preserved all 1,262 frozen file hashes,
+The latest run reused installed iOS 26.2, preserved all 1,263 frozen file hashes,
 and removed only its owned temporary simulator. Physical camera, phone/Watch
 concurrency, fresh post-restoration ramp-up, true outage and remote proxy tests
 remain open.

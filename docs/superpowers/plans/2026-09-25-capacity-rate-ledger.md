@@ -285,3 +285,43 @@ Fresh verification passes all 4,702 tooling tests (joined exit 0 in
 prospective capacity policy from the immutable YnfAvU raw evidence. Its
 `mediaFilesQualified`, `freshRampQualified` and `productionUpgradeAuthorized`
 flags remain false. A new native run is still required.
+
+## Fresh token-budget run: truthful failed delivery checkpoint
+
+`native-app-DhjMLB` ran at `8b013ab` with an explicit `token-budget-v1` selection.
+The joined native child exits 1; all 1,263 frozen source/input hashes are unchanged
+in `capacity750-token-budget-freeze-7civzdul`. The owned iOS 26.2 simulator
+`3185DC9E-B22B-4F6F-9E96-6FDADD33AD08` is absent after cleanup. No runtime was
+installed and no other simulator was removed.
+
+The UI workflow passes in 291.555 seconds. Both complete A/V decodes and ordinary
+score/audio checks complete. The archive has 7,450 consecutive IDs 0–7,449; live
+has 7,016 consecutive IDs 205–7,220. One worker pipeline terminates with decoder
+fresh count and output count both 7,016. Trial application is at +47.099 s and
+the pressure decrease at +91.893 s. No native quality rejection occurs. The four
+clock round trips are 12.616, 22.645, 10.877 and 12.103 ms; both causal brackets
+pass. The new transport contract passes, including anchored ledger replay.
+
+Full capacity replay fails `Incomplete delivery classification`: one of 325 rows
+is unknown. Delivery row 196 owns cadence report 1499 and its exact receipt,
+context and sample bounds. Its one-second window is [1976652, 1976653]. At the
+cadence audit (1976654.684480792), the conservative sample age is 111.244 ms.
+Evaluation at 1976654.863321208 adds 178.840 ms of residence, reaching 290.084 ms.
+The original 250 ms rule correctly rejects it; no missing frame is inferred.
+
+The next control poll starts at 1976654.765584167 but spends 300.843 ms before
+requesting worker status. HTTP then takes 19.492 ms. Its fresh report arrives at
+1976655.088910333, already 88.910 ms beyond the existing two-second live window
+consumption limit. The recorded maintenance span includes several operations and
+does not identify which caused the delay. A historical reclassification cannot
+prove timely native consumption. Neighboring rows 197/198 retain the same three
+uncertain frames; their windows start before restoration's upper bracket, so they
+are not evidence of healthy restored delivery and are not automatically another
+complete-policy blocker.
+
+`diagnostic-native750-token-budget-terminal-replay.json` and
+`rate-ledger-run-assessment.json` preserve this failed result and raw hashes.
+Media-files, fresh-ramp and production qualification remain false. Next investigate
+separating worker status acquisition from unrelated control maintenance, with
+single-flight ownership, cancellation and late-response tests. Preserve every
+existing delivery freshness and classification rule.
