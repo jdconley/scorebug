@@ -235,11 +235,8 @@ function replayMeasuredTrialPolicy(
   const recoveryPolicy = transportPolicy === 'recovery-budget-v1';
   assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
   if (recoveryPolicy) {
-    assert.equal(
-      confirmedPrefix,
-      false,
-      'Recovery-budget prefix qualification is not yet supported',
-    );
+    // Prefix mode replays the same pressure policy and all admission/probation
+    // gates through confirmation. It grants no qualification to a later reset.
     assert.equal(quality.transportPolicy, transportPolicy);
     assert.equal(candidateWitnessQualification?.policy, transportPolicy);
     assert.equal(lifecycleQualification?.probePolicy, transportPolicy);

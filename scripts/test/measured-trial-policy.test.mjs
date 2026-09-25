@@ -506,3 +506,80 @@ test('complete pressure replay uses recovery rules for recovered retries and ret
     assert.throws(() => qualifyMeasuredTrialPolicy(bad));
   }
 });
+
+function recoveryBudgetPrefixInput(base = recoveryContext()) {
+  base.transportPolicy = 'recovery-budget-v1';
+  base.quality.formatVersion = 5;
+  base.quality.transportPolicy = base.transportPolicy;
+  base.candidateWitnessQualification.policy = base.transportPolicy;
+  base.lifecycleQualification.probePolicy = base.transportPolicy;
+  return base;
+}
+for (const suffix of [false, true])
+  test(`recovery-budget prefix preserves exact confirmation with later suffix=${suffix}`, () => {
+    const f = recoveryBudgetPrefixInput(suffix ? recoveryContext() : fixture());
+    const before = JSON.stringify(f);
+    const result = qualifyMeasuredTrialConfirmedPrefix(f);
+    const index = f.quality.events.findIndex((e) => e.reasons?.includes('trialConfirmed'));
+    assert.equal(result.proofExtent, 'confirmed-prefix');
+    assert.equal(result.transportPolicy, 'recovery-budget-v1');
+    assert.equal(result.confirmedEventIndex, index);
+    assert.equal(result.nextEventIndex, index + 1);
+    assert.equal(result.rawEventCount, f.quality.events.length);
+    assert.equal(result.confirmedAt, f.quality.events[index].evaluatedAt);
+    assert.equal(result.upgradeAuthorized, false);
+    assert.match(result.scope, /suffix and recovery remain unqualified/);
+    assert.equal(JSON.stringify(f), before);
+    if (suffix) assert.throws(() => qualifyMeasuredTrialPolicy(f));
+    else assert.deepEqual(result.probation, qualifyMeasuredTrialPolicy(f).probation);
+  });
+for (const [name, mutate] of Object.entries({
+  policy: (f) => delete f.transportPolicy,
+  format: (f) => (f.quality.formatVersion = 4),
+  metadata: (f) => (f.quality.transportPolicy = 'sender-delay-v1'),
+  admissionPolicy: (f) => delete f.candidateWitnessQualification.policy,
+  lifecyclePolicy: (f) => delete f.lifecycleQualification.probePolicy,
+  unqualifiedHistory: (f) => f.lifecycleQualification.applications.pop(),
+  missingConfirmation: (f) => {
+    for (const e of f.quality.events)
+      if (e.reasons) e.reasons = e.reasons.filter((r) => r !== 'trialConfirmed');
+  },
+  earlyConfirmation: (f) => probation(f)[0].reasons.push('trialConfirmed'),
+  staleProbation: (f) => (probation(f)[0].evaluatedAt = probation(f)[0].window.end + 2.01),
+  nativeOwner: (f) =>
+    (probation(f)[0].receipt.configurationID = '00000000-0000-4000-8000-000000000001'),
+  pressure: (f) => probation(f)[0].evidence.thermal.samples.forEach((s) => (s.state = 2)),
+  cadence: (f) => (intermediateCadence(f).observedStall = true),
+  rejected: (f) => {
+    const e = probation(f)[1];
+    f.quality.events.splice(f.quality.events.indexOf(e), 0, {
+      ...e,
+      kind: 'rejected',
+      reasons: [],
+    });
+  },
+  discontinuous: (f) => (f.quality.events = f.quality.events.filter((e) => e !== probation(f)[1])),
+}))
+  test(`recovery-budget prefix rejects ${name}`, () => {
+    const f = recoveryBudgetPrefixInput();
+    mutate(f);
+    assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(f));
+  });
+test('recovery-budget prefix accepts recovered retries but rejects actual transport pressure', () => {
+  const f = recoveryBudgetPrefixInput();
+  for (const e of f.quality.events)
+    for (const s of e.evidence?.transport?.samples ?? [])
+      s.retransmittedBytes = String(BigInt(s.sentBytes) / 20n);
+  assert.equal(qualifyMeasuredTrialConfirmedPrefix(f).confirmed, 1);
+  for (const mutate of [
+    (s) => (s.droppedPackets = Number(BigInt(s.sentBytes) / 10000n)),
+    (s) => (s.senderDeliveryDelayMilliseconds = 0),
+    (s) => (s.rttMilliseconds = 31),
+    (s) => (s.senderBufferMilliseconds = 61),
+  ]) {
+    const bad = structuredClone(f);
+    for (const e of bad.quality.events)
+      for (const s of e.evidence?.transport?.samples ?? []) mutate(s);
+    assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(bad));
+  }
+});
