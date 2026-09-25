@@ -239,3 +239,14 @@ export function nativeSourceCadencePacing({ environment, adaptiveProfiles }) {
   );
   return true;
 }
+
+/** Recording artifacts stay owned by the fixture, never by ambient worker configuration. */
+export function fixtureProxyRecording({ streaming, environment }) {
+  const raw = environment.SCOREBUG_TEST_PROXY_RECORDING;
+  if (raw === undefined) return false;
+  assert.ok(
+    streaming === true && raw === '1',
+    'Proxy recording requires native streaming and exact opt-in 1',
+  );
+  return true;
+}

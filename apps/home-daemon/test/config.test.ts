@@ -81,3 +81,44 @@ it('supports the experimental240 publishing candidate without changing the defau
   expect(videoProfiles['240p30']).toEqual({ width: 426, height: 240, fps: 30, bitrateKbps: 350 });
   expect(loadConfig(base).VIDEO_PROFILE).toBe('1080p30');
 });
+
+it('defaults to RTMP and validates output requirements for each mode', () => {
+  expect(loadConfig(base).OUTPUT_MODE).toBe('rtmp');
+  expect(() => loadConfig({ ...base, OUTPUT_URL: undefined })).toThrow();
+  expect(
+    loadConfig({
+      ...base,
+      OUTPUT_MODE: 'record',
+      OUTPUT_URL: undefined,
+      OUTPUT_RECORDING_DIR: '/tmp/recordings',
+    }),
+  ).toMatchObject({ OUTPUT_MODE: 'record', OUTPUT_RECORDING_DIR: '/tmp/recordings' });
+  expect(
+    loadConfig({
+      ...base,
+      OUTPUT_MODE: 'rtmp+record',
+      OUTPUT_RECORDING_DIR: '/tmp/recordings',
+    }).OUTPUT_MODE,
+  ).toBe('rtmp+record');
+  for (const OUTPUT_MODE of ['record', 'rtmp+record']) {
+    for (const OUTPUT_RECORDING_DIR of [undefined, '', '   '])
+      expect(() => loadConfig({ ...base, OUTPUT_MODE, OUTPUT_RECORDING_DIR })).toThrow();
+  }
+  expect(() =>
+    loadConfig({
+      ...base,
+      OUTPUT_MODE: 'rtmp+record',
+      OUTPUT_RECORDING_DIR: '/tmp',
+      OUTPUT_URL: undefined,
+    }),
+  ).toThrow();
+  expect(() => loadConfig({ ...base, OUTPUT_MODE: 'unknown' })).toThrow();
+  expect(() =>
+    loadConfig({
+      ...base,
+      OUTPUT_MODE: 'record',
+      OUTPUT_RECORDING_DIR: '/tmp',
+      OUTPUT_URL: 'file:///tmp/video',
+    }),
+  ).toThrow();
+});

@@ -1,6 +1,7 @@
 import { loadConfig, videoProfiles } from './config.js';
 import { createLogger } from './logger.js';
 import { startPipeline } from './pipeline.js';
+import { allocatePipelineOutputs } from './output-recording.js';
 import { scoreFilePath } from './score-file.js';
 import { WorkerClient } from './worker-client.js';
 import { WorkerSupervisor } from './supervisor.js';
@@ -36,7 +37,7 @@ const supervisor = new WorkerSupervisor({
       {
         gameId: input.gameId,
         pullUrl: input.readUrl,
-        publishUrl: config.OUTPUT_URL,
+        ...allocatePipelineOutputs(config),
         scoreFile,
         nvenc: false,
         encoder: config.ENCODER,
@@ -102,6 +103,7 @@ process.on('SIGTERM', () => void shutdown());
 log.info('worker_started', {
   workerId: config.WORKER_ID,
   outputId: config.OUTPUT_ID,
+  outputMode: config.OUTPUT_MODE,
   encoder: config.ENCODER,
   decoderThreading: config.DECODER_THREADING,
   profile: config.VIDEO_PROFILE,

@@ -55,6 +55,29 @@ Audio is AAC at 128 Kbps. Automatic profile qualification and adaptation remain 
 If `ENCODER` is omitted, software is the default; legacy `NVENC_ENABLED=true` selects
 NVENC only when an explicit encoder was not provided.
 
+## Output recording
+
+`OUTPUT_MODE=rtmp` is the default. Use `OUTPUT_MODE=record` to save the overlaid
+stream without RTMP, or `OUTPUT_MODE=rtmp+record` for both. Recording modes require
+`OUTPUT_RECORDING_DIR`; RTMP modes require `OUTPUT_URL`. Each pipeline attempt
+creates a private `attempt-*/overlay.mp4` below that directory, retaining earlier
+attempts after retries. Provide a writable volume when running in a container.
+
+Both outputs share one encode through FFmpeg's [tee muxer](https://ffmpeg.org/ffmpeg-formats.html#tee).
+Either output failing stops that attempt and enters the existing bounded retry path.
+Fragmented MP4 preserves completed fragments after interruption; the first complete
+fragment is required before recovery is possible, and a partial tail can be lost.
+There is no automatic recording rotation or deletion. These files contain the
+score overlay; the phone's independent recording remains clean.
+
+```sh
+OUTPUT_MODE=rtmp+record
+OUTPUT_RECORDING_DIR=/path/to/scorebug-recordings
+```
+
+See [native device testing](../../docs/device-testing.md) for the owned LAN stack,
+mock YouTube recorder, and phone/Watch workflow.
+
 ## Local validation
 
 ```sh

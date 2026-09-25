@@ -343,3 +343,27 @@ test('source-cadence pacing requires exact opt-in and the validated adaptive fix
     }),
   );
 });
+
+test('proxy recording is explicit and requires streaming', () => {
+  assert.equal(options.fixtureProxyRecording({ streaming: true, environment: {} }), false);
+  assert.equal(
+    options.fixtureProxyRecording({
+      streaming: true,
+      environment: { SCOREBUG_TEST_PROXY_RECORDING: '1' },
+    }),
+    true,
+  );
+  assert.throws(() =>
+    options.fixtureProxyRecording({
+      streaming: false,
+      environment: { SCOREBUG_TEST_PROXY_RECORDING: '1' },
+    }),
+  );
+  for (const value of ['', '0', 'true', 1, null])
+    assert.throws(() =>
+      options.fixtureProxyRecording({
+        streaming: true,
+        environment: { SCOREBUG_TEST_PROXY_RECORDING: value },
+      }),
+    );
+});

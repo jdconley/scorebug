@@ -90,6 +90,7 @@ import { startScoringTestServer } from './scoring-test-server.mjs';
 import { preserveNativeFailureArtifacts } from './native-failure-artifacts.mjs';
 import {
   nativeStreamingOptions,
+  fixtureProxyRecording,
   fixtureDecoderThreading,
   fixtureDeliveryDeadline,
   fixtureDeadlineResets,
@@ -113,6 +114,7 @@ async function readBoundedJSON(path, maximum) {
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const streaming = process.argv.includes('--streaming');
+const proxyRecording = fixtureProxyRecording({ streaming, environment: process.env });
 const decoderThreading = fixtureDecoderThreading(process.env);
 const publishPeerLatencyMs = fixturePublishPeerLatency(process.env);
 const publishPacing = fixturePublishPacing(process.env);
@@ -1074,6 +1076,12 @@ try {
   if (proxy)
     for (const [index, path] of (await proxy.collect()).entries())
       live.push(await analyze(path, `live-${index}`, true));
+  const proxyMedia = [];
+  if (proxyRecording) {
+    assert.ok(proxy, 'Proxy recording requires the native worker fixture');
+    for (const [index, path] of (await proxy.collectProxyRecordings()).entries())
+      proxyMedia.push(await analyze(path, `proxy-${index}`, true));
+  }
   const uplinkSnapshot = uplinkProfile
     ? await readBoundedJSON(join(artifact, 'uplink-proxy.json'), 64 * 1024 * 1024)
     : undefined;
@@ -1095,7 +1103,7 @@ try {
       : undefined;
   if (streaming) {
     assert.equal(media.length, 1, 'Streaming fixture must export its single clean recording');
-    for (const output of live) {
+    for (const output of [...live, ...proxyMedia]) {
       assert.ok(
         output.firstSourceFrame >= media[0].firstSourceFrame &&
           output.lastSourceFrame <= media[0].lastSourceFrame,
@@ -1696,6 +1704,7 @@ try {
         streamingBudget,
         media,
         live,
+        proxyMedia,
         statuses: states,
         videoObservation,
         publishingClockObservation,
@@ -1721,7 +1730,7 @@ try {
     assert.equal(measuredRecoveryQualification?.measuredRecoveryQualified, true);
   else if (measuredTrial) assert.equal(measuredTrialQualification?.measuredTrialQualified, true);
   console.log(
-    `${capacityRecovery ? 'MEASURED CAPACITY RECOVERY PASS (local laboratory route; fresh ramp not qualified)' : repeatedRecovery ? 'REPEATED MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length} fully decoded MP4s.`,
+    `${capacityRecovery ? 'MEASURED CAPACITY RECOVERY PASS (local laboratory route; fresh ramp not qualified)' : repeatedRecovery ? 'REPEATED MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredRecovery ? 'MEASURED NATIVE RECOVERY PASS (local laboratory route)' : measuredTrial ? 'MEASURED NATIVE TRIAL PASS (local laboratory route)' : ['rate4m', 'rate3m'].includes(uplinkProfile) || ['540p30', '360p30', '240p30'].includes(liveProfile) || profileTransitions ? 'DIAGNOSTIC MEDIA PASS (native adaptation/recovery not yet qualified)' : 'PASS'}: native ${streaming ? 'streaming and scoring' : 'offline recording, scoring role, recovery'}, export, and ${media.length + live.length + proxyMedia.length} fully decoded MP4s.`,
   );
 } catch (error) {
   nativeFailed = true;

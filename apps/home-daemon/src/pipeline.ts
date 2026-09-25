@@ -31,7 +31,9 @@ export type PipelineSpec = {
   gameId: string;
   pullUrl: string;
   /** Full RTMPS URL **with** the stream key appended (`${RTMP_TARGET}/${streamKey}`). */
-  publishUrl: string;
+  publishUrl?: string;
+  /** Fresh per-attempt local path; recording contains the final proxy overlay. */
+  recordingPath?: string;
   scoreFile: string;
   nvenc: boolean;
   encoder?: 'software' | 'videotoolbox' | 'nvenc';
@@ -76,6 +78,24 @@ export function buildFfmpegArgs(
   spec: PipelineSpec,
   options: { encoderTiming?: boolean; decoderDiagnostics?: boolean; packetTiming?: boolean } = {},
 ): string[] {
+  if (!spec.publishUrl && !spec.recordingPath) throw new Error('missing_pipeline_output');
+  // delay_moov preserves unequal first A/V timestamps via edit lists. An empty
+  // initial moov would reset each track separately and destroy the audio lead.
+  const fragmentedMp4 = '+frag_keyframe+delay_moov+default_base_moof';
+  // Tee splits slave names with av_get_token; this is FFmpeg escaping, not shell quoting.
+  const teePath = (value: string) => value.replace(/[\\'|]/g, '\\$&');
+  const output = spec.recordingPath
+    ? spec.publishUrl
+      ? [
+          '-n',
+          '-flags',
+          '+global_header',
+          '-f',
+          'tee',
+          `[f=flv]${teePath(spec.publishUrl)}|[f=mp4:movflags=${fragmentedMp4}]${teePath(spec.recordingPath)}`,
+        ]
+      : ['-n', '-movflags', fragmentedMp4, '-f', 'mp4', spec.recordingPath]
+    : ['-f', 'flv', spec.publishUrl!];
   const decoderThreading = spec.decoderThreading ?? 'automatic';
   if (!['automatic', 'slice'].includes(decoderThreading))
     throw new Error('invalid_decoder_threading');
@@ -195,9 +215,7 @@ export function buildFfmpegArgs(
     '44100',
     '-avoid_negative_ts',
     'make_zero',
-    '-f',
-    'flv',
-    spec.publishUrl,
+    ...output,
   ];
 }
 

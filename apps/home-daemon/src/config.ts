@@ -1,27 +1,48 @@
 import { z } from 'zod';
 
-const schema = z.object({
-  CONTROL_PLANE_URL: z.string().url(),
-  HOME_TOKEN: z.string().min(16),
-  WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-  OUTPUT_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-  OUTPUT_URL: z
-    .string()
-    .url()
-    .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol)),
-  ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
-  DECODER_THREADING: z.enum(['automatic', 'slice']).default('automatic'),
-  WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(1000),
-  WORKER_PROCESSING: z.enum(['auto', 'off']).default('auto'),
-  VIDEO_PROFILE: z
-    .enum(['240p30', '360p30', '540p30', '720p30', '1080p30', '2160p30'])
-    .default('1080p30'),
-  FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
-  FFPROBE_PATH: z.string().min(1).default('ffprobe'),
-  FONT_PATH: z.string().min(1).default('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
-  SCORE_DIR: z.string().default('/tmp/scorebug'),
-  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-});
+const schema = z
+  .object({
+    CONTROL_PLANE_URL: z.string().url(),
+    HOME_TOKEN: z.string().min(16),
+    WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    OUTPUT_ID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    OUTPUT_MODE: z.enum(['rtmp', 'record', 'rtmp+record']).default('rtmp'),
+    OUTPUT_RECORDING_DIR: z
+      .string()
+      .refine((value) => value.trim().length > 0)
+      .optional(),
+    OUTPUT_URL: z
+      .string()
+      .url()
+      .refine((value) => ['rtmp:', 'rtmps:'].includes(new URL(value).protocol))
+      .optional(),
+    ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
+    DECODER_THREADING: z.enum(['automatic', 'slice']).default('automatic'),
+    WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(1000),
+    WORKER_PROCESSING: z.enum(['auto', 'off']).default('auto'),
+    VIDEO_PROFILE: z
+      .enum(['240p30', '360p30', '540p30', '720p30', '1080p30', '2160p30'])
+      .default('1080p30'),
+    FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
+    FFPROBE_PATH: z.string().min(1).default('ffprobe'),
+    FONT_PATH: z.string().min(1).default('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    SCORE_DIR: z.string().default('/tmp/scorebug'),
+    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  })
+  .superRefine((config, context) => {
+    if (config.OUTPUT_MODE !== 'record' && !config.OUTPUT_URL)
+      context.addIssue({
+        code: 'custom',
+        path: ['OUTPUT_URL'],
+        message: 'RTMP output requires OUTPUT_URL',
+      });
+    if (config.OUTPUT_MODE !== 'rtmp' && !config.OUTPUT_RECORDING_DIR)
+      context.addIssue({
+        code: 'custom',
+        path: ['OUTPUT_RECORDING_DIR'],
+        message: 'Recording output requires OUTPUT_RECORDING_DIR',
+      });
+  });
 
 export type Config = z.infer<typeof schema>;
 

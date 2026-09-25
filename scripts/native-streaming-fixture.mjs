@@ -6,7 +6,7 @@ import {
 import { capacityClockScope } from './capacity-clock-brackets.mjs';
 import { collectCapacityDiagnostics } from './capacity-diagnostics.mjs';
 import { nativeRelayImageTag } from './native-relay-image.mjs';
-import { fixtureWorkerReportInterval } from './native-streaming-options.mjs';
+import { fixtureWorkerReportInterval, fixtureProxyRecording } from './native-streaming-options.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
 import { runRepeatedOwnedDecoderStalls } from './repeated-owned-decoder-stall.mjs';
 import {
@@ -175,6 +175,7 @@ export async function nativeStreamingFixture({
   const names = [];
   let worker, done, workerEvidence, directRecorder, uplink, stopUplinkEvidence;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
+  const proxyRecording = fixtureProxyRecording({ streaming: true, environment: process.env });
   let matchID;
   let statusTask, statusAbort, statusError, faultTask, faultError, repeatedQuality;
   const decodedWindows = new Map();
@@ -646,6 +647,8 @@ export async function nativeStreamingFixture({
               HOME_TOKEN: 'qa-home-token-not-production',
               WORKER_ID: 'mac',
               OUTPUT_ID: 'local-sink',
+              OUTPUT_MODE: proxyRecording ? 'rtmp+record' : 'rtmp',
+              OUTPUT_RECORDING_DIR: proxyRecording ? join(artifact, 'proxy-recordings') : undefined,
               OUTPUT_URL:
                 directRecorder?.url ??
                 `rtmp://127.0.0.1:${sinkPort}/live/fixture?user=qa-worker&pass=qa-output-not-production`,
@@ -686,6 +689,17 @@ export async function nativeStreamingFixture({
           },
           { recorderMode: 'reconnecting' },
         );
+      },
+      async collectProxyRecordings() {
+        if (!proxyRecording) return [];
+        assert(!worker, 'Stop and collect the live worker before reading its recordings');
+        const directory = join(artifact, 'proxy-recordings');
+        const attempts = await readdir(directory, { withFileTypes: true });
+        const files = attempts
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith('attempt-'))
+          .map((entry) => join(directory, entry.name, 'overlay.mp4'));
+        assert.ok(files.length, 'Proxy recording output missing');
+        return files;
       },
       async collect() {
         assert(!capacityDiagnostics, 'Diagnostic recorder cannot grant a normal media verdict');

@@ -181,3 +181,51 @@ it('enables numeric packet timing only with the explicit diagnostic option', () 
   expect(args).toContain('-copyts');
   expect(args[args.indexOf('-avoid_negative_ts') + 1]).toBe('make_zero');
 });
+
+it('records the final overlay as fragmented MP4 without an RTMP output', () => {
+  const args = buildFfmpegArgs({
+    ...baseSpec,
+    nvenc: false,
+    publishUrl: undefined,
+    recordingPath: '/tmp/final overlay.mp4',
+  });
+  expect(args.slice(-5)).toEqual([
+    '-movflags',
+    '+frag_keyframe+delay_moov+default_base_moof',
+    '-f',
+    'mp4',
+    '/tmp/final overlay.mp4',
+  ]);
+  expect(args).toContain('-n');
+  expect(args).not.toContain('-y');
+  expect(args).not.toContain('flv');
+  expect(args).toContain('-copyts');
+  expect(args[args.indexOf('-vf') + 1]).toContain('drawtext=');
+});
+
+it('shares one A/V encode between RTMP and fragmented MP4 with safe tee escaping', () => {
+  const args = buildFfmpegArgs({
+    ...baseSpec,
+    nvenc: false,
+    recordingPath: "/tmp/final video's | archive\\copy.mp4",
+  });
+  expect(args.filter((arg) => arg === '-c:v')).toHaveLength(1);
+  expect(args.filter((arg) => arg === '-c:a')).toHaveLength(1);
+  expect(args.filter((arg) => arg === '-map')).toHaveLength(2);
+  expect(args[args.indexOf('-flags') + 1]).toBe('+global_header');
+  expect(args.slice(-3, -1)).toEqual(['-f', 'tee']);
+  expect(args.at(-1)).toBe(
+    '[f=flv]' +
+      baseSpec.publishUrl +
+      "|[f=mp4:movflags=+frag_keyframe+delay_moov+default_base_moof]/tmp/final video\\'s \\| archive\\\\copy.mp4",
+  );
+  expect(args.at(-1)).not.toContain('onfail=ignore');
+  expect(args).toContain('-copyts');
+  expect(args[args.indexOf('-fps_mode') + 1]).toBe('passthrough');
+});
+
+it('rejects pipelines with no output', () => {
+  expect(() => buildFfmpegArgs({ ...baseSpec, nvenc: false, publishUrl: undefined })).toThrow(
+    'missing_pipeline_output',
+  );
+});

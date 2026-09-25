@@ -8,11 +8,14 @@ This document tracks goals, current evidence, delivery tasks and acceptance gate
 
 - The guarded SDK, publishing adapters, Core rejection settlement and PublishingSession changes are committed through `b65ca7f`; independent specification and quality reviews approve all four checkpoints.
 - Latest component evidence: **Core 487, SDK 346, Media 271, Streaming 245 and native app model 583 tests pass**. These counts do not establish a new full-media or physical-device pass.
-- The latest full native laboratory run (`native-app-uG39s5`, `e0477be`) passes the three-phase 240p → 360p → 240p route, archive/live decode, score glyphs and phase/grid audio. It preserves 7,467 archive and 7,008 acquired live frames, with no gaps inside their recorded spans; all 325 delivery windows meet 30 fps.
+- The latest adaptive full native laboratory run (`native-app-uG39s5`, `e0477be`) passes the three-phase 240p → 360p → 240p route, archive/live decode, score glyphs and phase/grid audio. It preserves 7,467 archive and 7,008 acquired live frames, with no gaps inside their recorded spans; all 325 delivery windows meet 30 fps.
 - A fresh automatic increase after restoration, the wider adaptive ladder, real-camera operation, paired physical Watch scoring, outages and remote hosts remain unqualified. Production automatic increases remain gated; laboratory routes are explicit.
 - Native phone scoring, file-driven independent recording and local proxy/overlay/RTMP recording have working local evidence. Thirty-minute 1080p and 4K file-driven CPU-proxy replays passed; this does not qualify camera or thermal behavior.
 - Direct Watch scoring/relaunch has simulator evidence. Paired WatchConnectivity simulator setup still fails before scoring; physical testing is authorized now and can resolve the actual device path.
-- Current device observations and the outstanding signing-team choice are in [NEXT](../../session-logs/NEXT.md). Historical evidence and failures remain in the [lossless legacy archive](../../session-logs/README.md#legacy-provenance).
+- Current device observations and the selected Conley Chaos LLC signing team are in [NEXT](../../session-logs/NEXT.md). Historical evidence and failures remain in the [lossless legacy archive](../../session-logs/README.md#legacy-provenance).
+
+- The complete local three-output vertical now passes (`native-app-k1oNme`): clean app archive, mock RTMP destination MP4 and proxy overlay MP4, native score changes, full A/V decode and frame checks. Phone/Watch hardware acceptance remains open. See the [device runbook](../../device-testing.md).
+- The iPhone app and embedded Watch app build with Conley Chaos LLC signing; the iPhone app is installed. Watch provisioning and actual device workflow validation are in progress.
 
 ## Baseline and owner decisions
 
@@ -172,94 +175,3 @@ The following **original checkboxes and statuses are preserved**. An unchecked i
 Append one [session log](../../session-logs/README.md) per work session with goal, commands/results, decisions, failures, commits and next steps. Keep this plan limited to current status, acceptance and backlog. Update [NEXT](../../session-logs/NEXT.md) for handoff; writing it does not compact the conversation.
 
 The original 3,206-line plan is retained byte-for-byte and as a readable archive with repaired relative links. Known September 25 checkpoints have separately named imported logs; unknown older session boundaries remain unknown. Original checkbox wording/statuses remain above, including partially evidenced open audits.
-
-### Historical anchor compatibility
-
-Moved checkpoint headings below preserve old main-plan fragment targets and lead to the archive. They are historical evidence, not current task ordering.
-
-<a id="native-adaptive-control-checkpoint"></a>
-[Native adaptive control checkpoint](../../session-logs/legacy-portable-streaming-plan.md#native-adaptive-control-checkpoint)
-
-<a id="native-deadline-monitor-checkpoint"></a>
-[Native deadline monitor checkpoint](../../session-logs/legacy-portable-streaming-plan.md#native-deadline-monitor-checkpoint)
-
-<a id="2026-09-17-staged-probes-qualified-through-the-native-media-pipeline"></a>
-[2026-09-17: staged probes qualified through the native media pipeline](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-staged-probes-qualified-through-the-native-media-pipeline)
-
-<a id="2026-09-17-bounded-candidate-video-encoding"></a>
-[2026-09-17: bounded candidate video encoding](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-bounded-candidate-video-encoding)
-
-<a id="2026-09-17-candidate-sampling-integrated-native-buffering-gate-remains-open"></a>
-[2026-09-17: candidate sampling integrated; native buffering gate remains open](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-candidate-sampling-integrated-native-buffering-gate-remains-open)
-
-<a id="2026-09-17-native-candidate-buffering-isolated-frame-delay-setting-unsupported"></a>
-[2026-09-17: native candidate buffering isolated; frame-delay setting unsupported](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-native-candidate-buffering-isolated-frame-delay-setting-unsupported)
-
-<a id="2026-09-17-candidate-startup-buffering-depth-measured"></a>
-[2026-09-17: candidate startup buffering depth measured](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-candidate-startup-buffering-depth-measured)
-
-<a id="2026-09-17-bounded-candidate-measurement-qualified-during-recording-and-streaming"></a>
-[2026-09-17: bounded candidate measurement qualified during recording and streaming](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-bounded-candidate-measurement-qualified-during-recording-and-streaming)
-
-<a id="2026-09-17-finite-candidate-audiovideo-mux-accounting-implemented"></a>
-[2026-09-17: finite candidate audio/video mux accounting implemented](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-finite-candidate-audiovideo-mux-accounting-implemented)
-
-<a id="2026-09-17-fresh-candidate-audiovideo-transport-cost-qualified"></a>
-[2026-09-17: fresh candidate audio/video transport cost qualified](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-fresh-candidate-audiovideo-transport-cost-qualified)
-
-<a id="2026-09-17-concurrent-candidate-cost-and-receiver-load-qualified-locally"></a>
-[2026-09-17: concurrent candidate cost and receiver load qualified locally](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-concurrent-candidate-cost-and-receiver-load-qualified-locally)
-
-<a id="2026-09-17-measured-candidate-admission-and-owned-application-contract"></a>
-[2026-09-17: measured candidate admission and owned application contract](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-measured-candidate-admission-and-owned-application-contract)
-
-<a id="2026-09-17-measured-candidate-provider-and-native-integration-diagnostics"></a>
-[2026-09-17: measured candidate provider and native integration diagnostics](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-measured-candidate-provider-and-native-integration-diagnostics)
-
-<a id="2026-09-17-native-measured-transitions-and-lifecycle-evidence"></a>
-[2026-09-17: native measured transitions and lifecycle evidence](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-native-measured-transitions-and-lifecycle-evidence)
-
-<a id="2026-09-17-monotonic-telemetry-polling-and-stage-timing"></a>
-[2026-09-17: monotonic telemetry polling and stage timing](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-monotonic-telemetry-polling-and-stage-timing)
-
-<a id="2026-09-17-fresh-worker-timing-and-observed-native-confirmation"></a>
-[2026-09-17: fresh worker timing and observed native confirmation](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-fresh-worker-timing-and-observed-native-confirmation)
-
-<a id="2026-09-17-complete-measured-native-trial-qualification"></a>
-[2026-09-17: complete measured native trial qualification](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-complete-measured-native-trial-qualification)
-
-<a id="2026-09-17-measured-faultrecovery-verifier-and-streamed-audio-startup-failure"></a>
-[2026-09-17: measured fault/recovery verifier and streamed-audio startup failure](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-measured-faultrecovery-verifier-and-streamed-audio-startup-failure)
-
-<a id="2026-09-17-fresh-candidate-startup-and-repeated-native-scheduling"></a>
-[2026-09-17: fresh candidate startup and repeated native scheduling](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-fresh-candidate-startup-and-repeated-native-scheduling)
-
-<a id="2026-09-17-repeated-native-evidence-replay-foundations"></a>
-[2026-09-17: repeated native evidence replay foundations](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-repeated-native-evidence-replay-foundations)
-
-<a id="2026-09-17-repeated-candidate-and-receiver-evidence-ownership"></a>
-[2026-09-17: repeated candidate and receiver evidence ownership](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-repeated-candidate-and-receiver-evidence-ownership)
-
-<a id="2026-09-17-repeated-native-lifecycle-and-probe-retirement"></a>
-[2026-09-17: repeated native lifecycle and probe retirement](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-repeated-native-lifecycle-and-probe-retirement)
-
-<a id="2026-09-17-repeated-receiver-intervals-and-complete-admissions"></a>
-[2026-09-17: repeated receiver intervals and complete admissions](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-repeated-receiver-intervals-and-complete-admissions)
-
-<a id="2026-09-17-repeated-fault-causality-and-shared-raw-media-replay"></a>
-[2026-09-17: repeated fault causality and shared raw media replay](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-repeated-fault-causality-and-shared-raw-media-replay)
-
-<a id="2026-09-17-complete-repeated-policy-replay-and-native-readiness-joins"></a>
-[2026-09-17: complete repeated policy replay and native readiness joins](../../session-logs/legacy-portable-streaming-plan.md#2026-09-17-complete-repeated-policy-replay-and-native-readiness-joins)
-
-<a id="2026-09-23-resumed-decoder-freshness-verification"></a>
-[2026-09-23: resumed decoder-freshness verification](../../session-logs/legacy-portable-streaming-plan.md#2026-09-23-resumed-decoder-freshness-verification)
-
-<a id="2026-09-23-live-checkpoints-and-supplied-match-footage"></a>
-[2026-09-23: live checkpoints and supplied match footage](../../session-logs/legacy-portable-streaming-plan.md#2026-09-23-live-checkpoints-and-supplied-match-footage)
-
-<a id="2026-09-24-representative-native-file-capture-and-adaptation"></a>
-[2026-09-24: representative native file capture and adaptation](../../session-logs/legacy-portable-streaming-plan.md#2026-09-24-representative-native-file-capture-and-adaptation)
-
-<a id="earlier-checkpoint-evidence"></a>
-[Earlier checkpoint evidence](../../session-logs/legacy-portable-streaming-plan.md#earlier-checkpoint-evidence)

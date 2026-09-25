@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 three-output vertical](2026-09-25-three-output-vertical.md) — proxy recording, full native simulator route, device lab and physical installation.
+
 - [September 25 guarded SDK](2026-09-25-guarded-sdk.md) — imported checkpoint, `2aa6162`.
 - [September 25 guarded adapters](2026-09-25-guarded-adapters.md) — imported checkpoint, `8947c0f`.
 - [September 25 guarded Core settlement](2026-09-25-guarded-core.md) — imported checkpoint, `055b0b5`.
@@ -22,6 +24,6 @@ Original repository path: `docs/superpowers/plans/2026-09-13-portable-streaming-
 Source commit: `b65ca7fe1d58be9ac27e88a63c67867d428f1b10` (`codex/local-validation`).
 Original line count: 3,206. Original SHA-256: `f8382e9b39359d1355eaa3bad469451ac21576ab0f82cc2c33217b4b60d31fe1`.
 
-The `.txt` file is exactly the original UTF-8 bytes, without an added header. Interpret its relative Markdown links from the original path above; plain `artifacts/`, `ios/`, `scripts/`, and other code-formatted paths are repository-relative. The readable `.md` copy adds only a provenance comment and rebases relative Markdown link destinations to this folder; original prose, failures, checkbox statuses and headings remain. Old main-plan checkpoint anchors have compatibility links into that readable archive. No source date or unknown session boundary has been invented; dated headings retain only their original attribution.
+The `.txt` file is exactly the original UTF-8 bytes, without an added header. Interpret its relative Markdown links from the original path above; plain `artifacts/`, `ios/`, `scripts/`, and other code-formatted paths are repository-relative. The readable `.md` copy adds only a provenance comment and rebases relative Markdown link destinations to this folder; original prose, failures, checkbox statuses and headings remain. Historical checkpoint anchors live in that readable archive; the live plan contains no checkpoint inventory. No source date or unknown session boundary has been invented; dated headings retain only their original attribution.
 
 The four named September 25 imports come from `docs/superpowers/plans/2026-09-25-owned-application-admission.md` at the same commit, with exact available command arrays imported from local exit records. These are checkpoint extracts, not claims about the start/end of actual sessions. Imported “next” descriptions are contemporaneous; follow NEXT for today’s order.
