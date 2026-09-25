@@ -46,9 +46,12 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
 - [x] Permit exact1000ms only on the explicit owned diagnostic retry route,
       preserving400ms and1500ms delivery limits; specification/quality reviews pass.
 - [ ] Qualify recovery latency on the complete native cycle with A/V, timing and
-      all three recordings. Both 1000 ms and 700 ms produce clean media but fail
-      progression. At 700 ms, delivery bounds straddle 1500 ms and source freshness
-      approaches two seconds. Reduce actual delay before repeating the cycle.
+      all three recordings. Retain the strict 1500 ms benchmark and compare
+      explicitly selected 2000/3000 ms diagnostic profiles with coherent
+      capture-window evaluation ages and unchanged report/stall bounds. Both
+      1000 ms and 700 ms SRT settings produce clean media but fail progression
+      under the strict benchmark. Select the broadcast budget from fresh
+      evidence; do not reinterpret old runs under a different profile.
 - [ ] Resolve the observed live-frame damage following late packet retransmission.
       Verify actual SRT/relay boundary capture and recovery timing before choosing
       a fix; decoder flags alone failed the controlled reproduction. Retain strict

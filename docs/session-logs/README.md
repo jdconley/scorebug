@@ -8,6 +8,7 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 reliability profiles and paired hardware](2026-09-25-reliability-profile-and-paired-hardware.md) — coherent diagnostic timing and a fresh physical phone/Watch vertical.
 - [September 25 platform streaming research](2026-09-25-platform-streaming-research.md) — published sender/viewer adaptation and reliability-first timing proposals.
 
 - [September 25 actual relay recovery budget](2026-09-25-relay-recovery-budget.md) — real SRT relay loss/recovery comparison and native1000ms experiment.
