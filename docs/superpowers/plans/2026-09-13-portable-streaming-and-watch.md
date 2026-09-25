@@ -33,19 +33,24 @@ connected through the limit and restoration.
 Both files fully decode: the clean local archive has 7,499 consecutive frames,
 and the saved stream has 7,043 consecutive frames. All 327 reconstructed delivery
 windows pass at 30fps; score glyphs and phase/grid audio checks also pass. Live A/V
-offset peaks at about 66ms. All 4,418 tooling tests pass; the last native checkpoint
+offset peaks at about 66ms. All 4,457 tooling tests pass; the last native checkpoint
 passed 567 app-model tests, the arm64 simulator build and native UI workflow.
 
-Full recovery remains **unqualified**. The component checks still need a complete
-causal policy join across restoration, followed by a fresh measured ramp-up. The
-original strict transport result remains failed on post-stop export silence; only
-an explicitly selected scheduled-window replay passes. A pre-trial stale-delivery
-rejection is retained as an invalidation with zero healthy credit. Physical camera,
-phone/Watch concurrency and remote proxy tests remain open.
+The complete capacity policy now passes an offline replay of the original raw
+artifacts, including probation delivery, clock-bounded decrease, every subsequent
+policy event, and at least ten seconds of shared source/delivery recovery after
+restoration. Checks reject missing terminal source decisions or delivery buckets;
+one final pending encoder interval earns no healthy credit.
+
+A complete native harness success route and a fresh measured ramp-up remain
+**unqualified**. The original strict transport result remains failed on post-stop
+export silence; only an explicitly selected scheduled-window replay passes. A
+pre-trial stale-delivery rejection is retained as an invalidation with zero healthy
+credit. Physical camera, phone/Watch concurrency and remote proxy tests remain open.
 
 No simulator runtime was installed, only the experiment's temporary simulator was
 removed, and the frozen input/code hashes were unchanged. See the
-[latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#confirmed-prefix-invalidation-replay-checkpoint).
+[latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#complete-capacity-policy-replay-checkpoint).
 
 Earlier recorder and calibration checkpoints:
 

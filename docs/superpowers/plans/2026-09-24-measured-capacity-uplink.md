@@ -844,3 +844,104 @@ second delivery lanes after restoration, then join the preserved archive/audio/s
 results. The original source and native histories must remain complete, including
 all minimum-profile pressure events. A later fresh measured re-ramp and real outage
 still need their own native campaigns. Production upgrades remain disabled.
+
+## Complete capacity policy join
+
+Add `qualifyMeasuredCapacityPolicy` with raw native metadata/decoded identities,
+raw closed UDP accounting, raw native clock audit and host exchanges. Select the
+trusted profile explicitly. Recompute scheduled transport, scope-bound clock
+brackets, complete native evidence with explicit capacity decrease, confirmed
+prefix (including explicitly chosen pre-trial invalidation), and delivery ownership.
+Do not accept caller-supplied qualified summaries as authority.
+
+Require confirmed decision AND log time before the limit's lower native bound;
+require the reconstructed pressure window start after its upper bound, and the
+completed decrease before restoration's lower bound. These checks bind independently
+verified components without assuming a shared host/native epoch.
+
+Replay every suffix event through the original stopped row. Keep source interval
+sequence/end separate from policy window sequence/end. Each source event must join
+one original source observation and its independently reconstructed proof, preserve
+worker/reader/processing ownership, and consume the next source interval. A transition
+may consume source coverage only when the native guard actually forbids evaluation
+(mixed/wrong encoding configuration, a start before acknowledgment, or overlap with
+the last policy window); it contributes no health. Evaluated source windows consume
+the next policy sequence, retain exact native receipt, independently recompute raw
+pressure and frame counts, and match fresh raw cadence evidence and decision reasons.
+The selected run requires strong nominal source windows; unmodeled degraded source,
+unknown or rejected suffix events fail closed, rather than being skipped.
+
+Reconstruct all local-pressure windows from original samples with the prior policy
+watermark, exact reasons/current configuration, and no source/delivery capacity
+credit. Only the already-qualified first decrease may follow the higher-profile
+pressure; subsequent minimum-profile pressure retains `minimumProfileInsufficient`
+and cannot acquire authority. Pressure after restoration restarts recovery selection.
+No recovery credit is earned before the conservative restoration upper bound.
+
+Select whole contiguous strong source windows after restoration/latest pressure and
+require at least ten seconds shared with BOTH independently reconstructed one- and
+two-second delivery lanes, using existing recovery bucket thresholds. Retain whole
+suffix cadence continuity and final delivery/decision bounds through actual audit
+closure; later asynchronous publisher stop creates no additional telemetry coverage.
+Qualify every delivery row's native/decoded/archive ownership. Return capacity policy
+qualification only, with fresh-ramp, physical-device, media-file decoding and production
+upgrade authorization false. The caller still owes full A/V decoding, clean archive,
+score and waveform verification. This single-decrease route does not establish a
+later fresh re-ramp or an outage; those remain separate campaigns.
+
+Tests use the frozen real native fixture plus a separate hashed raw network/clock
+fixture. Cover wrong profile/clock scope, confirmation after fault, pressure before
+fault, late decrease, shifted restoration, omitted/reordered source or policy events,
+forged transitions, changed receipts/pressure/counts/cadence/reasons, incomplete
+post-restoration source/delivery lanes and extra authority. Preserve the original
+artifacts and their strict result. Red/green, full tooling, review and frozen offline
+replay precede changing any native success path.
+
+
+### Complete capacity policy replay checkpoint
+
+Implemented `scripts/measured-capacity-policy.mjs` and 39 focused tests. The caller
+must explicitly select a trusted profile. The verifier now joins the original raw
+network schedule, host/native clock brackets, measured admission and confirmation,
+strict delivery coverage throughout probation, native pressure-driven decrease,
+every subsequent source/policy event, and recovery after restoration. It reuses raw
+media/receipt reconstruction; it never accepts a prior qualified summary as authority.
+
+Review caught trailing omissions that ordinary sequence checks missed. The final
+source must agree with the final raw cadence report; at most one unconsumed source
+is allowed, with pending encoder frames and an age below the native two-second
+wait bound. That pending interval earns no health credit. Each delivery lane must
+extend through every bucket due by the final cadence observation, using the native
+scheduler's configured latency/sample-age budgets. Every post-restoration recovery
+bucket must remain healthy, including buckets after the selected ten-second window.
+Missing probation delivery in either lane also fails. All eight new omission/profile
+regressions failed before the corresponding fix; focused tests subsequently passed.
+Independent review found no remaining actionable issues after these fixes.
+
+The frozen `native-app-5UYvcA` artifacts passed a separate offline replay at
+`diagnostic-native750-policy-final-replay.json`. All 20 raw input hashes and 147 replay
+code hashes were unchanged. It verifies 15.000202 seconds of probation delivery,
+then replays 32 source windows, six local-pressure events, and one transition.
+Post-restoration source windows 30–31 supply 10.000051 seconds of shared recovery
+with both delivery lanes. The full suffix is checked through native uptime
+1966432.0250071252. The final pending source is 46 (nine pending frames, age
+1.340779 seconds), with zero healthy credit. Final one-/two-second delivery coverage
+ends at 1966430 / 1966429 respectively, before the next bucket becomes due.
+
+The original strict transport result is preserved: it fails on post-stop export
+silence. The explicitly selected scheduled-window transport check passes. This
+checkpoint qualifies the capacity policy from saved raw evidence; it does not
+rewrite the original diagnostic run into a native harness pass. Existing full A/V,
+archive, glyph and waveform evidence remains separately recorded. Fresh re-ramp,
+physical devices, broad quality ladder and production upgrade authorization remain
+unqualified. No simulator or source video was changed for this offline checkpoint.
+
+Next, connect this bounded capacity qualifier to a distinct native harness success
+route, preserving diagnostic-only mode and ordinary strict defaults. The route must
+run the existing full media/archive/audio/scoring checks, explicitly use scheduled
+capacity transport coverage, and save capacity policy evidence separately. Inspect
+all downstream legacy cadence/profile/deadline entry points before removing the
+current harness guard; capacity evidence must not fall through to steady-trial or
+decoder-pause qualification. Freeze and run a fresh native experiment only after the
+routing and failure cases pass local tooling tests. Fresh measured ramp-up after
+restoration remains a subsequent experiment.
