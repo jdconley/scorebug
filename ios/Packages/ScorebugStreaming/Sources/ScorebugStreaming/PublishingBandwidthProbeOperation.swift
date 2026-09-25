@@ -13,6 +13,9 @@ public final class PublishingBandwidthProbeRetirement: @unchecked Sendable {
     let issuer: UUID
     let operationID: UUID
     let lineageContext: PublishingBandwidthProbeContext
+    /// Diagnostic projection of the actual joined terminal. It grants no live
+    /// authority or continuation; only this opaque receipt can reserve a successor.
+    public var terminalSnapshot: PublishingBandwidthProbeSnapshot? { terminal }
     let terminal: PublishingBandwidthProbeSnapshot?
     let lower: PublishingBandwidthProbeRetirement?
     let eligible: Bool

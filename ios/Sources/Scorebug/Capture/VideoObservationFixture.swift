@@ -16,12 +16,14 @@ enum VideoObservationFixture {
 
     enum UplinkError: Error { case invalidFixtureRoute }
 
-    private static let capacityHolds = ["capacity550k": "180", "capacity750k": "210"]
+    private static let capacityHolds = ["capacity550k": "180", "capacity750k": "210", "capacity750k-retry": "270"]
 
     /// Complete forwarded capacity experiment. Leaf validation avoids recursive selectors.
     static func capacityFileUplink(environment: [String: String]) -> Bool {
         guard let profile = environment["SCOREBUG_TEST_UPLINK_PROFILE"],
-              let hold = capacityHolds[profile] else { return false }
+              let hold = capacityHolds[profile],
+              profile == "capacity750k-retry" ? environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] == "1" :
+                (environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] ?? "").isEmpty else { return false }
         let required = [
             "SCOREBUG_TEST_CAPACITY_RECOVERY": "1", "SCOREBUG_TEST_UPLINK_PROFILE": profile,
             "SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1", "SCOREBUG_TEST_FILE_CAPTURE": "1",
@@ -138,7 +140,7 @@ enum VideoObservationFixture {
               let originalPort = components.port, (1...65535).contains(originalPort),
               components.user == nil, components.password == nil, components.fragment == nil
         else { throw UplinkError.invalidFixtureRoute }
-        if ["loss0p2-delay30", "capacity550k", "capacity750k"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
+        if ["loss0p2-delay30", "capacity550k", "capacity750k", "capacity750k-retry"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
             let recovery = (components.queryItems ?? []).filter { $0.name == "peerlatency" }
             guard recovery.count == 1, recovery.first?.value == "400" else { throw UplinkError.invalidFixtureRoute }
         }

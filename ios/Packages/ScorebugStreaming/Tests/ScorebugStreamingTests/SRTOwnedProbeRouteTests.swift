@@ -73,6 +73,9 @@ final class SRTOwnedProbeRouteTests: XCTestCase {
             try await fixture.sendPacket()
             let receipt = try await operation.retire()
             XCTAssertEqual(receipt.terminal?.totalAcceptedPayloadBytes, UInt64(stage) * 1316)
+            XCTAssertEqual(receipt.terminalSnapshot?.id, value.id)
+            XCTAssertNotNil(receipt.terminalSnapshot?.reason)
+            XCTAssertEqual(receipt.terminalSnapshot?.totalAcceptedPayloadBytes, UInt64(stage) * 1316)
             await rejects { _ = try await operation.value() }
             await rejects { _ = try await operation.renew() }
             if stage < 3 {
@@ -150,6 +153,7 @@ final class SRTOwnedProbeRouteTests: XCTestCase {
             await rejects { _ = try await first.value() }
             let receipt = try await first.retire()
             XCTAssertNil(receipt.terminal); XCTAssertTrue(receipt.eligible, proof)
+            XCTAssertNil(receipt.terminalSnapshot)
             XCTAssertEqual(receipt.lower != nil, proof == "nativeFailure" || proof == "lowerCancelled")
             let retry = try await publisher.restartOwnedBandwidthProbe(after: receipt, in: context, bitRate: 500_000)
             let retriedValue = try await retry.value()

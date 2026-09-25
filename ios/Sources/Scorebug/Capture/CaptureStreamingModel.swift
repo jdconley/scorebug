@@ -67,10 +67,13 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// Ordinary publishing never installs a candidate provider.
     var measuredCandidateFactory: ((any MediaPublisher) -> MeasuredCandidateReader?) = { publisher in
         #if DEBUG && targetEnvironment(simulator)
-        guard (try? NativeMeasuredTrialFixture.requested(environment: ProcessInfo.processInfo.environment)) == true,
-              let candidate = publisher as? NativeCandidatePublisher else { return nil }
+        guard (try? NativeMeasuredTrialFixture.requested(environment: ProcessInfo.processInfo.environment)) == true else { return nil }
+        let read: @Sendable () async -> NativeCandidatePublisher.CandidateSnapshot?
+        if let candidate = publisher as? NativeOwnedCandidatePublisher { read = { await candidate.candidateSnapshot() } }
+        else if let candidate = publisher as? NativeCandidatePublisher { read = { await candidate.candidateSnapshot() } }
+        else { return nil }
         return {
-            guard let snapshot = await candidate.candidateSnapshot() else { return nil }
+            guard let snapshot = await read() else { return nil }
             return MeasuredCandidate(measurement: .init(snapshot.cost), binding: snapshot.binding, probe: snapshot.probe,
                 boundAt: snapshot.boundAt, completedAt: snapshot.completedAt,
                 permitsCurrentCandidate: snapshot.permitsCurrentCandidate)
@@ -200,6 +203,7 @@ struct PublishingClockObservation: Equatable, Sendable {
          publisherFactory: @escaping (URL, VideoFrameObservationOwner?) throws -> any MediaPublisher = { url, observations in
              #if DEBUG && targetEnvironment(simulator)
              let environment = ProcessInfo.processInfo.environment
+             let ownedMeasurement = try NativeOwnedCandidatePublisher.requested(environment: environment)
              let measuredTrial = try NativeMeasuredTrialFixture.requested(environment: environment)
              let candidateProfile = try NativeCandidateFixture.requested(environment: environment)
              let candidateHeadroom = try NativeCandidateHeadroomFixture.requested(environment: environment)
@@ -222,7 +226,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
              let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
              let transitions = measuredTrial ? observations.map {
-                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: probeMode == .repeated ? .repeatedMeasured : .measured)
+                 NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: ownedMeasurement ? .ownedMeasured : probeMode == .repeated ? .repeatedMeasured : .measured)
              } : nil
              let observer: (@Sendable (SRTPublisher.CompressedVideoFrame) -> Void)?
              let didStop: (@Sendable () -> Void)?
@@ -246,6 +250,16 @@ struct PublishingClockObservation: Equatable, Sendable {
                  muxedPacketObserver: proof.map { proof in { frame in proof.observeMux(frame) } },
                  didStop: didStop, allowsBandwidthProbes: probeMode != nil, videoCost: proof?.videoCost)
              proof?.observeStartup(from: publisher)
+             if ownedMeasurement {
+                 guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+                 return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+                     campaignOwner: campaignOwner, lifecycle: NativeCandidateLifecycleAudit(scope: observations.snapshot.scope),
+                     profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
+                     joinedStop: transitions.map { evidence in {
+                         evidence.close()
+                         if let data = try? evidence.data() { await NativeProfileTransitionEvidence.persist(data) }
+                     } })
+             }
              let primary: any MediaPublisher
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
@@ -491,6 +505,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
                 #if DEBUG
+                if let candidate = publisher as? NativeOwnedCandidatePublisher, let driver = qualityDriver {
+                    try await driver.installOwnedMeasurementPublisher(candidate, session: session,
+                        policy: try NativeMeasuredTrialFixture.probePolicy(environment: ProcessInfo.processInfo.environment))
+                    try check(context, attempt)
+                }
                 if let candidate = publisher as? NativeCandidatePublisher, let driver = qualityDriver {
                     let installed = await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
                         guard let self, let session, let driver else { return nil }

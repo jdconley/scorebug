@@ -70,6 +70,23 @@ public struct QualityController: Sendable {
             self.readiness = readiness; self.registeredAt = registeredAt
         }
     }
+    /// Read-only policy diagnostics. These values never grant measurement or application authority.
+    public struct CandidateMeasurementDiagnostic: Equatable, Sendable {
+        public let consecutiveFailures: Int
+        public let healthyNotBefore: Double
+        public let requiredHealthyDuration: Double
+        public let failureEpisodeActive: Bool
+        public let recoveryStart: Double?
+        public let strongHealthSequence: UInt64?
+        public let strongHealthStart: Double?
+        public let strongHealthEnd: Double?
+    }
+    public var candidateMeasurementDiagnostic: CandidateMeasurementDiagnostic {
+        .init(consecutiveFailures: consecutiveFailures, healthyNotBefore: healthyNotBefore,
+            requiredHealthyDuration: requiredHealthyDuration, failureEpisodeActive: failureEpisodeActive,
+            recoveryStart: recoveryStart, strongHealthSequence: latestStrongHealth?.sequence,
+            strongHealthStart: latestStrongHealth?.start, strongHealthEnd: latestStrongHealth?.end)
+    }
     /// Actual candidate transport cost and delivered probe padding, qualified
     /// independently by the caller and bound to one publication and exact target.
     public struct CandidateAdmission: Sendable {

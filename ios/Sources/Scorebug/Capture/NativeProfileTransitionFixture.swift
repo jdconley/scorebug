@@ -9,10 +9,11 @@ enum NativeProfileTransitionSequence: String, Sendable {
     case minimum = "low240"
     case stallReset = "stall540"
     case measured = "measured240"
+    case ownedMeasured = "owned240"
     case repeatedMeasured = "repeated240"
-    var isMeasured: Bool { self == .measured || self == .repeatedMeasured }
+    var isMeasured: Bool { self == .measured || self == .repeatedMeasured || self == .ownedMeasured }
     var initialProfile: PublishingVideoProfile { self == .stallReset ? .sd540 : (self == .minimum || isMeasured) ? .low240 : .hd1080 }
-    var destinations: [PublishingVideoProfile] { self == .stallReset ? [.low240] : self == .repeatedMeasured ? [.low360, .low240, .low360, .low240] : self == .measured ? [.low360, .low240] : [.sd540, initialProfile] }
+    var destinations: [PublishingVideoProfile] { self == .ownedMeasured ? [.low360, .low240, .low360] : self == .stallReset ? [.low240] : self == .repeatedMeasured ? [.low360, .low240, .low360, .low240] : self == .measured ? [.low360, .low240] : [.sd540, initialProfile] }
 }
 
 /// Bounded scalar evidence for one explicit simulator experiment. It owns no media.
@@ -21,7 +22,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     private let scope: VideoFrameObservationScope
     private let adaptive: Bool
     let sequence: NativeProfileTransitionSequence
-    private var phaseLimit: Int { sequence == .repeatedMeasured ? 5 : sequence == .stallReset ? 2 : sequence == .measured ? 3 : adaptive ? 17 : 3 }
+    private var phaseLimit: Int { sequence == .ownedMeasured ? 4 : sequence == .repeatedMeasured ? 5 : sequence == .stallReset ? 2 : sequence == .measured ? 3 : adaptive ? 17 : 3 }
     private struct Phase {
         let width: Int32, height: Int32, first: CMTime
         var last: CMTime, frames: Int, maximumSourceGap: Double
@@ -114,7 +115,7 @@ final class NativeProfileTransitionEvidence: @unchecked Sendable {
     func close() { lock.withLock { closed = true } }
     func data() throws -> Data {
         let object: [String: Any] = lock.withLock {
-            var result: [String: Any] = ["formatVersion": sequence == .repeatedMeasured ? 9 : sequence == .measured ? 8 : sequence == .stallReset ? 7 : sequence == .minimum ? 6 : adaptive ? 5 : 4, "isClosed": closed, "invalid": invalid, "frames": frames,
+            var result: [String: Any] = ["formatVersion": sequence == .ownedMeasured ? 10 : sequence == .repeatedMeasured ? 9 : sequence == .measured ? 8 : sequence == .stallReset ? 7 : sequence == .minimum ? 6 : adaptive ? 5 : 4, "isClosed": closed, "invalid": invalid, "frames": frames,
              "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
                 "broadcastGeneration": scope.broadcastGeneration, "publishingAttemptID": scope.publishingAttemptID.uuidString,
                 "appliedProfileRevision": String(scope.appliedProfileRevision)],

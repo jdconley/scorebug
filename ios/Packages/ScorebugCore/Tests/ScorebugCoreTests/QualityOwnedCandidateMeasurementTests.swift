@@ -52,6 +52,30 @@ final class QualityOwnedCandidateMeasurementTests: XCTestCase {
         XCTAssertNotNil(policy.candidateMeasurementReadiness(at: start + Double(seconds)))
     }
 
+    func testDiagnosticProjectsActualFailureEpisodeAndFreshHealthWatermark() throws {
+        for deliveryFirst in [false, true] {
+            var policy = try qualified()
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.consecutiveFailures, 0)
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.requiredHealthyDuration, 4)
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.strongHealthSequence, 1)
+            let token = try policy.beginCandidateMeasurement(at: 4)
+            if deliveryFirst { try failDelivery(&policy, sequence: 2, at: 5) }
+            try policy.settleCandidateMeasurementFailure(token, at: 5)
+            if !deliveryFirst { try failDelivery(&policy, sequence: 2, at: 5) }
+            let failed = policy.candidateMeasurementDiagnostic
+            XCTAssertEqual(failed.consecutiveFailures, 1)
+            XCTAssertEqual(failed.requiredHealthyDuration, 10)
+            XCTAssertTrue(failed.failureEpisodeActive)
+            XCTAssertEqual(failed.healthyNotBefore, 5)
+            XCTAssertNil(failed.strongHealthSequence)
+            var sequence: UInt64 = 3
+            try recover(&policy, from: 5, seconds: 10, sequence: &sequence)
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.strongHealthSequence, 12)
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.strongHealthEnd, 15)
+            XCTAssertEqual(policy.candidateMeasurementDiagnostic.recoveryStart, 5)
+        }
+    }
+
     func testSameRevisionFailuresRequireTenTwentyFortySixtySecondsOfActualHealth() throws {
         var policy = try qualified(), now = 4.0
         var sequence: UInt64 = 2

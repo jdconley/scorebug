@@ -2,6 +2,7 @@ import CoreMedia
 import Foundation
 import ScorebugCore
 import ScorebugMedia
+import ScorebugStreaming
 
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
@@ -48,6 +49,16 @@ import ScorebugMedia
         self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
+    #if DEBUG
+    func installOwnedMeasurementPublisher(_ publisher: NativeOwnedCandidatePublisher, session: PublishingSession,
+        policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
+        try await owner.installOwnedMeasurementPublisher(publisher, policy: policy,
+            diagnostics: { .init(snapshot: session.snapshot) })
+        guard publisher.installReaders(candidate: { [weak owner] in await owner?.ownedCandidateSnapshot() },
+            probe: { [weak owner] in await owner?.ownedProbeObservation() },
+            pressure: { [weak session] in NativeCandidatePublisher.Pressure(session?.snapshot) }) else { throw PublishingQualitySession.Failure.staleAdvice }
+    }
+    #endif
     func candidateMeasurementContext(diagnostics: PublishingQualityTelemetry.Diagnostics) async -> PublishingQualitySession.CandidateMeasurementContext? {
         guard !isClosed, !Task.isCancelled else { return nil }
         let context = await owner.candidateMeasurementContext(diagnostics: diagnostics)
@@ -209,7 +220,12 @@ import ScorebugMedia
                 if let advice = decision.recommendation { try await apply(advice) }
                 return
             }
-            if canEvaluateCandidate { try await evaluateCandidateInput() }
+            if canEvaluateCandidate {
+                #if DEBUG
+                _ = try await owner.startOwnedMeasurement(diagnostics: currentDiagnostics)
+                #endif
+                try await evaluateCandidateInput()
+            }
         } catch {
             guard !isClosed, !Task.isCancelled else { return }
             isClosed = true
@@ -291,6 +307,9 @@ import ScorebugMedia
         do {
             try await owner.apply(advice)
             await record("applied", source: source, advice: advice)
+        } catch let error as PublishingVideoMutationAdmissionError {
+            guard !(await owner.snapshot).isClosed else { throw error }
+            await record("skipped", source: source, advice: advice, reason: "guarded-" + String(describing: error))
         } catch PublishingQualitySession.Failure.staleAdvice {
             // Rejected before dispatch: a late recommendation must not retire live.
             await record("skipped", source: source, advice: advice, reason: "staleAdvice")
@@ -597,7 +616,8 @@ import ScorebugMedia
         let environment = ProcessInfo.processInfo.environment
         let measured = try NativeMeasuredTrialFixture.requested(environment: environment)
         let probePolicy = try NativeMeasuredTrialFixture.probePolicy(environment: environment)
-        let liveCheckpoint = try repeatedLiveExportRequested(environment: environment)
+        let ownedMeasurement = try NativeOwnedCandidatePublisher.requested(environment: environment)
+        let liveCheckpoint = try repeatedLiveExportRequested(environment: environment) || ownedMeasurement
         let deliveryLatencyBudget = try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment)
         let requestedDeliveryFailures = try PublishingDeliveryMonitor.fixtureResetsRequested(environment: environment)
         let enableDeliveryFailures = measured || requestedDeliveryFailures
@@ -624,7 +644,8 @@ import ScorebugMedia
             initial: .init(profileID: resetStall ? "540p30" : (minimumStall || measured) ? "240p30" : "1080p30", videoBitrate: resetStall ? 1_500_000 : (minimumStall || measured) ? 350_000 : 6_000_000),
             strategy: measured ? .measuredCandidateTrials : adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
             behavior: (minimumStall || measured) ? .progressive : .legacy,
-            requiresSharedCandidateRecovery: liveCheckpoint)
+            requiresSharedCandidateRecovery: liveCheckpoint,
+            usesGuardedMutations: ownedMeasurement)
         return .init(owner: owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, policy: probePolicy == .recoveryBudget ? .recoveryBudget : .senderDelay),

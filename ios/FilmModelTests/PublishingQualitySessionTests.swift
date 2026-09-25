@@ -1005,6 +1005,43 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         }
     }
 
+    func testOwnedReadinessExpiryBeforeRegistrationSkipsWithoutClosingPublisher() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics), gate = OwnedProbeCaptureGate()
+        let wrapper = NativeOwnedCandidatePublisher(publisher: gate, scope: diagnostics.ingress!.scope,
+            campaignOwner: PublishingCandidateCampaignOwner(), probes: gate.probes)
+        try await f.owner.installOwnedMeasurementPublisher(wrapper)
+        f.native.enqueueTimes([116.999, 117.001])
+        let started = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertFalse(started)
+        let state = await f.owner.snapshot
+        XCTAssertFalse(state.isClosed)
+        XCTAssertEqual(f.native.stops, 0)
+        await f.owner.stop(); await wrapper.stop()
+    }
+
+    func testOwnedAllocationFailureJoinsBeforeSettlementAndNeverBlocksSourceEvaluation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let gate = OwnedProbeCaptureGate()
+        let native = NativeOwnedCandidatePublisher(publisher: gate, scope: try XCTUnwrap(diagnostics.ingress).scope,
+            campaignOwner: PublishingCandidateCampaignOwner(), probes: gate.probes)
+        try await f.owner.installOwnedMeasurementPublisher(native)
+        let started = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertTrue(started)
+        await gate.waitUntilEntered()
+        let state = await f.owner.snapshot
+        XCTAssertFalse(state.isBusy)
+        let duplicate = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertFalse(duplicate)
+        gate.release()
+        await f.owner.joinOwnedMeasurement()
+        let ready = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(ready, "Joined failure clears source and strong health")
+        XCTAssertEqual(f.native.calls, ["rate:350000"])
+        await f.owner.stop()
+    }
+
     func testMeasurementReadinessBindsAuthenticatedSourceAndVerifiedCurrentReceiptWithoutWrites() async throws {
         let f = try await CandidateQualityFixture.make()
         let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
@@ -1431,7 +1468,7 @@ struct CandidateQualityFixture: Sendable {
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
         ingress.updateOccupancy(items: unhealthy ? 4 : 0, bytes: unhealthy ? 40 : 0, phase: .admitting, at: 100)
         var thermal = PublishingThermalTracker(), transport = PublishingTransportStatisticsTracker()
-        for index in 100...Int(max(115, native.now.rounded(.down))) {
+        for index in max(100, Int(native.now.rounded(.down)) - 7)...Int(max(115, native.now.rounded(.down))) {
             let time = Double(index)
             thermal.observe(.init(state: .nominal, sampledAt: time))
             transport.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(index * 1000),
@@ -1455,14 +1492,17 @@ struct CandidateQualityFixture: Sendable {
     static func make(sourceHealth: Bool = true, foreignPublication: Bool = false,
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
                      unhealthySource: Bool = false, priorHealthEnd: Double? = nil,
-                     requiresSharedCandidateRecovery: Bool = false) async throws -> Self {
+                     requiresSharedCandidateRecovery: Bool = false,
+                     guarded: PublishingQualitySession.GuardedMutations? = nil) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
         let attempt = try XCTUnwrap(UUID(uuidString: template.status.publication!.publishingAttemptId))
         let probeID = try XCTUnwrap(UUID(uuidString: template.status.receiverProbe!.snapshot.id))
-        let owner = try PublishingQualitySession(operations: native.operations, profiles: [
+        var operations = native.operations
+        operations.guarded = guarded
+        let owner = try PublishingQualitySession(operations: operations, profiles: [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
             .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)],
@@ -1551,8 +1591,12 @@ final class CandidateQualityNative: @unchecked Sendable {
     private var onProfile: (@Sendable () -> Void)?
     private var profileGate: QualityWriteGate?
     fileprivate func installProfileGate(_ value: QualityWriteGate) { lock.withLock { profileGate = value } }
-    var now: Double { lock.withLock { time } }
-    var instant: ContinuousClock.Instant { anchor + .seconds(now - 100) }
+    private var queuedTimes: [Double] = []
+    func enqueueTimes(_ values: [Double]) { lock.withLock { queuedTimes = values } }
+    var now: Double { lock.withLock { if !queuedTimes.isEmpty { time = queuedTimes.removeFirst() }; return time } }
+    private var actualInstant = false
+    func useActualInstant() { lock.withLock { actualInstant = true } }
+    var instant: ContinuousClock.Instant { lock.withLock({ actualInstant }) ? .now : anchor + .seconds(now - 100) }
     var receipt: PublishingBitRateChange? { lock.withLock { current } }
     var calls: [String] { lock.withLock { history } }
     var stops: Int { lock.withLock { stopped } }
