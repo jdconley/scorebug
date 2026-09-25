@@ -1,0 +1,18 @@
+{
+  "description": "Complete original native receiver intervals and independently collected/redacted worker publication evidence from failed experiment LvDNAy. Unfiltered and unmodified; reused owned-receiver-LvDNAy provenance supplies complete native and HTTP history. No capacity or recovery claim.",
+  "reusedProvenance": "scripts/test/fixtures/owned-receiver-LvDNAy.provenance.json",
+  "intervals": {
+    "source": "artifacts/qa/native-app-LvDNAy/failure-app-data-DyWfFh/QA/native-receiver-intervals.json",
+    "fixture": "scripts/test/fixtures/owned-intervals-LvDNAy.intervals.json.gz",
+    "bytes": 27634,
+    "sha256": "1875eb328022c833cf8b3192334c3f12dc0bc122379f61baa68d1950cf041372",
+    "compressedBytes": 3749
+  },
+  "worker": {
+    "source": "artifacts/qa/native-app-LvDNAy/worker-publication-status.json",
+    "fixture": "scripts/test/fixtures/owned-intervals-LvDNAy.worker.json.gz",
+    "bytes": 1170,
+    "sha256": "6a1d290a8b847fa8b5e178a90837bde9c64bb991630d631b7b483e510b476445",
+    "compressedBytes": 497
+  }
+}
