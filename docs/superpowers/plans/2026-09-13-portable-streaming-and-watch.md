@@ -24,15 +24,15 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The explicit capacity experiment now has independently validated host/native
-selectors and bounded three-minute evidence formats:3,072 cadence rows/16MiB
-and512 delivery rows/32MiB, with sticky overflow and unchanged legacy defaults.
-All548 app-model and4,066 tooling tests pass; review found no actionable issues.
-The harness deliberately stops this new route before resources until the causal
-qualifier is connected. Next: forward the selected mode, bind the applied fault
-times to native observations, and run the real match workflow. Neither native
-capacity recovery nor a fresh post-recovery ramp-up is qualified yet; see the
-[capacity recovery plan](2026-09-24-measured-capacity-uplink.md).
+The capacity experiment now has bounded host/native clock challenges and independent
+causal timing checks. Native diagnostics run through the existing control poll and
+close during joined publisher teardown; they leave recording ownership intact.
+All554 app-model and4,107 tooling tests pass. The original capture scope is revision1,
+independent of the quality controller's revision0; both languages enforce that identity.
+The harness still stops the capacity route before resources until the host file adapter,
+fault scheduling and full causal media/controller qualification are connected.
+Neither native capacity recovery nor a fresh post-recovery ramp-up is qualified yet;
+see the [capacity recovery plan](2026-09-24-measured-capacity-uplink.md).
 
 Earlier checkpoint:
 

@@ -67,3 +67,49 @@ Host `nativeCapacityRecovery` and the existing file/measured option parsers acce
 All4,066 tooling tests pass, including actual child-process verification that the harness denial occurs before any new native artifact directory. All56 focused Swift tests and the full548 app-model tests pass (`repeated-live-checkpoint-capacity-native-route-film-models.log`); both runs joined with exit0. Independent review found no actionable issues. The red preflight test before the denial was added reached the runtime-availability check and left only configuration/diagnostic/runtime logs in `native-app-IJ0QFd`; it did not launch an app or install a runtime. That failed experiment remains preserved.
 
 Remaining integration work is explicit: forward the new capacity flag through Xcode/UITest/app launch; pass caller-selected capacity envelope modes through full native evidence and confirmed-prefix replay (these still default to legacy); launch the owned capacity queue; capture independently bounded host/native clock correspondence; qualify baseline confirmation before the actual limit, the subsequent owned downward action and stable minimum delivery. Do not assume Node performance time and native uptime are interchangeable. Remove the harness denial only when the complete causal qualifier is connected. The current staged fixture proves at most the first trial/reset; a later fresh campaign and re-ramp requires its own native/controller evidence and must not be inferred from restored UDP traffic.
+
+## Causal clock bracket design
+
+Use four owned request/reply challenges: one before and one after each actual rate change (limit and restoration). Each request carries the publishing scope, sequential index and fresh UUID nonce. The native responder records its current monotonic uptime only after reading the request, retains at most four samples and exports a closed audit at teardown. The host saves the exact request, returned native sample and monotonic send/read bracket. A reply must match the nonce, sequence and scope, complete within250ms, and match the later closed native audit unchanged.
+
+For each rate change, the before reply must arrive strictly before the proxy's applied timestamp and the after request must start at or after it. Native samples then bracket the fault without assuming equal epochs, clock rates or a constant offset. Require both host and native brackets at most1.5s, all sequences/times ordered, and no overflow/invalid/extra samples. Qualification returns timing bounds only; transport accounting and native media/controller recovery remain separate. Baseline confirmation must precede the conservative lower limit boundary; credited post-fault or post-restoration events must follow the corresponding upper boundary. A missed challenge fails closed; never freshen an old sample, widen the budget or infer an offset.
+
+
+## Clock prerequisite and native lifecycle checkpoint
+
+Implemented four-sample causal bracket qualification, a bounded host exchange sampler,
+and a DEBUG native file responder. The sampler awaits each write/read and cancellation;
+its 250ms budget never resets. The responder accepts only ordered, scoped UUID
+challenges, retains original timestamps on duplicate reads, and rejects malformed,
+oversized, non-regular or symlink request files. Its closed audit is exported during
+joined publisher teardown. It uses the existing control poll and starts no extra timer,
+network operation or camera work. The simulator default factory requires the complete
+capacity route; physical-device and Release behavior do not activate it.
+
+The original capture observation scope has `appliedProfileRevision: "1"`.
+This is distinct from the quality controller's initial revision `"0"`. Source inspection
+and the saved real-match artifacts exposed that distinction; red/green regressions now
+require scope1 in Swift and JavaScript. Do not substitute a controller revision for this
+original capture identity.
+
+All4,107 tooling tests and554 app-model tests pass, including actual responder file I/O,
+malformed-file rejection, publisher teardown, immutable closed exports and continued
+recording ownership. Logs are `repeated-live-checkpoint-capacity-clock-tools-full.log`
+and `repeated-live-checkpoint-capacity-clock-film-models.log`. Read-only review found
+no additional actionable issues. These tests establish the diagnostic mechanism, not
+actual clock brackets captured around a native network fault.
+
+The host's bounded atomic file adapter, scheduling around actual proxy phase changes,
+flag forwarding, capacity envelope propagation and full causal media/controller replay
+remain open. Keep the pre-resource harness denial until these are composed. The
+four-sample verifier returns timing qualification only; independently qualify the same
+raw transport schedule and the clean archive/live media before crediting recovery.
+
+The iOS simulator Debug build passes for this Mac's arm64 architecture
+(`repeated-live-checkpoint-capacity-clock-ios-arm64-build.log`). The initial generic
+multi-architecture build failed linking the bundled SRT library for x86_64;
+`nm -arch x86_64` confirms no exported `_srt_startup`, while arm64 exports it.
+The source binary and the copied build product have the same missing Intel symbol.
+This is an unresolved Intel-simulator dependency limitation, not a deleted-runtime
+problem. No simulator/runtime was created or reinstalled for these checks, and no
+persistent architecture exclusion was added.

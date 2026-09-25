@@ -2271,6 +2271,41 @@ import XCTest
         await model.stopStreaming()
     }
 
+    func testCapacityClockPollingIsOwnedAndClosedByPublisherTeardown() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = makeModel(server: CaptureTestServer())
+        var captured: VideoFrameObservationScope?
+        model.capacityClockFixtureFactory = { scope in
+            captured = scope
+            return try? NativeCapacityClockFixture(scope: scope, directory: directory)
+        }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let scope = try XCTUnwrap(captured)
+        let request: [String: Any] = ["formatVersion": 1, "sequence": 1,
+            "nonce": "22222222-2222-4222-8222-222222222222",
+            "scope": ["recordingID": scope.recordingID, "matchID": scope.matchID,
+                "broadcastGeneration": scope.broadcastGeneration,
+                "publishingAttemptID": scope.publishingAttemptID.uuidString.lowercased(),
+                "appliedProfileRevision": String(scope.appliedProfileRevision)]]
+        try JSONSerialization.data(withJSONObject: request).write(
+            to: directory.appendingPathComponent("capacity-clock-request.json"), options: .atomic)
+        await model.pollControl()
+        let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
+            directory.appendingPathComponent("capacity-clock-response.json"))) as? [String: Any])
+        XCTAssertEqual((reply["sample"] as? [String: Any])?["sequence"] as? Int, 1)
+        await model.stopStreaming()
+        let closed = try Data(contentsOf: directory.appendingPathComponent("capacity-clock.json"))
+        let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: closed) as? [String: Any])
+        XCTAssertEqual(audit["closed"] as? Bool, true)
+        XCTAssertEqual(audit["invalid"] as? Bool, false)
+        XCTAssertEqual((audit["samples"] as? [Any])?.count, 1)
+        XCTAssertEqual(model.activeRecordingID, captureContext().id, "Clock fixture never stops clean recording")
+        await model.pollControl()
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("capacity-clock.json")), closed)
+    }
+
     func testDeliveryConsumerUsesCursorAndClearsOnOmissionExpiryAndDetach() async throws {
         let server = CaptureTestServer(), publisher = CaptureTestPublisher()
         var owner: VideoFrameObservationOwner?, driver: PublishingQualityDriver?, auditData: Data?

@@ -105,6 +105,17 @@ struct PublishingClockObservation: Equatable, Sendable {
         return nil
         #endif
     }()
+    var capacityClockFixtureFactory: (VideoFrameObservationScope) -> NativeCapacityClockFixture? = { scope in
+        #if targetEnvironment(simulator)
+        guard VideoObservationFixture.capacityFileUplink(environment: ProcessInfo.processInfo.environment) else { return nil }
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Scorebug/QA", isDirectory: true)
+        return try? NativeCapacityClockFixture(scope: scope, directory: directory)
+        #else
+        return nil
+        #endif
+    }
+    private var capacityClockFixture: NativeCapacityClockFixture?
     private var cadenceReportAudit: WorkerCadenceReportAudit?
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
     private var receiverProbeHistory = ReceiverProbeFixtureHistory()
@@ -491,6 +502,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                         diagnostics: .init(snapshot: current.session.snapshot), delivery: delivery, authority: self.deliveryAuthority)
                 }
                 #if DEBUG
+                capacityClockFixture = observations.map { capacityClockFixtureFactory($0.snapshot.scope) } ?? nil
                 cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment)
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
@@ -550,6 +562,10 @@ struct PublishingClockObservation: Equatable, Sendable {
             controlBusy = false
             resumeRequestedStart(controlFailed: controlFailed)
         }
+        #if DEBUG
+        await capacityClockFixture?.poll()
+        guard !publisherStopping else { return }
+        #endif
         do {
             try persist()
             if coordinator == nil { try makeCoordinator() }
@@ -927,6 +943,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             publishing.context.tap.detach(publishing.session)
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
+            let capacityClock = capacityClockFixture; capacityClockFixture = nil
             cadenceReportAudit?.close()
             let cadenceData = try? cadenceReportAudit?.data()
             let cadenceWriter = cadenceReportFixtureWriter
@@ -956,6 +973,9 @@ struct PublishingClockObservation: Equatable, Sendable {
             teardownID = id
             publisherStopping = true
             publisherTeardown = Task { [self] in
+                #if DEBUG
+                await capacityClock?.closeAndExport()
+                #endif
                 await quality?.stop()
                 #if DEBUG
                 await transitions?.stop()
