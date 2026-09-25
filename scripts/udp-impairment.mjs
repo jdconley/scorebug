@@ -549,6 +549,7 @@ export async function createUDPImpairmentProxy(configuration) {
     return {
       port,
       close,
+      rateLedgerSnapshot: () => outgoing.queue.rateLedgerSnapshot(),
       snapshot: () => ({
         formatVersion: 1,
         closed,

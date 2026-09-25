@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatagramImpairmentQueue } from '../udp-impairment.mjs';
+import { qualifyRateLedger } from '../rate-ledger-qualification.mjs';
 const module = await import('../measured-capacity-uplink.mjs').catch((e) => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   return {};
@@ -29,8 +30,10 @@ function simulation({
   trafficGaps = {},
   sendPauses = {},
   appliedOffsets = [0, 0, 0],
+  recordRateLedger = false,
+  forwardBursts = [],
 } = {}) {
-  const forward = new DatagramImpairmentQueue(configuration),
+  const forward = new DatagramImpairmentQueue({ ...configuration, recordRateLedger }),
     reverse = new DatagramImpairmentQueue(configuration);
   const direction = (q) => ({
     queue: q.snapshot(),
@@ -58,7 +61,8 @@ function simulation({
       ['reverse', reverse, 50, 100],
     ]) {
       const within = (ranges) => ranges?.some(([start, end]) => elapsed >= start && elapsed < end);
-      if (elapsed <= trafficUntil && elapsed % every === 0 && !within(trafficGaps[name]))
+      const interval = name === 'forward' && within(forwardBursts) ? 10 : every;
+      if (elapsed <= trafficUntil && elapsed % interval === 0 && !within(trafficGaps[name]))
         q.enqueue(Buffer.alloc(bytes), now);
       if (!within(sendPauses[name])) while (q.takeReady(now) !== null) {}
     }
@@ -66,6 +70,7 @@ function simulation({
   forward.close(1000 + duration + 100);
   reverse.close(1000 + duration + 100);
   return {
+    ...(recordRateLedger ? { rateLedger: forward.rateLedgerSnapshot() } : {}),
     formatVersion: 1,
     closed: true,
     foreignPeerPackets: 0,
@@ -394,3 +399,186 @@ for (const options of [
       /coverage policy|option/i,
     );
   });
+
+function ledgerSimulation(extra = {}) {
+  const { rateLedger, ...snapshot } = simulation({
+    rate: 750000,
+    schedule: delayed750Schedule,
+    duration: 210000,
+    forwardEvery: 20,
+    forwardBursts: [[91000, 92000]],
+    recordRateLedger: true,
+    ...extra,
+  });
+  return { snapshot, rateLedger };
+}
+const boundLedger = ledgerSimulation();
+const ledgerOptions = { profile: 'capacity750k', stimulusPolicy: 'rate-ledger-v1' };
+function qualifyLedger({ snapshot, rateLedger } = boundLedger, options = {}) {
+  return module.qualifyMeasuredCapacityUplink(snapshot, {
+    ...ledgerOptions,
+    rateLedger,
+    ...options,
+  });
+}
+
+test('explicit ledger stimulus qualifies a real token denial below historical congestion severity', () => {
+  const before = structuredClone(boundLedger);
+  const [, limited, restored] = boundLedger.snapshot.forwardRateSchedule.phases;
+  const { recordTimeline, ...finiteConfiguration } = configuration;
+  const expectedProof = qualifyRateLedger(
+    {
+      ledger: boundLedger.rateLedger,
+      limited: { appliedAt: limited.appliedAt, queue: limited.forward.queue },
+      restored: { appliedAt: restored.appliedAt, queue: restored.forward.queue },
+    },
+    { configuration: { ...finiteConfiguration, rateBitsPerSecond: 750000 } },
+  );
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityUplink(boundLedger.snapshot, {
+        profile: 'capacity750k',
+      }),
+    /No observed congestion/,
+  );
+  const result = qualifyLedger();
+  assert.equal(result.stimulusPolicy, 'rate-ledger-v1');
+  assert.deepEqual(result.rateLedgerProof, expectedProof);
+  assert.equal(result.limitedOverflowPackets, 0);
+  assert(result.maximumLimitedResidenceMilliseconds < 500);
+  assert(result.maximumOfferedBitsPerSecond > 750000);
+  assert.equal(result.nativeAdaptationQualified, false);
+  assert.equal(result.networkLossRecoveryQualified, false);
+  assert.deepEqual(boundLedger, before);
+});
+
+test('explicit historical stimulus keeps the exact default result', () => {
+  const result = qualify();
+  assert.deepEqual(
+    module.qualifyMeasuredCapacityUplink(original, {
+      stimulusPolicy: 'congestion-v1',
+    }),
+    result,
+  );
+  assert(!Object.hasOwn(result, 'stimulusPolicy'));
+  assert(!Object.hasOwn(result, 'rateLedgerProof'));
+});
+for (const stimulusPolicy of [null, false, 'rate-ledger', 'unknown'])
+  test(`rejects unsupported stimulus policy ${stimulusPolicy}`, () => {
+    assert.throws(() => qualifyLedger(boundLedger, { stimulusPolicy }), /stimulus policy/i);
+  });
+for (const options of [
+  { rateLedger: boundLedger.rateLedger },
+  { stimulusPolicy: 'congestion-v1', rateLedger: boundLedger.rateLedger },
+  { rateLedger: undefined },
+])
+  test(`ledger cannot select or accompany default stimulus ${Object.keys(options)}`, () => {
+    assert.throws(() => module.qualifyMeasuredCapacityUplink(original, options), /ledger.*policy/i);
+  });
+test('raw snapshot policy and ledger cannot authorize new qualification', () => {
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityUplink(
+        {
+          ...boundLedger.snapshot,
+          stimulusPolicy: 'rate-ledger-v1',
+          rateLedger: boundLedger.rateLedger,
+        },
+        { profile: 'capacity750k' },
+      ),
+    /No observed congestion/,
+  );
+});
+for (const rateLedger of [undefined, null, {}])
+  test(`explicit ledger policy rejects absent/incomplete evidence ${JSON.stringify(rateLedger)}`, () => {
+    assert.throws(() => qualifyLedger(boundLedger, { rateLedger }), /ledger/i);
+  });
+for (const [name, mutate] of Object.entries({
+  limitOrdinal: (f) =>
+    f.snapshot.forwardRateSchedule.phases[1].forward.queue.rateLedgerOperationOrdinal++,
+  restoredOrdinal: (f) =>
+    f.snapshot.forwardRateSchedule.phases[2].forward.queue.rateLedgerOperationOrdinal++,
+  firstDenial: (f) =>
+    f.snapshot.forwardRateSchedule.phases[2].forward.queue.rateLedgerFirstDenial.ordinal++,
+  limitTime: (f) => f.rateLedger.header.limit.at++,
+  restorationTime: (f) => f.rateLedger.footer.restoration.at++,
+  ledgerConfiguration: (f) => f.rateLedger.header.configuration.burstBytes++,
+  missingOperation: (f) => f.rateLedger.operations.splice(10, 1),
+  missingClosure: (f) => (f.rateLedger.footer.closed = false),
+  overflow: (f) => (f.rateLedger.overflow = true),
+}))
+  test(`explicit ledger stimulus rejects ${name}`, () => {
+    const f = structuredClone(boundLedger);
+    mutate(f);
+    assert.throws(() => qualifyLedger(f));
+  });
+for (const [name, mutate] of Object.entries(mutations))
+  test(`explicit ledger stimulus retains ${name} transport gate`, () => {
+    const f = structuredClone(boundLedger);
+    mutate(f.snapshot);
+    assert.throws(() => qualifyLedger(f));
+  });
+test('ledger stimulus still requires offered traffic above selected rate', () => {
+  assert.throws(() => qualifyLedger(ledgerSimulation({ forwardBursts: [] })), /offered load/);
+});
+test('ledger stimulus retains baseline and restored traffic coverage', () => {
+  for (const name of ['forward', 'reverse'])
+    assert.throws(
+      () =>
+        qualifyLedger(
+          ledgerSimulation({
+            trafficGaps: { [name]: [[180000, 195000]] },
+          }),
+        ),
+      /coverage/,
+    );
+});
+test('ledger stimulus retains baseline and restored queue delay ceilings', () => {
+  for (const name of ['forward', 'reverse'])
+    assert.throws(
+      () =>
+        qualifyLedger(
+          ledgerSimulation({
+            sendPauses: { [name]: [[200000, 200600]] },
+          }),
+        ),
+      /queue remains delayed/,
+    );
+});
+
+test('an offered-load peak absorbed by the burst cannot qualify without an actual denial', () => {
+  const f = ledgerSimulation({
+    forwardBursts: [
+      [91000, 91200],
+      [91600, 91800],
+    ],
+  });
+  assert.equal(f.rateLedger.denial, null);
+  assert.throws(() => qualifyLedger(f), /denial/i);
+});
+test('ledger stimulus retains the per-bin finite rate budget', () => {
+  const f = ledgerSimulation({ rate: 1100000 });
+  f.snapshot.forwardRateSchedule.phases[1].forward.queue.configuration.rateBitsPerSecond = 750000;
+  assert.throws(() => qualifyLedger(f), /ceiling|budget/i);
+});
+test('ledger stimulus derives its finite rate from either selected capacity profile', () => {
+  const f = ledgerSimulation({
+    rate: 550000,
+    schedule: requested,
+    duration: 180000,
+    forwardBursts: [[61000, 61600]],
+  });
+  const result = qualifyLedger(f, { profile: 'capacity550k' });
+  assert.equal(result.rateLedgerProof.rateBoundQualified, true);
+  assert.equal(result.limitedOverflowPackets, 0);
+  assert(result.maximumLimitedResidenceMilliseconds < 500);
+  assert.throws(() => module.qualifyMeasuredCapacityUplink(f.snapshot), /No observed congestion/);
+});
+test('ledger stimulus composes with scheduled coverage during silent cleanup', () => {
+  const f = ledgerSimulation({ duration: 250000, trafficUntil: 210000 });
+  assert.equal(
+    qualifyLedger(f, { coveragePolicy: 'scheduled-hold-v1' }).rateLedgerProof.rateBoundQualified,
+    true,
+  );
+  assert.throws(() => qualifyLedger(f), /coverage/);
+});

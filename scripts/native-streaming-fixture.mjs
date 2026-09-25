@@ -17,6 +17,7 @@ import {
 import assert from 'node:assert/strict';
 import { recordReceiverProbeEvidence } from './receiver-probe-evidence.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
+import { createUplinkEvidenceStopper } from './uplink-proxy-evidence.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -52,6 +53,7 @@ export async function nativeStreamingFixture({
   measuredRecovery = false,
   repeatedRecovery = false,
   capacityRecovery = false,
+  capacityEvidencePolicy = 'congestion-v1',
   capacityDiagnostics = false,
   collectCapacityClock,
   readQualityCheckpoint,
@@ -63,6 +65,14 @@ export async function nativeStreamingFixture({
   publishPacing,
 }) {
   assert.equal(typeof capacityRecovery, 'boolean');
+  assert(
+    ['congestion-v1', 'rate-ledger-v1'].includes(capacityEvidencePolicy),
+    'Unsupported capacity evidence policy',
+  );
+  assert(
+    capacityEvidencePolicy !== 'rate-ledger-v1' || capacityRecovery,
+    'Rate ledger evidence requires capacity recovery',
+  );
   assert.equal(typeof capacityDiagnostics, 'boolean');
   assert(
     !capacityDiagnostics || capacityRecovery,
@@ -163,7 +173,7 @@ export async function nativeStreamingFixture({
     repeatedReceiverProbe: repeatedRecovery,
   });
   const names = [];
-  let worker, done, workerEvidence, directRecorder, uplink;
+  let worker, done, workerEvidence, directRecorder, uplink, stopUplinkEvidence;
   const useDirectRecorder = process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1';
   let matchID;
   let statusTask, statusAbort, statusError, faultTask, faultError, repeatedQuality;
@@ -218,14 +228,12 @@ export async function nativeStreamingFixture({
   }
   async function stopUplink() {
     if (!uplink) return;
-    try {
-      await uplink.close();
-    } finally {
-      await writeFile(
-        join(artifact, 'uplink-proxy.json'),
-        JSON.stringify(uplink.snapshot(), null, 2),
-      );
-    }
+    stopUplinkEvidence ??= createUplinkEvidenceStopper({
+      uplink,
+      artifact,
+      capacityEvidencePolicy,
+    });
+    await stopUplinkEvidence();
   }
   async function stop() {
     const errors = [];
@@ -323,8 +331,8 @@ export async function nativeStreamingFixture({
       }
       assert.ok(ready, `${kind} readiness`);
     }
-    if (uplinkProfile)
-      uplink = await createUDPImpairmentProxy({
+    if (uplinkProfile) {
+      const uplinkConfiguration = {
         receiverPort: ingestPort,
         forward: { recordTimeline: true },
         reverse: { recordTimeline: true },
@@ -342,7 +350,11 @@ export async function nativeStreamingFixture({
               ],
             }
           : {}),
-      });
+      };
+      if (capacityEvidencePolicy === 'rate-ledger-v1')
+        uplinkConfiguration.forward = { ...uplinkConfiguration.forward, recordRateLedger: true };
+      uplink = await createUDPImpairmentProxy(uplinkConfiguration);
+    }
     if (useDirectRecorder)
       directRecorder = await (
         capacityDiagnostics ? startReconnectingRTMPRecorder : startDirectRTMPRecorder

@@ -41,8 +41,9 @@ loss against the raw receiver and completed worker counts, at 29.8 fps and 0.667
 loss in the affected interval. It keeps the clean archive strict and grants no
 healthy recovery credit. A new explicit queue audit and independent replay now
 prove actual token-limit denial in controlled tests, including FIFO order, all
-token advances and phase-counter conservation. All 4,556 tooling tests pass. The
-next task is exporting and selecting that audit in a fresh native experiment;
+token advances and phase-counter conservation. An explicit native laboratory
+selection now exports that audit and composes it with bounded live-loss checks.
+All 4,642 tooling tests pass. The next task is a fresh native experiment;
 complete capacity recovery and a fresh subsequent ramp-up remain unqualified.
 Physical camera, phone/Watch concurrency and remote proxy tests remain open.
 
@@ -53,8 +54,8 @@ removed, and the frozen input/code hashes were unchanged. See the
 The [direct rate-limit proof component](2026-09-25-capacity-rate-ledger.md)
 keeps the historical congestion gate unchanged. It requires evidence that the
 old runs did not record, and cannot retrospectively qualify them. Bounded
-live-loss conservation passes the saved-artifact replay; native success routes
-remain unchanged.
+live-loss conservation passes the saved-artifact replay. The default native route
+remains strict; the new laboratory selection still needs fresh observed evidence.
 
 Earlier saved evidence from `native-app-5UYvcA` passed its separate transport,
 confirmed-upgrade, native pressure-decrease, and media checks. The observed upload

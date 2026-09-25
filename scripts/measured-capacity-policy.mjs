@@ -92,17 +92,35 @@ function cadenceDecision(row, source, reports, scope) {
 /** Replays a single capacity decrease and restored policy/delivery from raw metadata.
  * Decoded IDs must come from actual media; this function cannot decode files or
  * verify waveform/score/archive durability. Fresh re-ramp and production stay gated. */
-export function qualifyMeasuredCapacityPolicy(
-  raw,
-  { profile, preTrialRejectionPolicy = 'reject', ...unsupported } = {},
-) {
-  assert.equal(Reflect.ownKeys(unsupported).length, 0, 'Unknown capacity policy option');
+export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
+  assert(
+    options !== null && typeof options === 'object' && !Array.isArray(options),
+    'Capacity policy options must be an object',
+  );
+  for (const key of Reflect.ownKeys(options))
+    assert(
+      ['profile', 'preTrialRejectionPolicy', 'capacityEvidencePolicy'].includes(key),
+      'Unknown capacity policy option',
+    );
+  const {
+    profile,
+    preTrialRejectionPolicy = 'reject',
+    capacityEvidencePolicy = 'congestion-v1',
+  } = options;
+  assert(
+    ['congestion-v1', 'rate-ledger-v1'].includes(capacityEvidencePolicy),
+    'Unknown capacity evidence policy',
+  );
+  const rateLedgerSelected = capacityEvidencePolicy === 'rate-ledger-v1';
   measuredCapacityProfile(profile);
   const input = { ...raw, quality: expandQualityEvidence(raw.quality) };
   const { quality, snapshot, cadenceReports, deliveryAudit } = input;
   const transport = qualifyMeasuredCapacityUplink(input.uplink, {
     profile,
     coveragePolicy: 'scheduled-hold-v1',
+    ...(rateLedgerSelected
+      ? { stimulusPolicy: 'rate-ledger-v1', rateLedger: input.rateLedger }
+      : {}),
   });
   const exchanges = input.capacityClockExchanges;
   assert.equal(exchanges.formatVersion, 1);
@@ -121,6 +139,7 @@ export function qualifyMeasuredCapacityPolicy(
     capacityRecovery: true,
     capacityDecrease: true,
     probePolicy: 'recovery-budget-v1',
+    ...(rateLedgerSelected ? { mediaLossPolicy: 'accounted-bounded-v1' } : {}),
   });
   const prefix = qualifyMeasuredTrialConfirmedPrefix({
     quality,
@@ -469,6 +488,9 @@ export function qualifyMeasuredCapacityPolicy(
     nativeProfile: native.profile,
     scope: snapshot.scope,
     transport,
+    ...(rateLedgerSelected
+      ? { capacityEvidencePolicy, mediaConservation: native.mediaConservation }
+      : {}),
     clock,
     prefix,
     prefixDelivery,

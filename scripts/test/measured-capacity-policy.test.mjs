@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { expandQualityEvidence } from '../quality-evidence-dictionary.mjs';
+import { qualifyMeasuredNativeEvidence } from '../measured-native-trial.mjs';
 const module = await import('../measured-capacity-policy.mjs').catch((e) => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   return {};
@@ -33,6 +34,65 @@ function qualify(f, options = {}) {
 const min = (f) => f.quality.events.filter((e) => e.kind === 'evaluated' && e.revision === '2');
 const local = (f) =>
   f.quality.events.filter((e) => e.kind === 'localPressure' && e.revision === '2');
+test('explicit congestion policy preserves the existing complete capacity result', () => {
+  const f = fixture();
+  assert.deepEqual(qualify(f, { capacityEvidencePolicy: 'congestion-v1' }), qualify(f));
+});
+test('native capacity evidence explicitly propagates bounded loss conservation without health credit', () => {
+  const f = fixture();
+  const options = {
+    recovery: true,
+    capacityRecovery: true,
+    capacityDecrease: true,
+    probePolicy: 'recovery-budget-v1',
+  };
+  const legacy = qualifyMeasuredNativeEvidence(f, options);
+  const bounded = qualifyMeasuredNativeEvidence(f, {
+    ...options,
+    mediaLossPolicy: 'accounted-bounded-v1',
+  });
+  assert.equal(legacy.mediaConservation, undefined);
+  assert.equal(bounded.video.lossConservation.policy, 'accounted-bounded-v1');
+  assert.equal(bounded.mediaConservation.healthyCreditSeconds, 0);
+  assert.equal(bounded.mediaConservation.productionUpgradeAuthorized, false);
+  assert.deepEqual(bounded.profile, legacy.profile);
+  assert.deepEqual(bounded.nativeLifecycle, legacy.nativeLifecycle);
+  for (const patch of [
+    { recovery: false },
+    { capacityRecovery: false },
+    { capacityDecrease: false },
+  ])
+    assert.throws(
+      () =>
+        qualifyMeasuredNativeEvidence(f, {
+          ...options,
+          ...patch,
+          mediaLossPolicy: 'accounted-bounded-v1',
+        }),
+      /capacity|bounded/i,
+    );
+});
+test('ledger capacity policy cannot reuse historical evidence without a newly observed ledger', () => {
+  assert.throws(() => qualify(fixture(), { capacityEvidencePolicy: 'rate-ledger-v1' }), /ledger/i);
+});
+test('raw metadata cannot change the caller-selected capacity contract', () => {
+  const f = fixture();
+  const original = qualify(f);
+  f.capacityEvidencePolicy = 'rate-ledger-v1';
+  f.mediaLossPolicy = 'accounted-bounded-v1';
+  assert.deepEqual(qualify(f), original);
+});
+for (const options of [
+  null,
+  false,
+  [],
+  { mediaLossPolicy: 'unknown' },
+  { [Symbol('allowLoss')]: true },
+  Object.defineProperty({}, 'allowLoss', { value: true }),
+])
+  test(`native evidence rejects malformed options ${String(options)}`, () => {
+    assert.throws(() => qualifyMeasuredNativeEvidence(fixture(), options), /option|policy/i);
+  });
 function shiftClock(f, indices, seconds) {
   for (const i of indices) {
     f.capacityClockAudit.samples[i].nativeAt += seconds;

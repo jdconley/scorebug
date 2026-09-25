@@ -115,3 +115,57 @@ test('complete750k diagnostic worker route reaches resource setup', async (t) =>
   assert.equal(calls.length, 1);
   assert.equal(calls[0][2], 'publication-relay-image');
 });
+
+for (const policy of ['congestion-v1', 'rate-ledger-v1'])
+  test(`capacity evidence ${policy} reaches resource setup on its complete route`, async (t) => {
+    recorderEnvironment(t);
+    const artifact = await mkdtemp(join(tmpdir(), 'capacity-policy-fixture-'));
+    t.after(() => rm(artifact, { recursive: true, force: true }));
+    const calls = [];
+    await assert.rejects(
+      nativeStreamingFixture({
+        ...options(),
+        artifact,
+        capacityEvidencePolicy: policy,
+        run: async (...args) => {
+          calls.push(args);
+          throw Error('Stop before resources');
+        },
+      }),
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][2], 'publication-relay-image');
+  });
+
+for (const policy of ['unknown', null, '', 1])
+  test(`invalid capacity evidence ${JSON.stringify(policy)} fails before resource setup`, async (t) => {
+    recorderEnvironment(t);
+    let calls = 0;
+    await assert.rejects(
+      nativeStreamingFixture({
+        ...options(),
+        capacityEvidencePolicy: policy,
+        run: async () => {
+          calls++;
+          throw Error('Unexpected resource setup');
+        },
+      }),
+      /capacity evidence policy/i,
+    );
+    assert.equal(calls, 0);
+  });
+
+test('rate ledger evidence cannot be selected outside capacity recovery', async () => {
+  let calls = 0;
+  await assert.rejects(
+    nativeStreamingFixture({
+      capacityEvidencePolicy: 'rate-ledger-v1',
+      run: async () => {
+        calls++;
+        throw Error('Unexpected resource setup');
+      },
+    }),
+    /rate ledger evidence requires capacity recovery/i,
+  );
+  assert.equal(calls, 0);
+});

@@ -185,15 +185,37 @@ export function qualifyMeasuredNativeMedia(input, options = {}) {
  * Full A/V decoding, archive durability and ingress checks remain required by
  * the calling harness. No production upgrade permission is returned.
  */
-export function qualifyMeasuredNativeEvidence(
-  input,
-  {
+export function qualifyMeasuredNativeEvidence(input, options = {}) {
+  assert(
+    options !== null && typeof options === 'object' && !Array.isArray(options),
+    'Native evidence options must be an object',
+  );
+  for (const key of Reflect.ownKeys(options))
+    assert(
+      [
+        'recovery',
+        'probePolicy',
+        'capacityRecovery',
+        'capacityDecrease',
+        'mediaLossPolicy',
+      ].includes(key),
+      'Unknown native evidence option',
+    );
+  const {
     recovery = false,
     probePolicy = 'local-zero-loss-v1',
     capacityRecovery = false,
     capacityDecrease = false,
-  } = {},
-) {
+    mediaLossPolicy = 'lossless-v1',
+  } = options;
+  assert(
+    ['lossless-v1', 'accounted-bounded-v1'].includes(mediaLossPolicy),
+    'Unknown native media loss policy',
+  );
+  assert(
+    mediaLossPolicy === 'lossless-v1' || (recovery && capacityRecovery && capacityDecrease),
+    'Bounded native media requires the explicit capacity decrease route',
+  );
   input = { ...input, quality: expandQualityEvidence(input.quality) };
   assert.ok(
     ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
@@ -223,16 +245,27 @@ export function qualifyMeasuredNativeEvidence(
     workerRecords,
     liveIDs,
   } = input;
-  const { video, clock, attempt, worker, source, processing, reportAge, cadence, delivery } =
-    qualifyMeasuredNativeMedia(
-      input,
-      capacityRecovery
-        ? {
-            cadenceAuditMode: 'capacity',
-            deliveryAuditMode: 'capacity',
-          }
-        : {},
-    );
+  const {
+    video,
+    clock,
+    attempt,
+    worker,
+    source,
+    processing,
+    mediaConservation,
+    reportAge,
+    cadence,
+    delivery,
+  } = qualifyMeasuredNativeMedia(
+    input,
+    capacityRecovery
+      ? {
+          cadenceAuditMode: 'capacity',
+          deliveryAuditMode: 'capacity',
+          mediaLossPolicy,
+        }
+      : {},
+  );
   const profile = qualifyNativeProfileTransitions(format, snapshot, liveIDs, {
     sequence: 'measured240',
     requireFrameEvidence: true,
@@ -335,6 +368,7 @@ export function qualifyMeasuredNativeEvidence(
     receiver,
     intervals,
     witness,
+    ...(mediaConservation ? { mediaConservation } : {}),
   };
 }
 

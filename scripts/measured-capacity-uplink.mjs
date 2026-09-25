@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
 import { qualifyDatagramTimeline } from './datagram-timeline-qualification.mjs';
+import { qualifyRateLedger } from './rate-ledger-qualification.mjs';
 
 export const measuredCapacityProfiles = Object.freeze(['capacity550k', 'capacity750k']);
 const profiles = Object.freeze({
@@ -189,8 +190,24 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
     'Invalid capacity qualifier options',
   );
   for (const key of Reflect.ownKeys(options))
-    assert(['profile', 'coveragePolicy'].includes(key), 'Unknown capacity qualifier option');
-  const { profile = 'capacity550k', coveragePolicy = 'through-close-v1' } = options;
+    assert(
+      ['profile', 'coveragePolicy', 'stimulusPolicy', 'rateLedger'].includes(key),
+      'Unknown capacity qualifier option',
+    );
+  const {
+    profile = 'capacity550k',
+    coveragePolicy = 'through-close-v1',
+    stimulusPolicy = 'congestion-v1',
+    rateLedger,
+  } = options;
+  assert(
+    ['congestion-v1', 'rate-ledger-v1'].includes(stimulusPolicy),
+    'Unknown capacity stimulus policy',
+  );
+  assert(
+    stimulusPolicy === 'rate-ledger-v1' || !Object.hasOwn(options, 'rateLedger'),
+    'Rate ledger requires explicit rate-ledger-v1 stimulus policy',
+  );
   assert(
     ['through-close-v1', 'scheduled-hold-v1'].includes(coveragePolicy),
     'Unknown capacity coverage policy',
@@ -301,10 +318,25 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
     0,
     ...limitedBins.map((w) => w.maximumForwardResidenceMilliseconds),
   );
-  assert(
-    limitedOverflowPackets > 0 || maximumLimitedResidenceMilliseconds >= 500,
-    'No observed congestion',
-  );
+  let rateLedgerProof;
+  if (stimulusPolicy === 'rate-ledger-v1') {
+    // The selected profile authorizes the exact finite configuration. Raw ledger
+    // headers cannot authorize a different queue, burst, rate or loss policy.
+    const { recordTimeline, ...configuration } =
+      measuredCapacityUplinkConfiguration(profile).forward;
+    rateLedgerProof = qualifyRateLedger(
+      {
+        ledger: rateLedger,
+        limited: { appliedAt: limited.appliedAt, queue: limited.forward.queue },
+        restored: { appliedAt: restored.appliedAt, queue: restored.forward.queue },
+      },
+      { configuration: { ...configuration, rateBitsPerSecond: rate } },
+    );
+  } else
+    assert(
+      limitedOverflowPackets > 0 || maximumLimitedResidenceMilliseconds >= 500,
+      'No observed congestion',
+    );
   for (const name of ['forward', 'reverse']) {
     const q = snapshot[name].queue;
     for (const w of [
@@ -322,6 +354,7 @@ export function qualifyMeasuredCapacityUplink(snapshot, options = {}) {
   return {
     profile,
     coveragePolicy,
+    ...(stimulusPolicy === 'rate-ledger-v1' ? { stimulusPolicy, rateLedgerProof } : {}),
     trafficCoverageWindows,
     limitedDurationMilliseconds,
     limitedForwardWireBytes,

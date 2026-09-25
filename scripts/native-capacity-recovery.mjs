@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
 import { measuredCapacityProfile, measuredCapacityProfiles } from './measured-capacity-uplink.mjs';
 
+/** Host-only evidence contract; never inferred from artifacts or native telemetry. */
+export function nativeCapacityEvidencePolicy({ environment, capacityRecovery }) {
+  assert.equal(typeof capacityRecovery, 'boolean');
+  const selected = environment.SCOREBUG_TEST_CAPACITY_EVIDENCE;
+  if (selected === undefined) return 'congestion-v1';
+  assert.equal(selected, 'rate-ledger-v1', 'Unknown capacity evidence policy');
+  assert.equal(capacityRecovery, true, 'Rate-ledger evidence requires complete capacity recovery');
+  return selected;
+}
+
 /** Complete host selection only; no resources or native recovery qualification. */
 export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) {
   if (

@@ -1,7 +1,7 @@
 # Direct evidence of an active upload rate limit
 
-> Use `superpowers:executing-plans`. This is a bounded laboratory proof component,
-> not an enabled native route or replacement for historical acceptance criteria.
+> Use `superpowers:executing-plans`. This is an explicitly selected laboratory
+> route, not production authority or a replacement for historical acceptance criteria.
 
 ## Problem and intended result
 
@@ -110,8 +110,8 @@ and cannot acquire this new qualification retroactively.
   denial, wrong ready time, incorrect wire accounting and incomplete terminal
   evidence. Keep the historical500ms gate tests unchanged.
 - [x] Review and run focused/full tooling checks.
-- [ ] Enable only an explicit future laboratory selector and retain raw
-  input/source hashes for a new run.
+- [x] Implement only an explicit laboratory selector and bounded separate export.
+- [ ] Retain raw input/source hashes and run the new native experiment.
 - [ ] Compose actual token limiting with causal native pressure, bounded live-loss
   conservation, strict clean recording and fresh recovery. No evidence can be
   retroactively added to YAQo8F or substituted into its frozen failed result.
@@ -120,8 +120,8 @@ Review additionally requires tests for an initially finite or previously deplete
 bucket, same-time boundary operations, denial followed immediately by restoration,
 initial backlog, forged/dropped head identity, tolerance-edge arithmetic, omitted
 empty or `nextDelay` advances, partial-bin mutation, and exhaustion just before
-closure. The recorder and independent component now exist; no new native success
-route is enabled at this checkpoint.
+closure. The recorder and independent component now exist. The separately selected
+native route is integrated below; its fresh end-to-end result remains unqualified.
 
 ## Implementation checkpoint
 
@@ -161,3 +161,55 @@ Formatting and `git diff --check` pass. No simulator was created or installed fo
 this component checkpoint. Final specification and code-quality reviews found no
 remaining actionable findings after independently repeating both corruption
 regressions.
+
+## Explicit native integration
+
+Use a separate host-only environment selection,
+`SCOREBUG_TEST_CAPACITY_EVIDENCE=rate-ledger-v1`, valid only with the complete
+existing native capacity-recovery route. An absent selection retains
+`congestion-v1` and the historical lossless contract. Unknown values and selection
+outside that route fail before resource creation. This changes laboratory
+qualification only and grants no production authority.
+
+The native fixture receives `capacityEvidencePolicy`. Only `rate-ledger-v1`
+enables the forward queue observer. The proxy exposes a separate final
+`rateLedgerSnapshot()` accessor for its forward queue; its normal snapshot never
+contains the growing ledger. After joined proxy closure, export compact JSON to
+`uplink-rate-ledger.json`, with an enforced 32 MiB bound and idempotent cleanup.
+Null/incomplete/overflowed evidence may be preserved for diagnosis, but must fail
+qualification. Export errors must not skip resource cleanup or be treated as a
+passing result.
+
+Transport qualification accepts explicitly trusted `stimulusPolicy` and separate
+raw `rateLedger` options. The default `congestion-v1` keeps the 500 ms/overflow
+criterion exactly. The new `rate-ledger-v1` replaces only that stimulus criterion
+with `qualifyRateLedger`, deriving queue configuration from the selected profile
+and binding to the original limited/restored snapshots. Keep configured loss,
+socket closure, pending sends, foreign-peer checks, phase timing, offered load,
+rate ceilings and baseline/restored traffic unchanged. Merely attaching a ledger
+to historical input cannot select this policy.
+
+The complete capacity policy receives the trusted `capacityEvidencePolicy` and
+raw `rateLedger` separately. Only the explicit ledger route selects the existing
+`accounted-bounded-v1` live-media contract in both the preliminary native harness
+check and shared raw native evidence. The archive stays lossless. Other measured
+routes reject this bounded media option. Keep admission/probation, causal clocks,
+native pressure/decrease, delivery ownership and all recovery gates intact.
+
+Implement with red/green tests for route validation, bounded/idempotent export,
+transport false positives and retained gates, default compatibility and explicit
+media-option propagation. Review and run the full tooling suite before freezing
+source/input hashes and starting one fresh native 750 kbps experiment. Use the
+installed runtime and remove only the experiment-owned temporary simulator.
+
+The integration is implemented. Host selection is validated before resource
+creation, and `capacityEvidencePolicy` is recorded in requested options and final
+results. Explicit transport results retain `stimulusPolicy` and the independent
+`rateLedgerProof`; the complete policy also reports bounded `mediaConservation`
+with zero health credit. Historical outputs remain unchanged by default.
+
+Focused red/green tests and the real loopback export/replay pass. The full tooling
+suite passes 4,642 tests, joined exit 0 in
+`artifacts/qa/repeated-live-checkpoint-rate-native-integration-tools-20260925-exit.json`.
+Specification and code-quality reviews found no actionable issues. Fresh native execution is still
+pending and must use new frozen evidence; no previous result is relabeled.

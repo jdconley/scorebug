@@ -1,6 +1,9 @@
 import { qualifyMeasuredCapacityPolicy } from './measured-capacity-policy.mjs';
 import { qualifyMeasuredCapacityUplink } from './measured-capacity-uplink.mjs';
-import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
+import {
+  nativeCapacityRecovery,
+  nativeCapacityEvidencePolicy,
+} from './native-capacity-recovery.mjs';
 import {
   nativeCapacityDiagnostics,
   runCapacityDiagnosticWorkflow,
@@ -137,6 +140,11 @@ const capacityRecovery = nativeCapacityRecovery({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const capacityEvidencePolicy = nativeCapacityEvidencePolicy({
+  environment: process.env,
+  capacityRecovery,
+});
+const rateLedgerSelected = capacityEvidencePolicy === 'rate-ledger-v1';
 // Diagnostic collection remains non-passing; the explicit capacity route below
 // joins raw policy evidence with the same full media gates as the native runner.
 const capacityDiagnostics = nativeCapacityDiagnostics({
@@ -290,6 +298,7 @@ await writeFile(
       repeatedRecovery,
       capacityRecovery,
       capacityDiagnostics,
+      capacityEvidencePolicy,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -802,6 +811,7 @@ try {
       repeatedRecovery,
       capacityRecovery,
       collectCapacityClock: capacityRecovery ? collectOwnedCapacityClock : undefined,
+      capacityEvidencePolicy,
       capacityDiagnostics,
       readQualityCheckpoint: repeatedRecovery ? readLiveQualityCheckpoint : undefined,
       decoderStall,
@@ -1067,10 +1077,14 @@ try {
   const uplinkSnapshot = uplinkProfile
     ? await readBoundedJSON(join(artifact, 'uplink-proxy.json'), 64 * 1024 * 1024)
     : undefined;
+  const rateLedger = rateLedgerSelected
+    ? await readBoundedJSON(join(artifact, 'uplink-rate-ledger.json'), 32 * 1024 * 1024)
+    : undefined;
   const uplinkQualification = capacityRecovery
     ? qualifyMeasuredCapacityUplink(uplinkSnapshot, {
         profile: uplinkProfile,
         coveragePolicy: 'scheduled-hold-v1',
+        ...(rateLedgerSelected ? { stimulusPolicy: 'rate-ledger-v1', rateLedger } : {}),
       })
     : uplinkProfile
       ? (uplinkProfile === 'loss0p2-delay30'
@@ -1276,17 +1290,20 @@ try {
         },
       );
     }
-    videoObservation = qualifyVideoObservation({
-      snapshot: observationSnapshot,
-      expectedScope: {
-        recordingID: states[0].id,
-        matchID: proxy.matchID,
-        broadcastGeneration: generations[0],
+    videoObservation = qualifyVideoObservation(
+      {
+        snapshot: observationSnapshot,
+        expectedScope: {
+          recordingID: states[0].id,
+          matchID: proxy.matchID,
+          broadcastGeneration: generations[0],
+        },
+        archiveIDs,
+        liveIDs: liveSegments.flat(),
+        completedWindowLimit: streamingOptions.completedWindowLimit,
       },
-      archiveIDs,
-      liveIDs: liveSegments.flat(),
-      completedWindowLimit: streamingOptions.completedWindowLimit,
-    });
+      rateLedgerSelected ? { mediaLossPolicy: 'accounted-bounded-v1' } : {},
+    );
     publishingClockObservation = qualifyPublishingClockObservation({
       snapshot: observationSnapshot,
       expectedScope: videoObservation.scope,
@@ -1508,6 +1525,7 @@ try {
             {
               ...measuredInput,
               uplink: uplinkSnapshot,
+              ...(rateLedgerSelected ? { rateLedger } : {}),
               capacityClockAudit: await readBoundedJSON(
                 join(artifact, 'capacity-clock.json'),
                 16384,
@@ -1520,6 +1538,7 @@ try {
             {
               profile: uplinkProfile,
               preTrialRejectionPolicy: 'invalidate-delivery-freshness-v1',
+              capacityEvidencePolicy,
             },
           )
         : repeatedRecovery
@@ -1658,6 +1677,7 @@ try {
         repeatedRecovery,
         capacityRecovery,
         capacityPolicyQualification,
+        capacityEvidencePolicy,
         measuredTrialQualification,
         measuredRecoveryQualification,
         repeatedRecoveryQualification,
