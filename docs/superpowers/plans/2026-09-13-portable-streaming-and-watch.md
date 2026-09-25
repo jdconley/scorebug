@@ -62,7 +62,7 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [x] Add reviewed, opt-in guarded app application ownership; preserve publication on pre-effect rejection and join shutdown after partial profile application (`064e555`).
 - [x] Resolve the full-suite stop/control-poll ordering failure with a deterministic regression, then verify scoped stop before replacement publishing (`265aa0a`, 598 app-model tests pass).
 - [x] Review the owned measurement/apply/retry route and resolve Driver tick blocking during rejected-application cleanup. Exact cleanup and settlement remain joined through stop.
-- [ ] Complete full-media qualification of the reviewed owned app route.
+- [ ] Complete full-media qualification of the reviewed owned app route. The first real run records all three outputs but does not upgrade. Campaign-aware relay selection is fixed; candidate scheduling must align with fresh source reports before rerunning.
 - [ ] Qualify the fresh four-phase automatic post-restoration increase with complete media/evidence checks; do not infer it from component suites or the passing three-phase run. The separate test contract and 390-second source preparation are reviewed/verified; actual native recovery and whole-history qualification remain open. See [four-phase qualification](2026-09-25-owned-recovery-qualification.md).
 
 Implementation references: [owned retries](2026-09-25-owned-measured-retries.md), [probe operations](2026-09-25-owned-probe-operations.md), [guarded admission](2026-09-25-owned-application-admission.md). Session reviews are complete; older “awaits review” prose in subordinate implementation documents is historical. Native integration qualification remains open.

@@ -32,6 +32,7 @@ const kinds = new Set([
   'cleanupJoined',
   'applicationTransferred',
   'applicationRejected',
+  'policyState',
   'acknowledged',
   ...settlements,
 ]);
@@ -107,7 +108,9 @@ export function indexOwnedMeasurementHistory(raw, options = {}) {
       };
       attempts.push(current);
     } else {
-      check(current && !current.terminal, 'event outside active Session owner');
+      // Session publishes its changed policy after recording exact settlement.
+      // That read-only observation retains ownership; it cannot reopen work.
+      check(current && (!current.terminal || event.kind === 'policyState'), 'event outside active Session owner');
       check(
         ownerID === current.ownerID &&
           event.coreRegisteredAt === current.coreRegisteredAt &&
@@ -125,7 +128,7 @@ export function indexOwnedMeasurementHistory(raw, options = {}) {
     } else {
       check(
         current.cleanupEventIndex === null ||
-          ['acknowledged', 'applicationTransferred', 'applicationRejected'].includes(event.kind),
+          ['acknowledged', 'applicationTransferred', 'applicationRejected', 'policyState'].includes(event.kind),
         'new measurement work after cleanup join',
       );
     }

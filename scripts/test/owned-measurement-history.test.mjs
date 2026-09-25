@@ -80,6 +80,25 @@ test('a final stopped owner can join without settling discarded policy', () => {
   raw.events.pop();
   assert.equal(index(raw).attempts.at(-1).terminal, 'stopped');
 });
+test('retains policy observations after joined settlement without reopening the owner', () => {
+  const raw = fixture();
+  raw.events.splice(6, 0, { ...raw.events[5], kind: 'policyState', at: raw.events[5].at + 0.001 });
+  raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+  const result = index(raw);
+  assert.deepEqual(result.attempts[0].eventIndices, [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(result.attempts[0].terminal, 'settledFailure');
+  assert.equal(result.attempts[0].settlementEventIndex, 5);
+  assert.equal(result.retryPolicyQualified, false);
+  raw.events[6].ownerID = raw.events[7].ownerID;
+  assert.throws(() => index(raw), /changed registered ownership/);
+});
+test('policy observations cannot authorize work after settlement', () => {
+  const raw = fixture();
+  raw.events.splice(6, 0, { ...raw.events[5], kind: 'policyState', at: raw.events[5].at + 0.001 },
+    { ...raw.events[5], kind: 'allocationRequested', at: raw.events[5].at + 0.002 });
+  raw.events.forEach((e, i) => { e.ordinal = String(i + 1); });
+  assert.throws(() => index(raw), /event outside active Session owner/);
+});
 for (const cleanupFirst of [false, true])
   test(`indexes rejected application with cleanup ${cleanupFirst ? 'before' : 'after'} rejection`, () => {
     const raw = fixture();

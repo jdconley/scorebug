@@ -26,8 +26,10 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       restoration upper clock bound, revision-3 application and confirmed trial.
       Preserve all failed attempts, cleanup/settlement and 10/20/40/60-second fresh
       healthy holds; classify the complete terminal suffix.
-- [ ] Collect an explicit diagnostic native run with all three recordings before
+- [x] Collect an explicit diagnostic native run with all three recordings before
       final qualification; diagnostic collection must never report a passing verdict.
+- [ ] Align real candidate collection with fresh source reports, preserving the
+      existing two-second freshness limits, then rerun with the campaign-aware relay.
 - [ ] Run the full native experiment with all archive/live frames, phase audio
       anchors, changing score, continued local recording and both final outputs.
       Preserve the 3,072 cadence / 512 delivery row and 16/32 MiB evidence limits;

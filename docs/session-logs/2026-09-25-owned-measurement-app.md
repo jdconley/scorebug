@@ -203,3 +203,36 @@ regressions. Diagnostic `native-app-6M1CiA` is running on iOS26.2 with the prepa
 390-second source, a 270-second hold, 750 kbps restriction/restoration and proxy
 recording. Its outcome is pending; success collecting raw artifacts will still
 produce an intentional nonzero verdict.
+
+## First real owned diagnostic result
+
+`native-app-6M1CiA` completed its UI workflow (355s) and joined all resources; the
+outer runner exited1 intentionally because diagnostics cannot qualify recovery.
+`capacity-diagnostics.json` has no collection errors. Source stayed240p: six
+measurement registrations, five completed121-frame candidate encodes, no applied
+upgrade. All958 raw lifecycle events are closed, within bounds and retained.
+
+Two integration defects explain the result. Owned native probes emit campaign-v3
+packets, but the fixture selected staged-v2; all2960 worker responses lacked
+receiver-probe evidence. Reviewed fix `2b31c95` selects campaign-v3 for the exact
+owned retry route while preserving legacy tags. Each completed candidate also
+arrived with source coverage2.86–3.03s old; the next report arrived3.61–3.96s later,
+after its2s cost freshness expired. A real-duration source-aligned scheduling
+regression/fix is underway; no freshness bound is being relaxed.
+
+Full decoding succeeded for all three MP4s. Clean archive:1920x1080 H264/AAC,
+9280frames/309.33s. Both overlaid outputs:640x360 H264/AAC,8822frames,~295.3s
+including audio; maximum decoded video timestamp gap34ms, no gaps over100ms.
+These are decode/timestamp results, not fresh-content identity or A/V-sync
+qualification. Spot checks show visible volleyball footage, clean archive and
+live HOME1–0 overlay. Evidence:`diagnostic-media-decode.json`,
+`diagnostic-frame-summary.json`,per-output frame JSON,decode logs and sample JPGs.
+Failure preservation marked incomplete only because duplicate`QA/input.mov`
+exceeded its1GiB budget; the original prepared input and artifact-root`input.mov`
+remain retained. Every recording and other QA file was copied.
+
+After diagnostic/relay changes, full`pnpm test:tools` passes4852tests, joinedexit0
+(`repeated-live-checkpoint-owned-diagnostic-tools-20260925`). Native-only replay
+of the unmodified real958-event audit passes all six attempts after recognizing
+actual`policyState` observations. This grants no receiver capacity,retry policy
+or media qualification.
