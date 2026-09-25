@@ -307,3 +307,47 @@ Next work, in order:
 4. Run a newly frozen diagnostic, qualify transport and actual native causal
    response, and only then enable the full recovery gate. Fresh post-recovery
    measurement/ramp and true outage remain separate experiments.
+
+## Candidate scheduling diagnosis and bounded trace
+
+Further replay of the original timestamps is saved separately in
+`native-app-rQQICD/diagnostic-candidate-timing-inspection.json`. At the earliest
+eligible stage3 time1960023.6136242084, the previous healthy source window had
+already expired at1960022.2504742085. The next source evaluation arrived at
+1960027.0101839583; the candidate bound8.34ms later. Its first overlapping source
+window was evaluated at1960031.904023, **766.21ms after probe retirement**.
+Current admission requires both current probe authority and a fresh overlapping
+source window, so this one-shot schedule had no valid admission opportunity.
+This explains the recorded failure without weakening either guard.
+
+The existing bounded advisory wait trace now also covers single measured trials
+that require readiness. It records probe reads, unavailable context, binding and
+measurement completion, and exports only after joined retirement. Its4096-event/
+4MiB limits and non-authoritative role are unchanged. Legacy trials without
+readiness still do not export this trace. The regression failed on missing trace
+data before the change; all58 candidate fixture tests pass afterward, including
+the joined single-trial export and unchanged legacy behavior. This is diagnostic
+instrumentation only; a new live trace and the scheduling correction remain open.
+
+Scheduling work should coordinate the final probe with fresh source readiness,
+using the existing repeated-campaign coordination as a reference. Preserve bounded
+probe duration/payload, cancellation and ownership, and allow time for actual
+candidate encoding plus an independently received overlapping source report.
+Do not simply extend evidence expiry or renew a retired probe. Validate phase
+offsets between report cadence and probe startup with deterministic tests before
+another real-match experiment.
+
+All555 app-model tests pass with joined exit0
+(`repeated-live-checkpoint-capacity-one-shot-trace-app-models.log`), and read-only
+review found no actionable issue. The original native source freeze and failed
+result remain unchanged.
+The arm64 iOS simulator UI test target also builds successfully with Xcode26.2
+(`repeated-live-checkpoint-capacity-one-shot-trace-ios-build.log`). This build did
+not create or boot a simulator or install a runtime; no new live run is implied.
+
+The retained late video-cost intervals provide a further diagnostic: eight usable
+240p intervals report345.5–382.9kbps video payload (mean362.4kbps) against350kbps
+configuration. `diagnostic-native-video-rate-inspection.json` preserves those
+scalars. These are late, video-only intervals; neither matched audio cost nor a
+full transport decomposition is established. They cannot determine a new fault
+capacity by themselves.

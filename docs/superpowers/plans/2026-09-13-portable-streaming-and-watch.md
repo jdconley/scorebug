@@ -43,6 +43,12 @@ reused installed iOS26.2 and removed only its owned temporary simulator; no runt
 was installed. See the [capacity recovery plan](2026-09-24-measured-capacity-uplink.md)
 for evidence, limits and next steps.
 
+The timestamp replay now explains the missed upgrade: the prior source report was
+stale before the final probe became usable, and the next overlapping report arrived
+766ms after probe retirement. Single measured trials now export the same bounded
+readiness trace as repeated trials. Scheduling still needs correction; no freshness
+limit was relaxed. All4,188 tooling tests and555 app-model tests pass.
+
 Earlier harness checkpoint:
 
 The capacity experiment is now wired through native launch settings, its independently

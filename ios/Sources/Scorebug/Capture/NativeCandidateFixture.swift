@@ -265,7 +265,10 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 typedResult: { await attempt.result().flatMap(PublishingCandidateCost.init) },
                 retire: { await attempt.retire() })
         }
-        self.waitTrace = repeated ? NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID) : nil
+        // One-shot measured trials can also spend their final probe waiting for
+        // readiness. Preserve that wait without changing its admission rules.
+        self.waitTrace = (repeated || requiresMeasurementReadiness)
+            ? NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID) : nil
         self.repeated = repeated; self.repeatOperations = repeated ? make : nil
         self.requiresMeasurementReadiness = requiresMeasurementReadiness
         self.measurementProfile = candidate
@@ -283,7 +286,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
          waitTraceExport: (@Sendable (Data) async -> Void)? = nil) {
         self.publisher = publisher; self.scope = scope; self.liveProfile = liveProfile
         self.operations = operations; self.timing = timing; self.candidateHeadroom = candidateHeadroom
-        self.waitTrace = repeated ? waitTraceExport.map { NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID, export: $0) }
+        self.waitTrace = (repeated || requiresMeasurementReadiness) ? waitTraceExport.map { NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID, export: $0) }
             ?? NativeCandidateWaitTrace(attemptID: scope.publishingAttemptID) : nil
         self.repeated = repeated; self.repeatOperations = repeatOperations
         self.requiresMeasurementReadiness = requiresMeasurementReadiness; self.measurementProfile = measurementProfile

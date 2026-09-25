@@ -1315,6 +1315,40 @@ extension NativeCandidateFixtureTests {
         await f.owner.stop()
     }
 
+    func testWaitTraceSingleMeasuredTrialExportsUnavailableReadinessAfterJoinedRetirement() async throws {
+        let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
+        fake.setProbe(stage: 3); fake.finish()
+        let gate = AsyncStream<Void>.makeStream()
+        var operations = fake.operations
+        operations.retire = {
+            fake.markJoinedStop()
+            await Task.detached { for await _ in gate.stream {} }.value
+        }
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
+            operations: operations,
+            timing: .init(delay: .zero, poll: .milliseconds(1), maximumProbeWaitPolls: 2),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360,
+            waitTraceExport: { sink.receive($0) })
+        _ = await wrapper.setMeasurementContextProvider { nil }
+        try await wrapper.start(); await wrapper.waitForMeasurement()
+        let stop = Task { await wrapper.stop() }
+        await wait { fake.joinedStops == 1 }
+        XCTAssertNil(sink.data)
+        gate.continuation.finish(); await stop.value
+        let events = try sink.events()
+        let polls = events.filter { $0["kind"] as? String == "poll" }
+        XCTAssertEqual(polls.count, 2)
+        XCTAssertTrue(polls.allSatisfy { $0["outcome"] as? String == "contextUnavailable" })
+        XCTAssertTrue(polls.allSatisfy { $0["contextReadStartedAt"] is Double && $0["contextReadReturnedAt"] is Double })
+        XCTAssertTrue(events.allSatisfy { $0["campaign"] as? Int == 1 })
+        XCTAssertFalse(events.contains { $0["kind"] as? String == "operationStarted" })
+        XCTAssertEqual(events.last?["outcome"] as? String, "deadline")
+        let frozen = sink.data
+        await wrapper.stop()
+        XCTAssertEqual(sink.count, 1); XCTAssertEqual(sink.data, frozen)
+        XCTAssertEqual(fake.object?["formatVersion"] as? Int, 3)
+    }
+
     func testWaitTraceLegacyFixtureNeverExports() async throws {
         let fake = CandidateFixtureFake(), sink = CandidateWaitSink()
         let wrapper = NativeCandidatePublisher(publisher: fake, scope: fake.scope, liveProfile: .low240,
