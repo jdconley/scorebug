@@ -7,6 +7,13 @@ import ScorebugStreaming
 /// One Session-issued measurement. This object never changes policy or starts a
 /// successor; its terminal callback follows actual native and candidate joins.
 actor PublishingOwnedMeasurementLease {
+    struct SourceCoverage: Sendable {
+        let sequence: UInt64
+        let start: Double, end: Double, observedAt: Double
+        var object: [String: Any] { ["sequence": String(sequence), "start": start, "end": end, "observedAt": observedAt] }
+    }
+    private let sourceCoverage: @Sendable (QualityController.CandidateMeasurementAttempt) async -> SourceCoverage?
+    private let sourceDeadline = ProcessInfo.processInfo.systemUptime + QualityController.maximumWindowDuration + 2
     nonisolated let id = UUID()
     private nonisolated let audit: PublishingOwnedMeasurementAudit
     nonisolated let token: QualityController.CandidateMeasurementAttempt
@@ -53,11 +60,12 @@ actor PublishingOwnedMeasurementLease {
     }
     init(token: QualityController.CandidateMeasurementAttempt, context: PublishingQualitySession.CandidateMeasurementContext,
          publisher: NativeOwnedCandidatePublisher, probes: NativeOwnedCandidatePublisher.Probes,
-         predecessor: PublishingBandwidthProbeRetirement?, diagnostic: QualityController.CandidateMeasurementDiagnostic) throws {
+         predecessor: PublishingBandwidthProbeRetirement?, diagnostic: QualityController.CandidateMeasurementDiagnostic,
+         sourceCoverage: @escaping @Sendable (QualityController.CandidateMeasurementAttempt) async -> SourceCoverage?) throws {
         guard let target = PublishingVideoProfile(rawValue: context.readiness.settings.profileID),
               target.bitRate == context.readiness.settings.videoBitrate else { throw PublishingQualitySession.Failure.unsupportedProfile }
         self.token = token; self.context = context; self.publisher = publisher; self.probes = probes; self.predecessor = predecessor; self.retirement = predecessor
-        self.audit = publisher.audit; self.diagnostic = diagnostic
+        self.audit = publisher.audit; self.diagnostic = diagnostic; self.sourceCoverage = sourceCoverage
         let owner = publisher.campaignOwner, generation = context.applied.receipt.publishingGeneration, scope = context.scope
         candidate = NativeCandidateAttempt(operations: .init(begin: { _ in
             try await owner.begin(scope: scope, profile: target, publishingGeneration: generation).id
@@ -144,6 +152,29 @@ actor PublishingOwnedMeasurementLease {
             try await renew()
         }
     }
+    // Use observed source progress to schedule collection from the lower-rate
+    // stage. This grants no admission authority and does not extend evidence age.
+    private func awaitNextSourceCoverage() async throws {
+        record("sourceWaitStarted", fields: ["deadline": sourceDeadline])
+        while true {
+            try check()
+            guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
+                record("sourceWaitTimedOut")
+                throw PublishingQualitySession.Failure.staleAdvice
+            }
+            if let coverage = await sourceCoverage(token) {
+                try check()
+                guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
+                    record("sourceWaitTimedOut")
+                    throw PublishingQualitySession.Failure.staleAdvice
+                }
+                record("sourceReady", fields: ["source": coverage.object])
+                return
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            try await renew()
+        }
+    }
     private func run(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         record("contextRequested")
         let selected = try await probes.capture(context.applied.receipt)
@@ -154,6 +185,7 @@ actor PublishingOwnedMeasurementLease {
         try await allocate(in: selected, after: predecessor, rate: 500_000, policy: policy, replacement: false)
         for rate in [2_000_000, 12_000_000] {
             try await hold(for: 0.8)
+            if rate == 12_000_000 { try await awaitNextSourceCoverage() }
             guard let operation else { throw PublishingQualitySession.Failure.notReady }
             record("retirementRequested", fields: ["snapshot": sample.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
             let retired = try await operation.retire()

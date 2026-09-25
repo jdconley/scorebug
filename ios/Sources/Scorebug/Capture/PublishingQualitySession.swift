@@ -134,11 +134,26 @@ actor PublishingQualitySession {
         catch QualityController.ValidationError.staleMeasurement { return false }
         let lease = try PublishingOwnedMeasurementLease(token: token, context: context,
             publisher: publisher, probes: probes, predecessor: ownedPredecessor,
-            diagnostic: current.candidateMeasurementDiagnostic)
+            diagnostic: current.candidateMeasurementDiagnostic,
+            sourceCoverage: { [weak self] token in await self?.ownedCandidateSourceCoverage(for: token) })
         ownedAttempts += 1
         policy = current; ownedMeasurement = lease; ownedSource = candidateHealthSource
         await lease.start(policy: ownedProbePolicy) { [weak self] lease in await self?.ownedMeasurementFinished(lease) }
         return true
+    }
+    private func ownedCandidateSourceCoverage(for token: QualityController.CandidateMeasurementAttempt) -> PublishingOwnedMeasurementLease.SourceCoverage? {
+        guard !closed, !busy, operations.isPublishing(), let lease = ownedMeasurement,
+              lease.token == token, lease.isActive, candidateHealthSource == ownedSource,
+              let policy, policy.appliedRevision == token.readiness.appliedRevision,
+              policy.applied == token.readiness.baseline,
+              let window = lastWindow, let receiver = window.receiver,
+              window.sequence > token.readiness.healthSequence,
+              window.end > token.readiness.healthyThrough,
+              policy.candidateMeasurementDiagnostic.strongHealthSequence == window.sequence else { return nil }
+        let now = uptime()
+        guard now.isFinite, now >= window.end, now - window.end <= 2,
+              receiver.observedAt <= now, now - receiver.observedAt <= 2 else { return nil }
+        return .init(sequence: window.sequence, start: window.start, end: window.end, observedAt: receiver.observedAt)
     }
     func joinOwnedMeasurement() async {
         await ownedMeasurement?.join()

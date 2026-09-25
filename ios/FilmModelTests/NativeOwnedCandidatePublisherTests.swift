@@ -45,7 +45,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testDriverStopJoinsRejectedMeasurementBeforeClosingAudit() async throws {
         try await exerciseOwnedApplication(.heldRejectionStop)
     }
-    private enum ApplicationOutcome { case accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    func testFourSecondCandidateUsesActualFiveSecondSourceCadenceWithReportLag() async throws {
+        try await exerciseOwnedApplication(.sourceCadence)
+    }
+    private enum ApplicationOutcome { case sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
     @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
         let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
@@ -54,7 +57,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         let start = ProcessInfo.processInfo.systemUptime
         f.native.useActualInstant()
         f.native.setNow(start)
-        let fresh = try await f.freshSource(start: start - 5, sequence: 3)
+        let fresh = try await f.freshSource(start: start - (outcome == .sourceCadence ? 6.8 : 5), sequence: 3)
         _ = try await f.owner.evaluate(source: fresh.0, diagnostics: fresh.1,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
@@ -87,23 +90,69 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 let now = ProcessInfo.processInfo.systemUptime
                 return .init(observedAt: now, sampledAt: now, thermal: 0, dropped: 0, rejected: 0, publishing: true)
             }))
+        if outcome == .sourceCadence {
+            let driver = PublishingQualityDriver(owner: f.owner,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now })
+            driver.candidateInputProvider = { [self] _ in
+                guard let value = await wrapper.candidateSnapshot() else { return nil }
+                return try? ownedAdmission(value, f: f)
+            }
+            var nextSourceReport = 5.0, sequence: Int64 = 4
+            var diagnostics = fresh.1
+            while ProcessInfo.processInfo.systemUptime - start < 12 {
+                f.native.setNow(ProcessInfo.processInfo.systemUptime)
+                var source: WorkerSourceIntervalObservation?
+                if f.native.now - start >= nextSourceReport {
+                    let next = try await f.freshSource(start: start + nextSourceReport - 6.8, sequence: sequence)
+                    source = next.0; diagnostics = next.1
+                    nextSourceReport += 5; sequence += 1
+                }
+                await driver.tick(encoderReady: true, source: source, diagnostics: diagnostics)?.value
+                if (await f.owner.snapshot).revision == 1 { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            let state = await f.owner.snapshot
+            XCTAssertEqual(state.revision, 1, "A real four-second candidate must meet the next observed source window without widening freshness")
+            XCTAssertEqual(state.applied?.profileID, "360p30")
+            await f.owner.joinOwnedMeasurement()
+            let rows = try auditRows(wrapper)
+            let measurement = try XCTUnwrap(rows.first { $0["kind"] as? String == "candidateJoined" }?["measurement"] as? [String: Any])
+            XCTAssertEqual(measurement["acceptedInputCount"] as? Int, 121)
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(measurement["endedAt"] as? Double) - XCTUnwrap(measurement["startedAt"] as? Double), 4)
+            let terminal = try XCTUnwrap(rows.last { $0["kind"] as? String == "retired" }?["snapshot"] as? [String: Any])
+            XCTAssertLessThanOrEqual(try XCTUnwrap(Int(try XCTUnwrap(terminal["totalAcceptedPayloadBytes"] as? String))), 16 * 1024 * 1024)
+            XCTAssertFalse(driver.isClosed)
+            await driver.stop(); await wrapper.stop()
+            return
+        }
         _ = try await f.owner.startOwnedMeasurement(diagnostics: fresh.1)
-        let deadline = ContinuousClock.now + .seconds(7)
+        let deadline = ContinuousClock.now + .seconds(11.5)
         var witness: NativeCandidatePublisher.CandidateSnapshot?
+        var suppliedNextSource = false
         while witness == nil, ContinuousClock.now < deadline {
+            f.native.setNow(ProcessInfo.processInfo.systemUptime)
+            if !suppliedNextSource, f.native.now >= start + 5.15 {
+                let next = try await f.freshSource(start: start, sequence: 4)
+                _ = try await f.owner.evaluate(source: next.0, diagnostics: next.1,
+                    workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                    transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+                suppliedNextSource = true
+            }
             witness = await wrapper.candidateSnapshot()
             if witness == nil { try await Task.sleep(for: .milliseconds(10)) }
         }
         let completedWitness = try XCTUnwrap(witness, "Actual registered stages must produce the joined candidate")
-        while ProcessInfo.processInfo.systemUptime < max(start + 5.15, completedWitness.cost.endedAt + 0.1) { try await Task.sleep(for: .milliseconds(10)) }
+        while ProcessInfo.processInfo.systemUptime < max(start + 10.15, completedWitness.cost.endedAt + 0.1) { try await Task.sleep(for: .milliseconds(10)) }
         f.native.setNow(ProcessInfo.processInfo.systemUptime)
-        let covered = try await f.freshSource(start: start, sequence: 4)
+        let covered = try await f.freshSource(start: start + 5, sequence: 5)
         _ = try await f.owner.evaluate(source: covered.0, diagnostics: covered.1,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
         let finalValue = await wrapper.candidateSnapshot()
         let final = try XCTUnwrap(finalValue)
-        let admission = try ownedAdmission(final, f: f, baseline: baseline)
+        let admission = try XCTUnwrap(ownedAdmission(final, f: f, baseline: baseline))
         if heldRejection {
             await fixture.hold(.retire)
             let driver = PublishingQualityDriver(owner: f.owner,
@@ -133,8 +182,8 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 await wrapper.stop()
                 return
             }
-            f.native.setNow(start + 10.2)
-            let unhealthy = try await f.freshSource(start: start + 5.1, sequence: 5, unhealthy: true)
+            f.native.setNow(start + 15.2)
+            let unhealthy = try await f.freshSource(start: start + 10.1, sequence: 6, unhealthy: true)
             let downward = driver.tick(encoderReady: true, source: unhealthy.0, diagnostics: unhealthy.1)
             let deadline = ContinuousClock.now + .seconds(1)
             while (await f.owner.snapshot).revision == 0, ContinuousClock.now < deadline {
@@ -184,7 +233,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
-        case .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
+        case .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])
@@ -194,7 +243,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         await f.owner.stop(); await wrapper.stop()
     }
     private var admissionClockInstant = ContinuousClock.now
-    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture, baseline: PublishingVideoProfile = .low240) throws -> PublishingCandidateAdmission {
+    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture, baseline: PublishingVideoProfile = .low240) throws -> PublishingCandidateAdmission? {
         let templateURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: templateURL))
@@ -221,11 +270,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         let pair = try XCTUnwrap(tracker.latestPair), receipt = try XCTUnwrap(f.native.receipt)
         let applied = PublishingQualityTelemetry.Applied(attemptID: f.attempt, revision: 0,
             settings: .init(profileID: baseline.rawValue, videoBitrate: baseline.bitRate), receipt: receipt, acknowledgedAt: 100)
-        return try XCTUnwrap(.laboratoryIPv4(measurement: .init(value.cost), applied: applied, binding: value.binding,
+        return .laboratoryIPv4(measurement: .init(value.cost), applied: applied, binding: value.binding,
             boundAt: value.boundAt, completedAt: value.completedAt, probe: value.probe, pair: pair,
             authority: .init(pair.newer.end), clock: clock,
-            currentReceipt: { f.native.receipt }, candidateIsCurrent: { value.permitsCurrentCandidate(value.cost.id) }),
-            "now=\(now) start=\(value.cost.startedAt) end=\(value.cost.endedAt) probeActive=\(value.probe.isActive(at: now)) bytes=\(value.probe.acceptedPayloadBytes)")
+            currentReceipt: { f.native.receipt }, candidateIsCurrent: { value.permitsCurrentCandidate(value.cost.id) })
     }
 
     @MainActor func testActualOwnedSRTStagesJoinAndRetryOnSameRevisionAfterFreshHealth() async throws {
@@ -241,6 +289,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             uptime: { f.native.now })
         await driver.tick(encoderReady: true, source: nil, diagnostics: diagnostics)?.value
         XCTAssertFalse(driver.isClosed)
+        await advanceSourceAfterStageTwo(f, start: 115, sequence: 3)
         await f.owner.joinOwnedMeasurement()
         var rows = try auditRows(wrapper)
         let first = rows.filter { $0["kind"] as? String == "allocated" }.compactMap { $0["snapshot"] as? [String: Any] }
@@ -255,7 +304,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         let premature = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
         XCTAssertFalse(premature)
         var latest = diagnostics
-        for (start, sequence) in [(116.0, Int64(3)), (121.0, Int64(4))] {
+        for (start, sequence) in [(121.0, Int64(4)), (126.0, Int64(5))] {
             f.native.setNow(start + 5.1)
             let pair = try await f.freshSource(start: start, sequence: sequence)
             _ = try await f.owner.evaluate(source: pair.0, diagnostics: pair.1,
@@ -268,7 +317,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         let failedCapture = try await f.owner.startOwnedMeasurement(diagnostics: latest)
         XCTAssertTrue(failedCapture)
         await f.owner.joinOwnedMeasurement()
-        for (start, sequence) in [(127.0, Int64(5)), (132.0, Int64(6)), (137.0, Int64(7)), (142.0, Int64(8))] {
+        for (start, sequence) in [(132.0, Int64(6)), (137.0, Int64(7)), (142.0, Int64(8)), (147.0, Int64(9))] {
             f.native.setNow(start + 5.1)
             let pair = try await f.freshSource(start: start, sequence: sequence)
             _ = try await f.owner.evaluate(source: pair.0, diagnostics: pair.1,
@@ -279,6 +328,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         }
         await driver.tick(encoderReady: true, source: nil, diagnostics: latest)?.value
         XCTAssertFalse(driver.isClosed)
+        await advanceSourceAfterStageTwo(f, start: 152, sequence: 10)
         await f.owner.joinOwnedMeasurement()
         rows = try auditRows(wrapper)
         let second = rows.filter { $0["kind"] as? String == "allocated" }.compactMap { $0["snapshot"] as? [String: Any] }.dropFirst(3)
@@ -288,6 +338,45 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         XCTAssertEqual(state.revision, 0)
         XCTAssertEqual(f.native.calls, ["rate:350000"])
         await driver.stop(); await wrapper.stop()
+    }
+    private func advanceSourceAfterStageTwo(_ f: CandidateQualityFixture, start: Double, sequence: Int64) async {
+        do {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while await f.owner.ownedProbeObservation()?.stage != 2, ContinuousClock.now < deadline { await Task.yield() }
+            f.native.setNow(start + 5.1)
+            let next = try await f.freshSource(start: start, sequence: sequence)
+            _ = try await f.owner.evaluate(source: next.0, diagnostics: next.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+        } catch { XCTFail("Fresh source fixture: \(error)") }
+    }
+    func testSourceWaitCancellationAndTimeoutJoinStageTwoWithoutStartingCandidate() async throws {
+        for cancel in [true, false] {
+            let f = try await CandidateQualityFixture.make(), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+            let fixture = OwnedAppRouteFixture(selected: f.native.receipt!)
+            let lower = SRTMediaPublisher(operations: await fixture.operations())
+            let wrapper = NativeOwnedCandidatePublisher(publisher: lower, scope: diagnostics.ingress!.scope,
+                campaignOwner: PublishingCandidateCampaignOwner())
+            try await wrapper.start(); await fixture.enableSending()
+            try await f.owner.installOwnedMeasurementPublisher(wrapper)
+            _ = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+            let waitDeadline = ContinuousClock.now + .seconds(3)
+            while !(try auditRows(wrapper).contains { $0["kind"] as? String == "sourceWaitStarted" }), ContinuousClock.now < waitDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(try auditRows(wrapper).contains { $0["kind"] as? String == "sourceWaitStarted" })
+            if cancel { await f.owner.stop() }
+            else { await f.owner.joinOwnedMeasurement() }
+            let rows = try auditRows(wrapper)
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "allocated" }.compactMap { ($0["snapshot"] as? [String: Any])?["stage"] as? Int }, [1, 2])
+            XCTAssertFalse(rows.contains { $0["kind"] as? String == "candidateStarted" || $0["kind"] as? String == "sourceReady" })
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "sourceWaitTimedOut" }.count, cancel ? 0 : 1)
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "cleanupJoined" }.count, 1)
+            let terminal = try XCTUnwrap(rows.last { $0["kind"] as? String == "retired" }?["snapshot"] as? [String: Any])
+            XCTAssertLessThanOrEqual(try XCTUnwrap(Int(try XCTUnwrap(terminal["totalAcceptedPayloadBytes"] as? String))), 16 * 1024 * 1024)
+            XCTAssertLessThan(try XCTUnwrap(rows.last?["at"] as? Double) - XCTUnwrap(rows.first?["at"] as? Double), 9)
+            await f.owner.stop(); await wrapper.stop()
+        }
     }
     func testStaleDownwardAdviceCannotRevokeCurrentOwnedMeasurement() async throws {
         let f = try await CandidateQualityFixture.make()
@@ -673,18 +762,24 @@ private final class OwnedCandidateResult: @unchecked Sendable {
     func start() { lock.withLock { startedAt = ProcessInfo.processInfo.systemUptime } }
     func cancel(_ value: PublishingCandidateMeasurement.Reason) { lock.withLock { reason = value } }
     func result() async -> PublishingCandidateMeasurement.Result {
-        try? await Task.sleep(for: .seconds(2.8))
-        let (start, reason) = lock.withLock { (startedAt, self.reason) }
+        let start = lock.withLock { startedAt }
+        var collectedAt: [Double] = []
+        for index in 0...120 {
+            let remaining = start + Double(index) / 30 - ProcessInfo.processInfo.systemUptime
+            if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+            collectedAt.append(ProcessInfo.processInfo.systemUptime)
+        }
+        let reason = lock.withLock { self.reason }
         return ownedCandidateResult(id: id, scope: scope, start: start, end: ProcessInfo.processInfo.systemUptime,
-            generation: generation, profile: profile, reason: reason)
+            generation: generation, profile: profile, collectedAt: collectedAt, reason: reason)
     }
 }
 private func ownedCandidateResult(id: UUID, scope: VideoFrameObservationScope, start: Double, end: Double,
-                           generation: UInt64 = 7, profile: PublishingVideoProfile = .low360, reason: PublishingCandidateMeasurement.Reason = .completed) -> PublishingCandidateMeasurement.Result {
+                           generation: UInt64 = 7, profile: PublishingVideoProfile = .low360, collectedAt: [Double], reason: PublishingCandidateMeasurement.Reason = .completed) -> PublishingCandidateMeasurement.Result {
     let session = UUID()
     let frames: [VideoCandidateEncoder.Frame] = (0...120).map { index in
         let pts = CMTime(value: Int64(index), timescale: 30)
-        let at = start + Double(index) / 120 * 2.7
+        let at = collectedAt[index]
         return .init(sourcePTS: pts, outputPTS: pts, encoderSessionID: session,
             admittedAt: at, rawByteCount: 16384, submittedAt: at, completedAt: at, dequeuedAt: at,
             byteCount: 1000, width: Int32(profile.width), height: Int32(profile.height), isSync: index == 0)
