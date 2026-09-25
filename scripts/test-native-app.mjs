@@ -1,4 +1,6 @@
 import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
+import { capacityClockFiles } from './capacity-clock-files.mjs';
+import { collectCapacityClockExchanges } from './capacity-clock-schedule.mjs';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
 import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
@@ -277,6 +279,7 @@ await writeFile(
       deliveryProfile,
       measuredRecovery,
       repeatedRecovery,
+      capacityRecovery,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -296,7 +299,7 @@ let measuredFileAudioQualification;
 let simulator;
 let liveContainer;
 const execute = promisify(execFile);
-async function readLiveQualityCheckpoint(signal) {
+async function ownedLiveContainer(signal) {
   assert(simulator, 'Owned simulator is not created');
   signal.throwIfAborted();
   if (!liveContainer) {
@@ -308,11 +311,24 @@ async function readLiveQualityCheckpoint(signal) {
     liveContainer = stdout.trim();
     assert(isAbsolute(liveContainer), 'Invalid owned app container');
   }
+  signal.throwIfAborted();
+  return liveContainer;
+}
+async function readLiveQualityCheckpoint(signal) {
+  const container = await ownedLiveContainer(signal);
   const value = await readRepeatedCheckpoint(
-    join(liveContainer, 'Library/Application Support/Scorebug/QA/quality-control-live.json'),
+    join(container, 'Library/Application Support/Scorebug/QA/quality-control-live.json'),
   );
   signal.throwIfAborted();
   return value;
+}
+async function collectOwnedCapacityClock({ scope, snapshot, signal }) {
+  const container = await ownedLiveContainer(signal);
+  const files = await capacityClockFiles(
+    join(container, 'Library/Application Support/Scorebug/QA'),
+  );
+  signal.throwIfAborted();
+  return collectCapacityClockExchanges({ scope, snapshot, signal, ...files });
 }
 let api;
 let proxy;
@@ -774,6 +790,8 @@ try {
       measuredTrial,
       measuredRecovery,
       repeatedRecovery,
+      capacityRecovery,
+      collectCapacityClock: capacityRecovery ? collectOwnedCapacityClock : undefined,
       readQualityCheckpoint: repeatedRecovery ? readLiveQualityCheckpoint : undefined,
       decoderStall,
       deadlineResets,
@@ -853,6 +871,7 @@ try {
     `SCOREBUG_TEST_CANDIDATE_PROFILE=${candidateProfile ?? ''}`,
     `SCOREBUG_TEST_CANDIDATE_HEADROOM=${candidateHeadroom ? '1' : ''}`,
     `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
+    `SCOREBUG_TEST_CAPACITY_RECOVERY=${capacityRecovery ? '1' : ''}`,
     `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
     `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
     `SCOREBUG_TEST_PROBE_POLICY=${probePolicy === 'recovery-budget-v1' ? probePolicy : ''}`,
@@ -950,6 +969,13 @@ try {
       if (error?.code !== 'ENOENT')
         console.warn('Candidate wait diagnostic could not be collected');
     }
+  }
+  if (capacityRecovery) {
+    const name = 'capacity-clock.json';
+    const path = join(container, 'Library/Application Support/Scorebug/QA', name);
+    const info = await lstat(path);
+    assert(info.isFile() && info.size <= 16384, 'Missing bounded native capacity clock audit');
+    await cp(path, join(artifact, name), { errorOnExist: true, force: false });
   }
   const source = join(container, 'Library/Application Support/Scorebug/Recordings');
   const saved = join(artifact, 'recordings');
@@ -1568,6 +1594,7 @@ try {
         deliveryProfile,
         measuredRecovery,
         repeatedRecovery,
+        capacityRecovery,
         measuredTrialQualification,
         measuredRecoveryQualification,
         repeatedRecoveryQualification,

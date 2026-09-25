@@ -165,3 +165,57 @@ propagate explicit capacity audit modes through full raw native and prefix repla
 compose timing with transport, controller, archive/live and audio evidence. Keep the
 harness denial until that complete causal route is connected. Fresh measured re-ramp
 and true outage remain separate open gates.
+
+
+## Native harness wiring and capacity replay checkpoint
+
+The host now forwards `SCOREBUG_TEST_CAPACITY_RECOVERY` through the generated
+Xcode test environment and the UI test's app launch settings. The UI test separately
+requires the file route, capacity550k, recovery-budget policy and exactly 180s. The
+native worker fixture validates the exclusive capacity configuration before resources,
+creates the independently timed capacity UDP proxy, and starts clock collection only
+from a freshly authenticated relay publication record. The publication collector now
+returns a detached copy of that current public record; a disconnected/cached owner
+cannot start collection. No private relay query or credential enters the clock scope.
+
+The host resolves the owned simulator's existing data container, passes its QA directory
+to the file adapter and saves the four raw exchanges. The collector uses the existing
+owned fault task: shutdown aborts and awaits it, propagates failure, and rejects a route
+whose clock collection never started. The closed native clock artifact is copied with
+its 16KiB/non-regular-file bound. These paths remain behind the existing pre-resource
+harness denial until the full causal qualifier is connected.
+
+The shared raw native evidence helper now accepts `capacityRecovery: true` only with
+`recovery: true` and `recovery-budget-v1`. It forwards both capacity envelope modes
+through original cadence/deadline reconstruction, media, native lifecycle and admission
+checks. Confirmed-prefix policy replay separately requires explicit capacity cadence
+mode and recovery-budget policy. It retains full raw history, all pressure/continuity
+checks and the exact confirmation boundary; no suffix or recovery success is implied.
+Tests use existing recorded media with synthetic policy/envelope metadata, not a fresh
+capacity network experiment. Legacy/default and repeated routes remain separate.
+
+All 4,172 tooling tests pass (`repeated-live-checkpoint-capacity-harness-tools.log`),
+including 117 focused raw/prefix tests and fresh-publication ownership tests. The
+arm64 iOS simulator UI test target builds successfully with Xcode 26.2
+(`repeated-live-checkpoint-capacity-harness-ios-build.log`), without booting, creating
+or reinstalling a simulator. The resource-entry test deliberately throws before Docker
+image inspection; it proves route selection and early rejection, not real worker startup.
+
+Remaining before removing the denial: compose independently replayed transport and
+closed clock evidence with confirmed 360p before the limit, the actual owned downward
+pressure/deadline action after it, and stable 240p delivery after restoration. Update the
+harness's route-specific qualification and saved result fields, preserving archive/live
+full decoding, scoring and phase audio checks. Native capacity reduction may have a
+transport-pressure trigger rather than the existing decoder-pause trigger; do not forge
+an owned decoder pause or reuse its proof as evidence of a network fault. Then run the
+frozen real-match workflow. A later fresh candidate campaign/re-ramp and true outage
+remain open and must not be credited by this three-phase experiment.
+
+Review found a false-positive risk in the incompatible-option tests: their shared
+recorder prerequisite was missing. Each now starts from the valid environment.
+Removing only the worker-output-profile exclusion makes its targeted test fail at
+resource entry, as intended; the exclusion was restored. The mutation failure is
+preserved in `repeated-live-checkpoint-capacity-worker-guard-mutation-red.log`.
+No further implementation findings were reported.
+The corrected complete tooling suite again passes all 4,172 tests
+(`repeated-live-checkpoint-capacity-harness-reviewed-tools.log`).

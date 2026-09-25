@@ -49,6 +49,13 @@ final class NativeStreamingTests: XCTestCase {
         }
         let uplinkPort = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] ?? ""
         let uplinkProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""
+        let capacityRecovery = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? ""
+        if !capacityRecovery.isEmpty || uplinkProfile == "capacity550k" {
+            XCTAssertEqual(capacityRecovery, "1"); XCTAssertEqual(uplinkProfile, "capacity550k")
+            XCTAssertEqual(fileFlag, "1"); XCTAssertEqual(holdSeconds, 180)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROBE_POLICY"], "recovery-budget-v1")
+            app.launchEnvironment["SCOREBUG_TEST_CAPACITY_RECOVERY"] = capacityRecovery
+        }
         if !uplinkProfile.isEmpty { XCTAssertFalse(uplinkPort.isEmpty) }
         if !uplinkPort.isEmpty {
             XCTAssertTrue(transitions.isEmpty)
@@ -57,7 +64,7 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertTrue(qualityFlag == "1" || ["540p30", "360p30", "240p30"].contains(liveProfile))
             if fileFlag == "1" {
                 XCTAssertTrue(motionFlag.isEmpty)
-                XCTAssertTrue(["passthrough", "loss0p2-delay30"].contains(uplinkProfile))
+                XCTAssertTrue((capacityRecovery == "1" ? ["capacity550k"] : ["passthrough", "loss0p2-delay30"]).contains(uplinkProfile))
                 XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_MEASURED_TRIAL"], "1")
                 XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_BANDWIDTH_PROBE"], "staged")
                 app.launchEnvironment["SCOREBUG_TEST_UPLINK_PROFILE"] = uplinkProfile
@@ -155,7 +162,7 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(probe, "staged")
             XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(candidate, "360p30")
             XCTAssertEqual(liveProfile, "240p30"); XCTAssertEqual(deliveryDeadline, "1500")
-            XCTAssertTrue(["passthrough", "loss0p2-delay30"].contains(uplinkProfile))
+            XCTAssertTrue((capacityRecovery == "1" ? ["capacity550k"] : ["passthrough", "loss0p2-delay30"]).contains(uplinkProfile))
             XCTAssertFalse(uplinkPort.isEmpty)
             app.launchEnvironment["SCOREBUG_TEST_PROBE_POLICY"] = probePolicy
         }

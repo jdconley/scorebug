@@ -81,6 +81,22 @@ const native = {
 function record(evidence, s = status(), l = listing()) {
   recordWorkerPublicationEvidence(evidence, s, l, scope, secret);
 }
+test('collector returns only a fresh authenticated public record, never a cached disconnected owner', () => {
+  const evidence = new Map();
+  const fresh = recordWorkerPublicationEvidence(evidence, status(), listing(), scope, secret);
+  assert.equal(fresh?.recordingId, 'archive');
+  assert.equal(fresh.publication.publishingAttemptId, attempt);
+  const before = structuredClone([...evidence.values()]);
+  fresh.publication.publishingAttemptId = readerId;
+  fresh.completedWindows.push(999);
+  assert.deepEqual([...evidence.values()], before);
+  const absent = { pageCount: 0, itemCount: 0, items: [] };
+  assert.equal(
+    recordWorkerPublicationEvidence(evidence, status(), absent, scope, secret),
+    undefined,
+  );
+  assert.deepEqual([...evidence.values()], before);
+});
 test('requires actual private reader/source/origin and native scope while retaining only public fields', () => {
   const evidence = new Map();
   record(evidence);

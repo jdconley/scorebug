@@ -515,6 +515,47 @@ function recoveryBudgetPrefixInput(base = recoveryContext()) {
   base.lifecycleQualification.probePolicy = base.transportPolicy;
   return base;
 }
+function capacityPrefixInput() {
+  const f = recoveryBudgetPrefixInput();
+  f.cadenceAuditMode = 'capacity';
+  Object.assign(f.cadenceReports, {
+    formatVersion: 2,
+    mode: 'capacity',
+    maximumRows: 3072,
+    maximumBytes: 16777216,
+  });
+  return f;
+}
+test('capacity confirmed prefix explicitly selects its envelope without crediting the reset suffix', () => {
+  const f = capacityPrefixInput(),
+    before = structuredClone(f);
+  const result = qualifyMeasuredTrialConfirmedPrefix(f);
+  assert.equal(result.confirmed, 1);
+  assert.equal(result.upgradeAuthorized, false);
+  assert.equal(result.proofExtent, 'confirmed-prefix');
+  assert(result.nextEventIndex < result.rawEventCount);
+  assert.deepEqual(f, before);
+  assert.throws(() => qualifyMeasuredTrialPolicy(f));
+});
+for (const [name, mutate] of Object.entries({
+  'implicit mode': (f) => delete f.cadenceAuditMode,
+  'wrong mode': (f) => (f.cadenceAuditMode = 'repeated'),
+  'wrong policy': (f) => (f.transportPolicy = 'sender-delay-v1'),
+  'wrong envelope': (f) => (f.cadenceReports.mode = 'repeated'),
+  overflow: (f) => (f.cadenceReports.overflow = true),
+  invalid: (f) => (f.cadenceReports.invalid = true),
+  'missing confirmation': (f) => {
+    for (const e of f.quality.events)
+      if (e.reasons) e.reasons = e.reasons.filter((r) => r !== 'trialConfirmed');
+  },
+  'stalled prefix': (f) => (intermediateCadence(f).observedStall = true),
+  'thermal pressure': (f) => probation(f)[0].evidence.thermal.samples.forEach((s) => (s.state = 2)),
+}))
+  test(`capacity prefix rejects ${name}`, () => {
+    const f = capacityPrefixInput();
+    mutate(f);
+    assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(f));
+  });
 for (const suffix of [false, true])
   test(`recovery-budget prefix preserves exact confirmation with later suffix=${suffix}`, () => {
     const f = recoveryBudgetPrefixInput(suffix ? recoveryContext() : fixture());

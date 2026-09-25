@@ -112,7 +112,9 @@ export function recordWorkerPublicationEvidence(evidence, status, listing, scope
       completedWindows.push(window.sequence);
     }
   }
-  evidence.set(key, { ...record, completedWindows });
+  const observed = { ...record, completedWindows };
+  evidence.set(key, observed);
+  return structuredClone(observed);
 }
 
 export function qualifyWorkerPublicationEvidence(records, nativeScope) {

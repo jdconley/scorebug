@@ -1,4 +1,6 @@
 import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
+import { measuredCapacityUplinkConfiguration } from './measured-capacity-uplink.mjs';
+import { capacityClockScope } from './capacity-clock-brackets.mjs';
 import { nativeRelayImageTag } from './native-relay-image.mjs';
 import { fixtureWorkerReportInterval } from './native-streaming-options.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
@@ -44,6 +46,8 @@ export async function nativeStreamingFixture({
   measuredTrial = false,
   measuredRecovery = false,
   repeatedRecovery = false,
+  capacityRecovery = false,
+  collectCapacityClock,
   readQualityCheckpoint,
   cadenceReports = false,
   decoderStall = false,
@@ -52,6 +56,34 @@ export async function nativeStreamingFixture({
   publishPeerLatencyMs,
   publishPacing,
 }) {
+  assert.equal(typeof capacityRecovery, 'boolean');
+  if (capacityRecovery) {
+    assert(
+      uplinkProfile === 'capacity550k' &&
+        measuredTrial &&
+        requirePublication &&
+        requireReceiverProbe &&
+        stagedReceiverProbe &&
+        candidateHeadroom &&
+        liveProfile === '240p30' &&
+        workerOutputProfile === '360p30' &&
+        publishPeerLatencyMs === 400 &&
+        typeof collectCapacityClock === 'function' &&
+        !measuredRecovery &&
+        !repeatedRecovery &&
+        !decoderStall &&
+        !deadlineResets &&
+        !cadenceReports &&
+        publishPacing === undefined &&
+        process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
+      'Capacity worker requires its complete exclusive route and owned clock collector',
+    );
+  } else {
+    assert(
+      uplinkProfile !== 'capacity550k' && collectCapacityClock === undefined,
+      'Capacity proxy and collector require explicit capacity recovery',
+    );
+  }
   assert.equal(typeof repeatedRecovery, 'boolean');
   assert.ok(
     !repeatedRecovery || (measuredRecovery && typeof readQualityCheckpoint === 'function'),
@@ -86,7 +118,13 @@ export async function nativeStreamingFixture({
   assert.ok([64, 128].includes(decodedWindowLimit), 'Unsupported decoder evidence bound');
   assert.ok(
     uplinkProfile === null ||
-      ['passthrough', 'rate4m', 'rate3m', 'loss0p2-delay30'].includes(uplinkProfile),
+      [
+        'passthrough',
+        'rate4m',
+        'rate3m',
+        'loss0p2-delay30',
+        ...(capacityRecovery ? ['capacity550k'] : []),
+      ].includes(uplinkProfile),
     'Unsupported uplink profile',
   );
   if (uplinkProfile === 'loss0p2-delay30')
@@ -127,7 +165,8 @@ export async function nativeStreamingFixture({
     statusAbort?.abort();
     await statusTask;
     await faultTask;
-    if (faultError) throw new Error('Owned decoder stall failed', { cause: faultError });
+    if (faultError) throw new Error('Owned fault collection failed', { cause: faultError });
+    if (capacityRecovery) assert(faultTask, 'Capacity clock collection never started');
   }
   async function saveStatus() {
     await saveNativeStatusEvidence({
@@ -279,6 +318,7 @@ export async function nativeStreamingFixture({
         forward: { recordTimeline: true },
         reverse: { recordTimeline: true },
         ...(uplinkProfile === 'loss0p2-delay30' ? measuredUplinkConfiguration(uplinkProfile) : {}),
+        ...(capacityRecovery ? measuredCapacityUplinkConfiguration(uplinkProfile) : {}),
         ...(['rate4m', 'rate3m'].includes(uplinkProfile)
           ? {
               forwardRateSchedule: [
@@ -506,8 +546,8 @@ export async function nativeStreamingFixture({
                   },
                   scoringTestToken,
                 );
-                if (requirePublication)
-                  recordWorkerPublicationEvidence(
+                if (requirePublication) {
+                  const publicationRecord = recordWorkerPublicationEvidence(
                     workerPublications,
                     status,
                     listing,
@@ -518,6 +558,36 @@ export async function nativeStreamingFixture({
                     },
                     scoringTestToken,
                   );
+                  // This record exists only after the current private relay inventory
+                  // authenticates the selected recording, reader and publication.
+                  if (
+                    capacityRecovery &&
+                    !faultTask &&
+                    publicationRecord &&
+                    status.state === 'producing_output'
+                  ) {
+                    const scope = capacityClockScope({
+                      recordingID: publicationRecord.recordingId,
+                      matchID: publicationRecord.gameId,
+                      broadcastGeneration: publicationRecord.generation,
+                      publishingAttemptID: publicationRecord.publication.publishingAttemptId,
+                      appliedProfileRevision: '1',
+                    });
+                    faultTask = (async () => {
+                      const result = await collectCapacityClock({
+                        scope,
+                        snapshot: uplink.snapshot,
+                        signal: statusAbort.signal,
+                      });
+                      await writeFile(
+                        join(artifact, 'capacity-clock-exchanges.json'),
+                        JSON.stringify(result, null, 2),
+                      );
+                    })().catch((error) => {
+                      faultError = error;
+                    });
+                  }
+                }
               }
             }
             await delay(500, undefined, { signal: statusAbort.signal });

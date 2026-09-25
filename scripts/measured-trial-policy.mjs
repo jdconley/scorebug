@@ -26,7 +26,7 @@ function receipt(r) {
  * it grants no health duration from cadence reports. The 500-ms gap ceiling is
  * the existing native cadence audit completeness budget, not probation credit.
  */
-function requireUninterruptedCadence(reports, sourceEvents, scope) {
+function requireUninterruptedCadence(reports, sourceEvents, scope, cadenceAuditMode) {
   const first = sourceEvents[0],
     last = sourceEvents.at(-1);
   assert(first && last, 'Missing source decisions');
@@ -36,6 +36,7 @@ function requireUninterruptedCadence(reports, sourceEvents, scope) {
     end: last.evaluatedAt,
     source: first.source,
     scope,
+    cadenceAuditMode,
   });
 }
 /** Validate an explicit native-time interval, without awarding health duration.
@@ -225,6 +226,7 @@ function replayMeasuredTrialPolicy(
     candidateWitnessQualification,
     cadenceReports,
     transportPolicy = 'sender-delay-v1',
+    cadenceAuditMode = 'legacy',
   },
   confirmedPrefix = false,
 ) {
@@ -233,6 +235,11 @@ function replayMeasuredTrialPolicy(
     'Unknown measured transport policy',
   );
   const recoveryPolicy = transportPolicy === 'recovery-budget-v1';
+  assert(
+    cadenceAuditMode === 'legacy' ||
+      (cadenceAuditMode === 'capacity' && confirmedPrefix && recoveryPolicy),
+    'Capacity cadence requires explicit recovery-budget confirmed-prefix replay',
+  );
   assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
   if (recoveryPolicy) {
     // Prefix mode replays the same pressure policy and all admission/probation
@@ -376,7 +383,7 @@ function replayMeasuredTrialPolicy(
     c.validUntil > c.evaluatedAt &&
       c.validUntil <= Math.min(c.measuredEnd + 2, c.evaluatedAt + 1.5),
   );
-  qualifyCadenceAuditEnvelope(cadenceReports);
+  qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode });
   const evaluatedRows = [];
   let appliedCount = 0,
     candidateCount = 0,
@@ -691,7 +698,7 @@ function replayMeasuredTrialPolicy(
       break;
     }
   }
-  requireUninterruptedCadence(cadenceReports.rows, evaluatedRows, snapshot.scope);
+  requireUninterruptedCadence(cadenceReports.rows, evaluatedRows, snapshot.scope, cadenceAuditMode);
   if (!confirmedPrefix) assert.equal(stop.kind, 'stopped');
   assert.equal(appliedCount, 1);
   assert.equal(candidateCount, 1);

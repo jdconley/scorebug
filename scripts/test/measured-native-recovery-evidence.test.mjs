@@ -29,6 +29,61 @@ const fixture = () => {
 const options = { recovery: true, probePolicy: 'recovery-budget-v1' };
 const qualify = (f) => qualifyMeasuredNativeEvidence(f, options);
 
+function capacityInput() {
+  const f = fixture();
+  Object.assign(f.cadenceReports, {
+    formatVersion: 2,
+    mode: 'capacity',
+    maximumRows: 3072,
+    maximumBytes: 16777216,
+  });
+  Object.assign(f.deliveryAudit, {
+    formatVersion: 2,
+    mode: 'capacity',
+    maximumRows: 512,
+    maximumBytes: 33554432,
+  });
+  return f;
+}
+test('explicit capacity replay retains full raw recovery checks with both bounded envelopes', () => {
+  const f = capacityInput(),
+    before = structuredClone(f);
+  const result = qualifyMeasuredNativeEvidence(f, { ...options, capacityRecovery: true });
+  assert.equal(result.profile.phases.length, 3);
+  assert.equal(result.nativeLifecycle.upgradeAuthorized, false);
+  assert.equal(Object.hasOwn(result, 'capacityRecoveryQualified'), false);
+  assert.deepEqual(f, before);
+  assert.throws(() => qualify(f));
+});
+test('capacity envelopes require paired explicit recovery and transport policy selection', () => {
+  for (const extra of [
+    {},
+    { capacityRecovery: false },
+    { capacityRecovery: 'true' },
+    { capacityRecovery: true, recovery: false },
+    { capacityRecovery: true, probePolicy: 'local-zero-loss-v1' },
+  ])
+    assert.throws(() => qualifyMeasuredNativeEvidence(capacityInput(), { ...options, ...extra }));
+});
+for (const [name, mutate] of Object.entries({
+  'legacy cadence': (f) => (f.cadenceReports = fixture().cadenceReports),
+  'legacy delivery': (f) => (f.deliveryAudit = fixture().deliveryAudit),
+  'repeated cadence': (f) => (f.cadenceReports.mode = 'repeated'),
+  'repeated delivery': (f) => (f.deliveryAudit.mode = 'repeated'),
+  overflow: (f) => (f.deliveryAudit.overflow = true),
+  'invalid cadence': (f) => (f.cadenceReports.invalid = true),
+  'wrong row bound': (f) => f.cadenceReports.maximumRows++,
+  'missing media': (f) => (f.liveIDs = []),
+  'changed historical reset': (f) =>
+    (f.lifecycle.profileRequests[1].terminalProbeRead.observation.id =
+      f.lifecycle.profileRequests[1].requestID),
+}))
+  test(`capacity raw replay rejects ${name}`, () => {
+    const f = capacityInput();
+    mutate(f);
+    assert.throws(() => qualifyMeasuredNativeEvidence(f, { ...options, capacityRecovery: true }));
+  });
+
 test('recovery raw evidence joins three phases without granting route or recovery success', () => {
   const f = fixture(),
     before = structuredClone(f),

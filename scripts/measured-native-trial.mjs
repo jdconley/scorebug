@@ -119,7 +119,7 @@ export function qualifyMeasuredNativeMedia(
  */
 export function qualifyMeasuredNativeEvidence(
   input,
-  { recovery = false, probePolicy = 'local-zero-loss-v1' } = {},
+  { recovery = false, probePolicy = 'local-zero-loss-v1', capacityRecovery = false } = {},
 ) {
   input = { ...input, quality: expandQualityEvidence(input.quality) };
   assert.ok(
@@ -127,6 +127,11 @@ export function qualifyMeasuredNativeEvidence(
     'Unknown measured probe policy',
   );
   assert.equal(typeof recovery, 'boolean');
+  assert.equal(typeof capacityRecovery, 'boolean');
+  assert(
+    !capacityRecovery || (recovery && probePolicy === 'recovery-budget-v1'),
+    'Capacity evidence requires explicit recovery and recovery-budget policy',
+  );
   const {
     snapshot,
     quality,
@@ -141,7 +146,15 @@ export function qualifyMeasuredNativeEvidence(
     liveIDs,
   } = input;
   const { video, clock, attempt, worker, source, processing, reportAge, cadence, delivery } =
-    qualifyMeasuredNativeMedia(input);
+    qualifyMeasuredNativeMedia(
+      input,
+      capacityRecovery
+        ? {
+            cadenceAuditMode: 'capacity',
+            deliveryAuditMode: 'capacity',
+          }
+        : {},
+    );
   const profile = qualifyNativeProfileTransitions(format, snapshot, liveIDs, {
     sequence: 'measured240',
     requireFrameEvidence: true,
