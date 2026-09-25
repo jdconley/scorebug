@@ -1,4 +1,5 @@
 import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
+import { nativeCapacityDiagnostics } from './capacity-diagnostics.mjs';
 import { capacityClockFiles } from './capacity-clock-files.mjs';
 import { collectCapacityClockExchanges } from './capacity-clock-schedule.mjs';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
@@ -133,7 +134,14 @@ const capacityRecovery = nativeCapacityRecovery({
 });
 // Do not let the new fault route fall through to a steady successful-trial verdict.
 // Remove this guard only when the complete causal native qualifier is connected.
-assert(!capacityRecovery, 'Capacity recovery causal qualification is not yet integrated');
+const capacityDiagnostics = nativeCapacityDiagnostics({
+  args: process.argv.slice(2),
+  capacityRecovery,
+});
+assert(
+  !capacityRecovery || capacityDiagnostics,
+  'Capacity recovery causal qualification is not yet integrated',
+);
 const fileFixture = nativeFileFixtureOptions({
   environment: process.env,
   streaming,
@@ -280,6 +288,7 @@ await writeFile(
       measuredRecovery,
       repeatedRecovery,
       capacityRecovery,
+      capacityDiagnostics,
       profileTransitions,
       profileTransitionSequence,
       adaptiveProfiles,
@@ -921,6 +930,17 @@ try {
   await run('xcodebuild', workflowArguments, 'workflow', {
     timeout: streamingBudget.workflowTimeoutMs,
   });
+  if (capacityDiagnostics) {
+    const result = await proxy.collectCapacityDiagnostics();
+    await writeFile(join(artifact, 'capacity-diagnostics.json'), JSON.stringify(result, null, 2), {
+      flag: 'wx',
+    });
+    // Deliberately non-passing: the catch/finally path preserves bounded native
+    // QA + recording data and joins all cleanup. No normal trial PASS is reachable.
+    throw new Error(
+      'Capacity diagnostics collected; adaptation, media and recovery are NOT qualified',
+    );
+  }
   // Xcode may shut its destination down after tests; boot the same owned device
   // to inspect the app container rather than rerunning or losing its recordings.
   const devices = JSON.parse(

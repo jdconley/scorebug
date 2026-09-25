@@ -1,6 +1,7 @@
 import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
 import { measuredCapacityUplinkConfiguration } from './measured-capacity-uplink.mjs';
 import { capacityClockScope } from './capacity-clock-brackets.mjs';
+import { collectCapacityDiagnostics } from './capacity-diagnostics.mjs';
 import { nativeRelayImageTag } from './native-relay-image.mjs';
 import { fixtureWorkerReportInterval } from './native-streaming-options.mjs';
 import { runOwnedDecoderStall } from './owned-decoder-stall.mjs';
@@ -635,6 +636,16 @@ export async function nativeStreamingFixture({
           ),
         );
         done = workerEvidence.closed;
+      },
+      async collectCapacityDiagnostics() {
+        assert(capacityRecovery && directRecorder, 'Diagnostics require the owned capacity route');
+        return collectCapacityDiagnostics({
+          stopStatus,
+          saveStatus,
+          stopWorker,
+          stopUplink,
+          finishRecorder: () => directRecorder.finish(),
+        });
       },
       async collect() {
         await stopStatus();

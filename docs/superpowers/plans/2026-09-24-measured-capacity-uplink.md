@@ -219,3 +219,23 @@ preserved in `repeated-live-checkpoint-capacity-worker-guard-mutation-red.log`.
 No further implementation findings were reported.
 The corrected complete tooling suite again passes all 4,172 tests
 (`repeated-live-checkpoint-capacity-harness-reviewed-tools.log`).
+
+
+## Diagnostic capture before causal qualification
+
+Refine the execution order to gather actual native fault behavior before completing
+its causal verifier. Add an explicit host-only `--capacity-diagnostics` flag, valid only
+with the complete existing capacity route. Ordinary capacity qualification remains
+blocked before resources. The diagnostic path runs the same UI/recording/publisher
+workflow, joins status, worker, UDP and recorder collection even when an earlier
+collector fails, and saves raw evidence plus explicit false qualification fields.
+It then deliberately exits nonzero through the existing bounded app-data preservation
+and cleanup path, before any steady-trial or recovery PASS branch. This is an experiment,
+not a relaxed acceptance gate. Do not label collected files or a successful UI workflow
+as successful adaptation, clean media or recovery without independent replay.
+
+Use the prepared real-match input unchanged, freeze all sources and input hashes,
+reuse installed iOS26.2, and preserve every failed clock/media/transport observation.
+The actual response will determine which native pressure/deadline trigger needs to be
+joined to the fault. This avoids designing the remaining proof around an assumed
+trigger or fabricating decoder-pause evidence.
