@@ -124,7 +124,7 @@ export function qualifyNaturalAudio({
 /** Sample every measured phase at its head/tail, plus a five-second source grid. */
 export function measuredAudioProbeFrames({ phases, codes }) {
   assert(
-    Array.isArray(phases) && [2, 3, 5].includes(phases.length),
+    Array.isArray(phases) && [2, 3, 4, 5].includes(phases.length),
     'Complete measured phases required',
   );
   assert(
