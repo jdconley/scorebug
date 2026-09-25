@@ -64,13 +64,22 @@ function range(first, last) {
 
 /** Offline fixture comparison, not a production loss estimator. All runtime
  * cadence uses the entire monotonic window, including startup and drain. */
-export function qualifyVideoObservation({
-  snapshot,
-  expectedScope,
-  archiveIDs,
-  liveIDs,
-  completedWindowLimit = 8,
-}) {
+export function qualifyVideoObservation(
+  { snapshot, expectedScope, archiveIDs, liveIDs, completedWindowLimit = 8 },
+  options = {},
+) {
+  assert.ok(
+    options !== null && typeof options === 'object' && !Array.isArray(options),
+    'Media options must be an object',
+  );
+  for (const key of Reflect.ownKeys(options))
+    assert.ok(key === 'mediaLossPolicy', `Unknown video observation option: ${String(key)}`);
+  const { mediaLossPolicy = 'lossless-v1' } = options;
+  assert.ok(
+    ['lossless-v1', 'accounted-bounded-v1'].includes(mediaLossPolicy),
+    'Unsupported media loss policy',
+  );
+  const boundedLoss = mediaLossPolicy === 'accounted-bounded-v1';
   assert.ok([8, 64, 128].includes(completedWindowLimit), 'Unsupported fixture history limit');
   assert.equal(snapshot.formatVersion, 1, 'Unsupported observation format');
   for (const key of ['recordingID', 'matchID', 'broadcastGeneration']) {
@@ -277,11 +286,12 @@ export function qualifyVideoObservation({
       let decodedCount = 0;
       for (let id = firstSourceFrame; id <= lastSourceFrame; id++)
         if (liveSet.has(id)) decodedCount++;
-      assert.equal(
-        decodedCount,
-        encoded.callbackCount,
-        'Aligned decoded live identities differ from local encoded count',
-      );
+      if (!boundedLoss)
+        assert.equal(
+          decodedCount,
+          encoded.callbackCount,
+          'Aligned decoded live identities differ from local encoded count',
+        );
       aligned.push({
         index,
         ...encoded.sourceRange,
@@ -307,6 +317,73 @@ export function qualifyVideoObservation({
       encoded.lastSourceFrame <= capture.lastSourceFrame,
     'Encoded bounds must belong to observed capture range',
   );
+  let lossConservation;
+  if (boundedLoss) {
+    liveIDs.forEach((id) =>
+      assert.ok(
+        id >= encoded.firstSourceFrame && id <= encoded.lastSourceFrame,
+        'Decoded live identity outside observed encoded range',
+      ),
+    );
+    // Only interior absences can be enumerated. Acquisition and tail remain
+    // explicitly uncompared; neither is evidence of zero loss.
+    const missingEncodedIDs = [];
+    for (let id = liveIDs[0]; id <= liveIDs.at(-1); id++)
+      if (!liveSet.has(id)) missingEncodedIDs.push(id);
+    const boundedWindows = [];
+    const accounted = { captureVideo: new Set(), encodedVideo: new Set() };
+    for (const window of windows) {
+      if (window.isPartial) continue;
+      for (const stage of ['captureVideo', 'encodedVideo']) {
+        const sourceRange = window[stage].sourceRange;
+        if (
+          !sourceRange ||
+          sourceRange.firstSourceFrame < liveIDs[0] ||
+          sourceRange.lastSourceFrame > liveIDs.at(-1)
+        )
+          continue;
+        const missingIDs = missingEncodedIDs.filter(
+          (id) => id >= sourceRange.firstSourceFrame && id <= sourceRange.lastSourceFrame,
+        );
+        const decodedCount = sourceRange.sourceFrames - missingIDs.length;
+        // Integer inequality avoids rounding the conservative one-percent cap.
+        assert.ok(
+          missingIDs.length * 100 <= sourceRange.sourceFrames,
+          `${stage} full window exceeds 1% decoded loss`,
+        );
+        const decodedFPS = decodedCount / window.durationSeconds;
+        assert.ok(decodedFPS >= 24, `${stage} decoded full window fell below 24 fps`);
+        missingIDs.forEach((id) => accounted[stage].add(id));
+        boundedWindows.push({
+          index: window.index,
+          stage,
+          phase: window.phase,
+          durationSeconds: window.durationSeconds,
+          ...sourceRange,
+          decodedCount,
+          decodedFPS,
+          missingIDs,
+          lossFraction: missingIDs.length / sourceRange.sourceFrames,
+        });
+      }
+    }
+    for (const id of missingEncodedIDs)
+      for (const stage of ['captureVideo', 'encodedVideo'])
+        assert.ok(
+          accounted[stage].has(id),
+          `Missing identity ${id} lacks a fully covered full ${stage} window`,
+        );
+    lossConservation = {
+      policy: mediaLossPolicy,
+      scope:
+        'Offline interior fixture identity conservation only; no fresh health, recovery or capacity credit.',
+      rawCountersReconciled: false,
+      healthyCreditSeconds: 0,
+      productionUpgradeAuthorized: false,
+      missingEncodedIDs,
+      windows: boundedWindows,
+    };
+  }
   return {
     formatVersion: 1,
     scope: snapshot.scope,
@@ -315,6 +392,7 @@ export function qualifyVideoObservation({
     captureDetachedAt,
     isClosed: true,
     totals,
+    ...(lossConservation ? { lossConservation } : {}),
     sourceRanges: observedRanges,
     stableCompletedWindowCount: stable,
     windows,

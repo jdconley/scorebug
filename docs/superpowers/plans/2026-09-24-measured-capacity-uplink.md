@@ -1074,3 +1074,112 @@ Read-only spec and lifecycle reviews found no actionable issues. The test's
 two-second response timeout proves independence from suspended network control;
 it does not establish the native experiment's250ms exchange limit. A frozen
 real-match repeat is required for that claim.
+
+
+## Frozen independent-clock native repeat
+
+`native-app-YAQo8F`, frozen at0c92d84 by
+`capacity750-qualified-freeze-np1p8cd3`, joined with exit1. All1,255 source/input
+hashes were unchanged. The temporary simulator was confirmed absent after owned
+cleanup; no runtime was installed. The UI workflow passed in300.267s.
+
+The clock repair holds in the real pipeline: all four exchanges completed in
+22.249,22.753,12.721 and12.563ms. Independent closed native audit/raw proxy replay
+passes both causal brackets. Native quality contains no freshness rejection. It
+applies360p at47.397s and240p at90.403s after bootstrap. Raw local-pressure replay
+passes separately: its window begins at1971503.352371, after the independently
+bounded limit upper time1971503.114408. This is a pressure/timing component result,
+not a complete media/controller recovery pass.
+
+The complete archive and live A/V files decode. Archive has7,481 consecutive IDs
+0–7,480. Live has7,023 IDs231–7,254, missing2877. Raw receiver source interval17
+has150 captured/encoded and149 decoded frames; worker processing submits and
+completes149 with no pending/omitted frames. The single worker's terminal decoded
+fresh count and output frame count are both7,023, equal to the recorded file.
+This localizes the discrepancy before worker decoding; it does not prove which
+transport component dropped the frame. The interval is a native transition and
+earns no healthy recovery credit. The direct recorder closes naturally with code0.
+
+The harness fails its unchanged congestion gate: maximum offered load788,352bps
+exceeds the750,000bps limit, but maximum constrained queue residence480.596ms is
+below500ms and there is no overflow. Independent media replay also rejects its
+preliminary exact encoded/live identity equality (149 vs150), before later raw
+source conservation checks. Historical strict replay and all existing failures
+remain unchanged. Do not rerun an unchanged experiment or lower500ms just to
+obtain a passing result.
+
+The raw replay is `diagnostic-native750-clock-repeat-replay.json`, reproduced by
+`artifacts/qa/replay-capacity750-clock-repeat.mjs`; the concise transport/media
+assessment with11 immutable raw-file hashes is `clock-repeat-assessment.json`,
+reproduced by `artifacts/qa/assess-capacity750-YAQo8F.mjs`. Both reports live under
+the native run directory. Only the independent clock qualification is true;
+complete native/media/recovery/fresh-ramp/production flags remain false.
+
+### Next proof design
+
+- Preserve the existing exact-lossless media contract by default. Define an
+  explicitly selected controlled-capacity contract that reconciles every missing
+  live identity against native encoded identities, receiver source intervals and
+  worker decoded/processing counts. Keep the complete local archive exact; never
+  permit duplicates, reordering, unexplained omissions or unknown source windows.
+  Verify the24fps floor for each applicable interval and retain stricter healthy
+  recovery/probation requirements. Transition/fault loss receives no healthy credit.
+- Evaluate a raw rate-limiting proof rather than substituting a lower unexplained
+  queue-residence threshold. Current delay evidence remains below its selected
+ 500ms gate. Any new explicit proof must establish actual token-budget pressure
+  and queued media from original observations, retain deterministic loss/byte
+  conservation/clock bounds, and reject mere host delay or an underloaded link.
+- SRT live delivery intentionally may discard unrecovered packets past their
+  playback deadline; this is documented in the official
+  [SRT API](https://github.com/Haivision/srt/blob/master/docs/API/API.md) and
+  [statistics reference](https://github.com/Haivision/srt/blob/master/docs/API/statistics.md).
+  A400ms latency setting and a laboratory demand for500ms queue residence can
+  therefore exercise loss as well as adaptation. This explains why loss must
+  be accounted for, not evidence that this particular frame was dropped by SRT.
+- No broader stale-evidence allowance is justified by this repeat. The earlier
+  aRYRfO gap still fails500ms cadence coverage; exact delivery-rejection replay
+  would require new receipt/evaluator audit joins. Keep that separate from the
+  measured one-frame loss here.
+
+
+## Bounded live-loss conservation checkpoint
+
+An explicit caller-selected `mediaLossPolicy: 'accounted-bounded-v1'` now exists
+in video observation and shared raw media replay. The lossless default and its
+output remain unchanged. The new component enumerates interior missing encoded
+identities and checks full capture, encoded and independently joined raw source
+intervals at a minimum 24 fps and maximum 1% loss. Partial or unaccounted loss,
+archive gaps, duplicate/reordered/foreign IDs and mismatched raw counters fail.
+Each affected source interval must have positive duration and independently
+matching, fully completed worker processing. Unknown option keys and values fail,
+including symbol or non-enumerable keys.
+
+The native runner, complete capacity policy and transport congestion gate do not
+select this option. It is an explicit offline media conservation component and
+grants zero healthy time, recovery permission or production authorization.
+
+Tests reproduced missing behavior before implementation. Review prompted checks
+for two losses split across observation windows but concentrated in one raw source
+interval, a raw interval below 24 fps, and zero duration. The final focused set
+passes 117 tests; the complete tooling suite passes 4,491 tests. The final process
+joined with exit 0, and diff validation is clean. Final spec and code-quality
+reviews found no outstanding issues. Logs are under
+`artifacts/qa/repeated-live-checkpoint-bounded-media-*`; final full verification
+is `bounded-media-tools-20260924-b`.
+
+Independent replay of unchanged YAQo8F artifacts passes this explicit raw-media
+component and continues to fail the original lossless check. It enumerates only
+ID 2877; raw source interval 17 has 150 encoded, 149 decoded and 149 independently
+completed frames over 5.000267458s: 29.798406 fps and 0.666667% loss. Both associated
+capture/encoded observation windows pass at 29.8 fps. All 2,232 settled cadence
+reports fit their original freshness budget, with a maximum usable gap of
+182.323ms. This does not extend delivery-deadline coverage to the missing frame.
+
+The report `diagnostic-native750-bounded-loss-replay.json` retains 20 unchanged raw
+file hashes and 147 replay-source hashes, reproduced by
+`artifacts/qa/replay-capacity750-bounded-loss.mjs`. Complete native capacity,
+media-file qualification, fresh re-ramp and production flags remain false; the
+original native run and the historical 500ms congestion gate remain failed.
+The reviewed [rate operation ledger plan](2026-09-25-capacity-rate-ledger.md) is the
+next implementation prerequisite. It requires complete token/FIFO replay and does
+not retrofit evidence into the existing run.

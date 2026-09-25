@@ -22,9 +22,38 @@ intentionally does not invent unverified Swift media method signatures. The medi
 compatibility experiment must establish those before detailed implementation of its
 adapters. No runtime code was changed while preparing this plan.
 
-## Current assessment — September 24
+## Current assessment — September 25
 
-The delayed 750kbps real-match experiment has now passed its separate transport,
+The native success route is connected, but the fresh end-to-end run remains
+**unqualified**. Two concrete scheduling fixes now pass 576 app-model tests:
+candidate measurement wakes when fresh health arrives, and lab clock replies run
+independently of network control polling. The frozen repeat `native-app-YAQo8F`
+measures and applies 360p, decreases to 240p, has no freshness rejections, and passes
+all four causal clock exchanges in 12.6–22.8 ms. Its UI workflow and both complete
+A/V decodes pass. The clean archive contains 7,481 consecutive frames.
+
+Two acceptance issues remain explicit: the proxy reaches 480.596 ms queue residence
+with no overflow, below the existing 500 ms congestion gate; the saved stream has
+one missing source frame (7,023 decoded frames, missing identity 2877). Raw receiver
+and worker-processing counts agree on that missing frame. The default media verifier still
+requires zero loss. A new explicit offline conservation check now reconciles this
+loss against the raw receiver and completed worker counts, at 29.8 fps and 0.667%
+loss in the affected interval. It keeps the clean archive strict and grants no
+healthy recovery credit. All 4,491 tooling tests pass. The next task is direct
+evidence that the rate cap bound traffic; complete capacity recovery and a fresh
+subsequent ramp-up remain unqualified.
+Physical camera, phone/Watch concurrency and remote proxy tests remain open.
+
+No simulator runtime was installed, only the experiment's temporary simulator was
+removed, and the frozen input/code hashes were unchanged. See the
+[latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#frozen-independent-clock-native-repeat).
+
+The proposed [direct rate-limit proof](2026-09-25-capacity-rate-ledger.md)
+keeps the historical congestion gate unchanged and specifies new evidence for a
+future explicit experiment. Bounded live-loss conservation is implemented and
+passes the saved-artifact replay; native success routes remain unchanged.
+
+Earlier saved evidence from `native-app-5UYvcA` passed its separate transport,
 confirmed-upgrade, native pressure-decrease, and media checks. The observed upload
 sequence is 240p → 360p → 240p. Confirmation precedes the actual bandwidth limit,
 and the independently reconstructed pressure window follows it. The worker remains
@@ -42,26 +71,10 @@ policy event, and at least ten seconds of shared source/delivery recovery after
 restoration. Checks reject missing terminal source decisions or delivery buckets;
 one final pending encoder interval earns no healthy credit.
 
-The native success route is connected, but the fresh end-to-end run remains
-**unqualified**. Its UI and full media decodes passed; it stayed at 240p because
-candidate polling missed a roughly 76ms fresh-health opportunity. With insufficient
-offered traffic it correctly failed the congestion gate. A notification-based
-measurement wake-up is implemented and all 574 app-model tests pass. Its fresh
-repeat now measures and applies 360p, then decreases to 240p. That run still fails
-qualification: the first causal clock exchange exceeded 250ms, and the raw health
-audit contains six freshness rejections. Its clean archive fully decoded with
-7,503 consecutive frame identities. The clock responder was waiting behind
-network control polling; its independent owned polling lifecycle now passes all
-576 app-model tests and review. The next native timing experiment is pending.
-Full capacity recovery and a fresh subsequent ramp-up remain unqualified.
 The original strict transport result remains failed on post-stop
 export silence; only an explicitly selected scheduled-window replay passes. A
 pre-trial stale-delivery rejection is retained as an invalidation with zero healthy
-credit. Physical camera, phone/Watch concurrency and remote proxy tests remain open.
-
-No simulator runtime was installed, only the experiment's temporary simulator was
-removed, and the frozen input/code hashes were unchanged. See the
-[latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#complete-capacity-policy-replay-checkpoint).
+credit.
 
 Earlier recorder and calibration checkpoints:
 

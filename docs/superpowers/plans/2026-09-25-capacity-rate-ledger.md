@@ -1,0 +1,115 @@
+# Direct evidence of an active upload rate limit
+
+> Use `superpowers:executing-plans`. This is a proposed bounded laboratory proof,
+> not an enabled route or replacement for historical acceptance criteria.
+
+## Problem and intended result
+
+The frozen `native-app-YAQo8F` experiment passed its causal clock exchange but
+failed the historical congestion stimulus criterion:480.596ms maximum queue
+residence, no overflow, versus the required500ms or overflow. A one-second input
+peak above750kbps cannot independently prove sustained rate pressure because the
+16KiB token burst may absorb it. Residence alone also cannot distinguish token
+waiting from delayed scheduling. Preserve that run's failed result.
+
+Record payload-free evidence at the actual queue branch that refuses a ready
+packet because it lacks tokens. Reconstruct the complete limited-phase token
+balance independently from actual forward times and wire-byte charges. A future
+explicit `rate-ledger-v1` proof would establish that the rate limit actually bound
+traffic, without claiming a particular queue-delay severity. The native policy
+must still separately prove confirmation before the fault, owned transport
+pressure after it, a decrease, complete media conservation and fresh recovery.
+
+## Reviewed audit contract
+
+Use a bounded phase operation log, not a forward-only witness. A forward-only
+ledger cannot independently establish FIFO head identity or reproduce all
+floating-point token updates.
+
+- Opt in explicitly at queue construction. Default queue snapshots, historical
+  fixtures and the current 500 ms/overflow qualification remain unchanged.
+- Header: format version, exact queue configuration, actual limit timestamp and
+  operation ordinal, received-packet counter, and complete bounded initial FIFO
+  metadata (identity, wire bytes, enqueue/ready times; no payload). Require that
+  the queue was constructed unlimited and had no previous finite-rate phase.
+  Only then are initial tokens exactly the configured 16 KiB burst. Returning
+  to unlimited does not replenish a previously depleted bucket.
+- Records: every existing `#advance()` call in the finite phase, with its original
+  timestamp; every receive and disposition with its monotonic received-packet
+  identity and wire bytes; every forwarded charge; and the first actual ready-head
+  token denial from `takeReady()`. Record empty/delay-only/`nextDelay()` advances
+  too: omitting floating-point refills prevents bit-exact reconstruction.
+- A denial is recorded only at the existing branch, with a nonempty FIFO and
+  `now >= enqueuedAt + configured delay`, when
+  `tokens + 1e-9 < head.wireBytes`. Predictions from `nextDelay()` are not denials.
+  One witness is sufficient; repeated denials need not add witness rows, but their
+  token advances still belong to the complete operation log.
+- Footer: actual restoration timestamp/ordinal, final FIFO metadata and counters,
+  record totals, and phase-closed/overflow/invalid flags. Close the audit at rate
+  restoration before subsequent unlimited forwarding. Equal timestamps are valid;
+  explicit operation ordinals and boundary markers establish order.
+- Fix row and byte limits before implementation; reserve header/footer capacity.
+  Exhaustion is sticky and disables only this proof. It must not affect forwarding
+  or substitute aggregate counters for missing records. Use existing timestamps,
+  avoid payload copying and per-event serialization, and deep-copy exported data.
+- Keep the growing operation log out of ordinary `snapshot()` calls used by
+  clock/status polling. Export it through an explicit final accessor and bounded
+  separate artifact; match its boundaries to the existing immutable phase
+  snapshots. Repeatedly cloning a large ledger during clock polling would itself
+  create measurement load. A compact per-public-operation row may combine its
+  one advance and outcome, provided replay still includes every original advance.
+- The recorder cannot sleep, alter tokens/FIFO/rate timers, extend latency, or
+  grant native quality authority. The final queue/socket shutdown remains joined
+  separately after phase closure.
+
+## Independent replay
+
+Reconstruct the FIFO and all token updates in recorded operation order. Start at
+burst tokens under the exact initial-history precondition. At every advance use
+the queue's actual expression:
+`tokens = min(burst, tokens + (now - previousTime) * rate / 8000)`.
+A forward requires the original tolerance predicate and performs
+`tokens = max(0, tokens - wireBytes)`. Replay every receive/drop/forward against
+its FIFO head, wire cost, readiness and queue capacity. Require that the recorded
+first denial is a real ready-head deficit under the reconstructed token balance.
+
+For every timeline bin, compare ledger dispositions with **restoration snapshot
+counters minus limit snapshot counters**, treating absent bins as zero. This
+includes partial first/last bins without mixing later unlimited traffic into the
+phase. Reconcile header/footer FIFO occupancy and cumulative counters as well.
+Reject omitted/extra/reversed operations, changed prefixes, foreign configuration,
+wrong packet identity/size, impossible head order, premature readiness, token
+arithmetic mismatch, and any missing phase closure or overflow/invalidity.
+
+Retain existing conservation, configured loss, final queue/pending-send closure,
+phase duration/rate ceilings, baseline/restored traffic and causal clocks. One
+valid denial establishes active rate limiting, not deep congestion, receiver loss
+or successful adaptation. Composed native acceptance retains its independent
+transport-pressure, media and recovery gates. Old artifacts have no operation log
+and cannot acquire this new qualification retroactively.
+
+## Test-first implementation sequence
+
+- [x] Review the proof shape and resolve initial history, FIFO ownership, complete
+  floating-point advances, same-time boundaries, partial bins and phase closure.
+- [ ] Set fixed row/byte budgets and prove overflow cannot affect queue behavior
+  before enabling the recorder.
+- [ ] Add queue observer tests: a finite cap with actual token denial; an underload
+  with no denial; a delayed host timer whose replenished bucket can forward;
+  delay-only waiting; packet drops; phase boundaries; immutable snapshots; caps;
+  unchanged queue behavior with and without observation.
+- [ ] Implement the bounded audit without enabling it in any native run.
+- [ ] Add independent replay tests with missing/extra/reordered charges, forged
+  denial, wrong ready time, incorrect wire accounting and incomplete terminal
+  evidence. Keep the historical500ms gate tests unchanged.
+- [ ] Review and run focused/full tooling checks. Then enable only an explicit
+  future laboratory selector and retain raw input/source hashes for a new run.
+- [ ] Compose actual token limiting with causal native pressure, bounded live-loss
+  conservation, strict clean recording and fresh recovery. No evidence can be
+  retroactively added to YAQo8F or substituted into its frozen failed result.
+
+Review additionally requires tests for an initially finite or previously depleted
+bucket, same-time boundary operations, denial followed immediately by restoration,
+initial backlog, forged/dropped head identity, tolerance-edge arithmetic, omitted
+empty or `nextDelay` advances, partial-bin mutation, and exhaustion just before
+closure. No recorder or new success route is implemented at this checkpoint.

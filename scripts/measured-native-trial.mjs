@@ -43,10 +43,21 @@ export const measuredTrialArtifacts = {
 /** Shared raw capture/receiver/worker/delivery replay for measured routes.
  * This grants no candidate, policy, recovery, or production permission. Each
  * route must still qualify its original media phases and admission timeline. */
-export function qualifyMeasuredNativeMedia(
-  input,
-  { cadenceAuditMode = 'legacy', deliveryAuditMode = 'legacy' } = {},
-) {
+export function qualifyMeasuredNativeMedia(input, options = {}) {
+  assert.ok(
+    options !== null && typeof options === 'object' && !Array.isArray(options),
+    'Media options must be an object',
+  );
+  for (const key of Reflect.ownKeys(options))
+    assert.ok(
+      ['cadenceAuditMode', 'deliveryAuditMode', 'mediaLossPolicy'].includes(key),
+      `Unknown measured media option: ${String(key)}`,
+    );
+  const {
+    cadenceAuditMode = 'legacy',
+    deliveryAuditMode = 'legacy',
+    mediaLossPolicy = 'lossless-v1',
+  } = options;
   const {
     snapshot,
     workerRecords,
@@ -60,13 +71,16 @@ export function qualifyMeasuredNativeMedia(
     expectedScope,
     completedWindowLimit,
   } = input;
-  const video = qualifyVideoObservation({
-    snapshot,
-    expectedScope,
-    archiveIDs,
-    liveIDs,
-    completedWindowLimit,
-  });
+  const video = qualifyVideoObservation(
+    {
+      snapshot,
+      expectedScope,
+      archiveIDs,
+      liveIDs,
+      completedWindowLimit,
+    },
+    { mediaLossPolicy },
+  );
   const clock = qualifyPublishingClockObservation({ snapshot, expectedScope: video.scope });
   const attempt = qualifyPublishingAttemptEvidence(attemptRecords, video.scope);
   const worker = qualifyWorkerPublicationEvidence(workerRecords, video.scope);
@@ -84,6 +98,59 @@ export function qualifyMeasuredNativeMedia(
     sourceIntervalQualification: source,
     processingEvidence,
   });
+  let mediaConservation;
+  if (video.lossConservation) {
+    const accountedSourceIntervals = [];
+    const accounted = new Set();
+    for (const interval of source.intervals) {
+      const missingIDs = video.lossConservation.missingEncodedIDs.filter(
+        (id) => id > interval.sourceStartExclusive && id <= interval.sourceEndInclusive,
+      );
+      assert.equal(
+        missingIDs.length,
+        interval.encodedNotDecodedFrames,
+        'Source loss differs from enumerated missing encoded identities',
+      );
+      const raw = snapshot.sourceIntervals.find(
+        (row) => Number(row.sequence) === interval.sequence,
+      );
+      const durationSeconds = raw.captureBoundaryEndTime - raw.captureBoundaryStartTime;
+      assert.ok(
+        missingIDs.length * 100 <= interval.encodedFrames,
+        'Raw source interval exceeds 1% decoded loss',
+      );
+      assert.ok(
+        durationSeconds > 0 && interval.decodedFrames / durationSeconds >= 24,
+        'Raw source interval fell below 24 fps',
+      );
+      if (!missingIDs.length) continue;
+      const complete = processing.completed.find((row) => row.sequence === interval.sequence);
+      assert.ok(complete, 'Missing identity lacks complete independent processing evidence');
+      assert.equal(complete.decodedFrames, interval.decodedFrames);
+      assert.equal(complete.completedFrames, interval.decodedFrames);
+      missingIDs.forEach((id) => accounted.add(id));
+      accountedSourceIntervals.push({
+        sequence: interval.sequence,
+        missingIDs,
+        encodedFrames: interval.encodedFrames,
+        decodedFrames: interval.decodedFrames,
+        completedFrames: complete.completedFrames,
+        durationSeconds,
+        decodedFPS: interval.decodedFrames / durationSeconds,
+        lossFraction: missingIDs.length / interval.encodedFrames,
+      });
+    }
+    for (const id of video.lossConservation.missingEncodedIDs)
+      assert.ok(
+        accounted.has(id),
+        `Missing identity ${id} lacks independently qualified raw source counters`,
+      );
+    mediaConservation = {
+      ...video.lossConservation,
+      rawCountersReconciled: true,
+      accountedSourceIntervals,
+    };
+  }
   const reportAge = qualifyWorkerReportAge({ snapshot, decodedEvidence });
   const cadence = qualifyNativeCadenceReports({
     audit: cadenceReports,
@@ -106,6 +173,7 @@ export function qualifyMeasuredNativeMedia(
     worker,
     source,
     processing,
+    ...(mediaConservation ? { mediaConservation } : {}),
     reportAge,
     cadence,
     delivery,

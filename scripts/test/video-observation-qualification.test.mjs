@@ -258,3 +258,84 @@ test('ten-minute observation history requires128 and preserves continuity and ev
   f.snapshot.completed.splice(70, 1);
   assert.throws(() => qualifyVideoObservation({ ...f, completedWindowLimit: 128 }), /contiguous/);
 });
+
+const boundedPolicy = 'accounted-bounded-v1';
+function boundedFixture() {
+  const f = fixture();
+  f.liveIDs = f.liveIDs.filter((id) => id !== 220);
+  return f;
+}
+test('explicit bounded conservation enumerates a single missing identity over full windows', () => {
+  const f = boundedFixture(),
+    before = structuredClone(f);
+  const result = qualifyVideoObservation(f, { mediaLossPolicy: boundedPolicy });
+  assert.deepEqual(result.lossConservation.missingEncodedIDs, [220]);
+  assert.equal(result.lossConservation.policy, boundedPolicy);
+  assert.equal(result.lossConservation.rawCountersReconciled, false);
+  const w = result.lossConservation.windows.find(
+    (w) => w.index === 1 && w.stage === 'encodedVideo',
+  );
+  assert.deepEqual(w.missingIDs, [220]);
+  assert.equal(w.decodedFPS, 149 / 5);
+  assert.equal(w.lossFraction, 1 / 150);
+  assert.deepEqual(f, before);
+  assert.throws(() => qualifyVideoObservation(f), /decoded/);
+});
+for (const [name, mutate, pattern] of [
+  ['excessive loss', (f) => f.liveIDs.splice(f.liveIDs.indexOf(221), 1), /1%/],
+  ['burst loss', (f) => f.liveIDs.splice(f.liveIDs.indexOf(222), 10), /1%/],
+  ['duplicate', (f) => f.liveIDs.splice(20, 0, f.liveIDs[20]), /Duplicate/],
+  ['reordering', (f) => f.liveIDs.splice(20, 2, f.liveIDs[21], f.liveIDs[20]), /reordered/],
+  ['foreign live ID', (f) => f.liveIDs.push(599), /encoded range/],
+  ['archive gap', (f) => f.archiveIDs.splice(30, 1), /archive/],
+  ['uncovered startup loss', (f) => f.liveIDs.splice(f.liveIDs.indexOf(130), 1), /fully covered/],
+  ['terminal loss', (f) => f.liveIDs.splice(f.liveIDs.indexOf(460), 1), /fully covered/],
+])
+  test(`bounded conservation rejects ${name}`, () => {
+    const f = boundedFixture();
+    mutate(f);
+    assert.throws(() => qualifyVideoObservation(f, { mediaLossPolicy: boundedPolicy }), pattern);
+  });
+test('bounded conservation includes full transition windows and their whole-window cadence', () => {
+  const f = boundedFixture();
+  // Retain two steady windows before a later capture detach transition.
+  f.snapshot.captureDetachedAt = 17;
+  f.snapshot.completed.push(window(15, 20, 450, 599));
+  f.snapshot.current = window(20, 22, 600, 629, true);
+  f.archiveIDs = ids(0, 749);
+  f.liveIDs = ids(120, 629).filter((id) => id !== 520);
+  const result = qualifyVideoObservation(f, { mediaLossPolicy: boundedPolicy });
+  assert.equal(result.windows[3].phase, 'captureDetachTransition');
+  assert.deepEqual(result.lossConservation.missingEncodedIDs, [520]);
+  f.liveIDs = f.liveIDs.filter((id) => id !== 521);
+  assert.throws(() => qualifyVideoObservation(f, { mediaLossPolicy: boundedPolicy }), /1%/);
+});
+test('bounded conservation never grants loss allowance to a slow full transition window', () => {
+  const f = boundedFixture();
+  f.snapshot.completed.push(window(15, 20, 450, 569));
+  f.snapshot.current = window(20, 22, 570, 599, true);
+  f.snapshot.captureDetachedAt = 17;
+  f.archiveIDs = ids(0, 749);
+  f.liveIDs = ids(120, 599).filter((id) => id !== 520);
+  assert.throws(() => qualifyVideoObservation(f, { mediaLossPolicy: boundedPolicy }), /24 fps/);
+});
+
+test('video conservation rejects unknown option keys and policy values', () => {
+  for (const options of [
+    { mediaLossPolicy: 'future' },
+    { mediaLossPolicy: null },
+    { allowLoss: true },
+  ])
+    assert.throws(() => qualifyVideoObservation(fixture(), options), /option|policy/i);
+});
+
+for (const [name, options] of [
+  ['array', []],
+  ['boolean', false],
+  ['string', 'lossless-v1'],
+  ['symbol key', { [Symbol('unknown')]: true }],
+  ['hidden key', Object.defineProperty({}, 'unknown', { value: true })],
+])
+  test(`media options reject ${name}`, () => {
+    assert.throws(() => qualifyVideoObservation(fixture(), options), /option/i);
+  });

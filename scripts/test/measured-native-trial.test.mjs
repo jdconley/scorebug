@@ -191,3 +191,138 @@ for (const startupPressurePolicy of ['ignore', null, false, 'minimum-before-sour
   test(`full trial rejects startup policy without recovery transport ${startupPressurePolicy}`, () => {
     assert.throws(() => module.qualifyMeasuredNativeTrial(fixture(), { startupPressurePolicy }));
   });
+
+function singleLossMediaFixture() {
+  // Synthetic loss variant of the saved successful trial; original raw fixture is unchanged.
+  const f = fixture(),
+    row = f.snapshot.sourceIntervals[2];
+  const id = (Number(row.sourceStartExclusive.value) - 7395) / 2 + 30;
+  f.liveIDs = f.liveIDs.filter((value) => value !== id);
+  row.decodedFrames--;
+  row.encodedNotDecodedFrames++;
+  for (const sample of f.decodedEvidence)
+    if (sample.completed.sequence === Number(row.sequence)) sample.completed.freshFrames--;
+  const decrement = (p) => {
+    for (const key of ['decodedFrames', 'submittedFrames', 'completedFrames']) p.interval[key]--;
+  };
+  decrement(row.processing);
+  for (const sample of f.processingEvidence)
+    if (sample.processing.sequence === Number(row.sequence)) decrement(sample.processing);
+  return { f, id, row };
+}
+const boundedMediaOptions = { mediaLossPolicy: 'accounted-bounded-v1' };
+test('shared raw media reconciles explicit bounded loss to actual IDs, raw source, receiver and completed processing', () => {
+  const { f, id, row } = singleLossMediaFixture(),
+    before = structuredClone(f);
+  const result = module.qualifyMeasuredNativeMedia(f, boundedMediaOptions);
+  assert.equal(result.mediaConservation.rawCountersReconciled, true);
+  assert.deepEqual(result.mediaConservation.missingEncodedIDs, [id]);
+  assert.deepEqual(result.mediaConservation.accountedSourceIntervals, [
+    {
+      sequence: Number(row.sequence),
+      missingIDs: [id],
+      encodedFrames: 150,
+      decodedFrames: 149,
+      completedFrames: 149,
+      durationSeconds: row.captureBoundaryEndTime - row.captureBoundaryStartTime,
+      decodedFPS: 149 / (row.captureBoundaryEndTime - row.captureBoundaryStartTime),
+      lossFraction: 1 / 150,
+    },
+  ]);
+  assert.equal(result.mediaConservation.productionUpgradeAuthorized, false);
+  assert.equal(result.mediaConservation.healthyCreditSeconds, 0);
+  assert.deepEqual(f, before);
+  assert.throws(() => module.qualifyMeasuredNativeMedia(f), /decoded/);
+});
+for (const [name, change] of Object.entries({
+  'unaccounted identity': (f) => f.snapshot.sourceIntervals.splice(2, 1),
+  'forged raw source count': (f) => f.snapshot.sourceIntervals[2].decodedFrames++,
+  'forged receiver count': (f) => {
+    for (const r of f.decodedEvidence) if (r.completed.sequence === 4) r.completed.freshFrames++;
+  },
+  'forged processing count': (f) =>
+    f.snapshot.sourceIntervals[2].processing.interval.decodedFrames++,
+  'missing processing': (f) => delete f.snapshot.sourceIntervals[2].processing,
+  'pending processing': (f) => {
+    const p = f.snapshot.sourceIntervals[2].processing.interval;
+    p.completedFrames--;
+    p.pendingFrames++;
+    p.processingDuration = null;
+  },
+  'missing independent processing': (f) =>
+    (f.processingEvidence = f.processingEvidence.filter((r) => r.processing.sequence !== 4)),
+}))
+  test(`shared bounded conservation rejects ${name}`, () => {
+    const { f } = singleLossMediaFixture();
+    change(f);
+    assert.throws(() => module.qualifyMeasuredNativeMedia(f, boundedMediaOptions));
+  });
+test('shared media rejects unknown policy values and option keys', () => {
+  for (const options of [
+    { mediaLossPolicy: 'future' },
+    { mediaLossPolicy: null },
+    { allowLoss: true },
+  ])
+    assert.throws(() => module.qualifyMeasuredNativeMedia(fixture(), options), /option|policy/i);
+});
+
+test('raw source intervals retain their own conservative loss cap across observation boundaries', () => {
+  const { f, id, row } = singleLossMediaFixture();
+  const end = (Number(row.sourceEndInclusive.value) - 7395) / 2;
+  // This source interval straddles two native observation windows. Keep one
+  // absence per native window but exceed one percent in the joined raw span.
+  const second = end - 1;
+  assert.notEqual(Math.floor(id / 150), Math.floor(second / 150));
+  // Shift this synthetic capture split five frames; encoded already splits at 892.
+  const left = f.snapshot.completed[4].captureVideo;
+  const right = f.snapshot.completed[5].captureVideo;
+  for (const key of ['lastSourcePTS', 'highWaterSourcePTS'])
+    left[key].value = String(7395 + 900 * 2);
+  right.firstSourcePTS.value = String(7395 + 901 * 2);
+  for (const key of ['callbackCount', 'advancingSourcePTSCount']) {
+    left[key] = '145';
+    right[key] = '155';
+  }
+  f.liveIDs = f.liveIDs.filter((value) => value !== second);
+  row.decodedFrames--;
+  row.encodedNotDecodedFrames++;
+  for (const sample of f.decodedEvidence)
+    if (sample.completed.sequence === Number(row.sequence)) sample.completed.freshFrames--;
+  for (const p of [
+    row.processing,
+    ...f.processingEvidence
+      .filter((s) => s.processing.sequence === Number(row.sequence))
+      .map((s) => s.processing),
+  ])
+    for (const key of ['decodedFrames', 'submittedFrames', 'completedFrames']) p.interval[key]--;
+  assert.throws(
+    () => module.qualifyMeasuredNativeMedia(f, boundedMediaOptions),
+    /source interval.*1%/i,
+  );
+});
+test('raw source conservation preserves whole measured capture-boundary duration', () => {
+  for (const duration of [0, 6.3]) {
+    const { f, row } = singleLossMediaFixture();
+    row.captureBoundaryStartTime = row.captureBoundaryEndTime - duration;
+    assert.throws(
+      () => module.qualifyMeasuredNativeMedia(f, boundedMediaOptions),
+      /source interval.*24 fps/i,
+    );
+  }
+});
+test('raw artifacts cannot select a permissive media policy', () => {
+  const { f } = singleLossMediaFixture();
+  f.mediaLossPolicy = 'accounted-bounded-v1';
+  assert.throws(() => module.qualifyMeasuredNativeMedia(f), /decoded/);
+});
+
+for (const [name, options] of [
+  ['array', []],
+  ['boolean', false],
+  ['string', 'lossless-v1'],
+  ['symbol key', { [Symbol('unknown')]: true }],
+  ['hidden key', Object.defineProperty({}, 'unknown', { value: true })],
+])
+  test(`media options reject ${name}`, () => {
+    assert.throws(() => module.qualifyMeasuredNativeMedia(fixture(), options), /option/i);
+  });
