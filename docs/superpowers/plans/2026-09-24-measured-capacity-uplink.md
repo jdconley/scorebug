@@ -113,3 +113,55 @@ The source binary and the copied build product have the same missing Intel symbo
 This is an unresolved Intel-simulator dependency limitation, not a deleted-runtime
 problem. No simulator/runtime was created or reinstalled for these checks, and no
 persistent architecture exclusion was added.
+
+
+## Host file exchange and scheduling contract
+
+Use an existing, explicitly supplied absolute app QA directory; never create or search
+for another app container. The host writes only its fixed request name using a private,
+exclusive temporary file and atomic rename, and reads only the fixed response name.
+Bound requests to4KiB and responses to16KiB; reject non-regular files, symlinks,
+malformed UTF-8/JSON and changing/oversized reads. Every descriptor and temporary
+file is joined/cleaned before returning, including errors. The sampler owns the
+250ms exchange deadline; exceeding it fails rather than detaching file work.
+
+Schedule the four challenges against the owned proxy's original start time, without
+changing its rate timers. Start each before challenge500ms before the requested
+change. Wait for the actual applied phase to appear before issuing the after challenge.
+Reject a late start, changed schedule/original phase times, cancellation, incomplete
+phase or a host bracket exceeding1.5s. Save the exact exchanges for the independent
+closed native audit/transport replay. Scheduling success alone grants no recovery
+qualification. Integration must derive the capture scope from owned native evidence
+and reconcile it with the final media artifacts.
+
+
+## Host clock adapter and scheduler checkpoint
+
+`capacity-clock-files.mjs` now supplies bounded, serialized real file I/O to the
+nonce sampler. Tests verify atomic replacement, private permissions, fixed paths,
+missing replies, malformed/oversized/non-regular/symlink replies, invalid UTF-8,
+request byte limits, failed-rename cleanup and rejection of overlapping operations.
+`capacity-clock-schedule.mjs` observes the independently running UDP proxy schedule,
+samples500ms before each due change, waits for its actual application, then collects
+the corresponding after sample. It pins the original schedule/origin and all observed
+phase timestamps; cancellation and all injected operations are joined. It never sets
+or delays a rate, renews a deadline or grants adaptation permission.
+
+All25 new focused tests and4,132 complete tooling tests pass
+(`repeated-live-checkpoint-capacity-clock-host-tools.log`). The synthetic schedule
+uses a different native clock epoch and its four replies pass the independent closed
+native audit bracket verifier. Actual file-I/O composition uses a JavaScript reply
+stand-in; it does not claim a Swift responder or native network experiment. Read-only
+review found no actionable issues. The initial missing-implementation red run had a
+test-only cancellation barrier that could wait forever; that exact process was stopped
+and joined, then the test gained an early-rejection race and a2s timeout. The corrected
+red run fails for the missing API and the green run completes normally. No simulator,
+runtime installation or physical device was involved.
+
+Next integration: derive the scope from the owned match/recording/publication, resolve
+its existing simulator QA directory once, invoke this collector from the native worker
+fixture and save its exact exchanges. Forward the capacity flag through Xcode/UITest,
+propagate explicit capacity audit modes through full raw native and prefix replay, and
+compose timing with transport, controller, archive/live and audio evidence. Keep the
+harness denial until that complete causal route is connected. Fresh measured re-ramp
+and true outage remain separate open gates.

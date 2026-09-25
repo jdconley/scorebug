@@ -27,10 +27,12 @@ adapters. No runtime code was changed while preparing this plan.
 The capacity experiment now has bounded host/native clock challenges and independent
 causal timing checks. Native diagnostics run through the existing control poll and
 close during joined publisher teardown; they leave recording ownership intact.
-All554 app-model and4,107 tooling tests pass. The original capture scope is revision1,
+The host file adapter and fault-clock scheduler now also pass their focused tests;
+all554 app-model and4,132 tooling tests pass at these checkpoints.
+The original capture scope is revision1,
 independent of the quality controller's revision0; both languages enforce that identity.
-The harness still stops the capacity route before resources until the host file adapter,
-fault scheduling and full causal media/controller qualification are connected.
+The harness still stops the capacity route before resources until these clock helpers,
+capacity audit modes and full causal media/controller qualification are connected.
 Neither native capacity recovery nor a fresh post-recovery ramp-up is qualified yet;
 see the [capacity recovery plan](2026-09-24-measured-capacity-uplink.md).
 
