@@ -7,11 +7,11 @@ This document tracks goals, current evidence, delivery tasks and acceptance gate
 ## Current assessment — September 25
 
 - The guarded SDK, publishing adapters, Core rejection settlement and PublishingSession changes are committed through `b65ca7f`; independent specification and quality reviews approve all four checkpoints.
-- Latest component evidence: **Core 487, SDK 346, Media 271, Streaming 245 and native app model 583 tests pass**. These counts do not establish a new full-media or physical-device pass.
+- Component baseline: **Core 487, SDK 346, Media 271 and Streaming 245 tests pass**. The latest native app-model suite passes **598 tests**, including guarded application ownership and deferred-stop reconciliation. These component results do not qualify production adaptation or the complete paired hardware route.
 - The latest adaptive full native laboratory run (`native-app-uG39s5`, `e0477be`) passes the three-phase 240p → 360p → 240p route, archive/live decode, score glyphs and phase/grid audio. It preserves 7,467 archive and 7,008 acquired live frames, with no gaps inside their recorded spans; all 325 delivery windows meet 30 fps.
 - A fresh automatic increase after restoration, the wider adaptive ladder, sustained real-camera operation, paired physical Watch scoring, outages and remote hosts remain unqualified. Production automatic increases remain gated; laboratory routes are explicit.
 - Native phone scoring, file-driven independent recording and local proxy/overlay/RTMP recording have working local evidence. Thirty-minute 1080p and 4K file-driven CPU-proxy replays passed; this does not qualify camera or thermal behavior.
-- Direct Watch scoring/relaunch has simulator evidence. Paired WatchConnectivity simulator setup still fails before scoring; physical testing is authorized now and can resolve the actual device path.
+- Physical Ultra 2 setup through WatchConnectivity, takeover, point, undo and match end passed. The concurrent phone test exposed a corrected status-text locator; the next paired attempt was blocked by Watch destination preparation. The complete paired three-output acceptance remains open. Direct Watch scoring/relaunch also has simulator evidence.
 - Current device observations and the selected Conley Chaos LLC signing team are in [NEXT](../../session-logs/NEXT.md). Historical evidence and failures remain in the [lossless legacy archive](../../session-logs/README.md#legacy-provenance).
 
 - The complete local three-output vertical now passes (`native-app-k1oNme`): clean app archive, mock RTMP destination MP4 and proxy overlay MP4, native score changes, full A/V decode and frame checks. Phone/Watch hardware acceptance remains open. See the [device runbook](../../device-testing.md).
@@ -59,6 +59,8 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 
 - [x] Pass the short physical iPhone route through clean archive, native scoring, proxy overlay and both MP4 outputs; retain the startup-profile, sync and sustained-operation limits in the current assessment.
 - [ ] Complete the authorized physical vertical and record all three artifacts: clean phone archive, mock-destination MP4 and configurable proxy final-overlay MP4.
+- [x] Add reviewed, opt-in guarded app application ownership; preserve publication on pre-effect rejection and join shutdown after partial profile application (`064e555`).
+- [x] Resolve the full-suite stop/control-poll ordering failure with a deterministic regression, then verify scoped stop before replacement publishing (`265aa0a`, 598 app-model tests pass).
 - [ ] Integrate owned measurement leases and joined probe cleanup in the app; enforce joined shutdown after partially applied profile-plus-bitrate changes.
 - [ ] Qualify the fresh four-phase automatic post-restoration increase with complete media/evidence checks; do not infer it from component suites or the passing three-phase run.
 

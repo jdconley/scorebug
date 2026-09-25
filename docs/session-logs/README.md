@@ -8,6 +8,7 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 progressive vertical continuation](2026-09-25-progressive-vertical-resume.md) — paired hardware retry and guarded app application ownership.
 - [September 25 three-output vertical](2026-09-25-three-output-vertical.md) — proxy recording, full native simulator route, device lab and physical installation.
 
 - [September 25 guarded SDK](2026-09-25-guarded-sdk.md) — imported checkpoint, `2aa6162`.

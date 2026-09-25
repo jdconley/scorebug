@@ -92,10 +92,14 @@ stale completion must not consume a newer token.
 - [x] Session safe pre-write mismatch preserves the broadcast and clears only
       its own timer/reservation; cancellation and uncertain effects retain joined
       shutdown behavior.
-- [ ] The broader app owner enforces joined shutdown after a partially completed
+- [x] The broader app owner enforces joined shutdown after a partially completed
       profile-plus-bitrate application.
 - [ ] Focused/full affected suites, SDK patch provenance, independent spec and
       quality review before wiring the owned Session transfer route.
+
+The opt-in app application owner is implemented and reviewed in `064e555`;
+see the [current session log](../../session-logs/2026-09-25-progressive-vertical-resume.md).
+Owned measurement transfer/settlement and production enablement remain open.
 
 The native SDK and publisher-adapter checkpoints below implement guarded mutation
 and explicit adapter propagation. Session handling is implemented below but awaits
