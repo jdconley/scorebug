@@ -24,6 +24,21 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The complete successful-trial verifier and explicit DEBUG recovery route are now
+wired. `SCOREBUG_TEST_PROBE_POLICY=recovery-budget-v1` selects native probe and
+transport-pressure policies together only for the complete staged file/network
+experiment. Lifecycle, raw native evidence and independent receiver/admission
+checks agree on policy; historical defaults reject the new evidence. Full
+app-model534 and tooling3850 checks pass, with two read-only reviews finding no
+issues. The next step is the frozen real-match90-second impaired run; no new network
+qualification or production adaptation pass is claimed yet. The
+[implementation checkpoint](2026-09-24-recovery-policy-app-integration.md) contains
+route selection, verification logs and remaining work. Installed iOS/watchOS
+runtimes are currently26.2 and27; earlier18/11 coverage is historical following the
+user's simulator cleanup. No runtimes were reinstalled.
+
+The following paragraphs preserve earlier checkpoint evidence and its limitations.
+
 Recovery-policy evidence is now joined across profile-change retirement, receiver
 revalidation, candidate headroom and frozen admission witnesses. Final candidate
 snapshots are pinned to the same probe identity and checked against native counters

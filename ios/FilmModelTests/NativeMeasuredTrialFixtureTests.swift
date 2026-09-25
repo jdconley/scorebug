@@ -9,6 +9,51 @@ final class NativeMeasuredTrialFixtureTests: XCTestCase {
         "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "90", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
     ] }
 
+
+    func testRecoveryPolicyRequiresCompleteStagedFileNetworkRoute() throws {
+        XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: [:]), .localZeroLoss)
+        XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: valid), .localZeroLoss)
+        for profile in ["passthrough", "loss0p2-delay30"] {
+            var environment = valid
+            environment.removeValue(forKey: "SCOREBUG_TEST_MOTION_FIXTURE")
+            environment["SCOREBUG_TEST_FILE_CAPTURE"] = "1"
+            environment["SCOREBUG_TEST_UPLINK_PROFILE"] = profile
+            environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"] = "12345"
+            environment["SCOREBUG_TEST_PROBE_POLICY"] = "recovery-budget-v1"
+            XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: environment), .recoveryBudget)
+            XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+            XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: environment), .low240)
+            for key in environment.keys where key != "SCOREBUG_TEST_PROBE_POLICY" {
+                var bad = environment; bad.removeValue(forKey: key)
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.probePolicy(environment: bad), key)
+                XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: bad), key)
+                XCTAssertThrowsError(try VideoObservationFixture.liveProfile(environment: bad), key)
+            }
+            for (key, values) in [
+                "SCOREBUG_TEST_PROBE_POLICY": ["1", "local-zero-loss-v1", "recovery-budget-v2", " recovery-budget-v1"],
+                "SCOREBUG_TEST_MEASURED_RECOVERY": ["decoder-stall", "repeated"],
+                "SCOREBUG_TEST_BANDWIDTH_PROBE": ["repeated", "renew"],
+                "SCOREBUG_TEST_MOTION_FIXTURE": ["blocks16"],
+                "SCOREBUG_TEST_UPLINK_PROXY_PORT": ["0", "012345", "65536"],
+                "SCOREBUG_TEST_ADAPTIVE_PROFILES": ["1"],
+                "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["89", "090", "601"]
+            ] {
+                for value in values {
+                    var bad = environment; bad[key] = value
+                    XCTAssertThrowsError(try NativeMeasuredTrialFixture.probePolicy(environment: bad), key)
+                    XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: bad), key)
+                    XCTAssertThrowsError(try VideoObservationFixture.liveProfile(environment: bad), key)
+                }
+            }
+            environment["SCOREBUG_TEST_PROBE_POLICY"] = ""
+            XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: environment), .localZeroLoss)
+        }
+        let partial = ["SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1"]
+        XCTAssertThrowsError(try NativeMeasuredTrialFixture.probePolicy(environment: partial))
+        XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: partial))
+        XCTAssertThrowsError(try VideoObservationFixture.liveProfile(environment: partial))
+    }
+
     func testMeasuredFileLinkRequiresCompleteProfileAndGeneratedPort() throws {
         for profile in ["passthrough", "loss0p2-delay30"] {
             var environment = valid

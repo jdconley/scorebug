@@ -148,6 +148,17 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(deliveryDeadline, "1500"); XCTAssertEqual(cadenceReports, "1")
             app.launchEnvironment["SCOREBUG_TEST_DEADLINE_RESETS"] = deadlineResets
         }
+        let probePolicy = ProcessInfo.processInfo.environment["SCOREBUG_TEST_PROBE_POLICY"] ?? ""
+        if !probePolicy.isEmpty {
+            XCTAssertEqual(probePolicy, "recovery-budget-v1")
+            XCTAssertEqual(fileFlag, "1"); XCTAssertTrue(motionFlag.isEmpty)
+            XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(probe, "staged")
+            XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(candidate, "360p30")
+            XCTAssertEqual(liveProfile, "240p30"); XCTAssertEqual(deliveryDeadline, "1500")
+            XCTAssertTrue(["passthrough", "loss0p2-delay30"].contains(uplinkProfile))
+            XCTAssertFalse(uplinkPort.isEmpty)
+            app.launchEnvironment["SCOREBUG_TEST_PROBE_POLICY"] = probePolicy
+        }
         app.launch()
         app.swipeUp()
         tap(app.buttons["streaming.setup"])

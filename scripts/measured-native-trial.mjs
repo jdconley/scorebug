@@ -116,7 +116,18 @@ export function qualifyMeasuredNativeMedia(
  * Full A/V decoding, archive durability and ingress checks remain required by
  * the calling harness. No production upgrade permission is returned.
  */
-export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) {
+export function qualifyMeasuredNativeEvidence(
+  input,
+  { recovery = false, probePolicy = 'local-zero-loss-v1' } = {},
+) {
+  assert.ok(
+    ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
+    'Unknown measured probe policy',
+  );
+  assert.ok(
+    !recovery || probePolicy === 'local-zero-loss-v1',
+    'Recovery-budget later reset requires separate qualification',
+  );
   assert.equal(typeof recovery, 'boolean');
   const {
     snapshot,
@@ -145,6 +156,7 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
     snapshot,
     startupFormat,
     profileQualification: profile,
+    probePolicy,
   });
   const phase = profile.phases[0];
   const baseline = {
@@ -184,6 +196,7 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
     scope: video.scope,
     publishingGeneration: clock.publishingGeneration,
     measuredRetirement,
+    policy: probePolicy,
   });
   const receiver = qualifyReceiverProbeEvidence(receiverRecords, video.scope, probe);
   const intervals = qualifyNativeReceiverIntervals(
@@ -193,7 +206,7 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
     probe,
     workerRecords,
     nativeProbe,
-    { includeIntervalIndexes: true, measuredRetirement },
+    { includeIntervalIndexes: true, measuredRetirement, policy: probePolicy },
   );
   const admissions = quality.events.filter((e) => e.kind === 'candidate');
   assert.equal(admissions.length, 1);
@@ -205,6 +218,7 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
     intervals: receiverIntervals,
     intervalQualification: intervals,
     nativeProof: nativeProbe,
+    policy: probePolicy,
   });
   assert.equal(witness.headroomQualified, true);
   return {
@@ -229,7 +243,7 @@ export function qualifyMeasuredNativeEvidence(input, { recovery = false } = {}) 
 }
 
 /** Full successful laboratory trial; recovery uses a separately required verifier. */
-export function qualifyMeasuredNativeTrial(input) {
+export function qualifyMeasuredNativeTrial(input, { probePolicy = 'local-zero-loss-v1' } = {}) {
   const { quality, snapshot, cadenceReports, deliveryAudit } = input;
   const {
     video,
@@ -248,7 +262,7 @@ export function qualifyMeasuredNativeTrial(input) {
     receiver,
     intervals,
     witness,
-  } = qualifyMeasuredNativeEvidence(input);
+  } = qualifyMeasuredNativeEvidence(input, { probePolicy });
   const policy = qualifyMeasuredTrialPolicy({
     quality,
     snapshot,
@@ -256,6 +270,7 @@ export function qualifyMeasuredNativeTrial(input) {
     profileQualification: profile,
     lifecycleQualification: nativeLifecycle,
     candidateWitnessQualification: witness,
+    transportPolicy: probePolicy === 'recovery-budget-v1' ? probePolicy : 'sender-delay-v1',
     cadenceReports,
   });
 

@@ -14,6 +14,16 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     undefined,
     'App file flag is derived only from a validated host input',
   );
+  if (environment.SCOREBUG_TEST_PROBE_POLICY !== undefined)
+    assert(
+      environment.SCOREBUG_TEST_PROBE_POLICY === 'recovery-budget-v1' &&
+        path !== undefined &&
+        environment.SCOREBUG_TEST_MEASURED_TRIAL === '1' &&
+        environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'staged' &&
+        environment.SCOREBUG_TEST_MEASURED_RECOVERY === undefined &&
+        measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE),
+      'Recovery policy requires the complete staged measured file network route',
+    );
   if (path === undefined) return null;
   assert(typeof path === 'string' && isAbsolute(path), 'Absolute local file input required');
   assert.equal(streaming, true, 'File input requires native streaming');
@@ -244,4 +254,11 @@ export async function stageNativeFileFixture({ source, destination, sha256 }) {
   await copyFile(source, destination, constants.COPYFILE_EXCL);
   await verifyNativeFileFixtureHash(destination, sha256);
   return { sha256 };
+}
+
+/** Explicit policy selection; historical routes retain their original semantics. */
+export function nativeProbePolicy(environment) {
+  if (environment.SCOREBUG_TEST_PROBE_POLICY === undefined) return 'local-zero-loss-v1';
+  assert(nativeMeasuredFileSource(environment), 'Recovery policy requires a measured file source');
+  return environment.SCOREBUG_TEST_PROBE_POLICY;
 }

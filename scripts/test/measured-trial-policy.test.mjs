@@ -446,3 +446,63 @@ test('confirmed prefix cannot hide an in-range stall behind an out-of-order futu
   f.cadenceReports.rows.splice(index, 0, future);
   assert.throws(() => qualifyMeasuredTrialConfirmedPrefix(f), /Cadence audit time reversal/);
 });
+
+test('successful measured pressure replay requires explicit recovery format and policy', () => {
+  const f = fixture();
+  f.transportPolicy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = f.transportPolicy;
+  f.candidateWitnessQualification.policy = f.transportPolicy;
+  f.lifecycleQualification.probePolicy = f.transportPolicy;
+  const result = qualifyMeasuredTrialPolicy(f);
+  assert.equal(result.transportPolicy, 'recovery-budget-v1');
+  assert.equal(result.confirmed, 1);
+  for (const change of [
+    (x) => delete x.transportPolicy,
+    (x) => (x.transportPolicy = 'future-v1'),
+    (x) => (x.quality.formatVersion = 4),
+    (x) => (x.quality.transportPolicy = 'sender-delay-v1'),
+    (x) => delete x.candidateWitnessQualification.policy,
+    (x) => delete x.lifecycleQualification.probePolicy,
+  ]) {
+    const changed = structuredClone(f);
+    change(changed);
+    assert.throws(() => qualifyMeasuredTrialPolicy(changed));
+  }
+});
+test('historical measured pressure replay rejects unknown policy and new envelope metadata', () => {
+  const f = fixture();
+  f.transportPolicy = 'future-v1';
+  assert.throws(() => qualifyMeasuredTrialPolicy(f));
+  delete f.transportPolicy;
+  f.quality.transportPolicy = 'recovery-budget-v1';
+  assert.throws(() => qualifyMeasuredTrialPolicy(f));
+});
+
+test('complete pressure replay uses recovery rules for recovered retries and retains drop limits', () => {
+  const f = fixture();
+  for (const row of f.quality.events)
+    for (const sample of row.evidence?.transport?.samples ?? [])
+      sample.retransmittedBytes = String(BigInt(sample.sentBytes) / 20n);
+  assert.throws(
+    () => qualifyMeasuredTrialPolicy(f),
+    'historical retry-fraction rule must reject the nominal claim',
+  );
+  f.transportPolicy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = f.transportPolicy;
+  f.candidateWitnessQualification.policy = f.transportPolicy;
+  f.lifecycleQualification.probePolicy = f.transportPolicy;
+  assert.equal(qualifyMeasuredTrialPolicy(f).confirmed, 1);
+  for (const change of [
+    (s) => (s.droppedPackets = Number(BigInt(s.sentBytes) / 10000n)),
+    (s) => (s.senderDeliveryDelayMilliseconds = 0),
+    (s) => (s.rttMilliseconds = 31),
+    (s) => (s.senderBufferMilliseconds = 61),
+  ]) {
+    const bad = structuredClone(f);
+    for (const row of bad.quality.events)
+      for (const sample of row.evidence?.transport?.samples ?? []) change(sample);
+    assert.throws(() => qualifyMeasuredTrialPolicy(bad));
+  }
+});

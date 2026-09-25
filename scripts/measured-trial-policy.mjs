@@ -224,10 +224,36 @@ function replayMeasuredTrialPolicy(
     lifecycleQualification,
     candidateWitnessQualification,
     cadenceReports,
+    transportPolicy = 'sender-delay-v1',
   },
   confirmedPrefix = false,
 ) {
-  assert.equal(quality.formatVersion, 4);
+  assert.ok(
+    ['sender-delay-v1', 'recovery-budget-v1'].includes(transportPolicy),
+    'Unknown measured transport policy',
+  );
+  const recoveryPolicy = transportPolicy === 'recovery-budget-v1';
+  assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
+  if (recoveryPolicy) {
+    assert.equal(
+      confirmedPrefix,
+      false,
+      'Recovery-budget prefix qualification is not yet supported',
+    );
+    assert.equal(quality.transportPolicy, transportPolicy);
+    assert.equal(candidateWitnessQualification?.policy, transportPolicy);
+    assert.equal(lifecycleQualification?.probePolicy, transportPolicy);
+  } else {
+    assert.ok(
+      !Object.hasOwn(quality, 'transportPolicy'),
+      'Historical quality has new pressure policy',
+    );
+    assert.ok(
+      !Object.hasOwn(candidateWitnessQualification ?? {}, 'policy') &&
+        !Object.hasOwn(lifecycleQualification ?? {}, 'probePolicy'),
+      'Historical quality has recovery-policy joins',
+    );
+  }
   assert.equal(quality.overflow, false);
   assert.equal(quality.measuredSourceEvaluationEnabled, true);
   assert(
@@ -568,7 +594,7 @@ function replayMeasuredTrialPolicy(
     assert.equal(w.lost, w.captured - w.received);
     assert(w.expected > 0 && w.lost >= 0);
     assert.equal(w.capacity, null);
-    replayNativePressure(row, snapshot, source, { transportPolicy: 'sender-delay-v1' });
+    replayNativePressure(row, snapshot, source, { transportPolicy });
     const report = cadenceReports.rows.findLast((r) => r.evaluatedUptime <= row.evaluatedAt);
     assert(
       report && row.evaluatedAt - report.evaluatedUptime <= 0.25,
@@ -684,6 +710,7 @@ function replayMeasuredTrialPolicy(
           rawEventCount: events.length,
         }
       : {}),
+    ...(recoveryPolicy ? { transportPolicy } : {}),
     evaluated,
     trials: 1,
     confirmed: 1,

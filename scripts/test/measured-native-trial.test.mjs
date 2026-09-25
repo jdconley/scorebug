@@ -86,3 +86,44 @@ for (const [name, mutate] of Object.entries(mutations))
     mutate(f);
     assert.throws(() => qualify(f));
   });
+
+function recoveryPolicyInput(f, addRaw) {
+  f.nativeProbe.formatVersion = 4;
+  f.nativeProbe.policy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = 'recovery-budget-v1';
+  for (const value of [f.nativeProbe, f.quality, f.candidateProof, f.lifecycle]) addRaw(value);
+  return f;
+}
+test('complete trial explicitly propagates recovery policy through independently recomputed gates', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = recoveryPolicyInput(fixture(), addSyntheticRecoveryProbeEvidence),
+    before = JSON.stringify(f);
+  const result = module.qualifyMeasuredNativeTrial(f, { probePolicy: 'recovery-budget-v1' });
+  assert.equal(result.measuredTrialQualified, true);
+  assert.equal(result.productionUpgradeAuthorized, false);
+  assert.equal(result.probe.policy, 'recovery-budget-v1');
+  assert.equal(result.witness.policy, 'recovery-budget-v1');
+  assert.equal(result.policy.transportPolicy, 'recovery-budget-v1');
+  assert.equal(JSON.stringify(f), before);
+  assert.throws(() => qualify(f));
+  assert.throws(() => module.qualifyMeasuredNativeTrial(f, { probePolicy: 'future-v1' }));
+  for (const change of [
+    (x) => (x.quality.transportPolicy = 'sender-delay-v1'),
+    (x) => (x.quality.formatVersion = 4),
+    (x) => (x.nativeProbe.policy = 'local-zero-loss-v1'),
+    (x) => (x.lifecycle.profileRequests[0].currentProbe.policy = 'local-zero-loss-v1'),
+    (x) => (x.candidateProof.probeBinding.final.id = '11111111-1111-1111-1111-111111111111'),
+  ]) {
+    const changed = structuredClone(f);
+    change(changed);
+    assert.throws(() =>
+      module.qualifyMeasuredNativeTrial(changed, { probePolicy: 'recovery-budget-v1' }),
+    );
+  }
+});
+test('historical complete trial rejects unknown or recovery option against old evidence', () => {
+  for (const probePolicy of ['future-v1', 'recovery-budget-v1', null])
+    assert.throws(() => module.qualifyMeasuredNativeTrial(fixture(), { probePolicy }));
+});

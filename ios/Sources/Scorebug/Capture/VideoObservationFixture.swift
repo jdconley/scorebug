@@ -37,6 +37,9 @@ enum VideoObservationFixture {
     }
 
     static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
+        let policy = environment["SCOREBUG_TEST_PROBE_POLICY"] ?? ""
+        guard policy.isEmpty || (policy == "recovery-budget-v1" && measuredFileUplink(environment: environment))
+        else { throw UplinkError.invalidFixtureRoute }
         guard let raw = environment["SCOREBUG_TEST_LIVE_PROFILE"], !raw.isEmpty else {
             return requested(environment: environment) ? .hd1080 : .minimumStartup
         }

@@ -71,7 +71,7 @@ by this laboratory selection.
   counters, fresh checked/sample times, same-collection reserve checks, unchanged
   cached values and monotonic validated observations. Snapshot order uses actual
   check times, not the order in which overlapping async reads return.
-- [ ] Wire one explicit DEBUG network-recovery route selection through the native
+- [x] Wire one explicit DEBUG network-recovery route selection through the native
   fixture start and pressure classifier, plus the host options and qualifiers.
   Reject partial/unsupported combinations. Historical verifiers must reject new
   policy evidence rather than reinterpret it. The encoding-only candidate payload
@@ -223,3 +223,42 @@ and `repeated-live-checkpoint-recovery-retirement-candidate-final-tools-full`.
 The native321/Streaming179 suites remain the preceding verified baseline; their
 runtime libraries were not changed in this checkpoint. Read-only review and its
 follow-up found no remaining actionable findings in this slice.
+
+
+## Complete trial and DEBUG route checkpoint
+
+The successful full-trial qualifier now explicitly selects the recovery probe policy
+and forwards it through lifecycle/native/receiver/witness joins. Lifecycle joins the
+binding, pre-request and terminal raw observations with exact owner identity. The
+pressure replay requires matching independently qualified lifecycle/witness policy
+and quality5; it applies recovery-budget rules to the original transport samples.
+A behavioral fixture with five-percent recovered retries passes only the new policy;
+actual drops, unknown delay and exhausted RTT/backlog reserves still reject. A
+controlled mutation restoring historical pressure forwarding failed that test.
+Later reset/repeated and confirmed-prefix recovery-policy routes remain unsupported.
+
+`SCOREBUG_TEST_PROBE_POLICY=recovery-budget-v1` now selects both native probe and
+pressure policy on the complete DEBUG simulator file/measured/staged/network route.
+Host validation rejects partial, malformed, repeated and fault combinations before
+creating resources. App validation runs before optional selector returns and uses a
+nonrecursive leaf predicate. The host, generated Xcode scheme, UI test launch and
+app carry the same value; full-trial replay receives it explicitly. An absent flag
+retains historical behavior. The delayed link still requires actual400ms peer delay;
+this policy opt-in is not production upgrade authority.
+
+Verification: route red/green tests, full app-model534 and tooling3850 pass. The six
+Swift route tests and35 host option tests cover complete/partial/unsupported choices.
+Two read-only reviews found no actionable issues in the trial integration and route
+wiring. Runtime libraries are unchanged from the preceding native321/Streaming179
+passes. Joined full logs are `repeated-live-checkpoint-recovery-route-models-full`
+and `repeated-live-checkpoint-recovery-route-tools-full` under `artifacts/qa`.
+The pure full-trial unit fixture combines synthetic raw observations with recorded
+scalar chronology; it does not qualify real network adaptation.
+
+The next actual run is prepared in
+`artifacts/qa/native-measured-link-recovery-budget-run.py`: ninety-second file hold,
+iPhone14/iOS26.2, static bidirectional30ms/every500th-datagram loss,400ms SRT delay,
+slice decoder,1500ms deadline and explicit recovery policy. It freezes source and
+prepared clip hashes, joins the same process and preserves all failures. Current
+installed iOS/watchOS runtimes are26.2 and27; older-runtime coverage is historical,
+not a claim that deleted runtimes remain installed. No runtime was reinstalled.

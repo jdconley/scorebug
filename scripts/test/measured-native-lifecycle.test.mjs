@@ -78,3 +78,34 @@ for (const [name, mutate] of Object.entries(mutations))
     mutate(f);
     assert.throws(() => qualify(f));
   });
+
+test('lifecycle explicitly binds recovery policy to all raw profile request observations', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const f = fixture();
+  f.probePolicy = 'recovery-budget-v1';
+  f.quality.formatVersion = 5;
+  f.quality.transportPolicy = f.probePolicy;
+  addSyntheticRecoveryProbeEvidence(f.lifecycle);
+  const result = qualify(f);
+  assert.equal(result.probePolicy, 'recovery-budget-v1');
+  for (const change of [
+    (x) => delete x.probePolicy,
+    (x) => (x.probePolicy = 'future-v1'),
+    (x) => (x.quality.formatVersion = 4),
+    (x) => (x.quality.transportPolicy = 'sender-delay-v1'),
+    (x) => (x.lifecycle.profileRequests[0].currentProbe.policy = 'local-zero-loss-v1'),
+    (x) =>
+      (x.lifecycle.profileRequests[0].terminalProbeRead.observation.id =
+        '11111111-1111-1111-1111-111111111111'),
+  ]) {
+    const changed = structuredClone(f);
+    change(changed);
+    assert.throws(() => qualify(changed));
+  }
+});
+test('historical lifecycle rejects recovery policy metadata', () => {
+  const f = fixture();
+  f.lifecycle.profileRequests[0].currentProbe.policy = 'recovery-budget-v1';
+  assert.throws(() => qualify(f));
+});

@@ -1,6 +1,7 @@
 import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
   nativeFileFixtureOptions,
+  nativeProbePolicy,
   qualifyNativeFileFixture,
   nativeFileFixtureHash,
   stageNativeFileFixture,
@@ -125,6 +126,7 @@ const fileFixture = nativeFileFixtureOptions({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const probePolicy = nativeProbePolicy(process.env);
 const cadenceReports = nativeCadenceReports({
   environment: process.env,
   streaming,
@@ -839,6 +841,7 @@ try {
     `SCOREBUG_TEST_MEASURED_TRIAL=${measuredTrial ? '1' : ''}`,
     `SCOREBUG_TEST_DIRECT_RTMP_RECORDER=${process.env.SCOREBUG_TEST_DIRECT_RTMP_RECORDER ?? ''}`,
     `SCOREBUG_TEST_BANDWIDTH_PROBE=${bandwidthProbe ?? ''}`,
+    `SCOREBUG_TEST_PROBE_POLICY=${probePolicy === 'recovery-budget-v1' ? probePolicy : ''}`,
     `SCOREBUG_TEST_LIVE_PROFILE=${['540p30', '360p30', '240p30'].includes(liveProfile) ? liveProfile : ''}`,
     `SCOREBUG_TEST_UPLINK_PROXY_PORT=${proxy?.publishingProxyPort ?? ''}`,
     `SCOREBUG_TEST_UPLINK_PROFILE=${fileFixture && measuredTrial ? (uplinkProfile ?? '') : ''}`,
@@ -1225,6 +1228,7 @@ try {
         JSON.parse(bytes.toString('utf8')),
         {
           mode: bandwidthProbe,
+          policy: probePolicy,
           candidateHeadroom,
           scope: videoObservation.scope,
           publishingGeneration: publishingClockObservation.publishingGeneration,
@@ -1252,7 +1256,7 @@ try {
         bandwidthProbeQualification,
         JSON.parse(await readFile(join(artifact, 'worker-publication-status.json'), 'utf8')),
         JSON.parse(bytes.toString('utf8')),
-        { includeIntervalIndexes: candidateHeadroom },
+        { includeIntervalIndexes: candidateHeadroom, policy: probePolicy },
       );
     }
     publishingAttemptEvidence = qualifyPublishingAttemptEvidence(
@@ -1433,7 +1437,7 @@ try {
               ...measuredInput,
               fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
             })
-          : qualifyMeasuredNativeTrial(measuredInput);
+          : qualifyMeasuredNativeTrial(measuredInput, { probePolicy });
       if (fileFixture) {
         assert.equal(live.length, 1, 'Measured file audio requires one complete saved stream');
         const liveAudio = fileAudioContexts.get('live-0');
@@ -1493,6 +1497,7 @@ try {
     }
     if (candidateHeadroom && !measuredTrial) {
       candidateHeadroomQualification = qualifyCandidateProbeHeadroom({
+        policy: probePolicy,
         candidate: candidateQualification,
         candidateProof: JSON.parse(
           await readFile(join(artifact, 'native-candidate-measurement.json'), 'utf8'),

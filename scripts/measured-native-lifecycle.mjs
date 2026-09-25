@@ -1,3 +1,4 @@
+import { assertRecoveryProbeAcceptanceHistory } from './recovery-probe-observation.mjs';
 import assert from 'node:assert/strict';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
 import { qualifyNativeProfileTransitions } from './native-profile-transitions.mjs';
@@ -32,11 +33,30 @@ export function qualifyMeasuredNativeLifecycle({
   profileQualification,
   sequence = 'measured240',
   liveIDs,
+  probePolicy = 'local-zero-loss-v1',
 }) {
   assert.ok(
     ['measured240', 'repeated240'].includes(sequence),
     'Unknown measured lifecycle sequence',
   );
+  assert.ok(
+    ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
+    'Unknown lifecycle probe policy',
+  );
+  const recoveryPolicy = probePolicy === 'recovery-budget-v1';
+  assert.equal(quality.formatVersion, recoveryPolicy ? 5 : 4);
+  if (recoveryPolicy) {
+    assert.equal(
+      sequence,
+      'measured240',
+      'Recovery-budget repeated lifecycle is not yet supported',
+    );
+    assert.equal(quality.transportPolicy, probePolicy);
+  } else
+    assert.ok(
+      !Object.hasOwn(quality, 'transportPolicy'),
+      'Historical lifecycle has new pressure policy',
+    );
   const repeated = sequence === 'repeated240';
   assert.equal(format.sequence, sequence);
   if (repeated) {
@@ -59,6 +79,35 @@ export function qualifyMeasuredNativeLifecycle({
   assert.equal(audit.bitRateRequestLimit, 48);
   assert.ok(Array.isArray(audit.profileRequests) && audit.profileRequests.length <= 16);
   assert.ok(Array.isArray(audit.bitRateRequests) && audit.bitRateRequests.length <= 48);
+  if (recoveryPolicy)
+    assert.equal(audit.profileRequests.length, 1, 'Recovery-budget lifecycle requires one trial');
+  const probeEntries = [];
+  for (const row of audit.profileRequests) {
+    const values = [
+      [row.probeBinding?.observation, row.probeBinding?.boundAt],
+      [row.currentProbe, row.requestedAt],
+      [row.terminalProbeRead?.observation, row.terminalProbeRead?.completedAt],
+    ];
+    for (const [sample, observedAt] of values) {
+      if (recoveryPolicy) {
+        assert.ok(sample, 'Missing recovery lifecycle probe');
+        const bound = values[0][0];
+        sameID(sample.id, bound.id);
+        for (const key of [
+          'publishingGeneration',
+          'campaign',
+          'stage',
+          'bitRate',
+          'startedAt',
+          'policy',
+        ])
+          assert.equal(sample[key], bound[key], `Lifecycle probe ${key} mismatch`);
+      }
+      if (sample != null) probeEntries.push({ sample, observedAt });
+    }
+  }
+  if (probeEntries.length)
+    assertRecoveryProbeAcceptanceHistory(probeEntries, { policy: probePolicy });
   time(audit.closedAt);
   time(snapshot.monotonicAnchor);
   assert.ok(audit.closedAt >= snapshot.monotonicAnchor);
@@ -337,6 +386,7 @@ export function qualifyMeasuredNativeLifecycle({
     startup,
     bootstrap,
     applications,
+    ...(recoveryPolicy ? { probePolicy } : {}),
     nativeLifecycleReceiptsMatched: true,
     upgradeAuthorized: false,
   };

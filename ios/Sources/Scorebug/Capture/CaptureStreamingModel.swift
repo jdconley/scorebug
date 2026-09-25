@@ -230,7 +230,8 @@ struct PublishingClockObservation: Equatable, Sendable {
              if let probeMode {
                  guard let observations else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  primary = NativeBandwidthProbePublisher(publisher: publisher, scope: observations.snapshot.scope,
-                     mode: probeMode, candidateHeadroom: candidateHeadroom)
+                     mode: probeMode, candidateHeadroom: candidateHeadroom,
+                     policy: try NativeMeasuredTrialFixture.probePolicy(environment: environment))
              } else { primary = publisher }
              if let candidateProfile {
                  guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
