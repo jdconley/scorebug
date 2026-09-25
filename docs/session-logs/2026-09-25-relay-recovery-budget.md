@@ -58,3 +58,22 @@ Committed `85bc29e` passes250 focused JS tests and14 Swift fixture tests; both s
 Full native700ms experiment `native-app-7JYkdI` is active under wrapper86509, log `repeated-live-checkpoint-owned-diagnostic-latency700-20260925.log`. Exact environment and launcher use unique700 filenames. No phone test was started. Result pending; source/frame/deadline limits remain unchanged.
 
 A read-only audit of the original four-owner history found the telemetry needed for full owned qualification already exists. The next complete verifier must join original owner/campaign/revision indices across receiver, candidate, witness, application and retry policy evidence. A shared raw candidate validator is being extracted as a bounded prerequisite, preserving existing legacy envelope checks and adding no recovery authority or normal-runner bypass.
+
+
+## 700 ms native result: clean A/V and score, uncertain timing
+
+`native-app-7JYkdI` and wrapper 86509 joined with intentional diagnostic exit 1. The UI workflow succeeded and collection errors are empty. All three recordings fully decode: archive 9,274 sequential IDs 0–9,273; direct and proxy overlay each 8,826 sequential IDs 224–9,049. Maximum video gaps are 33.334 ms in archive/proxy and 34 ms in direct. No IDs are missing or reversed within any acquired span.
+
+`owned-av-overlay-diagnostic/results.json` additionally passes decoded A/V coverage and 64 archive / 61 each live natural-waveform samples, including a five-second source grid. All three outputs average approximately 30 fresh fps. Both live recordings match the initial 0–0 and final 1–0 glyph templates exactly on their discriminating pixels. The archive continues 224 frames (7.47 seconds) beyond both live tails. These are recorded-media checks; there is no adaptive-phase audio or complete policy pass.
+
+The app remains at 240p. Its 41-event owned history contains one registration, cancelled before candidate binding and settled once. Native lifecycle replay and complete common-media/clock leaves pass; both four-phase checks fail 1≠4. Of 427 delivery windows, 109 are fully on time and 318 have uncertain frames; none classifies definite loss/lateness. The overlapping window totals are not unique video counts.
+
+`latency-budget-diagnosis-v2.json` reconstructs 17,070 per-window arrival bounds: median lower 1445.37 ms / upper 1514.25 ms, with median clock bracket width 69.54 ms. Native encoder submission-to-completion remains median 435.31 ms across the final 1,024 observations. Source evaluation age ranges 1966–2110 ms; the only registration has 0.219 ms readiness remaining. A fully uncertain delivery window immediately precedes cancellation. The first helper report retained as `latency-budget-diagnosis.json` had empty arrival aggregates due to a numeric/string PTS map mismatch; v2 normalizes keys and requires complete arrival coverage. Neither report changes runtime policy.
+
+The next isolated test reruns the existing low-latency encoder request on installed iOS 26.2, since previous unsupported evidence was from iOS 17.5. Wrapper 63832, artifact `encoder-low-latency-H9eUhm`, log `repeated-live-checkpoint-encoder-low-latency-ios262-20260925.log`. Result pending. No production encoder setting, delivery deadline, freshness limit or physical device was changed.
+
+## Raw candidate validation prerequisite
+
+Commit `551828f` extracts shared raw encoding, resources and A/V cost validation. The new entry requires explicit independent owner/source bindings, generation, transferred measurement ID, exclusion of the live encoder, and pinned SDK resource limits. It retains complete original 514-event mAluZi audit bytes and provenance. Both actual candidate measurements pass; mutated frame/audio/resource/session/time evidence rejects. Legacy version/envelope/pressure checks and return shape remain intact. No runner wiring or recovery/admission permission is added.
+
+Focused tests pass 55/55 and relevant regression suites 405/405. Independent spec review passes 144 tests and quality review 192; both approve. Logs and SHA-256 are retained in `551828f-imported-verification-logs.json`. Complete receiver/witness/application/retry joins remain open. Four-phase audio-anchor support is the next bounded prerequisite under implementation.

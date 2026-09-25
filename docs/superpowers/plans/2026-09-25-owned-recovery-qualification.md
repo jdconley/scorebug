@@ -17,6 +17,8 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
 - [x] Wire the actual owned app route and bounded lifecycle artifact. Native
       operations, final candidate binding, guarded application and exact cleanup
       must be real; exported booleans cannot create authority.
+- [x] Extract shared raw candidate encoding/resource/A/V validation; retain legacy
+      envelope gates, independent owner bindings and pinned resource limits.
 - [ ] Add whole-history owned lifecycle, witness and policy replay. Reuse complete
       media, capacity clock/rate-ledger, delivery ownership and coverage checks.
       Never call the old one-candidate qualifier with a fabricated three-phase
@@ -42,8 +44,9 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
 - [x] Permit exact1000ms only on the explicit owned diagnostic retry route,
       preserving400ms and1500ms delivery limits; specification/quality reviews pass.
 - [ ] Qualify recovery latency on the complete native cycle with A/V, timing and
-      all three recordings.1000ms produces clean media but fails1500ms delivery and
-     2s source freshness; the measured700ms candidate requires full native testing.
+      all three recordings. Both 1000 ms and 700 ms produce clean media but fail
+      progression. At 700 ms, delivery bounds straddle 1500 ms and source freshness
+      approaches two seconds. Reduce actual delay before repeating the cycle.
 - [ ] Resolve the observed live-frame damage following late packet retransmission.
       Verify actual SRT/relay boundary capture and recovery timing before choosing
       a fix; decoder flags alone failed the controlled reproduction. Retain strict
