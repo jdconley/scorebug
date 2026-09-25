@@ -18,7 +18,22 @@ public struct MatchHTTPClient: MatchScoringClient {
     private let endpoint: ScoringEndpoint
     private let transport: Transport
 
-    public init(endpoint: ScoringEndpoint, session: URLSession = .shared) {
+    // Reuse one owned session across phone/watch clients. Waiting lets the first
+    // LAN request survive the privacy prompt; the resource timeout also bounds
+    // that connectivity wait, unlike URLRequest's inactivity timeout alone.
+    static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 20
+        return URLSession(configuration: configuration)
+    }()
+
+    public init(endpoint: ScoringEndpoint) {
+        self.init(endpoint: endpoint, session: Self.defaultSession)
+    }
+
+    public init(endpoint: ScoringEndpoint, session: URLSession) {
         self.init(endpoint: endpoint, transport: { request in
             try await session.data(for: request)
         })
