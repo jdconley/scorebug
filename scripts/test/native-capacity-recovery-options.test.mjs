@@ -214,3 +214,65 @@ test('750k native host selection requires its exact210s complete route', async (
   assert.equal(nativeUplinkOptions(args), 'capacity750k');
   assert.equal(nativeMeasuredTrial(args), true);
 });
+
+const ownedEnvironment = () => ({
+  ...capacityEnvironment(),
+  SCOREBUG_TEST_UPLINK_PROFILE: 'capacity750k-retry',
+  SCOREBUG_TEST_STREAM_HOLD_SECONDS: '270',
+  SCOREBUG_TEST_OWNED_MEASUREMENT: '1',
+  SCOREBUG_TEST_CAPACITY_EVIDENCE: 'token-budget-v1',
+});
+test('owned retry is an exact separate capacity selection with a longer source budget', async () => {
+  const environment = ownedEnvironment();
+  assert.equal(select(environment, { holdSeconds: 270 }), true);
+  const { measuredCapacityProfile, measuredCapacityUplinkConfiguration } =
+    await import('../measured-capacity-uplink.mjs');
+  assert.deepEqual(measuredCapacityProfile('capacity750k-retry'), {
+    rateBitsPerSecond: 750000,
+    limitedAtMilliseconds: 90000,
+    restoredAtMilliseconds: 150000,
+    holdSeconds: 270,
+  });
+  assert.deepEqual(
+    measuredCapacityUplinkConfiguration('capacity750k-retry'),
+    measuredCapacityUplinkConfiguration('capacity750k'),
+  );
+  const { nativeFileFixtureOptions } = await import('../native-file-fixture.mjs');
+  assert.equal(
+    nativeFileFixtureOptions({ environment, streaming: true, holdSeconds: 270 })
+      .minimumDurationSeconds,
+    360,
+  );
+});
+for (const patch of [
+  { SCOREBUG_TEST_OWNED_MEASUREMENT: undefined },
+  { SCOREBUG_TEST_OWNED_MEASUREMENT: 'true' },
+  { SCOREBUG_TEST_OWNED_MEASUREMENT: '' },
+  { SCOREBUG_TEST_CAPACITY_EVIDENCE: undefined },
+  { SCOREBUG_TEST_CAPACITY_EVIDENCE: 'rate-ledger-v1' },
+  { SCOREBUG_TEST_UPLINK_PROFILE: 'capacity750k', SCOREBUG_TEST_STREAM_HOLD_SECONDS: '210' },
+])
+  test(`owned retry rejects incomplete or mixed selection ${JSON.stringify(patch)}`, () => {
+    const environment = { ...ownedEnvironment(), ...patch };
+    assert.throws(() =>
+      select(environment, { holdSeconds: Number(environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS) }),
+    );
+  });
+test('an owned flag cannot silently fall through a non-capacity route', () => {
+  assert.throws(() => select({ SCOREBUG_TEST_OWNED_MEASUREMENT: '1' }));
+});
+
+test('native runner fails before resources until whole-history owned qualification is wired', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('SCOREBUG_TEST_')),
+  );
+  const result = spawnSync(process.execPath, ['scripts/test-native-app.mjs', '--streaming'], {
+    cwd: new URL('../..', import.meta.url),
+    env: { ...environment, ...ownedEnvironment(), SCOREBUG_IOS_RUNTIME: '00.0' },
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Owned recovery runner awaits its whole-history qualifier/);
+});

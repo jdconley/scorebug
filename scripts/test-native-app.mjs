@@ -142,6 +142,13 @@ const capacityRecovery = nativeCapacityRecovery({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
+// Fail before any simulator or service allocation until the new route has its
+// own complete policy/lifecycle replay. Three phases cannot certify recovery.
+assert.equal(
+  process.env.SCOREBUG_TEST_OWNED_MEASUREMENT,
+  undefined,
+  'Owned recovery runner awaits its whole-history qualifier',
+);
 const capacityEvidencePolicy = nativeCapacityEvidencePolicy({
   environment: process.env,
   capacityRecovery,

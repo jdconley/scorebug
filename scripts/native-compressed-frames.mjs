@@ -7,17 +7,22 @@ export function qualifyNativeCompressedFrames(
   snapshot,
   { requirePacingEvidence = false, sequence = '1' } = {},
 ) {
-  assert.ok(['1', 'low240', 'stall540', 'measured240', 'repeated240'].includes(sequence));
-  if (['low240', 'stall540', 'measured240', 'repeated240'].includes(sequence)) {
+  assert.ok(
+    ['1', 'low240', 'stall540', 'measured240', 'repeated240', 'owned240'].includes(sequence),
+  );
+  if (sequence === 'owned240') assert.equal(format.phases.length, 4);
+  if (['low240', 'stall540', 'measured240', 'repeated240', 'owned240'].includes(sequence)) {
     assert.equal(
       format.formatVersion,
-      sequence === 'repeated240'
-        ? 9
-        : sequence === 'measured240'
-          ? 8
-          : sequence === 'stall540'
-            ? 7
-            : 6,
+      sequence === 'owned240'
+        ? 10
+        : sequence === 'repeated240'
+          ? 9
+          : sequence === 'measured240'
+            ? 8
+            : sequence === 'stall540'
+              ? 7
+              : 6,
     );
     assert.equal(format.sequence, sequence);
   } else {

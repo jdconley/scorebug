@@ -107,6 +107,11 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     preTrialRejectionPolicy = 'reject',
     capacityEvidencePolicy = 'congestion-v1',
   } = options;
+  assert.notEqual(
+    profile,
+    'capacity750k-retry',
+    'Owned recovery requires its separate whole-history owned qualifier',
+  );
   assert(
     ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(capacityEvidencePolicy),
     'Unknown capacity evidence policy',

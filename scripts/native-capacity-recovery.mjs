@@ -17,6 +17,17 @@ export function nativeCapacityEvidencePolicy({ environment, capacityRecovery }) 
 
 /** Complete host selection only; no resources or native recovery qualification. */
 export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) {
+  const owned = environment.SCOREBUG_TEST_OWNED_MEASUREMENT;
+  const retry = environment.SCOREBUG_TEST_UPLINK_PROFILE === 'capacity750k-retry';
+  if (owned !== undefined || retry) {
+    assert.equal(owned, '1', 'Owned recovery requires exact measurement opt-in');
+    assert.equal(retry, true, 'Owned recovery requires its separate retry profile');
+    assert.equal(
+      environment.SCOREBUG_TEST_CAPACITY_EVIDENCE,
+      'token-budget-v1',
+      'Owned recovery requires token-budget evidence',
+    );
+  }
   if (
     environment.SCOREBUG_TEST_CAPACITY_RECOVERY === undefined &&
     !measuredCapacityProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE)

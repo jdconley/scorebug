@@ -875,3 +875,111 @@ for (const [name, damage] of [
       qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, repeatedMeasuredOptions),
     );
   });
+
+function ownedMeasuredFixture() {
+  const f = measuredFixture(4);
+  f.format.formatVersion = 10;
+  f.format.sequence = 'owned240';
+  f.format.phases.forEach((phase, i) => {
+    phase.width = i % 2 ? 640 : 426;
+    phase.height = i % 2 ? 360 : 240;
+  });
+  f.format.receipts.forEach((receipt, i) => {
+    receipt.profile = i % 2 ? '240p30' : '360p30';
+    receipt.width = f.format.phases[i + 1].width;
+    receipt.height = f.format.phases[i + 1].height;
+  });
+  return f;
+}
+const ownedMeasuredOptions = { sequence: 'owned240', requireFrameEvidence: true };
+test('owned recovery requires the whole four-phase media history without claiming policy success', () => {
+  const f = ownedMeasuredFixture();
+  const result = qualifyNativeProfileTransitions(
+    f.format,
+    f.snapshot,
+    f.liveIDs,
+    ownedMeasuredOptions,
+  );
+  assert.deepEqual(
+    result.phases.map((p) => p.height),
+    [240, 360, 240, 360],
+  );
+  assert.equal(result.compressedFrames.frames, 3600);
+  assert.equal(result.trialConfirmed, false);
+  assert.equal(result.upgradeAuthorized, false);
+  for (const options of [
+    measuredOptions,
+    repeatedMeasuredOptions,
+    { ...ownedMeasuredOptions, adaptive: true },
+  ])
+    assert.throws(() => qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, options));
+});
+for (const [name, damage] of [
+  [
+    'historical version',
+    (f) => {
+      f.format.formatVersion = 8;
+    },
+  ],
+  [
+    'historical sequence',
+    (f) => {
+      f.format.sequence = 'measured240';
+    },
+  ],
+  [
+    'missing recovery phase',
+    (f) => {
+      f.format.phases.pop();
+    },
+  ],
+  [
+    'extra reset',
+    (f) => {
+      f.format.phases.push({ ...f.format.phases.at(-1) });
+    },
+  ],
+  [
+    'wrong recovery dimensions',
+    (f) => {
+      f.format.phases[3].width = 426;
+    },
+  ],
+  [
+    'wrong recovery receipt',
+    (f) => {
+      f.format.receipts[2].profile = '240p30';
+    },
+  ],
+  [
+    'reused native encoder',
+    (f) => {
+      f.format.encoderSessions[3].encoderSessionID = ids[1];
+    },
+  ],
+  [
+    'missing recovery sync',
+    (f) => {
+      f.format.compressedFrames[2700].isSync = false;
+    },
+  ],
+  [
+    'missing recovery frame',
+    (f) => {
+      f.liveIDs.splice(f.liveIDs.indexOf(2700), 1);
+    },
+  ],
+  [
+    'missing final tail',
+    (f) => {
+      f.liveIDs.pop();
+    },
+  ],
+])
+  test(`owned recovery media rejects ${name}`, () => {
+    const f = ownedMeasuredFixture();
+    damage(f);
+    assert.throws(() =>
+      qualifyNativeProfileTransitions(f.format, f.snapshot, f.liveIDs, ownedMeasuredOptions),
+    );
+  });

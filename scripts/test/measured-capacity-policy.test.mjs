@@ -330,3 +330,20 @@ for (const [name, mutate, error] of [
     mutate(f);
     assert.throws(() => qualifyTerminal(f), error);
   });
+
+test('historical complete three-phase evidence cannot qualify the owned retry profile', () => {
+  const original = JSON.parse(
+    gunzipSync(
+      readFileSync(new URL('./fixtures/measured-capacity-YnfAvU.json.gz', import.meta.url)),
+    ),
+  ).input;
+  assert.throws(
+    () =>
+      module.qualifyMeasuredCapacityPolicy(original, {
+        profile: 'capacity750k-retry',
+        capacityEvidencePolicy: 'token-budget-v1',
+        preTrialRejectionPolicy: 'invalidate-delivery-freshness-v1',
+      }),
+    /owned.*qualifier/i,
+  );
+});

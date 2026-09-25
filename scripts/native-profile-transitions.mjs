@@ -76,11 +76,12 @@ export function qualifyNativeProfileTransitions(
     'Pacing requires current raw frame evidence',
   );
   assert.ok(
-    ['1', 'low240', 'stall540', 'measured240', 'repeated240'].includes(sequence),
+    ['1', 'low240', 'stall540', 'measured240', 'repeated240', 'owned240'].includes(sequence),
     'Unknown transition sequence',
   );
   const repeated = sequence === 'repeated240';
-  const measured = sequence === 'measured240' || repeated;
+  const owned = sequence === 'owned240';
+  const measured = sequence === 'measured240' || repeated || owned;
   assert.ok(!measured || !adaptive, 'Measured trial has its own bounded sequence');
   const stallReset = sequence === 'stall540';
   assert.ok(!stallReset || !adaptive, 'Stall reset is one controlled downward transition');
@@ -90,7 +91,7 @@ export function qualifyNativeProfileTransitions(
   else assert.equal(format.sequence, undefined);
   const hasFrameEvidence =
     format.formatVersion ===
-    (repeated ? 9 : measured ? 8 : stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
+    (owned ? 10 : repeated ? 9 : measured ? 8 : stallReset ? 7 : minimum ? 6 : adaptive ? 5 : 4);
   assert.ok(
     hasFrameEvidence ||
       (!minimum &&
@@ -117,6 +118,7 @@ export function qualifyNativeProfileTransitions(
     assert.ok(
       format.phases.length >= 3 && format.phases.length <= 17 && format.phases.length % 2 === 1,
     );
+  else if (owned) assert.equal(format.phases.length, 4);
   else if (repeated) assert.equal(format.phases.length, 5);
   else if (measured) assert.ok(format.phases.length >= 1 && format.phases.length <= 3);
   else assert.equal(format.phases.length, stallReset ? 2 : 3);

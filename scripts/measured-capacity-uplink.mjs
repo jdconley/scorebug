@@ -4,7 +4,11 @@ import { measuredUplinkConfiguration } from './native-measured-uplink.mjs';
 import { qualifyDatagramTimeline } from './datagram-timeline-qualification.mjs';
 import { qualifyRateLedger } from './rate-ledger-qualification.mjs';
 
-export const measuredCapacityProfiles = Object.freeze(['capacity550k', 'capacity750k']);
+export const measuredCapacityProfiles = Object.freeze([
+  'capacity550k',
+  'capacity750k',
+  'capacity750k-retry',
+]);
 const profiles = Object.freeze({
   capacity550k: Object.freeze({
     rateBitsPerSecond: 550000,
@@ -17,6 +21,12 @@ const profiles = Object.freeze({
     limitedAtMilliseconds: 90000,
     restoredAtMilliseconds: 150000,
     holdSeconds: 210,
+  }),
+  'capacity750k-retry': Object.freeze({
+    rateBitsPerSecond: 750000,
+    limitedAtMilliseconds: 90000,
+    restoredAtMilliseconds: 150000,
+    holdSeconds: 270,
   }),
 });
 /** Trusted caller selection, never inferred from a raw artifact's claimed rate. */
