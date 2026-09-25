@@ -40,3 +40,11 @@ The real Swift writer processed all 479 events of the prior 17,126,924-byte pres
 Read-only review found a mutable-scalar alias (reproduced and fixed) and a missing brace in the harness loading loop (fixed). All 3,879 tooling tests also pass. A fresh native format6 export is next. Live repeated-recovery defaults remain legacy format4; this change does not enable the separately unqualified recovery-budget repeated route.
 
 The next frozen native run keeps the existing static impaired-link fixture to exercise the new writer, artifact loading loop and independent replay boundaries. It is needed for format6 integration, not another attempt to get favorable strict30fps counts. Sustained-pressure capacity/outage routing remains a separate next gate.
+
+## Fresh native format6 checkpoint
+
+`native-app-YFObMQ`, frozen by `pressure-dictionary-freeze-7tvso5i0`, ran the unchanged static 30 ms/0.2% loss route with the real match source. The UI workflow passed in 170.244 s. Export format6 is 257,350 bytes, 24 events, overflow false; host expansion and full component/policy replay work. Candidate measurement completes 121 inputs and applies240p→360p. Archive IDs0–3881 and live230–3667 are consecutive; clean archive continues7.13s after live. Baseline and27 phase audio anchors pass for each output, as do score glyph checks; audio timeline error is≤0.228ms.
+
+The joined harness exit remains1: one of152 delivery rows is unknown (`freshness`). The other151 meet strict30fps with zero late/missing/uncertain/below24 rows. The unknown receipt was121.322ms old at its earlier cadence evaluation;140.245ms later, the audit correctly rejected its261.567ms conservative age against the unchanged250ms limit. This is missing timely evidence, not proof of dropped media, and must not be counted as healthy. No freshness threshold or classifier was changed.
+
+All1,222 frozen source/input hashes match after join; no temporary simulator is booted and no relay container remains. Separate `failure-assessment.json`, `pressure-dictionary-components.json`, `independent-phase-audio-qualification.json` and `freshness-assessment.json` retain the observations. Original failed artifacts are unchanged. This verifies the live codec/reader path, not sustained-pressure or complete network qualification.

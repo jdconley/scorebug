@@ -28,11 +28,18 @@ Recovery-policy diagnostic export now stores repeated pressure histories once an
 reconstructs them exactly before validation. The real 17.1 MB failed-pressure
 artifact round-trips through Swift and JavaScript in 1.09 MB; the latest recovery
 artifact also matches exactly. All 542 app-model and 3,879 tooling tests pass.
-A fresh native run will verify the new format6 writer/loader path. Sustained
+The fresh native format6 writer/loader run passed component replay and all 27
+phase audio anchors for both archive/live outputs. The 257,350-byte export holds
+24 complete events without overflow. Archive/live IDs are consecutive and the
+archive continues 7.13 seconds after live. Full qualification still fails: one of
+152 delivery windows has stale timing evidence (261.567 ms against a 250 ms limit);
+the other 151 meet strict30fps with no late/missing/uncertain frames. This unknown
+window remains a failure. All 1,222 frozen source/input hashes are unchanged, the
+UI workflow passed, and temporary simulators/containers were cleaned up. Sustained
 pressure and causal network runs remain open; see the
 [bounded evidence plan](2026-09-24-bounded-pressure-evidence.md).
 
-The latest impaired-match run completes the real 121-frame candidate and applies
+The previous impaired-match run completes the real 121-frame candidate and applies
 an automatic 240p→360p upgrade. Capture windows stay at least 29.6 fps; archive/live
 frame IDs are consecutive, the archive continues 7.4 seconds after live, and all
 27 phase audio anchors pass for both outputs. Startup clock and opening-AAC races
