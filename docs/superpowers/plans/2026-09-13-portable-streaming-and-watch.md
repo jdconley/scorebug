@@ -39,19 +39,22 @@ and worker-processing counts agree on that missing frame. The default media veri
 requires zero loss. A new explicit offline conservation check now reconciles this
 loss against the raw receiver and completed worker counts, at 29.8 fps and 0.667%
 loss in the affected interval. It keeps the clean archive strict and grants no
-healthy recovery credit. All 4,491 tooling tests pass. The next task is direct
-evidence that the rate cap bound traffic; complete capacity recovery and a fresh
-subsequent ramp-up remain unqualified.
+healthy recovery credit. A new explicit queue audit and independent replay now
+prove actual token-limit denial in controlled tests, including FIFO order, all
+token advances and phase-counter conservation. All 4,556 tooling tests pass. The
+next task is exporting and selecting that audit in a fresh native experiment;
+complete capacity recovery and a fresh subsequent ramp-up remain unqualified.
 Physical camera, phone/Watch concurrency and remote proxy tests remain open.
 
 No simulator runtime was installed, only the experiment's temporary simulator was
 removed, and the frozen input/code hashes were unchanged. See the
 [latest replay evidence and next steps](2026-09-24-measured-capacity-uplink.md#frozen-independent-clock-native-repeat).
 
-The proposed [direct rate-limit proof](2026-09-25-capacity-rate-ledger.md)
-keeps the historical congestion gate unchanged and specifies new evidence for a
-future explicit experiment. Bounded live-loss conservation is implemented and
-passes the saved-artifact replay; native success routes remain unchanged.
+The [direct rate-limit proof component](2026-09-25-capacity-rate-ledger.md)
+keeps the historical congestion gate unchanged. It requires evidence that the
+old runs did not record, and cannot retrospectively qualify them. Bounded
+live-loss conservation passes the saved-artifact replay; native success routes
+remain unchanged.
 
 Earlier saved evidence from `native-app-5UYvcA` passed its separate transport,
 confirmed-upgrade, native pressure-decrease, and media checks. The observed upload

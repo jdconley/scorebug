@@ -1,7 +1,7 @@
 # Direct evidence of an active upload rate limit
 
-> Use `superpowers:executing-plans`. This is a proposed bounded laboratory proof,
-> not an enabled route or replacement for historical acceptance criteria.
+> Use `superpowers:executing-plans`. This is a bounded laboratory proof component,
+> not an enabled native route or replacement for historical acceptance criteria.
 
 ## Problem and intended result
 
@@ -58,6 +58,13 @@ floating-point token updates.
   snapshots. Repeatedly cloning a large ledger during clock polling would itself
   create measurement load. A compact per-public-operation row may combine its
   one advance and outcome, provided replay still includes every original advance.
+- When recording is explicitly enabled, ordinary snapshots include a compact
+  `rateLedgerOperationOrdinal` alongside their existing fields. Match both phase
+  snapshot ordinals to the ledger boundaries. Otherwise, deleting a no-op and
+  renumbering the log could hide an omitted advance. Also include the small
+  `rateLedgerFirstDenial` witness (null until an actual denial) and match it at
+  restoration. This prevents a prediction-only row and forged witness from
+  passing together against untouched snapshots. Default snapshots stay unchanged.
 - The recorder cannot sleep, alter tokens/FIFO/rate timers, extend latency, or
   grant native quality authority. The final queue/socket shutdown remains joined
   separately after phase closure.
@@ -92,18 +99,19 @@ and cannot acquire this new qualification retroactively.
 
 - [x] Review the proof shape and resolve initial history, FIFO ownership, complete
   floating-point advances, same-time boundaries, partial bins and phase closure.
-- [ ] Set fixed row/byte budgets and prove overflow cannot affect queue behavior
+- [x] Set fixed row/byte budgets and prove overflow cannot affect queue behavior
   before enabling the recorder.
-- [ ] Add queue observer tests: a finite cap with actual token denial; an underload
+- [x] Add queue observer tests: a finite cap with actual token denial; an underload
   with no denial; a delayed host timer whose replenished bucket can forward;
   delay-only waiting; packet drops; phase boundaries; immutable snapshots; caps;
   unchanged queue behavior with and without observation.
-- [ ] Implement the bounded audit without enabling it in any native run.
-- [ ] Add independent replay tests with missing/extra/reordered charges, forged
+- [x] Implement the bounded audit without enabling it in any native run.
+- [x] Add independent replay tests with missing/extra/reordered charges, forged
   denial, wrong ready time, incorrect wire accounting and incomplete terminal
   evidence. Keep the historical500ms gate tests unchanged.
-- [ ] Review and run focused/full tooling checks. Then enable only an explicit
-  future laboratory selector and retain raw input/source hashes for a new run.
+- [x] Review and run focused/full tooling checks.
+- [ ] Enable only an explicit future laboratory selector and retain raw
+  input/source hashes for a new run.
 - [ ] Compose actual token limiting with causal native pressure, bounded live-loss
   conservation, strict clean recording and fresh recovery. No evidence can be
   retroactively added to YAQo8F or substituted into its frozen failed result.
@@ -112,4 +120,44 @@ Review additionally requires tests for an initially finite or previously deplete
 bucket, same-time boundary operations, denial followed immediately by restoration,
 initial backlog, forged/dropped head identity, tolerance-edge arithmetic, omitted
 empty or `nextDelay` advances, partial-bin mutation, and exhaustion just before
-closure. No recorder or new success route is implemented at this checkpoint.
+closure. The recorder and independent component now exist; no new native success
+route is enabled at this checkpoint.
+
+## Implementation checkpoint
+
+`DatagramImpairmentQueue` now accepts explicit `recordRateLedger: true` and exports
+through `rateLedgerSnapshot()`. The recorder retains at most 131,072 operation rows
+and 32 MiB of serialized evidence, reserving 2 MiB for bounded initial/final FIFO
+metadata. JavaScript heap usage is separately bounded by those row/FIFO limits;
+32 MiB is not a claim about the engine's object representation. Ordinary packet
+operations perform no JSON serialization and retain no payloads. Exhaustion is
+sticky, invalidates only the proof, and leaves queue forwarding unchanged.
+
+`qualifyRateLedger({ ledger, limited, restored }, { configuration })` independently
+reconstructs every token advance, receive/drop/forward decision, first actual
+ready-head denial, and final FIFO. Its configuration is explicitly supplied by
+the caller. It reconciles each disposition in every 100 ms bin against restoration
+minus limit snapshots, including partial boundary bins. It reports rate binding
+only; adaptation, recovery and production qualification remain false.
+
+Review reproduced an omitted same-time empty advance hidden by renumbering the
+ledger. The phase snapshot ordinal anchors and a regression test close that gap.
+Code review also reproduced a predicted wait rewritten as a denying operation,
+with a matching forged ledger witness. A separately copied first-denial witness
+in the phase snapshot now binds that branch; a coherent row-and-witness mutation
+must fail even though all tokens, FIFO counters and ordinals still match.
+No old artifact can acquire this evidence retrospectively. The historical 500 ms
+congestion gate, default lossless media gate, proxy export and native runner remain
+unchanged. The next integration must export the separate bounded artifact, select
+this proof explicitly, retain all other transport checks, and compose it with
+causal native pressure, bounded live-loss conservation and fresh recovery.
+
+Verification: 18 observer tests and 47 independent replay tests pass. The complete
+tooling suite passes 4,556 tests, with a joined exit 0 in
+`artifacts/qa/repeated-live-checkpoint-rate-ledger-tools-20260925-c-exit.json`.
+Initial missing-feature and later omitted-no-op failures are retained alongside
+the green logs under `artifacts/qa/repeated-live-checkpoint-rate-ledger-*`.
+Formatting and `git diff --check` pass. No simulator was created or installed for
+this component checkpoint. Final specification and code-quality reviews found no
+remaining actionable findings after independently repeating both corruption
+regressions.

@@ -1180,6 +1180,34 @@ file hashes and 147 replay-source hashes, reproduced by
 `artifacts/qa/replay-capacity750-bounded-loss.mjs`. Complete native capacity,
 media-file qualification, fresh re-ramp and production flags remain false; the
 original native run and the historical 500ms congestion gate remain failed.
-The reviewed [rate operation ledger plan](2026-09-25-capacity-rate-ledger.md) is the
-next implementation prerequisite. It requires complete token/FIFO replay and does
-not retrofit evidence into the existing run.
+The reviewed [rate operation ledger plan](2026-09-25-capacity-rate-ledger.md) now has
+an implemented observer and independent token/FIFO replay component. Export and
+explicit native integration remain the next prerequisite; no evidence is
+retrofitted into the existing run.
+
+## Direct rate-limit audit component checkpoint
+
+The queue can explicitly record a bounded, payload-free operation ledger for its
+first finite phase. Independent replay checks every token advance and actual
+ready-head denial, FIFO ordering, packet dispositions, both boundary states and
+per-bin differences between immutable phase snapshots. Compact snapshot operation
+ordinals independently anchor the log length; a review regression removes a no-op
+and renumbers the log, which must still fail. A separate first-denial snapshot
+witness also rejects a prediction rewritten as a denying operation, even with a
+matching forged ledger witness. Only the explicit recorder adds these compact
+fields; default snapshots and existing native routes are unchanged.
+
+All 4,556 tooling tests pass, with joined exit 0 in
+`artifacts/qa/repeated-live-checkpoint-rate-ledger-tools-20260925-c-exit.json`.
+Observer tests prove capped retention, unchanged delivery, no per-packet JSON
+serialization, valid same-time boundaries, fractional arithmetic and failure on
+unsupported finite history. Replay tests reject forged/omitted/reordered data,
+wrong packet identities, unready denial, changed partial bins and missing closure.
+The component reports only rate binding; adaptation, recovery and production
+qualification remain false.
+
+The next experiment needs a separate bounded audit artifact, an explicit trusted
+selection of this proof, and composition with existing transport closure,
+configured loss, rate ceilings, traffic coverage, causal native pressure and
+media/recovery checks. Preserve the 500 ms historical route. A new frozen native
+run must record this evidence; YAQo8F remains failed under its original contract.

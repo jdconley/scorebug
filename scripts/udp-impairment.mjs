@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createSocket } from 'node:dgram';
 import { once } from 'node:events';
+import { RateLedgerObserver } from './rate-ledger-observer.mjs';
 
 const defaults = Object.freeze({
   rateBitsPerSecond: null,
@@ -115,6 +116,8 @@ function validateSchedule(schedule, initialRate) {
 export class DatagramImpairmentQueue {
   #configuration;
   #timeline;
+  #rateLedger;
+  #operationOrdinal = 0;
   #storage;
   #head = 0;
   #count = 0;
@@ -134,9 +137,17 @@ export class DatagramImpairmentQueue {
   constructor(configuration = {}) {
     assert.ok(configuration && typeof configuration === 'object' && !Array.isArray(configuration));
     for (const key of Object.keys(configuration))
-      assert.ok(key in defaults || key === 'recordTimeline', `Unknown impairment option ${key}`);
-    const { recordTimeline = false, ...queueConfiguration } = configuration;
+      assert.ok(
+        key in defaults || key === 'recordTimeline' || key === 'recordRateLedger',
+        `Unknown impairment option ${key}`,
+      );
+    const {
+      recordTimeline = false,
+      recordRateLedger = false,
+      ...queueConfiguration
+    } = configuration;
     assert.equal(typeof recordTimeline, 'boolean', 'Invalid timeline selection');
+    assert.equal(typeof recordRateLedger, 'boolean', 'Invalid rate ledger selection');
     const c = { ...defaults, ...queueConfiguration };
     validateRate(c.rateBitsPerSecond);
     assert.ok(
@@ -155,6 +166,7 @@ export class DatagramImpairmentQueue {
       assert.ok(Number.isSafeInteger(c[key]) && c[key] >= min && c[key] <= max, `Invalid ${key}`);
     this.#configuration = Object.freeze(c);
     if (recordTimeline) this.#timeline = new QueueTimeline();
+    if (recordRateLedger) this.#rateLedger = new RateLedgerObserver(c);
     this.#storage = Array(c.maxQueuePackets);
     this.#tokens = c.burstBytes;
   }
@@ -173,6 +185,7 @@ export class DatagramImpairmentQueue {
         this.#tokens + ((now - this.#lastTime) * c.rateBitsPerSecond) / 8000,
       );
     this.#lastTime = now;
+    if (this.#rateLedger) this.#operationOrdinal++;
     this.#timeline?.time(now);
   }
   setRate(rateBitsPerSecond, now) {
@@ -180,7 +193,33 @@ export class DatagramImpairmentQueue {
     validateRate(rateBitsPerSecond);
     // Advance at the old rate, preserving the token balance and FIFO deadlines.
     this.#advance(now);
+    const previousRate = this.#configuration.rateBitsPerSecond;
     this.#configuration = Object.freeze({ ...this.#configuration, rateBitsPerSecond });
+    if (this.#rateLedger)
+      this.#rateLedger.rateChange(
+        previousRate,
+        this.#configuration,
+        this.#operationOrdinal,
+        now,
+        this.#tokens,
+        this.#ledgerState(),
+      );
+  }
+  #ledgerState() {
+    return {
+      counters: this.#counts,
+      fifo: Array.from({ length: this.#count }, (_, i) => {
+        const item = this.#storage[(this.#head + i) % this.#storage.length];
+        return [item.receivedOrdinal, item.bytes, item.enqueuedAt, item.readyAt];
+      }),
+    };
+  }
+  #recordOperation(kind, detail, tokens = this.#tokens) {
+    if (this.#rateLedger?.active)
+      this.#rateLedger.record([this.#operationOrdinal, this.#lastTime, kind, tokens, detail]);
+  }
+  rateLedgerSnapshot() {
+    return this.#rateLedger?.snapshot() ?? null;
   }
   #account(kind, bytes, residence = 0) {
     this.#counts[kind].packets++;
@@ -196,18 +235,25 @@ export class DatagramImpairmentQueue {
     this.#account('received', bytes);
     if (data.length > c.maxDatagramBytes) {
       this.#account('oversizeDrop', bytes);
+      if (this.#rateLedger?.recording)
+        this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'oversizeDrop']);
       return false;
     }
     if (c.dropEvery && this.#counts.received.packets % c.dropEvery === 0) {
       this.#account('injectedDrop', bytes);
+      if (this.#rateLedger?.recording)
+        this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'injectedDrop']);
       return false;
     }
     if (this.#count === c.maxQueuePackets || this.#bytes + bytes > c.maxQueueBytes) {
       this.#account('overflowDrop', bytes);
+      if (this.#rateLedger?.recording)
+        this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'overflowDrop']);
       return false;
     }
     this.#storage[(this.#head + this.#count) % this.#storage.length] = {
       data: Buffer.from(data),
+      receivedOrdinal: this.#counts.received.packets,
       bytes,
       readyAt: now + c.delayMilliseconds,
       enqueuedAt: now,
@@ -217,18 +263,37 @@ export class DatagramImpairmentQueue {
     this.#peakPackets = Math.max(this.#peakPackets, this.#count);
     this.#peakBytes = Math.max(this.#peakBytes, this.#bytes);
     this.#timeline?.queued(now, this.#count, this.#bytes);
+    if (this.#rateLedger?.recording)
+      this.#recordOperation('enqueue', [this.#counts.received.packets, bytes, 'queued']);
     return true;
   }
   takeReady(now) {
     if (this.#closed) return null;
     this.#advance(now);
     const item = this.#storage[this.#head];
-    if (
-      !this.#count ||
-      item.readyAt > now ||
-      (this.#configuration.rateBitsPerSecond !== null && this.#tokens + 1e-9 < item.bytes)
-    )
+    if (!this.#count) {
+      if (this.#rateLedger?.recording) this.#recordOperation('takeReady', ['empty', null, null]);
       return null;
+    }
+    if (item.readyAt > now) {
+      if (this.#rateLedger?.recording)
+        this.#recordOperation('takeReady', ['delay', item.receivedOrdinal, item.bytes]);
+      return null;
+    }
+    if (this.#configuration.rateBitsPerSecond !== null && this.#tokens + 1e-9 < item.bytes) {
+      if (this.#rateLedger?.recording)
+        this.#recordOperation('takeReady', ['tokenDenied', item.receivedOrdinal, item.bytes]);
+      this.#rateLedger?.denial(
+        this.#operationOrdinal,
+        now,
+        item.receivedOrdinal,
+        item.bytes,
+        this.#tokens,
+      );
+      return null;
+    }
+    if (this.#rateLedger?.recording)
+      this.#recordOperation('takeReady', ['forwarded', item.receivedOrdinal, item.bytes]);
     if (this.#configuration.rateBitsPerSecond !== null)
       this.#tokens = Math.max(0, this.#tokens - item.bytes);
     this.#timeline?.queued(now, this.#count, this.#bytes);
@@ -244,19 +309,25 @@ export class DatagramImpairmentQueue {
   nextDelay(now) {
     if (this.#closed) return null;
     this.#advance(now);
-    if (!this.#count) return null;
+    if (!this.#count) {
+      if (this.#rateLedger?.recording) this.#recordOperation('nextDelay', null);
+      return null;
+    }
     const item = this.#storage[this.#head],
       rate = this.#configuration.rateBitsPerSecond;
-    return Math.max(
+    const delay = Math.max(
       0,
       item.readyAt - now,
       rate === null ? 0 : ((item.bytes - this.#tokens) * 8000) / rate,
     );
+    if (this.#rateLedger?.recording) this.#recordOperation('nextDelay', delay);
+    return delay;
   }
   close(now = this.#lastTime ?? 0) {
     if (this.#closed) return;
     this.#advance(now);
     this.#closed = true;
+    if (this.#rateLedger?.recording) this.#recordOperation('close', null);
     for (let i = 0; i < this.#count; i++) {
       const index = (this.#head + i) % this.#storage.length;
       this.#account('closeDiscard', this.#storage[index].bytes);
@@ -264,10 +335,24 @@ export class DatagramImpairmentQueue {
     }
     this.#count = 0;
     this.#bytes = 0;
+    if (this.#rateLedger?.active)
+      this.#rateLedger.finish(
+        this.#operationOrdinal,
+        now,
+        this.#tokens,
+        this.#ledgerState(),
+        false,
+      );
   }
   snapshot() {
     return structuredClone({
       configuration: this.#configuration,
+      ...(this.#rateLedger
+        ? {
+            rateLedgerOperationOrdinal: this.#operationOrdinal,
+            rateLedgerFirstDenial: this.#rateLedger.firstDenialSnapshot(),
+          }
+        : {}),
       ...(this.#timeline ? { timeline: this.#timeline } : {}),
       ...this.#counts,
       queue: {
