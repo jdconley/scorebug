@@ -9,6 +9,40 @@ export function nativeCapacityDiagnostics({ args, capacityRecovery }) {
   return count === 1;
 }
 
+/** Join raw diagnostic collection even when the UI workflow fails. This route
+ * never grants a passing verdict, and secondary failures cannot mask the UI error. */
+export async function runCapacityDiagnosticWorkflow({
+  workflow,
+  collect,
+  save,
+  onSecondaryFailure,
+}) {
+  assert([workflow, collect, save].every((operation) => typeof operation === 'function'));
+  assert(onSecondaryFailure === undefined || typeof onSecondaryFailure === 'function');
+  let workflowFailed = false,
+    workflowError;
+  try {
+    await workflow();
+  } catch (error) {
+    workflowFailed = true;
+    workflowError = error;
+  }
+  try {
+    await save(await collect());
+  } catch (error) {
+    if (!workflowFailed) throw error;
+    try {
+      onSecondaryFailure?.(error);
+    } catch {
+      /* Preserve the primary failure. */
+    }
+  }
+  if (workflowFailed) throw workflowError;
+  throw new Error(
+    'Capacity diagnostics collected; adaptation, media and recovery are NOT qualified',
+  );
+}
+
 function failureFields(error) {
   return {
     name: String(error?.name ?? 'Error').slice(0, 100),

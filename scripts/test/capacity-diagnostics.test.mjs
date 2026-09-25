@@ -17,6 +17,96 @@ test('diagnostics require a unique explicit flag and the complete independently 
   assert.throws(() => select(['--capacity-diagnostics'], 'true'));
 });
 const stages = ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink', 'finishRecorder'];
+async function workflow(operations) {
+  assert.equal(typeof implementation.runCapacityDiagnosticWorkflow, 'function');
+  return implementation.runCapacityDiagnosticWorkflow(operations);
+}
+for (const uiFailed of [false, true])
+  test(`diagnostic workflow joins and saves after UI ${uiFailed ? 'failure' : 'success'}, then fails`, async () => {
+    const calls = [];
+    const original = new Error('UI qualification failed');
+    const report = { diagnosticOnly: true, recoveryQualified: false };
+    await assert.rejects(
+      workflow({
+        workflow: async () => {
+          calls.push('workflow');
+          if (uiFailed) throw original;
+        },
+        collect: async () => {
+          calls.push('collect');
+          return report;
+        },
+        save: async (value) => {
+          calls.push('save');
+          assert.strictEqual(value, report);
+        },
+      }),
+      (error) => (uiFailed ? error === original : /NOT qualified/.test(error.message)),
+    );
+    assert.deepEqual(calls, ['workflow', 'collect', 'save']);
+  });
+for (const failedStage of ['collect', 'save'])
+  for (const uiFailed of [false, true])
+    test(`diagnostic ${failedStage} failure retains ${uiFailed ? 'original UI' : 'collection'} error`, async () => {
+      const original = new Error('UI qualification failed'),
+        secondary = new Error(failedStage);
+      const calls = [];
+      await assert.rejects(
+        workflow({
+          workflow: async () => {
+            calls.push('workflow');
+            if (uiFailed) throw original;
+          },
+          collect: async () => {
+            calls.push('collect');
+            if (failedStage === 'collect') throw secondary;
+            return {};
+          },
+          save: async () => {
+            calls.push('save');
+            throw secondary;
+          },
+          onSecondaryFailure: (error) => {
+            calls.push('secondary');
+            assert.strictEqual(error, secondary);
+          },
+        }),
+        (error) => error === (uiFailed ? original : secondary),
+      );
+      assert.deepEqual(calls, [
+        'workflow',
+        'collect',
+        ...(failedStage === 'save' ? ['save'] : []),
+        ...(uiFailed ? ['secondary'] : []),
+      ]);
+    });
+test('pending diagnostics must finish before the workflow rejects', async () => {
+  let release, began;
+  const started = new Promise((resolve) => {
+    began = resolve;
+  });
+  let settled = false;
+  const pending = workflow({
+    workflow: async () => {
+      throw new Error('UI failure');
+    },
+    collect: async () => {
+      began();
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      return {};
+    },
+    save: async () => {},
+  }).catch((error) => {
+    settled = true;
+    return error;
+  });
+  await Promise.race([started, pending]);
+  assert.equal(settled, false);
+  release();
+  assert.equal((await pending).message, 'UI failure');
+});
 test('diagnostics preserve bounded nested clock causes including cyclic chains', async () => {
   const clock = new Error('Clock exchange exceeds 250ms');
   const wrapped = new Error('Owned fault collection failed', { cause: clock });

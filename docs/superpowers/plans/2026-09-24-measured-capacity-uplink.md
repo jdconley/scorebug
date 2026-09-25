@@ -239,3 +239,71 @@ reuse installed iOS26.2, and preserve every failed clock/media/transport observa
 The actual response will determine which native pressure/deadline trigger needs to be
 joined to the fault. This avoids designing the remaining proof around an assumed
 trigger or fabricating decoder-pause evidence.
+
+## First native capacity diagnostic — failed, preserved
+
+`artifacts/qa/native-app-rQQICD` ran the prepared 270-second real-match source
+with a 180-second hold and the existing 550 kbps capacity route. Xcode built
+successfully, but the UI workflow failed its final live qualification assertion:
+local publishing remained active while the worker was starting. The UI stopped
+and exported local recording before asserting that failure. The process joined
+with exit1 and cleanup removed its owned temporary simulator. The iOS26.2 runtime
+was reused. The source freeze at `capacity-diagnostics-freeze-b5btaaff` verifies
+all 1,244 hashes unchanged; the runtime source state is committed as `a9e2c37`.
+
+Preserved observations:
+
+- `diagnostic-clock-transport-inspection.json`: all four host/native exchanges
+  match the closed native clock audit. Boundary widths are 0.504s and 0.498s.
+  This qualifies timing only. Transport replay rejects `Missing phase traffic
+  coverage`; do not treat packet counters alone as a qualified transport run.
+- The app stayed at revision0/240p: zero profile requests, zero candidate admission
+  events, and no applied upgrade. Nine healthy source evaluations reported
+  `missingCapacity` before the fault. There is no demonstrated step-down or recovery.
+- The 121-frame candidate completed at native uptime1960031.1162350834. Stage3
+  retirement was requested at1960031.1378159584, only21.58ms later. It bound3.905s
+  after stage3 began. The last accepted receiver interval preceded completion by
+  about0.93s. This identifies a narrow admission window, not the cause of delayed
+  readiness; the one-shot route currently lacks the repeated route's wait trace.
+- With the probe retired and still at240p, offered wire traffic is roughly600kbps.
+  The550kbps limit therefore also constrains the minimum profile. Re-measure actual
+  video/audio/transport costs before selecting a recoverable capacity test; the
+  configured350kbps video rate alone does not describe total wire traffic.
+- Worker pipeline1 ended with an input I/O error after2455 decoded frames. Eight
+  retries produced zero decoded frames and output connection refusals. The direct
+  FFmpeg recorder exited naturally after the first connection. It is explicitly a
+  single-publisher listener, so the fixture prevents observing worker reconnection.
+- `diagnostic-media-inspection.json`: both archive and live audio/video fully decode
+  with FFmpeg `-xerror`. The1080p archive contains237.866667s of video and237.886667s
+  of audio. Live contains82s video and93.336712s audio. Live output is worker-scaled
+  360p, not evidence of a native360p upgrade. No barcode continuity, scoreboard or
+  phase-audio/sync qualification is claimed. The preserved native input hash matches
+  the prepared source. Original Downloads videos remain unchanged.
+- The bounded failure snapshot is complete:261 files,1,012,223,290 bytes. Reuse it
+  rather than making another gigabyte copy. No `capacity-diagnostics.json` exists
+  in this original run because the UI failure skipped that branch; keep that absence
+  intact as part of the failed experiment.
+
+The harness correction joins diagnostic collection after either UI outcome and
+then saves the report before entering existing failure preservation/cleanup. It
+always rejects; a secondary collection/write failure cannot mask the original UI
+failure. Seven new tests failed before the correction and all16 focused tests now
+pass. Read-only review found no actionable issue. This correction does not repair
+streaming or retroactively change the failed experiment.
+The complete tooling suite also passes all4,188 tests with joined exit0
+(`repeated-live-checkpoint-capacity-ui-failure-tools.log`).
+
+Next work, in order:
+
+1. Add bounded one-shot candidate readiness/admission diagnostics and determine why
+   the final probe had almost expired when measurement finished. Preserve strict
+   freshness and owner checks; do not extend stale evidence.
+2. Provide a reconnectable, session-aware output recorder for fault experiments.
+   Retain each connection's timestamps and media; never concatenate across a gap
+   and claim continuous delivery.
+3. Measure baseline and higher-profile total wire rates, then specify the fault
+   capacity and expected minimum-profile behavior before launch. Existing550kbps
+   results remain failures under their original criteria.
+4. Run a newly frozen diagnostic, qualify transport and actual native causal
+   response, and only then enable the full recovery gate. Fresh post-recovery
+   measurement/ramp and true outage remain separate experiments.

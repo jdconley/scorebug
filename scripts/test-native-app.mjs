@@ -1,5 +1,8 @@
 import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
-import { nativeCapacityDiagnostics } from './capacity-diagnostics.mjs';
+import {
+  nativeCapacityDiagnostics,
+  runCapacityDiagnosticWorkflow,
+} from './capacity-diagnostics.mjs';
 import { capacityClockFiles } from './capacity-clock-files.mjs';
 import { collectCapacityClockExchanges } from './capacity-clock-schedule.mjs';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
@@ -927,20 +930,24 @@ try {
       { flag: 'wx' },
     );
   }
-  await run('xcodebuild', workflowArguments, 'workflow', {
-    timeout: streamingBudget.workflowTimeoutMs,
-  });
-  if (capacityDiagnostics) {
-    const result = await proxy.collectCapacityDiagnostics();
-    await writeFile(join(artifact, 'capacity-diagnostics.json'), JSON.stringify(result, null, 2), {
-      flag: 'wx',
+  const workflow = () =>
+    run('xcodebuild', workflowArguments, 'workflow', {
+      timeout: streamingBudget.workflowTimeoutMs,
     });
-    // Deliberately non-passing: the catch/finally path preserves bounded native
-    // QA + recording data and joins all cleanup. No normal trial PASS is reachable.
-    throw new Error(
-      'Capacity diagnostics collected; adaptation, media and recovery are NOT qualified',
-    );
-  }
+  if (capacityDiagnostics) {
+    // A failed UI workflow still owns live resources and useful raw evidence.
+    // Join collection before preserving app data; the helper always rejects.
+    await runCapacityDiagnosticWorkflow({
+      workflow,
+      collect: () => proxy.collectCapacityDiagnostics(),
+      save: (result) =>
+        writeFile(join(artifact, 'capacity-diagnostics.json'), JSON.stringify(result, null, 2), {
+          flag: 'wx',
+        }),
+      onSecondaryFailure: () =>
+        console.warn('Secondary failure: capacity diagnostic collection could not finish.'),
+    });
+  } else await workflow();
   // Xcode may shut its destination down after tests; boot the same owned device
   // to inspect the app container rather than rerunning or losing its recordings.
   const devices = JSON.parse(

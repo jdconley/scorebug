@@ -24,6 +24,27 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+**The first native capacity experiment failed; recovery remains unqualified.**
+`native-app-rQQICD` preserved a 237.9-second clean local archive whose video and
+audio fully decode. The app remained at 240p and never admitted its completed
+360p candidate. The worker's first stream ended with an input error; retries then
+hit the closed single-connection test recorder. Both recordings decode, but live
+A/V durations differ, and continuity, scoring and phase audio have not passed.
+Clock bracketing passes independently; transport qualification fails its phase
+traffic coverage check. All 1,244 frozen source/input hashes are unchanged.
+
+The 550 kbps limit is below the observed roughly 600 kbps wire rate even at 240p.
+Before another recovery qualification attempt, investigate late candidate readiness,
+provide a reconnectable recording sink, and measure a capacity limit that permits
+the baseline profile while constraining the higher profile. Do not weaken evidence
+freshness or relabel this failure. The diagnostic harness now joins and saves raw
+collection even after a UI failure, preserving the original failure. The experiment
+reused installed iOS26.2 and removed only its owned temporary simulator; no runtime
+was installed. See the [capacity recovery plan](2026-09-24-measured-capacity-uplink.md)
+for evidence, limits and next steps.
+
+Earlier harness checkpoint:
+
 The capacity experiment is now wired through native launch settings, its independently
 timed UDP proxy and owned clock collection. Raw media replay and the confirmed-upgrade
 check accept the bounded capacity audits only under explicit recovery settings.
