@@ -24,6 +24,18 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The third frozen impaired-match run still rejects the candidate's opening audio;
+there is no upgrade request. Capture steady windows stayed at 30 fps, archive/live frame
+identities are consecutive, sampled audio and score changes pass, and the clean
+archive continues 7.3 seconds after live output. Its new packet diagnostic isolates
+a 25.583 ms opening source gap, beyond the unchanged 21.333 ms AAC allowance.
+A separate startup-clock regression is now repaired using the real measurement,
+encoder, transport and cost validator; all 183 Streaming and 535 app-model tests pass; read-only review found no
+actionable issues. Next: establish an opening audio
+anchor before admitting raw, preserving every existing continuity/deadline gate.
+
+Earlier evidence:
+
 A second impaired-match run completed candidate measurement and **confirmed an
 automatic240p→360p upgrade**, with at least29.8fps in each steady capture window.
 Every measured frame met the1.5s deadline; the full lab benchmark still failed its
@@ -35,7 +47,7 @@ A separate deterministic real-encoder regression reproduced an owner startup rac
 that discards AAC after transport arming. The repair installs/validates the entry
 before arming and permits bounded audio routing during startup while raw video waits.
 Full Streaming181 and app-model535 tests pass; read-only review found no issues.
-The next run will verify the repaired startup path under the same impaired link.
+The third run above tested that repair and preserved the remaining opening-gap failure.
 
 The first actual run with the new recovery policy completed all three native probe
 stages (12.35MB accepted padding) and removed retransmission-only pressure failures,

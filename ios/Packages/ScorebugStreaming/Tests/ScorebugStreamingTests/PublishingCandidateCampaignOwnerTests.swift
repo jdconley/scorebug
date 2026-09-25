@@ -118,23 +118,22 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         let scope = scope()
         let transport = PublishingCandidateTransport(scope: scope, profile: .low240)
         let encoder = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)
-        let armed = CampaignGate(), startupGate = CampaignGate(), finishGate = CampaignGate()
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        let owner = PublishingCandidateCampaignOwner(factory: { _, _, generation in
-            .init(id: encoder.id, start: {
-                guard transport.arm(publishingGeneration: generation) else { throw CampaignFakeError.startup }
+        let armed = CampaignGate(), startupGate = CampaignGate()
+        let measurement = PublishingCandidateMeasurement(scope: scope, profile: .low240,
+            operations: .init(id: encoder.id, start: {
+                guard transport.arm(publishingGeneration: 7) else { throw CampaignFakeError.startup }
                 armed.open()
                 await startupGate.wait()
                 try await encoder.start()
-            }, offer: { encoder.offer($0.sampleBuffer) }, observeAudio: { transport.observeAudio($0) },
-            cancel: { _ in transport.cancel(); finishGate.open() }, result: {
-                await finishGate.wait()
-                let result = await encoder.finish()
-                return .init(id: encoder.id, scope: scope, profile: .low240, reason: .completed,
-                    startedAt: startedAt, endedAt: ProcessInfo.processInfo.systemUptime, acceptedInputCount: 2,
-                    firstInputPTS: CMTime(value: 10, timescale: 1), lastInputPTS: CMTime(value: 301, timescale: 30),
-                    encoding: result)
-            })
+            }, offer: { encoder.offer($0) }, finish: { await encoder.finish() },
+            cancel: { await encoder.cancel() }, rawClosed: { reason in
+                if reason == .completed { transport.closeRawWindow() } else { transport.cancel() }
+            }, requiresTransport: true))
+        let owner = PublishingCandidateCampaignOwner(factory: { _, _, _ in
+            .init(id: encoder.id, start: { try await measurement.start() },
+                offer: { measurement.offer($0) }, observeAudio: { transport.observeAudio($0) },
+                cancel: { measurement.cancel(reason: $0); transport.cancel() },
+                result: { await measurement.result() })
         })
         let starting = Task { try await owner.begin(scope: scope, profile: .low240, publishingGeneration: 7) }
         await armed.wait()
@@ -144,20 +143,29 @@ final class PublishingCandidateCampaignOwnerTests: XCTestCase {
         owner.observeAudio(opening)
         startupGate.open()
         let handle = try await starting.value
-        XCTAssertTrue(owner.offer(first, id: handle.id))
-        XCTAssertTrue(owner.offer(try sample(at: CMTime(value: 301, timescale: 30)), id: handle.id))
-        owner.observeAudio(try audio(at: 10.014187458 + 1024.0 / 48000))
-        finishGate.open()
+        var nextAudio = 1
+        for n in 0...120 {
+            let pts = 10 + Double(n) / 30
+            XCTAssertTrue(owner.offer(try sample(at: CMTime(value: Int64(300 + n), timescale: 30)), id: handle.id))
+            while 10.014187458 + Double(nextAudio) * 1024 / 48000 <= pts {
+                owner.observeAudio(try audio(at: 10.014187458 + Double(nextAudio) * 1024 / 48000))
+                nextAudio += 1
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        owner.observeAudio(try audio(at: 10.014187458 + Double(nextAudio) * 1024 / 48000))
         let value = await owner.result(id: handle.id)
-        let measurement = try XCTUnwrap(value)
-        let result = try XCTUnwrap(measurement.encoding?.transport)
+        let measured = try XCTUnwrap(value)
+        XCTAssertEqual(measured.reason, .completed)
+        let result = try XCTUnwrap(measured.encoding?.transport)
         XCTAssertEqual(result.outcome, .completed, result.failure ?? "")
         XCTAssertNil(result.openingAudioFailure)
-        XCTAssertEqual(result.audio.count, 1)
         XCTAssertEqual(result.audio.first?.sourcePTS, opening.sourcePTS)
         XCTAssertEqual(result.audio.first?.observedAt, opening.observedAt)
+        XCTAssertGreaterThanOrEqual(opening.observedAt, try XCTUnwrap(measured.startedAt))
+        XCTAssertNotNil(PublishingCandidateCost(measured), "Startup AAC must satisfy the unchanged final cost validator")
         XCTAssertGreaterThanOrEqual(result.maximumPendingCount, 1)
-        XCTAssertEqual(result.mux?.videoInputCount, 2)
+        XCTAssertEqual(result.mux?.videoInputCount, 121)
         await owner.stop()
     }
 

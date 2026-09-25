@@ -123,9 +123,9 @@ public actor PublishingCandidateCampaignOwner {
                                                    profile: PublishingVideoProfile,
                                                    publishingGeneration: UInt64) throws -> Operations {
         let transport = PublishingCandidateTransport(scope: scope, profile: profile)
-        let measurement = try PublishingCandidateMeasurement(scope: scope, profile: profile, transport: transport)
+        let measurement = try PublishingCandidateMeasurement(scope: scope, profile: profile, transport: transport,
+            publishingGeneration: publishingGeneration)
         return Operations(id: measurement.id, start: {
-            guard transport.arm(publishingGeneration: publishingGeneration) else { throw OwnerError.invalidGeneration }
             try await measurement.start()
         }, offer: { measurement.offer($0) }, observeAudio: { transport.observeAudio($0) },
         cancel: { reason in measurement.cancel(reason: reason); transport.cancel() },

@@ -35,10 +35,18 @@ public final class PublishingCandidateMeasurement: Sendable {
     private let state: MeasurementState
     private let terminal: Task<Result, Never>
     public convenience init(scope: VideoFrameObservationScope, profile: PublishingVideoProfile,
-                            transport: PublishingCandidateTransport? = nil) throws {
+                            transport: PublishingCandidateTransport? = nil,
+                            publishingGeneration: UInt64? = nil) throws {
         let encoder = try PublishingCandidateEncoder(scope: scope, profile: profile, transport: transport)
         self.init(scope: scope, profile: profile, operations: .init(id: encoder.id,
-            start: { try await encoder.start() }, offer: { encoder.offer($0) },
+            start: {
+                if let publishingGeneration {
+                    guard transport?.arm(publishingGeneration: publishingGeneration) == true else {
+                        throw MeasurementError.invalidGeneration
+                    }
+                }
+                try await encoder.start()
+            }, offer: { encoder.offer($0) },
             finish: { await encoder.finish() }, cancel: { await encoder.cancel() },
             rawClosed: { reason in
                 if reason == .completed { transport?.closeRawWindow() } else { transport?.cancel() }
@@ -96,7 +104,7 @@ public final class PublishingCandidateMeasurement: Sendable {
     }
 }
 
-private enum MeasurementError: Error { case alreadyStarted, closed, invalidClock }
+private enum MeasurementError: Error { case alreadyStarted, closed, invalidClock, invalidGeneration }
 
 /// Only a short synchronous SDK offer occurs under this lock. The fixed startup,
 /// deadline and terminal tasks retain this state, never the public owner.
@@ -114,6 +122,7 @@ private final class MeasurementState: @unchecked Sendable {
     private let continuation: AsyncStream<Void>.Continuation
     private var startup: Task<Void, Error>?
     private var deadline: Task<Void, Never>?
+    private var rawReady = false
     private var startedAt: Double?
     private var reason: Reason?
     private var count = 0
@@ -133,6 +142,18 @@ private final class MeasurementState: @unchecked Sendable {
     func start() throws -> Task<Void, Error> {
         try lock.withLock {
             guard startup == nil, reason == nil else { throw MeasurementError.alreadyStarted }
+            // Startup and opening AAC belong to this same bounded measurement.
+            // Establish its clock before the operation can arm the transport.
+            let at = now()
+            guard at.isFinite, at >= 0 else {
+                close(.startupFailed)
+                throw MeasurementError.invalidClock
+            }
+            startedAt = at
+            deadline = Task { [self] in
+                await deadlineWait()
+                if !Task.isCancelled { lock.withLock { if reason == nil { close(.deadline) } } }
+            }
             let task = Task { [self] in
                 do {
                     try await operations.start()
@@ -150,13 +171,8 @@ private final class MeasurementState: @unchecked Sendable {
     private func ready() throws {
         try lock.withLock {
             guard reason == nil else { throw MeasurementError.closed }
-            let at = now()
-            guard at.isFinite, at >= 0 else { throw MeasurementError.invalidClock }
-            startedAt = at
-            deadline = Task { [self] in
-                await deadlineWait()
-                if !Task.isCancelled { lock.withLock { if reason == nil { close(.deadline) } } }
-            }
+            guard withinDeadline() else { close(.deadline); throw MeasurementError.closed }
+            rawReady = true
         }
     }
     func checkReady() throws {
@@ -186,7 +202,7 @@ private final class MeasurementState: @unchecked Sendable {
     }
     func offer(_ sample: CMSampleBuffer) -> Bool {
         lock.withLock {
-            guard startedAt != nil, reason == nil else { return false }
+            guard rawReady, reason == nil else { return false }
             guard withinDeadline() else { close(.deadline); return false }
             let pts = sample.presentationTimeStamp
             guard pts.isNumeric, pts.timescale > 0, pts.epoch == 0, pts.value >= 0,

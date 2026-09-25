@@ -151,6 +151,37 @@ final class PublishingCandidateMeasurementTests: XCTestCase {
         do { try await candidate.start(); XCTFail("single use") } catch {}
     }
 
+    func testStartupClockPrecedesNativeStartButRawWaitsForReadiness() async throws {
+        let fake = MeasurementEncoder(), clock = MeasurementClock(), gate = MeasurementGate()
+        fake.startGate = gate
+        let candidate = measurement(fake, clock: clock)
+        let starting = Task { try await candidate.start() }
+        await fake.waitForStart()
+        XCTAssertFalse(candidate.offer(try sample(0)))
+        clock.set(11); gate.open()
+        try await starting.value
+        XCTAssertTrue(candidate.offer(try sample(0)))
+        candidate.cancel()
+        let result = await candidate.result()
+        XCTAssertEqual(result.startedAt, 10)
+    }
+
+    func testStartupConsumesTheSameFiveSecondAdmissionBudget() async throws {
+        let fake = MeasurementEncoder(), clock = MeasurementClock(), gate = MeasurementGate()
+        fake.startGate = gate
+        let candidate = measurement(fake, clock: clock)
+        let starting = Task { try await candidate.start() }
+        await fake.waitForStart()
+        clock.set(15); gate.open()
+        do { try await starting.value; XCTFail("Startup exhausted admission budget") } catch {}
+        XCTAssertFalse(candidate.offer(try sample(0)))
+        candidate.cancel() // ensures the old implementation also terminates for the regression
+        let result = await candidate.result()
+        XCTAssertEqual(result.reason, .deadline)
+        XCTAssertEqual(result.startedAt, 10)
+        XCTAssertEqual(result.acceptedInputCount, 0)
+    }
+
     func testDeadlineTimerClosesIdleMeasurementWithoutAnotherOffer() async throws {
         let fake = MeasurementEncoder(), clock = MeasurementClock(), timer = MeasurementGate()
         let candidate = measurement(fake, clock: clock, timer: timer)
@@ -253,7 +284,7 @@ final class PublishingCandidateMeasurementTests: XCTestCase {
         let result = await candidate.result()
         XCTAssertEqual(result.reason, .cancelled)
         XCTAssertEqual(fake.cancels, 1)
-        XCTAssertNil(result.startedAt)
+        XCTAssertEqual(result.startedAt, 10)
     }
 
     func testOwnerReleaseClosesAndJoinsNativeCancellation() async throws {

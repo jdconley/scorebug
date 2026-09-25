@@ -373,3 +373,23 @@ threshold was changed or failed benchmark retroactively promoted.1216 frozen inp
 and owned simulator/relay/API/process cleanup were verified. The next actual
 experiment uses `artifacts/qa/native-measured-startup-audio-repair-run.py` with the
 same source, static link, SRT budget and delivery criteria.
+
+
+### Measurement startup clock repair (in progress)
+
+The third frozen run (`native-app-Jts7xm`, freeze `startup-audio-repair-freeze-o7r6bolm`) joined with exit 1 and all 1,216 source hashes unchanged. Candidate transport failed `audioOpeningCoverage` after one raw frame; there were no profile requests. Its first raw PTS was 166.25 s, rejected AAC PTS 166.275583291 s, arm time 1950475.9192127085 and packet observation 1950475.9397460418. The 25.583 ms source gap exceeds one 48 kHz AAC packet (21.333 ms). This preserves the failure without proving when a prior packet arrived.
+
+Review separately found that measurement `startedAt` was recorded after native startup, while valid AAC could already be retained after arming. The unchanged cost validators correctly reject such out-of-window evidence. The previous regression fabricated an earlier measurement start and masked this integration gap.
+
+Repair design: establish measurement time and the existing five-second deadline before arming/native startup; keep raw admission separately disabled until startup completes; include startup time in the same five-second budget and reject late readiness even if the timer is delayed. Pass generation through the production measurement startup operation so arming occurs after its clock. Preserve joined cancellation, terminal ownership and all AAC/cost gates. Replace the fabricated measurement regression with real measurement/encoder/transport and final cost validation; test held startup, raw readiness and exhausted startup budget. Behavioral red confirmed before implementation. This clock fix does not claim to fix the third run's opening source gap.
+
+
+### Cold-start opening audio anchor (next implementation)
+
+Third-run media assessment: capture steady windows all 30 fps; archive frame IDs 0–3870 and live IDs 237–3651 are consecutive. The archive continues 7.3 s after live; three baseline waveform windows per output and score glyph checks pass. Maximum cumulative AAC timestamp error is below 0.114 ms. These checks are recorded in `native-app-Jts7xm/failure-assessment.json`; they do not qualify the failed candidate or an upgrade. Owned harness shutdown/deletion/container-removal logs are retained.
+
+The opening failure is consistent with a needed predecessor packet having passed before arming, but its existence/arrival was not recorded. Do not reconstruct callback time by subtracting an AAC period: observed callbacks may arrive in batches.
+
+Proposed repair: after the existing measurement clock and transport arming, observe one valid same-generation AAC packet before opening raw admission. Keep its source PTS as an immutable lower bound for the first raw frame. Ignore early raw samples before encoder/transport admission, rather than marking them as rejected input; open only for raw PTS at or beyond that audio anchor. The existing bounded pending queue keeps the packet, and subsequent opening coverage/cadence/following checks remain authoritative. The lower bound cannot advance between readiness inspection and first raw admission, so an audio callback cannot invalidate that decision; terminal transport failures still reject admission. No raw queue, timestamp rewriting, pre-arm media cache, new per-frame task or longer deadline. Silent/missing audio consumes the same five-second measurement budget then fails. Tests must cover no audio, raw PTS below the anchor, successful cold-start completion through real native cost validation, and retained failure on a later AAC gap.
+
+Clock repair verification: focused 36 tests, full Streaming 183 and app-model 535 tests pass. Read-only review found no actionable issues with ordering, cancellation, timer joining or the unchanged cost gate. Joined logs use `repeated-live-checkpoint-measurement-startup-clock-*`. No native network run yet claims this clock repair fixes the independent opening source gap.
