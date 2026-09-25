@@ -25,9 +25,19 @@ Session stores the handle before cancellation checks or awaiting `value()`.
 The upper publisher similarly stores its lower owned-operation handle before
 awaiting the lower value. A thrown value never loses cleanup responsibility.
 Retirement joins initial allocation and any captured renewal before joining the
-lower retirement. Failure cleanup uses only the lower-layer leaf, never its own
-retirement or shutdown. Keep a bounded current operation/continuation record;
+lower retirement. Failure cleanup inside an owned allocation/renewal task uses only the
+lower-layer leaf, never its own retirement or shutdown. A public `value()` or
+`renew()` wrapper whose final validation fails revokes and joins retirement before
+throwing; that external waiter is not the task captured by the retirement join. Keep a bounded current operation/continuation record;
 completion can mutate slots only when their identity still matches.
+
+`cancel()` is async and nonjoining: revoke the operation's live admission state
+first, then request exact lower/native cancellation when its target is known.
+It may await that request without waiting for allocation, renewal or wake-task
+completion. An allocator that has not returned its identity can still finish
+late; capture and clean that result before further health reads. Only `retire()`
+proves the complete native join. Renewal never creates a new owner, so malformed
+renewal fields must not redirect cleanup away from the already-owned allocation.
 
 ## Configuration context and the downshift case
 
@@ -89,7 +99,8 @@ may cross configuration epochs. Stop/new publication forbids continuation.
 
 Retain three distinct facts: raw identity for cleanup, validated allocation lineage
 for continuation, and accepted live authority after health/context checks. Capture
-raw returns before any validation or further await. A late valid allocation can
+raw returns before any validation or further await. An initial allocation must
+have a strictly positive lease no longer than 300 ms. A late valid allocation can
 retain lineage even if cancellation already revoked live authority.
 
 The joined SDK terminal snapshot must match the validated allocation's UUID,
@@ -99,6 +110,14 @@ aligned, nondecreasing bounded counters, preserved prior-stage carry and consist
 cumulative growth, plus historical time/last-acceptance relationships. An expired
 terminal lease is expected; do not impose live freshness on cleanup. Never obtain
 missing ownership from a global probe snapshot.
+
+Native acceptance can finish after the lease deadline: `SRTBandwidthProbe.offer`
+deliberately counts that send and records its late completion before terminating.
+Do not reject joined cleanup solely because `lastAcceptedAt > leaseDeadline`.
+Require a valid historical completion within the observed join boundary and
+nondecreasing accounting; separately reject late evidence for live admission or
+capacity credit. A renewed deadline can also extend up to 300 ms beyond the
+campaign limit even though no new send may start beyond that limit.
 
 For valid late returns, authority may already be revoked. Their lineage must come
 from the lowest handle's direct trusted SDK result and the upper handle's retained
@@ -112,6 +131,14 @@ retained native predecessor. Validate request/context before consuming it,
 atomically with reserving the successor operation. Record the predecessor before
 any await. Duplicate old retirement joins must not cancel that successor.
 
+Because owned stage replacement starts from a joined predecessor, the new stage's
+zero-byte initial snapshot must carry exactly that predecessor's final total.
+The legacy `isValidReplacement` allowance for a greater total applies to an
+unjoined prior snapshot and is insufficient here. A failed cross-configuration
+restart must also retain the predecessor's original campaign context when
+reissuing its receipt; it cannot relabel that campaign for replacement under the
+new configuration.
+
 A canceled first operation may positively establish that nothing was allocated:
 native dispatch never occurred, or a trusted allocator threw before installation.
 Its receipt permits a fresh begin. A failed restart before allocation retains the
@@ -119,6 +146,14 @@ already joined predecessor and issues a new continuation; its consumed input is
 never re-enabled. Unknown mutation, malformed lineage, mismatched terminal receipt
 or failed joins cannot authorize continuation. Cleanup completion and eligibility
 for another attempt remain separate results.
+
+The upper route must preserve this behavior for a known lower-factory rejection
+before reservation. The actual non-suspending lower factory has all throwing
+guards before its atomic reserve/start/return. Preserve a typed module-private
+proof of that rejection through the trusted bridge, including the unchanged exact
+lower predecessor when present. An arbitrary injected factory error supplies no
+such proof. A safe pre-allocation context race must not force a reconnect merely
+because the upper caller never received a lower handle.
 
 ## Integration boundary
 
@@ -151,25 +186,25 @@ owned factories to injected operations with disabled defaults, not fake receipts
 - [x] Context-only adapter capture/validation: exact selectors, separate issuer
       and epoch, actual native read after health, mutation/stop suspension races,
       disabled defaults and lifetime exclusive opt-in; no probe allocation.
-- [ ] Canceled initial operation before dispatch and after a late valid return;
+- [x] Canceled initial operation before dispatch and after a late valid return;
       lower replacement rejected without ever reaching upper `value()`.
-- [ ] Held renewal/allocation joins, duplicate/canceled retirement waiters,
+- [x] Held renewal/allocation joins, duplicate/canceled retirement waiters,
       immediate revocation, no completion mutating a newer owner.
-- [ ] Three distinct stage UUIDs through retire-before-replace; exact cumulative
+- [x] Three distinct stage UUIDs through retire-before-replace; exact cumulative
       campaign accounting; stage replacement cannot cross contexts.
-- [ ] One-shot/concurrent receipt use; failed restart creates a new continuation;
+- [x] One-shot/concurrent receipt use; failed restart creates a new continuation;
       malformed, foreign, substituted authority, live authority, counter rollback
       and failed cleanup receipts cannot restart.
-- [ ] Same-publisher downshift plus verified write and fresh context restarts the
+- [x] Same-publisher downshift plus verified write and fresh context restarts the
       exact old terminal predecessor as a new campaign. Old context cannot
       restart, renew or replace even if numeric bitrate/profile values match.
-- [ ] Context acquisition racing mutation, profile-before-bitrate interval,
+- [x] Context acquisition racing mutation, profile-before-bitrate interval,
       implicit native encoder invalidation and stop rejects; cleanup still joins.
-- [ ] Actual native context checks surround allocation/renewal and health awaits;
+- [x] Actual native context checks surround allocation/renewal and health awaits;
       same numeric settings with a changed encoder identity reject live admission.
-      Session transfer additionally closes the native read-to-write race before
-      the owned application route can be enabled.
-- [ ] Exclusive owned routing, unchanged legacy tests, focused/full SDK and
+- [ ] Session transfer additionally closes the native read-to-write race before
+      the owned application route can be enabled; see the guarded admission plan.
+- [x] Exclusive owned routing, unchanged legacy tests, focused/full SDK and
       Streaming suites, independent specification and code-quality review.
 
 Session token/lease integration and a fresh four-phase media experiment remain
@@ -213,3 +248,41 @@ reviews approve the checkpoint. Logs:
 No operation handles, terminal continuation receipts, Session lease or automatic
 retry scheduler are implemented by this checkpoint. The next implementation is
 the exact owned operation/retirement path described above.
+
+
+### Owned operation checkpoint
+
+Both publisher adapters now reserve and return a privately constructed operation
+before native allocation. The operation retains the exact lower owner or direct
+native result, revokes stale live admission, and joins allocation, renewal and
+cleanup before issuing an opaque one-use continuation. Cancellation and duplicate
+retirement cannot cancel a successor. Terminal validation separates completed
+cleanup from eligibility to restart, preserves exact cumulative byte accounting,
+and accepts valid historical sends that completed after lease expiry.
+
+A verified encoder downshift can start a fresh campaign on the same SRT
+publication using the exact old terminal predecessor and a newly captured
+configuration context. Stage replacement cannot cross configuration contexts.
+No-allocation continuations require actual pre-dispatch or trusted pre-reservation
+proof; arbitrary downstream errors and foreign handles cannot establish it.
+Downward encoder changes remain available while cleanup waits.
+
+Verification passes **82 focused / 233 full Streaming tests**, including 20 new
+cases. All jobs joined; independent specification and code-quality reviews approve
+the checkpoint, and `git diff --check` passes. Two real native loopback tests exercise three stages, actual raw encoder
+replacement from 360p to 240p, and restart on the same connection under both
+local-zero-loss and recovery-budget policies. This validates the native plumbing;
+it is not a fresh decoded-media or automatic recovery qualification. SDK source
+is unchanged from the verified 335-test accessor checkpoint.
+
+Review regressions first reproduced early wrapper error return without cleanup
+and eligible lineage from a zero-length initial lease. Final wrappers join before
+throwing, and initial allocation requires a positive lease. The terminal live
+authority regression independently includes a terminal reason, so it verifies
+revocation as well as terminal shape.
+
+Logs: `artifacts/qa/owned-probe-route-focused-final-2-20260925.log`,
+`artifacts/qa/owned-probe-route-full-20260925.log` and
+`artifacts/qa/repeated-live-checkpoint-owned-probe-native-loopback-20260925.log`.
+The guarded mutation path, Session lease integration, automatic retry scheduler
+and fresh four-phase media experiment remain separate gates.

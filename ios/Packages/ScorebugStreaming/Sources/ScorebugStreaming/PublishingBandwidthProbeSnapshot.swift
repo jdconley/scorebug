@@ -96,6 +96,7 @@ extension PublishingBandwidthProbeSnapshot {
 }
 
 func publishingProbeError(_ error: any Error) -> PublishingBandwidthProbeError {
+    if let rejection = error as? PublishingOwnedFactoryRejection { return rejection.reason }
     if let error = error as? PublishingBandwidthProbeError { return error }
     if error is CancellationError { return .cancelled }
     if let error = error as? SRTBandwidthProbeError {

@@ -43,6 +43,115 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
         try await connectedStages(policy: .recoveryBudget)
     }
 
+    func testConnectedOwnedStagesRestartAfterRawEncoderDownshift() async throws {
+        try await connectedOwnedStages(policy: .localZeroLoss)
+    }
+
+    func testConnectedOwnedRecoveryBudgetSurvivesRawEncoderDownshift() async throws {
+        try await connectedOwnedStages(policy: .recoveryBudget)
+    }
+
+    private func connectedOwnedStages(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
+        let adapter = SRTPublisher(videoProfile: .low360, allowsBandwidthProbes: true)
+        try await adapter.configure()
+        let listener = try ProbeTestListener()
+        defer { listener.close() }
+        var components = try XCTUnwrap(URLComponents(url: listener.url, resolvingAgainstBaseURL: false))
+        if policy == .recoveryBudget {
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "peerlatency", value: "400")]
+        }
+        let url = try XCTUnwrap(components.url)
+        let start = Task { try await adapter.start(url) }
+        var feeding: Task<Void, Error>?
+        do {
+            try await listener.accept()
+            try await start.value
+            // Keep raw input moving during replacement so its acknowledgment
+            // comes from an actual new encoded frame, not a fabricated receipt.
+            feeding = Task {
+                for frame in 0..<240 {
+                    try Task.checkCancellation()
+                    await adapter.video(try probeRawVideo(frame))
+                    try await Task.sleep(for: .milliseconds(33))
+                }
+            }
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+            let audio = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+            audio.frameLength = 4096
+            for channel in 0..<2 { audio.floatChannelData![channel].initialize(repeating: 0, count: 4096) }
+            await adapter.audio(audio, when: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: 10)))
+            let deadline = ContinuousClock.now + .seconds(5)
+            var ready = false
+            while ContinuousClock.now < deadline {
+                if adapter.videoStartup != nil, await adapter.transportClock() != nil,
+                   let stats = await adapter.transportStatistics(), stats.rttMilliseconds <= 50,
+                   stats.senderBufferMilliseconds <= 50 { ready = true; break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(ready, "Raw encoder, transport clock and loopback acknowledgments must be ready")
+            guard ready else { throw ProbeTestListener.Failure.timeout }
+            let baseline = try await adapter.setBitRateWithReceipt(PublishingVideoProfile.low360.bitRate)
+            let context = try await adapter.captureOwnedProbeContext(matching: baseline)
+            let first = try await adapter.beginOwnedBandwidthProbe(in: context, bitRate: 500_000, policy: policy)
+            let firstValue = try await first.value()
+            try await Task.sleep(for: .milliseconds(35))
+            _ = try await first.renew()
+            let firstRetired = try await first.retire()
+            let second = try await adapter.replaceOwnedBandwidthProbe(after: firstRetired, in: context, bitRate: 750_000)
+            let secondValue = try await second.value()
+            XCTAssertEqual(secondValue.stage, 2)
+            XCTAssertEqual(secondValue.totalAcceptedPayloadBytes, firstRetired.terminal?.totalAcceptedPayloadBytes)
+            let secondRetired = try await second.retire()
+            let third = try await adapter.replaceOwnedBandwidthProbe(after: secondRetired, in: context, bitRate: 1_000_000)
+            let thirdValue = try await third.value()
+            XCTAssertEqual(thirdValue.stage, 3)
+            XCTAssertEqual(thirdValue.totalAcceptedPayloadBytes, secondRetired.terminal?.totalAcceptedPayloadBytes)
+            XCTAssertEqual(Set([firstValue.id, secondValue.id, thirdValue.id]).count, 3)
+            await first.cancel() // An old handle cannot revoke its current successor.
+            _ = try await third.renew()
+
+            let changed = try await adapter.setVideoProfile(.low240)
+            let thirdRetired = try await third.retire()
+            XCTAssertTrue(thirdRetired.eligible, "Joined predecessor must survive actual encoder replacement")
+            let newBaseline = try await adapter.setBitRateWithReceipt(PublishingVideoProfile.low240.bitRate)
+            XCTAssertNotEqual(newBaseline.configuration.encoderSessionID, baseline.configuration.encoderSessionID)
+            XCTAssertEqual(newBaseline.configuration.encoderSessionID, changed.encoderSessionID)
+            do {
+                _ = try await adapter.restartOwnedBandwidthProbe(after: thirdRetired, in: context, bitRate: 500_000)
+                XCTFail("Old configuration context authorized a restart")
+            } catch {}
+            let newContext = try await adapter.captureOwnedProbeContext(matching: newBaseline)
+            let restarted = try await adapter.restartOwnedBandwidthProbe(after: thirdRetired, in: newContext, bitRate: 500_000)
+            let restartedValue = try await restarted.value()
+            XCTAssertEqual(restartedValue.stage, 1)
+            XCTAssertEqual(restartedValue.campaign, 2)
+            XCTAssertEqual(restartedValue.totalAcceptedPayloadBytes, 0)
+            XCTAssertEqual(restartedValue.publishingGeneration, firstValue.publishingGeneration)
+            XCTAssertEqual(restartedValue.policy, policy)
+            if policy == .recoveryBudget {
+                XCTAssertEqual(restartedValue.recoveryObservation?.senderDeliveryDelayMilliseconds, 400)
+            }
+            let healthy = await adapter.isPublishing()
+            XCTAssertTrue(healthy, "Restart must preserve the same live connection")
+            let finalReceipt = try await restarted.retire()
+            feeding?.cancel()
+            _ = await feeding?.result
+            await adapter.stop()
+            let duplicate = try await restarted.retire()
+            XCTAssertTrue(finalReceipt === duplicate)
+            do {
+                _ = try await adapter.restartOwnedBandwidthProbe(after: finalReceipt, in: newContext, bitRate: 500_000)
+                XCTFail("Stopped publication authorized a continuation")
+            } catch {}
+        } catch {
+            start.cancel(); feeding?.cancel()
+            await adapter.stop()
+            _ = await start.result
+            _ = await feeding?.result
+            throw error
+        }
+    }
+
     private func connectedStages(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         let adapter = SRTPublisher(allowsBandwidthProbes: true)
         try await adapter.configure()
@@ -427,5 +536,29 @@ private func probeTransportVideo(_ frame: Int = 0) throws -> CMSampleBuffer {
     XCTAssertEqual(CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: buffer,
         formatDescription: format, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
         sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample), noErr)
+    return try XCTUnwrap(sample)
+}
+
+// Real bounded raw input for native encoder/context integration; no file media
+// or simulator is involved, and this does not qualify received video quality.
+private func probeRawVideo(_ frame: Int) throws -> CMSampleBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA,
+        [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixelBuffer), kCVReturnSuccess)
+    let pixels = try XCTUnwrap(pixelBuffer)
+    CVPixelBufferLockBaseAddress(pixels, [])
+    if let base = CVPixelBufferGetBaseAddress(pixels) {
+        memset(base, Int32(frame % 128), CVPixelBufferGetBytesPerRow(pixels) * CVPixelBufferGetHeight(pixels))
+    }
+    CVPixelBufferUnlockBaseAddress(pixels, [])
+    var description: CMVideoFormatDescription?
+    XCTAssertEqual(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+        imageBuffer: pixels, formatDescriptionOut: &description), noErr)
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: CMTime(value: 300 + Int64(frame), timescale: 30), decodeTimeStamp: .invalid)
+    var sample: CMSampleBuffer?
+    XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
+        imageBuffer: pixels, formatDescription: try XCTUnwrap(description), sampleTiming: &timing,
+        sampleBufferOut: &sample), noErr)
     return try XCTUnwrap(sample)
 }

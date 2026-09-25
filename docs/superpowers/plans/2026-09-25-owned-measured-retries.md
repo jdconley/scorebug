@@ -150,11 +150,14 @@ cannot supply the missing ownership proof.
 
 ## Task 2: Core token and Session campaign lease
 
-- [ ] Add the owned terminal receipt/restart path described above, preserving
+- [x] Add the owned terminal receipt/restart path described above, preserving
       legacy accepted-identity APIs. A canceled valid late allocation must be
       recoverable without a global snapshot; malformed, foreign and unjoined
       receipts cannot authorize another campaign. Test canceled initial and
-      replacement allocations through both adapter layers.
+      replacement allocations through both adapter layers. The
+      [owned operation checkpoint](2026-09-25-owned-probe-operations.md#owned-operation-checkpoint)
+      passes 82 focused / 233 full Streaming tests, including actual native
+      encoder downshift and same-connection restart under both policies.
 - [x] Implement the complete Core policy lifecycle: begin, bound candidate admission,
       unsuccessful settlement and verified ownership retirement. Token creation
       is private. Preserve ordinary admission when no owned attempt exists;

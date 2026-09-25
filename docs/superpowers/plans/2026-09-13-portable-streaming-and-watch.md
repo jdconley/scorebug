@@ -86,10 +86,22 @@ failure, finish and close. It reads the existing verified receipt without writin
 or measuring encoder properties. The maintained patch still verifies all 162
 upstream hashes. Adapter context capture/validation now passes **213 Streaming
 tests**. Exact configuration selection, mutation/stop races and exclusive probe
-ownership are covered; independent reviews approve both checkpoints. Owned probe
-operation handles and Session integration remain next. The
-[guarded application plan](2026-09-25-owned-application-admission.md) closes the
-configuration read-to-write gap before the owned upward route can be enabled.
+ownership are covered; independent reviews approve both checkpoints.
+
+Owned probe operations now pass **82 focused / 233 full Streaming tests**. The
+publisher returns an operation before allocation, retains and joins exact native
+work, and issues a one-use continuation only from validated cleanup. Two real
+SRT loopback cases perform actual raw encoder replacement from 360p to 240p and
+restart a fresh probe campaign on the same connection, covering both probe
+policies. A pending cleanup does not block a downward encoder write. All test
+jobs joined; independent specification and code-quality reviews approve. This is a component checkpoint; it does not establish decoded-media
+continuity or an automatic post-restoration increase. Details and logs are in the
+[owned operation plan](2026-09-25-owned-probe-operations.md#owned-operation-checkpoint).
+
+The [guarded application plan](2026-09-25-owned-application-admission.md) closes
+the configuration read-to-write gap next, before Session lease integration and
+the owned upward route can be enabled. A fresh four-phase media experiment and
+physical phone/Watch testing remain open.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

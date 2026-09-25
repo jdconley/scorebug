@@ -29,6 +29,7 @@ public actor SRTMediaPublisher: MediaPublisher {
     private let probeContextIssuer = UUID()
     private var probeConfigurationEpoch = UUID()
     private var ownedProbeMode = false
+    private var ownedProbeOperation: PublishingBandwidthProbeOperation?
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
 
@@ -78,7 +79,10 @@ public actor SRTMediaPublisher: MediaPublisher {
             beginRecoveryProbe: { try await adapter.beginBandwidthProbe(bitRate: $0, staged: true, repeatable: $1, policy: .recoveryBudget) },
             retireProbe: { try await adapter.retireBandwidthProbe(id: $0, publishingGeneration: $1) },
             captureProbeContext: { try await adapter.captureOwnedProbeContext(matching: $0) },
-            validateProbeContext: { try await adapter.validateOwnedProbeContext($0) })
+            validateProbeContext: { try await adapter.validateOwnedProbeContext($0) },
+            beginOwnedProbe: { try await adapter.beginOwnedBandwidthProbe(in: $0, bitRate: $1, policy: $2) },
+            replaceOwnedProbe: { try await adapter.replaceOwnedBandwidthProbe(after: $0, in: $1, bitRate: $2) },
+            restartOwnedProbe: { try await adapter.restartOwnedBandwidthProbe(after: $0, in: $1, bitRate: $2) })
     }
 
     struct Operations: Sendable {
@@ -104,6 +108,9 @@ public actor SRTMediaPublisher: MediaPublisher {
         var retireProbe: PublishingProbeOperationOwner.Retirement? = nil
         var captureProbeContext: (@Sendable (PublishingBitRateChange) async throws -> PublishingBandwidthProbeContext)? = nil
         var validateProbeContext: (@Sendable (PublishingBandwidthProbeContext) async throws -> Void)? = nil
+        var beginOwnedProbe: (@Sendable (PublishingBandwidthProbeContext, Int, PublishingBandwidthProbeSnapshot.Policy) async throws -> PublishingBandwidthProbeOperation)? = nil
+        var replaceOwnedProbe: (@Sendable (PublishingBandwidthProbeRetirement, PublishingBandwidthProbeContext, Int) async throws -> PublishingBandwidthProbeOperation)? = nil
+        var restartOwnedProbe: (@Sendable (PublishingBandwidthProbeRetirement, PublishingBandwidthProbeContext, Int) async throws -> PublishingBandwidthProbeOperation)? = nil
     }
     init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
@@ -158,6 +165,8 @@ public actor SRTMediaPublisher: MediaPublisher {
             let changing = profileChange
             let probing = probeOperation
             let retirement = probeRetirement?.task
+            let owned = ownedProbeOperation
+            owned?.revoke()
             probing?.cancel()
             starting?.cancel(); changing?.cancel()
             pending = Task.detached {
@@ -169,7 +178,8 @@ public actor SRTMediaPublisher: MediaPublisher {
                 if let changing { _ = await changing.result }
                 if let probing { _ = await probing.result }
                 if let retirement { _ = await retirement.result }
-                if starting != nil || changing != nil || probing != nil { await close() }
+                if let owned { _ = try? await owned.retire() }
+                if starting != nil || changing != nil || probing != nil || owned != nil { await close() }
             }
             shutdown = pending
         }
@@ -276,6 +286,59 @@ public actor SRTMediaPublisher: MediaPublisher {
         guard ownedProbeMode, probeConfigurationEpoch == epoch, !encoderUpdating else {
             throw PublishingBandwidthProbeError.obsolete
         }
+    }
+
+    public func beginOwnedBandwidthProbe(in context: PublishingBandwidthProbeContext, bitRate: Int,
+        policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: nil, request: .init(kind: .begin, bitRate: bitRate, policy: policy))
+    }
+    public func replaceOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
+        in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .replace, bitRate: bitRate, policy: receipt.policy))
+    }
+    public func restartOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
+        in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .restart, bitRate: bitRate, policy: receipt.policy))
+    }
+    private func makeOwnedProbe(in context: PublishingBandwidthProbeContext, after receipt: PublishingBandwidthProbeRetirement?,
+        request: PublishingOwnedProbeRequest) throws -> PublishingBandwidthProbeOperation {
+        guard context.issuer == probeContextIssuer, let lowerContext = context.lower else { throw PublishingBandwidthProbeError.obsolete }
+        try checkProbeContextScope(context.epoch)
+        try validateOwnedReservation(current: ownedProbeOperation, issuer: probeContextIssuer,
+            context: context, receipt: receipt, request: request)
+        let allocate: @Sendable (PublishingOwnedProbeRequest, PublishingBandwidthProbeRetirement?) async throws -> PublishingBandwidthProbeOperation
+        if request.kind == .begin || receipt?.lower == nil {
+            guard let begin = operations.beginOwnedProbe else { throw PublishingBandwidthProbeError.disabled }
+            allocate = { request, _ in try await begin(lowerContext, request.bitRate, request.policy) }
+        } else if request.kind == .replace {
+            guard let replace = operations.replaceOwnedProbe else { throw PublishingBandwidthProbeError.disabled }
+            allocate = { request, prior in
+                guard let prior else { throw PublishingBandwidthProbeError.obsolete }
+                return try await replace(prior, lowerContext, request.bitRate)
+            }
+        } else {
+            guard let restart = operations.restartOwnedProbe else { throw PublishingBandwidthProbeError.disabled }
+            allocate = { request, prior in
+                guard let prior else { throw PublishingBandwidthProbeError.obsolete }
+                return try await restart(prior, lowerContext, request.bitRate)
+            }
+        }
+        try receipt?.consume()
+        let operation = PublishingBandwidthProbeOperation(issuer: probeContextIssuer, context: context,
+            request: request, predecessor: receipt, backend: .lower(.init(
+                validate: { [weak self] id in
+                    guard let self else { throw PublishingBandwidthProbeError.obsolete }
+                    try await self.validateOwnedProbe(context, operationID: id)
+                }, allocate: allocate)))
+        ownedProbeOperation = operation
+        operation.start()
+        return operation
+    }
+    private func validateOwnedProbe(_ context: PublishingBandwidthProbeContext, operationID: UUID) async throws {
+        guard ownedProbeOperation?.id == operationID else { throw PublishingBandwidthProbeError.obsolete }
+        try await validateOwnedProbeContext(context)
+        guard ownedProbeOperation?.id == operationID else { throw PublishingBandwidthProbeError.obsolete }
+        try checkProbeContextScope(context.epoch)
     }
 
     public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false, policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) async throws -> PublishingBandwidthProbeSnapshot {
@@ -406,6 +469,7 @@ public actor SRTMediaPublisher: MediaPublisher {
     }
 
     private func invalidateBandwidthProbe() async {
+        await ownedProbeOperation?.cancel()
         probeRevision &+= 1
         if let target = probeOwner?.target {
             await operations.cancelProbe(target.id, target.generation)

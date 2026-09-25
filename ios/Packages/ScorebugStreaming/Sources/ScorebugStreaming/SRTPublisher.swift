@@ -72,6 +72,7 @@ public actor SRTPublisher {
     private let probeContextIssuer = UUID()
     private var probeConfigurationEpoch = UUID()
     private var ownedProbeMode = false
+    private var ownedProbeOperation: PublishingBandwidthProbeOperation?
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
     private var startup: Task<Void, Error>?
@@ -292,6 +293,69 @@ public actor SRTPublisher {
               !encoderUpdating else { throw PublishingBandwidthProbeError.obsolete }
     }
 
+    public func beginOwnedBandwidthProbe(in context: PublishingBandwidthProbeContext, bitRate: Int,
+        policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: nil, request: .init(kind: .begin, bitRate: bitRate, policy: policy))
+    }
+    public func replaceOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
+        in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .replace, bitRate: bitRate, policy: receipt.policy))
+    }
+    public func restartOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
+        in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .restart, bitRate: bitRate, policy: receipt.policy))
+    }
+    private func makeOwnedProbe(in context: PublishingBandwidthProbeContext, after receipt: PublishingBandwidthProbeRetirement?,
+        request: PublishingOwnedProbeRequest) throws -> PublishingBandwidthProbeOperation {
+        // Every throw precedes reservation. This exact typed proof permits the
+        // upper owner to distinguish native preflight rejection from unknown work.
+        let canProveNoReservation = receipt.map { ownedProbeOperation?.owns($0) == true && $0.isAvailable }
+            ?? (ownedProbeOperation == nil)
+        do {
+            try checkProbeContext(context)
+            try validateOwnedReservation(current: ownedProbeOperation, issuer: probeContextIssuer,
+                context: context, receipt: receipt, request: request)
+            try receipt?.consume()
+        } catch {
+            guard canProveNoReservation else { throw publishingProbeError(error) }
+            throw PublishingOwnedFactoryRejection(context: context, predecessor: receipt,
+                request: request, reason: publishingProbeError(error))
+        }
+        let stream = stream
+        let operation = PublishingBandwidthProbeOperation(issuer: probeContextIssuer, context: context,
+            request: request, predecessor: receipt, backend: .native(.init(
+                validate: { [weak self] id in
+                    guard let self else { throw PublishingBandwidthProbeError.obsolete }
+                    try await self.validateOwnedProbe(context, operationID: id)
+                }, allocate: { request, prior in
+                    let result: SRTBandwidthProbeSnapshot
+                    if let prior {
+                        if request.kind == .replace {
+                            result = try await stream.replaceBandwidthProbe(id: prior.id, publishingGeneration: prior.publishingGeneration,
+                                stage: prior.stage!, bitRate: request.bitRate)
+                        } else {
+                            result = try await stream.restartBandwidthProbe(id: prior.id, publishingGeneration: prior.publishingGeneration,
+                                stage: prior.stage!, bitRate: request.bitRate)
+                        }
+                    } else {
+                        result = try await stream.beginBandwidthProbe(bitRate: request.bitRate,
+                            publishingGeneration: context.selected.publishingGeneration, staged: true, repeatable: true, policy: request.policy)
+                    }
+                    return PublishingBandwidthProbeSnapshot(result)
+                }, renew: { PublishingBandwidthProbeSnapshot(try await stream.renewBandwidthProbe(id: $0, publishingGeneration: $1)) },
+                cancel: { try? await stream.cancelBandwidthProbe(id: $0, publishingGeneration: $1) },
+                retire: { PublishingBandwidthProbeSnapshot(try await stream.retireBandwidthProbe(id: $0, publishingGeneration: $1)) })))
+        ownedProbeOperation = operation
+        operation.start()
+        return operation
+    }
+    private func validateOwnedProbe(_ context: PublishingBandwidthProbeContext, operationID: UUID) async throws {
+        guard ownedProbeOperation?.id == operationID else { throw PublishingBandwidthProbeError.obsolete }
+        try await validateOwnedProbeContext(context)
+        guard ownedProbeOperation?.id == operationID else { throw PublishingBandwidthProbeError.obsolete }
+        try checkProbeContext(context)
+    }
+
     public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false, policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) async throws -> PublishingBandwidthProbeSnapshot {
         guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw PublishingBandwidthProbeError.obsolete }
@@ -425,6 +489,7 @@ public actor SRTPublisher {
     }
 
     private func invalidateBandwidthProbe() async {
+        await ownedProbeOperation?.cancel()
         probeRevision &+= 1
         if let target = probeOwner?.target {
             try? await stream.cancelBandwidthProbe(id: target.id, publishingGeneration: target.generation)
@@ -557,6 +622,8 @@ public actor SRTPublisher {
         let starting = startup
         let probing = probeOperation
         let retirement = probeRetirement?.task
+        let owned = ownedProbeOperation
+        owned?.revoke()
         probing?.cancel()
         changing?.cancel()
         starting?.cancel()
@@ -575,7 +642,8 @@ public actor SRTPublisher {
             _ = await starting?.result
             _ = await probing?.result
             _ = await retirement?.result
-            if starting != nil || changing != nil || probing != nil {
+            if let owned { _ = try? await owned.retire() }
+            if starting != nil || changing != nil || probing != nil || owned != nil {
                 // A native actor call admitted before shutdown can complete after
                 // the first close. Its owner must finish before this final close.
                 await stream.close()
