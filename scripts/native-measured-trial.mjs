@@ -1,3 +1,4 @@
+import { nativeTimingContract } from './native-capacity-recovery.mjs';
 import assert from 'node:assert/strict';
 import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import { nativeCandidateHeadroom } from './native-candidate-headroom.mjs';
@@ -11,6 +12,7 @@ export function nativeMeasuredTrial({
   holdSeconds,
   liveProfile,
 }) {
+  const timing = nativeTimingContract({ environment, streaming, holdSeconds });
   const flag = environment.SCOREBUG_TEST_MEASURED_TRIAL;
   const repeated =
     environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'repeated' ||
@@ -33,7 +35,7 @@ export function nativeMeasuredTrial({
       holdSeconds >= 90 &&
       holdSeconds <= 600 &&
       liveProfile === '240p30' &&
-      environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS === '1500' &&
+      environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS === String(timing.decoderBudgetMs) &&
       environment.SCOREBUG_TEST_CANDIDATE_PROFILE === '360p30' &&
       nativeCandidateHeadroom(environment) &&
       (environment.SCOREBUG_TEST_UPLINK_PROFILE === undefined ||

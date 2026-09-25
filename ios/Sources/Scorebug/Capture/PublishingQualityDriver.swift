@@ -19,6 +19,7 @@ import ScorebugStreaming
     private let enableMeasuredSourceEvaluation: Bool
     private let deliveryAudit: PublishingDeliveryMonitor.Audit?
     private let deliveryExport: ((Data) async -> Void)?
+    private let timingProfile: StreamingTimingProfile
     private let owner: PublishingQualitySession
     private let workerLimits: PublishingQualityTelemetry.WorkerLimits?
     private let transportLimits: PublishingQualityTelemetry.TransportLimits?
@@ -40,9 +41,10 @@ import ScorebugStreaming
     private var startupWaitStartedAt: Double?
     private(set) var isClosed = false
     private(set) var bootstrapCount = 0
-    init(owner: PublishingQualitySession, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
+    init(owner: PublishingQualitySession, timingProfile: StreamingTimingProfile = .strict1500, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
          deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+        self.timingProfile = timingProfile
         self.liveExport = liveExport
         self.enableDeliveryFailures = enableDeliveryFailures
         self.enableMeasuredSourceEvaluation = enableMeasuredSourceEvaluation
@@ -275,7 +277,7 @@ import ScorebugStreaming
             return false
         }
         if let processing = source.processing, processing.interval.pendingFrames > 0,
-           uptime() - source.interval.captureBoundaryEndTime < 2 { return false }
+           uptime() - source.interval.captureBoundaryEndTime < timingProfile.maximumCaptureWindowEvaluationAge { return false }
         consumed = key
         let decision: QualityController.Decision
         let evaluation = evaluationCapture(selectedAt: selectedAt)
@@ -343,6 +345,7 @@ import ScorebugStreaming
             "deadlineFailuresEnabled": enableDeliveryFailures,
             "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation,
             "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events]
+        object["timingContract"] = timingProfile.evidence
         if recovery {
             object["transportPolicy"] = "recovery-budget-v1"
             object["evidenceDictionary"] = evidenceDictionary.dictionary
@@ -358,6 +361,7 @@ import ScorebugStreaming
         pendingLiveCheckpoint = ["formatVersion": 1, "mode": "repeated",
             "publishingAttemptID": attemptID.uuidString.lowercased(),
             "eventCount": events.count, "closed": closed, "quality": qualityObject]
+        pendingLiveCheckpoint?["timingContract"] = timingProfile.evidence
         guard liveDrain == nil else { return }
         liveDrain = Task { [self] in
             while let checkpoint = pendingLiveCheckpoint {
@@ -614,6 +618,7 @@ import ScorebugStreaming
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
+        let timingProfile = try VideoObservationFixture.timingProfile(environment: environment)
         let measured = try NativeMeasuredTrialFixture.requested(environment: environment)
         let probePolicy = try NativeMeasuredTrialFixture.probePolicy(environment: environment)
         let ownedMeasurement = try NativeOwnedCandidatePublisher.requested(environment: environment)
@@ -645,11 +650,11 @@ import ScorebugStreaming
             strategy: measured ? .measuredCandidateTrials : adaptive ? .receiverValidatedProfileTrials : .receiverValidatedTrials,
             behavior: (minimumStall || measured) ? .progressive : .legacy,
             requiresSharedCandidateRecovery: liveCheckpoint,
-            usesGuardedMutations: ownedMeasurement)
-        return .init(owner: owner,
+            usesGuardedMutations: ownedMeasurement, timingProfile: timingProfile)
+        return .init(owner: owner, timingProfile: timingProfile,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, policy: probePolicy == .recoveryBudget ? .recoveryBudget : .senderDelay),
-            deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25, usesRequestTiming: true, environment: environment) : nil,
+            deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25, usesRequestTiming: true, environment: environment, timingProfile: timingProfile) : nil,
             deliveryExport: (minimumStall || measured) ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             enableDeliveryFailures: enableDeliveryFailures, enableMeasuredSourceEvaluation: measured,
             liveExport: liveCheckpoint ? { await Self.persistLiveCheckpoint($0) } : nil,

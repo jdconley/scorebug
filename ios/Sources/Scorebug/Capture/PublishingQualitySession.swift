@@ -75,6 +75,7 @@ actor PublishingQualitySession {
     private let profiles: [QualityController.Profile]
     private let attemptID: UUID
     private let initial: QualityController.Settings
+    private let timingProfile: StreamingTimingProfile
     private let behavior: QualityController.Behavior
     private let strategy: QualityController.RecoveryStrategy
     private let uptime: @Sendable () -> Double
@@ -151,7 +152,7 @@ actor PublishingQualitySession {
               window.end > token.readiness.healthyThrough,
               policy.candidateMeasurementDiagnostic.strongHealthSequence == window.sequence else { return nil }
         let now = uptime()
-        guard now.isFinite, now >= window.end, now - window.end <= 2,
+        guard now.isFinite, now >= window.end, now - window.end <= timingProfile.maximumCaptureWindowEvaluationAge,
               receiver.observedAt <= now, now - receiver.observedAt <= 2 else { return nil }
         return .init(sequence: window.sequence, start: window.start, end: window.end, observedAt: receiver.observedAt)
     }
@@ -264,7 +265,7 @@ actor PublishingQualitySession {
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
          behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
-         usesGuardedMutations: Bool = false) throws {
+         usesGuardedMutations: Bool = false, timingProfile: StreamingTimingProfile = .strict1500) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
             stop: { await session.stop() },
             guarded: usesGuardedMutations ? .init(setBitRate: {
@@ -276,19 +277,20 @@ actor PublishingQualitySession {
             videoStartup: { session.videoStartup },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
-            requiresSharedCandidateRecovery: requiresSharedCandidateRecovery, uptime: { ProcessInfo.processInfo.systemUptime })
+            requiresSharedCandidateRecovery: requiresSharedCandidateRecovery, timingProfile: timingProfile, uptime: { ProcessInfo.processInfo.systemUptime })
     }
     init(operations: Operations, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
          behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
+         timingProfile: StreamingTimingProfile = .strict1500,
          uptime: @escaping @Sendable () -> Double,
          instant: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) throws {
         let now = uptime()
-        _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy, behavior: behavior)
+        _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy, behavior: behavior, timingProfile: timingProfile)
         guard now <= 1e12 else { throw QualityController.ValidationError.invalidTime }
         self.operations = operations; self.profiles = profiles; self.attemptID = attemptID
         self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
-        self.sampleInstant = instant
+        self.sampleInstant = instant; self.timingProfile = timingProfile
         self.candidateRecovery = requiresSharedCandidateRecovery ? PublishingCandidateRecoveryCoverage() : nil
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
@@ -375,7 +377,7 @@ actor PublishingQualitySession {
                       CMTimeCompare(pts, startup.firstSourcePTS) >= 0 else { throw Failure.invalidReceipt }
             }
             policy = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial,
-                at: now, recoveryStrategy: strategy, behavior: behavior)
+                at: now, recoveryStrategy: strategy, behavior: behavior, timingProfile: timingProfile)
             receipt = result; acknowledgedAt = now
         } catch { await stop(); throw error }
     }
@@ -401,7 +403,7 @@ actor PublishingQualitySession {
               source.attempt == receiver.workerAttempt, source.publication == receiver.publication,
               let window = lastWindow, let observedReceiver = window.receiver,
               window.attemptID == attemptID, window.appliedRevision == policy.appliedRevision,
-              window.end <= now, now - window.end <= 2,
+              window.end <= now, now - window.end <= timingProfile.maximumCaptureWindowEvaluationAge,
               observedReceiver.observedAt <= now, now - observedReceiver.observedAt <= 2,
               window.end > admission.value.measuredStart, window.start < admission.value.measuredEnd else { return nil }
         return try evaluateCandidate(admission, instant: instant)
@@ -498,7 +500,7 @@ actor PublishingQualitySession {
                 applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
                     settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
                 diagnostics: diagnostics, workerLimits: workerLimits, transportLimits: transportLimits,
-                sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
+                sequence: lastPolicySequence + 1, at: now, instant: sampledInstant, timingProfile: timingProfile)
             if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry(); candidateHealthSource = nil }
             let decision = try policy.evaluate(window, at: now)
             candidateHealthSource = sourceScope
@@ -636,7 +638,7 @@ actor PublishingQualitySession {
                   observation.observedAtLowerBound.isFinite, observation.observedAtLowerBound <= now,
                   source.windowEnd <= observation.observedAtLowerBound,
                   now - observation.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
-                  now - source.windowEnd <= 2 else { throw PublishingQualityTelemetry.Failure.freshness }
+                  now - source.windowEnd <= timingProfile.maximumCaptureWindowEvaluationAge else { throw PublishingQualityTelemetry.Failure.freshness }
             if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
                 if deliveryAuthority != nil { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
                 deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]

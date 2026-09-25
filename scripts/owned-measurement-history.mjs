@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 
 export const ownedMeasurementLifecycleArtifact = [
@@ -58,10 +59,11 @@ const uint = (value) =>
 export function indexOwnedMeasurementHistory(raw, options = {}) {
   check(options && typeof options === 'object' && !Array.isArray(options), 'invalid options');
   check(
-    Reflect.ownKeys(options).every((key) => key === 'scope'),
+    Reflect.ownKeys(options).every((key) => ['scope', 'timingProfile'].includes(key)),
     'unknown option',
   );
   check(raw && typeof raw === 'object' && !Array.isArray(raw), 'missing audit');
+  qualifyTimingContract(raw, options.timingProfile);
   check(raw.formatVersion === 1, 'requires explicit format 1');
   check(raw.isClosed === true && raw.overflow === false, 'requires closed complete audit');
   check(raw.maximumAttempts === 16 && raw.maximumEvents === 4096, 'changed evidence bounds');
@@ -113,7 +115,10 @@ export function indexOwnedMeasurementHistory(raw, options = {}) {
     } else {
       // Session publishes its changed policy after recording exact settlement.
       // That read-only observation retains ownership; it cannot reopen work.
-      check(current && (!current.terminal || event.kind === 'policyState'), 'event outside active Session owner');
+      check(
+        current && (!current.terminal || event.kind === 'policyState'),
+        'event outside active Session owner',
+      );
       check(
         ownerID === current.ownerID &&
           event.coreRegisteredAt === current.coreRegisteredAt &&
@@ -131,7 +136,9 @@ export function indexOwnedMeasurementHistory(raw, options = {}) {
     } else {
       check(
         current.cleanupEventIndex === null ||
-          ['acknowledged', 'applicationTransferred', 'applicationRejected', 'policyState'].includes(event.kind),
+          ['acknowledged', 'applicationTransferred', 'applicationRejected', 'policyState'].includes(
+            event.kind,
+          ),
         'new measurement work after cleanup join',
       );
     }

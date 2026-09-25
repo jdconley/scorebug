@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import ScorebugCore
 import ScorebugMedia
 import ScorebugStreaming
 
@@ -65,13 +66,13 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
     private let joinedStop: (@Sendable () async -> Void)?
 
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
-         campaignOwner: PublishingCandidateCampaignOwner, probes: Probes? = nil,
+         campaignOwner: PublishingCandidateCampaignOwner, timingProfile: StreamingTimingProfile = .strict1500, probes: Probes? = nil,
          lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
          joinedStop: (@Sendable () async -> Void)? = nil) {
         self.publisher = publisher; self.scope = scope; self.campaignOwner = campaignOwner
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
-        self.audit = PublishingOwnedMeasurementAudit(scope: scope)
+        self.audit = PublishingOwnedMeasurementAudit(scope: scope, timingProfile: timingProfile)
         self.probes = probes ?? (publisher as? SRTMediaPublisher).map(Probes.init)
     }
     func installCandidate(_ value: NativeCandidateAttempt) {

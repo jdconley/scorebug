@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure, replayNativeLocalPressure } from './native-quality-pressure.mjs';
 import { fixtureFrameID } from './video-observation-qualification.mjs';
@@ -15,6 +16,7 @@ export function qualifyNativeQuality({
   adaptiveProfiles = false,
   profileQualification,
 }) {
+  qualifyTimingContract(quality);
   assert([1, 2, 3, 4].includes(quality.formatVersion));
   assert.equal(quality.overflow, false);
   assert(Array.isArray(quality.events) && quality.events.length <= 512);

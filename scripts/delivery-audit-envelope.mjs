@@ -1,7 +1,16 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 
 /** The trusted caller selects capacity. Envelope acceptance grants no delivery health. */
-export function qualifyDeliveryAuditEnvelope(audit, { deliveryAuditMode = 'legacy' } = {}) {
+export function qualifyDeliveryAuditEnvelope(
+  audit,
+  { deliveryAuditMode = 'legacy', timingProfile = 'strict1500-v1' } = {},
+) {
+  qualifyTimingContract(audit, timingProfile);
+  assert(
+    timingProfile === 'strict1500-v1' || deliveryAuditMode === 'capacity',
+    'Experimental timing requires capacity diagnostic envelopes',
+  );
   assert(
     ['legacy', 'repeated', 'capacity'].includes(deliveryAuditMode),
     'Unsupported delivery audit mode',

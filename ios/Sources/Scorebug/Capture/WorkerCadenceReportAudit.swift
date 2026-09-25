@@ -32,6 +32,7 @@ struct WorkerCadenceReportAudit {
                 "postProbeProcessingSeconds": auditEvaluatedUptime - probeReadFinishedUptime]
         }
     }
+    private let timingProfile: StreamingTimingProfile
     private let usesRequestTiming: Bool
     private let extendedMode: String?
     private static let extendedMaximumRows = 3072
@@ -42,6 +43,7 @@ struct WorkerCadenceReportAudit {
     private var serializedRowBytes = 0
     init(usesRequestTiming: Bool = false, environment: [String: String] = [:]) {
         self.usesRequestTiming = usesRequestTiming
+        self.timingProfile = (try? VideoObservationFixture.timingProfile(environment: environment)) ?? .strict1500
         let measured = (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
         if measured && VideoObservationFixture.capacityFileUplink(environment: environment) {
             extendedMode = "capacity"
@@ -105,6 +107,7 @@ struct WorkerCadenceReportAudit {
     func data() throws -> Data {
         var fields: [String: Any] = ["formatVersion": 1, "closed": closed,
             "overflow": overflow, "invalid": invalid, "rows": rows]
+        fields["timingContract"] = timingProfile.evidence
         if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
         if extendedMode != nil {
             fields["formatVersion"] = 2

@@ -1246,3 +1246,10 @@ for (const key of [
       assert.throws(() => qualifyNativeQuality(f));
     });
 }
+
+test('historical native quality rejects experimental timing metadata', async () => {
+  const { timingContracts } = await import('../native-timing-contract.mjs');
+  const input = fixture();
+  input.quality.timingContract = timingContracts['broadcast-reliability2000-v1'];
+  assert.throws(() => qualifyNativeQuality(input), /Legacy evidence rejects timing metadata/);
+});

@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -61,6 +62,8 @@ export class RepeatedQualityCheckpoint {
     this.#attempt = identifier(publishingAttemptID);
   }
   observe(value) {
+    qualifyTimingContract(value);
+    qualifyTimingContract(value?.quality);
     assert.equal(value?.formatVersion, 1);
     assert.equal(value.mode, 'repeated');
     assert.equal(value.publishingAttemptID, this.#attempt);

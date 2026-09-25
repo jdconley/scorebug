@@ -27,6 +27,52 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         XCTAssertThrowsError(try NativeOwnedCandidatePublisher.requested(environment: environment))
     }
 
+    func testTimingProfilesRequireCompleteOwnedRouteAndPreserveAuditContract() throws {
+        let base = ["SCOREBUG_TEST_OWNED_MEASUREMENT": "1", "SCOREBUG_TEST_CAPACITY_RECOVERY": "1",
+            "SCOREBUG_TEST_UPLINK_PROFILE": "capacity750k-retry", "SCOREBUG_TEST_UPLINK_PROXY_PORT": "1234",
+            "SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1", "SCOREBUG_TEST_FILE_CAPTURE": "1",
+            "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+            "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1",
+            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "270",
+            "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"]
+        for timing in StreamingTimingProfile.allCases {
+            var environment = base
+            environment["SCOREBUG_TEST_TIMING_PROFILE"] = timing.rawValue
+            environment["SCOREBUG_TEST_CAPACITY_EVIDENCE"] = "token-budget-v1"
+            environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = String(timing.decoderBudgetMs)
+            XCTAssertEqual(try VideoObservationFixture.timingProfile(environment: environment), timing)
+            XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: environment))
+            XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: environment), timing.decoderBudget)
+            XCTAssertTrue(try NativeOwnedCandidatePublisher.requested(environment: environment))
+            let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: timing.decoderBudget,
+                maximumSampleAge: 0.25, usesRequestTiming: true, environment: environment, timingProfile: timing)
+            audit.close()
+            let delivery = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+            var cadenceAudit = WorkerCadenceReportAudit(usesRequestTiming: true, environment: environment)
+            cadenceAudit.close()
+            let cadence = try XCTUnwrap(JSONSerialization.jsonObject(with: cadenceAudit.data()) as? [String: Any])
+            for value in [delivery, cadence] {
+                XCTAssertEqual(value["formatVersion"] as? Int, 2)
+                XCTAssertEqual(value["mode"] as? String, "capacity")
+                XCTAssertEqual(value["timingContract"] as? NSDictionary, timing.evidence as NSDictionary?)
+            }
+            for key in base.keys {
+                var invalid = environment; invalid.removeValue(forKey: key)
+                XCTAssertThrowsError(try VideoObservationFixture.timingProfile(environment: invalid), key)
+            }
+            for value in ["", "unknown", "2000", " broadcast-reliability2000-v1"] {
+                var invalid = environment; invalid["SCOREBUG_TEST_TIMING_PROFILE"] = value
+                XCTAssertThrowsError(try VideoObservationFixture.timingProfile(environment: invalid))
+            }
+            for value in ["2", "2000.0", "02000", " 2000", "1000"] {
+                var invalid = environment; invalid["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] = value
+                XCTAssertThrowsError(try VideoObservationFixture.timingProfile(environment: invalid))
+            }
+        }
+        XCTAssertEqual(try VideoObservationFixture.timingProfile(environment: base), .strict1500)
+    }
+
     func testActualOwnedSRTCandidateTransfersThroughGuardedWrapperAndAcknowledgesOnce() async throws {
         try await exerciseOwnedApplication(.accepted)
     }

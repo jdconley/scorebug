@@ -1,4 +1,5 @@
 import Foundation
+import ScorebugCore
 import XCTest
 
 final class PublishingDeliveryMonitorTests: XCTestCase {
@@ -41,6 +42,20 @@ final class PublishingDeliveryMonitorTests: XCTestCase {
         var reset = base; reset["SCOREBUG_TEST_DECODER_STALL"] = "reset540"
         XCTAssertTrue(try PublishingDeliveryMonitor.fixtureResetsRequested(environment: reset))
     }
+    func testEveryTimingScheduleBecomesConsumableBeforeItsMediaAgeExpires() throws {
+        for timing in StreamingTimingProfile.allCases {
+            var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: timing.decoderBudget, maximumSampleAge: 0.25)
+            XCTAssertEqual(schedule.poll(at: 10.1, identity: "a"), [])
+            // Model ongoing polling; a >5s suspension intentionally resets ownership.
+            XCTAssertEqual(schedule.poll(at: 12, identity: "a"), [])
+            let available = 12 + timing.decoderBudget + 0.25
+            XCTAssertEqual(schedule.poll(at: available - 0.000001, identity: "a"), [])
+            let windows = schedule.poll(at: available, identity: "a")
+            XCTAssertEqual(windows, [.init(start: 11, end: 12)])
+            XCTAssertLessThan(available - 12, timing.maximumCaptureWindowEvaluationAge)
+        }
+    }
+
     func testSchedulesIndependentNonoverlappingWindowsAfterDeadline() throws {
         var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: 1, maximumSampleAge: 0.25)
         XCTAssertEqual(schedule.poll(at: 10.1, identity: "a"), [])

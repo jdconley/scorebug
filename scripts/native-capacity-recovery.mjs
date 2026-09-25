@@ -1,3 +1,4 @@
+import { requestedTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
 import { measuredCapacityProfile, measuredCapacityProfiles } from './measured-capacity-uplink.mjs';
@@ -17,6 +18,7 @@ export function nativeCapacityEvidencePolicy({ environment, capacityRecovery }) 
 
 /** Complete host selection only; no resources or native recovery qualification. */
 export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) {
+  const timing = requestedTimingContract(environment);
   const owned = environment.SCOREBUG_TEST_OWNED_MEASUREMENT;
   const retry = environment.SCOREBUG_TEST_UPLINK_PROFILE === 'capacity750k-retry';
   if (owned !== undefined || retry) {
@@ -59,7 +61,7 @@ export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) 
     SCOREBUG_TEST_CANDIDATE_PROFILE: '360p30',
     SCOREBUG_TEST_LIVE_PROFILE: '240p30',
     SCOREBUG_TEST_BANDWIDTH_PROBE: 'staged',
-    SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
+    SCOREBUG_TEST_DELIVERY_DEADLINE_MS: String(timing.decoderBudgetMs),
     SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS:
       retry && ['700', '1000'].includes(environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS)
         ? environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS
@@ -91,4 +93,10 @@ export function nativeCapacityRecovery({ environment, streaming, holdSeconds }) 
     'Capacity recovery supports slice decoding only',
   );
   return true;
+}
+
+/** Complete trusted host selection; artifacts cannot select policy. */
+export function nativeTimingContract({ environment, streaming, holdSeconds }) {
+  nativeCapacityRecovery({ environment, streaming, holdSeconds });
+  return requestedTimingContract(environment);
 }

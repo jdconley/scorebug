@@ -99,7 +99,8 @@ enum PublishingQualityTelemetry {
     }
     static func window(source: WorkerSourceIntervalObservation, applied: Applied, diagnostics: Diagnostics,
                        workerLimits: WorkerLimits?, transportLimits: TransportLimits?,
-                       sequence: UInt64? = nil, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.Window {
+                       sequence: UInt64? = nil, at now: Double, instant: ContinuousClock.Instant,
+                       timingProfile: StreamingTimingProfile = .strict1500) throws -> QualityController.Window {
         let interval = source.interval, receipt = applied.receipt
         guard diagnostics.isPublishing, interval.scope.publishingAttemptID == applied.attemptID,
               diagnostics.clock == source.nativeClock,
@@ -118,7 +119,7 @@ enum PublishingQualityTelemetry {
         guard now.isFinite, (0...1e12).contains(now), applied.acknowledgedAt.isFinite,
               applied.acknowledgedAt >= receipt.acceptedAt, start >= applied.acknowledgedAt,
               start.isFinite, end.isFinite, (1...QualityController.maximumWindowDuration).contains(end - start),
-              end <= now, now - end <= 2, source.sequence > 0 else { throw Failure.time }
+              end <= now, now - end <= timingProfile.maximumCaptureWindowEvaluationAge, source.sequence > 0 else { throw Failure.time }
         guard let age = source.freshness.ageUpperBound(at: instant), age >= .zero, age <= .seconds(2) else { throw Failure.freshness }
         let ageSeconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18
         let observedAt = max(end, now - ageSeconds)

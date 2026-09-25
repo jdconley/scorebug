@@ -253,7 +253,8 @@ struct PublishingClockObservation: Equatable, Sendable {
              if ownedMeasurement {
                  guard let observations, let campaignOwner else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
                  return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
-                     campaignOwner: campaignOwner, lifecycle: NativeCandidateLifecycleAudit(scope: observations.snapshot.scope),
+                     campaignOwner: campaignOwner, timingProfile: try VideoObservationFixture.timingProfile(environment: ProcessInfo.processInfo.environment),
+                     lifecycle: NativeCandidateLifecycleAudit(scope: observations.snapshot.scope),
                      profileReceipt: transitions.map { evidence in { evidence.receipt($0) } },
                      joinedStop: transitions.map { evidence in {
                          evidence.close()

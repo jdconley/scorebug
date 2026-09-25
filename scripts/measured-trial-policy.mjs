@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import { cadenceAuditRowLimit, qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 import { replayNativePressure, replayNativeLocalPressure } from './native-quality-pressure.mjs';
@@ -227,6 +228,7 @@ function replayMeasuredTrialPolicy(
     lifecycleQualification,
     candidateWitnessQualification,
     cadenceReports,
+    timingProfile = 'strict1500-v1',
     transportPolicy = 'sender-delay-v1',
     cadenceAuditMode = 'legacy',
     startupPressurePolicy = 'reject',
@@ -237,6 +239,12 @@ function replayMeasuredTrialPolicy(
   assert.ok(
     ['sender-delay-v1', 'recovery-budget-v1'].includes(transportPolicy),
     'Unknown measured transport policy',
+  );
+  const timing = qualifyTimingContract(quality, timingProfile);
+  const maximumCaptureAge = timing.maximumCaptureWindowEvaluationAgeMs / 1000;
+  assert(
+    timingProfile === 'strict1500-v1' || (confirmedPrefix && cadenceAuditMode === 'capacity'),
+    'Experimental timing requires owned diagnostic prefix',
   );
   const recoveryPolicy = transportPolicy === 'recovery-budget-v1';
   assert(
@@ -401,7 +409,7 @@ function replayMeasuredTrialPolicy(
     c.validUntil > c.evaluatedAt &&
       c.validUntil <= Math.min(c.measuredEnd + 2, c.evaluatedAt + 1.5),
   );
-  qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode });
+  qualifyCadenceAuditEnvelope(cadenceReports, { cadenceAuditMode, timingProfile });
   const evaluatedRows = [];
   let appliedCount = 0,
     candidateCount = 0,
@@ -592,14 +600,18 @@ function replayMeasuredTrialPolicy(
       assert(candidate.evaluatedAt >= baseline.evaluatedAt);
       assert(w.end - recoveryStart >= 4, 'Insufficient initial healthy recovery');
       assert(
-        candidate.evaluatedAt - w.end <= 2 && candidate.evaluatedAt - w.observedAt <= 2,
+        candidate.evaluatedAt - w.end <= maximumCaptureAge &&
+          candidate.evaluatedAt - w.observedAt <= 2,
         'Candidate health is stale',
       );
       assert(
         w.end > c.measuredStart && w.start < c.measuredEnd,
         'Selected baseline does not overlap candidate measurement',
       );
-      assert.equal(a.validUntil, Math.min(c.validUntil, w.end + 2, w.observedAt + 2));
+      assert.equal(
+        a.validUntil,
+        Math.min(c.validUntil, w.end + maximumCaptureAge, w.observedAt + 2),
+      );
       assert(
         finite(app.admittedAt) &&
           app.admittedAt >= candidate.evaluatedAt &&
@@ -701,7 +713,7 @@ function replayMeasuredTrialPolicy(
       finite(row.evaluatedAt) &&
         row.evaluatedAt >= w.end &&
         row.evaluatedAt <= row.at &&
-        row.evaluatedAt - w.end <= 2,
+        row.evaluatedAt - w.end <= maximumCaptureAge,
     );
     assert(
       finite(w.observedAt) &&

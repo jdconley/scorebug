@@ -42,12 +42,14 @@ function bytes(v) {
 export function qualifyOwnedNativeProbes(raw, options = {}) {
   check(options && typeof options === 'object' && !Array.isArray(options), 'invalid options');
   check(
-    Reflect.ownKeys(options).every((key) => ['scope', 'publishingGeneration'].includes(key)),
+    Reflect.ownKeys(options).every((key) =>
+      ['scope', 'publishingGeneration', 'timingProfile'].includes(key),
+    ),
     'unknown option',
   );
-  const { scope, publishingGeneration } = options;
+  const { scope, publishingGeneration, timingProfile } = options;
   check(uint(publishingGeneration) > 0n, 'invalid native generation');
-  const history = indexOwnedMeasurementHistory(raw, { scope }),
+  const history = indexOwnedMeasurementHistory(raw, { scope, timingProfile }),
     attempts = [],
     identities = new Set(),
     observations = [];

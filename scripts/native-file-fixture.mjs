@@ -1,4 +1,4 @@
-import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
+import { nativeCapacityRecovery, nativeTimingContract } from './native-capacity-recovery.mjs';
 import assert from 'node:assert/strict';
 import { measuredUplinkProfiles } from './native-measured-uplink.mjs';
 import { createReadStream, constants } from 'node:fs';
@@ -84,7 +84,9 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
       SCOREBUG_TEST_CANDIDATE_HEADROOM: '1',
       SCOREBUG_TEST_CANDIDATE_PROFILE: '360p30',
       SCOREBUG_TEST_LIVE_PROFILE: '240p30',
-      SCOREBUG_TEST_DELIVERY_DEADLINE_MS: '1500',
+      SCOREBUG_TEST_DELIVERY_DEADLINE_MS: String(
+        nativeTimingContract({ environment, streaming, holdSeconds }).decoderBudgetMs,
+      ),
       SCOREBUG_TEST_STREAM_HOLD_SECONDS: String(holdSeconds),
     }))
       assert.equal(environment[key], value, `Measured file route requires ${key}=${value}`);

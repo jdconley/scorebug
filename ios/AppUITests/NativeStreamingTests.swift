@@ -51,6 +51,16 @@ final class NativeStreamingTests: XCTestCase {
         let uplinkProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""
         let capacityRecovery = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? ""
         let ownedMeasurement = ProcessInfo.processInfo.environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] ?? ""
+        let timingProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_TIMING_PROFILE"] ?? ""
+        let timingBudgets = ["strict1500-v1": "1500", "broadcast-reliability2000-v1": "2000", "broadcast-reliability3000-v1": "3000"]
+        let expectedMeasuredDeadline = timingProfile.isEmpty ? "1500" : try XCTUnwrap(timingBudgets[timingProfile])
+        if !timingProfile.isEmpty {
+            XCTAssertEqual(ownedMeasurement, "1"); XCTAssertEqual(capacityRecovery, "1")
+            XCTAssertEqual(uplinkProfile, "capacity750k-retry"); XCTAssertEqual(holdSeconds, 270)
+            XCTAssertEqual(ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_EVIDENCE"], "token-budget-v1")
+            app.launchEnvironment["SCOREBUG_TEST_TIMING_PROFILE"] = timingProfile
+            app.launchEnvironment["SCOREBUG_TEST_CAPACITY_EVIDENCE"] = "token-budget-v1"
+        }
         let capacityHolds = ["capacity550k": 180, "capacity750k": 210, "capacity750k-retry": 270]
         if !ownedMeasurement.isEmpty || uplinkProfile == "capacity750k-retry" {
             XCTAssertEqual(ownedMeasurement, "1")
@@ -150,7 +160,7 @@ final class NativeStreamingTests: XCTestCase {
         }
         let deliveryDeadline = ProcessInfo.processInfo.environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] ?? ""
         if !deliveryDeadline.isEmpty {
-            if measuredTrial == "1" { XCTAssertEqual(deliveryDeadline, "1500") }
+            if measuredTrial == "1" { XCTAssertEqual(deliveryDeadline, expectedMeasuredDeadline) }
             else {
                 XCTAssertTrue(["1000", "1500"].contains(deliveryDeadline)); XCTAssertFalse(decoderStall.isEmpty)
                 XCTAssertEqual(cadenceReports, "1")
@@ -169,7 +179,7 @@ final class NativeStreamingTests: XCTestCase {
             XCTAssertEqual(fileFlag, "1"); XCTAssertTrue(motionFlag.isEmpty)
             XCTAssertEqual(measuredTrial, "1"); XCTAssertEqual(probe, "staged")
             XCTAssertEqual(candidateHeadroom, "1"); XCTAssertEqual(candidate, "360p30")
-            XCTAssertEqual(liveProfile, "240p30"); XCTAssertEqual(deliveryDeadline, "1500")
+            XCTAssertEqual(liveProfile, "240p30"); XCTAssertEqual(deliveryDeadline, expectedMeasuredDeadline)
             XCTAssertTrue((capacityRecovery == "1" ? Array(capacityHolds.keys) : ["passthrough", "loss0p2-delay30"]).contains(uplinkProfile))
             XCTAssertFalse(uplinkPort.isEmpty)
             app.launchEnvironment["SCOREBUG_TEST_PROBE_POLICY"] = probePolicy

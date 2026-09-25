@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 
 /** The caller selects the route; raw metadata never selects a larger budget. */
@@ -10,7 +11,15 @@ export function cadenceAuditRowLimit(cadenceAuditMode = 'legacy') {
 }
 
 /** Envelope only. This does not qualify the contained cadence, delivery or health. */
-export function qualifyCadenceAuditEnvelope(audit, { cadenceAuditMode = 'legacy' } = {}) {
+export function qualifyCadenceAuditEnvelope(
+  audit,
+  { cadenceAuditMode = 'legacy', timingProfile = 'strict1500-v1' } = {},
+) {
+  qualifyTimingContract(audit, timingProfile);
+  assert(
+    timingProfile === 'strict1500-v1' || cadenceAuditMode === 'capacity',
+    'Experimental timing requires capacity diagnostic envelopes',
+  );
   const maximumRows = cadenceAuditRowLimit(cadenceAuditMode);
   const label = cadenceAuditMode === 'capacity' ? 'Capacity' : 'Repeated';
   assert(audit && typeof audit === 'object', 'Missing cadence audit envelope');

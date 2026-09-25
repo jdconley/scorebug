@@ -89,3 +89,17 @@ for (const [name, mutate] of Object.entries({
     mutate(q);
     assert.throws(() => expandQualityEvidence(q));
   });
+
+test('dictionary expansion preserves timing metadata without selecting or rewriting it', async () => {
+  const { timingContracts, qualifyTimingContract } = await import('../native-timing-contract.mjs');
+  const input = fixture();
+  input.timingContract = structuredClone(timingContracts['broadcast-reliability3000-v1']);
+  const before = structuredClone(input),
+    expanded = expandQualityEvidence(input);
+  assert.deepEqual(expanded.timingContract, input.timingContract);
+  assert.deepEqual(input, before);
+  assert.throws(() => qualifyTimingContract(expanded));
+  qualifyTimingContract(expanded, 'broadcast-reliability3000-v1');
+  expanded.timingContract.decoderBudgetMs = 1.5;
+  assert.throws(() => qualifyTimingContract(expanded, 'broadcast-reliability3000-v1'));
+});

@@ -1,3 +1,4 @@
+import { timingContractForProfile, qualifyTimingContract } from './native-timing-contract.mjs';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
 import { qualifyRecoveryDeliveryBucket } from './recovery-delivery-bucket.mjs';
 import assert from 'node:assert/strict';
@@ -50,10 +51,11 @@ export function qualifyMeasuredNativeMedia(input, options = {}) {
   );
   for (const key of Reflect.ownKeys(options))
     assert.ok(
-      ['cadenceAuditMode', 'deliveryAuditMode', 'mediaLossPolicy'].includes(key),
+      ['cadenceAuditMode', 'deliveryAuditMode', 'mediaLossPolicy', 'timingProfile'].includes(key),
       `Unknown measured media option: ${String(key)}`,
     );
   const {
+    timingProfile = 'strict1500-v1',
     cadenceAuditMode = 'legacy',
     deliveryAuditMode = 'legacy',
     mediaLossPolicy = 'lossless-v1',
@@ -156,6 +158,7 @@ export function qualifyMeasuredNativeMedia(input, options = {}) {
     audit: cadenceReports,
     scope: video.scope,
     cadenceAuditMode,
+    timingProfile,
   });
   const delivery = qualifyNativeDeliveryDeadlines({
     audit: deliveryAudit,
@@ -163,7 +166,8 @@ export function qualifyMeasuredNativeMedia(input, options = {}) {
     cadenceAuditMode,
     deliveryAuditMode,
     scope: video.scope,
-    expectedLatencyBudget: 1.5,
+    expectedLatencyBudget: timingContractForProfile(timingProfile).decoderBudgetMs / 1000,
+    timingProfile,
   });
   return {
     scope: video.scope,
@@ -217,6 +221,7 @@ export function qualifyMeasuredNativeEvidence(input, options = {}) {
     'Bounded native media requires the explicit capacity decrease route',
   );
   input = { ...input, quality: expandQualityEvidence(input.quality) };
+  qualifyTimingContract(input.quality);
   assert.ok(
     ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
     'Unknown measured probe policy',

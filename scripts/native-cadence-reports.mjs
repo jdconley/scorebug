@@ -38,8 +38,13 @@ export function nativeCadenceReports({
 }
 /** Reconcile historical native helper execution. This is reporting freshness,
  * not source-frame health, capacity, or a measured stall-to-reset latency. */
-export function qualifyNativeCadenceReports({ audit, scope, cadenceAuditMode = 'legacy' }) {
-  qualifyCadenceAuditEnvelope(audit, { cadenceAuditMode });
+export function qualifyNativeCadenceReports({
+  audit,
+  scope,
+  cadenceAuditMode = 'legacy',
+  timingProfile = 'strict1500-v1',
+}) {
+  qualifyCadenceAuditEnvelope(audit, { cadenceAuditMode, timingProfile });
   let previous = -1,
     firstUsable,
     known = 0;

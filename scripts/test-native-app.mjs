@@ -1,3 +1,9 @@
+import { qualifyOwnedTimingEnvelopes } from './native-timing-evidence.mjs';
+import {
+  requestedTimingContract,
+  timingContractMetadata,
+  qualifyTimingContract,
+} from './native-timing-contract.mjs';
 import { qualifyMeasuredCapacityPolicy } from './measured-capacity-policy.mjs';
 import { qualifyMeasuredCapacityUplink } from './measured-capacity-uplink.mjs';
 import {
@@ -142,6 +148,7 @@ const capacityRecovery = nativeCapacityRecovery({
   streaming,
   holdSeconds: streamingOptions.holdSeconds,
 });
+const timingContract = requestedTimingContract(process.env);
 const capacityEvidencePolicy = nativeCapacityEvidencePolicy({
   environment: process.env,
   capacityRecovery,
@@ -283,6 +290,7 @@ await writeFile(
       cadenceReports,
       decoderStall,
       deliveryLatencyBudget,
+      ...timingContractMetadata(timingContract),
       deadlineResets,
       stallReset,
       streaming,
@@ -345,6 +353,10 @@ async function readLiveQualityCheckpoint(signal) {
     join(container, 'Library/Application Support/Scorebug/QA/quality-control-live.json'),
   );
   signal.throwIfAborted();
+  if (value !== null) {
+    qualifyTimingContract(value, timingContract.profileId);
+    qualifyTimingContract(value.quality, timingContract.profileId);
+  }
   return value;
 }
 async function collectOwnedCapacityClock({ profile, scope, snapshot, signal }) {
@@ -890,6 +902,8 @@ try {
     `SCOREBUG_TEST_NATIVE_QUALITY=${qualityFlag ?? ''}`,
     `SCOREBUG_TEST_CADENCE_REPORTS=${cadenceReports ? '1' : ''}`,
     `SCOREBUG_TEST_DECODER_STALL=${decoderStall ? process.env.SCOREBUG_TEST_DECODER_STALL : ''}`,
+    `SCOREBUG_TEST_TIMING_PROFILE=${process.env.SCOREBUG_TEST_TIMING_PROFILE ?? ''}`,
+    `SCOREBUG_TEST_CAPACITY_EVIDENCE=${process.env.SCOREBUG_TEST_CAPACITY_EVIDENCE ?? ''}`,
     `SCOREBUG_TEST_DELIVERY_DEADLINE_MS=${process.env.SCOREBUG_TEST_DELIVERY_DEADLINE_MS ?? ''}`,
     `SCOREBUG_TEST_DEADLINE_RESETS=${deadlineResets ? '1' : ''}`,
     `SCOREBUG_TEST_PROFILE_TRANSITIONS=${profileTransitionSequence ?? ''}`,
@@ -1740,9 +1754,47 @@ try {
 } catch (error) {
   nativeFailed = true;
   if (simulator) {
-    await preserveNativeFailureArtifacts({ simulator, artifact, run }).catch(() => {
-      console.warn('Secondary failure: native app evidence preservation could not finish.');
-    });
+    const preserved = await preserveNativeFailureArtifacts({ simulator, artifact, run }).catch(
+      () => {
+        console.warn('Secondary failure: native app evidence preservation could not finish.');
+      },
+    );
+    if (preserved && timingContract.profileId !== 'strict1500-v1') {
+      let timingEvidence;
+      try {
+        const qa = join(preserved.destination, 'QA');
+        const [provenance, quality, checkpoint, cadence, delivery, ownedLifecycle] =
+          await Promise.all([
+            readBoundedJSON(join(artifact, 'configuration.json'), 64 * 1024),
+            readBoundedJSON(join(qa, 'quality-control.json'), 8 * 1024 * 1024),
+            readBoundedJSON(join(qa, 'quality-control-live.json'), 8 * 1024 * 1024),
+            readBoundedJSON(join(qa, 'worker-cadence-reports.json'), 16 * 1024 * 1024),
+            readBoundedJSON(join(qa, 'delivery-deadlines.json'), 32 * 1024 * 1024),
+            readBoundedJSON(join(qa, 'owned-measurement-lifecycle.json'), 8 * 1024 * 1024),
+          ]);
+        timingEvidence = qualifyOwnedTimingEnvelopes(
+          { provenance, quality, checkpoint, cadence, delivery, ownedLifecycle },
+          { timingProfile: timingContract.profileId },
+        );
+      } catch (timingError) {
+        timingEvidence = {
+          formatVersion: 1,
+          diagnosticOnly: true,
+          timingMetadataConsistent: false,
+          recoveryQualified: false,
+          mediaQualified: false,
+          automaticAdaptationQualified: false,
+          reason: String(timingError.message).slice(0, 2000),
+        };
+      }
+      await writeFile(
+        join(artifact, 'timing-evidence.json'),
+        JSON.stringify(timingEvidence, null, 2),
+        { flag: 'wx' },
+      ).catch(() =>
+        console.warn('Secondary failure: timing metadata diagnostics could not be saved.'),
+      );
+    }
   }
   if (streaming) {
     await run(

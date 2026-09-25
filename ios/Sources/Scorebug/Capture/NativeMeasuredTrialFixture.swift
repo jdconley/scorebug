@@ -10,11 +10,12 @@ enum NativeMeasuredTrialFixture {
     }
 
     static func requested(environment: [String: String]) throws -> Bool {
+        let timing = try VideoObservationFixture.timingProfile(environment: environment)
         _ = try probePolicy(environment: environment)
         guard let flag = environment["SCOREBUG_TEST_MEASURED_TRIAL"] else { return false }
         guard flag == "1", environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] == "360p30",
               environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] == "1",
-              environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == "1500",
+              environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == String(timing.decoderBudgetMs),
               try NativeCandidateHeadroomFixture.requested(environment: environment),
               ((environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "").isEmpty || VideoObservationFixture.measuredFileUplink(environment: environment)),
               ["SCOREBUG_TEST_CADENCE_REPORTS", "SCOREBUG_TEST_DEADLINE_RESETS"]

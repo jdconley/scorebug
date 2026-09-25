@@ -941,3 +941,53 @@ test('both delivery profiles reject every missing classification or health compo
     );
   }
 });
+
+for (const [timingProfile, budget] of [
+  ['broadcast-reliability2000-v1', 2],
+  ['broadcast-reliability3000-v1', 3],
+]) {
+  test(`${timingProfile} reconstructs classifications with unchanged fresh-report authority`, async () => {
+    const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+    const { timingContracts } = await import('../native-timing-contract.mjs');
+    const f = baselineFixture(),
+      row = f.audit.rows[0],
+      report = f.reports.rows[0];
+    const elapsed = budget - 1.5;
+    row.evaluatedAt += elapsed;
+    report.receivedUptime += elapsed;
+    report.evaluatedUptime += elapsed;
+    report.response.status.observation.decoderDelivery.sampledAtMs += elapsed * 1000;
+    row.timeline = deliverySnapshot(report.response.status.observation.decoderDelivery);
+    f.audit.latencyBudget = budget;
+    for (const [audit, maximumRows, maximumBytes] of [
+      [f.audit, 512, 33554432],
+      [f.reports, 3072, 16777216],
+    ]) {
+      Object.assign(audit, {
+        formatVersion: 2,
+        mode: 'capacity',
+        maximumRows,
+        maximumBytes,
+        timingContract: { ...timingContracts[timingProfile] },
+      });
+    }
+    const args = {
+      ...f,
+      timingProfile,
+      expectedLatencyBudget: budget,
+      cadenceAuditMode: 'capacity',
+      deliveryAuditMode: 'capacity',
+    };
+    const result = qualifyNativeDeliveryDeadlines(args);
+    assert.equal(result.latencyBudget, budget);
+    assert.equal(result.maximumSampleAge, 0.25);
+    assert.equal(result.counts.onTimeFrames, 29);
+    assert.equal(result.recoveryQualified, false);
+    assert.equal(result.automaticAdaptationQualified, false);
+    assert.throws(() =>
+      qualifyNativeDeliveryDeadlines({ ...args, timingProfile: 'strict1500-v1' }),
+    );
+    row.sampleAgeSeconds = 0.250001;
+    assert.throws(() => qualifyNativeDeliveryDeadlines(args));
+  });
+}

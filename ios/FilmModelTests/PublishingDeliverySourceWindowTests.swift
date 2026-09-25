@@ -16,12 +16,12 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertEqual(failure.observedAtLowerBound, 4.5); XCTAssertEqual(failure.sequence, 2)
         XCTAssertNil(try classify(missing: [], late: [], latency: 0.55, ageMs: 100, deadline: 0.5).failureSignal(sequence: 3))
     }
-    private func deliveryOwner(_ native: DeadlineNative, behavior: QualityController.Behavior = .progressive) throws -> PublishingQualitySession {
+    private func deliveryOwner(_ native: DeadlineNative, behavior: QualityController.Behavior = .progressive, timingProfile: StreamingTimingProfile = .strict1500) throws -> PublishingQualitySession {
         try .init(operations: .init(setBitRate: { rate, _ in try native.write(rate) }, stop: { native.stop() },
             isPublishing: { native.isPublishing() }, videoStartup: { native.startup }),
             profiles: [.init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 700_000)],
             attemptID: session, initial: .init(profileID: "240p30", videoBitrate: bitRate),
-            behavior: behavior, uptime: { native.now })
+            behavior: behavior, timingProfile: timingProfile, uptime: { native.now })
     }
     @MainActor func testDriverDeadlineClassificationAppliesMinimumAndExportsExactEvidence() async throws {
         bitRate = 700_000
@@ -237,6 +237,29 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertEqual(native.calls, 2)
         await owner.stop()
     }
+    func testExperimentalDeliveryMediaAgeDoesNotRenewAuthorityOrRevision() async throws {
+        for timing in [StreamingTimingProfile.broadcastReliability2000, .broadcastReliability3000] {
+            for fault in ["none", "expiredMedia", "expiredReport", "revoked", "revision"] {
+                bitRate = 700_000
+                let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native, timingProfile: timing)
+                try await owner.bootstrap()
+                let evaluatedAt = 3 + timing.maximumCaptureWindowEvaluationAge
+                native.setNow(evaluatedAt + (fault == "expiredMedia" ? 0.000001 : 0))
+                let observation = try classify(missing: [40,41,42,43], late: [], evaluationTime: evaluatedAt,
+                    revision: fault == "revision" ? 1 : 0, profileID: "240p30", submittedBoundary: .zero, withAuthority: true)
+                let authority = try XCTUnwrap(observation.authority)
+                if fault == "revoked" { authority.revoke() }
+                do {
+                    let decision = try await owner.evaluateDeliveryFailure(observation, authority: authority,
+                        instant: instant + (fault == "expiredReport" ? .milliseconds(251) : .zero))
+                    XCTAssertEqual(fault, "none")
+                    XCTAssertEqual(decision?.recommendation?.kind, .reset)
+                } catch { XCTAssertNotEqual(fault, "none", "Fresh reports remain consumable at the exact experimental media boundary: \(error)") }
+                await owner.stop()
+            }
+        }
+    }
+
     func testNativeOwnerRejectsRetiredStaleAndWrongRevisionBeforeLatching() async throws {
         for fault in ["retired", "stale", "revision", "configuration"] {
             bitRate = 700_000
@@ -414,7 +437,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     }
     private let instant = ContinuousClock.now
     private func classify(missing: Set<Int> = [40], late: Set<Int> = [50],
-                          latency: Double = 0.5, ageMs: Double = 0,
+                          latency: Double = 0.5, ageMs: Double = 0, evaluationTime: Double = 4.5,
                           deadline: Double = 1, fault: Int = -1, decodedThrough: Int = 90,
                           workerEpoch: String = "22222222-2222-2222-2222-222222222222",
                           deliveryScope: String = "55555555-5555-5555-5555-555555555555",
@@ -435,7 +458,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             settings: .init(profileID: profileID, videoBitrate: configuration.bitRate), receipt: receipt, acknowledgedAt: 0)
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 0, maxItems: 4, maxBytes: 100)
         var diagnostics = PublishingQualityTelemetry.Diagnostics(isPublishing: true, clock: clock, receipt: receipt,
-            ingress: ingress.poll(at: 4.5), transport: PublishingTransportStatisticsTracker().snapshot,
+            ingress: ingress.poll(at: evaluationTime), transport: PublishingTransportStatisticsTracker().snapshot,
             thermal: PublishingThermalTracker().snapshot)
         // Explicit synthetic clock/publication binding; no physical latency claim.
         var rows: [(pts: Int64, at: Double)] = []
@@ -447,7 +470,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         if fault == 8 { rows.append((40 * 3000 - 1919, 2)) }
         rows.sort { $0.at < $1.at }
         let wire: [String: Any] = ["formatVersion": 1, "scopeID": deliveryScope,
-            "sampledAtMs": 4500, "coverageAtMs": 0, "afterOrdinal": 0, "lastOrdinal": rows.count,
+            "sampledAtMs": evaluationTime * 1000, "coverageAtMs": 0, "afterOrdinal": 0, "lastOrdinal": rows.count,
             "arrivals": rows.map { [$0.pts as Any, $0.at * 1000] }, "invalidReason": NSNull(), "ended": false]
         let packet = try JSONDecoder().decode(DecoderDeliveryPacket.self,
             from: JSONSerialization.data(withJSONObject: wire))
@@ -484,14 +507,14 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         captureInput?(input)
         if let audit {
             audit.record(input: input, applied: applied, at: 0.5, instant: instant)
-            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
-            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
-            audit.record(input: input, applied: applied, at: 4.5, instant: instant)
+            audit.record(input: input, applied: applied, at: evaluationTime, instant: instant)
+            audit.record(input: input, applied: applied, at: evaluationTime, instant: instant)
+            audit.record(input: input, applied: applied, at: evaluationTime, instant: instant)
         }
         return try PublishingDeliveryObservation.classify(history: h,
             clock: .init(scope: scope, transportClock: clock, isClosed: fault == 6),
             applied: applied, diagnostics: diagnostics, delivery: delivery,
-            windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : 4.5 + localDelay,
+            windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : evaluationTime + localDelay,
             instant: fault == 7 ? instant + .seconds(6) : instant + .seconds(localDelay),
             maximumSampleAge: 0.25, latencyBudget: deadline, authority: authority)
     }

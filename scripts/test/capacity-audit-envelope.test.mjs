@@ -78,3 +78,55 @@ test('capacity envelopes reconstruct all original native cadence and delivery ev
   f.deliveryAudit.rows.find((r) => r.result !== null).result.onTimeFrames++;
   assert.throws(() => qualifyMeasuredNativeMedia(f, options), /differs/);
 });
+
+for (const [kind, qualify] of Object.entries({
+  cadence: qualifyCadenceAuditEnvelope,
+  delivery: qualifyDeliveryAuditEnvelope,
+})) {
+  test(`${kind} timing contract cannot select or alter the trusted experimental profile`, async () => {
+    const { timingContracts } = await import('../native-timing-contract.mjs');
+    for (const profile of ['broadcast-reliability2000-v1', 'broadcast-reliability3000-v1']) {
+      const options = { [`${kind}AuditMode`]: 'capacity', timingProfile: profile };
+      const audit = wrap(kind, {
+        closed: true,
+        overflow: false,
+        invalid: false,
+        rows: [{}],
+        timingContract: { ...timingContracts[profile] },
+      });
+      assert.equal(qualify(audit, options), audit.rows);
+      assert.throws(() => qualify(audit, { [`${kind}AuditMode`]: 'capacity' }));
+      const missing = { ...audit };
+      delete missing.timingContract;
+      assert.throws(() => qualify(missing, options));
+      audit.timingContract.maximumCadenceDeliveryReportAgeMs = 2000;
+      assert.throws(() => qualify(audit, options));
+    }
+  });
+}
+test('old native evidence cannot be relabelled by changing only timing envelopes', async () => {
+  const { timingContracts } = await import('../native-timing-contract.mjs');
+  const input = JSON.parse(
+    gunzipSync(
+      fs.readFileSync(new URL('./fixtures/measured-recovery-mnaRRb.json.gz', import.meta.url)),
+    ),
+  ).input;
+  const timingProfile = 'broadcast-reliability2000-v1';
+  input.cadenceReports = {
+    ...wrap('cadence', input.cadenceReports),
+    timingContract: { ...timingContracts[timingProfile] },
+  };
+  input.deliveryAudit = {
+    ...wrap('delivery', input.deliveryAudit),
+    timingContract: { ...timingContracts[timingProfile] },
+  };
+  assert.throws(
+    () =>
+      qualifyMeasuredNativeMedia(input, {
+        cadenceAuditMode: 'capacity',
+        deliveryAuditMode: 'capacity',
+        timingProfile,
+      }),
+    /deadline budgets/,
+  );
+});

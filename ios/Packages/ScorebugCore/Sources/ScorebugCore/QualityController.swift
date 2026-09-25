@@ -4,6 +4,7 @@ import Foundation
 /// measured telemetry; this type never configures capture, encoding, or archives.
 /// Thresholds are initial qualification values, not a reliability guarantee.
 public struct QualityController: Sendable {
+    private let timingProfile: StreamingTimingProfile
     /// Measured source spans may exceed nominal five-second decoder windows.
     /// This ingestion allowance never changes actual elapsed-time rate calculations.
     public static let maximumWindowDuration: Double = 5.25
@@ -292,7 +293,7 @@ public struct QualityController: Sendable {
     private var trial: Trial?
     private var trialCooldownUntil = 0.0
 
-    public init(profiles: [Profile], attemptID: UUID, applied: Settings, at now: Double, recoveryStrategy: RecoveryStrategy = .capacityQualified, behavior: Behavior = .legacy) throws {
+    public init(profiles: [Profile], attemptID: UUID, applied: Settings, at now: Double, recoveryStrategy: RecoveryStrategy = .capacityQualified, behavior: Behavior = .legacy, timingProfile: StreamingTimingProfile = .strict1500) throws {
         guard recoveryStrategy != .measuredCandidateTrials || behavior == .progressive else {
             throw ValidationError.invalidRecoveryStrategy
         }
@@ -316,7 +317,7 @@ public struct QualityController: Sendable {
         }
         guard Self.valid(applied, in: profiles) else { throw ValidationError.invalidSettings }
         self.profiles = profiles; self.attemptID = attemptID; self.applied = applied
-        self.recoveryStrategy = recoveryStrategy; self.behavior = behavior
+        self.recoveryStrategy = recoveryStrategy; self.behavior = behavior; self.timingProfile = timingProfile
         lastNow = now; appliedAt = now
     }
 
@@ -342,7 +343,7 @@ public struct QualityController: Sendable {
               now.isFinite, now >= lastNow, now <= 1e12,
               application == nil, trial == nil, pending == nil, !minimumResetRequired,
               let health = latestStrongHealth, let receiver = health.receiver,
-              health.end <= now, now - health.end <= 2,
+              health.end <= now, now - health.end <= timingProfile.maximumCaptureWindowEvaluationAge,
               receiver.observedAt <= now, now - receiver.observedAt <= 2,
               let recoveryStart, health.end - recoveryStart >= requiredHealthyDuration,
               now >= trialCooldownUntil,
@@ -351,7 +352,7 @@ public struct QualityController: Sendable {
         return .init(attemptID: attemptID, appliedRevision: appliedRevision,
                      baseline: applied, settings: settings, healthSequence: health.sequence,
                      healthySince: recoveryStart, healthyThrough: health.end,
-                     validUntil: min(health.end + 2, receiver.observedAt + 2))
+                     validUntil: min(health.end + timingProfile.maximumCaptureWindowEvaluationAge, receiver.observedAt + 2))
     }
 
     /// Register only from actual current readiness. Advisory reads remain available
@@ -529,7 +530,7 @@ public struct QualityController: Sendable {
         }
         if pending?.candidateID != nil { pending = nil }
         guard let health = latestStrongHealth, let receiver = health.receiver,
-              now - health.end <= 2, now - receiver.observedAt <= 2,
+              now - health.end <= timingProfile.maximumCaptureWindowEvaluationAge, now - receiver.observedAt <= 2,
               health.end > admission.measuredStart, health.start < admission.measuredEnd,
               let recoveryStart, health.end - recoveryStart >= requiredHealthyDuration,
               now >= trialCooldownUntil else {
@@ -540,7 +541,7 @@ public struct QualityController: Sendable {
         }
         pending = .init(kind: .trial, attemptID: attemptID, windowSequence: health.sequence,
                         appliedRevision: appliedRevision,
-                        validUntil: min(admission.validUntil, health.end + 2, receiver.observedAt + 2),
+                        validUntil: min(admission.validUntil, health.end + timingProfile.maximumCaptureWindowEvaluationAge, receiver.observedAt + 2),
                         settings: admission.settings, candidateID: admission.id)
         return .init(state: .healthy, reasons: [.trialRecommended], recommendation: pending)
     }
@@ -592,7 +593,7 @@ public struct QualityController: Sendable {
                   signal.start >= appliedAt, duration == 1 || duration == 2,
                   signal.end <= signal.observedAtLowerBound, signal.observedAtLowerBound <= now
             else { throw ValidationError.invalidWindow }
-            guard now - signal.end <= 2,
+            guard now - signal.end <= timingProfile.maximumCaptureWindowEvaluationAge,
                   now - signal.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge
             else { throw ValidationError.staleWindow }
             guard (1...240).contains(signal.expectedFrames),
@@ -613,7 +614,7 @@ public struct QualityController: Sendable {
         if minimumResetRequired {
             pending = .init(kind: .reset, attemptID: attemptID, windowSequence: signal.sequence,
                 appliedRevision: appliedRevision,
-                validUntil: min(signal.end + 2, signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                validUntil: min(signal.end + timingProfile.maximumCaptureWindowEvaluationAge, signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
                 settings: minimumSettings)
         }
         var reasons: [Reason] = [duration == 1 ? .freshFrameFloor : .sourceLoss]
@@ -629,7 +630,7 @@ public struct QualityController: Sendable {
     }
 
     /// Windows must be complete, nonoverlapping, 1–5.25 seconds long and received
-    /// within 2 seconds of their end. Consecutive windows share exact boundaries.
+    /// within the selected capture evaluation age. Consecutive windows share exact boundaries.
     /// Invalid input clears recovery and pending recommendations; callers must
     /// treat rejected telemetry as unknown rather than retaining a healthy claim.
     public mutating func evaluate(_ window: Window, at now: Double) throws -> Decision {
@@ -637,6 +638,7 @@ public struct QualityController: Sendable {
     }
     private mutating func evaluate(_ window: Window, at now: Double, localPressure: Bool) throws -> Decision {
         latestStrongHealth = nil
+        let maximumWindowAge = localPressure ? 2 : timingProfile.maximumCaptureWindowEvaluationAge
         do {
             try recordTime(now)
             if localPressure {
@@ -647,7 +649,7 @@ public struct QualityController: Sendable {
                         || (window.meanQueueOccupancy.map { $0 >= 0.75 } ?? false)
                 else { throw ValidationError.invalidWindow }
             }
-            try validate(window, at: now, minimumDuration: localPressure ? 0.25 : 1)
+            try validate(window, at: now, minimumDuration: localPressure ? 0.25 : 1, maximumAge: maximumWindowAge)
         }
         catch { invalidateTelemetry(); throw error }
         var reasons: [Reason] = []
@@ -714,7 +716,7 @@ public struct QualityController: Sendable {
             latchMinimumReset()
         }
         if minimumResetRequired {
-            pending = recommendation(minimumSettings, for: window, kind: .reset)
+            pending = recommendation(minimumSettings, for: window, maximumAge: maximumWindowAge, kind: .reset)
             recoveryStart = nil
             return .init(state: window.connectivity == .disconnected ? .disconnected
                 : stalled ? .stalled : unknown ? .unknown : .degraded,
@@ -736,8 +738,8 @@ public struct QualityController: Sendable {
                 recoveryStart = nil
                 if behavior == .progressive {
                     latchMinimumReset()
-                    pending = recommendation(minimumSettings, for: window, kind: .reset)
-                } else { pending = recommendation(active.baseline, for: window, kind: .rollback) }
+                    pending = recommendation(minimumSettings, for: window, maximumAge: maximumWindowAge, kind: .reset)
+                } else { pending = recommendation(active.baseline, for: window, maximumAge: maximumWindowAge, kind: .rollback) }
                 let state: State = window.connectivity == .disconnected ? .disconnected
                     : stalled ? .stalled : unknown ? .unknown : .degraded
                 if window.connectivity == .disconnected { reasons.append(.disconnected) }
@@ -757,7 +759,7 @@ public struct QualityController: Sendable {
         if unhealthy {
             recoveryStart = nil
             let reduced = lowerSettings(profileIndex: profileIndex, capacity: window.usableVideoCapacity)
-            if let reduced { pending = recommendation(reduced, for: window) }
+            if let reduced { pending = recommendation(reduced, for: window, maximumAge: maximumWindowAge) }
             else { reasons.append(.minimumProfileInsufficient) }
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded
             return .init(state: state, reasons: reasons, recommendation: pending)
@@ -786,7 +788,7 @@ public struct QualityController: Sendable {
             if strongObservations && fitsKnownCapacity {
                 if recoveryStart == nil { recoveryStart = window.start }
                 if window.end - recoveryStart! >= requiredHealthyDuration, now >= trialCooldownUntil, let candidate {
-                    pending = recommendation(candidate, for: window, kind: .trial)
+                    pending = recommendation(candidate, for: window, maximumAge: maximumWindowAge, kind: .trial)
                     reasons.append(.trialRecommended)
                 }
             } else { recoveryStart = nil }
@@ -804,7 +806,7 @@ public struct QualityController: Sendable {
         if qualified {
             if recoveryStart == nil { recoveryStart = window.start }
             if window.end - recoveryStart! >= requiredHealthyDuration, let higher {
-                pending = recommendation(higher, for: window, kind: behavior == .progressive ? .trial : .increase)
+                pending = recommendation(higher, for: window, maximumAge: maximumWindowAge, kind: behavior == .progressive ? .trial : .increase)
                 reasons.append(.recoveryQualified)
             }
         } else { recoveryStart = nil }
@@ -940,12 +942,12 @@ public struct QualityController: Sendable {
         guard now.isFinite, now >= lastNow else { throw ValidationError.invalidTime }
         lastNow = now
     }
-    private func validate(_ window: Window, at now: Double, minimumDuration: Double) throws {
+    private func validate(_ window: Window, at now: Double, minimumDuration: Double, maximumAge: Double) throws {
         guard window.attemptID == attemptID else { throw ValidationError.wrongAttempt }
         guard window.appliedRevision == appliedRevision else { throw ValidationError.wrongAppliedRevision }
         guard window.start.isFinite, window.end.isFinite, window.start >= appliedAt,
               (minimumDuration...Self.maximumWindowDuration).contains(window.end - window.start), window.end <= now else { throw ValidationError.invalidWindow }
-        guard now - window.end <= 2 else { throw ValidationError.staleWindow }
+        guard now - window.end <= maximumAge else { throw ValidationError.staleWindow }
         if let lastEnd, window.start < lastEnd { throw ValidationError.outOfOrder }
         if let lastSequence, window.sequence <= lastSequence { throw ValidationError.outOfOrder }
         guard [window.capturedFreshFrames, window.encodedFreshFrames, window.receiver?.freshFrames].compactMap({ $0 }).allSatisfy({ $0 >= 0 }) else {
@@ -1001,10 +1003,10 @@ public struct QualityController: Sendable {
         return pending
     }
 
-    private func recommendation(_ settings: Settings, for window: Window,
+    private func recommendation(_ settings: Settings, for window: Window, maximumAge: Double,
                                 kind: Recommendation.Kind = .decrease) -> Recommendation {
         .init(kind: kind, attemptID: attemptID, windowSequence: window.sequence, appliedRevision: appliedRevision,
-              validUntil: window.end + 2, settings: settings)
+              validUntil: window.end + maximumAge, settings: settings)
     }
     private func lowerSettings(profileIndex: Int, capacity: Double?) -> Settings? {
         let profile = profiles[profileIndex]

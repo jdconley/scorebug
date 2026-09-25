@@ -18,9 +18,28 @@ enum VideoObservationFixture {
 
     private static let capacityHolds = ["capacity550k": "180", "capacity750k": "210", "capacity750k-retry": "270"]
 
+    /// Parse only trusted launch selection here; the complete route is checked below.
+    private static func selectedTimingProfile(environment: [String: String]) -> StreamingTimingProfile? {
+        guard let raw = environment["SCOREBUG_TEST_TIMING_PROFILE"] else { return .strict1500 }
+        guard let timing = StreamingTimingProfile(rawValue: raw),
+              environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] == "1",
+              environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity750k-retry",
+              environment["SCOREBUG_TEST_CAPACITY_EVIDENCE"] == "token-budget-v1",
+              environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == String(timing.decoderBudgetMs)
+        else { return nil }
+        return timing
+    }
+    static func timingProfile(environment: [String: String]) throws -> StreamingTimingProfile {
+        guard let timing = selectedTimingProfile(environment: environment),
+              environment["SCOREBUG_TEST_TIMING_PROFILE"] == nil || capacityFileUplink(environment: environment)
+        else { throw UplinkError.invalidFixtureRoute }
+        return timing
+    }
+
     /// Complete forwarded capacity experiment. Leaf validation avoids recursive selectors.
     static func capacityFileUplink(environment: [String: String]) -> Bool {
-        guard let profile = environment["SCOREBUG_TEST_UPLINK_PROFILE"],
+        guard let timing = selectedTimingProfile(environment: environment),
+              let profile = environment["SCOREBUG_TEST_UPLINK_PROFILE"],
               let hold = capacityHolds[profile],
               profile == "capacity750k-retry" ? environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] == "1" :
                 (environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] ?? "").isEmpty else { return false }
@@ -31,7 +50,7 @@ enum VideoObservationFixture {
             "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged",
             "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1",
             "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": hold,
-            "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+            "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": String(timing.decoderBudgetMs)
         ]
         guard required.allSatisfy({ environment[$0.key] == $0.value }),
               let raw = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], let port = Int(raw),
@@ -53,7 +72,8 @@ enum VideoObservationFixture {
             capacityHolds[environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? ""] != nil {
             return capacityFileUplink(environment: environment)
         }
-        guard environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", requested(environment: environment),
+        guard environment["SCOREBUG_TEST_TIMING_PROFILE"] == nil,
+              environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", requested(environment: environment),
               (environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? "").isEmpty,
               environment["SCOREBUG_TEST_MEASURED_TRIAL"] == "1",
               environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] == "1",
@@ -72,6 +92,7 @@ enum VideoObservationFixture {
     }
 
     static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
+        let timing = try timingProfile(environment: environment)
         guard (environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? "").isEmpty ||
                 capacityFileUplink(environment: environment) else { throw UplinkError.invalidFixtureRoute }
         let policy = environment["SCOREBUG_TEST_PROBE_POLICY"] ?? ""
@@ -109,7 +130,7 @@ enum VideoObservationFixture {
                       environment["SCOREBUG_TEST_CANDIDATE_HEADROOM"] == "1",
                       environment["SCOREBUG_TEST_CANDIDATE_PROFILE"] == "360p30",
                       environment["SCOREBUG_TEST_DIRECT_RTMP_RECORDER"] == "1",
-                      environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == "1500",
+                      environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] == String(timing.decoderBudgetMs),
                       probe == "staged" || (probe == "repeated" && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180")
                 else { throw UplinkError.invalidFixtureRoute }
             }

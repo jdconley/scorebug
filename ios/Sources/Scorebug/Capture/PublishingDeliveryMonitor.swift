@@ -10,7 +10,7 @@ enum PublishingDeliveryMonitor {
     #if DEBUG
     /// Explicit simulator qualification only; no production deadline default.
     static func fixtureLatencyBudget(environment: [String: String]) throws -> Double {
-        if try NativeMeasuredTrialFixture.requested(environment: environment) { return 1.5 }
+        if try NativeMeasuredTrialFixture.requested(environment: environment) { return try VideoObservationFixture.timingProfile(environment: environment).decoderBudget }
         guard let raw = environment["SCOREBUG_TEST_DELIVERY_DEADLINE_MS"] else { return 1 }
         guard ["1000", "1500"].contains(raw), WorkerCadenceReportAudit.requested(environment: environment),
               ["1", "reset540"].contains(environment["SCOREBUG_TEST_DECODER_STALL"] ?? "") else {
@@ -96,6 +96,7 @@ enum PublishingDeliveryMonitor {
             let acknowledgedAt: Double
             let authorityID: ObjectIdentifier?
         }
+        private let timingProfile: StreamingTimingProfile
         private let usesRequestTiming: Bool
         private let extendedMode: String?
         private static let extendedMaximumRows = 512
@@ -111,9 +112,14 @@ enum PublishingDeliveryMonitor {
         private var rows: [[String: Any]] = []
         private var closed = false
         private var overflow = false
-        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false, environment: [String: String] = [:]) throws {
+        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false, environment: [String: String] = [:], timingProfile: StreamingTimingProfile? = nil) throws {
             self.usesRequestTiming = usesRequestTiming
             #if DEBUG
+            let selected = try VideoObservationFixture.timingProfile(environment: environment)
+            guard timingProfile == nil || timingProfile == selected,
+                  selected == .strict1500 || (latencyBudget == selected.decoderBudget && maximumSampleAge == 0.25)
+            else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
+            self.timingProfile = selected
             let measured = (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
             if measured && VideoObservationFixture.capacityFileUplink(environment: environment) {
                 extendedMode = "capacity"
@@ -122,6 +128,7 @@ enum PublishingDeliveryMonitor {
                 extendedMode = "repeated"
             } else { extendedMode = nil }
             #else
+            self.timingProfile = .strict1500
             extendedMode = nil
             #endif
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
@@ -206,6 +213,7 @@ enum PublishingDeliveryMonitor {
             var fields: [String: Any] = ["formatVersion": 1, "closed": closed, "overflow": overflow,
                 "invalid": schedule.invalid || serializationInvalid, "latencyBudget": schedule.latencyBudget,
                 "maximumSampleAge": schedule.maximumSampleAge, "rows": rows]
+            fields["timingContract"] = timingProfile.evidence
             if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
             if extendedMode != nil {
                 fields["formatVersion"] = 2

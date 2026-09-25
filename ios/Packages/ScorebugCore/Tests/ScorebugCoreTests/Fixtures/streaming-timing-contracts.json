@@ -1,0 +1,32 @@
+[
+  {
+    "formatVersion": 1,
+    "profileId": "strict1500-v1",
+    "decoderBudgetMs": 1500,
+    "maximumCaptureWindowEvaluationAgeMs": 2000,
+    "maximumCompletedDecoderWindowReportAgeMs": 2000,
+    "maximumCadenceDeliveryReportAgeMs": 250,
+    "decoderStallThresholdMs": 1000,
+    "scope": "owned-capacity-diagnostic"
+  },
+  {
+    "formatVersion": 1,
+    "profileId": "broadcast-reliability2000-v1",
+    "decoderBudgetMs": 2000,
+    "maximumCaptureWindowEvaluationAgeMs": 2500,
+    "maximumCompletedDecoderWindowReportAgeMs": 2000,
+    "maximumCadenceDeliveryReportAgeMs": 250,
+    "decoderStallThresholdMs": 1000,
+    "scope": "owned-capacity-diagnostic"
+  },
+  {
+    "formatVersion": 1,
+    "profileId": "broadcast-reliability3000-v1",
+    "decoderBudgetMs": 3000,
+    "maximumCaptureWindowEvaluationAgeMs": 3500,
+    "maximumCompletedDecoderWindowReportAgeMs": 2000,
+    "maximumCadenceDeliveryReportAgeMs": 250,
+    "decoderStallThresholdMs": 1000,
+    "scope": "owned-capacity-diagnostic"
+  }
+]

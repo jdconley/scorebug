@@ -9,12 +9,13 @@ import ScorebugStreaming
 final class PublishingOwnedMeasurementAudit: @unchecked Sendable {
     static let maximumAttempts = 16
     static let maximumEvents = 4096
+    private let timingProfile: StreamingTimingProfile
     private let scope: VideoFrameObservationScope
     private let lock = NSLock()
     private var events: [[String: Any]] = []
     private var closed = false, overflow = false
     private var closedAt: Double?
-    init(scope: VideoFrameObservationScope) { self.scope = scope }
+    init(scope: VideoFrameObservationScope, timingProfile: StreamingTimingProfile = .strict1500) { self.scope = scope; self.timingProfile = timingProfile }
     func record(_ kind: String, owner: UUID, registeredAt: Double, revision: UInt64, fields: [String: Any] = [:]) {
         lock.withLock {
             guard !closed, events.count < Self.maximumEvents else { overflow = true; return }
@@ -29,9 +30,11 @@ final class PublishingOwnedMeasurementAudit: @unchecked Sendable {
     func close() { lock.withLock { if !closed { closed = true; closedAt = ProcessInfo.processInfo.systemUptime } } }
     func data() throws -> Data {
         try lock.withLock {
-            try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "isClosed": closed, "closedAt": closedAt as Any? ?? NSNull(), "overflow": overflow,
+            var fields: [String: Any] = ["formatVersion": 1, "isClosed": closed, "closedAt": closedAt as Any? ?? NSNull(), "overflow": overflow,
                 "scope": NativeCandidateFixture.scope(scope), "maximumAttempts": Self.maximumAttempts,
-                "maximumEvents": Self.maximumEvents, "events": events], options: [.sortedKeys])
+                "maximumEvents": Self.maximumEvents, "events": events]
+            fields["timingContract"] = timingProfile.evidence
+            return try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
         }
     }
     static func snapshot(_ value: PublishingBandwidthProbeSnapshot) -> [String: Any] {

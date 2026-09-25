@@ -1,3 +1,4 @@
+import { timingContractForProfile } from './native-timing-contract.mjs';
 import { qualifyDeliveryAuditEnvelope } from './delivery-audit-envelope.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
@@ -115,8 +116,8 @@ function binding(status, scope, expectedAttempt) {
 }
 
 // Reconstruct the bounded wire history independently of the native exported snapshot.
-function reconstructReports(reports, scope, cadenceAuditMode) {
-  qualifyCadenceAuditEnvelope(reports, { cadenceAuditMode });
+function reconstructReports(reports, scope, cadenceAuditMode, timingProfile) {
+  qualifyCadenceAuditEnvelope(reports, { cadenceAuditMode, timingProfile });
   assert(
     reports.deliveryTiming === undefined || reports.deliveryTiming === 'request-uptime-v1',
     'Unknown delivery timing mode',
@@ -552,10 +553,13 @@ export function qualifyNativeDeliveryDeadlines({
   expectedLatencyBudget = 1,
   cadenceAuditMode = 'legacy',
   deliveryAuditMode = 'legacy',
+  timingProfile = 'strict1500-v1',
 }) {
-  qualifyDeliveryAuditEnvelope(audit, { deliveryAuditMode });
+  qualifyDeliveryAuditEnvelope(audit, { deliveryAuditMode, timingProfile });
   assert(
-    expectedLatencyBudget === 1 || expectedLatencyBudget === 1.5,
+    timingProfile === 'strict1500-v1'
+      ? expectedLatencyBudget === 1 || expectedLatencyBudget === 1.5
+      : expectedLatencyBudget === timingContractForProfile(timingProfile).decoderBudgetMs / 1000,
     'Unsupported expected deadline budget',
   );
   assert(
@@ -564,7 +568,7 @@ export function qualifyNativeDeliveryDeadlines({
   );
   same(audit.deliveryTiming, reports.deliveryTiming, 'Delivery timing modes differ');
   const anchored = audit.deliveryTiming === 'request-uptime-v1';
-  const reconstructed = reconstructReports(reports, scope, cadenceAuditMode),
+  const reconstructed = reconstructReports(reports, scope, cadenceAuditMode, timingProfile),
     lanes = new Map(),
     phases = new Map();
   const counts = {

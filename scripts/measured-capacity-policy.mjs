@@ -1,3 +1,4 @@
+import { qualifyTimingContract } from './native-timing-contract.mjs';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
@@ -40,12 +41,12 @@ function noAuthority(row) {
   for (const k of ['action', 'candidate', 'candidateAdmission', 'decoderStall', 'deliveryFailure'])
     assert.equal(row[k], undefined, 'Unexpected suffix authority');
 }
-function decisionTime(row) {
+function decisionTime(row, maximumCaptureAge) {
   for (const n of [row.evaluatedAt, row.window.start, row.window.end]) time(n);
   assert(
     row.evaluatedAt >= row.window.end &&
       row.evaluatedAt <= row.at &&
-      row.evaluatedAt - row.window.end <= 2,
+      row.evaluatedAt - row.window.end <= maximumCaptureAge,
     'Stale/future suffix decision',
   );
 }
@@ -112,6 +113,10 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     'capacity750k-retry',
     'Owned recovery requires its separate whole-history owned qualifier',
   );
+  // Whole-history owned timing remains gated by the dedicated qualifier.
+  const timing = qualifyTimingContract(raw.quality);
+  const maximumCaptureAge = timing.maximumCaptureWindowEvaluationAgeMs / 1000;
+
   assert(
     ['congestion-v1', 'rate-ledger-v1', 'token-budget-v1'].includes(capacityEvidencePolicy),
     'Unknown capacity evidence policy',
@@ -223,7 +228,7 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     }
     assert.equal(row.closed, false);
     if (row.kind === 'localPressure') {
-      decisionTime(row);
+      decisionTime(row, 2);
       assert(
         row.evaluatedAt >= lastEvaluation && row.evaluatedAt <= cadenceEnd,
         'Pressure outside cadence audit',
@@ -319,7 +324,7 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
     }
     const w = row.window;
     assert(w);
-    decisionTime(row);
+    decisionTime(row, maximumCaptureAge);
     assert(
       row.evaluatedAt >= lastEvaluation && row.evaluatedAt <= cadenceEnd,
       'Source decision outside cadence audit',
@@ -427,7 +432,7 @@ export function qualifyMeasuredCapacityPolicy(raw, options = {}) {
         p.submittedFrames === p.decodedFrames &&
         p.omittedBeforeEncoderFrames === 0 &&
         cadenceEnd >= s.captureBoundaryEndTime &&
-        cadenceEnd - s.captureBoundaryEndTime < 2,
+        cadenceEnd - s.captureBoundaryEndTime < maximumCaptureAge,
       'Unconsumed capacity source is not a bounded pending interval',
     );
     pendingSource = {

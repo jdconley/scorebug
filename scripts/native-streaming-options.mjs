@@ -1,4 +1,4 @@
-import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
+import { nativeCapacityRecovery, nativeTimingContract } from './native-capacity-recovery.mjs';
 import { nativeMeasuredFileSource } from './native-file-fixture.mjs';
 import { measuredUplinkProfiles } from './native-measured-uplink.mjs';
 import assert from 'node:assert/strict';
@@ -33,6 +33,8 @@ export function qualifyNativeStreamingHold({ holdSeconds, savedFrames }) {
 /** Validated before creating native test resources; production has no hold override. */
 export function nativeStreamingOptions({ streaming, environment }) {
   const raw = environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS;
+  if (environment.SCOREBUG_TEST_TIMING_PROFILE !== undefined)
+    nativeTimingContract({ environment, streaming, holdSeconds: Number(raw) });
   if (raw === undefined) return { holdSeconds: 12, completedWindowLimit: 8, extended: false };
   assert.ok(
     streaming && environment.SCOREBUG_TEST_DIRECT_RTMP_RECORDER === '1',
@@ -181,9 +183,21 @@ export function fixtureDecoderThreading(environment) {
 export function fixtureDeliveryDeadline({ environment, decoderStall, measuredTrial = false }) {
   const raw = environment.SCOREBUG_TEST_DELIVERY_DEADLINE_MS;
   assert.equal(typeof measuredTrial, 'boolean');
+  const timing =
+    environment.SCOREBUG_TEST_TIMING_PROFILE === undefined
+      ? null
+      : nativeTimingContract({
+          environment,
+          streaming: true,
+          holdSeconds: Number(environment.SCOREBUG_TEST_STREAM_HOLD_SECONDS),
+        });
   if (measuredTrial) {
-    assert.equal(raw, '1500', 'Measured trial requires the explicit qualified 1500 ms experiment');
-    return 1.5;
+    assert.equal(
+      raw,
+      String(timing?.decoderBudgetMs ?? 1500),
+      'Measured trial requires the explicit qualified 1500 ms experiment',
+    );
+    return (timing?.decoderBudgetMs ?? 1500) / 1000;
   }
   if (raw === undefined) return 1;
   assert.ok(

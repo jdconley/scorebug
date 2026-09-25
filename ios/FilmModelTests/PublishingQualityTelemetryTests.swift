@@ -91,10 +91,11 @@ final class PublishingQualityTelemetryTests: XCTestCase {
                 transport: transport.snapshot, thermal: thermal.snapshot), now: 111 + Double(frameOffset) / 30)
     }
     private func window(_ f: Fixture, instant: ContinuousClock.Instant? = nil,
-                        worker: Adapter.WorkerLimits? = nil, transport: Adapter.TransportLimits? = nil) throws -> QualityController.Window {
+                        worker: Adapter.WorkerLimits? = nil, transport: Adapter.TransportLimits? = nil,
+                        timingProfile: StreamingTimingProfile = .strict1500) throws -> QualityController.Window {
         try Adapter.window(source: f.source, applied: f.applied, diagnostics: f.diagnostics,
             workerLimits: worker ?? workerLimits, transportLimits: transport ?? transportLimits,
-            at: f.now, instant: instant ?? now)
+            at: f.now, instant: instant ?? now, timingProfile: timingProfile)
     }
     private func local(_ f: Fixture, after: Double? = nil, limits: Adapter.TransportLimits? = nil) throws -> QualityController.Window? {
         try Adapter.localPressureWindow(applied: f.applied, diagnostics: f.diagnostics,
@@ -419,6 +420,22 @@ final class PublishingQualityTelemetryTests: XCTestCase {
         // Causal source identity tightens that lower bound; the age gate still applies.
         XCTAssertEqual(try window(f).receiver?.observedAt, f.source.interval.captureBoundaryEndTime)
     }
+    func testExperimentalCaptureAgeAndCompletedReportAgeAreIndependent() throws {
+        let base = try fixture()
+        for timing in StreamingTimingProfile.allCases {
+            var f = base
+            f.now = f.source.interval.captureBoundaryEndTime + timing.maximumCaptureWindowEvaluationAge
+            XCTAssertNoThrow(try window(f, timingProfile: timing))
+            XCTAssertThrowsError(try window(f, instant: now + .seconds(2), timingProfile: timing)) {
+                XCTAssertEqual($0 as? Adapter.Failure, .freshness)
+            }
+            f.now += 0.000001
+            XCTAssertThrowsError(try window(f, timingProfile: timing)) {
+                XCTAssertEqual($0 as? Adapter.Failure, .time)
+            }
+        }
+    }
+
     func testUnknownPressureIsExplicitAndCapacityNeverComesFromBandwidth() throws {
         var f = try fixture()
         let unqualified = try Adapter.window(source: f.source, applied: f.applied, diagnostics: f.diagnostics,
