@@ -1014,3 +1014,332 @@ extension SRTStreamPaddingTests {
         #expect(restarted.authority?.permits(id: restarted.id, generation: generation, stage: 1, policy: .recoveryBudget) == false)
     }
 }
+
+extension SRTStreamPaddingTests {
+    @Test(arguments: [false, true])
+    func exactRetirementRevokesImmediatelyAndJoinsCancellationIgnoringWake(cancelWaiter: Bool) async throws {
+        let wake = StreamProbeWakeGate(), completed = StreamProbeWakeGate()
+        defer { wake.release() }
+        let (stream, connection, generation) = try await restartFixture(probeWakeRunner: { _, _ in
+            await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+        })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let retirement = Task {
+            let receipt = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+            completed.didClose()
+            return receipt
+        }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        if cancelWaiter { retirement.cancel() }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(completed.closes == 0, "Retirement must remain joined to the held wake")
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        #expect(await stream.publishingGeneration == generation, "Probe retirement must leave media publishing")
+        wake.release()
+        let receipt = try await retirement.value
+        #expect(receipt.id == first.id && receipt.reason == .cancelled)
+        #expect(completed.closes == 1)
+        await stream.finish(); await connection.close()
+    }
+}
+
+extension SRTStreamPaddingTests {
+    @Test(arguments: [false, true])
+    func retirementDuplicatesDoNotPoisonCrossingStageOrCampaignAllocation(restart: Bool) async throws {
+        let wake = StreamProbeWakeGate(), statistics = PaddingStatisticsGate(), completed = StreamProbeWakeGate()
+        defer { wake.release(); statistics.release() }
+        let (stream, connection, generation) = try await restartFixture(statisticsReader: statistics.read,
+            probeWakeRunner: { _, _ in
+                await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+            })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let retiring = Task { try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation) }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        let duplicate = Task {
+            let receipt = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+            completed.didClose()
+            return receipt
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(completed.closes == 0)
+        statistics.arm()
+        let replacing = Task {
+            if restart {
+                return try await stream.restartBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+            }
+            return try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 500_000)
+        }
+        wake.release()
+        let retired = try await retiring.value, duplicateReceipt = try await duplicate.value
+        #expect(retired == duplicateReceipt && retired.reason == .cancelled)
+        end = ContinuousClock.now + .seconds(1)
+        while !statistics.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(statistics.entered)
+        // Even after the old join completes, a duplicate must not bump revision
+        // and invalidate the replacement suspended in native statistics.
+        let completedDuplicate = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        #expect(completedDuplicate == retired)
+        statistics.release()
+        let next = try await replacing.value
+        #expect(next.id != first.id && next.reason == nil)
+        #expect(next.stage == (restart ? 1 : 2) && next.campaign == (restart ? 2 : 1))
+        #expect(await stream.bandwidthProbeSnapshot?.id == next.id)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        }
+        #expect(next.authority?.permits(id: next.id, generation: generation, stage: next.stage) == true)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func retirementRejectsForeignIdentityAndGenerationBeforeRevocation() async throws {
+        let (stream, connection, generation) = try await restartFixture()
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: UUID(), publishingGeneration: generation)
+        }
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation + 1)
+        }
+        #expect(await stream.bandwidthProbeSnapshot == first)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == true)
+        let retired = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        #expect(retired.reason == .cancelled)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test(arguments: [SRTBandwidthProbeSnapshot.Reason.leaseExpired, .transportPressure, .replaced])
+    func retirementPreservesExistingTerminalReason(reason: SRTBandwidthProbeSnapshot.Reason) async throws {
+        let wake = StreamProbeWakeGate(); defer { wake.release() }
+        let (stream, connection, generation) = try await restartFixture(probeWakeRunner: { probe, _ in
+            probe.cancel(reason)
+            await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+        })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let retiring = Task { try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation) }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        #expect(await stream.bandwidthProbeSnapshot?.reason == reason)
+        wake.release()
+        #expect(try await retiring.value.reason == reason)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func retirementAndCloseJoinOldWakeWithoutMutatingNextPublication() async throws {
+        let wake = StreamProbeWakeGate(), completed = StreamProbeWakeGate()
+        defer { wake.release() }
+        let (stream, connection, generation) = try await restartFixture(probeWakeRunner: { _, _ in
+            await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+        })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let retiring = Task { try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation) }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        let closing = Task { await stream.close(); completed.didClose() }
+        end = ContinuousClock.now + .seconds(1)
+        while await stream.publishingGeneration != nil && ContinuousClock.now < end { await Task.yield() }
+        #expect(await stream.publishingGeneration == nil)
+        let duplicateDuringClose = Task { try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation) }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(completed.closes == 0)
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        #expect(await stream.publishingGeneration == nil)
+        wake.release()
+        await closing.value
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try paddingVideo(1))
+        let nextGeneration = try #require(await stream.publishingGeneration)
+        #expect(nextGeneration != generation)
+        let next = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: nextGeneration, staged: true, repeatable: true)
+        let retired = try await retiring.value, duplicate = try await duplicateDuringClose.value
+        #expect(retired == duplicate && retired.id == first.id && retired.reason == .cancelled)
+        #expect(await stream.bandwidthProbeSnapshot?.id == next.id)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        }
+        #expect(next.authority?.permits(id: next.id, generation: nextGeneration, stage: 1) == true)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func retirementRevocationRejectsLateNativeSendFromCancellationIgnoringWake() async throws {
+        let wake = StreamProbeWakeGate(), sent = StreamProbeWakeGate()
+        defer { wake.release() }
+        let (stream, connection, generation) = try await restartFixture(probeWakeRunner: { probe, _ in
+            await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+            let at = ProcessInfo.processInfo.systemUptime
+            var native = CBytePerfMon(); native.msRTT = 2
+            let statistics = SRTPerformanceData(mon: native, sampledAt: at)
+            do {
+                let accepted = try probe.offer(statistics: statistics, now: { at }) { _ in
+                    sent.didClose(); return true
+                }
+                #expect(!accepted)
+            } catch { Issue.record(error) }
+        })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let retiring = Task { try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation) }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        wake.release()
+        let retired = try await retiring.value
+        #expect(sent.closes == 0 && retired.acceptedPayloadBytes == 0 && retired.reason == .cancelled)
+        await stream.finish(); await connection.close()
+    }
+}
+
+extension SRTStreamPaddingTests {
+    @Test(arguments: [false, true])
+    func closeFirstRetirementJoinsCapturedWakeEvenWhenWaiterCancels(cancelWaiter: Bool) async throws {
+        let wake = StreamProbeWakeGate(), completed = StreamProbeWakeGate()
+        defer { wake.release() }
+        let (stream, connection, generation) = try await restartFixture(probeWakeRunner: { _, _ in
+            await withTaskCancellationHandler { await wake.wait() } onCancel: { wake.didClose() }
+        })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        let closing = Task { await stream.close() }
+        end = ContinuousClock.now + .seconds(1)
+        while wake.closes == 0 && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.closes == 1)
+        #expect(await stream.publishingGeneration == nil)
+        #expect(await stream.bandwidthProbeSnapshot?.reason == .closed)
+        let retiring = Task { () -> Result<SRTBandwidthProbeSnapshot, Error> in
+            do {
+                let receipt = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+                completed.didClose(); return .success(receipt)
+            } catch {
+                completed.didClose(); return .failure(error)
+            }
+        }
+        if cancelWaiter { retiring.cancel() }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(completed.closes == 0, "Retained closed probe must join close's captured wake")
+        wake.release(); await closing.value
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        await stream.append(try paddingVideo(1))
+        let nextGeneration = try #require(await stream.publishingGeneration)
+        let next = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: nextGeneration, staged: true, repeatable: true)
+        switch await retiring.value {
+        case .success(let receipt):
+            #expect(receipt.id == first.id && receipt.publishingGeneration == generation && receipt.reason == .closed)
+        case .failure(let error): Issue.record("Exact closed owner failed retirement: \(error)")
+        }
+        #expect(await stream.bandwidthProbeSnapshot?.id == next.id)
+        #expect(next.authority?.permits(id: next.id, generation: nextGeneration, stage: 1) == true)
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        }
+        await stream.finish(); await connection.close()
+    }
+
+    @Test func completedCloseRetainsExactJoinableProbeWithoutAcceptingForeignOwners() async throws {
+        let (stream, connection, generation) = try await restartFixture()
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        await stream.close()
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: UUID(), publishingGeneration: generation)
+        }
+        await #expect(throws: SRTBandwidthProbeError.obsolete) {
+            try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation + 1)
+        }
+        let receipt = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+        #expect(receipt.id == first.id && receipt.reason == .closed)
+        #expect(await stream.bandwidthProbeSnapshot == receipt)
+        await connection.close()
+    }
+}
+
+extension SRTStreamPaddingTests {
+    @Test(arguments: [false, true])
+    func exactRetirementDoesNotRequireHealthyPublishingGeneration(unhealthy: Bool) async throws {
+        let wake = StreamProbeWakeGate(), statistics = PaddingStatisticsGate(), completed = StreamProbeWakeGate()
+        defer { wake.release(); statistics.release() }
+        let (stream, connection, generation) = try await restartFixture(statisticsReader: statistics.read,
+            probeWakeRunner: { _, _ in await wake.wait() })
+        let first = try await stream.beginBandwidthProbe(bitRate: 1_000_000,
+            publishingGeneration: generation, staged: true, repeatable: true)
+        var end = ContinuousClock.now + .seconds(1)
+        while !wake.entered && ContinuousClock.now < end { await Task.yield() }
+        try #require(wake.entered)
+        var finishing: Task<Void, Never>?
+        var sampling: Task<SRTPerformanceData?, Never>?
+        if unhealthy {
+            // Hold the connection actor so asynchronous error shutdown cannot
+            // close the stream before retirement sees the unhealthy current owner.
+            statistics.arm()
+            sampling = Task { await connection.samplePerformanceData() }
+            end = ContinuousClock.now + .seconds(1)
+            while !statistics.entered && ContinuousClock.now < end { await Task.yield() }
+            try #require(statistics.entered)
+            let source = try paddingVideo(1)
+            var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+                presentationTimeStamp: .indefinite, decodeTimeStamp: .invalid)
+            var invalid: CMSampleBuffer?
+            try #require(CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault,
+                sampleBuffer: source, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                sampleBufferOut: &invalid) == noErr)
+            await stream.append(try #require(invalid))
+            #expect(await stream.publishingError != nil)
+            #expect(await stream.readyState == .publishing)
+        } else {
+            finishing = Task { await stream.finish() }
+            end = ContinuousClock.now + .seconds(1)
+            while await stream.bandwidthProbeSnapshot?.reason != .finished && ContinuousClock.now < end { await Task.yield() }
+            try #require(await stream.bandwidthProbeSnapshot?.reason == .finished)
+        }
+        #expect(await stream.publishingGeneration == nil)
+        let retiring = Task { () -> Result<SRTBandwidthProbeSnapshot, Error> in
+            do {
+                let receipt = try await stream.retireBandwidthProbe(id: first.id, publishingGeneration: generation)
+                completed.didClose(); return .success(receipt)
+            } catch {
+                completed.didClose(); return .failure(error)
+            }
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(completed.closes == 0)
+        #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+        wake.release(); statistics.release()
+        switch await retiring.value {
+        case .success(let receipt):
+            #expect(receipt.id == first.id && receipt.reason == (unhealthy ? .cancelled : .finished))
+        case .failure(let error): Issue.record("Exact unhealthy/finishing owner failed retirement: \(error)")
+        }
+        _ = await sampling?.value
+        await finishing?.value
+        await stream.close(); await connection.close()
+    }
+}

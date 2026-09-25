@@ -313,6 +313,16 @@ identities cannot replace a newer successful stage. Close, finish and configurat
 changes revoke the owner, and new publication waits for a pending probe admission
 to return.
 
+`retireBandwidthProbe(id:publishingGeneration:)` is the exact-owner cleanup
+barrier. It revokes sends under the existing native-send lock and joins the
+captured wake task, including a wake that ignores cancellation. Duplicate callers
+share that join; canceling a waiter does not abandon cleanup. The captured terminal
+snapshot preserves the first stop reason, and completion cannot clear a newer
+stage or publication. Cleanup also works during finish or failure and can join
+the close task that already captured the exact retained probe's wake. The existing
+`cancelBandwidthProbe` remains nonjoining. Retirement alone grants no retry or
+quality-increase authority.
+
 Every stage retains the first campaign start and prior accepted payload. The
 campaign stops admitting after 32 stages, 16 MiB cumulative payload or 60 seconds
 from the first stage; replacing or renewing never grants a fresh campaign budget.

@@ -52,6 +52,9 @@ public actor SRTStream {
     private var bandwidthProbe: SRTBandwidthProbe?
     private let probeWakeRunner: @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void
     private var probeWakeTask: Task<Void, Never>?
+    // Retain even a completed join until ownership changes: another waiter must
+    // not revoke again while a restart is already allocating its replacement.
+    private var probeRetirement: (probe: SRTBandwidthProbe, task: Task<SRTBandwidthProbeSnapshot, Never>)?
     private var probeStarting = false
     private var probeConfigurationRevision: UInt64 = 0
     private func invalidateProbeConfiguration() {
@@ -175,6 +178,7 @@ public actor SRTStream {
         // Capture the initial receipt before publishing its pointer.
         let initial = probe.snapshot(now: { at })
         bandwidthProbe = probe
+        probeRetirement = nil
         let accounting = writer.outputAccounting
         accounting.probe = probe
         probeWakeTask = Task {
@@ -195,6 +199,48 @@ public actor SRTStream {
         probeConfigurationRevision &+= 1
         probe.cancel(.cancelled)
         probeWakeTask?.cancel()
+    }
+    /// Revoke the exact current probe and join its captured wake owner. Once
+    /// accepted, retirement survives waiter cancellation and publication teardown;
+    /// the returned snapshot always belongs to that retired identity. It never
+    /// clears a newer probe, and the terminal identity remains restartable. An
+    /// exact probe retained by close may also join that close owner's captured wake.
+    public func retireBandwidthProbe(id: UUID, publishingGeneration expected: UInt64) async throws -> SRTBandwidthProbeSnapshot {
+        guard let probe = bandwidthProbe, probe.id == id, probe.generation == expected else {
+            throw SRTBandwidthProbeError.obsolete
+        }
+        if let retirement = probeRetirement, retirement.probe === probe {
+            return await retirement.task.value
+        }
+        let wake = probeWakeTask
+        let closing: Task<Void, Never>?
+        if generation == expected {
+            probeConfigurationRevision &+= 1
+            // cancel serializes with a native send under the existing probe lock.
+            // It preserves any earlier terminal reason and revokes before suspension.
+            probe.cancel(.cancelled)
+            wake?.cancel()
+            closing = nil
+        } else {
+            // close retains this exact terminal probe but transfers its wake into
+            // closeTask before suspending. Capture that barrier instead of treating
+            // the now-empty wake slot as proof of joined cleanup. A nil closeTask
+            // here means the close owner already completed; publish clears the probe.
+            guard readyState == .idle, wake == nil,
+                  probe.snapshot(now: { ProcessInfo.processInfo.systemUptime }).reason != nil else {
+                throw SRTBandwidthProbeError.obsolete
+            }
+            closing = closeTask
+        }
+        let joined = Task {
+            await wake?.value
+            await closing?.value
+            return probe.snapshot(now: { ProcessInfo.processInfo.systemUptime })
+        }
+        probeRetirement = (probe, joined)
+        // Joining this unstructured task is deliberately shielded from waiter
+        // cancellation. Completion reads only captured ownership, never live state.
+        return await joined.value
     }
     /// Scalar evidence that a PES reached the local mux output queue/sink.
     /// Transport timestamps are unwrapped 90 kHz integers, not wire-modulo values.
@@ -594,6 +640,7 @@ public actor SRTStream {
         generation &+= 1
         sourceCadenceClock = SourceCadenceClock()
         bandwidthProbe = nil
+        probeRetirement = nil
         videoInputIsRaw = false
         let session = generation
         failure = PublishingFailureLatch()

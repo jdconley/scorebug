@@ -70,11 +70,11 @@ cannot bypass backoff.
 Files: vendored `SRTStream.swift` and probe tests, Streaming publisher adapters
 and their probe tests, maintained SDK patch/provenance.
 
-- [ ] Add an explicit exact-owner retirement primitive that revokes probe sends
+- [x] Add an explicit exact-owner retirement primitive that revokes probe sends
       and joins the captured wake task. Existing `cancelBandwidthProbe` cancels
       that task but does not await it. Native probe revocation already serializes
       with the nonblocking send under its lock; retain that behavior.
-- [ ] Keep the old cancellation API's behavior. Capture immutable old ownership
+- [x] Keep the old cancellation API's behavior. Capture immutable old ownership
       before suspension. Duplicate joins should coalesce; cancellation of a
       waiter must not abandon cleanup. Completion must not clear a replacement
       probe or overwrite its state. Preserve restart from the terminal identity.
@@ -86,6 +86,40 @@ and their probe tests, maintained SDK patch/provenance.
       after revocation. Run focused and full relevant SDK/Streaming suites;
       verify the maintained patch against all original hashes. This component
       alone does not enable retry scheduling or qualify recovery.
+
+SDK checkpoint: the new exact-owner primitive passes **39 focused / 333 full
+vendored tests** with Xcode 26.2. Regressions first reproduced early return from
+legacy cancellation and premature rejection during close, finish and failure.
+Final cases cover held wakes, duplicate and canceled waiters, replacement/restart,
+new publication, preserved terminal reasons and rejected late native sends. All
+test processes joined. The maintained patch verifies all **162 original hashes**
+and an exact round trip. Logs are
+`artifacts/qa/owned-probe-retirement-sdk-final-{focused,full}.log`; this is a
+component checkpoint, not a new native media or automatic retry qualification.
+Adapter integration is in progress.
+
+### Adapter cleanup contract
+
+Each adapter keeps accepted probe authority separate from an operation's raw
+returned allocation. Capture the raw handle before validating its fields or
+awaiting health: replacement can allocate B while the caller still owns A, then
+lose admission to cancellation. That operation must retire and join B before
+throwing. A public retirement of A joins the captured operation and its exact
+cleanup obligation; it cannot query a global snapshot and adopt whichever probe
+is current. Retain only bounded, operation-owned cleanup records.
+
+Failure cleanup calls a leaf retirement operation in the lower layer, never its
+own public retirement method. Public retirement may join that operation, so the
+reverse dependency would deadlock. Coalesce duplicate joins and shield cleanup
+from waiter cancellation. Conditional operation IDs protect slot cleanup and
+revision changes from old completions. Keep downward encoder action available
+while retirement waits, but admit no new probe operation through that barrier.
+
+Close-first races also require evidence of completion: an exact retained SDK
+probe can join the close task that captured its wake, or the already completed
+close. It must preserve the original terminal reason and cannot mutate a newer
+publication. An obsolete error alone is never proof of joined cleanup. An adapter
+operation must not await its own shutdown, since shutdown already joins it.
 
 ## Task 2: Core token and Session campaign lease
 
