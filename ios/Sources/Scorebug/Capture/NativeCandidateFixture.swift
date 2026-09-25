@@ -88,6 +88,9 @@ enum NativeCandidateFixture {
             "audio": value.audio.map(audio), "followingAudio": value.followingAudio.map(audio) as Any? ?? NSNull(),
             "maximumPendingCount": value.maximumPendingCount, "maximumPendingBytes": value.maximumPendingBytes,
             "mux": NSNull()]
+        if let failure = value.openingAudioFailure {
+            object["openingAudioFailure"] = ["armedAt": failure.armedAt, "rejected": audio(failure.rejected)]
+        }
         if let mux = value.mux {
             object["mux"] = ["outcome": mux.outcome.rawValue, "failure": mux.failure as Any? ?? NSNull(),
                 "videoInputCount": mux.videoInputCount, "audioInputCount": mux.audioInputCount,

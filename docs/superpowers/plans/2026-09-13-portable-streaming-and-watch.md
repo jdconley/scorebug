@@ -24,6 +24,16 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The first actual run with the new recovery policy completed all three native probe
+stages (12.35MB accepted padding) and removed retransmission-only pressure failures,
+but **full adaptation qualification still fails**. The candidate stopped at its
+first video frame because opening audio coverage was missing; much later, two
+capture windows fell to10 and9.6fps. The clean archive and saved live output retain
+consecutive frame identities, sampled audio checks and the score change, but those
+do not excuse the capture-rate failure. Artifacts and cleanup are preserved. See
+[the impaired-match checkpoint](2026-09-24-recovery-policy-app-integration.md#first-recovery-policy-impaired-match-attempt)
+for exact results and the bounded opening-packet diagnostic under verification.
+
 The complete successful-trial verifier and explicit DEBUG recovery route are now
 wired. `SCOREBUG_TEST_PROBE_POLICY=recovery-budget-v1` selects native probe and
 transport-pressure policies together only for the complete staged file/network

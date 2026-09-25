@@ -20,6 +20,11 @@ public final class PublishingCandidateTransport: @unchecked Sendable {
         public let framesPerPacket: UInt32
         public let audioObjectType: UInt32
     }
+    /// Constant-size diagnostics for the first rejected opening packet. No payload retained.
+    public struct OpeningAudioFailure: Sendable {
+        public let armedAt: Double
+        public let rejected: AudioReceipt
+    }
     public struct Result: Sendable {
         public let scope: VideoFrameObservationScope
         public let profile: PublishingVideoProfile
@@ -35,6 +40,7 @@ public final class PublishingCandidateTransport: @unchecked Sendable {
         public let lastRawPTS: CMTime?
         public let audio: [AudioReceipt]
         public let followingAudio: AudioReceipt?
+        public let openingAudioFailure: OpeningAudioFailure?
         public let maximumPendingCount: Int
         public let maximumPendingBytes: Int
         public let mux: CandidateTransportMeasurement.Result?
@@ -117,6 +123,7 @@ private final class CandidateTransportState: @unchecked Sendable {
     private var pending: [Owner.AudioSnapshot] = []
     private var audio: [Owner.AudioReceipt] = []
     private var following: Owner.AudioReceipt?
+    private var openingAudioFailure: Owner.OpeningAudioFailure?
     private var previousAudio: Owner.AudioSnapshot?
     private var deadline: Task<Void, Never>?
     private var finishRequested = false, cancelled = false
@@ -227,6 +234,8 @@ private final class CandidateTransportState: @unchecked Sendable {
                   delta > 0, abs(delta - 1024 / frame.sampleRate) <= 0.000000100 else { fail("audioCadence"); return }
         } else {
             guard CMTimeSubtract(frame.sourcePTS, firstPTS).seconds <= 1024 / frame.sampleRate + 0.000000100 else {
+                guard let armedAt, let at = clock() else { return }
+                openingAudioFailure = .init(armedAt: armedAt, rejected: receipt(frame, consumedAt: at))
                 fail("audioOpeningCoverage"); return
             }
         }
@@ -337,7 +346,7 @@ private final class CandidateTransportState: @unchecked Sendable {
                 outcome: cancelled ? .cancelled : failure == nil ? .completed : .failed, failure: failure,
                 publishingGeneration: generation, startedAt: startedAt, closedAt: closedAt, endedAt: at,
                 rawInputCount: count, firstRawPTS: firstPTS, lastRawPTS: lastPTS, audio: audio,
-                followingAudio: following, maximumPendingCount: maximumPendingCount,
+                followingAudio: following, openingAudioFailure: openingAudioFailure, maximumPendingCount: maximumPendingCount,
                 maximumPendingBytes: maximumPendingBytes, mux: measured)
             result = completed; deadline = nil; pending.removeAll(); previousAudio = nil
             return completed

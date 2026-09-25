@@ -35,6 +35,7 @@ final class PublishingCandidateTransportTests: XCTestCase {
         let result = await window.finish()
         XCTAssertEqual(result.outcome, .completed, result.failure ?? "")
         XCTAssertEqual(result.id, id); XCTAssertEqual(result.publishingGeneration, 7)
+        XCTAssertNil(result.openingAudioFailure)
         XCTAssertEqual(result.rawInputCount, 2); XCTAssertEqual(result.audio.count, 2)
         XCTAssertEqual(result.followingAudio?.sourcePTS, pts(2))
         XCTAssertEqual(result.maximumPendingCount, 1); XCTAssertEqual(result.maximumPendingBytes, 4)
@@ -68,6 +69,35 @@ final class PublishingCandidateTransportTests: XCTestCase {
         XCTAssertEqual(result.startedAt, 10.01)
         XCTAssertEqual(result.followingAudio?.sourcePTS, pts(3))
         XCTAssertEqual(result.maximumPendingCount, 2)
+    }
+
+    func testOpeningCoverageFailureRetainsOnlyOriginalScalarPacketEvidence() async throws {
+        for preRaw in [false, true] {
+            let clock = TransportTestClock(), window = owner(clock: clock)
+            prepare(window)
+            clock.now = 10.01
+            let rejected = audio(2, clock: clock)
+            if preRaw { window.observeAudio(rejected) }
+            clock.now = 10.02
+            XCTAssertEqual(window.advanceRaw(pts(0)), !preRaw)
+            if !preRaw { window.observeAudio(rejected) }
+            let result = await window.finish()
+            XCTAssertEqual(result.failure, "audioOpeningCoverage")
+            let diagnostic = try XCTUnwrap(result.openingAudioFailure)
+            XCTAssertEqual(diagnostic.armedAt, 10)
+            XCTAssertEqual(diagnostic.rejected.sourcePTS, rejected.sourcePTS)
+            XCTAssertEqual(diagnostic.rejected.observedAt, 10.01)
+            XCTAssertEqual(diagnostic.rejected.consumedAt, 10.02)
+            XCTAssertEqual(diagnostic.rejected.byteCount, 4)
+            XCTAssertTrue(result.audio.isEmpty)
+            XCTAssertNil(result.followingAudio)
+            XCTAssertEqual(result.mux?.audioInputCount, 0)
+            clock.now = 11
+            window.observeAudio(audio(3, clock: clock))
+            let again = await window.finish()
+            XCTAssertEqual(again.openingAudioFailure?.rejected.sourcePTS, rejected.sourcePTS)
+            XCTAssertEqual(again.openingAudioFailure?.rejected.consumedAt, 10.02)
+        }
     }
 
     func testPreRawAudioUsesTheSameFinitePendingBudget() async {

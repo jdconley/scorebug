@@ -262,3 +262,60 @@ slice decoder,1500ms deadline and explicit recovery policy. It freezes source an
 prepared clip hashes, joins the same process and preserves all failures. Current
 installed iOS/watchOS runtimes are26.2 and27; older-runtime coverage is historical,
 not a claim that deleted runtimes remain installed. No runtime was reinstalled.
+
+
+## First recovery-policy impaired-match attempt
+
+Commitd8b3d80 ran as `native-app-4a378Y`, frozen by
+`recovery-match-freeze-uh5i8mjs` (1216 hashed inputs unchanged at joined completion).
+The full harness exited1 at the unchanged24fps capture-window gate. Both offending
+five-second steady windows occurred late,110–115s and115–120s after the publication
+observation anchor: capture/encode were10 and9.6fps. File-source diagnostics record
+maximum read0.835s, total reads10.678s and maximum nominal source lag9.127s; their
+aggregate timing does not establish exactly which reads caused each bad window.
+
+The new native recovery policy worked independently: all three stages completed,
+242 observations replayed successfully,12,349,344 accepted padding bytes, actual
+400ms sender delay and no quality `localPressure` events. Native acceptance is not
+receiver capacity/adaptation permission. The link qualifier independently confirms
+53 forward/16 reverse injected drops,30ms directional delay and no unintended loss.
+Quality5 / recovery policy exported556043bytes with no overflow.
+
+A separate earlier candidate failure prevented any profile upgrade. Its measurement
+accepted one raw frame and stopped with `inputRejected` / `audioOpeningCoverage`.
+There are zero profile requests. The failed opening packet was not retained by
+that implementation, so startup callback-order loss is a hypothesis, not a proven
+cause. It occurred around37s; the late capture slowdown occurred over70s later.
+Do not conflate them or weaken audio, frame-rate or deadline requirements.
+
+Saved media checks establish contiguous archive IDs0–3739 and live IDs216–3540,
+with archive continuing6.633s beyond live. All AAC frame timestamps remain within
+0.205ms of cumulative sample time; three source-anchored natural-audio windows per
+output pass, and live score-template checks pass0–0 then1–0. Complete natural-audio
+phase anchors/adaptation were not qualified. Frame-identity continuity does not
+prove timely real-time delivery. The closed local archive/persistence gate passed.
+Owned simulator, relay, API and child-process cleanup was verified independently.
+`native-app-4a378Y/failure-assessment.json` preserves the bounded findings.
+
+Next investigation: retain one rejected opening audio receipt plus original armed
+and evaluation times, with no payload/history, and repeat the frozen route after
+focused/full checks. This diagnostic does not relax the opening coverage gate or
+alter scheduling. Keep the earlier failed attempt visible even if the next passes.
+
+
+## Opening-audio diagnostic checkpoint
+
+The transport now freezes one `openingAudioFailure` receipt when the existing
+opening-coverage check fails: original armed time, source PTS, observed/evaluated
+times, generation, format and byte count. It retains no payload or history. Later
+callbacks cannot overwrite the terminal result. DEBUG measurement export includes
+it only when present, preserving successful/historical output omission. Host run
+configuration and final results now also record the selected probe policy.
+
+The diagnostic and its export each failed their targeted tests before implementation.
+Focused transport16 and export2 checks pass; full Streaming180 and app-model535
+pass. A read-only review found no issues. Logs are the joined
+`repeated-live-checkpoint-opening-audio-*` records. Native321 and tooling3850 are
+the preceding passes; no native transport rules or host qualification rules changed.
+The diagnostic does not fix either observed failure. The next frozen experiment
+uses `artifacts/qa/native-measured-opening-audio-run.py` with the same route/limits.

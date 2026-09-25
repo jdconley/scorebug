@@ -103,7 +103,7 @@ final class PublishingCandidateCostTests: XCTestCase {
             publishingGeneration: fault == .wrongGeneration ? 0 : 7, startedAt: 10, closedAt: 14,
             endedAt: fault == .followingAfterDeadline ? 15.04 : 14.04,
             rawInputCount: count, firstRawPTS: .zero, lastRawPTS: CMTime(value: 4, timescale: 1),
-            audio: fault == .missingAudio ? [] : audio, followingAudio: fault == .missingFollowing ? nil : following,
+            audio: fault == .missingAudio ? [] : audio, followingAudio: fault == .missingFollowing ? nil : following, openingAudioFailure: nil,
             maximumPendingCount: 2, maximumPendingBytes: 200, mux: fault == .missingMux ? nil : mux)
         var settings = PublishingVideoProfile.low360.settings
         if fault == .wrongRecipe { settings.bitRate += 1 }

@@ -105,6 +105,7 @@ final class NativeCandidateFixtureTests: XCTestCase {
         XCTAssertEqual(window["id"] as? String, candidate.id.uuidString)
         XCTAssertEqual(window["publishingGeneration"] as? String, "7")
         XCTAssertEqual(window["outcome"] as? String, "completed")
+        XCTAssertNil(window["openingAudioFailure"])
         let audio = try XCTUnwrap(window["audio"] as? [[String: Any]])
         XCTAssertEqual(audio.count, 1)
         XCTAssertEqual(audio.first?["byteCount"] as? Int, 4)
@@ -117,6 +118,41 @@ final class NativeCandidateFixtureTests: XCTestCase {
         XCTAssertEqual(Set(inputs.compactMap { $0["media"] as? String }), Set(["video", "audio"]))
         XCTAssertGreaterThan(try XCTUnwrap(mux["transportBytes"] as? Int), 4)
         XCTAssertLessThan(data.count, 256 * 1024)
+    }
+
+    @MainActor func testSerializationPreservesRejectedOpeningAudioWithoutPayload() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "record", matchID: "match", broadcastGeneration: 1,
+            publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let transport = PublishingCandidateTransport(scope: scope, profile: .low360)
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low360, transport: transport)
+        let before = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(transport.arm(publishingGeneration: 7))
+        try await candidate.start()
+        let sample = try candidateVideo(at: CMTime(value: 10, timescale: 1)).sampleBuffer
+        XCTAssertTrue(candidate.offer(sample))
+        let host = AVAudioTime.hostTime(forSeconds: 10 + 2 * 1024.0 / 48000)
+        let pts = CMTime(seconds: AVAudioTime.seconds(forHostTime: host), preferredTimescale: 1_000_000_000)
+        let observed = ProcessInfo.processInfo.systemUptime
+        transport.observeAudio(PublishingCandidateTransport.AudioSnapshot(sourcePTS: pts, hostTime: host,
+            publishingGeneration: 7, wasEncoded: true, valid: true, observedAt: observed,
+            sampleRate: 48000, channelCount: 2, framesPerPacket: 1024, audioObjectType: 2,
+            payload: Data([1, 2, 3, 4])))
+        let result = await candidate.finish()
+        XCTAssertEqual(result.transport?.failure, "audioOpeningCoverage")
+        let measurement = PublishingCandidateMeasurement.Result(id: candidate.id, scope: scope, profile: .low360,
+            reason: .inputRejected, startedAt: before, endedAt: ProcessInfo.processInfo.systemUptime,
+            acceptedInputCount: 1, firstInputPTS: sample.presentationTimeStamp,
+            lastInputPTS: sample.presentationTimeStamp, encoding: result)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeCandidateFixture.data(measurement)) as? [String: Any])
+        let window = try XCTUnwrap(object["transport"] as? [String: Any])
+        let diagnostic = try XCTUnwrap(window["openingAudioFailure"] as? [String: Any])
+        XCTAssertEqual(diagnostic["armedAt"] as? Double, result.transport?.openingAudioFailure?.armedAt)
+        let rejected = try XCTUnwrap(diagnostic["rejected"] as? [String: Any])
+        XCTAssertEqual(rejected["observedAt"] as? Double, observed)
+        XCTAssertEqual(rejected["byteCount"] as? Int, 4)
+        XCTAssertNil(rejected["payload"])
+        XCTAssertEqual((rejected["sourcePTS"] as? [String: Any])?["value"] as? String, String(pts.value))
+        XCTAssertTrue(try XCTUnwrap(window["audio"] as? [[String: Any]]).isEmpty)
     }
 
     func testFlagsRequireExclusiveHigherCandidateAndFullFixedProfileFixture() throws {
@@ -1560,7 +1596,7 @@ private func candidateCost(scope: VideoFrameObservationScope, start: Double, end
     let transport = PublishingCandidateTransport.Result(scope: scope, profile: .low360, id: id,
         outcome: .completed, failure: nil, publishingGeneration: generation, startedAt: start,
         closedAt: end, endedAt: end, rawInputCount: 121, firstRawPTS: .zero,
-        lastRawPTS: CMTime(value: 4, timescale: 1), audio: audio, followingAudio: following,
+        lastRawPTS: CMTime(value: 4, timescale: 1), audio: audio, followingAudio: following, openingAudioFailure: nil,
         maximumPendingCount: 2, maximumPendingBytes: 200, mux: mux)
     let native = VideoCandidateEncoder.Result(id: id, settings: PublishingVideoProfile.low360.settings,
         outcome: .completed, failure: nil, nativeFailure: nil, encoderSessionID: session,
