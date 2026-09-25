@@ -36,6 +36,13 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       stop with explicit failure if exhausted rather than dropping history.
 - [x] Reproduce missing-reference damage offline with retained compressed input
       and decoder diagnostics; compare identities and pixels at original PTS.
+- [x] Reproduce the silent damage through the actual SRT relay and compare measured
+      retransmission recovery at400ms and1000ms. The1000ms controlled case matches
+      all captured video frames; complete native A/V and delivery remain unqualified.
+- [x] Permit exact1000ms only on the explicit owned diagnostic retry route,
+      preserving400ms and1500ms delivery limits; specification/quality reviews pass.
+- [ ] Rerun the full native cycle at1000ms and qualify complete A/V, timing and
+      all three recordings before selecting production recovery behavior.
 - [ ] Resolve the observed live-frame damage following late packet retransmission.
       Verify actual SRT/relay boundary capture and recovery timing before choosing
       a fix; decoder flags alone failed the controlled reproduction. Retain strict

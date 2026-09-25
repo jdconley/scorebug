@@ -8,6 +8,7 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 actual relay recovery budget](2026-09-25-relay-recovery-budget.md) — real SRT relay loss/recovery comparison and native1000ms experiment.
 - [September 25 reference-loss reproduction](2026-09-25-reference-loss-reproduction.md) — controlled compressed-frame loss, decoder-option checks and remux diagnostics.
 
 - [September 25 owned measurement app integration](2026-09-25-owned-measurement-app.md) — native lease, application and retry integration with four-phase preparation.
