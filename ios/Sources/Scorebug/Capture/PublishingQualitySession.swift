@@ -56,9 +56,16 @@ actor PublishingQualitySession {
         let scope: VideoFrameObservationScope
         let clock: PublishingTransportClock
     }
+    /// Explicit capability: rejection promises that the individual native call
+    /// had no effect and its cleanup has joined before returning.
+    struct GuardedMutations: Sendable {
+        let setBitRate: @Sendable (Int, PublishingVideoMutationExpectation, Double) async throws -> PublishingBitRateChange
+        let setProfile: @Sendable (PublishingVideoProfile, PublishingBitRateChange, Double) async throws -> PublishingVideoProfileChange
+    }
     struct Operations: Sendable {
         let setBitRate: @Sendable (Int, Double) async throws -> PublishingBitRateChange
         let stop: @Sendable () async -> Void
+        var guarded: GuardedMutations? = nil
         var isPublishing: @Sendable () -> Bool = { true }
         var videoStartup: @Sendable () -> PublishingVideoStartup? = { nil }
         var setProfile: (@Sendable (PublishingVideoProfile, Double) async throws -> PublishingVideoProfileChange)? = nil
@@ -75,6 +82,11 @@ actor PublishingQualitySession {
     private var receipt: PublishingBitRateChange?
     private var profileReceipt: PublishingVideoProfileChange?
     private var application: QualityController.Application?
+    private struct ApplicationOwner {
+        let application: QualityController.Application
+        var changedProfile = false
+    }
+    private var applicationOwner: ApplicationOwner?
     private var acknowledgedAt: Double?
     private var lastWindow: QualityController.Window?
     private var lastDecoderStall: QualityController.DecoderStall?
@@ -141,9 +153,16 @@ actor PublishingQualitySession {
 
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
-         behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false) throws {
+         behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
+         usesGuardedMutations: Bool = false) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
-            stop: { await session.stop() }, isPublishing: { session.snapshot.state == .publishing },
+            stop: { await session.stop() },
+            guarded: usesGuardedMutations ? .init(setBitRate: {
+                try await session.setVideoBitRate($0, expecting: $1, before: $2)
+            }, setProfile: {
+                try await session.setVideoProfile($0, expecting: $1, before: $2)
+            }) : nil,
+            isPublishing: { session.snapshot.state == .publishing },
             videoStartup: { session.videoStartup },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
@@ -542,7 +561,7 @@ actor PublishingQualitySession {
         if advice.settings.profileID == policy.applied.profileID {
             profile = nil
         } else {
-            guard operations.setProfile != nil,
+            guard operations.guarded != nil || operations.setProfile != nil,
                   let native = PublishingVideoProfile(rawValue: advice.settings.profileID),
                   let descriptor = profiles.first(where: { $0.id == native.rawValue }),
                   descriptor.width == native.width, descriptor.height == native.height,
@@ -560,24 +579,49 @@ actor PublishingQualitySession {
             }
         }
         let admitted = try policy.beginApplication(advice, at: start)
+        // Publish authoritative policy and private ownership before native work
+        // suspends. A selector is never proof that this application changed it.
+        self.policy = policy
+        applicationOwner = .init(application: admitted)
         // Once admitted, the owned native application has its independent two-
         // second deadline. Native changes normally retire the probe authority.
         pendingCandidate = nil; candidateHealthSource = nil
         let deadline = admitted.completionDeadline
         busy = true
-        defer { busy = false }
+        defer {
+            if applicationOwner?.application == admitted {
+                applicationOwner = nil
+                busy = false
+            }
+        }
         do {
             var format: PublishingVideoProfileChange?
             var rateStart = start
-            if let profile, let setProfile = operations.setProfile {
-                let result = try await setProfile(profile, deadline)
+            if let profile {
+                let result: PublishingVideoProfileChange
+                if let guarded = operations.guarded {
+                    guard let receipt else { throw Failure.notReady }
+                    result = try await guarded.setProfile(profile, receipt, deadline)
+                } else if let setProfile = operations.setProfile {
+                    result = try await setProfile(profile, deadline)
+                } else { throw Failure.unsupportedProfile }
+                guard applicationOwner?.application == admitted else { throw Failure.closed }
+                applicationOwner?.changedProfile = true
                 try afterWrite()
                 rateStart = try time()
                 try validate(result, profile: profile, start: start, deadline: deadline, now: rateStart)
                 guard rateStart < deadline else { throw Failure.invalidReceipt }
                 format = result
             }
-            let result = try await operations.setBitRate(advice.settings.videoBitrate, deadline)
+            let result: PublishingBitRateChange
+            if let guarded = operations.guarded {
+                guard let receipt else { throw Failure.notReady }
+                let expected: PublishingVideoMutationExpectation = format.map { .replacement($0) } ?? .verified(receipt)
+                result = try await guarded.setBitRate(advice.settings.videoBitrate, expected, deadline)
+            } else {
+                result = try await operations.setBitRate(advice.settings.videoBitrate, deadline)
+            }
+            guard applicationOwner?.application == admitted else { throw Failure.closed }
             try afterWrite()
             let now = try time()
             try validate(result, rate: advice.settings.videoBitrate, start: rateStart, deadline: deadline, now: now)
@@ -589,18 +633,45 @@ actor PublishingQualitySession {
             }
             // The profile's default bitrate is configuration intent. A verified
             // write on that exact new encoder must precede the single policy ack.
-            try policy.acknowledge(admitted, applied: advice.settings, at: now)
-            self.policy = policy; receipt = result; acknowledgedAt = now; pending = nil; application = admitted
+            guard var current = self.policy else { throw Failure.notReady }
+            defer { self.policy = current }
+            try current.acknowledge(admitted, applied: advice.settings, at: now)
+            receipt = result; acknowledgedAt = now; pending = nil; application = admitted
             // This revision change is our acknowledged write, not replacement
             // of the receiver context. Keep its revocable identity while new
             // source/configuration windows start their own delivery watermarks.
-            deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
+            deliveryRevision = current.appliedRevision; deliveryEnds = [:]
             if let format { profileReceipt = format }
-        } catch { await stop(); throw error }
+        } catch {
+            guard let owner = applicationOwner, owner.application == admitted else {
+                // stop() already retired this owner. Join its existing shutdown;
+                // a late completion cannot request shutdown of newer native work.
+                await shutdown?.value
+                throw error
+            }
+            if operations.guarded != nil, error is PublishingVideoMutationAdmissionError,
+               !owner.changedProfile, !Task.isCancelled, operations.isPublishing() {
+                // This compatibility path has no owned measurement to settle.
+                // The guarded call has joined its cleanup; retire only this
+                // application using the current authoritative policy.
+                if var current = self.policy {
+                    do { try current.acknowledge(admitted, applied: nil, at: time()) }
+                    catch { current.invalidateTelemetry() }
+                    self.policy = current
+                }
+                if pending == advice { pending = nil }
+            } else {
+                // A successful profile replacement is an application effect,
+                // even when its following guarded bitrate call had no effect.
+                await stop()
+            }
+            throw error
+        }
     }
     /// All callers join one shielded stop, even if their own task is cancelled.
     func stop() async {
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
+        applicationOwner = nil; busy = false
         let task: Task<Void, Never>
         if let shutdown { task = shutdown }
         else {
