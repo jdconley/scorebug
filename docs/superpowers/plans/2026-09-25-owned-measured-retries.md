@@ -162,10 +162,12 @@ cannot supply the missing ownership proof.
       unsuccessful settlement and verified ownership retirement. Token creation
       is private. Preserve ordinary admission when no owned attempt exists;
       reject competing unregistered admission while the owned route is active.
-- [ ] Add exact transferred-application rejection settlement for guarded
+- [x] Add exact transferred-application rejection settlement for guarded
       no-effect failures after Core transfer consumes the measurement token.
       Retain bounded ownership across telemetry revocation and cleanup, count
-      once without fabricating a reset, and preserve downward work. See the
+      once without fabricating a reset, and preserve downward work. Core passes
+      **28 focused / 487 full tests**, with both independent reviews approved;
+      actual cleanup and no-effect proof remain app obligations. See the
       [required settlement contract](2026-09-25-owned-application-admission.md#required-settlement-after-guarded-rejection).
 - [ ] Inject native begin/renew/replace/restart/snapshot/retire operations once
       into Session. Keep campaign start/cumulative counters internally because
@@ -199,6 +201,25 @@ The [owned probe operation plan](2026-09-25-owned-probe-operations.md) resolves
 initial allocations without returned UUIDs and same-connection restart after a
 downshift. A cleanup receipt survives an encoder change; a fresh verified
 configuration context and new Core/Session attempt are required to restart.
+
+### App integration call sites
+
+`PublishingQualitySession` currently receives only unguarded mutation operations,
+and `CaptureStreamingModel` constructs its quality driver from the Session and
+attempt ID. Inject the owned publisher operations once through that construction
+path; do not recover an arbitrary publisher from a later snapshot. The DEBUG
+`NativeBandwidthProbePublisher` wrapper currently forwards only legacy mutations.
+The new explicit fixture route must forward guarded calls as well, or their
+intentional disabled defaults will reject application.
+
+The existing `apply` method keeps its modified Core controller in a local variable
+across awaits and holds `busy` for the complete application. Preserve serialization
+for actual encoder writes, but publish transferred ownership before suspension
+and release application occupancy before failed measurement cleanup waits. Current
+telemetry and downward advice must remain authoritative while that cleanup joins.
+The new route needs tests through the actual wrapper/driver construction in
+addition to injected owner tests; the existing legacy fixture remains separately
+qualified until the new complete route passes.
 
 ### Core lifecycle implementation notes
 

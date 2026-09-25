@@ -115,9 +115,14 @@ now passes **346 full serial SDK, 245 Streaming and 257 Media tests**. Both
 publishers use explicit guarded mutation methods and reject stale configuration
 before disturbing healthy publication. A read-only native preflight covers the
 replacement interval; real loopback tests exercise both publisher layers.
-All jobs joined; independent specification and quality reviews approve. PublishingSession safe-error handling and exact Core settlement after
-application transfer remain next, followed by measurement lease integration and
-the fresh four-phase media experiment. Physical phone/Watch testing remains open.
+All jobs joined; independent specification and quality reviews approve.
+Core now also passes **28 focused / 487 full tests** for exact rejection settlement
+after application transfer. A rejected upgrade counts once without fabricating a
+resolution reset, preserves newer downward work, and requires fresh recovery
+coverage. Both reviews approve that separate Core checkpoint. PublishingSession
+safe-error handling and app enforcement of joined cleanup remain next, followed
+by measurement lease integration and the fresh four-phase media experiment.
+Physical phone/Watch testing remains open.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

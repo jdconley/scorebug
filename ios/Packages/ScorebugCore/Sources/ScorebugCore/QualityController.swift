@@ -230,8 +230,13 @@ public struct QualityController: Sendable {
         var recommendation: Recommendation?
     }
     private var ownedMeasurement: OwnedMeasurement?
+    // Cleanup ownership survives telemetry revoking the active application slot.
     // The measurement and its resulting application/probation share one episode.
-    private var measurementApplicationID: UUID?
+    private struct TransferredMeasurement: Sendable {
+        let attempt: CandidateMeasurementAttempt
+        let application: Application
+    }
+    private var transferredMeasurement: TransferredMeasurement?
     private var lastNow: Double
     private var appliedAt: Double
     private var lastEnd: Double?
@@ -334,7 +339,7 @@ public struct QualityController: Sendable {
     /// Register only from actual current readiness. Advisory reads remain available
     /// while owned work runs; another registration cannot replace that work.
     public mutating func beginCandidateMeasurement(at now: Double) throws -> CandidateMeasurementAttempt {
-        guard ownedMeasurement == nil else { throw ValidationError.measurementInProgress }
+        guard ownedMeasurement == nil, transferredMeasurement == nil else { throw ValidationError.measurementInProgress }
         guard let readiness = candidateMeasurementReadiness(at: now) else { throw ValidationError.staleMeasurement }
         try recordTime(now)
         let attempt = CandidateMeasurementAttempt(controllerID: controllerID, readiness: readiness, registeredAt: now)
@@ -364,12 +369,38 @@ public struct QualityController: Sendable {
         if let recommendation = owned.recommendation, pending == recommendation { pending = nil }
     }
 
+    /// Session calls this only after a guarded rejection with no earlier native
+    /// effect in this application, and after joining its exact native cleanup.
+    /// A retained transfer remains settleable when telemetry revoked its active
+    /// application. Uncertain or partially applied changes use the existing
+    /// failure acknowledgment/shutdown contract instead.
+    public mutating func settleCandidateApplicationRejection(_ admitted: Application,
+        for attempt: CandidateMeasurementAttempt, at now: Double) throws {
+        guard attempt.controllerID == controllerID,
+              let transferred = transferredMeasurement,
+              transferred.attempt == attempt, transferred.application == admitted,
+              attempt.readiness.attemptID == attemptID,
+              attempt.readiness.appliedRevision == appliedRevision,
+              attempt.readiness.baseline == applied else { throw ValidationError.staleMeasurement }
+        guard now.isFinite, (0...1e12).contains(now) else { throw ValidationError.invalidTime }
+        try recordTime(now)
+        transferredMeasurement = nil
+        countFailureEpisodeOnce()
+        latestStrongHealth = nil; recoveryStart = nil
+        healthyNotBefore = max(healthyNotBefore, now)
+        if application == admitted { application = nil }
+        if pending == admitted.recommendation { pending = nil }
+    }
+
     /// Non-counting retirement is permitted only after an actual applied revision
-    /// change. It removes obsolete bookkeeping without touching the new scope.
+    /// change. It removes the exact measurement or transferred-application
+    /// bookkeeping without touching the new scope.
     public mutating func retireObsoleteCandidateMeasurement(_ attempt: CandidateMeasurementAttempt) throws {
-        guard attempt.controllerID == controllerID, ownedMeasurement?.attempt == attempt,
+        guard attempt.controllerID == controllerID,
+              ownedMeasurement?.attempt == attempt || transferredMeasurement?.attempt == attempt,
               attempt.readiness.appliedRevision != appliedRevision else { throw ValidationError.staleMeasurement }
-        ownedMeasurement = nil
+        if ownedMeasurement?.attempt == attempt { ownedMeasurement = nil }
+        if transferredMeasurement?.attempt == attempt { transferredMeasurement = nil }
     }
 
     /// Bind one candidate to this issued measurement. Foreign, obsolete and
@@ -407,7 +438,7 @@ public struct QualityController: Sendable {
               application == nil else { throw ValidationError.staleMeasurement }
         guard now.isFinite, (0...1e12).contains(now) else { throw ValidationError.invalidTime }
         let admitted = try beginApplication(recommendation, at: now, preserveFailureEpisode: true)
-        measurementApplicationID = admitted.id
+        transferredMeasurement = .init(attempt: attempt, application: admitted)
         ownedMeasurement = nil
         return admitted
     }
@@ -416,7 +447,7 @@ public struct QualityController: Sendable {
     /// health sequence or crediting its duration. A candidate is one-shot even
     /// when health, padding, or recovery duration cannot authorize a trial.
     public mutating func evaluateCandidate(_ admission: CandidateAdmission, at now: Double) throws -> Decision {
-        guard ownedMeasurement == nil else { throw ValidationError.measurementInProgress }
+        guard ownedMeasurement == nil, transferredMeasurement == nil else { throw ValidationError.measurementInProgress }
         return try evaluateCandidate(admission, at: now, invalidateOnError: true)
     }
     private mutating func evaluateCandidate(_ admission: CandidateAdmission, at now: Double,
@@ -748,7 +779,9 @@ public struct QualityController: Sendable {
     /// Admit exactly the pending advice before its original freshness deadline.
     /// An in-flight authorization cannot be renewed by admitting the same advice.
     public mutating func beginApplication(_ recommendation: Recommendation, at now: Double) throws -> Application {
-        if ownedMeasurement != nil && Self.isUpward(recommendation) { throw ValidationError.measurementInProgress }
+        if (ownedMeasurement != nil || transferredMeasurement != nil) && Self.isUpward(recommendation) {
+            throw ValidationError.measurementInProgress
+        }
         return try beginApplication(recommendation, at: now, preserveFailureEpisode: false)
     }
     private mutating func beginApplication(_ recommendation: Recommendation, at now: Double,
@@ -772,12 +805,18 @@ public struct QualityController: Sendable {
     /// makes it unusable; new telemetry and explicit invalidation revoke it too.
     public mutating func acknowledge(_ admitted: Application, applied actual: Settings?, at now: Double) throws {
         if ownedMeasurement != nil && Self.isUpward(admitted.recommendation) { throw ValidationError.measurementInProgress }
+        if let transferred = transferredMeasurement, Self.isUpward(admitted.recommendation) {
+            guard transferred.application == admitted, application == admitted,
+                  transferred.attempt.readiness.appliedRevision == appliedRevision,
+                  transferred.attempt.readiness.baseline == applied else { throw ValidationError.staleMeasurement }
+        }
         guard application == admitted else {
             try recordTime(now)
             throw ValidationError.staleRecommendation
         }
-        defer { application = nil; measurementApplicationID = nil; pending = nil; recoveryStart = nil }
+        defer { application = nil; pending = nil; recoveryStart = nil }
         try acknowledge(admitted.recommendation, applied: actual, at: now, before: admitted.completionDeadline)
+        if actual != nil, transferredMeasurement?.application == admitted { transferredMeasurement = nil }
     }
 
     /// Acknowledge only the latest recommendation. Pass nil for a failed change.
@@ -785,7 +824,9 @@ public struct QualityController: Sendable {
     /// never become truth merely because they were emitted. Successful application
     /// increments the revision, and subsequent windows must start after this time.
     public mutating func acknowledge(_ recommendation: Recommendation, applied actual: Settings?, at now: Double) throws {
-        if ownedMeasurement != nil && Self.isUpward(recommendation) { throw ValidationError.measurementInProgress }
+        if (ownedMeasurement != nil || transferredMeasurement != nil) && Self.isUpward(recommendation) {
+            throw ValidationError.measurementInProgress
+        }
         if application != nil {
             try recordTime(now)
             throw ValidationError.staleRecommendation
@@ -826,7 +867,7 @@ public struct QualityController: Sendable {
             }
             if recommendation.kind == .trial {
                 trial = .init(baseline: applied, deadline: now + Self.maximumTrialDuration)
-                if behavior == .progressive && (measurementApplicationID == nil || application?.id != measurementApplicationID) {
+                if behavior == .progressive && (transferredMeasurement == nil || application != transferredMeasurement?.application) {
                     failureEpisodeActive = false
                 }
             } else if recommendation.kind == .rollback {

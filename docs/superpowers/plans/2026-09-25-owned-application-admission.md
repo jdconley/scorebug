@@ -145,6 +145,22 @@ can turn the same failure into a timeout; the external waiter cancels and joins
 that timer before returning. If cancellation, deadline or shutdown has already
 won, preserve that terminal outcome. Do not clear a newer mutation's state.
 
+Guarded Session requests carry their selector explicitly; legacy requests do not.
+Treat a resolved mutation as either an accepted success or a proven safe rejection.
+Only a typed error from the direct guarded publisher call can take the safe path;
+post-success receipt or health validation failures remain uncertain. Resolve that
+exact request under the state lock, then let its external waiter cancel and join
+the timer. If the clock already reached the deadline before safe resolution, the
+deadline wins even if the timer has not run. If resolution happened first, clock
+expiry during the subsequent timer join cannot create a new timeout. Stop and
+caller cancellation during that join remain terminal.
+
+Guarded successful receipts must also match their selected generation and encoder
+(or previous encoder for profile replacement), not merely historical Session
+receipts. Verified bitrate changes require a fresh configuration ID. A narrow
+internal timer-sleep injection beside the existing clock seam can make held timer
+joins and deadline ordering deterministic without wall-clock timing assertions.
+
 Regression cases for the upper layers include absent guarded capabilities making
 zero legacy calls; same numeric bitrate with a substituted configuration or
 encoder; changed configuration across a held health/native await; a forged
@@ -196,8 +212,9 @@ reset; delivery failure plus rejection counting once in either order; telemetry
 revocation and downward advice during held cleanup; duplicate/foreign/obsolete
 completion with future timestamps; success, partial profile application and real
 revision retirement. Core, Media and app suites must pass before wiring a native
-owned application transfer. This is additional required work, not implemented by
-the SDK or publisher-adapter checkpoints.
+owned application transfer. This is additional required work. The Core portion is implemented below; the
+app must still enforce actual joined cleanup and absence of an earlier native
+effect before using it.
 
 
 ## Native SDK checkpoint
@@ -287,3 +304,27 @@ Next are exact Core settlement after a transferred application is rejected,
 PublishingSession timer/reservation handling, and the broader application owner.
 A successful profile mutation followed by a rejected bitrate write still requires
 joined shutdown by that broader owner. No automatic retry route is enabled here.
+
+
+## Core transferred-application checkpoint
+
+Core now retains the exact measurement/application pair after transfer, separately
+from the active application slot that telemetry may revoke. Its explicit
+`settleCandidateApplicationRejection(_:for:at:)` consumes only that pair, counts
+failure once and requires fresh recovery coverage, without changing applied
+settings or creating a resolution reset. Existing downward work and reset intent
+remain intact. Identity and scope checks precede clock changes.
+
+An unresolved transfer blocks competing measurement/upward admission. Exact
+successful acknowledgement consumes it; actual applied-revision change permits
+non-counting retirement through `retireObsoleteCandidateMeasurement`. Uncertain
+or partially applied failures retain the prior reset/shutdown contract. This pure
+policy API cannot itself prove native cleanup or lack of earlier profile effects;
+those remain obligations of the app's owned application route.
+
+**28 focused / 487 full Core tests pass**, including 11 new transferred-application
+cases. All processes joined. Behavioral RED evidence exercised the former
+`acknowledge(applied: nil)` path and reproduced its incorrect reset/ownership
+behavior before using the new API. Evidence:
+`artifacts/qa/transferred-application-core-{red,focused-final,full}-20260925.log`.
+Independent specification and quality reviews approve the Core-only checkpoint.
