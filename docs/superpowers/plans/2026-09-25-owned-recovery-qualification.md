@@ -32,6 +32,8 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       final qualification; diagnostic collection must never report a passing verdict.
 - [x] Align real candidate collection with fresh source reports, preserving the
       existing two-second freshness limits, then rerun with the campaign-aware relay.
+- [x] Support four-phase audio head/tail and grid anchors with unchanged source
+      identity and coverage validation; retain existing two/three/five-phase checks.
 - [ ] Qualify the full native experiment with all archive/live frames, phase audio
       anchors, changing score, continued local recording and both final outputs.
       Preserve the 3,072 cadence / 512 delivery row and 16/32 MiB evidence limits;
