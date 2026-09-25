@@ -399,3 +399,49 @@ test('receiver interval replay requires explicit matching recovery policy and re
   );
   assert.throws(() => qualifyNativeReceiverIntervals(...args, { ...context, policy: 'future-v1' }));
 });
+
+// A renewal can finish before an older async binding read returns. Read completion
+// order must not manufacture additional accepted packets or move their timestamp.
+function bindingCompletesAfterUnchangedRenewal(make) {
+  const f = make(),
+    binding = request(f).probeBinding;
+  const renewed = f.probe.events.find(
+    (e) =>
+      e.phase === 'renewed' &&
+      e.sample.stage === 3 &&
+      e.sample.acceptedPayloadBytes === binding.observation.acceptedPayloadBytes &&
+      e.sample.lastAcceptedAt === binding.observation.lastAcceptedAt &&
+      e.observedAt > binding.boundAt,
+  );
+  assert.ok(renewed);
+  binding.boundAt = renewed.observedAt + 0.000001;
+  candidate(f).candidateAdmission.boundAt = binding.boundAt;
+  return { f, renewed };
+}
+for (const [name, make, validate] of [
+  ['historical', fixture, qualify],
+  ['recovery', recoveryPolicyFixture, qualifyRecoveryPolicy],
+]) {
+  test(`${name} retirement accepts unchanged acceptance when an older binding read finishes after renewal`, () => {
+    const { f } = bindingCompletesAfterUnchangedRenewal(make),
+      before = structuredClone(f);
+    assert.equal(validate(f).stages[2].retirementKind, 'profile-request-terminal-read');
+    assert.deepEqual(f, before);
+  });
+  test(`${name} retirement still rejects extra packets beyond one-token credit after renewal`, () => {
+    const { f, renewed } = bindingCompletesAfterUnchangedRenewal(make);
+    const binding = request(f).probeBinding.observation;
+    binding.acceptedPayloadBytes = String(BigInt(binding.acceptedPayloadBytes) + 2632n);
+    binding.lastAcceptedAt = renewed.sample.leaseDeadline - 0.3 + 0.00001;
+    candidate(f).candidateAdmission.binding = structuredClone(binding);
+    if (name === 'recovery') addSyntheticRecoveryProbeEvidence(f);
+    assert.throws(() => validate(f), /active observation exceeds token budget/);
+  });
+  test(`${name} retirement rejects changing acceptance time without accepting packets`, () => {
+    const { f } = bindingCompletesAfterUnchangedRenewal(make);
+    request(f).probeBinding.observation.lastAcceptedAt += 0.00001;
+    candidate(f).candidateAdmission.binding = structuredClone(request(f).probeBinding.observation);
+    if (name === 'recovery') addSyntheticRecoveryProbeEvidence(f);
+    assert.throws(() => validate(f));
+  });
+}

@@ -24,16 +24,26 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-The third frozen impaired-match run still rejects the candidate's opening audio;
-there is no upgrade request. Capture steady windows stayed at 30 fps, archive/live frame
-identities are consecutive, sampled audio and score changes pass, and the clean
-archive continues 7.3 seconds after live output. Its new packet diagnostic isolates
-a 25.583 ms opening source gap, beyond the unchanged 21.333 ms AAC allowance.
-The startup clock now precedes arming, and cold-start raw admission waits for a
-valid post-arm AAC source anchor. Real measurement/encoder/transport regressions
-pass the unchanged cost validator; all 189 Streaming and 535 app-model tests pass,
-with read-only review finding no issues. Next: frozen impaired-match verification
-of both repairs. Production upgrades remain disabled pending the full gates.
+The latest impaired-match run completes the real 121-frame candidate and applies
+an automatic 240p→360p upgrade. Capture windows stay at least 29.6 fps; archive/live
+frame IDs are consecutive, the archive continues 7.4 seconds after live, and all
+27 phase audio anchors pass for both outputs. Startup clock and opening-AAC races
+are repaired; 189 Streaming and 535 app-model tests pass.
+
+A host replay bug involving an unchanged byte counter and a renewed lease is also
+fixed, with 3,856 tooling tests passing. Corrected replay confirms the candidate,
+probe retirement and controller policy. **Full qualification remains open:** the
+unchanged lab30fps gate passes139/157 windows;18 contain29 or29.5fps. All157 have
+zero late/missing/uncertain frames and stay above the requested24fps floor. This is
+component evidence, not a retroactive pass of the original failed harness or
+production/device qualification. Exact evidence, sources and next steps are in the
+[recovery integration checkpoint](2026-09-24-recovery-policy-app-integration.md#fourth-impaired-match-opening-repaired-retirement-replay-correction).
+
+Installed runtimes were reused; temporary test simulators and relay were removed.
+A fresh device inventory sees the paired physical phone and Watch available, but
+signing/team selection and physical capture/Watch workflows remain unqualified.
+The next local work separates the requested performance floor from strict lab
+cadence and bounds pressure-history export before causal capacity/outage testing.
 
 Earlier evidence:
 

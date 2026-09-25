@@ -343,6 +343,16 @@ export function qualifyMeasuredProbeRetirement(
       else check(other >= n, 'active counter ahead of final');
       if (event.observedAt <= at) {
         check(sample.reason === null && other <= n, 'active observation follows withdrawal');
+        if (other === n) {
+          // A lease renewal may complete before an older async read returns.
+          // No new acceptance means no new pacing interval: the send timestamp
+          // must stay identical even when renewal advanced its lease checkpoint.
+          check(
+            sample.lastAcceptedAt === value.lastAcceptedAt,
+            'unchanged acceptance timestamp mismatch',
+          );
+          continue;
+        }
         const checkpoint = Math.max(
           sample.leaseDeadline - 0.3,
           sample.lastAcceptedAt ?? sample.startedAt,
