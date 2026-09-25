@@ -188,3 +188,9 @@ qualification nevertheless fails: 60 locally compressed frames disappear at the
 first downshift GOP, while the clean archive remains consecutive (7,518 frames).
 See the [next investigation](2026-09-25-transition-gop-loss.md). Passing this
 polling-specific observation does not qualify media recovery or the next ramp.
+
+A subsequent complete native run at `e0477be`, `native-app-uG39s5`, also has no
+unknown delivery rows and passes the full laboratory workflow after the separate
+mux continuity repair. All 325 windows classify with maximum sample age214.162 ms.
+See the [fresh native checkpoint](2026-09-25-transition-gop-loss.md#fresh-native-laboratory-pass)
+for full media, source-freeze and cleanup evidence.

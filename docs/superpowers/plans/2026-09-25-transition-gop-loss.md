@@ -56,10 +56,10 @@ must not alter datagrams, queue behavior, qualification or healthy credit.
 - [x] Test header parsing, bounds, immutable export, ordinal/disposition binding,
       unknown/malformed packets and unchanged default proxy behavior. A successful
       UDP send is not proof of remote receipt or successful late-packet recovery.
-- [ ] Review and freeze the next native run with unchanged 400 ms peer latency,
+- [x] Review and freeze the next native run with unchanged 400 ms peer latency,
       1,500 ms delivery deadline and media gates. Use installed runtimes only.
       Inspect any loss with packet identities before changing transport settings.
-- [ ] Update the main plan with the actual result. Autonomous repeated measured
+- [x] Update the main plan with the actual result. Autonomous repeated measured
       probes, the wider ladder, physical devices and remote hosts remain separate.
 
 If transport recovery is still insufficient, derive a prospective latency/pacing
@@ -103,3 +103,53 @@ A fresh native run is still required. Transport peer latency, deadline, bandwidt
 schedule, packet-drop schedule, frame-loss gates and source-health policy remain
 unchanged. Packet observations may help identify a later failure; they do not
 retroactively supply the missing packet identity in kEQWC0.
+
+## Fresh native laboratory pass
+
+Run `native-app-uG39s5` at `e0477be` passes the complete native harness, joined
+exit 0. Its iPhone 14 / iOS 26.2 workflow passes in 296.440 seconds. Full A/V
+checks pass for both MP4s. Archive identities 0–7466 and live identities 201–7208
+are consecutive (7,467 and 7,008 frames); the one worker pipeline independently
+reports exactly 7,008 fresh decoded and output frames. All 325 delivery windows
+classify at 30 fps with zero missing, late or uncertain frames; maximum sample age
+is 214.162 ms. Native upgrade occurs at +46.998 s and decrease at +92.022 s.
+
+Complete capacity replay passes with 10.000730 seconds of shared source/delivery
+recovery after the restoration bracket. The four causal exchanges take
+11.6–23.4 ms. All 56 archive and 55 live phase/grid audio probes pass; maximum
+absolute live A/V lag is 65.969 ms, with 0.667 ms spread. Both live score glyph
+checks pass. `native-pass-assessment.json` independently verifies the joined
+result and 15 unchanged evidence hashes.
+
+Freeze `capacity750-token-budget-freeze-t_v6msbi` confirms all 1,268 source/input
+hashes unchanged. Post-cleanup inventory confirms deletion of only owned simulator
+`FF195696-7284-4B00-949F-9F4B5CF1ED5E`. The installed runtime was reused.
+
+The partial packet export has 11,268 rows / 3,370,648 bytes with no overflow,
+invalid input or observer error. Native SRT data is encrypted, so the parser
+correctly retains only its scalar SRT headers, not TS/PES or media contents.
+Exact packet-sequence retransmissions can be compared, but this cannot prove
+wire TS continuity or map ciphertext to the failed run's IDR. Datagram 26000 in
+this new run is an ACKACK control packet, not the data packet dropped in kEQWC0.
+Thus this successful run is fresh laboratory evidence, not proof that the mux
+fix alone explains the earlier GOP failure.
+
+The component policy artifact remains explicitly `freshRampQualified: false`,
+`physicalDeviceQualified: false` and `productionUpgradeAuthorized: false`. Its
+`mediaFilesQualified: false` is retained because that pure verifier never inspects
+files; the separate full native harness actually decodes and checks both files.
+The next milestone is an owned repeated-probe lifecycle and a fresh automatic
+post-restoration ramp. No old verdict is relabeled.
+
+Independent packet review confirms all 2,605 original data arrivals retained in
+this partial window have consecutive SRT sequence numbers. All seven injected
+data losses have matching reverse NAKs and forwarded retransmissions with the same
+scalar headers and datagram length except the retransmission flag. First retries
+forward 94.8–127.1 ms after the dropped arrival. No DROPREQ is retained. Eight
+unpaired records at each boundary are compatible with explicit window cropping;
+they are not evidence of a complete packet lifecycle. These are queue observations,
+not independently proved receiver delivery of particular encrypted payloads.
+
+Continue with [owned measurements and automatic retries](2026-09-25-owned-measured-retries.md),
+starting with exact native retirement and join. This passing baseline supplies no
+second-readiness or post-restoration ramp evidence.

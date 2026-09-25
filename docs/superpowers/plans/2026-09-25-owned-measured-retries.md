@@ -1,0 +1,135 @@
+# Owned measurements and automatic recovery retries
+
+**Goal:** After upload capacity returns, retry failed measurements using actual
+healthy media coverage and complete a fresh quality increase without a host cue.
+
+**Starting checkpoint:** The three-phase native laboratory route passes at
+`e0477be` (`native-app-uG39s5`): 240p → 360p → 240p, intact archive/live files,
+and classified recovery after restoration. It does not perform a new increase.
+The existing repeated fixture permits two campaigns and requires a new applied
+revision between them. A failed probe can spend its final opportunity before the
+network recovers. Raising a timeout cannot repair this ownership/policy gap.
+
+**Architecture:** Core issues one opaque measurement attempt from current
+readiness. Session pins its exact publisher, configuration and telemetry identity
+and owns a native campaign lease. A scheduler may renew/advance that lease, admit
+its final-stage candidate, or settle failure; it cannot assert that cleanup joined
+or manufacture a successful measurement. Existing unregistered callers retain
+their behavior. The new path remains explicit until its complete native route is
+qualified.
+
+## Required semantics
+
+Readiness is advisory and remains queryable during measurement. Registration
+rechecks actual current readiness and rejects duplicate allocation. Its freshness
+expiry authorizes registration, not the whole campaign duration. Preserve the
+native 60-second / 16 MiB campaign, 300 ms lease and separate seven-second
+candidate-measurement bounds.
+
+The stable lease identity contains the opaque Core and Session IDs, publication,
+applied revision/receipt, baseline and exact target, native generation/policy,
+campaign start and optional native campaign ordinal. A stage's UUID, start and
+authority may change only through an awaited owned native allocation/replacement.
+Stage replacement verifies a fresh UUID, next stage, unchanged campaign identity,
+zero stage bytes and preserved cumulative accounting. A snapshot cannot adopt a
+foreign allocation. A native restart begins a new Core token and Session lease.
+
+Successful candidate admission must reference the actual final-stage UUID. Keep
+the existing cost-binding and receiver-interval identity checks. Once a candidate
+binds that stage, disallow another stage replacement; bounded renewal can continue
+while awaiting current source coverage. Admission is not completion. Retain probe
+ownership until `beginApplication` rechecks authority and transfers it to the
+owned encoder application. The expected profile-write revocation is not an extra
+measurement failure.
+
+Same-owner failure or abandonment retires and joins actual work before settling
+the attempt. Settlement consumes its token once, clears strong/source/shared
+delivery recovery coverage, preserves source/delivery watermarks and advances the
+earliest-health boundary monotonically. Factor failure-episode counting out of
+the minimum-reset helper; do not fabricate an encoder application, profile write,
+delivery failure or minimum reset to increment it. Retain pending downward advice.
+
+Use the approved observed-health holds: 4 seconds initially, then 10/20/40/60
+seconds following failures. Starting a new measurement opens an episode without
+clearing the count. Delivery failure and measurement failure during one attempt
+count once in either order. Only confirmed trial success clears the count.
+Foreign, duplicate and obsolete completions must be rejected before clocks or
+health mutate; they cannot cancel a newer encoder application.
+
+Stop or configuration replacement revokes policy authority immediately. Cleanup
+continues independently and joins before audit export or another allocation.
+Never hold Session's global `busy` flag while waiting for measurement work:
+source evaluation and downward action must remain responsive. Always retain a
+returned allocation before rechecking ownership so even a canceled allocation
+can be retired correctly. An old cleanup completion has no authority over a new
+lease. Verified ownership retirement is non-counting; generic caller cancellation
+cannot bypass backoff.
+
+## Task 1: Exact native retirement and join
+
+Files: vendored `SRTStream.swift` and probe tests, Streaming publisher adapters
+and their probe tests, maintained SDK patch/provenance.
+
+- [ ] Add an explicit exact-owner retirement primitive that revokes probe sends
+      and joins the captured wake task. Existing `cancelBandwidthProbe` cancels
+      that task but does not await it. Native probe revocation already serializes
+      with the nonblocking send under its lock; retain that behavior.
+- [ ] Keep the old cancellation API's behavior. Capture immutable old ownership
+      before suspension. Duplicate joins should coalesce; cancellation of a
+      waiter must not abandon cleanup. Completion must not clear a replacement
+      probe or overwrite its state. Preserve restart from the terminal identity.
+- [ ] Propagate trusted retirement through adapters with exact identity checks
+      and joined allocation/renewal/replacement work. Reject foreign owners
+      without mutating current state. Avoid self-await in operation error cleanup.
+- [ ] Test a cancellation-ignoring held wake, concurrent waiters, a replacement
+      crossing retirement completion, stop, canceled waiter, and no further sends
+      after revocation. Run focused and full relevant SDK/Streaming suites;
+      verify the maintained patch against all original hashes. This component
+      alone does not enable retry scheduling or qualify recovery.
+
+## Task 2: Core token and Session campaign lease
+
+- [ ] Implement the complete lifecycle: begin, bound candidate admission,
+      unsuccessful settlement and verified ownership retirement. Token creation
+      is private. Preserve ordinary admission when no owned attempt exists;
+      reject competing unregistered admission while the owned route is active.
+- [ ] Inject native begin/renew/replace/restart/snapshot/retire operations once
+      into Session. Keep campaign start/cumulative counters internally because
+      the current public observation omits them. Allocate and retain a task
+      before suspending; store every returned handle before validation.
+- [ ] Bind final measurement timestamps and candidate identity to the lease,
+      exact configuration and final stage. Do not add a generic unbound
+      `measuredSuccess` event or per-call `joined: true` assertion.
+- [ ] Share existing failure-episode counting without profile side effects.
+      Preserve downward advice and consumed evidence watermarks. Reject crossing
+      source/shared-delivery windows as new recovery credit.
+- [ ] Test same-revision retry holds through 10/20/40/60 seconds, both failure
+      orderings, obsolete/foreign tokens with invalid clocks, three changing stage
+      UUIDs, foreign snapshot rejection, cancellation during allocation and
+      replacement, pending-candidate renewal, expected profile-write revocation,
+      held cleanup with immediate downward action, and unchanged default callers.
+
+## Task 3: Bounded scheduler and fresh native four-phase experiment
+
+- [ ] Replace the two-campaign/revision-only fixture assumption on a distinct
+      route. Use current readiness and newly accumulated healthy coverage; neither
+      the host restoration clock nor an elapsed wait authorizes another attempt.
+      Retain failed attempts, independent probe/candidate/trial ordinals, a finite
+      overall attempt/event/byte budget and joined retirement for every allocation.
+- [ ] Define a separate 240p → 360p → 240p → 360p export and qualifier. Replay the
+      complete global source/delivery history, including failures and terminal
+      suffix. Do not slice raw evidence into synthetic sessions or alter existing
+      three-phase capacity/five-phase decoder-fault contracts.
+- [ ] Choose an experiment duration only after checking native source length,
+      UI timeouts and audit bounds. A 270-second hold would roughly add 600
+      cadence rows and 90 delivery rows to current runs, nearing the unchanged
+      3,072/512 limits. The prepared input is 330 seconds. These are feasibility
+      estimates, not permission to widen limits or skip tail coverage.
+- [ ] Require a fresh successful measurement and trial after independently
+      bracketed restoration, complete full-file archive/live/score/audio checks,
+      and at least 24 fps under the existing delivery/loss gates. Preserve any
+      failure, all frozen hashes and only-owned-simulator cleanup.
+
+Physical iPhone/Watch camera, cellular and thermal tests and remote proxy/GPU
+qualification remain later gates. No production upgrade flag changes merely
+because these components pass unit tests or because the three-phase run passed.

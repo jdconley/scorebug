@@ -24,42 +24,50 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 25
 
-The latest frozen native run, `native-app-kEQWC0` at `1c311f0`, performs
-240p → 360p → 240p and preserves all 7,518 clean archive frames. Its UI workflow
-and both full A/V decodes pass. The full result remains **failed**: live output
-has 7,001 frames and is missing exactly 60 identities, the first two-second GOP
-after the downshift. All missing frames were captured and compressed locally;
-worker evidence independently locates the loss before completed decoding.
+The fresh native laboratory run **passes** at `e0477be`:
+`native-app-uG39s5` records and streams representative match footage, scores and
+exports it, and performs 240p → 360p → 240p through the scheduled bandwidth limit
+and restoration. The archive has **7,467 consecutive frames** and the saved live
+stream **7,008 consecutive frames**, with zero gaps. Both MP4s fully decode;
+score glyphs, archive integrity and phase/grid audio checks pass. All 325 delivery
+windows classify at 30 fps with zero missing, late or uncertain frames.
+
+The complete capacity policy verifies the confirmed upgrade, native pressure
+response, decrease and 10.001 seconds of shared source/delivery recovery after
+restoration. The full joined harness exits 0. This qualifies the **three-phase
+local laboratory route**; a fresh automatic increase after restoration, the wider
+quality ladder, physical devices and general production upgrades remain open.
+The pure policy artifact's `mediaFilesQualified` remains false by design; the
+separate full harness performs and passes the actual file checks.
 
 The [independent status polling implementation](2026-09-25-independent-worker-status.md)
-works in this run: all 331 delivery windows are classified and the maximum report
-age is 156.0 ms, within the unchanged 250 ms limit. The previous `DhjMLB` run's
-stale-report failure remains preserved. All 583 native model and 4,702 tooling
-tests passed before this fresh native execution. Complete capacity recovery and
-a subsequent autonomous ramp-up remain unqualified.
+keeps health acquisition independent of control maintenance. Maximum delivery
+report age in the new run is 214.2 ms, within the unchanged 250 ms gate. The
+[MPEG-TS continuity fix and packet investigation](2026-09-25-transition-gop-loss.md)
+pass 324 vendored SDK tests and 4,748 tooling tests; the last native model
+checkpoint remains 583 passing tests. The fresh full app build and UI workflow
+also pass. The source and test-input freeze preserves all 1,268 hashes.
 
-The [current GOP-loss investigation](2026-09-25-transition-gop-loss.md) separates
-two issues. A configured packet drop coincides with the first downshift keyframe,
-while queueing consumes most of the 400 ms SRT delivery allowance; a late retry is
-plausible but not proved by the old packet counters. Separately, byte-level tests
-reproduce incorrect MPEG-TS continuity resets on format changes. Removing those
-resets passes all 324 vendored SDK tests. Bounded packet-header diagnostics are
-implemented for the next fresh native run, with all 4,748 tooling tests passing.
-No media or delivery threshold is relaxed.
+The preceding `native-app-kEQWC0` failure remains preserved: its clean archive
+was intact, but the first post-downshift GOP lost 60 live frames. The new run does
+not repeat that loss. It does not prove the old fault's cause: the configured
+packet-drop positions differ relative to media, and encrypted SRT payloads prevent
+packet-header diagnostics from independently identifying video contents. The
+counter-reset bug was independently reproduced and fixed with serialized-byte
+unit tests. No media, deadline, freshness or network-fault threshold was relaxed.
 
-The frozen native execution joins with exit 1, preserves all 1,264 file hashes,
-and removes only its owned temporary iOS 26.2 simulator. Installed runtimes are
-reused. The two representative original videos remain untouched. Physical camera,
-phone/Watch concurrency, fresh post-restoration ramp-up, true outage and remote
-proxy tests remain open. Repeated measured probes also need owned failure and
-retry accounting; the existing two-attempt fixture can spend its last probe
-before bandwidth returns.
+All runs reuse installed runtimes and remove only owned temporary simulators.
+The original representative videos remain untouched. Physical camera,
+phone/Watch concurrency, true outage and remote proxy tests remain open. The [next implementation plan](2026-09-25-owned-measured-retries.md) adds owned
+measurement attempts, failed probes, joined cleanup and the
+approved observed-health backoff, so recovery can retry on the same applied
+revision and eventually perform a fresh post-restoration increase. Stage changes
+have new native UUIDs within one campaign; successful admission must bind the
+actual final stage, and only a confirmed trial may clear the failure count.
 
-Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. The terminal
-delivery-ordering fix and explicit `token-budget-v1` transport contract pass
-separate offline replay of YnfAvU. Bounded live-loss accounting grants no healthy
-recovery time, and clean archive validation remains strict. See the
-[evidence contract and prior checkpoints](2026-09-25-capacity-rate-ledger.md#fresh-integration-run-and-prospective-token-budget-contract).
+Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
+accounting grants no healthy recovery time, and clean archive validation remains
+strict. See the [evidence contract and prior checkpoints](2026-09-25-capacity-rate-ledger.md#fresh-integration-run-and-prospective-token-budget-contract).
 
 Earlier saved evidence from `native-app-5UYvcA` passed its separate transport,
 confirmed-upgrade, native pressure-decrease, and media checks. The observed upload

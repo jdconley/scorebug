@@ -325,3 +325,17 @@ Media-files, fresh-ramp and production qualification remain false. Next investig
 separating worker status acquisition from unrelated control maintenance, with
 single-flight ownership, cancellation and late-response tests. Preserve every
 existing delivery freshness and classification rule.
+
+## Subsequent fresh laboratory pass
+
+The preserved DhjMLB failure led to independent worker-status polling; a later
+GOP-loss investigation also corrected MPEG-TS continuity across profile changes.
+The fresh `native-app-uG39s5` run at `e0477be` now passes the complete joined
+three-phase laboratory harness, including token-budget replay, full MP4 media
+checks and 325 classified 30 fps delivery windows. All 1,268 frozen hashes remain
+unchanged, and only the owned simulator was removed. See the
+[full native checkpoint](2026-09-25-transition-gop-loss.md#fresh-native-laboratory-pass)
+for exact media, audio, clock and scope limits. The old failed verdicts remain
+unchanged. Automatic post-restoration ramp and production upgrade authority are
+still unqualified; [owned measured retries](2026-09-25-owned-measured-retries.md)
+are the next implementation milestone.
