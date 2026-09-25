@@ -28,12 +28,15 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       healthy holds; classify the complete terminal suffix.
 - [x] Collect an explicit diagnostic native run with all three recordings before
       final qualification; diagnostic collection must never report a passing verdict.
-- [ ] Align real candidate collection with fresh source reports, preserving the
+- [x] Align real candidate collection with fresh source reports, preserving the
       existing two-second freshness limits, then rerun with the campaign-aware relay.
-- [ ] Run the full native experiment with all archive/live frames, phase audio
+- [ ] Qualify the full native experiment with all archive/live frames, phase audio
       anchors, changing score, continued local recording and both final outputs.
       Preserve the 3,072 cadence / 512 delivery row and 16/32 MiB evidence limits;
       stop with explicit failure if exhausted rather than dropping history.
+- [ ] Resolve the observed live-frame identity damage following late packet
+      retransmission. Capture pre-decoder input and decoder diagnostics before
+      choosing a fix; retain strict media checks.
 - [ ] Review specification and quality, retain failures, and update the delivery
       plan from actual evidence before production enablement or hardware claims.
 

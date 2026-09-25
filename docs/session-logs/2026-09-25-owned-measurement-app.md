@@ -259,3 +259,52 @@ The prior run's five candidate A/V transport payloads also pass the existing
 transport leaf validator directly from their actual measurements; results are
 `native-app-6M1CiA/candidate-transport-leaf-results.json`. That is neither an
 admission nor media qualification.
+
+## Second native run: four phases observed, media identity failure retained
+
+`native-app-mAluZi` completes the UI workflow and joins cleanup with intentional
+diagnostic exit1; collection errors are empty. With `4122bb6` and the campaign-v3
+relay, actual applications occur at +26.95s (360p, revision1), +91.95s (240p,
+revision2), and +171.98s (360p, revision3). Trials confirm at +46.49s and +186.49s.
+The final measurement registers at native2018109.5626, strictly after the
+qualified restoration upper bound2018097.3517. Two failed measurements during
+restriction are retained and settled, rather than omitted from the history.
+
+Native-only replay passes all514 lifecycle events/four owners. Compressed-frame
+validation passes8919 actual frames in four phases (809/1950/2401/3759) with three
+receipts observed. The first ad hoc invocation incorrectly required optional
+source-cadence pacing that this route does not request; its failure is retained
+in `diagnostic-native-leaf-results.json`. The correct unchanged route contract
+passes in `diagnostic-native-compressed-frames.json`. Clock brackets pass in
+`diagnostic-clock-and-transitions.json`. None grants whole-history recovery.
+
+All three MP4s fully decode with exit0. Archive:9322 sequential source identities,
+1080p, maximum timestamp gap33.334ms. Each live output:8858 frames at360p, maximum
+gap67ms; both contain identical source identities. Strict profile/media helpers
+reject live index2701: IDs2932,2933,2932,2936 indicate two missing IDs and damaged
+identity pixels in one intervening frame. No rows were removed or relabeled.
+Results and failures are retained in `diagnostic-profile-and-media-results.json`,
+`diagnostic-source-identity-anomalies.json` and `diagnostic-media-decode.json`.
+
+Read-only investigation strongly links the damage to lost reference data.
+Injected SRT drop2111488055 maps through all four clock exchanges to
+native[2018039.965899,2018039.975358], containing frame2934 dequeue2018039.968100.
+The first NAK is382.034ms later; retransmission is forwarded598.561ms later,
+beyond the400ms receiver latency. The damaged P-frame is not a full duplicate.
+Both outputs share worker encoding, so matching damage is not independent
+decoder proof. Terminal diagnostics count no known corrupt/decode/concealment
+messages, with28 unmatched lines; raw decoder stderr and pre-worker payload
+were not retained. Do not blindly add discardcorrupt or weaken the media gate.
+Next: retain bounded pre-decoder media/log evidence in a focused reproduction,
+identify the appropriate transport/decoder recovery behavior, then rerun.
+
+All native/media processes are joined. Preservation skipped only duplicate
+`QA/input.mov` at its1GiB cap; prepared source and artifact-root input remain.
+The plan remains open for strict media/whole-history checks and physical paired
+phone/Watch acceptance. No production automatic adaptation is enabled.
+
+Forensic extraction files and nine referenced original evidence inputs are
+hashed in `native-app-mAluZi/forensic-reference-loss/manifest.json`; all copied
+hashes were rechecked. `diagnosis.md` and `diagnosis.json` separate observed
+facts from the reference-loss inference. No source changes were made during
+that investigation.
