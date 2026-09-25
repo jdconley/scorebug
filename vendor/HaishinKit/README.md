@@ -399,3 +399,10 @@ assignment, new replacement, finish, close or notification invalidation makes it
 unusable; successful follow-up consumes it once. Notification callbacks only
 advance the lock-protected scalar revision. Legacy mutation APIs remain available,
 and no application quality-upgrade route is enabled by this SDK capability.
+
+`validateVideoMutationExpectation(_:)` supplies read-only preflight for publisher
+adapters before local reservation or probe revocation. It checks the actual
+native verified receipt or retained replacement continuation, including lifecycle
+and competing mutation guards. It neither consumes the continuation nor changes
+encoder properties. This point-in-time read is not a mutation permit; guarded
+setters still perform their own final checks.

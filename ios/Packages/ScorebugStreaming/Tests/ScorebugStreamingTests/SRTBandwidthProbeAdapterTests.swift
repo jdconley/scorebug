@@ -51,6 +51,96 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
         try await connectedOwnedStages(policy: .recoveryBudget)
     }
 
+    func testConnectedGuardedNativeProfileAndRateSelectExactContinuation() async throws {
+        try await connectedGuardedChanges(upper: false)
+    }
+
+    func testConnectedGuardedMediaBridgePreservesSafeStaleRejections() async throws {
+        try await connectedGuardedChanges(upper: true)
+    }
+
+    private func connectedGuardedChanges(upper: Bool) async throws {
+        // Guarded encoder mutations do not require opting into bandwidth probes.
+        let adapter = SRTPublisher(videoProfile: .low360)
+        let listener = try ProbeTestListener()
+        defer { listener.close() }
+        let publisher = upper ? SRTMediaPublisher(url: listener.url, videoProfile: .low360) : nil
+        if !upper { try await adapter.configure() }
+        let rate: (Int, PublishingVideoMutationExpectation?) async throws -> PublishingBitRateChange = { value, expected in
+            if let publisher {
+                if let expected { return try await publisher.setVideoBitRate(value, expecting: expected) }
+                return try await publisher.setVideoBitRate(value)
+            }
+            if let expected { return try await adapter.setBitRateWithReceipt(value, expecting: expected) }
+            return try await adapter.setBitRateWithReceipt(value)
+        }
+        let profile: (PublishingVideoProfile, PublishingBitRateChange) async throws -> PublishingVideoProfileChange = { value, expected in
+            if let publisher { return try await publisher.setVideoProfile(value, expecting: expected) }
+            return try await adapter.setVideoProfile(value, expecting: expected)
+        }
+        let url = listener.url
+        let start = Task {
+            if let publisher { try await publisher.start() }
+            else { try await adapter.start(url) }
+        }
+        var feeding: Task<Void, Error>?
+        do {
+            try await listener.accept()
+            try await start.value
+            feeding = Task {
+                for frame in 0..<240 {
+                    try Task.checkCancellation()
+                    let sample = try probeRawVideo(frame)
+                    if let publisher { try await publisher.append(.init(sampleBuffer: sample, kind: .video)) }
+                    else { await adapter.video(sample) }
+                    try await Task.sleep(for: .milliseconds(33))
+                }
+            }
+            let deadline = ContinuousClock.now + .seconds(5)
+            while (publisher?.videoStartup ?? adapter.videoStartup) == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertNotNil(publisher?.videoStartup ?? adapter.videoStartup)
+            let baseline = try await rate(600_000, nil)
+            let forged = PublishingBitRateChange(publishingGeneration: baseline.publishingGeneration,
+                configuration: .init(id: UUID(), encoderSessionID: baseline.configuration.encoderSessionID,
+                    bitRate: baseline.configuration.bitRate)!, acceptedAt: baseline.acceptedAt,
+                lastSubmittedSourcePTS: baseline.lastSubmittedSourcePTS)!
+            do { _ = try await rate(650_000, .verified(forged)); XCTFail("Forged configuration selected native encoder") }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            let updated = try await rate(650_000, .verified(baseline))
+            do { _ = try await profile(.low240, baseline); XCTFail("Old native receipt selected profile mutation") }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            let replaced = try await profile(.low240, updated)
+            let forgedReplacement = PublishingVideoProfileChange(profile: replaced.profile,
+                publishingGeneration: replaced.publishingGeneration, previousEncoderSessionID: replaced.previousEncoderSessionID,
+                encoderSessionID: replaced.encoderSessionID, lastOldSourcePTS: replaced.lastOldSourcePTS,
+                firstNewSourcePTS: replaced.firstNewSourcePTS, width: replaced.width, height: replaced.height,
+                rawVideoFramesDropped: replaced.rawVideoFramesDropped, acknowledgedAt: replaced.acknowledgedAt + 1)!
+            do { _ = try await rate(350_000, .replacement(forgedReplacement)); XCTFail("Forged acknowledgement selected continuation") }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            let followed = try await rate(350_000, .replacement(replaced))
+            XCTAssertEqual(followed.configuration.encoderSessionID, replaced.encoderSessionID)
+            do { _ = try await rate(350_000, .replacement(replaced)); XCTFail("Consumed replacement survived") }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            let second = try await profile(.low360, followed)
+            _ = try await rate(600_000, nil)
+            do { _ = try await rate(650_000, .replacement(second)); XCTFail("Legacy write failed to invalidate replacement") }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            let healthy: Bool
+            if let publisher { healthy = await publisher.isPublishing }
+            else { healthy = await adapter.isPublishing() }
+            XCTAssertTrue(healthy, "Safe guarded rejections must preserve the live connection")
+            feeding?.cancel(); _ = await feeding?.result
+            await publisher?.stop(); await adapter.stop()
+        } catch {
+            start.cancel(); feeding?.cancel()
+            await publisher?.stop(); await adapter.stop()
+            _ = await start.result; _ = await feeding?.result
+            throw error
+        }
+    }
+
     private func connectedOwnedStages(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         let adapter = SRTPublisher(videoProfile: .low360, allowsBandwidthProbes: true)
         try await adapter.configure()
@@ -94,6 +184,15 @@ final class SRTBandwidthProbeAdapterTests: XCTestCase {
             let context = try await adapter.captureOwnedProbeContext(matching: baseline)
             let first = try await adapter.beginOwnedBandwidthProbe(in: context, bitRate: 500_000, policy: policy)
             let firstValue = try await first.value()
+            let stale = PublishingBitRateChange(publishingGeneration: baseline.publishingGeneration,
+                configuration: .init(id: UUID(), encoderSessionID: baseline.configuration.encoderSessionID,
+                    bitRate: baseline.configuration.bitRate)!, acceptedAt: baseline.acceptedAt,
+                lastSubmittedSourcePTS: baseline.lastSubmittedSourcePTS)!
+            do { _ = try await adapter.setBitRateWithReceipt(650_000, expecting: .verified(stale)); XCTFail() }
+            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .stale) }
+            try await adapter.validateOwnedProbeContext(context)
+            XCTAssertEqual(firstValue.authority?.permits(id: firstValue.id, generation: firstValue.publishingGeneration,
+                stage: firstValue.stage, policy: firstValue.policy), true, "Failed preflight must preserve probe authority")
             try await Task.sleep(for: .milliseconds(35))
             _ = try await first.renew()
             let firstRetired = try await first.retire()

@@ -26,6 +26,9 @@ public protocol MediaPublisher: Sendable {
     /// Replaces the live encoder and returns its first observed new format boundary.
     /// Stop must join native replacement, including its old-output drain.
     func setVideoProfile(_ profile: PublishingVideoProfile) async throws -> PublishingVideoProfileChange
+    /// Explicit guarded capabilities never fall back to legacy mutation methods.
+    func setVideoBitRate(_ bitsPerSecond: Int, expecting: PublishingVideoMutationExpectation) async throws -> PublishingBitRateChange
+    func setVideoProfile(_ profile: PublishingVideoProfile, expecting: PublishingBitRateChange) async throws -> PublishingVideoProfileChange
 }
 
 public extension MediaPublisher {
@@ -34,6 +37,12 @@ public extension MediaPublisher {
     func transportStatistics() async -> PublishingTransportStatistics? { nil }
     func setVideoBitRate(_ bitsPerSecond: Int) async throws -> PublishingBitRateChange { throw PublishingSessionError.bitRateUpdateFailed }
     func setVideoProfile(_ profile: PublishingVideoProfile) async throws -> PublishingVideoProfileChange { throw PublishingSessionError.profileUpdateFailed }
+    func setVideoBitRate(_ bitsPerSecond: Int, expecting: PublishingVideoMutationExpectation) async throws -> PublishingBitRateChange {
+        throw PublishingVideoMutationAdmissionError.unavailable
+    }
+    func setVideoProfile(_ profile: PublishingVideoProfile, expecting: PublishingBitRateChange) async throws -> PublishingVideoProfileChange {
+        throw PublishingVideoMutationAdmissionError.unavailable
+    }
 }
 
 public enum PublishingSessionState: Sendable { case prepared, starting, publishing, stopping, stopped, failed }

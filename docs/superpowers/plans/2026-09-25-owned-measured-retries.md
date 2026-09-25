@@ -162,6 +162,11 @@ cannot supply the missing ownership proof.
       unsuccessful settlement and verified ownership retirement. Token creation
       is private. Preserve ordinary admission when no owned attempt exists;
       reject competing unregistered admission while the owned route is active.
+- [ ] Add exact transferred-application rejection settlement for guarded
+      no-effect failures after Core transfer consumes the measurement token.
+      Retain bounded ownership across telemetry revocation and cleanup, count
+      once without fabricating a reset, and preserve downward work. See the
+      [required settlement contract](2026-09-25-owned-application-admission.md#required-settlement-after-guarded-rejection).
 - [ ] Inject native begin/renew/replace/restart/snapshot/retire operations once
       into Session. Keep campaign start/cumulative counters internally because
       the current public observation omits them. Allocate and retain a task

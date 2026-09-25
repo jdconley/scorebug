@@ -1446,7 +1446,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,626 @@
+@@ -7,7 +7,636 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
@@ -1748,6 +1748,16 @@
 +        }
 +    }
 +    private var replacementContinuation: (receipt: VideoReplacementReceipt, native: VideoReplacementContinuation)?
++
++    /// Point-in-time preflight for adapters before they reserve mutation or
++    /// revoke probes. Reads the actual native receipt/continuation without
++    /// consuming it. The guarded mutation still rechecks at native admission.
++    public func validateVideoMutationExpectation(_ expected: VideoMutationExpectation) throws {
++        try Task.checkCancellation()
++        guard videoReplacement == nil, videoMutation == nil,
++              closeTask == nil, finishingGeneration == nil else { throw VideoMutationAdmissionError.stale }
++        try validateVideoAdmission(expected)
++    }
 +
 +    private func validateVideoAdmission(_ expected: VideoMutationExpectation) throws {
 +        guard publishingGeneration == expected.generation, videoInputIsRaw else { throw VideoMutationAdmissionError.stale }
@@ -2073,7 +2083,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +641,7 @@
+@@ -22,7 +651,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -2082,7 +2092,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +651,62 @@
+@@ -32,8 +661,62 @@
      }
 
      /// Creates a new stream object.
@@ -2146,7 +2156,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +718,9 @@
+@@ -45,7 +728,9 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -2157,7 +2167,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +732,46 @@
+@@ -57,8 +742,46 @@
              }
              return
          }
@@ -2205,7 +2215,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +781,55 @@
+@@ -68,26 +791,55 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -2281,7 +2291,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +858,100 @@
+@@ -116,16 +868,100 @@
          readyState = .playing
      }
 
@@ -2387,7 +2397,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +972,44 @@
+@@ -146,23 +982,44 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2435,7 +2445,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +1019,36 @@
+@@ -172,16 +1029,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {

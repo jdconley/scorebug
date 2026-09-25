@@ -32,6 +32,8 @@ public actor SRTMediaPublisher: MediaPublisher {
     private var ownedProbeOperation: PublishingBandwidthProbeOperation?
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
+    private enum GuardedReceipt: Sendable { case bitRate(PublishingBitRateChange), profile(PublishingVideoProfileChange) }
+    private var guardedMutation: (id: UUID, task: Task<GuardedReceipt, Error>)?
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
@@ -82,7 +84,10 @@ public actor SRTMediaPublisher: MediaPublisher {
             validateProbeContext: { try await adapter.validateOwnedProbeContext($0) },
             beginOwnedProbe: { try await adapter.beginOwnedBandwidthProbe(in: $0, bitRate: $1, policy: $2) },
             replaceOwnedProbe: { try await adapter.replaceOwnedBandwidthProbe(after: $0, in: $1, bitRate: $2) },
-            restartOwnedProbe: { try await adapter.restartOwnedBandwidthProbe(after: $0, in: $1, bitRate: $2) })
+            restartOwnedProbe: { try await adapter.restartOwnedBandwidthProbe(after: $0, in: $1, bitRate: $2) },
+            validateVideoMutationExpectation: { try await adapter.validateVideoMutationExpectation($0) },
+            setBitRateExpecting: { try await adapter.setBitRateWithReceipt($0, expecting: $1) },
+            setProfileExpecting: { try await adapter.setVideoProfile($0, expecting: $1) })
     }
 
     struct Operations: Sendable {
@@ -111,6 +116,12 @@ public actor SRTMediaPublisher: MediaPublisher {
         var beginOwnedProbe: (@Sendable (PublishingBandwidthProbeContext, Int, PublishingBandwidthProbeSnapshot.Policy) async throws -> PublishingBandwidthProbeOperation)? = nil
         var replaceOwnedProbe: (@Sendable (PublishingBandwidthProbeRetirement, PublishingBandwidthProbeContext, Int) async throws -> PublishingBandwidthProbeOperation)? = nil
         var restartOwnedProbe: (@Sendable (PublishingBandwidthProbeRetirement, PublishingBandwidthProbeContext, Int) async throws -> PublishingBandwidthProbeOperation)? = nil
+        // Trusted guarded implementations must reject with the typed admission
+        // error only when they prove no encoder effect. Snapshot validation alone
+        // never authorizes the later write; the guarded closure rechecks natively.
+        var validateVideoMutationExpectation: (@Sendable (PublishingVideoMutationExpectation) async throws -> Void)? = nil
+        var setBitRateExpecting: (@Sendable (Int, PublishingVideoMutationExpectation) async throws -> PublishingBitRateChange)? = nil
+        var setProfileExpecting: (@Sendable (PublishingVideoProfile, PublishingBitRateChange) async throws -> PublishingVideoProfileChange)? = nil
     }
     init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
 
@@ -163,12 +174,13 @@ public actor SRTMediaPublisher: MediaPublisher {
             let close = operations.stop
             let starting = startup
             let changing = profileChange
+            let guarded = guardedMutation?.task
             let probing = probeOperation
             let retirement = probeRetirement?.task
             let owned = ownedProbeOperation
             owned?.revoke()
             probing?.cancel()
-            starting?.cancel(); changing?.cancel()
+            starting?.cancel(); changing?.cancel(); guarded?.cancel()
             pending = Task.detached {
                 // Close first so a blocked configure/connect/readiness operation
                 // can finish. The reusable SDK can reopen on a late actor hop;
@@ -176,10 +188,11 @@ public actor SRTMediaPublisher: MediaPublisher {
                 await close()
                 if let starting { _ = await starting.result }
                 if let changing { _ = await changing.result }
+                if let guarded { _ = await guarded.result }
                 if let probing { _ = await probing.result }
                 if let retirement { _ = await retirement.result }
                 if let owned { _ = try? await owned.retire() }
-                if starting != nil || changing != nil || probing != nil || owned != nil { await close() }
+                if starting != nil || changing != nil || guarded != nil || probing != nil || owned != nil { await close() }
             }
             shutdown = pending
         }
@@ -241,6 +254,92 @@ public actor SRTMediaPublisher: MediaPublisher {
                     ? .cancelled : .profileUpdateFailed
                 await stop()
                 throw reason
+            }
+        } onCancel: {
+            pending.cancel()
+            Task { await self.stop() }
+        }
+    }
+
+    public func setVideoBitRate(_ bitsPerSecond: Int, expecting expected: PublishingVideoMutationExpectation) async throws -> PublishingBitRateChange {
+        guard let write = operations.setBitRateExpecting else { throw PublishingVideoMutationAdmissionError.unavailable }
+        let result = try await runGuardedMutation(expecting: expected, failure: .bitRateUpdateFailed) {
+            let receipt = try await write(bitsPerSecond, expected)
+            let generation: UInt64, encoder: UUID
+            switch expected {
+            case .verified(let selected): generation = selected.publishingGeneration; encoder = selected.configuration.encoderSessionID
+            case .replacement(let selected): generation = selected.publishingGeneration; encoder = selected.encoderSessionID
+            }
+            guard receipt.configuration.bitRate == bitsPerSecond, receipt.publishingGeneration == generation,
+                  receipt.configuration.encoderSessionID == encoder else {
+                throw PublisherError.bitRateUpdateFailed
+            }
+            if case .verified(let selected) = expected, receipt.configuration.id == selected.configuration.id {
+                throw PublisherError.bitRateUpdateFailed
+            }
+            return .bitRate(receipt)
+        }
+        guard case .bitRate(let receipt) = result else { preconditionFailure("Mismatched guarded operation") }
+        return receipt
+    }
+
+    public func setVideoProfile(_ profile: PublishingVideoProfile, expecting expected: PublishingBitRateChange) async throws -> PublishingVideoProfileChange {
+        guard let replace = operations.setProfileExpecting else { throw PublishingVideoMutationAdmissionError.unavailable }
+        let result = try await runGuardedMutation(expecting: .verified(expected), failure: .profileUpdateFailed) {
+            let receipt = try await replace(profile, expected)
+            guard receipt.profile == profile, receipt.publishingGeneration == expected.publishingGeneration,
+                  receipt.previousEncoderSessionID == expected.configuration.encoderSessionID else { throw PublisherError.profileUpdateFailed }
+            return .profile(receipt)
+        }
+        guard case .profile(let receipt) = result else { preconditionFailure("Mismatched guarded operation") }
+        return receipt
+    }
+
+    private func checkGuardedPreflight(_ epoch: UUID) throws {
+        guard !Task.isCancelled, state == .publishing else { throw PublisherError.cancelled }
+        guard probeConfigurationEpoch == epoch, !encoderUpdating else { throw PublishingVideoMutationAdmissionError.stale }
+    }
+
+    private func runGuardedMutation(expecting expected: PublishingVideoMutationExpectation, failure: PublisherError,
+        operation: @escaping @Sendable () async throws -> GuardedReceipt) async throws -> GuardedReceipt {
+        guard let validate = operations.validateVideoMutationExpectation else { throw PublishingVideoMutationAdmissionError.unavailable }
+        let epoch = probeConfigurationEpoch
+        try checkGuardedPreflight(epoch)
+        let healthy = await operations.isPublishing()
+        try checkGuardedPreflight(epoch)
+        guard healthy else { throw PublisherError.notPublishing }
+        do { try await validate(expected) }
+        catch { try checkGuardedPreflight(epoch); throw error }
+        try checkGuardedPreflight(epoch)
+        let id = UUID()
+        probeConfigurationEpoch = UUID()
+        encoderUpdating = true
+        // The tracked task is joined by stop. It never calls stop itself.
+        let pending = Task {
+            await self.invalidateBandwidthProbe()
+            guard self.state == .publishing, !Task.isCancelled else { throw PublisherError.cancelled }
+            try await validate(expected)
+            guard self.state == .publishing, !Task.isCancelled else { throw PublisherError.cancelled }
+            return try await operation()
+        }
+        guardedMutation = (id, pending)
+        defer {
+            if guardedMutation?.id == id { guardedMutation = nil; encoderUpdating = false }
+        }
+        return try await withTaskCancellationHandler {
+            do {
+                let receipt = try await pending.value
+                let stillHealthy = await operations.isPublishing()
+                guard state == .publishing, !Task.isCancelled else { throw PublisherError.cancelled }
+                guard stillHealthy else { throw PublisherError.notPublishing }
+                return receipt
+            } catch {
+                if state == .publishing, !Task.isCancelled, guardedMutation?.id == id, !(error is CancellationError),
+                   let safe = error as? PublishingVideoMutationAdmissionError { throw safe }
+                let terminal = state == .stopped || Task.isCancelled || error is CancellationError
+                await stop()
+                if terminal || Task.isCancelled { throw PublisherError.cancelled }
+                throw error is PublisherError ? error : failure
             }
         } onCancel: {
             pending.cancel()

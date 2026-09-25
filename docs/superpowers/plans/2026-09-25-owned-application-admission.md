@@ -69,8 +69,14 @@ uncertainty and post-mutation errors.
 If profile replacement has already succeeded, rejection of its following bitrate
 write leaves a partially completed application. Preserve the existing stop path
 for that case. A pre-write rejection of the second write does not undo the first.
-Session must settle/retire the measurement according to its exact current token
-and configuration ownership; stale completion must not consume a newer token.
+`PublishingSession` owns one mutation call at a time; the broader
+`PublishingQualitySession` owns the profile-plus-bitrate application. Preserve
+that distinction: the latter retains whether its exact current application has
+already changed profile and joins shutdown for partial application. Do not infer
+ownership of a partial application merely from an old `.replacement` selector;
+a stale selector must not stop newer healthy work. Session must settle/retire the
+measurement according to its exact current token and configuration ownership;
+stale completion must not consume a newer token.
 
 ## Verification gates
 
@@ -82,15 +88,15 @@ and configuration ownership; stale completion must not consume a newer token.
       verified write or replacement drain cannot acknowledge success.
 - [x] Exact replacement continuation permits its guarded bitrate write once;
       an intervening same-encoder write invalidates that continuation.
-- [ ] Missing guarded capability never invokes legacy mutation methods.
+- [x] Missing guarded capability never invokes legacy mutation methods.
 - [ ] Safe pre-write mismatch preserves the broadcast and clears only its own
       timer/reservation; cancellation, uncertain effects and partial profile
       application retain joined shutdown behavior.
 - [ ] Focused/full affected suites, SDK patch provenance, independent spec and
       quality review before wiring the owned Session transfer route.
 
-The native SDK checkpoint below implements guarded mutation. Media/publisher
-adapter propagation and Session handling remain open; the read-only getter and
+The native SDK and publisher-adapter checkpoints below implement guarded mutation
+and explicit adapter propagation. Session handling remains open; the read-only getter and
 probe context alone cannot authorize application. Automatic post-restoration
 quality increases remain gated.
 
@@ -112,6 +118,10 @@ expose or enable the guarded Session route by itself.
    Retain the exact native-to-Media replacement mapping so an arbitrary profile
    receipt with a substituted acknowledgement time cannot select a continuation.
    Invalidate this bounded mapping on intervening admitted configuration work.
+   Use the SDK's read-only `validateVideoMutationExpectation(_:)` for native
+   replacement preflight too: the verified bitrate getter is intentionally nil
+   between replacement and its following write. The read consumes no continuation
+   and does not replace the guarded setter's final checks.
    Preserve legacy/downward behavior and exercise the real loopback route.
 3. **PublishingSession:** carry the expectation with its owned mutation request.
    Only a guarded request may interpret the typed no-effect rejection as safe.
@@ -142,6 +152,52 @@ replacement mapping; stale rejection with a held timer; concurrent cancellation
 or deadline; and profile-success followed by guarded bitrate rejection. Tests
 must distinguish continued healthy publication from a partially applied change
 that requires joined shutdown.
+
+
+
+## Required settlement after guarded rejection
+
+The Core transfer currently consumes `ownedMeasurement` in
+`beginApplication(_:for:at:)`. Its old measurement failure method therefore
+cannot settle a later guarded rejection. Calling `acknowledge(applied: nil)` is
+also insufficient: that path can require a minimum-profile reset despite the
+rejected call making no encoder change. The app currently keeps the transferred
+policy only in a local copy until success; special-casing its catch without
+persisting ownership would lose the transfer and failure accounting.
+
+Before enabling the owned application route, retain one private transferred
+record containing the exact measurement attempt and admitted application. It is
+separate from the revocable active application slot, which failure telemetry may
+clear while cleanup joins. Add an explicit rejection settlement for that pair:
+
+- Check exact controller/attempt/application identity, unresolved ownership,
+  current applied revision and baseline before reading or changing policy time.
+- Call it only after the trusted guarded no-effect rejection, with no earlier
+  profile mutation in that application, and after exact native cleanup joins.
+  Do not introduce a caller-supplied `joined` or `noEffect` boolean.
+- Consume once, count the existing failure episode once, clear strong/recovery
+  coverage and advance the earliest healthy boundary monotonically. Clear the
+  active application or pending advice only when they belong to this owner.
+- Preserve newer downward work, existing reset intent, trial/settings/revision,
+  cooldown, and source/delivery/candidate watermarks. Do not fabricate a reset.
+- Keep unresolved transferred ownership a barrier to new measurements/upward
+  work while downward work remains available. Successful acknowledgement removes
+  it normally. A real revision change permits exact non-counting bookkeeping
+  retirement; stale completion must not change time or cancel newer work.
+
+The app must publish its transferred policy and private application owner before
+its first suspension. After cleanup, settle against the current authoritative
+policy only if that owner still matches. Never overwrite intervening telemetry
+or downward decisions with the pre-await policy copy, and never keep global
+`busy` set merely while failed measurement cleanup joins.
+
+Tests must cover a same-scope no-effect failure at a nonminimum profile without a
+reset; delivery failure plus rejection counting once in either order; telemetry
+revocation and downward advice during held cleanup; duplicate/foreign/obsolete
+completion with future timestamps; success, partial profile application and real
+revision retirement. Core, Media and app suites must pass before wiring a native
+owned application transfer. This is additional required work, not implemented by
+the SDK or publisher-adapter checkpoints.
 
 
 ## Native SDK checkpoint
@@ -182,7 +238,52 @@ scheduling-sensitive; it was not reproduced against the unchanged baseline.
 The failure artifact remains intact. No transport code or observer assertion was
 changed to obtain the serial pass.
 
-No guarded Media/Streaming adapter API, PublishingSession safe-error integration
-or automatic post-restoration increase is delivered by this native checkpoint.
-Those remain the next two implementation checkpoints above, followed by the
-owned measurement lease and fresh full-media qualification.
+This native checkpoint alone did not deliver guarded Media/Streaming APIs. The
+adapter checkpoint below now supplies them. PublishingSession safe-error handling,
+owned measurement integration and fresh full-media qualification remain open.
+
+
+## Media and publisher-adapter checkpoint
+
+Media now exposes explicit guarded methods with disabled defaults. Both Streaming
+adapters preflight the actual native configuration before reserving a mutation or
+revoking probe authority, then recheck ownership after suspension and at guarded
+native admission. Exact retained replacement mappings include source-time fields
+and acknowledgment-time bits; a substituted public receipt cannot recreate them.
+Guarded methods work independently of opting into owned bandwidth probes.
+
+The SDK adds a read-only mutation-expectation check for the interval between
+profile replacement and its following verified bitrate write, when the ordinary
+verified receipt getter is nil. Repeated reads do not consume the continuation or
+revoke probe authority. Implicit native invalidation is still detected. The real
+mutating call performs its own final checks.
+
+Typed pre-write rejection preserves a healthy publication. Cancellation and stop
+win over a late safe error, and malformed successful receipts or other uncertain
+mutation outcomes retain joined shutdown. Internal mutation tasks do not await
+shutdown that must join them. Regression tests include real lower SRT and
+production-initialized upper publisher loopback routes with actual replacement
+and follow-up writes. These small loopbacks establish component behavior, not
+full decoded-media continuity or production quality increases.
+
+Verification, with all processes joined:
+
+- **16 focused / 346 full serial SDK tests** pass; the maintained patch verifies
+  all **162 original hashes** and its exact round trip.
+- **14 focused / 245 full Streaming tests** pass.
+- **257 full Media tests** pass (191 XCTest and 66 Swift Testing).
+- Independent specification and quality reviews approve this checkpoint.
+  PublishingSession behavior has not yet changed.
+
+Evidence is retained in
+`artifacts/qa/repeated-live-checkpoint-guarded-native-preflight-{focused,full}-20260925{.log,-exit.json}`,
+`artifacts/qa/guarded-adapter-focused-04.log`,
+`artifacts/qa/guarded-adapter-streaming-full-01.log`, and
+`artifacts/qa/guarded-adapter-media-full-01.log`.
+Behavioral failure evidence remains in `guarded-adapter-red-02.log`,
+`guarded-adapter-red-03.log`, and `guarded-adapter-red-04.log`.
+
+Next are exact Core settlement after a transferred application is rejected,
+PublishingSession timer/reservation handling, and the broader application owner.
+A successful profile mutation followed by a rejected bitrate write still requires
+joined shutdown by that broader owner. No automatic retry route is enabled here.

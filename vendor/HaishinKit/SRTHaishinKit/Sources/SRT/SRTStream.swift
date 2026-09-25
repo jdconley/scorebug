@@ -306,6 +306,16 @@ public actor SRTStream {
     }
     private var replacementContinuation: (receipt: VideoReplacementReceipt, native: VideoReplacementContinuation)?
 
+    /// Point-in-time preflight for adapters before they reserve mutation or
+    /// revoke probes. Reads the actual native receipt/continuation without
+    /// consuming it. The guarded mutation still rechecks at native admission.
+    public func validateVideoMutationExpectation(_ expected: VideoMutationExpectation) throws {
+        try Task.checkCancellation()
+        guard videoReplacement == nil, videoMutation == nil,
+              closeTask == nil, finishingGeneration == nil else { throw VideoMutationAdmissionError.stale }
+        try validateVideoAdmission(expected)
+    }
+
     private func validateVideoAdmission(_ expected: VideoMutationExpectation) throws {
         guard publishingGeneration == expected.generation, videoInputIsRaw else { throw VideoMutationAdmissionError.stale }
         switch expected {

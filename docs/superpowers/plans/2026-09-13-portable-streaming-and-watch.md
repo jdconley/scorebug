@@ -108,8 +108,16 @@ behavior. Both reviews approve the native slice, and all 162 upstream hashes and
 the patch round trip verify. A downstream rerun also passes all **233 Streaming
 tests**, including both real loopback cases. The full SDK pass used serial execution; an earlier
 parallel run's transport-observer assertion failure remains documented in that
-plan. The adapter and Session guarded paths, measurement lease integration, fresh
-four-phase media experiment and physical phone/Watch testing remain open.
+plan.
+
+The [guarded publisher-adapter checkpoint](2026-09-25-owned-application-admission.md#media-and-publisher-adapter-checkpoint)
+now passes **346 full serial SDK, 245 Streaming and 257 Media tests**. Both
+publishers use explicit guarded mutation methods and reject stale configuration
+before disturbing healthy publication. A read-only native preflight covers the
+replacement interval; real loopback tests exercise both publisher layers.
+All jobs joined; independent specification and quality reviews approve. PublishingSession safe-error handling and exact Core settlement after
+application transfer remain next, followed by measurement lease integration and
+the fresh four-phase media experiment. Physical phone/Watch testing remains open.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains
