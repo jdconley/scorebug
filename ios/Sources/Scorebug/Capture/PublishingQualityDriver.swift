@@ -27,6 +27,7 @@ import ScorebugMedia
     private var pendingLiveCheckpoint: [String: Any]?
     private var liveDrain: Task<Void, Never>?
     private var events: [[String: Any]] = []
+    private let evidenceDictionary = QualityEvidenceDictionary()
     private var overflow = false
     private var consumed: String?
     private var consumedCandidateID: UUID?
@@ -316,11 +317,14 @@ import ScorebugMedia
     /// Live checkpoints and final export share the original policy-versioned object.
     private var qualityObject: [String: Any] {
         let recovery = transportLimits?.policy == .recoveryBudget
-        var object: [String: Any] = ["formatVersion": recovery ? 5 : 4, "overflow": overflow,
+        var object: [String: Any] = ["formatVersion": recovery ? 6 : 4, "overflow": overflow,
             "deadlineFailuresEnabled": enableDeliveryFailures,
             "decoderStallEnabled": !enableDeliveryFailures || enableMeasuredSourceEvaluation,
             "measuredSourceEvaluationEnabled": enableMeasuredSourceEvaluation, "events": events]
-        if recovery { object["transportPolicy"] = "recovery-budget-v1" }
+        if recovery {
+            object["transportPolicy"] = "recovery-budget-v1"
+            object["evidenceDictionary"] = evidenceDictionary.dictionary
+        }
         return object
     }
     /// Retain only one in-flight write and the newest complete original prefix.
@@ -501,7 +505,14 @@ import ScorebugMedia
             "profileID": advice.settings.profileID,
             "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil,
             "candidateID": Self.optional(advice.candidateID?.uuidString)] }
-        events.append(row)
+        if transportLimits?.policy == .recoveryBudget {
+            guard let encoded = evidenceDictionary.encode(row) else {
+                overflow = true
+                enqueueLiveCheckpoint(attemptID: state.attemptID, closed: kind == "stopped")
+                return
+            }
+            events.append(encoded)
+        } else { events.append(row) }
         enqueueLiveCheckpoint(attemptID: state.attemptID, closed: kind == "stopped")
     }
     private static func profileReceiptJSON(_ receipt: PublishingVideoProfileChange) -> [String: Any] {

@@ -1,3 +1,4 @@
+import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
 import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
   nativeFileFixtureOptions,
@@ -967,7 +968,9 @@ try {
   if (requireQuality || decoderStall || measuredTrial) {
     const file = join(artifact, 'quality-control.json');
     await cp(join(container, 'Library/Application Support/Scorebug/QA/quality-control.json'), file);
-    qualitySnapshot = await readBoundedJSON(file, measuredTrialArtifacts.quality[1]);
+    qualitySnapshot = expandQualityEvidence(
+      await readBoundedJSON(file, measuredTrialArtifacts.quality[1]),
+    );
   }
   if (streaming) {
     const observationPath = join(artifact, 'video-observation.json');
@@ -1155,8 +1158,10 @@ try {
       measuredRaw = {};
       for (const [key, [name, maximum]] of Object.entries(
         repeatedRecovery ? repeatedMeasuredArtifacts : measuredTrialArtifacts,
-      ))
+      )) {
         measuredRaw[key] = await readBoundedJSON(join(artifact, name), maximum);
+        if (key === 'quality') measuredRaw[key] = expandQualityEvidence(measuredRaw[key]);
+      }
     }
     const decodedEvidence =
       measuredRaw?.decodedEvidence ??

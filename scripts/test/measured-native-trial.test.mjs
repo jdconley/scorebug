@@ -127,3 +127,24 @@ test('historical complete trial rejects unknown or recovery option against old e
   for (const probePolicy of ['future-v1', 'recovery-budget-v1', null])
     assert.throws(() => module.qualifyMeasuredNativeTrial(fixture(), { probePolicy }));
 });
+
+test('dictionary recovery export passes the same complete independent trial and preserves policy gates', async () => {
+  const { addSyntheticRecoveryProbeEvidence } =
+    await import('./fixtures/recovery-policy-evidence.mjs');
+  const { dictionaryQualityFixture } = await import('./fixtures/quality-evidence-dictionary.mjs');
+  const inline = recoveryPolicyInput(fixture(), addSyntheticRecoveryProbeEvidence);
+  const expected = module.qualifyMeasuredNativeTrial(inline, { probePolicy: 'recovery-budget-v1' });
+  const encoded = { ...inline, quality: dictionaryQualityFixture(inline.quality) },
+    before = structuredClone(encoded);
+  assert.deepEqual(
+    module.qualifyMeasuredNativeTrial(encoded, { probePolicy: 'recovery-budget-v1' }),
+    expected,
+  );
+  assert.deepEqual(encoded, before);
+  assert.throws(() => qualify(encoded));
+  const damaged = structuredClone(encoded);
+  damaged.quality.evidenceDictionary.transport[0].droppedPackets = 100000;
+  assert.throws(() =>
+    module.qualifyMeasuredNativeTrial(damaged, { probePolicy: 'recovery-budget-v1' }),
+  );
+});

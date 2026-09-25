@@ -1,3 +1,4 @@
+import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
 import { qualifyRecoveryDeliveryBucket } from './recovery-delivery-bucket.mjs';
 import assert from 'node:assert/strict';
 import { fixtureFrameID, qualifyVideoObservation } from './video-observation-qualification.mjs';
@@ -120,6 +121,7 @@ export function qualifyMeasuredNativeEvidence(
   input,
   { recovery = false, probePolicy = 'local-zero-loss-v1' } = {},
 ) {
+  input = { ...input, quality: expandQualityEvidence(input.quality) };
   assert.ok(
     ['local-zero-loss-v1', 'recovery-budget-v1'].includes(probePolicy),
     'Unknown measured probe policy',
@@ -244,6 +246,7 @@ export function qualifyMeasuredNativeEvidence(
 
 /** Full successful laboratory trial; recovery uses a separately required verifier. */
 export function qualifyMeasuredNativeTrial(input, { probePolicy = 'local-zero-loss-v1' } = {}) {
+  input = { ...input, quality: expandQualityEvidence(input.quality) };
   const { quality, snapshot, cadenceReports, deliveryAudit } = input;
   const {
     video,

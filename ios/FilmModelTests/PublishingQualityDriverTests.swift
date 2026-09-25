@@ -16,11 +16,42 @@ import XCTest
                 export: { final = $0 })
             await driver.stop()
             let quality = try checkpointObject(XCTUnwrap(final))
-            XCTAssertEqual(quality["formatVersion"] as? Int, policy == .recoveryBudget ? 5 : 4)
+            XCTAssertEqual(quality["formatVersion"] as? Int, policy == .recoveryBudget ? 6 : 4)
             XCTAssertEqual(quality["transportPolicy"] as? String, policy == .recoveryBudget ? "recovery-budget-v1" : nil)
+            if policy == .recoveryBudget {
+                let dictionary = try XCTUnwrap(quality["evidenceDictionary"] as? [String: Any])
+                XCTAssertEqual(dictionary["formatVersion"] as? Int, 1)
+            } else { XCTAssertNil(quality["evidenceDictionary"]) }
             XCTAssertEqual(quality["measuredSourceEvaluationEnabled"] as? Bool, true)
             XCTAssertEqual(quality["overflow"] as? Bool, false)
         }
+    }
+
+    func testRecoveryExportPoolsActualEvaluatedDiagnosticHistories() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,
+                maximumRetransmittedFraction: 0.01, policy: .recoveryBudget),
+            uptime: { f.native.now }, enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true,
+            export: { exported = $0 })
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: diagnostics)?.value
+        await driver.stop()
+        let data = try XCTUnwrap(exported), quality = try checkpointObject(data)
+        let rows = try XCTUnwrap(quality["events"] as? [[String: Any]])
+        let row = try XCTUnwrap(rows.first { $0["kind"] as? String == "evaluated" })
+        let evidence = try XCTUnwrap(row["evidence"] as? [String: Any])
+        let transport = try XCTUnwrap(evidence["transport"] as? [String: Any])
+        let dictionary = try XCTUnwrap(quality["evidenceDictionary"] as? [String: Any])
+        XCTAssertNil(transport["samples"])
+        XCTAssertEqual(transport["sampleCount"] as? Int, diagnostics.transport.samples.count)
+        XCTAssertNotNil(transport["sampleRanges"] as? [[Int]])
+        XCTAssertEqual(try json(XCTUnwrap(dictionary["transport"])),
+                       try json(XCTUnwrap(PublishingQualityDriver.transportEvidence(diagnostics.transport)["samples"])))
+        XCTAssertEqual(quality["overflow"] as? Bool, false)
+        XCTAssertLessThan(data.count, 8 * 1024 * 1024)
     }
 
     func testRejectedSourceDiagnosticsPreserveTickSelectionAndOriginalSourceKey() async throws {

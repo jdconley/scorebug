@@ -24,6 +24,14 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+Recovery-policy diagnostic export now stores repeated pressure histories once and
+reconstructs them exactly before validation. The real 17.1 MB failed-pressure
+artifact round-trips through Swift and JavaScript in 1.09 MB; the latest recovery
+artifact also matches exactly. All 542 app-model and 3,879 tooling tests pass.
+A fresh native run will verify the new format6 writer/loader path. Sustained
+pressure and causal network runs remain open; see the
+[bounded evidence plan](2026-09-24-bounded-pressure-evidence.md).
+
 The latest impaired-match run completes the real 121-frame candidate and applies
 an automatic 240p→360p upgrade. Capture windows stay at least 29.6 fps; archive/live
 frame IDs are consecutive, the archive continues 7.4 seconds after live, and all
