@@ -119,10 +119,18 @@ All jobs joined; independent specification and quality reviews approve.
 Core now also passes **28 focused / 487 full tests** for exact rejection settlement
 after application transfer. A rejected upgrade counts once without fabricating a
 resolution reset, preserves newer downward work, and requires fresh recovery
-coverage. Both reviews approve that separate Core checkpoint. PublishingSession
-safe-error handling and app enforcement of joined cleanup remain next, followed
-by measurement lease integration and the fresh four-phase media experiment.
-Physical phone/Watch testing remains open.
+coverage. Both reviews approve that separate Core checkpoint.
+
+The next Session checkpoint now passes **271 Media, 245 Streaming and 583 native
+app model tests**; all final jobs joined with exit 0.
+Guarded rejection joins its exact timer without stopping healthy publishing;
+timeout/cancellation and uncertain native changes retain joined shutdown. Its
+independent specification and quality reviews now approve the unchanged,
+manifest-bound sources after the account reset. App enforcement of partial-change
+shutdown and actual joined measurement cleanup, measurement lease integration,
+and the fresh four-phase media experiment remain open. Physical phone/Watch
+testing remains open. Details and failure evidence are in the
+[Session checkpoint](2026-09-25-owned-application-admission.md#publishingsession-checkpoint).
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

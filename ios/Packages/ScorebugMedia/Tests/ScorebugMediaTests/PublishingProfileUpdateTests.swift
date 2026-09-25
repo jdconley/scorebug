@@ -96,15 +96,37 @@ final class PublishingProfileUpdateTests: XCTestCase {
     }
     func testInvalidProfileReceiptTimeScopeProfileAndNativeFailureRetireAttempt() async throws {
         for mode in [ProfilePublisher.Mode.failure, .wrongProfile, .oldTime, .futureTime, .wrongGeneration, .unhealthy] {
-            let publisher = ProfilePublisher(mode: mode)
+            // Hold the monitor after its initial healthy read/clock so this
+            // test specifically exercises mutation validation winning first.
+            let diagnostics = ProfileGate()
+            defer { diagnostics.release() }
+            let publisher = ProfilePublisher(mode: mode, diagnostics: diagnostics)
             let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2))
             try await session.start()
-            await eventually { session.snapshot.transportClock != nil }
+            await eventually { session.snapshot.transportClock != nil && diagnostics.entered }
             await fails(.profileUpdateFailed) { _ = try await session.setVideoProfile(.sd540) }
             XCTAssertNil(session.snapshot.lastVideoProfileChange)
             XCTAssertEqual(publisher.stops, 1)
             await session.stop()
         }
+    }
+    func testHealthMonitorFailureWinsAndJoinsPendingProfileWrite() async throws {
+        let dispatch = ProfileGate(), completion = ProfileGate()
+        defer { dispatch.release(); completion.release() }
+        let publisher = ProfilePublisher(gate: dispatch, completion: completion)
+        let session = try PublishingSession(publisher: publisher, healthCheckInterval: .milliseconds(2))
+        try await session.start()
+        let change = Task { try await session.setVideoProfile(.sd540) }
+        await eventually { dispatch.entered }
+        publisher.becomeUnhealthy()
+        await eventually { session.snapshot.failure == .publisherUnhealthy && completion.entered }
+        XCTAssertEqual(publisher.stops, 1)
+        XCTAssertFalse(publisher.returned)
+        completion.release()
+        await fails(.publisherUnhealthy) { _ = try await change.value }
+        await session.stop()
+        XCTAssertTrue(publisher.returned)
+        XCTAssertNil(session.snapshot.lastVideoProfileChange)
     }
     func testReusedProfileEncoderAndBackwardBoundaryCannotCommit() async throws {
         for mode in [ProfilePublisher.Mode.reusedID, .backwardBoundary, .profileReuseRetired] {
@@ -131,18 +153,20 @@ final class PublishingProfileUpdateTests: XCTestCase {
 private final class ProfilePublisher: MediaPublisher, @unchecked Sendable {
     enum Mode { case normal, profileReuseRate, profileReuseRetired, profileRewind, rateRewind, rateMissing, rateRetired, failure, wrongProfile, oldTime, futureTime, wrongGeneration, unhealthy, reusedID, backwardBoundary }
     private let lock = NSLock()
-    private let gate: ProfileGate?, completion: ProfileGate?, gateRate: Bool, mode: Mode
+    private let gate: ProfileGate?, completion: ProfileGate?, diagnostics: ProfileGate?, gateRate: Bool, mode: Mode
     private var healthy = false, stopCount = 0, callCount = 0, profileCount = 0, didReturn = false
     private var encoderID = UUID(), retiredID = UUID()
     private let repeatOld = UUID(), repeatNew = UUID()
-    init(mode: Mode = .normal, gate: ProfileGate? = nil, completion: ProfileGate? = nil, gateRate: Bool = false) {
-        self.mode = mode; self.gate = gate; self.completion = completion; self.gateRate = gateRate
+    init(mode: Mode = .normal, gate: ProfileGate? = nil, completion: ProfileGate? = nil, gateRate: Bool = false, diagnostics: ProfileGate? = nil) {
+        self.mode = mode; self.gate = gate; self.completion = completion; self.gateRate = gateRate; self.diagnostics = diagnostics
     }
     var stops: Int { lock.withLock { stopCount } }
     var calls: Int { lock.withLock { callCount } }
     var returned: Bool { lock.withLock { didReturn } }
     func start() async throws { lock.withLock { healthy = true } }
-    func stop() async { lock.withLock { stopCount += 1; healthy = false }; gate?.release() }
+    func stop() async { lock.withLock { stopCount += 1; healthy = false }; gate?.release(); diagnostics?.release() }
+    func becomeUnhealthy() { lock.withLock { healthy = false } }
+    func transportStatistics() async -> PublishingTransportStatistics? { await diagnostics?.wait(); return nil }
     var isPublishing: Bool { get async { lock.withLock { healthy } } }
     func append(_ sample: CapturedMediaSample) async throws {}
     func transportClock() async -> PublishingTransportClock? { .init(sourceOrigin: .zero, publishingGeneration: 7) }

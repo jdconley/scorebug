@@ -90,10 +90,11 @@ public final class PublishingSession: Sendable {
         core = try PublishingCore(publisher: publisher, maxItems: maxItems, maxBytes: maxBytes,
                                   healthCheckInterval: healthCheckInterval, ingressObservation: ingressObservation)
     }
-    // Internal clock seam for deterministic admission-expiry tests.
-    init(publisher: any MediaPublisher, bitRateClock: @escaping @Sendable () -> Double) throws {
+    // Internal time seams for deterministic admission and timer-join tests.
+    init(publisher: any MediaPublisher, bitRateClock: @escaping @Sendable () -> Double,
+         mutationSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) throws {
         core = try PublishingCore(publisher: publisher, maxItems: 8, maxBytes: 12 * 1024 * 1024,
-            healthCheckInterval: .milliseconds(250), ingressObservation: nil, bitRateClock: bitRateClock)
+            healthCheckInterval: .milliseconds(250), ingressObservation: nil, bitRateClock: bitRateClock, mutationSleep: mutationSleep)
     }
     // Internal synchronous sampler seam; production reads only Foundation scalars.
     init(publisher: any MediaPublisher, healthCheckInterval: Duration,
@@ -116,6 +117,16 @@ public final class PublishingSession: Sendable {
     public func setVideoProfile(_ profile: PublishingVideoProfile, before deadline: Double? = nil) async throws -> PublishingVideoProfileChange {
         try await core.setVideoProfile(profile, before: deadline)
     }
+    /// Requires explicit publisher support and exact native admission. A typed
+    /// no-effect rejection preserves this session; it is not application rollback.
+    public func setVideoBitRate(_ bitsPerSecond: Int, expecting expected: PublishingVideoMutationExpectation,
+        before deadline: Double? = nil) async throws -> PublishingBitRateChange {
+        try await core.setVideoBitRate(bitsPerSecond, expecting: expected, before: deadline)
+    }
+    public func setVideoProfile(_ profile: PublishingVideoProfile, expecting expected: PublishingBitRateChange,
+        before deadline: Double? = nil) async throws -> PublishingVideoProfileChange {
+        try await core.setVideoProfile(profile, expecting: expected, before: deadline)
+    }
 
 }
 
@@ -125,13 +136,16 @@ private final class PublishingCore: @unchecked Sendable {
     private let mailbox: BoundedMailbox<CapturedMediaSample>
     private let healthCheckInterval: Duration
     private let bitRateClock: @Sendable () -> Double
+    private let mutationSleep: @Sendable (Duration) async throws -> Void
     private var state = PublishingSessionState.prepared
     private var failure: PublishingSessionError?
     private var sentSamples = 0
     private var lastBitRateChange: PublishingBitRateChange?
     private var lastVideoProfileChange: PublishingVideoProfileChange?
     private var mutationID: UUID?
-    private var mutationCommitted = false
+    // Accepted success or a proven guarded no-effect rejection; either defeats
+    // the timer, while the exact reservation remains held until its timer joins.
+    private var mutationResolved = false
     private var mutationTask: Task<MutationReceipt, Error>?
     private var mutationTimer: Task<Void, Never>?
     private var transportClock: PublishingTransportClock?
@@ -147,12 +161,13 @@ private final class PublishingCore: @unchecked Sendable {
     init(publisher: any MediaPublisher, maxItems: Int, maxBytes: Int, healthCheckInterval: Duration,
          ingressObservation: LiveIngressObservationConfiguration?,
          bitRateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
+         mutationSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
          thermalSampler: @escaping @Sendable () -> PublishingThermalSample = {
              let state = PublishingThermalState(ProcessInfo.processInfo.thermalState)
              return .init(state: state, sampledAt: ProcessInfo.processInfo.systemUptime)
          }) throws {
         self.publisher = publisher; self.healthCheckInterval = healthCheckInterval
-        self.bitRateClock = bitRateClock; self.thermalSampler = thermalSampler
+        self.bitRateClock = bitRateClock; self.mutationSleep = mutationSleep; self.thermalSampler = thermalSampler
         // Readiness belongs to this session, regardless of the generic mailbox's
         // default admission phase. Configuration is immutable and diagnostic only.
         let configuration = ingressObservation.map {
@@ -306,7 +321,13 @@ private final class PublishingCore: @unchecked Sendable {
         return pending
     }
     private enum MutationRequest: Sendable {
-        case bitRate(Int), profile(PublishingVideoProfile)
+        case bitRate(Int, PublishingVideoMutationExpectation?), profile(PublishingVideoProfile, PublishingBitRateChange?)
+        var isGuarded: Bool {
+            switch self {
+            case .bitRate(_, let expected): expected != nil
+            case .profile(_, let expected): expected != nil
+            }
+        }
         var failed: PublishingSessionError { if case .bitRate = self { .bitRateUpdateFailed } else { .profileUpdateFailed } }
         var timedOut: PublishingSessionError { if case .bitRate = self { .bitRateUpdateTimedOut } else { .profileUpdateTimedOut } }
         var invalidDeadline: PublishingSessionError { if case .bitRate = self { .invalidBitRateDeadline } else { .invalidProfileDeadline } }
@@ -317,14 +338,14 @@ private final class PublishingCore: @unchecked Sendable {
         var generation: UInt64 { switch self { case .bitRate(let value): value.publishingGeneration; case .profile(let value): value.publishingGeneration } }
         var acknowledgedAt: Double { switch self { case .bitRate(let value): value.acceptedAt; case .profile(let value): value.acknowledgedAt } }
     }
-    func setVideoBitRate(_ bitsPerSecond: Int, before suppliedDeadline: Double?) async throws -> PublishingBitRateChange {
-        guard case .bitRate(let receipt) = try await mutate(.bitRate(bitsPerSecond), before: suppliedDeadline) else {
+    func setVideoBitRate(_ bitsPerSecond: Int, expecting expected: PublishingVideoMutationExpectation? = nil, before suppliedDeadline: Double?) async throws -> PublishingBitRateChange {
+        guard case .bitRate(let receipt) = try await mutate(.bitRate(bitsPerSecond, expected), before: suppliedDeadline) else {
             throw PublishingSessionError.bitRateUpdateFailed
         }
         return receipt
     }
-    func setVideoProfile(_ profile: PublishingVideoProfile, before suppliedDeadline: Double?) async throws -> PublishingVideoProfileChange {
-        guard case .profile(let receipt) = try await mutate(.profile(profile), before: suppliedDeadline) else {
+    func setVideoProfile(_ profile: PublishingVideoProfile, expecting expected: PublishingBitRateChange? = nil, before suppliedDeadline: Double?) async throws -> PublishingVideoProfileChange {
+        guard case .profile(let receipt) = try await mutate(.profile(profile, expected), before: suppliedDeadline) else {
             throw PublishingSessionError.profileUpdateFailed
         }
         return receipt
@@ -335,23 +356,23 @@ private final class PublishingCore: @unchecked Sendable {
         let (id, operation) = try lock.withLock { () -> (UUID, Task<MutationReceipt, Error>) in
             guard !Task.isCancelled else { throw PublishingSessionError.cancelled }
             guard state == .publishing else { throw PublishingSessionError.invalidState }
-            if case .bitRate(let rate) = request {
+            if case .bitRate(let rate, _) = request {
                 guard rate > 0, rate <= Int32.max else { throw PublishingSessionError.invalidBitRate }
             }
             guard suppliedDeadline.map({ $0.isFinite && $0 > admittedAt && $0 <= 1e12 }) ?? true,
                   deadline > bitRateClock() else { throw request.invalidDeadline }
             guard mutationID == nil else { throw request.inProgress }
             let id = UUID()
-            mutationID = id; mutationCommitted = false
+            mutationID = id; mutationResolved = false
             let operation = Task.detached {
                 try await self.performUpdate(request, id: id, admittedAt: admittedAt, deadline: deadline)
             }
             mutationTask = operation
             mutationTimer = Task.detached {
-                do { try await Task.sleep(for: .seconds(max(0, deadline - self.bitRateClock()))) }
+                do { try await self.mutationSleep(.seconds(max(0, deadline - self.bitRateClock()))) }
                 catch { return }
                 self.lock.withLock {
-                    guard self.mutationID == id, !self.mutationCommitted, self.state == .publishing else { return }
+                    guard self.mutationID == id, !self.mutationResolved, self.state == .publishing else { return }
                     _ = self.makeStopLocked(failure: request.timedOut)
                 }
             }
@@ -359,7 +380,7 @@ private final class PublishingCore: @unchecked Sendable {
         }
         defer {
             lock.withLock {
-                if mutationID == id { mutationID = nil; mutationTask = nil; mutationTimer = nil; mutationCommitted = false }
+                if mutationID == id { mutationID = nil; mutationTask = nil; mutationTimer = nil; mutationResolved = false }
             }
         }
         return try await withTaskCancellationHandler {
@@ -371,6 +392,18 @@ private final class PublishingCore: @unchecked Sendable {
                 }
                 return receipt
             } catch {
+                if request.isGuarded, let rejection = error as? PublishingVideoMutationAdmissionError {
+                    await cancelAndJoinMutationTimer(id)
+                    let outcome = lock.withLock { () -> (safe: Bool, shutdown: Task<Void, Never>?) in
+                        // A completion never stops or clears another reservation.
+                        guard mutationID == id else { return (false, shutdown) }
+                        if state == .publishing, mutationResolved, !Task.isCancelled { return (true, nil) }
+                        return (false, makeStopLocked(failure: .cancelled))
+                    }
+                    if outcome.safe { throw rejection }
+                    await outcome.shutdown?.value
+                    throw lock.withLock { failure ?? .cancelled }
+                }
                 // The caller is not the mutation task joined by shutdown.
                 await requestStop(failure: error as? PublishingSessionError ?? request.failed).value
                 await cancelAndJoinMutationTimer(id)
@@ -396,11 +429,7 @@ private final class PublishingCore: @unchecked Sendable {
                 guard state == .publishing, mutationID == id else { throw PublishingSessionError.cancelled }
                 guard bitRateClock() < deadline else { throw request.timedOut }
             }
-            let receipt: MutationReceipt
-            switch request {
-            case .bitRate(let rate): receipt = .bitRate(try await publisher.setVideoBitRate(rate))
-            case .profile(let profile): receipt = .profile(try await publisher.setVideoProfile(profile))
-            }
+            let receipt = try await dispatchUpdate(request, id: id, deadline: deadline)
             try Task.checkCancellation()
             let healthy = await publisher.isPublishing
             try Task.checkCancellation()
@@ -412,15 +441,19 @@ private final class PublishingCore: @unchecked Sendable {
                       receipt.acknowledgedAt >= admittedAt, receipt.acknowledgedAt <= now,
                       transportClock.map({ $0.publishingGeneration == receipt.generation }) ?? true else { throw request.failed }
                 switch (request, receipt) {
-                case (.bitRate(let rate), .bitRate(let receipt)):
-                    try acceptBitRate(receipt, requested: rate)
-                case (.profile(let profile), .profile(let receipt)):
-                    try acceptProfile(receipt, requested: profile)
+                case (.bitRate(let rate, let expected), .bitRate(let receipt)):
+                    try acceptBitRate(receipt, requested: rate, expecting: expected)
+                case (.profile(let profile, let expected), .profile(let receipt)):
+                    try acceptProfile(receipt, requested: profile, expecting: expected)
                 default: throw request.failed
                 }
-                mutationCommitted = true
+                mutationResolved = true
             }
             return receipt
+        } catch let rejection as ResolvedGuardedRejection {
+            // Only dispatchUpdate can create this marker, before any successful
+            // native result. The external waiter owns timer and shutdown joins.
+            throw rejection.reason
         } catch {
             let reason: PublishingSessionError = error is CancellationError ? .cancelled
                 : (error as? PublishingSessionError ?? request.failed)
@@ -429,8 +462,60 @@ private final class PublishingCore: @unchecked Sendable {
             throw lock.withLock { failure ?? .cancelled }
         }
     }
+    private struct ResolvedGuardedRejection: Error {
+        let reason: PublishingVideoMutationAdmissionError
+    }
+    private func dispatchUpdate(_ request: MutationRequest, id: UUID, deadline: Double) async throws -> MutationReceipt {
+        switch request {
+        case .bitRate(let rate, let expected):
+            guard let expected else { return .bitRate(try await publisher.setVideoBitRate(rate)) }
+            do { return .bitRate(try await publisher.setVideoBitRate(rate, expecting: expected)) }
+            catch let rejection as PublishingVideoMutationAdmissionError {
+                try resolveGuardedRejection(rejection, request: request, id: id, deadline: deadline)
+            }
+        case .profile(let profile, let expected):
+            guard let expected else { return .profile(try await publisher.setVideoProfile(profile)) }
+            do { return .profile(try await publisher.setVideoProfile(profile, expecting: expected)) }
+            catch let rejection as PublishingVideoMutationAdmissionError {
+                try resolveGuardedRejection(rejection, request: request, id: id, deadline: deadline)
+            }
+        }
+    }
+    private func resolveGuardedRejection(_ rejection: PublishingVideoMutationAdmissionError,
+        request: MutationRequest, id: UUID, deadline: Double) throws -> Never {
+        try lock.withLock {
+            guard state == .publishing, mutationID == id else { throw failure ?? PublishingSessionError.cancelled }
+            guard !Task.isCancelled else { throw PublishingSessionError.cancelled }
+            // Clock expiry wins even if the timer has not been scheduled. Once
+            // resolved here, later expiry while joining that timer cannot win.
+            guard bitRateClock() < deadline else { throw request.timedOut }
+            mutationResolved = true
+        }
+        throw ResolvedGuardedRejection(reason: rejection)
+    }
+
     /// Caller holds the state lock; these commit historical evidence atomically.
-    private func acceptBitRate(_ receipt: PublishingBitRateChange, requested: Int) throws {
+    private func acceptBitRate(_ receipt: PublishingBitRateChange, requested: Int,
+        expecting expected: PublishingVideoMutationExpectation?) throws {
+        if let expected {
+            let generation: UInt64, encoder: UUID, acceptedAt: Double, sourcePTS: CMTime?
+            switch expected {
+            case .verified(let selected):
+                guard receipt.configuration.id != selected.configuration.id else { throw PublishingSessionError.bitRateUpdateFailed }
+                generation = selected.publishingGeneration; encoder = selected.configuration.encoderSessionID
+                acceptedAt = selected.acceptedAt; sourcePTS = selected.lastSubmittedSourcePTS
+            case .replacement(let selected):
+                generation = selected.publishingGeneration; encoder = selected.encoderSessionID
+                acceptedAt = selected.acknowledgedAt; sourcePTS = selected.firstNewSourcePTS
+            }
+            guard receipt.publishingGeneration == generation, receipt.configuration.encoderSessionID == encoder,
+                  receipt.acceptedAt >= acceptedAt else { throw PublishingSessionError.bitRateUpdateFailed }
+            if let sourcePTS {
+                guard let next = receipt.lastSubmittedSourcePTS, CMTimeCompare(next, sourcePTS) >= 0 else {
+                    throw PublishingSessionError.bitRateUpdateFailed
+                }
+            }
+        }
         guard receipt.configuration.bitRate == requested,
               lastVideoProfileChange.map({ $0.publishingGeneration == receipt.publishingGeneration }) ?? true else {
             throw PublishingSessionError.bitRateUpdateFailed
@@ -455,7 +540,16 @@ private final class PublishingCore: @unchecked Sendable {
         }
         lastBitRateChange = receipt
     }
-    private func acceptProfile(_ receipt: PublishingVideoProfileChange, requested: PublishingVideoProfile) throws {
+    private func acceptProfile(_ receipt: PublishingVideoProfileChange, requested: PublishingVideoProfile,
+        expecting expected: PublishingBitRateChange?) throws {
+        if let expected {
+            guard receipt.publishingGeneration == expected.publishingGeneration,
+                  receipt.previousEncoderSessionID == expected.configuration.encoderSessionID,
+                  receipt.acknowledgedAt >= expected.acceptedAt else { throw PublishingSessionError.profileUpdateFailed }
+            if let sourcePTS = expected.lastSubmittedSourcePTS {
+                guard CMTimeCompare(receipt.lastOldSourcePTS, sourcePTS) >= 0 else { throw PublishingSessionError.profileUpdateFailed }
+            }
+        }
         guard receipt.profile == requested,
               lastBitRateChange.map({ $0.publishingGeneration == receipt.publishingGeneration &&
                   $0.configuration.encoderSessionID != receipt.encoderSessionID }) ?? true else {

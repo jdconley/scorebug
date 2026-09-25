@@ -89,14 +89,17 @@ stale completion must not consume a newer token.
 - [x] Exact replacement continuation permits its guarded bitrate write once;
       an intervening same-encoder write invalidates that continuation.
 - [x] Missing guarded capability never invokes legacy mutation methods.
-- [ ] Safe pre-write mismatch preserves the broadcast and clears only its own
-      timer/reservation; cancellation, uncertain effects and partial profile
-      application retain joined shutdown behavior.
+- [x] Session safe pre-write mismatch preserves the broadcast and clears only
+      its own timer/reservation; cancellation and uncertain effects retain joined
+      shutdown behavior.
+- [ ] The broader app owner enforces joined shutdown after a partially completed
+      profile-plus-bitrate application.
 - [ ] Focused/full affected suites, SDK patch provenance, independent spec and
       quality review before wiring the owned Session transfer route.
 
 The native SDK and publisher-adapter checkpoints below implement guarded mutation
-and explicit adapter propagation. Session handling remains open; the read-only getter and
+and explicit adapter propagation. Session handling is implemented below but awaits
+independent review and app integration; the read-only getter and
 probe context alone cannot authorize application. Automatic post-restoration
 quality increases remain gated.
 
@@ -328,3 +331,56 @@ cases. All processes joined. Behavioral RED evidence exercised the former
 behavior before using the new API. Evidence:
 `artifacts/qa/transferred-application-core-{red,focused-final,full}-20260925.log`.
 Independent specification and quality reviews approve the Core-only checkpoint.
+
+
+## PublishingSession checkpoint
+
+Explicit guarded Session overloads now carry the expected receipt through the
+shared mutation slot. Only a typed rejection from the direct guarded publisher
+call can resolve the request without shutdown. Resolution is atomic with the
+request identity and deadline check; the external waiter joins its exact timer
+before releasing the slot. Deadline, cancellation or stop that already won keep
+their terminal outcome. Expiry after safe resolution cannot turn a held timer
+join into a new timeout.
+
+Successful receipts are checked against the explicit expected generation,
+encoder, configuration identity and source/time ordering even without previous
+Session history. Malformed successful results remain uncertain and terminal.
+Legacy calls retain their terminal error behavior. A replacement selector does
+not prove that the caller owns a partially applied upgrade; the app must enforce
+that broader application contract separately.
+
+The 13 new guarded tests and existing capability/bitrate/profile tests pass
+(**35 focused** before the additional profile-ordering regression). The final
+full suites pass **271 Media tests** (205 XCTest and 66 Swift Testing) and
+**245 Streaming tests**. The macOS native app model suite also passes all
+**583 tests** after rebuilding against the current packages. Every final job
+joined with exit 0. Root review checked the catch boundary, exact timer
+ownership and shutdown dependencies. After the account reset, independent
+specification and quality reviews approved the exact manifest-bound source/test
+files with no findings. The owned app route still requires its separate integration
+and end-to-end qualification.
+
+The first full Media run found an existing test's uncontrolled race between the
+health monitor and post-profile health validation. Both stop paths preserve the
+first terminal outcome; that assertion assumed mutation validation always won.
+The fixture now holds the monitor after its initial healthy read for the strict
+mutation-validation assertions, and a separate test forces the monitor to win
+while verifying the outstanding write is joined. Production failure precedence
+and the strict expected outcomes were not relaxed. The original failure log is
+preserved. All **8 profile tests** also pass against unchanged Media sources from
+`055b0b5` with only the deterministic test fixture applied, confirming the existing
+first-terminal-result contract. That isolated source copy and fixture hash are in
+`artifacts/qa/guarded-session-baseline-055b0b5/fixture-provenance.json`; its joined
+result is `repeated-live-checkpoint-guarded-session-profile-baseline-20260925`.
+The original nondeterministic failure itself was not forced against that baseline.
+
+Evidence:
+`artifacts/qa/guarded-session-{red-03,red-04,focused-final-01}.log`,
+`artifacts/qa/repeated-live-checkpoint-guarded-session-profile-ordering-20260925{.log,-exit.json}`,
+`artifacts/qa/repeated-live-checkpoint-guarded-session-media-full-20260925{.log,-exit.json}` (failure),
+`artifacts/qa/repeated-live-checkpoint-guarded-session-media-full-02-20260925{.log,-exit.json}` (pass), and
+`artifacts/qa/repeated-live-checkpoint-guarded-session-streaming-full-20260925{.log,-exit.json}`, and
+`artifacts/qa/repeated-live-checkpoint-guarded-session-film-model-full-20260925{.log,-exit.json}`.
+The changed source/test hashes and final exit records are recorded in
+`artifacts/qa/guarded-session-verification-manifest-20260925.json`.

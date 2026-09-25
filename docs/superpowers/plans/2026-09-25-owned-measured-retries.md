@@ -208,9 +208,14 @@ configuration context and new Core/Session attempt are required to restart.
 and `CaptureStreamingModel` constructs its quality driver from the Session and
 attempt ID. Inject the owned publisher operations once through that construction
 path; do not recover an arbitrary publisher from a later snapshot. The DEBUG
-`NativeBandwidthProbePublisher` wrapper currently forwards only legacy mutations.
-The new explicit fixture route must forward guarded calls as well, or their
-intentional disabled defaults will reject application.
+`NativeBandwidthProbePublisher` and `NativeCandidatePublisher` wrappers currently
+forward only legacy mutations. The new explicit fixture route must forward
+guarded calls as well, or their intentional disabled defaults will reject
+application. Preserve bounded lifecycle audit and joined tracked writes in the
+candidate wrapper. Its legacy path revokes candidate ownership before forwarding
+profile work; do not reuse that global revocation for an unrelated stale guarded
+selector. Bind revocation/cleanup to the exact transferred owner, preserving a
+newer candidate if old guarded work rejects before admission.
 
 The existing `apply` method keeps its modified Core controller in a local variable
 across awaits and holds `busy` for the complete application. Preserve serialization
