@@ -1721,6 +1721,53 @@ import XCTest
         XCTAssertEqual(operations, ["start", "stop"])
     }
 
+    func testRestartReconcilesOwnedStopAfterControlWasOffline() async throws {
+        let server = CaptureTestServer()
+        let storage = CaptureMemoryStorage(captureSetup())
+        var publishers: [CaptureTestPublisher] = []
+        let model = makeModel(server: server, storage: storage, publisherFactory: { _, _ in
+            let publisher = CaptureTestPublisher(); publishers.append(publisher); return publisher
+        })
+        await model.restore()
+        model.captureChanged(captureContext())
+        await model.startStreaming()
+        await server.setOffline(true)
+        await model.stopStreaming()
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        XCTAssertEqual(storage.value?.stopRecordingIDs, ["recording-1"])
+        let stoppedOfflineOperations = await server.operations
+        XCTAssertEqual(stoppedOfflineOperations, ["start"])
+
+        await server.setOffline(false)
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(publishers.count, 2)
+        let operations = await server.operations
+        XCTAssertEqual(operations, ["start", "stop", "start"], "Restart must reconcile the retained stop before reusing the same recording")
+        XCTAssertEqual(storage.value?.stopRecordingIDs, ["recording-1"], "The replacement retains its own durable stop ownership")
+        await model.stopStreaming()
+    }
+
+    func testDeferredStopDoesNotStopForeignOrNewerRecordingSelection() async throws {
+        for sameDevice in [false, true] {
+            let server = CaptureTestServer()
+            let model = makeModel(server: server, publisherFactory: { _, _ in CaptureTestPublisher() })
+            await model.restore()
+            model.captureChanged(captureContext())
+            await model.startStreaming()
+            await server.setOffline(true)
+            await model.stopStreaming()
+            await server.selectAnotherCapture(sameDevice: sameDevice)
+            await server.setOffline(false)
+            await model.startStreaming()
+            XCTAssertEqual(model.localState, .publishing)
+            let operations = await server.operations
+            XCTAssertEqual(operations, ["start", "start"], "Deferred stop must not target a replacement selection")
+            await model.stopStreaming()
+        }
+    }
+
     func testStopNeverStopsAnotherCaptureSelection() async throws {
         let server = CaptureTestServer()
         let model = makeModel(server: server)
@@ -2810,7 +2857,7 @@ actor CaptureTestServer {
     func setFailBeforeCommand() { failBeforeCommand = true }
     func setDropReply() { dropReply = true }
     func setStatusGate(_ value: FilmTestGate?) { statusGate = value }
-    func selectAnotherCapture() { broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: .init(workerId: "worker-1", outputId: "output-1", captureDeviceId: "another-device", recordingId: "other-recording")) }
+    func selectAnotherCapture(sameDevice: Bool = false) { broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: .init(workerId: "worker-1", outputId: "output-1", captureDeviceId: sameDevice ? "capture-1" : "another-device", recordingId: "other-recording")) }
     func setOffline(_ value: Bool) { offline = value }
     func setPublishGate(_ value: FilmTestGate) { publishGate = value }
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {

@@ -430,6 +430,17 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try check(context, attempt)
                 if coordinator == nil { try await joinActiveMatch(); try check(context, attempt) }
                 guard let setup, let credential = setup.credential, let coordinator else { throw CaptureControlError.noSetup }
+                // A stop may have yielded to an already-running control poll or
+                // failed offline. Resolve that intent before recovery can replay a
+                // start or reuse the same server selection for this new publisher.
+                if shouldStopOwnedBroadcast {
+                    let stopped = try await coordinator.recover(activeRecordingId: nil)
+                    try check(context, attempt)
+                    commandState = stopped
+                    commandState = try await reconcileOwnedStop(stopped, coordinator: coordinator)
+                    try check(context, attempt)
+                    guard !shouldStopOwnedBroadcast else { throw CaptureControlError.unresolved }
+                }
                 try reserveStopOwnership(context.id)
                 queueReport(context, status: .recording)
                 try await flushReports()
@@ -598,25 +609,9 @@ struct PublishingClockObservation: Equatable, Sendable {
             guard !publisherStopping else { return }
             commandState = state
             if shouldStopOwnedBroadcast {
-                if state.pending != nil {
-                    do { state = try await coordinator.discardExpired(); commandState = state }
-                    catch BroadcastCoordinatorError.notExpired { return }
-                }
+                state = try await reconcileOwnedStop(state, coordinator: coordinator)
                 guard !publisherStopping else { return }
-                if state.pending == nil, let selection = state.snapshot?.broadcast.selection,
-                   state.snapshot?.broadcast.desired == .running, selection.captureDeviceId == setup.deviceId,
-                   ownedRecordingIDs.contains(selection.recordingId) {
-                    state = try await coordinator.submit(.stop, activeRecordingId: current?.id, requiredStopSelection: selection)
-                    commandState = state
-                }
-                if state.pending == nil, let broadcast = state.snapshot?.broadcast,
-                   broadcast.desired == .stopped || broadcast.selection.map({
-                       $0.captureDeviceId != setup.deviceId || !ownedRecordingIDs.contains($0.recordingId)
-                   }) == true {
-                    setupClearStopOwnership()
-                    try persist()
-                    shouldStopOwnedBroadcast = false
-                }
+                if shouldStopOwnedBroadcast && state.pending != nil { return }
             }
             if let publishing {
                 let broadcast = state.snapshot?.broadcast
@@ -635,6 +630,34 @@ struct PublishingClockObservation: Equatable, Sendable {
             if let coordinator { commandState = await coordinator.state() }
             fail(error)
         }
+    }
+
+    /// Keep stop ownership until recovery proves the owned selection is gone.
+    /// Both maintenance and replacement startup must honor the same intent.
+    private func reconcileOwnedStop(_ recovered: BroadcastCoordinatorState,
+                                    coordinator: BroadcastCommandCoordinator) async throws -> BroadcastCoordinatorState {
+        guard shouldStopOwnedBroadcast, let setup else { return recovered }
+        var state = recovered
+        if state.pending != nil {
+            do { state = try await coordinator.discardExpired(); commandState = state }
+            catch BroadcastCoordinatorError.notExpired { return state }
+        }
+        guard !publisherStopping else { return state }
+        if state.pending == nil, let selection = state.snapshot?.broadcast.selection,
+           state.snapshot?.broadcast.desired == .running, selection.captureDeviceId == setup.deviceId,
+           ownedRecordingIDs.contains(selection.recordingId) {
+            state = try await coordinator.submit(.stop, activeRecordingId: current?.id, requiredStopSelection: selection)
+            commandState = state
+        }
+        if state.pending == nil, let broadcast = state.snapshot?.broadcast,
+           broadcast.desired == .stopped || broadcast.selection.map({
+               $0.captureDeviceId != setup.deviceId || !ownedRecordingIDs.contains($0.recordingId)
+           }) == true {
+            setupClearStopOwnership()
+            try persist()
+            shouldStopOwnedBroadcast = false
+        }
+        return state
     }
 
     /// Worker acquisition has its own foreground schedule. It never awaits
