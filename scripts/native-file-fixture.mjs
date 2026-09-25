@@ -24,6 +24,16 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
         measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE),
       'Recovery policy requires the complete staged measured file network route',
     );
+  if (environment.SCOREBUG_TEST_DELIVERY_PROFILE !== undefined)
+    assert(
+      environment.SCOREBUG_TEST_DELIVERY_PROFILE === 'floor24-v1' &&
+        path !== undefined &&
+        environment.SCOREBUG_TEST_MEASURED_TRIAL === '1' &&
+        environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'staged' &&
+        environment.SCOREBUG_TEST_MEASURED_RECOVERY === undefined &&
+        holdSeconds >= 90,
+      'Delivery floor requires the complete staged measured file trial',
+    );
   if (path === undefined) return null;
   assert(typeof path === 'string' && isAbsolute(path), 'Absolute local file input required');
   assert.equal(streaming, true, 'File input requires native streaming');
@@ -261,4 +271,11 @@ export function nativeProbePolicy(environment) {
   if (environment.SCOREBUG_TEST_PROBE_POLICY === undefined) return 'local-zero-loss-v1';
   assert(nativeMeasuredFileSource(environment), 'Recovery policy requires a measured file source');
   return environment.SCOREBUG_TEST_PROBE_POLICY;
+}
+
+/** Host-only successful-trial benchmark; omission preserves historical strict30. */
+export function nativeDeliveryProfile(environment) {
+  if (environment.SCOREBUG_TEST_DELIVERY_PROFILE === undefined) return 'strict30-v1';
+  assert(nativeMeasuredFileSource(environment), 'Delivery profile requires a measured file source');
+  return environment.SCOREBUG_TEST_DELIVERY_PROFILE;
 }

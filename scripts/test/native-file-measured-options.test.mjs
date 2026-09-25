@@ -246,3 +246,33 @@ test('historical routes keep the original probe policy and partial opt-ins canno
     nativeFileFixtureOptions(options({ SCOREBUG_TEST_PROBE_POLICY: 'recovery-budget-v1' })),
   );
 });
+
+test('delivery floor has an explicit host selection and preserves the strict default', async () => {
+  const { nativeDeliveryProfile } = await import('../native-file-fixture.mjs');
+  assert.equal(typeof nativeDeliveryProfile, 'function');
+  assert.equal(nativeDeliveryProfile({}), 'strict30-v1');
+  assert.equal(nativeDeliveryProfile(valid()), 'strict30-v1');
+  const env = { ...valid(), SCOREBUG_TEST_DELIVERY_PROFILE: 'floor24-v1' };
+  qualify(env);
+  assert.equal(nativeDeliveryProfile(env), 'floor24-v1');
+  for (const key of Object.keys(valid())) {
+    const bad = { ...env, [key]: undefined };
+    assert.throws(() => nativeDeliveryProfile(bad), key);
+    assert.throws(() => nativeFileFixtureOptions(options(bad)), key);
+  }
+  for (const value of ['', '24', 'strict30-v1', ' floor24-v1', 'floor24-v2'])
+    assert.throws(() => nativeDeliveryProfile({ ...env, SCOREBUG_TEST_DELIVERY_PROFILE: value }));
+  for (const patch of [
+    { SCOREBUG_TEST_MEASURED_RECOVERY: 'decoder-stall' },
+    {
+      SCOREBUG_TEST_MEASURED_RECOVERY: 'repeated',
+      SCOREBUG_TEST_BANDWIDTH_PROBE: 'repeated',
+      SCOREBUG_TEST_STREAM_HOLD_SECONDS: '180',
+    },
+    { SCOREBUG_TEST_MOTION_FIXTURE: 'blocks16' },
+    { SCOREBUG_TEST_ADAPTIVE_PROFILES: '1' },
+    { SCOREBUG_TEST_DECODER_STALL: '1' },
+    { SCOREBUG_TEST_STREAM_HOLD_SECONDS: '89' },
+  ])
+    assert.throws(() => nativeDeliveryProfile({ ...env, ...patch }));
+});

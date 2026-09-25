@@ -244,8 +244,34 @@ export function qualifyMeasuredNativeEvidence(
   };
 }
 
+function validateDeliveryProfile(profile) {
+  assert(['strict30-v1', 'floor24-v1'].includes(profile), 'Unknown delivery profile');
+}
+
+/** Select a benchmark only after raw deadline reconstruction. This helper alone
+ * grants no full-trial, admission, recovery or production qualification. */
+export function qualifyMeasuredTrialDelivery(delivery, profile = 'strict30-v1') {
+  validateDeliveryProfile(profile);
+  assert(delivery.rowCount > 0, 'Missing measured delivery');
+  assert.equal(delivery.unknownRows, 0, 'Incomplete delivery classification');
+  assert.equal(delivery.successfulRows, delivery.rowCount, 'Incomplete delivery classification');
+  for (const key of ['lateRows', 'missingRows', 'uncertainRows', 'below24FPSRows'])
+    assert.equal(delivery.observations[key], 0, 'Unhealthy measured delivery');
+  if (profile === 'strict30-v1')
+    assert.equal(
+      delivery.observations.healthyRows,
+      delivery.rowCount,
+      'Unhealthy measured delivery',
+    );
+  return profile;
+}
+
 /** Full successful laboratory trial; recovery uses a separately required verifier. */
-export function qualifyMeasuredNativeTrial(input, { probePolicy = 'local-zero-loss-v1' } = {}) {
+export function qualifyMeasuredNativeTrial(
+  input,
+  { probePolicy = 'local-zero-loss-v1', deliveryProfile = 'strict30-v1' } = {},
+) {
+  validateDeliveryProfile(deliveryProfile);
   input = { ...input, quality: expandQualityEvidence(input.quality) };
   const { quality, snapshot, cadenceReports, deliveryAudit } = input;
   const {
@@ -279,8 +305,7 @@ export function qualifyMeasuredNativeTrial(input, { probePolicy = 'local-zero-lo
 
   // Deadlines are replayed independently, then joined to actual applications.
   // Overlapping one-/two-second lanes never contribute additive probation credit.
-  assert.equal(delivery.unknownRows, 0, 'Incomplete delivery classification');
-  assert.equal(delivery.observations.healthyRows, delivery.rowCount, 'Unhealthy measured delivery');
+  qualifyMeasuredTrialDelivery(delivery, deliveryProfile);
   qualifyMeasuredDeliveryOwnership(input, { profile, nativeLifecycle, delivery });
   for (const duration of [1, 2]) {
     const rows = deliveryAudit.rows.filter(
@@ -297,6 +322,7 @@ export function qualifyMeasuredNativeTrial(input, { probePolicy = 'local-zero-lo
   }
   return {
     measuredTrialQualified: true,
+    deliveryProfile,
     productionUpgradeAuthorized: false,
     scope: video.scope,
     video,

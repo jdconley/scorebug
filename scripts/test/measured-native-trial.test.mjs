@@ -148,3 +148,25 @@ test('dictionary recovery export passes the same complete independent trial and 
     module.qualifyMeasuredNativeTrial(damaged, { probePolicy: 'recovery-budget-v1' }),
   );
 });
+
+test('complete trial records the explicit delivery profile and preserves all other gates', () => {
+  const f = fixture(),
+    before = JSON.stringify(f);
+  const strict = qualify(f);
+  assert.equal(strict.deliveryProfile, 'strict30-v1');
+  const floor = module.qualifyMeasuredNativeTrial(f, { deliveryProfile: 'floor24-v1' });
+  assert.equal(floor.deliveryProfile, 'floor24-v1');
+  assert.deepEqual({ ...floor, deliveryProfile: strict.deliveryProfile }, strict);
+  assert.equal(JSON.stringify(f), before);
+  for (const value of ['', null, 24, 'floor24-v2'])
+    assert.throws(
+      () => module.qualifyMeasuredNativeTrial(f, { deliveryProfile: value }),
+      /delivery profile/i,
+    );
+});
+for (const [name, mutate] of Object.entries(mutations))
+  test(`floor24 complete trial still rejects ${name}`, () => {
+    const f = fixture();
+    mutate(f);
+    assert.throws(() => module.qualifyMeasuredNativeTrial(f, { deliveryProfile: 'floor24-v1' }));
+  });

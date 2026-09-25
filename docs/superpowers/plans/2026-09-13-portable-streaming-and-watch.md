@@ -24,6 +24,13 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+An explicit host-only `floor24-v1` lab profile now measures the user's24fps
+minimum; strict30 remains the default. All3,909 tooling tests pass. A separately
+recorded posthoc replay of `native-app-NCUMkX` passes the complete24fps profile
+while its original strict30 result remains failed. The newer stale-evidence run
+fails both profiles. Fresh preselected-profile validation is next; see the
+[delivery floor plan](2026-09-24-measured-delivery-floor.md).
+
 Recovery-policy diagnostic export now stores repeated pressure histories once and
 reconstructs them exactly before validation. The real 17.1 MB failed-pressure
 artifact round-trips through Swift and JavaScript in 1.09 MB; the latest recovery

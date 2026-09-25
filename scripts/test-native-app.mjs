@@ -3,6 +3,7 @@ import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
   nativeFileFixtureOptions,
   nativeProbePolicy,
+  nativeDeliveryProfile,
   qualifyNativeFileFixture,
   nativeFileFixtureHash,
   stageNativeFileFixture,
@@ -128,6 +129,7 @@ const fileFixture = nativeFileFixtureOptions({
   holdSeconds: streamingOptions.holdSeconds,
 });
 const probePolicy = nativeProbePolicy(process.env);
+const deliveryProfile = nativeDeliveryProfile(process.env);
 const cadenceReports = nativeCadenceReports({
   environment: process.env,
   streaming,
@@ -263,6 +265,7 @@ await writeFile(
       workerOutputProfile,
       measuredTrial,
       probePolicy,
+      deliveryProfile,
       measuredRecovery,
       repeatedRecovery,
       profileTransitions,
@@ -1443,7 +1446,7 @@ try {
               ...measuredInput,
               fault: await readBoundedJSON(join(artifact, 'owned-decoder-stall.json'), 256 * 1024),
             })
-          : qualifyMeasuredNativeTrial(measuredInput, { probePolicy });
+          : qualifyMeasuredNativeTrial(measuredInput, { probePolicy, deliveryProfile });
       if (fileFixture) {
         assert.equal(live.length, 1, 'Measured file audio requires one complete saved stream');
         const liveAudio = fileAudioContexts.get('live-0');
@@ -1553,6 +1556,7 @@ try {
         workerOutputProfile,
         measuredTrial,
         probePolicy,
+        deliveryProfile,
         measuredRecovery,
         repeatedRecovery,
         measuredTrialQualification,

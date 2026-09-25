@@ -836,3 +836,108 @@ test('clock reconciliation tolerance cannot claim completed deadline coverage', 
   row.anchorSourcePTS = time(packet.arrivals.at(-1)[0] / 3000);
   assert.throws(() => qualifyNativeDeliveryDeadlines(f), /Incomplete deadline history coverage/);
 });
+
+// A sparse capture history tests the delivery floor in isolation. It grants no
+// source admission or full-trial qualification (those still require near30fps).
+function floorFixture(count, duration = 1) {
+  const f = fixture(),
+    row = f.audit.rows[0],
+    report = f.reports.rows[0];
+  row.end = row.start + duration;
+  const inside = row.history.capture.filter(
+    (x) => x.observedAt >= row.start && x.observedAt < row.end,
+  );
+  const remove = new Set(inside.slice(4, 4 + inside.length - count).map((x) => x.sourcePTS.value));
+  row.history.capture = row.history.capture.filter((x) => !remove.has(x.sourcePTS.value));
+  row.history.encoded = row.history.capture.map((x) => ({
+    ...structuredClone(x),
+    observedAt: x.observedAt + 0.002,
+    encoding: {
+      encoderSessionID: id(3),
+      configuration: structuredClone(row.receipt.configuration),
+      submittedAt: x.observedAt + 0.001,
+      completedAt: x.observedAt + 0.002,
+    },
+  }));
+  const packet = report.response.status.observation.decoderDelivery;
+  packet.arrivals = row.history.capture
+    .filter((x) => x.observedAt < 12)
+    .map((x) => [
+      ((Number(x.sourcePTS.value) - 270000) / 1000) * 3000,
+      (x.observedAt + 0.1) * 1000,
+    ]);
+  packet.lastOrdinal = packet.arrivals.length;
+  packet.sampledAtMs += 2000;
+  report.receivedUptime += 2;
+  report.evaluatedUptime += 2;
+  row.evaluatedAt += 2;
+  row.timeline = deliverySnapshot(packet);
+  row.frames = row.history.capture
+    .filter((x) => x.observedAt >= row.start && x.observedAt < row.end)
+    .map((x) => ({
+      pts: String(((Number(x.sourcePTS.value) - 270000) / 1000) * 3000),
+      sourcePTS: x.sourcePTS,
+      capturedAt: x.observedAt,
+      wasEncoded: true,
+    }));
+  row.result = {
+    expectedFrames: count,
+    onTimeFrames: count,
+    lateFrames: 0,
+    missingFrames: 0,
+    uncertainFrames: 0,
+    onTimeFPS: count / duration,
+    failureFraction: 0,
+  };
+  return f;
+}
+for (const [count, duration] of [
+  [30, 1],
+  [29, 1],
+  [59, 2],
+  [24, 1],
+  [48, 2],
+  [47, 2],
+  [23, 1],
+])
+  test(`delivery profile independently classifies ${count}/${duration} FPS`, async () => {
+    const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+    const { qualifyMeasuredTrialDelivery } = await import('../measured-native-trial.mjs');
+    const result = qualifyNativeDeliveryDeadlines(floorFixture(count, duration));
+    assert.equal(result.counts.onTimeFrames, count);
+    assert.equal(result.unknownRows, 0);
+    assert.equal(typeof qualifyMeasuredTrialDelivery, 'function');
+    if (count / duration >= 24)
+      assert.equal(qualifyMeasuredTrialDelivery(result, 'floor24-v1'), 'floor24-v1');
+    else
+      assert.throws(
+        () => qualifyMeasuredTrialDelivery(result, 'floor24-v1'),
+        /Unhealthy measured delivery/,
+      );
+    if (count / duration >= 30) assert.equal(qualifyMeasuredTrialDelivery(result), 'strict30-v1');
+    else assert.throws(() => qualifyMeasuredTrialDelivery(result), /Unhealthy measured delivery/);
+  });
+test('both delivery profiles reject every missing classification or health component', async () => {
+  const { qualifyNativeDeliveryDeadlines } = await import('../native-delivery-deadlines.mjs');
+  const { qualifyMeasuredTrialDelivery } = await import('../measured-native-trial.mjs');
+  assert.equal(typeof qualifyMeasuredTrialDelivery, 'function');
+  const healthy = qualifyNativeDeliveryDeadlines(floorFixture(30));
+  for (const profile of ['strict30-v1', 'floor24-v1']) {
+    for (const key of ['lateRows', 'missingRows', 'uncertainRows', 'below24FPSRows']) {
+      const bad = structuredClone(healthy);
+      bad.observations[key] = 1;
+      assert.throws(() => qualifyMeasuredTrialDelivery(bad, profile));
+    }
+    assert.throws(
+      () => qualifyMeasuredTrialDelivery({ ...healthy, unknownRows: 1 }, profile),
+      /Incomplete delivery/,
+    );
+    assert.throws(() =>
+      qualifyMeasuredTrialDelivery({ ...healthy, rowCount: 0, successfulRows: 0 }, profile),
+    );
+    assert.throws(() => qualifyMeasuredTrialDelivery({ ...healthy, successfulRows: 0 }, profile));
+    assert.throws(() =>
+      qualifyMeasuredTrialDelivery(qualifyNativeDeliveryDeadlines(fixture()), profile),
+    );
+  }
+});
