@@ -24,12 +24,24 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-An explicit host-only `floor24-v1` lab profile now measures the user's24fps
-minimum; strict30 remains the default. All3,909 tooling tests pass. A separately
-recorded posthoc replay of `native-app-NCUMkX` passes the complete24fps profile
-while its original strict30 result remains failed. The newer stale-evidence run
-fails both profiles. Fresh preselected-profile validation is next; see the
-[delivery floor plan](2026-09-24-measured-delivery-floor.md).
+**The fresh native impaired-link trial passes.** `native-app-G0kJLr` uses the real
+match source and explicitly selects the24fps delivery floor before launch. It
+starts240p, measures121 candidate frames and applies360p. All154 audited delivery
+windows classify successfully with zero late/missing/uncertain frames; all154
+also meet30fps in this run. The clean1080p archive has3,865 consecutive frames,
+continues7.17s beyond live, and both outputs pass all27 phase audio anchors.
+All1,223 frozen source/input hashes match after joined exit0; temporary simulator
+and relay cleanup are complete. No deleted simulator runtime was reinstalled.
+
+The explicit host-only `floor24-v1` profile matches the requested minimum;
+strict30 remains the default. All3,909 tooling tests pass. Historical strict30
+and stale-evidence failures remain unchanged. This clears the static30ms/0.2%loss
+lab trial, **not sustained congestion, capacity/outage recovery or production
+upgrades**. Next work is causal network testing, followed by the wider ladder and
+production integration; physical iPhone/pairedWatch and remoteGPU/cloud remain
+separate gates. See the [delivery floor plan](2026-09-24-measured-delivery-floor.md).
+
+Earlier September24 checkpoints:
 
 Recovery-policy diagnostic export now stores repeated pressure histories once and
 reconstructs them exactly before validation. The real 17.1 MB failed-pressure

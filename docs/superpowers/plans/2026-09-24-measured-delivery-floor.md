@@ -30,4 +30,16 @@ Focused147 tests and full3,909 tooling tests pass (joined runner `delivery-floor
 
 Posthoc comparison `artifacts/qa/delivery-profile-replay-gh4ozU/` preserves source copies, hashes and every raw artifact hash. `native-app-NCUMkX` passes complete floor24 replay with all157 rows free of late/missing/uncertain frames; strict30 still fails139/157 healthy rows. `native-app-YFObMQ` still fails both profiles because one row is unknown. Original failed artifacts remain unchanged; this comparison is not a fresh network run or production authorization.
 
-A fresh native run with `floor24-v1` selected before launch is next, followed by the separately outstanding sustained-pressure/capacity/outage work.
+The fresh native run with `floor24-v1` selected before launch passes; the separately outstanding sustained-pressure/capacity/outage work is next.
+
+## Fresh native qualification
+
+`native-app-G0kJLr` / `delivery-floor-freeze-psy3xtu4` joined with exit0. Configuration and results explicitly record `floor24-v1` and `recovery-budget-v1`. The installed iOS26.2 simulator ran the prepared real match source (SDR1080p30), static bidirectional30ms delay/every500th-datagram loss,400ms SRT peer latency and1.5s delivery budget. The UI workflow passed in169.382s; both exported MP4s fully decoded.
+
+- All154 audited one-/two-second windows classify successfully, with zero unknown/late/missing/uncertain/below24 windows. All154 also meet the unchanged strict30 diagnostic in this particular run. No claim of a performance change from the host benchmark switch.
+- The real candidate measured121 frames, then native publication applied240p→360p and policy confirmation passed. Production upgrades remain disabled.
+- Clean1080p archive:3,865 consecutive source IDs0–3864. Saved360p worker output:3,412 consecutive IDs238–3649. Source loss0 in each; archive continues7.167s beyond live.
+- All27 phase audio anchors pass for each output. Live absolute audio/video lag≤65.451ms and lag spread≤0.667ms; archive lag is effectively zero. These are measured local-fixture results, not guarantees for other devices/hosts.
+- Actual format6 export255,792bytes, no overflow. All1,223 frozen source/input hashes unchanged after join. Temporary simulator and relay container cleaned up; originals untouched.
+
+`checkpoint-summary.json` and `results.json` retain the outcome. Historical failures remain unchanged. This clears the static impaired-link measured-trial gate only. Sustained congestion/export, causal capacity drop/outage recovery, broader resolution ladder, production integration, physical camera/pairedWatch and remoteGPU/cloud remain unqualified.
