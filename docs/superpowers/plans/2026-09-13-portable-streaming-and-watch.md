@@ -9,13 +9,15 @@ This document tracks goals, current evidence, delivery tasks and acceptance gate
 - The guarded SDK, publishing adapters, Core rejection settlement and PublishingSession changes are committed through `b65ca7f`; independent specification and quality reviews approve all four checkpoints.
 - Latest component evidence: **Core 487, SDK 346, Media 271, Streaming 245 and native app model 583 tests pass**. These counts do not establish a new full-media or physical-device pass.
 - The latest adaptive full native laboratory run (`native-app-uG39s5`, `e0477be`) passes the three-phase 240p → 360p → 240p route, archive/live decode, score glyphs and phase/grid audio. It preserves 7,467 archive and 7,008 acquired live frames, with no gaps inside their recorded spans; all 325 delivery windows meet 30 fps.
-- A fresh automatic increase after restoration, the wider adaptive ladder, real-camera operation, paired physical Watch scoring, outages and remote hosts remain unqualified. Production automatic increases remain gated; laboratory routes are explicit.
+- A fresh automatic increase after restoration, the wider adaptive ladder, sustained real-camera operation, paired physical Watch scoring, outages and remote hosts remain unqualified. Production automatic increases remain gated; laboratory routes are explicit.
 - Native phone scoring, file-driven independent recording and local proxy/overlay/RTMP recording have working local evidence. Thirty-minute 1080p and 4K file-driven CPU-proxy replays passed; this does not qualify camera or thermal behavior.
 - Direct Watch scoring/relaunch has simulator evidence. Paired WatchConnectivity simulator setup still fails before scoring; physical testing is authorized now and can resolve the actual device path.
 - Current device observations and the selected Conley Chaos LLC signing team are in [NEXT](../../session-logs/NEXT.md). Historical evidence and failures remain in the [lossless legacy archive](../../session-logs/README.md#legacy-provenance).
 
 - The complete local three-output vertical now passes (`native-app-k1oNme`): clean app archive, mock RTMP destination MP4 and proxy overlay MP4, native score changes, full A/V decode and frame checks. Phone/Watch hardware acceptance remains open. See the [device runbook](../../device-testing.md).
-- The iPhone app and embedded Watch app build with Conley Chaos LLC signing; both apps are installed and launch on the real devices. Actual camera/media and paired scoring workflow validation remain in progress.
+- The iPhone app and embedded Watch app build with Conley Chaos LLC signing; both apps are installed and launch on the real devices. The updated physical iPhone vertical passes with visible camera content, a clean 1080p/~30fps archive, native point entry and both overlaid outputs (`device-lab-yk1iYl`, run11). All three files fully decode. The live source remains at the 240p minimum startup profile, scaled to 1080p by the proxy; automatic increases, perceptual sync and sustained operation remain open. Paired Watch testing is blocked before execution by an automation-enablement timeout; the user has been asked to check the Watch.
+
+- [x] Stabilize idle capture setup editing against background poll locks; see [focused fix](2026-09-25-stable-capture-setup.md).
 
 ## Baseline and owner decisions
 
@@ -55,6 +57,7 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 
 ## Remaining integration and vertical work
 
+- [x] Pass the short physical iPhone route through clean archive, native scoring, proxy overlay and both MP4 outputs; retain the startup-profile, sync and sustained-operation limits in the current assessment.
 - [ ] Complete the authorized physical vertical and record all three artifacts: clean phone archive, mock-destination MP4 and configurable proxy final-overlay MP4.
 - [ ] Integrate owned measurement leases and joined probe cleanup in the app; enforce joined shutdown after partially applied profile-plus-bitrate changes.
 - [ ] Qualify the fresh four-phase automatic post-restoration increase with complete media/evidence checks; do not infer it from component suites or the passing three-phase run.

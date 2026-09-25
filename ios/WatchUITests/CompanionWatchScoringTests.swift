@@ -18,6 +18,11 @@ final class CompanionWatchScoringTests: XCTestCase {
         tap(app, "watch.takeover")
         tap(app, "watch.homePoint")
         value(app.staticTexts["watch.score"], "1-0")
+        if ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
+            // Physical phone UI must observe the point and concurrent live
+            // output before this runner proceeds to undo and match shutdown.
+            RunLoop.current.run(until: Date().addingTimeInterval(30))
+        }
         tap(app, "watch.undo")
         value(app.staticTexts["watch.score"], "0-0")
         tap(app, "watch.awayPoint")

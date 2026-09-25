@@ -22,7 +22,7 @@ The lab stops after the requested duration or Ctrl-C, joins its worker, finishes
 
 ## Install the native apps
 
-Use Xcode 26.2 at `/Applications/Xcode-26.2.0.app/Contents/Developer` on this Mac. Select the owner's developer team for both Scorebug and ScorebugWatch, then build/run the Scorebug scheme on the attached phone. The Watch app is embedded; verify installation in the paired Watch's app list. Enable Developer Mode, trust the Mac and unlock the devices when required. Physical build compilation has passed; signing and device installation are separate checks.
+Use Xcode 26.2 at `/Applications/Xcode-26.2.0.app/Contents/Developer` on this Mac. Use the selected Conley Chaos LLC team (`B222J9J7B8`) for both Scorebug and ScorebugWatch, then build/run the Scorebug scheme on the attached phone. The Watch app is embedded; verify installation in the paired Watch's app list. Enable Developer Mode, trust the Mac and unlock the devices when required. Both physical apps have signed, installed and launched on the available iPhone/Ultra 2. Build for the Watch destination when its embedded profile does not contain that device; signing and installation remain separate checks.
 
 ## Short physical smoke
 
@@ -58,3 +58,16 @@ node scripts/test-native-app.mjs --streaming
 ```
 
 Use an installed runtime; do not download deleted runtimes or delete unrelated simulators. Existing matched 1080p/4K volleyball fixtures remain available for longer content qualification after this smoke test.
+
+## Opt-in physical UI tests
+
+Build and install the current signed phone app while it is idle. The physical UI test uses `activate()` to inspect and preserve any existing capture; it does not kill a running recording to update the app. This also means a running old app must not be mistaken for verification of a newly built binary.
+
+Read the private lab setup into the test process environment (do not place the token in a shell argument or a shared log): `SCOREBUG_DEVICE_API_URL` and `SCOREBUG_DEVICE_TOKEN`. Select only `ScorebugAppUITests/PhysicalStreamingTests/testPhysicalIPhoneCameraPublishScoreStopAndExport` in the Scorebug scheme. It requires a seeded HOME/AWAY 0–0 match and exercises the real camera, permissions, scoring, streaming, independent recording continuation and a new export. Keep the rear camera uncovered and pointed at a lit scene. Existing recordings and Keychain data are retained.
+
+For paired hardware testing, start a fresh lab, set `SCOREBUG_DEVICE_WATCH_SCORING=1` for both schemes and run these together on their respective physical destinations:
+
+- Scorebug: `ScorebugAppUITests/PhysicalStreamingTests/testPhysicalPairedWatchWhileCameraPublishes`.
+- ScorebugWatch: `ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingRealCompanionSetup`.
+
+The Watch receives its setup through real WatchConnectivity. It holds its first point for 30 seconds so the phone can observe that point with publishing, worker output and local recording active, then undoes, awards AWAY and ends the match. The phone must observe 0–1 ended, continue recording after streaming stops, and export a new recording. The flag is test-only and does not provide fixture credentials to the Watch. Both test processes and the lab must be joined, and every output decoded, before treating the run as a pass.
