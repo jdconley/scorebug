@@ -94,3 +94,34 @@ Finish host quality review, commit the bounded contract, then finish and review
 the actual Session/native lease integration. Build the separate whole-history
 lifecycle, witness and policy replay before removing the runner guard. Run the
 four-phase experiment with all three output files and complete media checks.
+
+## Whole-history indexing and integration review
+
+Added a separate bounded event index for the new owned measurement audit. It
+retains original global event indices and all failed same-revision attempts,
+requires immutable registration ownership and actual cleanup joins before
+settlement/reuse, and allows only the final stopped owner to discard policy
+without inventing a failure settlement. It deliberately returns false for native
+probe, retry-policy and media qualification. Individual snapshots, costs, health,
+application receipts and complete media still require the forthcoming replay.
+The declared artifact limit is 8 MiB; harness preparse enforcement is not yet wired.
+
+Red/green/final logs: `artifacts/qa/owned-history-index-{red,green,final}-20260925.log`.
+Final focused tests: 35 pass, joined exit 0. Independent specification and quality
+reviews approve this limited indexing scope. Quality review also exercised exact
+16-owner/4096-event boundaries and invalid terminal suffixes. No old native
+qualification gate was relaxed.
+
+Preliminary app integration review identified and reported three concrete gaps:
+stale downward requests revoking newer measurements before admission, strong
+reader callbacks retaining stopped sessions, and advisory readiness expiry being
+routed to fatal publishing shutdown. The implementer is adding deterministic
+regressions and fixes before formal independent app reviews. Native three-stage,
+joined cleanup and same-revision restart integration tests have initial passing
+evidence; app implementation is not yet a reviewed or full-media checkpoint.
+
+The native audit also needs raw pressure observations for independent candidate
+cost replay, rather than a success boolean. Preserve actual pressure baseline,
+renewal observations and final measurement pressure. The complete owned qualifier
+must reuse candidate A/V/frame/resource arithmetic without manufacturing a legacy
+single-campaign envelope or rewriting profile/source histories.
