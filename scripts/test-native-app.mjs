@@ -1,3 +1,4 @@
+import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
 import { expandQualityEvidence } from './quality-evidence-dictionary.mjs';
 import { qualifyMeasuredUplink } from './native-measured-uplink.mjs';
 import {
@@ -123,6 +124,14 @@ assert.ok(
 );
 const requireProcessing = processingFlag === '1';
 const streamingOptions = nativeStreamingOptions({ streaming, environment: process.env });
+const capacityRecovery = nativeCapacityRecovery({
+  environment: process.env,
+  streaming,
+  holdSeconds: streamingOptions.holdSeconds,
+});
+// Do not let the new fault route fall through to a steady successful-trial verdict.
+// Remove this guard only when the complete causal native qualifier is connected.
+assert(!capacityRecovery, 'Capacity recovery causal qualification is not yet integrated');
 const fileFixture = nativeFileFixtureOptions({
   environment: process.env,
   streaming,

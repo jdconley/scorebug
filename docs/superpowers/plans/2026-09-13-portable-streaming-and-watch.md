@@ -24,6 +24,18 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The explicit capacity experiment now has independently validated host/native
+selectors and bounded three-minute evidence formats:3,072 cadence rows/16MiB
+and512 delivery rows/32MiB, with sticky overflow and unchanged legacy defaults.
+All548 app-model and4,066 tooling tests pass; review found no actionable issues.
+The harness deliberately stops this new route before resources until the causal
+qualifier is connected. Next: forward the selected mode, bind the applied fault
+times to native observations, and run the real match workflow. Neither native
+capacity recovery nor a fresh post-recovery ramp-up is qualified yet; see the
+[capacity recovery plan](2026-09-24-measured-capacity-uplink.md).
+
+Earlier checkpoint:
+
 The capacity-fault mechanism now passes a real three-minute loopback UDP run:
 upload is limited to 550 kbps for one minute, produces measured congestion, then
 returns to unrestricted traffic. Packet counts, configured loss, overflow, queue

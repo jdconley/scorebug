@@ -1,3 +1,4 @@
+import { nativeCapacityRecovery } from './native-capacity-recovery.mjs';
 import assert from 'node:assert/strict';
 import { measuredUplinkProfiles } from './native-measured-uplink.mjs';
 import { createReadStream, constants } from 'node:fs';
@@ -8,6 +9,7 @@ import { fixtureFrameID } from './video-observation-qualification.mjs';
 import { verifyContinuousFixtureMedia } from './continuous-fixture-media.mjs';
 
 export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }) {
+  const capacity = nativeCapacityRecovery({ environment, streaming, holdSeconds });
   const path = environment.SCOREBUG_TEST_FILE_INPUT;
   assert.equal(
     environment.SCOREBUG_TEST_FILE_CAPTURE,
@@ -21,7 +23,7 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
         environment.SCOREBUG_TEST_MEASURED_TRIAL === '1' &&
         environment.SCOREBUG_TEST_BANDWIDTH_PROBE === 'staged' &&
         environment.SCOREBUG_TEST_MEASURED_RECOVERY === undefined &&
-        measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE),
+        (capacity || measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE)),
       'Recovery policy requires the complete staged measured file network route',
     );
   if (environment.SCOREBUG_TEST_DELIVERY_PROFILE !== undefined)
@@ -64,13 +66,13 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     assert.equal(environment[key], undefined, `File baseline conflicts with ${key}`);
   assert(
     environment.SCOREBUG_TEST_DECODER_THREADING === undefined ||
-      (environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' &&
+      ((capacity || environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30') &&
         environment.SCOREBUG_TEST_DECODER_THREADING === 'slice'),
     'Explicit slice decoding requires the impaired measured file route',
   );
   assert.equal(
     environment.SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS,
-    environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' ? '400' : undefined,
+    capacity || environment.SCOREBUG_TEST_UPLINK_PROFILE === 'loss0p2-delay30' ? '400' : undefined,
     'Delayed measured link requires explicit400ms SRT peer recovery budget',
   );
   const measured = environment.SCOREBUG_TEST_MEASURED_TRIAL !== undefined;
@@ -88,7 +90,7 @@ export function nativeFileFixtureOptions({ environment, streaming, holdSeconds }
     const recovery = environment.SCOREBUG_TEST_MEASURED_RECOVERY;
     if (environment.SCOREBUG_TEST_UPLINK_PROFILE !== undefined)
       assert(
-        measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE) &&
+        (capacity || measuredUplinkProfiles.includes(environment.SCOREBUG_TEST_UPLINK_PROFILE)) &&
           probe === 'staged' &&
           recovery === undefined &&
           holdSeconds >= 90,

@@ -16,8 +16,37 @@ enum VideoObservationFixture {
 
     enum UplinkError: Error { case invalidFixtureRoute }
 
+    /// Complete forwarded capacity experiment. Leaf validation avoids recursive selectors.
+    static func capacityFileUplink(environment: [String: String]) -> Bool {
+        let required = [
+            "SCOREBUG_TEST_CAPACITY_RECOVERY": "1", "SCOREBUG_TEST_UPLINK_PROFILE": "capacity550k",
+            "SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1", "SCOREBUG_TEST_FILE_CAPTURE": "1",
+            "SCOREBUG_TEST_MEASURED_TRIAL": "1", "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1",
+            "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30", "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged",
+            "SCOREBUG_TEST_LIVE_PROFILE": "240p30", "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1",
+            "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180",
+            "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+        ]
+        guard required.allSatisfy({ environment[$0.key] == $0.value }),
+              let raw = environment["SCOREBUG_TEST_UPLINK_PROXY_PORT"], let port = Int(raw),
+              String(port) == raw, (1...65535).contains(port),
+              ["SCOREBUG_TEST_MOTION_FIXTURE", "SCOREBUG_TEST_MEASURED_RECOVERY",
+               "SCOREBUG_TEST_NATIVE_QUALITY", "SCOREBUG_TEST_NATIVE_CONFIRMATION",
+               "SCOREBUG_TEST_PROFILE_TRANSITIONS", "SCOREBUG_TEST_ADAPTIVE_PROFILES",
+               "SCOREBUG_TEST_SOURCE_CADENCE_PACING", "SCOREBUG_TEST_DECODER_STALL",
+               "SCOREBUG_TEST_CADENCE_REPORTS", "SCOREBUG_TEST_DEADLINE_RESETS",
+               "SCOREBUG_TEST_DECODER_THREADING", "SCOREBUG_TEST_PUBLISH_PEER_LATENCY_MS",
+               "SCOREBUG_TEST_PUBLISH_PACING", "SCOREBUG_FIXTURE_FAIL_AFTER", "SCOREBUG_TEST_DELIVERY_PROFILE"]
+                .allSatisfy({ (environment[$0] ?? "").isEmpty }) else { return false }
+        return true
+    }
+
     /// Leaf predicate: never calls other fixture selectors or changes production routing.
     static func measuredFileUplink(environment: [String: String]) -> Bool {
+        if !(environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? "").isEmpty ||
+            environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity550k" {
+            return capacityFileUplink(environment: environment)
+        }
         guard environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", requested(environment: environment),
               (environment["SCOREBUG_TEST_MOTION_FIXTURE"] ?? "").isEmpty,
               environment["SCOREBUG_TEST_MEASURED_TRIAL"] == "1",
@@ -37,6 +66,8 @@ enum VideoObservationFixture {
     }
 
     static func liveProfile(environment: [String: String]) throws -> PublishingVideoProfile {
+        guard (environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? "").isEmpty ||
+                capacityFileUplink(environment: environment) else { throw UplinkError.invalidFixtureRoute }
         let policy = environment["SCOREBUG_TEST_PROBE_POLICY"] ?? ""
         guard policy.isEmpty || (policy == "recovery-budget-v1" && measuredFileUplink(environment: environment))
         else { throw UplinkError.invalidFixtureRoute }
@@ -103,7 +134,7 @@ enum VideoObservationFixture {
               let originalPort = components.port, (1...65535).contains(originalPort),
               components.user == nil, components.password == nil, components.fragment == nil
         else { throw UplinkError.invalidFixtureRoute }
-        if environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "loss0p2-delay30" {
+        if ["loss0p2-delay30", "capacity550k"].contains(environment["SCOREBUG_TEST_UPLINK_PROFILE"] ?? "") {
             let recovery = (components.queryItems ?? []).filter { $0.name == "peerlatency" }
             guard recovery.count == 1, recovery.first?.value == "400" else { throw UplinkError.invalidFixtureRoute }
         }

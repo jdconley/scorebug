@@ -654,6 +654,42 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertTrue(unavailable, "Typed negative must be known before the driver submits any positive row")
     }
 
+    func testCapacityDeadlineAuditRetains512RowsAndRejectsTheNextScheduledRow() throws {
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: nativeCapacityTestEnvironment())
+        let (fixture, applied) = try auditFixture()
+        // A shorter valid source history keeps 512 rows below the independent
+        // byte limit, so this test reaches the row boundary specifically.
+        let input = PublishingDeliveryMonitor.Input(history: try history(captureRange: 0...90),
+            clock: fixture.clock, diagnostics: fixture.diagnostics, delivery: fixture.delivery)
+        audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+        for step in 1...341 {
+            audit.record(input: input, applied: applied, at: Double(step) + 2.25, instant: instant)
+        }
+        let before = try auditObject(audit)
+        let prefix = try XCTUnwrap(before["rows"] as? [[String: Any]])
+        XCTAssertEqual(prefix.count, 511)
+        XCTAssertEqual(before["formatVersion"] as? Int, 2)
+        XCTAssertEqual(before["mode"] as? String, "capacity")
+        XCTAssertEqual(before["maximumRows"] as? Int, 512)
+        XCTAssertEqual(before["maximumBytes"] as? Int, 33_554_432)
+        XCTAssertEqual(before["overflow"] as? Bool, false)
+        audit.record(input: input, applied: applied, at: 344.25, instant: instant)
+        let full = try auditObject(audit)
+        let retained = try XCTUnwrap(full["rows"] as? [[String: Any]])
+        XCTAssertEqual(retained.count, 512)
+        XCTAssertEqual(full["overflow"] as? Bool, true)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: Array(retained.prefix(511)), options: [.sortedKeys]),
+            try JSONSerialization.data(withJSONObject: prefix, options: [.sortedKeys]))
+        let terminal = try audit.data()
+        var unavailable = false
+        XCTAssertTrue(audit.record(input: input, applied: applied, at: 345.25, instant: instant,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
+        XCTAssertEqual(try audit.data(), terminal)
+        audit.close()
+        XCTAssertEqual(try auditObject(audit)["closed"] as? Bool, true)
+    }
     func testRepeatedDeadlineAuditRetains512RowsAndRejectsTheNextScheduledRow() throws {
         let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
             environment: repeatedAuditEnvironment)
@@ -734,7 +770,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
     }
     func testRepeatedAndLegacyDeadlineAuditsKeep256PhaseLimit() throws {
         let (input, initial) = try auditFixture()
-        for environment in [[:], repeatedAuditEnvironment] {
+        for environment in [[:], repeatedAuditEnvironment, nativeCapacityTestEnvironment()] {
             let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
                 environment: environment)
             var applied = initial
@@ -751,6 +787,34 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             audit.record(input: input, applied: initial, at: 4.5, instant: instant)
             XCTAssertEqual(try audit.data(), terminal)
         }
+    }
+    func testCapacityDeadlineAuditByteOverflowRetainsPrefixAndCannotResumeWithSmallerRows() throws {
+        auditRecordingID = String(repeating: "x", count: 128 * 1024)
+        let (large, applied) = try auditFixture()
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: nativeCapacityTestEnvironment())
+        audit.record(input: large, applied: applied, at: 0.5, instant: instant)
+        for step in 1...100 {
+            audit.record(input: large, applied: applied, at: Double(step) + 2.25, instant: instant)
+        }
+        let terminal = try audit.data(), object = try auditObject(audit)
+        let rows = try XCTUnwrap(object["rows"] as? [[String: Any]])
+        XCTAssertEqual(object["overflow"] as? Bool, true)
+        XCTAssertGreaterThan(rows.count, 0)
+        XCTAssertLessThan(rows.count, 150)
+        XCTAssertLessThanOrEqual(terminal.count, 33_554_432)
+        XCTAssertEqual(rows.first?["start"] as? Double, 1)
+        XCTAssertEqual(rows.first?["end"] as? Double, 2)
+        let serializedRows = try rows.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]).count }
+        XCTAssertLessThanOrEqual(serializedRows.reduce(0, +) + rows.count + 4096, 33_554_432)
+        XCTAssertGreaterThan(serializedRows.reduce(0, +) + rows.count + 4096 + (serializedRows.last ?? 0), 33_554_432)
+        auditRecordingID = "recording"
+        let (small, _) = try auditFixture()
+        var unavailable = false
+        XCTAssertTrue(audit.record(input: small, applied: applied, at: 103.25, instant: instant,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
+        XCTAssertEqual(try audit.data(), terminal)
     }
     func testRepeatedDeadlineAuditByteOverflowRetainsPrefixAndCannotResumeWithSmallerRows() throws {
         auditRecordingID = String(repeating: "x", count: 128 * 1024)
@@ -779,6 +843,22 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             onUnavailable: { unavailable = true }).isEmpty)
         XCTAssertTrue(unavailable)
         XCTAssertEqual(try audit.data(), terminal)
+    }
+    func testCapacityDeadlineAuditSerializationFailureIsInvalidAndTerminal() throws {
+        let (input, validApplied) = try auditFixture()
+        var invalidApplied = validApplied
+        invalidApplied.acknowledgedAt = .infinity
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25,
+            environment: nativeCapacityTestEnvironment())
+        audit.record(input: input, applied: invalidApplied, at: 0.5, instant: instant)
+        XCTAssertTrue(audit.record(input: input, applied: invalidApplied, at: 4.5, instant: instant).isEmpty)
+        let object = try auditObject(audit)
+        XCTAssertEqual(object["invalid"] as? Bool, true)
+        XCTAssertEqual((object["rows"] as? [Any])?.count, 0)
+        let terminal = try audit.data()
+        audit.record(input: input, applied: validApplied, at: 5.5, instant: instant)
+        audit.record(input: input, applied: validApplied, at: 8.5, instant: instant)
+        XCTAssertEqual(try audit.data(), terminal, "Serialization failure cannot leave a resumable gap")
     }
     func testRepeatedDeadlineAuditSerializationFailureIsInvalidAndTerminal() throws {
         let (input, validApplied) = try auditFixture()

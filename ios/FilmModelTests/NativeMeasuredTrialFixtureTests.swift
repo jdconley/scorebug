@@ -180,3 +180,59 @@ final class NativeMeasuredTrialFixtureTests: XCTestCase {
         }
     }
 }
+
+// Shared forwarded app environment, distinct from host-only file paths/latency flags.
+func nativeCapacityTestEnvironment() -> [String: String] { [
+    "SCOREBUG_TEST_CAPACITY_RECOVERY": "1", "SCOREBUG_TEST_UPLINK_PROFILE": "capacity550k",
+    "SCOREBUG_TEST_UPLINK_PROXY_PORT": "12345", "SCOREBUG_TEST_PROBE_POLICY": "recovery-budget-v1",
+    "SCOREBUG_TEST_FILE_CAPTURE": "1", "SCOREBUG_TEST_MEASURED_TRIAL": "1",
+    "SCOREBUG_TEST_CANDIDATE_HEADROOM": "1", "SCOREBUG_TEST_CANDIDATE_PROFILE": "360p30",
+    "SCOREBUG_TEST_BANDWIDTH_PROBE": "staged", "SCOREBUG_TEST_LIVE_PROFILE": "240p30",
+    "SCOREBUG_TEST_DIRECT_RTMP_RECORDER": "1", "SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1",
+    "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
+] }
+
+extension NativeMeasuredTrialFixtureTests {
+    func testCapacityFileRouteRequiresEveryExplicitPrerequisiteAnd400msPeerBudget() throws {
+        let valid = nativeCapacityTestEnvironment()
+        XCTAssertTrue(try NativeMeasuredTrialFixture.requested(environment: valid))
+        XCTAssertEqual(try NativeMeasuredTrialFixture.probePolicy(environment: valid), .recoveryBudget)
+        XCTAssertEqual(try NativeCandidateFixture.requested(environment: valid), .low360)
+        XCTAssertEqual(try VideoObservationFixture.liveProfile(environment: valid), .low240)
+        let original = URL(string: "srt://127.0.0.1:9999?streamid=publish%3Alive&peerlatency=400")!
+        XCTAssertEqual(try VideoObservationFixture.publishingURL(original, environment: valid).absoluteString,
+            "srt://127.0.0.1:12345?streamid=publish%3Alive&peerlatency=400")
+        var rejected = valid.keys.map { key -> [String: String] in
+            var env = valid; env.removeValue(forKey: key); return env
+        }
+        for (key, values) in [
+            "SCOREBUG_TEST_CAPACITY_RECOVERY": ["", "true", "0"],
+            "SCOREBUG_TEST_UPLINK_PROFILE": ["loss0p2-delay30", "passthrough", "rate3m"],
+            "SCOREBUG_TEST_STREAM_HOLD_SECONDS": ["90", "179", "181", "0180", "600"],
+            "SCOREBUG_TEST_PROBE_POLICY": ["", "local-zero-loss-v1", "future"],
+            "SCOREBUG_TEST_BANDWIDTH_PROBE": ["repeated", "renew"],
+            "SCOREBUG_TEST_UPLINK_PROXY_PORT": ["0", "012345", "65536"],
+            "SCOREBUG_TEST_MEASURED_RECOVERY": ["repeated", "decoder-stall"],
+            "SCOREBUG_TEST_MOTION_FIXTURE": ["blocks16"],
+            "SCOREBUG_TEST_NATIVE_QUALITY": ["1"],
+            "SCOREBUG_TEST_ADAPTIVE_PROFILES": ["1"],
+            "SCOREBUG_TEST_DELIVERY_PROFILE": ["floor24-v1"]
+        ] {
+            for value in values { var env = valid; env[key] = value; rejected.append(env) }
+        }
+        for env in rejected {
+            XCTAssertThrowsError(try NativeMeasuredTrialFixture.requested(environment: env), "\(env)")
+            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(original, environment: env), "\(env)")
+            let cadence = WorkerCadenceReportAudit(environment: env)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: cadence.data()) as? [String: Any])
+            XCTAssertEqual(object["formatVersion"] as? Int, 1)
+            let deadline = try PublishingDeliveryMonitor.Audit(latencyBudget: 1.5, maximumSampleAge: 0.25, environment: env)
+            let delivery = try XCTUnwrap(JSONSerialization.jsonObject(with: deadline.data()) as? [String: Any])
+            XCTAssertEqual(delivery["formatVersion"] as? Int, 1)
+        }
+        for query in ["", "peerlatency=120", "peerlatency=0400", "peerlatency=400&peerlatency=400"] {
+            XCTAssertThrowsError(try VideoObservationFixture.publishingURL(
+                URL(string: "srt://127.0.0.1:9999?\(query)")!, environment: valid))
+        }
+    }
+}

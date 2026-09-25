@@ -97,9 +97,9 @@ enum PublishingDeliveryMonitor {
             let authorityID: ObjectIdentifier?
         }
         private let usesRequestTiming: Bool
-        private let repeated: Bool
-        private static let repeatedMaximumRows = 512
-        private static let repeatedMaximumBytes = 32 * 1024 * 1024
+        private let extendedMode: String?
+        private static let extendedMaximumRows = 512
+        private static let extendedMaximumBytes = 32 * 1024 * 1024
         // Include separators and reserve the fixed envelope before retaining a
         // row. Exhaustion is terminal so later smaller rows cannot hide a gap.
         private static let envelopeAllowance = 4096
@@ -114,11 +114,15 @@ enum PublishingDeliveryMonitor {
         init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false, environment: [String: String] = [:]) throws {
             self.usesRequestTiming = usesRequestTiming
             #if DEBUG
-            repeated = environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated"
-                && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180"
-                && (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
+            let measured = (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
+            if measured && VideoObservationFixture.capacityFileUplink(environment: environment) {
+                extendedMode = "capacity"
+            } else if measured && environment["SCOREBUG_TEST_BANDWIDTH_PROBE"] == "repeated"
+                && environment["SCOREBUG_TEST_STREAM_HOLD_SECONDS"] == "180" {
+                extendedMode = "repeated"
+            } else { extendedMode = nil }
             #else
-            repeated = false
+            extendedMode = nil
             #endif
             schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
         }
@@ -138,7 +142,7 @@ enum PublishingDeliveryMonitor {
                 key = next; phase += 1
             }
             for window in schedule.poll(at: now, identity: String(phase), onUnavailable: onUnavailable) {
-                guard rows.count < (repeated ? Self.repeatedMaximumRows : 256) else { overflow = true; onUnavailable?(); return observations }
+                guard rows.count < (extendedMode != nil ? Self.extendedMaximumRows : 256) else { overflow = true; onUnavailable?(); return observations }
                 var row: [String: Any] = ["phase": phase, "start": window.start, "end": window.end, "evaluatedAt": now,
                     "appliedRevision": String(applied.revision), "acknowledgedAt": applied.acknowledgedAt,
                     "profileID": applied.settings.profileID, "videoBitrate": applied.settings.videoBitrate,
@@ -182,11 +186,11 @@ enum PublishingDeliveryMonitor {
                     row["reason"] = String(describing: error)
                     row["history"] = Self.history(input.history, start: window.start, anchor: nil)
                 }
-                if repeated {
+                if extendedMode != nil {
                     guard JSONSerialization.isValidJSONObject(row),
                           let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
                     else { serializationInvalid = true; onUnavailable?(); return observations }
-                    let available = Self.repeatedMaximumBytes - Self.envelopeAllowance - serializedRowBytes
+                    let available = Self.extendedMaximumBytes - Self.envelopeAllowance - serializedRowBytes
                     guard data.count < available else { overflow = true; onUnavailable?(); return observations }
                     serializedRowBytes += data.count + 1
                 }
@@ -203,14 +207,14 @@ enum PublishingDeliveryMonitor {
                 "invalid": schedule.invalid || serializationInvalid, "latencyBudget": schedule.latencyBudget,
                 "maximumSampleAge": schedule.maximumSampleAge, "rows": rows]
             if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
-            if repeated {
+            if extendedMode != nil {
                 fields["formatVersion"] = 2
-                fields["mode"] = "repeated"
-                fields["maximumRows"] = Self.repeatedMaximumRows
-                fields["maximumBytes"] = Self.repeatedMaximumBytes
+                fields["mode"] = extendedMode
+                fields["maximumRows"] = Self.extendedMaximumRows
+                fields["maximumBytes"] = Self.extendedMaximumBytes
             }
             let data = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
-            guard !repeated || data.count <= Self.repeatedMaximumBytes else { throw ExportError.capacity }
+            guard extendedMode == nil || data.count <= Self.extendedMaximumBytes else { throw ExportError.capacity }
             return data
         }
         private enum ExportError: Error { case capacity }

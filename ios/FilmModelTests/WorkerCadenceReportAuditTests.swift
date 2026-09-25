@@ -11,6 +11,32 @@ final class WorkerCadenceReportAuditTests: XCTestCase {
         "SCOREBUG_TEST_STREAM_HOLD_SECONDS": "180", "SCOREBUG_TEST_DELIVERY_DEADLINE_MS": "1500"
     ] }
 
+    func testCapacityEnvelopePreservesFullOrderedHistoryAndFailsAtCountLimit() throws {
+        var audit = WorkerCadenceReportAudit(environment: nativeCapacityTestEnvironment())
+        let instant = ContinuousClock.now, attempt = UUID(), response = try response()
+        for index in 0..<3072 {
+            audit.record(response: response, expectedAttempt: attempt, helper: nil,
+                receivedAt: instant, requestDuration: .zero, receivedUptime: Double(index),
+                instant: instant, evaluatedUptime: Double(index))
+        }
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(value["formatVersion"] as? Int, 2)
+        XCTAssertEqual(value["mode"] as? String, "capacity")
+        XCTAssertEqual(value["maximumRows"] as? Int, 3072)
+        XCTAssertEqual(value["maximumBytes"] as? Int, 16 * 1024 * 1024)
+        XCTAssertEqual(value["overflow"] as? Bool, false)
+        let rows = try XCTUnwrap(value["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 3072)
+        XCTAssertEqual(rows.compactMap { $0["evaluatedUptime"] as? Double }, (0..<3072).map(Double.init))
+        audit.record(response: response, expectedAttempt: attempt, helper: nil,
+            receivedAt: instant, requestDuration: .zero, receivedUptime: 3072,
+            instant: instant, evaluatedUptime: 3072)
+        audit.close()
+        value = try XCTUnwrap(JSONSerialization.jsonObject(with: audit.data()) as? [String: Any])
+        XCTAssertEqual(value["overflow"] as? Bool, true)
+        XCTAssertEqual(value["closed"] as? Bool, true)
+        XCTAssertEqual((value["rows"] as? [Any])?.count, 3072)
+    }
     func testRepeatedEnvelopePreservesFullOrderedHistoryAndFailsAtCountLimit() throws {
         var audit = WorkerCadenceReportAudit(environment: repeatedEnvironment)
         let instant = ContinuousClock.now, attempt = UUID(), response = try response()
@@ -60,6 +86,33 @@ final class WorkerCadenceReportAuditTests: XCTestCase {
         }
     }
 
+    func testCapacityByteOverflowIsBoundedLatchedAndRetainsOriginalPrefix() throws {
+        let game = String(repeating: "x", count: 128 * 1024)
+        let raw: [String: Any] = ["status": ["gameId": game, "generation": 1, "workerId": NSNull(),
+            "state": "unknown", "observation": NSNull(), "observedAt": NSNull(), "expiresAt": NSNull()],
+            "serverTime": "2040-01-01T00:00:00Z"]
+        let large = try JSONDecoder().decode(WorkerMediaStatusResponse.self,
+            from: JSONSerialization.data(withJSONObject: raw))
+        var audit = WorkerCadenceReportAudit(environment: nativeCapacityTestEnvironment())
+        let instant = ContinuousClock.now, attempt = UUID()
+        for index in 0..<140 {
+            audit.record(response: large, expectedAttempt: attempt, helper: nil,
+                receivedAt: instant, requestDuration: .zero, receivedUptime: Double(index),
+                instant: instant, evaluatedUptime: Double(index))
+        }
+        let before = try audit.data()
+        let prefix = try XCTUnwrap(JSONSerialization.jsonObject(with: before) as? [String: Any])
+        let rows = try XCTUnwrap(prefix["rows"] as? [[String: Any]])
+        XCTAssertEqual(prefix["overflow"] as? Bool, true)
+        XCTAssertGreaterThan(rows.count, 0)
+        XCTAssertLessThan(rows.count, 140)
+        XCTAssertLessThanOrEqual(before.count, 16 * 1024 * 1024)
+        XCTAssertEqual(rows.compactMap { $0["evaluatedUptime"] as? Double }, (0..<rows.count).map(Double.init))
+        audit.record(response: try response(), expectedAttempt: attempt, helper: nil,
+            receivedAt: instant, requestDuration: .zero, receivedUptime: 999,
+            instant: instant, evaluatedUptime: 999)
+        XCTAssertEqual(try audit.data(), before, "Byte overflow must not resume with smaller later rows")
+    }
     func testRepeatedByteOverflowIsBoundedLatchedAndRetainsOriginalPrefix() throws {
         let game = String(repeating: "x", count: 128 * 1024)
         let raw: [String: Any] = ["status": ["gameId": game, "generation": 1, "workerId": NSNull(),
