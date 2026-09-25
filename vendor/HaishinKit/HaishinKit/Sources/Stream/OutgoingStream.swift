@@ -48,18 +48,21 @@ package final class OutgoingStream {
         }
     }
 
-    package func setVerifiedVideoBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
+    package func setVerifiedVideoBitRate(_ bitRate: Int, expecting expected: VideoBitRateExpectation? = nil,
+                                          continuing continuation: VideoReplacementContinuation? = nil) throws -> VideoCodecSettings {
         guard isRunning, !inputFinished else { throw VideoBitRateUpdateError.notEncoding }
-        return try videoCodec.setVerifiedBitRate(bitRate)
+        return try videoCodec.setVerifiedBitRate(bitRate, expecting: expected, continuing: continuation)
     }
 
-    package func prepareVideoReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
+    package func prepareVideoReplacement(_ settings: VideoCodecSettings, expecting expected: VideoBitRateExpectation? = nil) throws -> VideoEncoderReplacement {
         guard isRunning, !inputFinished else { throw VideoEncoderReplacementError.notEncoding }
-        return try videoCodec.prepareReplacement(settings)
+        return try videoCodec.prepareReplacement(settings, expecting: expected)
     }
     package func commitVideoReplacement(_ operation: VideoEncoderReplacement) throws {
         try videoCodec.commitReplacement(operation)
     }
+    package var videoReplacementContinuation: VideoReplacementContinuation? { videoCodec.replacementContinuation }
+    package func validateVideoAdmission(_ expected: VideoReplacementContinuation) throws { try videoCodec.validateAdmission(expected) }
     package var lastVideoSubmission: (sessionID: UUID, sourcePTS: CMTime)? { videoCodec.lastSubmission }
 
     package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }

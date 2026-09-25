@@ -98,10 +98,18 @@ jobs joined; independent specification and code-quality reviews approve. This is
 continuity or an automatic post-restoration increase. Details and logs are in the
 [owned operation plan](2026-09-25-owned-probe-operations.md#owned-operation-checkpoint).
 
-The [guarded application plan](2026-09-25-owned-application-admission.md) closes
-the configuration read-to-write gap next, before Session lease integration and
-the owned upward route can be enabled. A fresh four-phase media experiment and
-physical phone/Watch testing remain open.
+The native SDK portion of the
+[guarded application plan](2026-09-25-owned-application-admission.md#native-sdk-checkpoint)
+now passes **10 focused / 345 full SDK tests**. Explicit guarded encoder changes
+recheck the selected configuration at native admission, and a private one-use
+record binds the verified bitrate write following a profile replacement. Stale
+requests preserve newer publication state; uncertain writes retain shutdown
+behavior. Both reviews approve the native slice, and all 162 upstream hashes and
+the patch round trip verify. A downstream rerun also passes all **233 Streaming
+tests**, including both real loopback cases. The full SDK pass used serial execution; an earlier
+parallel run's transport-observer assertion failure remains documented in that
+plan. The adapter and Session guarded paths, measurement lease integration, fresh
+four-phase media experiment and physical phone/Watch testing remain open.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

@@ -14,6 +14,25 @@ final class VideoCodec {
     private var recordedBitRateChange: VideoBitRateChange?
     private var lastSubmittedSourcePTS: CMTime?
     private var replacement: VideoEncoderReplacement?
+    private var pendingReplacementContinuation: (previous: UUID, revision: UUID)?
+    private var recordedReplacementContinuation: VideoReplacementContinuation?
+    var replacementContinuation: VideoReplacementContinuation? {
+        guard isRunning, !terminalCompletionCaptured, failure.error == nil, replacement == nil,
+              let recordedReplacementContinuation,
+              invalidation.isCurrent(recordedReplacementContinuation.encoderSessionID) else { return nil }
+        return recordedReplacementContinuation
+    }
+    private func clearReplacementContinuation() {
+        pendingReplacementContinuation = nil; recordedReplacementContinuation = nil
+    }
+    func validateAdmission(_ expected: VideoReplacementContinuation) throws {
+        guard let actual = replacementContinuation, actual.id == expected.id,
+              actual.previousEncoderSessionID == expected.previousEncoderSessionID,
+              actual.encoderSessionID == expected.encoderSessionID,
+              exactVideoSourceTime(actual.firstSourcePTS, expected.firstSourcePTS) else {
+            throw VideoMutationAdmissionError.stale
+        }
+    }
     private var terminalCompletionCaptured = false
     private var preparedSubmission: VideoSubmission?
 
@@ -44,13 +63,16 @@ final class VideoCodec {
 
     func requestSessionInvalidation() { invalidation.invalidate() }
 
-    func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
+    func prepareReplacement(_ settings: VideoCodecSettings, expecting expected: VideoBitRateExpectation? = nil) throws -> VideoEncoderReplacement {
+        if let expected { try validateAdmission(expected) }
         guard replacement == nil, preparedSubmission == nil else { throw VideoEncoderReplacementError.busy }
         guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
             throw VideoEncoderReplacementError.notEncoding
         }
         let observed = invalidation.snapshot
+        if let expected { try validateAdmission(expected) }
         guard !observed.pending else { throw VideoEncoderReplacementError.obsolete }
+        clearReplacementContinuation()
         let operation = VideoEncoderReplacement(settings: settings, revision: observed.revision,
             session: session, failure: failure)
         replacement = operation
@@ -71,17 +93,31 @@ final class VideoCodec {
         session = nil; sessionMode = nil
         storedSettings = operation.settings
         recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
-        requestSessionInvalidation()
+        let replacementRevision = invalidation.invalidate()
+        clearReplacementContinuation()
+        pendingReplacementContinuation = (operation.revision, replacementRevision)
         replacement = nil
     }
 
 
-    func setVerifiedBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
+    func validateAdmission(_ expected: VideoBitRateExpectation) throws {
+        guard expected.matches(lastBitRateChange), invalidation.isCurrent(expected.encoderSessionID) else {
+            throw VideoMutationAdmissionError.stale
+        }
+    }
+
+    func setVerifiedBitRate(_ bitRate: Int, expecting expected: VideoBitRateExpectation? = nil,
+                            continuing continuation: VideoReplacementContinuation? = nil) throws -> VideoCodecSettings {
+        if let expected { try validateAdmission(expected) }
+        if let continuation { try validateAdmission(continuation) }
         guard isRunning, failure.error == nil, sessionMode == .compression, let session else {
             throw VideoBitRateUpdateError.notEncoding
         }
         let observed = invalidation.snapshot
+        if let expected { try validateAdmission(expected) }
+        if let continuation { try validateAdmission(continuation) }
         guard replacement == nil, preparedSubmission == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
+        clearReplacementContinuation()
         let updated: VideoCodecSettings
         do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
         catch let error as VideoBitRateUpdateError {
@@ -117,6 +153,7 @@ final class VideoCodec {
             guard replacement == nil, preparedSubmission == nil else {
                 failure.fail(.outputTerminated(boundary: "video replacement settings")); return
             }
+            clearReplacementContinuation()
             let previous = storedSettings
             recordedBitRateChange = nil
             storedSettings = newValue
@@ -162,6 +199,8 @@ final class VideoCodec {
         inputFormat = sample.formatDescription
         let observed = invalidation.snapshot
         if observed.pending {
+            recordedReplacementContinuation = nil
+            if pendingReplacementContinuation?.revision != observed.revision { pendingReplacementContinuation = nil }
             let mode: VTSessionMode = sample.formatDescription?.isCompressed == true ? .decompression : .compression
             session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
             recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
@@ -206,7 +245,14 @@ final class VideoCodec {
         preparedSubmission = nil
         guard succeeded, isRunning, failure === operation.failure, failure.error == nil,
               invalidation.isCurrent(operation.revision), replacement == nil else { return false }
-        if operation.sample.imageBuffer != nil { lastSubmittedSourcePTS = operation.sample.presentationTimeStamp }
+        if operation.sample.imageBuffer != nil {
+            lastSubmittedSourcePTS = operation.sample.presentationTimeStamp
+            if let pending = pendingReplacementContinuation, pending.revision == operation.revision {
+                recordedReplacementContinuation = .init(id: UUID(), previousEncoderSessionID: pending.previous,
+                    encoderSessionID: operation.revision, firstSourcePTS: operation.sample.presentationTimeStamp)
+                pendingReplacementContinuation = nil
+            }
+        }
         presentationTimeStamp = operation.sample.presentationTimeStamp
         return true
     }
@@ -235,6 +281,7 @@ final class VideoCodec {
     /// so callbacks can be consumed concurrently within the existing queue bound.
     /// Only terminal invalidation may overlap the captured native session.
     func makeCompletion() -> @Sendable () -> Void {
+        clearReplacementContinuation()
         terminalCompletionCaptured = true
         if replacement != nil || preparedSubmission != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
         let completion = VideoCompletion(session: replacement == nil && preparedSubmission == nil ? session : nil,
@@ -331,6 +378,7 @@ extension VideoCodec: Runner {
             return
         }
         isRunning = false
+        clearReplacementContinuation()
         preparedSubmission = nil
         replacement = nil
         session = nil

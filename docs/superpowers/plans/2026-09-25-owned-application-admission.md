@@ -74,13 +74,13 @@ and configuration ownership; stale completion must not consume a newer token.
 
 ## Verification gates
 
-- [ ] Same bitrate with a different configuration ID rejects before native work;
+- [x] Same bitrate with a different configuration ID rejects before native work;
       identical numeric settings on a different encoder also reject.
-- [ ] Recheck expectation after a held pending-submission join. Mismatch makes
+- [x] Recheck expectation after a held pending-submission join. Mismatch makes
       no property writes or replacement drains and preserves newer work.
-- [ ] Notification invalidation before admission rejects; invalidation during a
+- [x] Notification invalidation before admission rejects; invalidation during a
       verified write or replacement drain cannot acknowledge success.
-- [ ] Exact replacement continuation permits its guarded bitrate write once;
+- [x] Exact replacement continuation permits its guarded bitrate write once;
       an intervening same-encoder write invalidates that continuation.
 - [ ] Missing guarded capability never invokes legacy mutation methods.
 - [ ] Safe pre-write mismatch preserves the broadcast and clears only its own
@@ -89,5 +89,100 @@ and configuration ownership; stale completion must not consume a newer token.
 - [ ] Focused/full affected suites, SDK patch provenance, independent spec and
       quality review before wiring the owned Session transfer route.
 
-No guarded native mutation is implemented by the current read-only getter or
-context checkpoint. Automatic post-restoration quality increases remain gated.
+The native SDK checkpoint below implements guarded mutation. Media/publisher
+adapter propagation and Session handling remain open; the read-only getter and
+probe context alone cannot authorize application. Automatic post-restoration
+quality increases remain gated.
+
+## Implementation checkpoints
+
+Deliver this gate in three reviewed steps. A passing native checkpoint does not
+expose or enable the guarded Session route by itself.
+
+1. **Native SDK:** add explicit expected-configuration selectors and guarded
+   bitrate/replacement overloads. Keep one private replacement continuation in
+   the codec and its actual matching receipt in `SRTStream`. The public selector
+   is a comparison value, not proof that a replacement happened. Compare the
+   complete retained receipt and pass the private native continuation down to
+   the codec. Rebuild and verify the maintained SDK patch after focused/full tests.
+2. **Media and publisher adapters:** add the disabled-by-default guarded protocol
+   methods, exact scalar conversion, and explicit guarded closures in injected
+   operations. Check configuration before local mutation reservation and probe
+   revocation; recheck after health/other suspension and at native admission.
+   Retain the exact native-to-Media replacement mapping so an arbitrary profile
+   receipt with a substituted acknowledgement time cannot select a continuation.
+   Invalidate this bounded mapping on intervening admitted configuration work.
+   Preserve legacy/downward behavior and exercise the real loopback route.
+3. **PublishingSession:** carry the expectation with its owned mutation request.
+   Only a guarded request may interpret the typed no-effect rejection as safe.
+   Resolve its exact timer/reservation without stopping healthy publication;
+   never overwrite an already committed stop, deadline or cancellation. The
+   broader `PublishingQualitySession` application owner must separately distinguish
+   rejection before any application mutation from rejection after a successful
+   profile change. Partial application still joins shutdown. Integrating the
+   Core measurement token and Session campaign lease follows these protections.
+
+Notification invalidation stays a thread-safe scalar revision change.
+`VideoCodec` continuation fields remain owned by the stream execution path;
+notification callbacks must not mutate them concurrently. Comparing the captured
+revision invalidates a continuation immediately, even before its stored record
+is cleared by the owner.
+
+At the Session layer, both `performUpdate` and its external `mutate` waiter need
+explicit handling. The internal task must not wait on shutdown that joins itself.
+A proven safe rejection should mark only its own mutation resolved before a timer
+can turn the same failure into a timeout; the external waiter cancels and joins
+that timer before returning. If cancellation, deadline or shutdown has already
+won, preserve that terminal outcome. Do not clear a newer mutation's state.
+
+Regression cases for the upper layers include absent guarded capabilities making
+zero legacy calls; same numeric bitrate with a substituted configuration or
+encoder; changed configuration across a held health/native await; a forged
+replacement mapping; stale rejection with a held timer; concurrent cancellation
+or deadline; and profile-success followed by guarded bitrate rejection. Tests
+must distinguish continued healthy publication from a partially applied change
+that requires joined shutdown.
+
+
+## Native SDK checkpoint
+
+Explicit guarded bitrate and profile-replacement methods are implemented. They
+compare the complete expected receipt before reservation/probe revocation, after
+pending submission joins and again inside the codec before native work. A stale
+request cannot silently update a different encoder with the same numeric bitrate.
+A retained private replacement continuation permits one follow-up verified write;
+public replacement values alone cannot create or restore it.
+
+Native regression tests cover exact scalar/source-time selectors, intervening
+same-encoder writes and settings, notification invalidation before/during work,
+held submissions, replacement reuse, and old operations resuming after close and
+republication. Guarded pre-write rejection clears only its exact reservation and
+preserves the newer publication and receipt. Cancellation and uncertain native
+write/drain failures keep their prior behavior. Ordinary video frames preserve
+the original replacement boundary. Notification callbacks remain revision-only;
+recording the replacement's own invalidation revision is atomic.
+
+Final native verification: **10 focused tests / 345 full SDK tests** pass with
+Xcode 26.2; all processes joined. The full suite used `--no-parallel`.
+Specification and code-quality reviews approve the native slice. The maintained
+patch verifies all **162 original upstream hashes** and an exact round trip.
+Evidence:
+`artifacts/qa/guarded-native-focused-final-02.log`,
+`artifacts/qa/guarded-native-full-final-02.log` and
+`artifacts/qa/guarded-native-patch-verify-final-02.log`.
+Downstream verification also passes **233 full Streaming tests**, including the
+two real SRT probe/encoder-replacement loopback cases. The command joined exit 0;
+log and exit record are
+`artifacts/qa/repeated-live-checkpoint-guarded-native-streaming-full-20260925{.log,-exit.json}`.
+
+The first parallel full run (`guarded-native-full-01.log`) failed an existing
+transport-observer assertion: it expected four events and observed six, including
+one later outer send attempt that never reached the socket. This appears
+scheduling-sensitive; it was not reproduced against the unchanged baseline.
+The failure artifact remains intact. No transport code or observer assertion was
+changed to obtain the serial pass.
+
+No guarded Media/Streaming adapter API, PublishingSession safe-error integration
+or automatic post-restoration increase is delivered by this native checkpoint.
+Those remain the next two implementation checkpoints above, followed by the
+owned measurement lease and fresh full-media qualification.

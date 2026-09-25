@@ -126,7 +126,7 @@
      }
 --- a/HaishinKit/Sources/Codec/VideoCodec.swift
 +++ b/HaishinKit/Sources/Codec/VideoCodec.swift
-@@ -8,72 +8,238 @@
+@@ -8,72 +8,285 @@
  final class VideoCodec {
      static let frameInterval: Double = 0.0
 
@@ -144,6 +144,25 @@
 +    private var recordedBitRateChange: VideoBitRateChange?
 +    private var lastSubmittedSourcePTS: CMTime?
 +    private var replacement: VideoEncoderReplacement?
++    private var pendingReplacementContinuation: (previous: UUID, revision: UUID)?
++    private var recordedReplacementContinuation: VideoReplacementContinuation?
++    var replacementContinuation: VideoReplacementContinuation? {
++        guard isRunning, !terminalCompletionCaptured, failure.error == nil, replacement == nil,
++              let recordedReplacementContinuation,
++              invalidation.isCurrent(recordedReplacementContinuation.encoderSessionID) else { return nil }
++        return recordedReplacementContinuation
++    }
++    private func clearReplacementContinuation() {
++        pendingReplacementContinuation = nil; recordedReplacementContinuation = nil
++    }
++    func validateAdmission(_ expected: VideoReplacementContinuation) throws {
++        guard let actual = replacementContinuation, actual.id == expected.id,
++              actual.previousEncoderSessionID == expected.previousEncoderSessionID,
++              actual.encoderSessionID == expected.encoderSessionID,
++              exactVideoSourceTime(actual.firstSourcePTS, expected.firstSourcePTS) else {
++            throw VideoMutationAdmissionError.stale
++        }
++    }
 +    private var terminalCompletionCaptured = false
 +    private var preparedSubmission: VideoSubmission?
 +
@@ -174,13 +193,16 @@
 +
 +    func requestSessionInvalidation() { invalidation.invalidate() }
 +
-+    func prepareReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
++    func prepareReplacement(_ settings: VideoCodecSettings, expecting expected: VideoBitRateExpectation? = nil) throws -> VideoEncoderReplacement {
++        if let expected { try validateAdmission(expected) }
 +        guard replacement == nil, preparedSubmission == nil else { throw VideoEncoderReplacementError.busy }
 +        guard isRunning, !terminalCompletionCaptured, failure.error == nil, sessionMode == .compression, let session else {
 +            throw VideoEncoderReplacementError.notEncoding
 +        }
 +        let observed = invalidation.snapshot
++        if let expected { try validateAdmission(expected) }
 +        guard !observed.pending else { throw VideoEncoderReplacementError.obsolete }
++        clearReplacementContinuation()
 +        let operation = VideoEncoderReplacement(settings: settings, revision: observed.revision,
 +            session: session, failure: failure)
 +        replacement = operation
@@ -201,17 +223,31 @@
 +        session = nil; sessionMode = nil
 +        storedSettings = operation.settings
 +        recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
-+        requestSessionInvalidation()
++        let replacementRevision = invalidation.invalidate()
++        clearReplacementContinuation()
++        pendingReplacementContinuation = (operation.revision, replacementRevision)
 +        replacement = nil
 +    }
 +
 +
-+    func setVerifiedBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
++    func validateAdmission(_ expected: VideoBitRateExpectation) throws {
++        guard expected.matches(lastBitRateChange), invalidation.isCurrent(expected.encoderSessionID) else {
++            throw VideoMutationAdmissionError.stale
++        }
++    }
++
++    func setVerifiedBitRate(_ bitRate: Int, expecting expected: VideoBitRateExpectation? = nil,
++                            continuing continuation: VideoReplacementContinuation? = nil) throws -> VideoCodecSettings {
++        if let expected { try validateAdmission(expected) }
++        if let continuation { try validateAdmission(continuation) }
 +        guard isRunning, failure.error == nil, sessionMode == .compression, let session else {
 +            throw VideoBitRateUpdateError.notEncoding
 +        }
 +        let observed = invalidation.snapshot
++        if let expected { try validateAdmission(expected) }
++        if let continuation { try validateAdmission(continuation) }
 +        guard replacement == nil, preparedSubmission == nil, !observed.pending else { throw VideoBitRateUpdateError.sessionInvalidated }
++        clearReplacementContinuation()
 +        let updated: VideoCodecSettings
 +        do { updated = try VerifiedVideoBitRate.apply(bitRate, to: settings, session: session) }
 +        catch let error as VideoBitRateUpdateError {
@@ -247,6 +283,7 @@
 +            guard replacement == nil, preparedSubmission == nil else {
 +                failure.fail(.outputTerminated(boundary: "video replacement settings")); return
 +            }
++            clearReplacementContinuation()
 +            let previous = storedSettings
 +            recordedBitRateChange = nil
 +            storedSettings = newValue
@@ -300,6 +337,8 @@
 +        inputFormat = sample.formatDescription
 +        let observed = invalidation.snapshot
 +        if observed.pending {
++            recordedReplacementContinuation = nil
++            if pendingReplacementContinuation?.revision != observed.revision { pendingReplacementContinuation = nil }
 +            let mode: VTSessionMode = sample.formatDescription?.isCompressed == true ? .decompression : .compression
 +            session = try sessionFactory?(mode, self) ?? mode.makeSession(self)
 +            recordedBitRateChange = nil; lastSubmittedSourcePTS = nil
@@ -344,7 +383,14 @@
 +        preparedSubmission = nil
 +        guard succeeded, isRunning, failure === operation.failure, failure.error == nil,
 +              invalidation.isCurrent(operation.revision), replacement == nil else { return false }
-+        if operation.sample.imageBuffer != nil { lastSubmittedSourcePTS = operation.sample.presentationTimeStamp }
++        if operation.sample.imageBuffer != nil {
++            lastSubmittedSourcePTS = operation.sample.presentationTimeStamp
++            if let pending = pendingReplacementContinuation, pending.revision == operation.revision {
++                recordedReplacementContinuation = .init(id: UUID(), previousEncoderSessionID: pending.previous,
++                    encoderSessionID: operation.revision, firstSourcePTS: operation.sample.presentationTimeStamp)
++                pendingReplacementContinuation = nil
++            }
++        }
 +        presentationTimeStamp = operation.sample.presentationTimeStamp
 +        return true
 +    }
@@ -393,6 +439,7 @@
 +    /// so callbacks can be consumed concurrently within the existing queue bound.
 +    /// Only terminal invalidation may overlap the captured native session.
 +    func makeCompletion() -> @Sendable () -> Void {
++        clearReplacementContinuation()
 +        terminalCompletionCaptured = true
 +        if replacement != nil || preparedSubmission != nil { failure.fail(.outputTerminated(boundary: "video replacement finish")) }
 +        let completion = VideoCompletion(session: replacement == nil && preparedSubmission == nil ? session : nil,
@@ -401,7 +448,7 @@
      }
 
      func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
-@@ -82,7 +248,7 @@
+@@ -82,7 +295,7 @@
              var attributes: [NSString: AnyObject] = [:]
              if let inputFormat {
                  // Specify the pixel format of the uncompressed video.
@@ -410,7 +457,7 @@
              }
              return attributes.isEmpty ? nil : attributes
          case .decompression:
-@@ -97,19 +263,24 @@
+@@ -97,19 +310,24 @@
          guard startedAt <= presentationTimeStamp else {
              return false
          }
@@ -438,7 +485,7 @@
      }
 
      @objc
-@@ -122,7 +293,7 @@
+@@ -122,7 +340,7 @@
          }
          switch type {
          case .ended:
@@ -447,7 +494,7 @@
          default:
              break
          }
-@@ -151,6 +322,7 @@
+@@ -151,6 +369,7 @@
          )
          #endif
          startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
@@ -455,10 +502,11 @@
          isRunning = true
      }
 
-@@ -159,11 +331,15 @@
+@@ -159,11 +378,16 @@
              return
          }
          isRunning = false
++        clearReplacementContinuation()
 +        preparedSubmission = nil
 +        replacement = nil
          session = nil
@@ -473,7 +521,7 @@
          continuation?.finish()
          startedAt = .zero
          #if os(iOS) || os(tvOS) || os(visionOS)
-@@ -172,3 +348,18 @@
+@@ -172,3 +396,18 @@
          #endif
      }
  }
@@ -659,30 +707,33 @@
      /// The asynchronous sequence for video output.
      package var videoOutputStream: AsyncStream<CMSampleBuffer> {
          return videoCodec.outputStream
-@@ -37,6 +47,22 @@
+@@ -37,6 +47,25 @@
              videoCodec.settings = newValue
          }
      }
 +
-+    package func setVerifiedVideoBitRate(_ bitRate: Int) throws -> VideoCodecSettings {
++    package func setVerifiedVideoBitRate(_ bitRate: Int, expecting expected: VideoBitRateExpectation? = nil,
++                                          continuing continuation: VideoReplacementContinuation? = nil) throws -> VideoCodecSettings {
 +        guard isRunning, !inputFinished else { throw VideoBitRateUpdateError.notEncoding }
-+        return try videoCodec.setVerifiedBitRate(bitRate)
++        return try videoCodec.setVerifiedBitRate(bitRate, expecting: expected, continuing: continuation)
 +    }
 +
-+    package func prepareVideoReplacement(_ settings: VideoCodecSettings) throws -> VideoEncoderReplacement {
++    package func prepareVideoReplacement(_ settings: VideoCodecSettings, expecting expected: VideoBitRateExpectation? = nil) throws -> VideoEncoderReplacement {
 +        guard isRunning, !inputFinished else { throw VideoEncoderReplacementError.notEncoding }
-+        return try videoCodec.prepareReplacement(settings)
++        return try videoCodec.prepareReplacement(settings, expecting: expected)
 +    }
 +    package func commitVideoReplacement(_ operation: VideoEncoderReplacement) throws {
 +        try videoCodec.commitReplacement(operation)
 +    }
++    package var videoReplacementContinuation: VideoReplacementContinuation? { videoCodec.replacementContinuation }
++    package func validateVideoAdmission(_ expected: VideoReplacementContinuation) throws { try videoCodec.validateAdmission(expected) }
 +    package var lastVideoSubmission: (sessionID: UUID, sourcePTS: CMTime)? { videoCodec.lastSubmission }
 +
 +    package var lastVideoBitRateChange: VideoBitRateChange? { videoCodec.lastBitRateChange }
 
      /// Specifies the video buffering count.
      package var videoInputBufferCounts = -1
-@@ -58,26 +84,39 @@
+@@ -58,26 +87,39 @@
      package private(set) var videoInputFormat: CMFormatDescription?
 
      private var audioCodec = AudioCodec()
@@ -725,7 +776,7 @@
          default:
              break
          }
-@@ -85,8 +124,26 @@
+@@ -85,8 +127,26 @@
 
      /// Appends a sample buffer for publish.
      package func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -752,7 +803,7 @@
      }
 
      /// Appends a video buffer.
-@@ -101,12 +158,15 @@
+@@ -101,12 +161,15 @@
          guard !isRunning else {
              return
          }
@@ -1395,7 +1446,7 @@
      }
 --- a/SRTHaishinKit/Sources/SRT/SRTStream.swift
 +++ b/SRTHaishinKit/Sources/SRT/SRTStream.swift
-@@ -7,7 +7,535 @@
+@@ -7,7 +7,626 @@
  /// An actor that provides the interface to control a one-way channel over a SRTConnection.
  public actor SRTStream {
      static let supportedAudioCodecs: [AudioCodecSettings.Format] = [.aac]
@@ -1684,21 +1735,69 @@
 +              let change = outgoing.lastVideoBitRateChange else { return nil }
 +        return .init(publishingGeneration: generation, change: change)
 +    }
++    /// Explicit selection of a verified configuration or the one retained
++    /// replacement continuation. Values alone never grant mutation authority.
++    public enum VideoMutationExpectation: Sendable {
++        case verified(publishingGeneration: UInt64, configuration: VideoBitRateExpectation)
++        case replacement(VideoReplacementReceipt)
++        var generation: UInt64 {
++            switch self {
++            case .verified(let generation, _): return generation
++            case .replacement(let receipt): return receipt.publishingGeneration
++            }
++        }
++    }
++    private var replacementContinuation: (receipt: VideoReplacementReceipt, native: VideoReplacementContinuation)?
++
++    private func validateVideoAdmission(_ expected: VideoMutationExpectation) throws {
++        guard publishingGeneration == expected.generation, videoInputIsRaw else { throw VideoMutationAdmissionError.stale }
++        switch expected {
++        case .verified(_, let configuration):
++            guard configuration.matches(outgoing.lastVideoBitRateChange) else { throw VideoMutationAdmissionError.stale }
++        case .replacement(let receipt):
++            guard let actual = replacementContinuation, receipt.matches(actual.receipt) else { throw VideoMutationAdmissionError.stale }
++            try outgoing.validateVideoAdmission(actual.native)
++        }
++    }
++
++    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, expecting expected: VideoMutationExpectation) async throws -> VideoBitRateReceipt {
++        try await setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected.generation, selector: expected)
++    }
 +    public func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64) async throws -> VideoBitRateReceipt {
++        try await setVerifiedVideoBitRateWithReceipt(bitRate, publishingGeneration: expected, selector: nil)
++    }
++    private func setVerifiedVideoBitRateWithReceipt(_ bitRate: Int, publishingGeneration expected: UInt64,
++        selector: VideoMutationExpectation?) async throws -> VideoBitRateReceipt {
 +        try Task.checkCancellation()
++        if let selector { try validateVideoAdmission(selector) }
 +        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
 +        guard videoReplacement == nil, videoMutation == nil, closeTask == nil, finishingGeneration == nil else {
++            if selector != nil { throw VideoMutationAdmissionError.stale }
 +            throw VideoBitRateUpdateError.sessionInvalidated
 +        }
 +        let mutation = reserveVideoMutation()
 +        defer { releaseVideoMutation(mutation) }
++        if selector == nil { replacementContinuation = nil }
 +        invalidateProbeConfiguration()
 +        if let submission = videoSubmission { await commitVideoSubmission(submission) }
++        if selector != nil { await videoMutationSubmissionJoined?() }
 +        try Task.checkCancellation()
 +        guard videoMutation == mutation, publishingGeneration == expected, closeTask == nil,
-+              finishingGeneration == nil else { throw VideoBitRateUpdateError.sessionInvalidated }
++              finishingGeneration == nil else {
++            if selector != nil { throw VideoMutationAdmissionError.stale }
++            throw VideoBitRateUpdateError.sessionInvalidated
++        }
++        if let selector { try validateVideoAdmission(selector) }
 +        guard videoInputIsRaw else { throw VideoBitRateUpdateError.notEncoding }
-+        _ = try outgoing.setVerifiedVideoBitRate(bitRate)
++        let nativeContinuation = replacementContinuation?.native
++        replacementContinuation = nil
++        switch selector {
++        case .verified(_, let configuration): _ = try outgoing.setVerifiedVideoBitRate(bitRate, expecting: configuration)
++        case .replacement:
++            guard let nativeContinuation else { throw VideoMutationAdmissionError.stale }
++            _ = try outgoing.setVerifiedVideoBitRate(bitRate, continuing: nativeContinuation)
++        case nil: _ = try outgoing.setVerifiedVideoBitRate(bitRate)
++        }
 +        guard let change = outgoing.lastVideoBitRateChange else { throw VideoBitRateUpdateError.sessionInvalidated }
 +        return .init(publishingGeneration: expected, change: change)
 +    }
@@ -1715,6 +1814,22 @@
 +        public let width: Int32
 +        public let height: Int32
 +        public let rawVideoFramesDropped: UInt64
++
++        public init(publishingGeneration: UInt64, encoderSessionID: UUID, previousEncoderSessionID: UUID,
++                    lastOldSourcePTS: CMTime, firstNewSourcePTS: CMTime, width: Int32, height: Int32,
++                    rawVideoFramesDropped: UInt64) {
++            self.publishingGeneration = publishingGeneration; self.encoderSessionID = encoderSessionID
++            self.previousEncoderSessionID = previousEncoderSessionID; self.lastOldSourcePTS = lastOldSourcePTS
++            self.firstNewSourcePTS = firstNewSourcePTS; self.width = width; self.height = height
++            self.rawVideoFramesDropped = rawVideoFramesDropped
++        }
++        func matches(_ actual: Self) -> Bool {
++            publishingGeneration == actual.publishingGeneration && encoderSessionID == actual.encoderSessionID
++                && previousEncoderSessionID == actual.previousEncoderSessionID
++                && exactVideoSourceTime(lastOldSourcePTS, actual.lastOldSourcePTS)
++                && exactVideoSourceTime(firstNewSourcePTS, actual.firstNewSourcePTS)
++                && width == actual.width && height == actual.height && rawVideoFramesDropped == actual.rawVideoFramesDropped
++        }
 +    }
 +    /// Replaces a running raw H.264 encoder while audio and compressed consumers
 +    /// continue. Newest-frame raw buffering remains bounded; evictions are counted.
@@ -1723,8 +1838,18 @@
 +    /// drain. A deadline requests invalidation; a wedged native call can delay join.
 +    public func replaceVideoSettings(_ settings: VideoCodecSettings,
 +        publishingGeneration expected: UInt64, timeout: Duration = .seconds(2)) async throws -> VideoReplacementReceipt {
++        try await replaceVideoSettings(settings, publishingGeneration: expected, selector: nil, timeout: timeout)
++    }
++    public func replaceVideoSettings(_ settings: VideoCodecSettings, publishingGeneration expected: UInt64,
++        expecting configuration: VideoBitRateExpectation, timeout: Duration = .seconds(2)) async throws -> VideoReplacementReceipt {
++        try await replaceVideoSettings(settings, publishingGeneration: expected, selector: configuration, timeout: timeout)
++    }
++    private func replaceVideoSettings(_ settings: VideoCodecSettings, publishingGeneration expected: UInt64,
++        selector: VideoBitRateExpectation?, timeout: Duration) async throws -> VideoReplacementReceipt {
 +        try Task.checkCancellation()
++        if let selector { try validateVideoAdmission(.verified(publishingGeneration: expected, configuration: selector)) }
 +        guard videoReplacement == nil, videoMutation == nil, closeTask == nil, finishingGeneration == nil else {
++            if selector != nil { throw VideoMutationAdmissionError.stale }
 +            throw VideoReplacementError.busy
 +        }
 +        guard publishingGeneration == expected, videoInputIsRaw else { throw VideoReplacementError.notEncoding }
@@ -1737,15 +1862,24 @@
 +              validDimensions, settings.bitRate > 0 else { throw VideoReplacementError.invalidSettings }
 +        let mutation = reserveVideoMutation()
 +        defer { releaseVideoMutation(mutation) }
++        if selector == nil { replacementContinuation = nil }
 +        invalidateProbeConfiguration()
 +        if let submission = videoSubmission { await commitVideoSubmission(submission) }
++        if selector != nil { await videoMutationSubmissionJoined?() }
 +        try Task.checkCancellation()
 +        guard videoMutation == mutation, publishingGeneration == expected, closeTask == nil,
-+              finishingGeneration == nil, let previous = outgoing.lastVideoSubmission else {
++              finishingGeneration == nil else {
++            if selector != nil { throw VideoMutationAdmissionError.stale }
 +            throw VideoReplacementError.interrupted
 +        }
++        if let selector { try validateVideoAdmission(.verified(publishingGeneration: expected, configuration: selector)) }
 +        guard videoInputIsRaw else { throw VideoReplacementError.notEncoding }
-+        let operation = try outgoing.prepareVideoReplacement(settings)
++        guard let previous = outgoing.lastVideoSubmission else {
++            if selector != nil { throw VideoMutationAdmissionError.stale }
++            throw VideoReplacementError.interrupted
++        }
++        replacementContinuation = nil
++        let operation = try outgoing.prepareVideoReplacement(settings, expecting: selector)
 +        let state = VideoReplacement(generation: expected, operation: operation, settings: settings,
 +            oldPTS: previous.sourcePTS, dropped: outgoing.rawVideoFramesDropped)
 +        videoReplacement = state
@@ -1859,6 +1993,8 @@
 +    var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
 +    var isVideoMutationPending: Bool { videoMutation != nil }
 +    private var videoMutation: UUID?
++    // Internal deterministic scheduling seam; absent from public construction.
++    private let videoMutationSubmissionJoined: (@Sendable () async -> Void)?
 +    private var videoMutationInput: CheckedContinuation<Void, Never>?
 +    private func reserveVideoMutation() -> UUID {
 +        let id = UUID(); videoMutation = id; return id
@@ -1914,6 +2050,12 @@
 +            lastOldSourcePTS: state.oldPTS, firstNewSourcePTS: first.sourcePTS,
 +            width: frame.width, height: frame.height,
 +            rawVideoFramesDropped: outgoing.rawVideoFramesDropped &- state.dropped)
++        if let native = outgoing.videoReplacementContinuation,
++           native.previousEncoderSessionID == receipt.previousEncoderSessionID,
++           native.encoderSessionID == receipt.encoderSessionID,
++           exactVideoSourceTime(native.firstSourcePTS, receipt.firstNewSourcePTS) {
++            replacementContinuation = (receipt, native)
++        }
 +        state.output?.resume(returning: receipt); state.output = nil
 +    }
 +
@@ -1931,7 +2073,7 @@
 
      /// The expected medias for transport stream.
      public var expectedMedias: Set<AVMediaType> {
-@@ -22,7 +550,7 @@
+@@ -22,7 +641,7 @@
      private lazy var writer = TSWriter()
      private lazy var reader = TSReader()
      package lazy var incoming = IncomingStream(self)
@@ -1940,7 +2082,7 @@
      private weak var connection: SRTConnection?
 
      /// The error domain codes.
-@@ -32,8 +560,59 @@
+@@ -32,8 +651,62 @@
      }
 
      /// Creates a new stream object.
@@ -1962,6 +2104,7 @@
 +                pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
 +                transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
 +                encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
++        videoMutationSubmissionJoined = nil
 +        self.transportSendObserver = transportSendObserver
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
 +        probeWakeRunner = { probe, accounting in
@@ -1986,12 +2129,14 @@
 +         transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
 +         pacesEncodedVideo: Bool = false,
 +         allowsBandwidthProbes: Bool = false,
++         videoMutationSubmissionJoined: (@Sendable () async -> Void)? = nil,
 +         probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
 +             await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
 +         },
 +         pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
 +        self.transportSendObserver = transportSendObserver
 +        self.allowsBandwidthProbes = allowsBandwidthProbes
++        self.videoMutationSubmissionJoined = videoMutationSubmissionJoined
 +        self.probeWakeRunner = probeWakeRunner
 +        self.pacesEncodedVideo = pacesEncodedVideo; self.pacingSleep = pacingSleep
 +        self.outgoing = outgoing; self.connection = connection
@@ -2001,7 +2146,7 @@
          Task { await connection.addStream(self) }
      }
 
-@@ -45,7 +624,9 @@
+@@ -45,7 +718,9 @@
      ///
      /// - Warning: As a prerequisite, SRTConnection must be connected. In the future, an exception will be thrown.
      public func publish(_ name: String? = "") async {
@@ -2012,7 +2157,7 @@
              return
          }
          guard name != nil else {
-@@ -57,8 +638,46 @@
+@@ -57,8 +732,46 @@
              }
              return
          }
@@ -2060,7 +2205,7 @@
          if outgoing.videoInputFormat != nil {
              writer.expectedMedias.insert(.video)
          }
-@@ -68,26 +687,55 @@
+@@ -68,26 +781,55 @@
          if writer.expectedMedias.isEmpty {
              logger.error("Please set expected media.")
          }
@@ -2136,7 +2281,7 @@
      }
 
      /// Playback streaming audio and video from server.
-@@ -116,16 +764,99 @@
+@@ -116,16 +858,100 @@
          readyState = .playing
      }
 
@@ -2209,6 +2354,7 @@
 +        let wakeTask = probeWakeTask
 +        wakeTask?.cancel()
 +        probeWakeTask = nil
++        replacementContinuation = nil
 +        videoReplacement?.interrupt(.interrupted)
 +        generation &+= 1
 +        sourceCadenceClock = SourceCadenceClock()
@@ -2241,7 +2387,7 @@
      }
 
      /// Sets the expected media.
-@@ -146,23 +877,43 @@
+@@ -146,23 +972,44 @@
          guard Self.supportedAudioCodecs.contains(audioSettings.format) else {
              throw Error.unsupportedCodec
          }
@@ -2258,6 +2404,7 @@
          guard Self.supportedVideoCodecs.contains(videoSettings.format) else {
              throw Error.unsupportedCodec
          }
++        replacementContinuation = nil
 +        let expected = generation, mutation = reserveVideoMutation()
 +        defer { releaseVideoMutation(mutation) }
 +        invalidateProbeConfiguration()
@@ -2288,7 +2435,7 @@
                  outgoing.append(sampleBuffer)
                  outputs.forEach { $0.stream(self, didOutput: sampleBuffer) }
              }
-@@ -172,16 +923,36 @@
+@@ -172,16 +1019,36 @@
      }
 
      public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
@@ -3179,7 +3326,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoCodecInvalidation.swift
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,28 @@
 +import Foundation
 +
 +/// Notifications may arrive outside the stream actor. They only replace this
@@ -3196,7 +3343,9 @@
 +    var snapshot: Snapshot {
 +        lock.withLock { Snapshot(revision: revision, pending: installedRevision != revision) }
 +    }
-+    func invalidate() { lock.withLock { revision = UUID() } }
++    @discardableResult func invalidate() -> UUID {
++        lock.withLock { revision = UUID(); return revision }
++    }
 +    func installed(_ revision: UUID) {
 +        // Installing a session cannot consume an invalidation that arrived while
 +        // it was being created. Such a request remains pending for the next input.
@@ -3278,7 +3427,7 @@
 +}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoEncoderConfiguration.swift
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,116 @@
 +import CoreMedia
 +import Foundation
 +
@@ -3345,6 +3494,56 @@
 +
 +/// Must remain bounded and synchronous; never wait, perform I/O or create tasks.
 +public typealias VideoEncoderSubmissionObserver = @Sendable (VideoEncoderSubmission) -> Void
++
++/// A value selector, never authority to mutate an encoder. The owner compares its
++/// retained actual receipt and notification revision again at native admission.
++public struct VideoBitRateExpectation: Sendable {
++    public let configurationID: UUID
++    public let encoderSessionID: UUID
++    public let bitRate: Int
++    public let acceptedAt: Double
++    public let lastSubmittedSourcePTS: CMTime?
++
++    public init(configurationID: UUID, encoderSessionID: UUID, bitRate: Int,
++                acceptedAt: Double, lastSubmittedSourcePTS: CMTime?) {
++        self.configurationID = configurationID; self.encoderSessionID = encoderSessionID
++        self.bitRate = bitRate; self.acceptedAt = acceptedAt
++        self.lastSubmittedSourcePTS = lastSubmittedSourcePTS
++    }
++    public init(_ change: VideoBitRateChange) {
++        self.init(configurationID: change.configuration.id, encoderSessionID: change.configuration.encoderSessionID,
++                  bitRate: change.configuration.bitRate, acceptedAt: change.acceptedAt,
++                  lastSubmittedSourcePTS: change.lastSubmittedSourcePTS)
++    }
++    package func matches(_ change: VideoBitRateChange?) -> Bool {
++        guard let change else { return false }
++        return configurationID == change.configuration.id && encoderSessionID == change.configuration.encoderSessionID
++            && bitRate == change.configuration.bitRate && acceptedAt.bitPattern == change.acceptedAt.bitPattern
++            && exactVideoSourceTime(lastSubmittedSourcePTS, change.lastSubmittedSourcePTS)
++    }
++}
++
++/// The current call made no encoder mutation. Post-write/drain uncertainty never
++/// uses this result, even if the notification revision is now obsolete.
++public enum VideoMutationAdmissionError: Error, Equatable, Sendable { case stale }
++
++package func exactVideoSourceTime(_ lhs: CMTime?, _ rhs: CMTime?) -> Bool {
++    switch (lhs, rhs) {
++    case (nil, nil): return true
++    case let (lhs?, rhs?):
++        return lhs.value == rhs.value && lhs.timescale == rhs.timescale && lhs.flags == rhs.flags && lhs.epoch == rhs.epoch
++    default: return false
++    }
++}
++
++/// Private package ownership minted only by a committed replacement's first
++/// successful submission. Public selectors cannot manufacture this identity.
++package struct VideoReplacementContinuation: Sendable {
++    package let id: UUID
++    package let previousEncoderSessionID: UUID
++    package let encoderSessionID: UUID
++    package let firstSourcePTS: CMTime
++}
 --- /dev/null
 +++ b/HaishinKit/Sources/Codec/VideoEncoderReplacement.swift
 @@ -0,0 +1,31 @@

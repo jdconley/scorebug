@@ -14,7 +14,9 @@ final class VideoCodecInvalidation: @unchecked Sendable {
     var snapshot: Snapshot {
         lock.withLock { Snapshot(revision: revision, pending: installedRevision != revision) }
     }
-    func invalidate() { lock.withLock { revision = UUID() } }
+    @discardableResult func invalidate() -> UUID {
+        lock.withLock { revision = UUID(); return revision }
+    }
     func installed(_ revision: UUID) {
         // Installing a session cannot consume an invalidation that arrived while
         // it was being created. Such a request remains pending for the next input.

@@ -64,3 +64,53 @@ public enum VideoEncoderHardwareSelection: Equatable, Sendable {
 
 /// Must remain bounded and synchronous; never wait, perform I/O or create tasks.
 public typealias VideoEncoderSubmissionObserver = @Sendable (VideoEncoderSubmission) -> Void
+
+/// A value selector, never authority to mutate an encoder. The owner compares its
+/// retained actual receipt and notification revision again at native admission.
+public struct VideoBitRateExpectation: Sendable {
+    public let configurationID: UUID
+    public let encoderSessionID: UUID
+    public let bitRate: Int
+    public let acceptedAt: Double
+    public let lastSubmittedSourcePTS: CMTime?
+
+    public init(configurationID: UUID, encoderSessionID: UUID, bitRate: Int,
+                acceptedAt: Double, lastSubmittedSourcePTS: CMTime?) {
+        self.configurationID = configurationID; self.encoderSessionID = encoderSessionID
+        self.bitRate = bitRate; self.acceptedAt = acceptedAt
+        self.lastSubmittedSourcePTS = lastSubmittedSourcePTS
+    }
+    public init(_ change: VideoBitRateChange) {
+        self.init(configurationID: change.configuration.id, encoderSessionID: change.configuration.encoderSessionID,
+                  bitRate: change.configuration.bitRate, acceptedAt: change.acceptedAt,
+                  lastSubmittedSourcePTS: change.lastSubmittedSourcePTS)
+    }
+    package func matches(_ change: VideoBitRateChange?) -> Bool {
+        guard let change else { return false }
+        return configurationID == change.configuration.id && encoderSessionID == change.configuration.encoderSessionID
+            && bitRate == change.configuration.bitRate && acceptedAt.bitPattern == change.acceptedAt.bitPattern
+            && exactVideoSourceTime(lastSubmittedSourcePTS, change.lastSubmittedSourcePTS)
+    }
+}
+
+/// The current call made no encoder mutation. Post-write/drain uncertainty never
+/// uses this result, even if the notification revision is now obsolete.
+public enum VideoMutationAdmissionError: Error, Equatable, Sendable { case stale }
+
+package func exactVideoSourceTime(_ lhs: CMTime?, _ rhs: CMTime?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): return true
+    case let (lhs?, rhs?):
+        return lhs.value == rhs.value && lhs.timescale == rhs.timescale && lhs.flags == rhs.flags && lhs.epoch == rhs.epoch
+    default: return false
+    }
+}
+
+/// Private package ownership minted only by a committed replacement's first
+/// successful submission. Public selectors cannot manufacture this identity.
+package struct VideoReplacementContinuation: Sendable {
+    package let id: UUID
+    package let previousEncoderSessionID: UUID
+    package let encoderSessionID: UUID
+    package let firstSourcePTS: CMTime
+}

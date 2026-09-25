@@ -8,7 +8,7 @@ import VideoToolbox
 @Suite(.serialized) struct VideoCodecBitRateTests {
     private final class Session: VTSessionConvertible {
         var options: [String: AnyObject] = [:]
-        var writes = 0, conversions = 0, invalidations = 0
+        var writes = 0, conversions = 0, invalidations = 0, drains = 0
         var onWrite: (() -> Void)?
         var onConvert: (() -> Void)?
         var writeStatus: OSStatus = noErr
@@ -39,7 +39,7 @@ import VideoToolbox
             defer { convertReturnedAt = ProcessInfo.processInfo.systemUptime }
             if convertStatus != noErr { throw VTSessionError.failedToConvert(status: convertStatus) }
         }
-        func completeFrames() -> OSStatus { noErr }
+        func completeFrames() -> OSStatus { drains += 1; return noErr }
         func invalidate() { invalidations += 1 }
     }
     #if os(macOS)
@@ -207,6 +207,122 @@ import VideoToolbox
         #expect(session.conversions == 1)
         #expect(observations.rows.isEmpty)
         codec.stopRunning()
+    }
+
+    @Test func guardedStaleSameRateDoesNotWriteOrDrainAndPreservesEncoder() throws {
+        let session = Session(), codec = try ready(session)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let old = try #require(codec.lastBitRateChange)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let current = try #require(codec.lastBitRateChange)
+        let writes = session.writes
+        do { _ = try guardedWrite(codec, 1_000_000, expecting: old); Issue.record("Stale configuration was admitted") } catch {}
+        #expect(session.writes == writes)
+        #expect(codec.lastBitRateChange?.configuration.id == current.configuration.id)
+        #expect(codec.failure.error == nil)
+        codec.append(try frame(1)); #expect(session.conversions == 2)
+        codec.stopRunning()
+    }
+
+    @Test func guardedOtherEncoderAtSameRateDoesNotWrite() throws {
+        let session = Session(), codec = try ready(session)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let old = try #require(codec.lastBitRateChange)
+        codec.requestSessionInvalidation(); codec.append(try frame(1))
+        _ = try codec.setVerifiedBitRate(900_000)
+        let writes = session.writes
+        do { _ = try guardedWrite(codec, 1_000_000, expecting: old); Issue.record("Other encoder was admitted") } catch {}
+        #expect(session.writes == writes && codec.failure.error == nil)
+        codec.stopRunning()
+    }
+
+    @Test(arguments: ["id", "encoder", "rate", "accepted", "nil", "scale", "flags", "epoch"])
+    func guardedSelectorComparesExactReceiptFields(field: String) throws {
+        let session = Session(), codec = try ready(session)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let actual = try #require(codec.lastBitRateChange), pts = try #require(actual.lastSubmittedSourcePTS)
+        var source: CMTime? = pts
+        if field == "nil" { source = nil }
+        if field == "scale" { source = CMTime(value: pts.value * 2, timescale: pts.timescale * 2, flags: pts.flags, epoch: pts.epoch) }
+        if field == "flags" { source = CMTime(value: pts.value, timescale: pts.timescale, flags: [pts.flags, .hasBeenRounded], epoch: pts.epoch) }
+        if field == "epoch" { source = CMTime(value: pts.value, timescale: pts.timescale, flags: pts.flags, epoch: pts.epoch + 1) }
+        let selector = VideoBitRateExpectation(configurationID: field == "id" ? UUID() : actual.configuration.id,
+            encoderSessionID: field == "encoder" ? UUID() : actual.configuration.encoderSessionID,
+            bitRate: field == "rate" ? 800_000 : actual.configuration.bitRate,
+            acceptedAt: field == "accepted" ? actual.acceptedAt.nextUp : actual.acceptedAt, lastSubmittedSourcePTS: source)
+        let writes = session.writes
+        #expect(throws: VideoMutationAdmissionError.stale) { try codec.setVerifiedBitRate(1_000_000, expecting: selector) }
+        #expect(throws: VideoMutationAdmissionError.stale) { try codec.prepareReplacement(.default, expecting: selector) }
+        #expect(session.writes == writes && session.drains == 0 && codec.failure.error == nil)
+        _ = try codec.setVerifiedBitRate(1_000_000, expecting: .init(actual))
+        #expect(session.writes > writes && codec.failure.error == nil)
+        codec.stopRunning()
+    }
+
+    @Test func guardedInvalidationBeforeRejectsSafelyButDuringWriteRemainsTerminal() throws {
+        let session = Session(), codec = try ready(session)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let actual = try #require(codec.lastBitRateChange), writes = session.writes
+        codec.requestSessionInvalidation()
+        #expect(throws: VideoMutationAdmissionError.stale) { try codec.setVerifiedBitRate(1_000_000, expecting: .init(actual)) }
+        #expect(throws: VideoMutationAdmissionError.stale) { try codec.prepareReplacement(.default, expecting: .init(actual)) }
+        #expect(session.writes == writes && session.drains == 0 && codec.failure.error == nil)
+        codec.append(try frame(1)); _ = try codec.setVerifiedBitRate(900_000)
+        let fresh = try #require(codec.lastBitRateChange)
+        session.onWrite = { codec.requestSessionInvalidation() }
+        #expect(throws: VideoBitRateUpdateError.sessionInvalidated) { try codec.setVerifiedBitRate(1_000_000, expecting: .init(fresh)) }
+        #expect(session.writes > writes && codec.failure.error != nil)
+        session.onWrite = nil; codec.stopRunning()
+    }
+
+    @Test(arguments: ["none", "write", "invalidWrite", "settings", "invalidate", "finish", "stop", "newReplacement"])
+    func guardedReplacementContinuationTracksExactOwnedConfiguration(action: String) throws {
+        let session = Session(), codec = try ready(session)
+        let operation = try codec.prepareReplacement(.default)
+        operation.drain(); try codec.commitReplacement(operation)
+        codec.append(try frame(1))
+        let continuation = try #require(codec.replacementContinuation)
+        #expect(continuation.previousEncoderSessionID == operation.revision)
+        codec.append(try frame(2))
+        #expect(codec.replacementContinuation?.id == continuation.id)
+        #expect(exactVideoSourceTime(codec.replacementContinuation?.firstSourcePTS, CMTime(value: 1, timescale: 30)))
+        switch action {
+        case "write": _ = try codec.setVerifiedBitRate(900_000)
+        case "invalidWrite": #expect(throws: VideoBitRateUpdateError.invalidBitRate) { try codec.setVerifiedBitRate(0) }
+        case "settings": codec.settings = codec.settings
+        case "invalidate": codec.requestSessionInvalidation(); codec.append(try frame(3))
+        case "finish": _ = codec.makeCompletion()
+        case "stop": codec.stopRunning()
+        case "newReplacement": _ = try codec.prepareReplacement(.default)
+        default: break
+        }
+        let writes = session.writes
+        if action == "none" {
+            _ = try codec.setVerifiedBitRate(1_000_000, continuing: continuation)
+            #expect(codec.lastBitRateChange?.configuration.encoderSessionID == continuation.encoderSessionID)
+            let acceptedWrites = session.writes
+            #expect(throws: VideoMutationAdmissionError.stale) { try codec.setVerifiedBitRate(1_100_000, continuing: continuation) }
+            #expect(session.writes == acceptedWrites)
+        } else {
+            #expect(throws: VideoMutationAdmissionError.stale) { try codec.setVerifiedBitRate(1_000_000, continuing: continuation) }
+            #expect(session.writes == writes && codec.failure.error == nil)
+        }
+        codec.stopRunning()
+    }
+
+    @Test func guardedReplacementDrainInvalidationRemainsUncertain() throws {
+        let session = Session(), codec = try ready(session)
+        _ = try codec.setVerifiedBitRate(900_000)
+        let baseline = try #require(codec.lastBitRateChange)
+        let operation = try codec.prepareReplacement(.default, expecting: .init(baseline))
+        operation.drain(); codec.requestSessionInvalidation()
+        #expect(throws: VideoEncoderReplacementError.obsolete) { try codec.commitReplacement(operation) }
+        #expect(session.drains == 1 && codec.replacementContinuation == nil)
+        codec.stopRunning()
+    }
+
+    private func guardedWrite(_ codec: VideoCodec, _ rate: Int, expecting: VideoBitRateChange) throws -> VideoCodecSettings {
+        try codec.setVerifiedBitRate(rate, expecting: VideoBitRateExpectation(expecting))
     }
 
     private func ready(_ session: Session) throws -> VideoCodec {

@@ -381,3 +381,21 @@ changes, modulo-16 wraparound and the intentional new-publication reset in
 that a particular impaired-network GOP loss was caused by the muxer. The maintained
 patch also includes the previously implemented `SRTProbeTransportGuard`; all 162
 original upstream hashes and the complete current source round trip are verified.
+
+Guarded native admission is available explicitly through
+`SRTStream.setVerifiedVideoBitRateWithReceipt(_:expecting:)` and
+`replaceVideoSettings(_:publishingGeneration:expecting:timeout:)`. A verified
+selector compares the actual configuration and encoder IDs, bitrate, acceptance
+time and exact source `CMTime` representation before reservation, after joining
+pending submission and at the codec's native admission boundary. Selectors are
+values, not retained authority. `VideoMutationAdmissionError.stale` is emitted
+only before this operation makes an encoder mutation; native write, cancellation
+and replacement-drain uncertainty retain their existing errors and failure paths.
+
+A replacement receipt selects one retained private continuation, minted by the
+actual replacement and first successful new submission. Its historical source
+boundary survives ordinary later submissions. A configuration write, settings
+assignment, new replacement, finish, close or notification invalidation makes it
+unusable; successful follow-up consumes it once. Notification callbacks only
+advance the lock-protected scalar revision. Legacy mutation APIs remain available,
+and no application quality-upgrade route is enabled by this SDK capability.

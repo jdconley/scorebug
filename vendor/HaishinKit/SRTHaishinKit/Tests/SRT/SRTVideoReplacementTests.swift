@@ -60,6 +60,203 @@ import Testing
         }
         await connection.close()
     }
+    @Test(arguments: ["none", "write", "settings", "close", "finish"])
+    func guardedReplacementContinuationIsSingleUse(action: String) async throws {
+        let gate = ReplacementGate(), observed = ReplacementFrames()
+        let (connection, stream, generation) = try await gatedStream(gate, observed: observed)
+        defer { gate.open() }
+        let baseline = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        let change = Task { try await stream.replaceVideoSettings(reduced, publishingGeneration: generation, expecting: .init(baseline.change)) }
+        try await gate.waitForEntry(); gate.open()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await stream.videoSettings.videoSize.width != 32, ContinuousClock.now < deadline { await Task.yield() }
+        await stream.append(try replacementVideo(1))
+        let receipt = try await change.value
+        // Wrong public values must not consume the retained private continuation.
+        for field in ["generation", "encoder", "previous", "old", "first", "flags", "epoch", "width", "height", "dropped"] {
+            let pts = receipt.firstNewSourcePTS
+            let first = field == "flags" ? CMTime(value: pts.value, timescale: pts.timescale, flags: [pts.flags, .hasBeenRounded], epoch: pts.epoch)
+                : field == "epoch" ? CMTime(value: pts.value, timescale: pts.timescale, flags: pts.flags, epoch: pts.epoch + 1)
+                : field == "first" ? CMTime(value: pts.value * 2, timescale: pts.timescale * 2, flags: pts.flags, epoch: pts.epoch) : pts
+            let altered = SRTStream.VideoReplacementReceipt(publishingGeneration: field == "generation" ? generation + 1 : generation,
+                encoderSessionID: field == "encoder" ? UUID() : receipt.encoderSessionID,
+                previousEncoderSessionID: field == "previous" ? UUID() : receipt.previousEncoderSessionID,
+                lastOldSourcePTS: field == "old" ? .invalid : receipt.lastOldSourcePTS, firstNewSourcePTS: first,
+                width: field == "width" ? 64 : receipt.width, height: field == "height" ? 64 : receipt.height,
+                rawVideoFramesDropped: field == "dropped" ? receipt.rawVideoFramesDropped + 1 : receipt.rawVideoFramesDropped)
+            await #expect(throws: VideoMutationAdmissionError.stale) { try await guardedFollowup(stream, rate: 800_000, receipt: altered) }
+        }
+        switch action {
+        case "write": _ = try await stream.setVerifiedVideoBitRateWithReceipt(800_000, publishingGeneration: generation)
+        case "settings": try await stream.setVideoSettings(stream.videoSettings)
+        case "close": await stream.close()
+        case "finish": await stream.finish()
+        default:
+            await stream.append(try replacementVideo(2))
+            let later = ContinuousClock.now + .seconds(2)
+            while observed.frames.count < 3 && ContinuousClock.now < later { await Task.yield() }
+            let accepted = try await guardedFollowup(stream, rate: 800_000, receipt: receipt)
+            #expect(accepted.change.configuration.encoderSessionID == receipt.encoderSessionID)
+        }
+        let current = await stream.verifiedVideoBitRateReceipt
+        await #expect(throws: VideoMutationAdmissionError.stale) { try await guardedFollowup(stream, rate: 900_000, receipt: receipt) }
+        #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration.id == current?.change.configuration.id)
+        #expect(await stream.publishingError == nil)
+        await stream.finish(); await connection.close()
+    }
+
+    @Test(arguments: [false, true])
+    func guardedRechecksAfterHeldSubmissionWithoutWritesOrDrains(profile: Bool) async throws {
+        let gate = ReplacementGate(), counts = AdmissionCounts(), observed = ReplacementFrames()
+        let codec = VideoCodec(sessionFactory: { mode, codec in
+            AdmissionSession(try mode.makeSession(codec), gate: gate, counts: counts)
+        })
+        let invalidation = ReplacementInvalidation(codec)
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec), compressedVideoObserver: observed.record)
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try replacementVideo(0))
+        let ready = ContinuousClock.now + .seconds(2)
+        while observed.frames.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        try #require(!observed.frames.isEmpty)
+        let baseline = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        await stream.append(try replacementVideo(1)); try await gate.waitForEntry()
+        defer { gate.open() }
+        let writes = counts.writes, drains = counts.drains
+        let mutation = Task {
+            if profile {
+                _ = try await stream.replaceVideoSettings(reduced, publishingGeneration: generation, expecting: .init(baseline.change))
+            } else {
+                _ = try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000,
+                    expecting: .verified(publishingGeneration: generation, configuration: .init(baseline.change)))
+            }
+        }
+        let reserved = ContinuousClock.now + .seconds(1)
+        while await !stream.isVideoMutationPending && ContinuousClock.now < reserved { await Task.yield() }
+        try #require(await stream.isVideoMutationPending)
+        invalidation.request(); gate.open()
+        await #expect(throws: VideoMutationAdmissionError.stale) { try await mutation.value }
+        #expect(counts.writes == writes && counts.drains == drains)
+        #expect(await !stream.isVideoMutationPending)
+        #expect(await stream.publishingGeneration == generation)
+        #expect(await stream.publishingError == nil)
+        await stream.append(try replacementVideo(2))
+        let rebuilt = ContinuousClock.now + .seconds(2)
+        while observed.frames.last?.sourcePTS != CMTime(value: 2, timescale: 30), ContinuousClock.now < rebuilt { await Task.yield() }
+        let fresh = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        _ = try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000,
+            expecting: .verified(publishingGeneration: generation, configuration: .init(fresh.change)))
+        await stream.finish(); await connection.close()
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func guardedOldAdmissionCannotMutateOrRetireRepublishedStream(profile: Bool, cancelled: Bool) async throws {
+        let gate = ReplacementGate(), counts = AdmissionCounts(), observed = ReplacementFrames(), joined = AdmissionJoinGate()
+        let codec = VideoCodec(sessionFactory: { mode, codec in
+            AdmissionSession(try mode.makeSession(codec), gate: gate, counts: counts)
+        })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            compressedVideoObserver: observed.record, videoMutationSubmissionJoined: { await joined.pause() })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        // Missing audio holds transport startup, isolating the admission/encoder lifecycle.
+        await stream.setExpectedMedias([.audio, .video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try replacementVideo(0))
+        let ready = ContinuousClock.now + .seconds(2)
+        while observed.frames.isEmpty && ContinuousClock.now < ready { await Task.yield() }
+        let baseline = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        await stream.append(try replacementVideo(1)); try await gate.waitForEntry()
+        defer { gate.open() }
+        let mutation = Task {
+            if profile {
+                _ = try await stream.replaceVideoSettings(reduced, publishingGeneration: generation, expecting: .init(baseline.change))
+            } else {
+                _ = try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000,
+                    expecting: .verified(publishingGeneration: generation, configuration: .init(baseline.change)))
+            }
+        }
+        let reserved = ContinuousClock.now + .seconds(1)
+        while await !stream.isVideoMutationPending && ContinuousClock.now < reserved { await Task.yield() }
+        try #require(await stream.isVideoMutationPending)
+        // A competing matching caller also has made no encoder mutation.
+        await #expect(throws: VideoMutationAdmissionError.stale) {
+            try await stream.setVerifiedVideoBitRateWithReceipt(1_200_000,
+                expecting: .verified(publishingGeneration: generation, configuration: .init(baseline.change)))
+        }
+        await #expect(throws: VideoMutationAdmissionError.stale) {
+            try await stream.replaceVideoSettings(reduced, publishingGeneration: generation, expecting: .init(baseline.change))
+        }
+        gate.open(); try await joined.waitForEntry()
+        await stream.close()
+        await stream.setExpectedMedias([.audio, .video]); await stream.publish()
+        let freshGeneration = try #require(await stream.publishingGeneration)
+        #expect(freshGeneration != generation)
+        let frames = observed.frames.count
+        await stream.append(try replacementVideo(0))
+        let readyAgain = ContinuousClock.now + .seconds(2)
+        while observed.frames.count == frames && ContinuousClock.now < readyAgain { await Task.yield() }
+        let fresh = try await stream.setVerifiedVideoBitRateWithReceipt(800_000, publishingGeneration: freshGeneration)
+        let writes = counts.writes, drains = counts.drains
+        if cancelled { mutation.cancel() }
+        await joined.release()
+        if cancelled { await #expect(throws: CancellationError.self) { try await mutation.value } }
+        else { await #expect(throws: VideoMutationAdmissionError.stale) { try await mutation.value } }
+        #expect(counts.writes == writes && counts.drains == drains)
+        #expect(await stream.publishingGeneration == freshGeneration)
+        #expect(await stream.publishingError == nil)
+        #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration.id == fresh.change.configuration.id)
+        #expect(await !stream.isVideoMutationPending)
+        await stream.close(); await connection.close()
+    }
+
+    @Test func guardedStaleBaselinePreservesNewerProbeAndPublication() async throws {
+        let gate = ReplacementGate(), counts = AdmissionCounts(), observed = ReplacementFrames()
+        let codec = VideoCodec(sessionFactory: { mode, codec in
+            AdmissionSession(try mode.makeSession(codec), gate: gate, counts: counts)
+        })
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: { _, mon, _ in mon.msRTT = 2; return 0 }))
+        let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
+            compressedVideoObserver: observed.record, allowsBandwidthProbes: true, probeWakeRunner: { _, _ in })
+        await connection.addStream(stream)
+        try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        try await stream.setVideoSettings(.init(videoSize: CGSize(width: 64, height: 64), allowFrameReordering: false))
+        await stream.setExpectedMedias([.video]); await stream.publish()
+        let generation = try #require(await stream.publishingGeneration)
+        await stream.append(try replacementVideo(0))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await stream.transportClockSnapshot == nil, ContinuousClock.now < deadline { await Task.yield() }
+        let old = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        let current = try await stream.setVerifiedVideoBitRateWithReceipt(900_000, publishingGeneration: generation)
+        let probe = try await stream.beginBandwidthProbe(bitRate: 100_000, publishingGeneration: generation)
+        let writes = counts.writes, drains = counts.drains
+        for selector in [SRTStream.VideoMutationExpectation.verified(publishingGeneration: generation, configuration: .init(old.change)),
+                         .verified(publishingGeneration: generation + 1, configuration: .init(current.change))] {
+            await #expect(throws: VideoMutationAdmissionError.stale) { try await stream.setVerifiedVideoBitRateWithReceipt(1_000_000, expecting: selector) }
+        }
+        await #expect(throws: VideoMutationAdmissionError.stale) {
+            try await stream.replaceVideoSettings(reduced, publishingGeneration: generation, expecting: .init(old.change))
+        }
+        #expect(counts.writes == writes && counts.drains == drains)
+        #expect(await stream.bandwidthProbeSnapshot?.id == probe.id)
+        #expect(await stream.bandwidthProbeSnapshot?.reason == nil)
+        #expect(await !stream.isVideoMutationPending)
+        #expect(await stream.verifiedVideoBitRateReceipt?.change.configuration.id == current.change.configuration.id)
+        #expect(await stream.publishingGeneration == generation)
+        #expect(await stream.publishingError == nil)
+        await stream.finish(); await connection.close()
+    }
+
+    private func guardedFollowup(_ stream: SRTStream, rate: Int, receipt: SRTStream.VideoReplacementReceipt) async throws -> SRTStream.VideoBitRateReceipt {
+        try await stream.setVerifiedVideoBitRateWithReceipt(rate, expecting: .replacement(receipt))
+    }
+
     private func gatedStream(_ gate: ReplacementGate, observed: ReplacementFrames, transport: ReplacementTransport = ReplacementTransport(), audio: Bool = false, deferTransport: Bool = false, defect: String? = nil) async throws -> (SRTConnection, SRTStream, UInt64) {
         var count = 0
         let codec = VideoCodec(sessionFactory: { mode, codec in
@@ -573,4 +770,43 @@ private final class EarlyReplacementSession: VTSessionConvertible {
     }
     func completeFrames() -> OSStatus { noErr }
     func invalidate() {}
+}
+
+private final class AdmissionCounts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedWrites = 0, storedDrains = 0
+    var writes: Int { lock.withLock { storedWrites } }
+    var drains: Int { lock.withLock { storedDrains } }
+    func wrote() { lock.withLock { storedWrites += 1 } }
+    func drained() { lock.withLock { storedDrains += 1 } }
+}
+private final class AdmissionSession: VTSessionConvertible {
+    let native: any VTSessionConvertible, gate: ReplacementGate, counts: AdmissionCounts
+    init(_ native: any VTSessionConvertible, gate: ReplacementGate, counts: AdmissionCounts) {
+        self.native = native; self.gate = gate; self.counts = counts
+    }
+    func setOption(_ option: VTSessionOption) -> OSStatus { counts.wrote(); return native.setOption(option) }
+    func copyOption(_ key: VTSessionOptionKey) -> (status: OSStatus, value: CFTypeRef?) { native.copyOption(key) }
+    func setOptions(_ options: Set<VTSessionOption>) -> OSStatus { native.setOptions(options) }
+    func convert(_ sampleBuffer: CMSampleBuffer, continuation: PublishingQueue<CMSampleBuffer>?, encoderCompletionObserver: VideoEncoderCompletionObserver?) throws {
+        if sampleBuffer.presentationTimeStamp == CMTime(value: 1, timescale: 30) { _ = gate.pause() }
+        try native.convert(sampleBuffer, continuation: continuation, encoderCompletionObserver: encoderCompletionObserver)
+    }
+    func completeFrames() -> OSStatus { counts.drained(); return native.completeFrames() }
+    func invalidate() { native.invalidate() }
+}
+
+private actor AdmissionJoinGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func pause() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func waitForEntry() async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !entered && ContinuousClock.now < deadline { await Task.yield() }
+        try #require(entered)
+    }
 }
