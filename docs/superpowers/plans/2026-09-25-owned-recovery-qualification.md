@@ -19,6 +19,9 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       must be real; exported booleans cannot create authority.
 - [x] Extract shared raw candidate encoding/resource/A/V validation; retain legacy
       envelope gates, independent owner bindings and pinned resource limits.
+- [x] Replay complete owned native stages, receiver conservation and receiver
+      intervals, including failed attempts and independently bracketed coverage.
+      This does not grant candidate, application or recovery authority.
 - [ ] Add whole-history owned lifecycle, witness and policy replay. Reuse complete
       media, capacity clock/rate-ledger, delivery ownership and coverage checks.
       Never call the old one-candidate qualifier with a fabricated three-phase
