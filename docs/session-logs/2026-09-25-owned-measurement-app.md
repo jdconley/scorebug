@@ -125,3 +125,63 @@ cost replay, rather than a success boolean. Preserve actual pressure baseline,
 renewal observations and final measurement pressure. The complete owned qualifier
 must reuse candidate A/V/frame/resource arithmetic without manufacturing a legacy
 single-campaign envelope or rewriting profile/source histories.
+
+## Native stage replay checkpoint
+
+Committed `74eadc4`: whole-history native probe replay over the original owned
+audit. It checks captured configuration/publication, stage/campaign identities,
+actual continuation terminals, cumulative/paced native acceptance, recovery
+preflight observations, lease bounds and call-result timing. Failed allocations,
+late returned handles and rejected renewals remain in the same history. A failed
+renewal may have changed the actual native lease; the replay joins its terminal
+snapshot to its original request/error interval. It never changes that failure
+into a successful renewal or fabricates a legacy campaign envelope.
+
+Specification review reproduced two clock gaps: a terminal snapshot could imply
+a renewal after the error returned, and an unchanged deadline could bypass the
+successful-renewal interval check. Quality review reproduced an impossible burst
+that passed total-since-start accounting, and candidate binding after retirement
+was requested. All four have deterministic red regressions and reviewed fixes.
+The final native-plus-index suite passes **74 tests**, joined exit 0. Both reviews
+approve this native-only checkpoint; it grants no receiver capacity, candidate,
+retry policy, application or media qualification by itself.
+
+Evidence under `artifacts/qa/`: `owned-native-probes-final-20260925.log`; preserved
+red logs include `owned-native-probes-rejection-clock-red-20260925.log`,
+`owned-native-probes-unchanged-lease-red-20260925.log` and
+`owned-native-probes-quality-red-final-20260925.log`. Earlier initial, terminal,
+renewal, failed-renewal and context logs remain. The existing 4,773-test full tools
+pass predates the index/native-probe modules; do not present it as a new full-suite
+count for these changes.
+
+## App checkpoint and remaining review blocker
+
+The implementer committed `c76b3b6`. Inspected and retained its original test logs
+from `/tmp` in `artifacts/qa/c76b3b6-scorebug-owned-*.log`; hashes and source paths
+are in `c76b3b6-imported-verification-logs.json`. These are preserved existing runs,
+not reruns. They show 612 FilmModel tests, 491 Core tests, 245 Streaming tests, an
+arm64 simulator build and a separately strengthened Driver-led same-revision
+native retry test passing. The application test uses the actual owned SRT bridge
+and SDK probe with a deterministic typed candidate result; it is not proof of
+real candidate encoding, capacity recovery or complete media.
+
+FilmModel command: Xcode 26.2 `xcodebuild test -project ios/Scorebug.xcodeproj
+-scheme ScorebugFilmModelTests -destination 'platform=macOS' -derivedDataPath
+ios/DerivedData/FilmModel CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`.
+The focused command adds
+`-only-testing:ScorebugFilmModelTests/NativeOwnedCandidatePublisherTests/testActualOwnedSRTStagesJoinAndRetryOnSameRevisionAfterFreshHealth`.
+The simulator build uses scheme Scorebug, `generic/platform=iOS Simulator`,
+`ios/DerivedData/App`, `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO`.
+Core/Streaming ran `swift test` in their respective package directories.
+
+Independent app specification review found one blocking gap: Session released its
+busy flag after a safe guarded rejection, but Driver.tick still awaited that
+application and coalesced away subsequent health ticks while measurement cleanup
+was held. The direct-Session regression could not detect this. The implementer is
+adding a Driver-led test and a tracked cleanup/settlement continuation. A narrow
+exact-token Core transition is authorized to record the already-proven no-effect
+rejection before cleanup: withdraw only the matching active application, retain
+the transferred token, and do not count failure, grant health or fabricate reset.
+Actual failure settlement still requires joined cleanup. Review and all affected
+verification must pass after this fix. Production enablement and the complete
+four-phase experiment remain open.
