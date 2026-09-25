@@ -531,3 +531,19 @@ live default changed. Capacity reduction/restoration, a reconnectable recorder,
 fresh post-recovery ramp, true outage, physical camera/Watch and other hosts remain
 open. Next, provide a session-aware reconnectable test recorder and choose a fault
 rate from measured full wire costs before a new capacity experiment.
+
+
+## Reconnectable recorder prerequisite complete
+
+The session-aware loopback recorder is implemented and selected only for explicit
+capacity diagnostics. Two real publishers using separate excerpts of the prepared
+match successfully reconnect to the same endpoint; both90-frame outputs and audio
+fully decode, and all saved source/input hashes are unchanged. Per-session native
+recorder/timestamp manifests and aggregate lifecycle evidence are preserved.
+All4,251 tooling tests pass; review found no actionable issues. See the
+[recorder implementation and verification](2026-09-24-reconnecting-recorder.md).
+
+This removes the one-connection sink limitation seen in`rQQICD`, but the native
+capacity campaign has not yet been rerun. Full wire-cost measurement and an
+appropriate capacity stimulus remain prerequisites; capacity adaptation, causal
+recovery, fresh re-ramp and outage qualification remain incomplete.

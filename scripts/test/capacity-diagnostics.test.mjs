@@ -212,3 +212,59 @@ test(
     assert.deepEqual(calls, stages);
   },
 );
+
+test('explicit reconnecting diagnostics preserve the closed session manifest without qualifying media', async () => {
+  const manifest = {
+    formatVersion: 1,
+    diagnosticOnly: true,
+    mediaQualified: false,
+    recoveryQualified: false,
+    closed: true,
+    sessions: [
+      {
+        sequence: 1,
+        recordingRelativePath: 'reconnecting-recorder/session-1/sink-recordings/direct.mp4',
+      },
+    ],
+  };
+  const operations = Object.fromEntries(
+    ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink'].map((k) => [k, async () => {}]),
+  );
+  operations.finishRecorder = async () => manifest;
+  const result = await implementation.collectCapacityDiagnostics(operations, {
+    recorderMode: 'reconnecting',
+  });
+  assert.equal(result.recording, null);
+  assert.deepEqual(result.recorderSessions, manifest);
+  assert.equal(result.mediaQualified, false);
+  assert.equal(result.recoveryQualified, false);
+  assert.deepEqual(result.errors, []);
+  assert.equal((await implementation.collectCapacityDiagnostics(operations)).errors.length, 1);
+});
+for (const mutate of [
+  (m) => (m.closed = false),
+  (m) => (m.mediaQualified = true),
+  (m) => (m.recoveryQualified = true),
+  (m) => (m.diagnosticOnly = false),
+  (m) => (m.sessions = Array(9).fill({})),
+])
+  test('reconnecting diagnostic result requires bounded closed nonqualifying evidence', async () => {
+    const manifest = {
+      formatVersion: 1,
+      diagnosticOnly: true,
+      mediaQualified: false,
+      recoveryQualified: false,
+      closed: true,
+      sessions: [],
+    };
+    mutate(manifest);
+    const operations = Object.fromEntries(
+      ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink'].map((k) => [k, async () => {}]),
+    );
+    operations.finishRecorder = async () => manifest;
+    const result = await implementation.collectCapacityDiagnostics(operations, {
+      recorderMode: 'reconnecting',
+    });
+    assert.equal(result.recorderSessions, null);
+    assert.equal(result.errors.length, 1);
+  });

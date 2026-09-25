@@ -52,7 +52,8 @@ function failureFields(error) {
 
 /** Diagnostic collection only: failures cannot skip later owned shutdown stages
  * or turn a raw recording into recovery/media permission. */
-export async function collectCapacityDiagnostics(operations) {
+export async function collectCapacityDiagnostics(operations, { recorderMode = 'single' } = {}) {
+  assert(['single', 'reconnecting'].includes(recorderMode), 'Unknown diagnostic recorder mode');
   const stages = ['stopStatus', 'saveStatus', 'stopWorker', 'stopUplink', 'finishRecorder'];
   assert(stages.every((stage) => typeof operations[stage] === 'function'));
   const result = {
@@ -63,13 +64,28 @@ export async function collectCapacityDiagnostics(operations) {
     freshRampQualified: false,
     errors: [],
     recording: null,
+    ...(recorderMode === 'reconnecting' ? { recorderSessions: null } : {}),
   };
   for (const stage of stages) {
     try {
       const value = await operations[stage]();
       if (stage === 'finishRecorder') {
-        assert(typeof value === 'string' && value.length > 0, 'Missing diagnostic recording');
-        result.recording = value;
+        if (recorderMode === 'reconnecting') {
+          assert(
+            value?.formatVersion === 1 &&
+              value.diagnosticOnly === true &&
+              value.mediaQualified === false &&
+              value.recoveryQualified === false &&
+              value.closed === true &&
+              Array.isArray(value.sessions) &&
+              value.sessions.length <= 8,
+            'Missing bounded closed diagnostic recorder sessions',
+          );
+          result.recorderSessions = value;
+        } else {
+          assert(typeof value === 'string' && value.length > 0, 'Missing diagnostic recording');
+          result.recording = value;
+        }
       }
     } catch (error) {
       const causes = [],

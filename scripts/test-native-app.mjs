@@ -804,6 +804,7 @@ try {
       repeatedRecovery,
       capacityRecovery,
       collectCapacityClock: capacityRecovery ? collectOwnedCapacityClock : undefined,
+      capacityDiagnostics,
       readQualityCheckpoint: repeatedRecovery ? readLiveQualityCheckpoint : undefined,
       decoderStall,
       deadlineResets,

@@ -78,3 +78,19 @@ for (const [name, value] of Object.entries({
     );
     assert.equal(calls, 0);
   });
+
+test('reconnecting capacity diagnostics cannot be selected on a normal fixture', async () => {
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      nativeStreamingFixture({
+        capacityDiagnostics: true,
+        run: async () => {
+          calls++;
+          throw Error('resource setup');
+        },
+      }),
+    /Capacity diagnostics require/,
+  );
+  assert.equal(calls, 0);
+});

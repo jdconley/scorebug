@@ -24,6 +24,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { mediaTools } from './media-tools.mjs';
 import { observeNativeWorkerEvidence } from './native-worker-evidence.mjs';
 import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
+import { startReconnectingRTMPRecorder } from './reconnecting-rtmp-recorder.mjs';
 import { scoringTestToken } from './scoring-test-server.mjs';
 import { immutableWindow, remoteWindowIdentity } from './worker-report-age-qualification.mjs';
 import { recordWorkerProcessingEvidence } from './worker-processing-qualification.mjs';
@@ -48,6 +49,7 @@ export async function nativeStreamingFixture({
   measuredRecovery = false,
   repeatedRecovery = false,
   capacityRecovery = false,
+  capacityDiagnostics = false,
   collectCapacityClock,
   readQualityCheckpoint,
   cadenceReports = false,
@@ -58,6 +60,11 @@ export async function nativeStreamingFixture({
   publishPacing,
 }) {
   assert.equal(typeof capacityRecovery, 'boolean');
+  assert.equal(typeof capacityDiagnostics, 'boolean');
+  assert(
+    !capacityDiagnostics || capacityRecovery,
+    'Capacity diagnostics require the capacity route',
+  );
   if (capacityRecovery) {
     assert(
       uplinkProfile === 'capacity550k' &&
@@ -334,7 +341,9 @@ export async function nativeStreamingFixture({
           : {}),
       });
     if (useDirectRecorder)
-      directRecorder = await startDirectRTMPRecorder({
+      directRecorder = await (
+        capacityDiagnostics ? startReconnectingRTMPRecorder : startDirectRTMPRecorder
+      )({
         artifact,
         ffmpeg: mediaTools().ffmpeg,
         port: sinkPort,
@@ -638,16 +647,23 @@ export async function nativeStreamingFixture({
         done = workerEvidence.closed;
       },
       async collectCapacityDiagnostics() {
-        assert(capacityRecovery && directRecorder, 'Diagnostics require the owned capacity route');
-        return collectCapacityDiagnostics({
-          stopStatus,
-          saveStatus,
-          stopWorker,
-          stopUplink,
-          finishRecorder: () => directRecorder.finish(),
-        });
+        assert(
+          capacityRecovery && capacityDiagnostics && directRecorder,
+          'Diagnostics require the owned capacity route',
+        );
+        return collectCapacityDiagnostics(
+          {
+            stopStatus,
+            saveStatus,
+            stopWorker,
+            stopUplink,
+            finishRecorder: () => directRecorder.finish(),
+          },
+          { recorderMode: 'reconnecting' },
+        );
       },
       async collect() {
+        assert(!capacityDiagnostics, 'Diagnostic recorder cannot grant a normal media verdict');
         await stopStatus();
         await saveStatus();
         const evidence = [...decodedWindows.values()];

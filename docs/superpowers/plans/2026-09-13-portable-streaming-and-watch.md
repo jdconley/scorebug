@@ -24,6 +24,14 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
+The diagnostic output recorder now accepts reconnections through one persistent
+loopback endpoint and preserves each session separately. Two real publishers using
+excerpts of the prepared match produced complete90-frame recordings with audio;
+both fully decoded. Explicit capacity diagnostics now use this recorder; ordinary
+streaming tests retain their strict single-session behavior. All4,251 tooling tests
+pass. The native capacity run still needs an appropriate measured bandwidth limit
+and full recovery qualification. See the [recorder checkpoint](2026-09-24-reconnecting-recorder.md#verified-checkpoint).
+
 The new real-match run `native-app-CLof0G` achieved and confirmed its native
 240p→360p upgrade. Its original full harness result remains **failed** because
 strict policy replay rejects two observed startup pressure events. A separate,
