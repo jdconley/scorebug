@@ -119,4 +119,53 @@ final class NativeCapacityClockTests: XCTestCase {
         }
     }
 
+    func testCancelledPollingDoesNotReadPendingChallengeAndJoinsBeforeExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = try NativeCapacityClockFixture(scope: scope, directory: directory)
+        try request(1).write(to: directory.appendingPathComponent("capacity-clock-request.json"), options: .atomic)
+        let gate = FilmTestGate()
+        let polling = Task.detached {
+            await gate.enter()
+            await fixture.runPolling()
+        }
+        await gate.waitUntilEntered()
+        polling.cancel()
+        await gate.release()
+        await polling.value
+        await fixture.closeAndExport()
+        let audit = try object(Data(contentsOf: directory.appendingPathComponent("capacity-clock.json")))
+        XCTAssertEqual(audit["closed"] as? Bool, true)
+        XCTAssertEqual(audit["invalid"] as? Bool, false)
+        XCTAssertEqual((audit["samples"] as? [Any])?.count, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("capacity-clock-response.json").path))
+    }
+
+    func testActivePollingCancellationJoinsAndClosedFixtureCannotSampleAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fixture = try NativeCapacityClockFixture(scope: scope, directory: directory)
+        let polling = Task.detached { await fixture.runPolling() }
+        try request(1).write(to: directory.appendingPathComponent("capacity-clock-request.json"), options: .atomic)
+        let responseURL = directory.appendingPathComponent("capacity-clock-response.json")
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !FileManager.default.fileExists(atPath: responseURL.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        polling.cancel()
+        await polling.value
+        await fixture.closeAndExport()
+        let response = try Data(contentsOf: responseURL)
+        let closed = try Data(contentsOf: directory.appendingPathComponent("capacity-clock.json"))
+        let audit = try object(closed)
+        XCTAssertEqual(audit["closed"] as? Bool, true)
+        XCTAssertEqual((audit["samples"] as? [Any])?.count, 1)
+        try request(2).write(to: directory.appendingPathComponent("capacity-clock-request.json"), options: .atomic)
+        await fixture.runPolling()
+        await fixture.poll()
+        await fixture.closeAndExport()
+        XCTAssertEqual(try Data(contentsOf: responseURL), response)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("capacity-clock.json")), closed)
+    }
+
 }

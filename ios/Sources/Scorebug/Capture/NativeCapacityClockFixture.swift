@@ -82,8 +82,8 @@ struct NativeCapacityClockAudit {
     }
 }
 
-/// Owned by one native publishing attempt. Poll/close calls are awaited; no timer,
-/// unstructured task, camera work or network work is started by this fixture.
+/// Owned by one native publishing attempt. The owner's task awaits polling and
+/// joins its cancellation before export. This fixture starts no camera or network work.
 actor NativeCapacityClockFixture {
     private var audit: NativeCapacityClockAudit
     private let directory: URL
@@ -95,6 +95,13 @@ actor NativeCapacityClockFixture {
         for name in ["capacity-clock-request.json", "capacity-clock-response.json", "capacity-clock.json"] {
             do { try FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
             catch CocoaError.fileNoSuchFile { }
+        }
+    }
+    func runPolling() async {
+        while !Task.isCancelled, !audit.closed {
+            poll()
+            do { try await Task.sleep(for: .milliseconds(10)) }
+            catch { return }
         }
     }
     func poll() {

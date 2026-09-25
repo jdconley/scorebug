@@ -37,7 +37,12 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
     }
     private var deliveryAuthority: PublishingDeliveryAuthority?
-    deinit { deliveryAuthority?.revoke(); candidateAuthority?.revoke() }
+    deinit {
+        deliveryAuthority?.revoke(); candidateAuthority?.revoke()
+        #if DEBUG
+        capacityClockPolling?.cancel()
+        #endif
+    }
     private var workerDeliveryTracker = WorkerDecoderDeliveryTracker()
     @Published private(set) var workerReceiverProbeFreshness: WorkerReceiverProbeFreshness? {
         didSet {
@@ -116,6 +121,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         #endif
     }
     private var capacityClockFixture: NativeCapacityClockFixture?
+    private var capacityClockPolling: Task<Void, Never>?
     private var cadenceReportAudit: WorkerCadenceReportAudit?
     private(set) var workerReportAgeProofHistory = WorkerReportAgeProofHistory()
     private var receiverProbeHistory = ReceiverProbeFixtureHistory()
@@ -509,6 +515,10 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 #if DEBUG
                 capacityClockFixture = observations.map { capacityClockFixtureFactory($0.snapshot.scope) } ?? nil
+                if let capacityClockFixture {
+                    // Lab timestamps must remain responsive while MainActor control awaits network I/O.
+                    capacityClockPolling = Task.detached { await capacityClockFixture.runPolling() }
+                }
                 cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment)
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
@@ -568,10 +578,6 @@ struct PublishingClockObservation: Equatable, Sendable {
             controlBusy = false
             resumeRequestedStart(controlFailed: controlFailed)
         }
-        #if DEBUG
-        await capacityClockFixture?.poll()
-        guard !publisherStopping else { return }
-        #endif
         do {
             try persist()
             if coordinator == nil { try makeCoordinator() }
@@ -950,6 +956,8 @@ struct PublishingClockObservation: Equatable, Sendable {
             let quality = qualityDriver; qualityDriver = nil; quality?.cancel()
             #if DEBUG
             let capacityClock = capacityClockFixture; capacityClockFixture = nil
+            let capacityClockTask = capacityClockPolling; capacityClockPolling = nil
+            capacityClockTask?.cancel()
             cadenceReportAudit?.close()
             let cadenceData = try? cadenceReportAudit?.data()
             let cadenceWriter = cadenceReportFixtureWriter
@@ -980,6 +988,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             publisherStopping = true
             publisherTeardown = Task { [self] in
                 #if DEBUG
+                await capacityClockTask?.value
                 await capacityClock?.closeAndExport()
                 #endif
                 await quality?.stop()

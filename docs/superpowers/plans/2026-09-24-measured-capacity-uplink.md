@@ -1015,3 +1015,62 @@ the two regression methods failed with six intended assertions. The full green r
 is `repeated-live-checkpoint-capacity-readiness-wakeup-model-green.log`. The next
 native run will retain the same750kbps profile and media input; no threshold,
 probe lifetime or campaign deadline was relaxed.
+
+
+## Fresh native wake-up repeat and clock failure
+
+The frozen `0c16b43` run `native-app-aRYRfO` joined with exit1. Its 1,255 frozen
+source/input hashes were unchanged, its UI workflow passed in300.835s, and the
+owned temporary simulator was deleted. No runtime was installed. The candidate
+now binds fresh source health, starts its measurement and joins it successfully.
+The native audit records a360p trial applied47.264723s after bootstrap and a240p
+decrease at90.193810s. This verifies the wake-up repair in the real workflow,
+not the full causal recovery policy.
+
+The clean local archive fully decodes and has7,503 consecutive frame identities
+0–7,502. The direct stream recorder exits naturally with code0 and no requested
+termination. Full live-media qualification did not run because collection failed
+first: the first host/native clock exchange exceeded250ms. The closed native
+clock audit contains only sequence1. No complete host clock file was emitted.
+Do not infer missing fault brackets from shared epochs or approximate schedules.
+
+Raw cadence evidence also retains six freshness rejections. Near89.23s, the
+control response spent149.954ms in HTTP and273.641ms awaiting the native probe;
+its total sample age was547.598ms, beyond the250ms budget. The adjacent report
+gap was625.848ms. Later HTTP delays at178s and195s also yielded stale reports.
+These unknown intervals cannot earn healthy credit, and the current complete
+capacity verifier correctly rejects such suffixes. The observations do not prove
+that the clock scheduling repair will remove these separate freshness failures.
+
+Inspection found that the lab-only clock responder is called solely from
+`pollControl()`, behind its busy gate and network work. Its next bounded repair
+is an owned cancellation-aware polling task, activated only by the existing
+DEBUG fixture factory, joined before closed export. Keep the250ms exchange
+and1.5s fault-bracket limits unchanged. Test response while network recovery is
+explicitly suspended, cancel-before-start, joined shutdown, immutable export and
+no samples after closure before another native experiment.
+
+The compact read-only assessment and nine raw-file hashes are saved in
+`artifacts/qa/native-app-aRYRfO/clock-and-freshness-assessment.json`; reproduction
+is `artifacts/qa/assess-capacity750-aRYRfO.mjs`. Every qualification/production
+authorization flag remains false. The original failed artifacts are retained.
+
+
+## Independent clock responder verification
+
+The regression reproduced before repair: a request written while snapshot recovery
+was suspended had no response. The DEBUG capture model now starts an owned task
+only when its existing clock fixture factory returns an instance. The actor polls
+at10ms intervals with cancellation-aware sleep. Publisher detach cancels the task
+synchronously and joined teardown awaits its completion before closed export.
+`pollControl()` no longer drives clock polling. Scope, nonce, sample limits and
+all host clock budgets remain unchanged. No Release media or quality behavior changed.
+
+The focused eight tests,99 capture/clock regression tests, and complete576
+app-model tests pass; all child processes joined. The full suite took89.898s.
+Logs use the prefix `artifacts/qa/repeated-live-checkpoint-capacity-clock-polling-`
+with `red`, `green`, `regression`, and `full-model` suffixes dated20260924.
+Read-only spec and lifecycle reviews found no actionable issues. The test's
+two-second response timeout proves independence from suspended network control;
+it does not establish the native experiment's250ms exchange limit. A frozen
+real-match repeat is required for that claim.

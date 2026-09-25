@@ -34,7 +34,7 @@ Both files fully decode: the clean local archive has 7,499 consecutive frames,
 and the saved stream has 7,043 consecutive frames. All 327 reconstructed delivery
 windows pass at 30fps; score glyphs and phase/grid audio checks also pass. Live A/V
 offset peaks at about 66ms. All 4,457 tooling tests pass; the last native checkpoint
-passed 567 app-model tests, the arm64 simulator build and native UI workflow.
+passed 576 app-model tests; arm64 simulator builds and the native UI workflow also pass.
 
 The complete capacity policy now passes an offline replay of the original raw
 artifacts, including probation delivery, clock-bounded decrease, every subsequent
@@ -46,8 +46,14 @@ The native success route is connected, but the fresh end-to-end run remains
 **unqualified**. Its UI and full media decodes passed; it stayed at 240p because
 candidate polling missed a roughly 76ms fresh-health opportunity. With insufficient
 offered traffic it correctly failed the congestion gate. A notification-based
-measurement wake-up is implemented and all 574 app-model tests pass; its next
-native experiment and fresh ramp-up remain unqualified.
+measurement wake-up is implemented and all 574 app-model tests pass. Its fresh
+repeat now measures and applies 360p, then decreases to 240p. That run still fails
+qualification: the first causal clock exchange exceeded 250ms, and the raw health
+audit contains six freshness rejections. Its clean archive fully decoded with
+7,503 consecutive frame identities. The clock responder was waiting behind
+network control polling; its independent owned polling lifecycle now passes all
+576 app-model tests and review. The next native timing experiment is pending.
+Full capacity recovery and a fresh subsequent ramp-up remain unqualified.
 The original strict transport result remains failed on post-stop
 export silence; only an explicitly selected scheduled-window replay passes. A
 pre-trial stale-delivery rejection is retained as an invalidation with zero healthy
