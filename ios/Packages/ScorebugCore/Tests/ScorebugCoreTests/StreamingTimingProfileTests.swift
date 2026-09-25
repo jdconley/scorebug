@@ -6,9 +6,9 @@ final class StreamingTimingProfileTests: XCTestCase {
     private typealias Q = QualityController
     private let attempt = UUID()
     private let baseline = Q.Settings(profileID: "small", videoBitrate: 500_000)
-    private func controller(_ timing: StreamingTimingProfile) throws -> Q {
+    private func controller(_ timing: StreamingTimingProfile, applied: Q.Settings? = nil) throws -> Q {
         try Q(profiles: [.init(id: "small", width: 640, height: 360, minimumBitrate: 500_000, maximumBitrate: 1_000_000)],
-              attemptID: attempt, applied: baseline, at: 0, recoveryStrategy: .measuredCandidateTrials,
+              attemptID: attempt, applied: applied ?? baseline, at: 0, recoveryStrategy: .measuredCandidateTrials,
               behavior: .progressive, timingProfile: timing)
     }
     private func health(observed: Double) -> Q.Window {
@@ -17,6 +17,52 @@ final class StreamingTimingProfileTests: XCTestCase {
               sourceLoss: .init(expectedFrames: 120, lostFrames: 0), meanQueueOccupancy: 0.1,
               usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal,
               workerPressure: .nominal, transportPressure: .nominal)
+    }
+    func testSourceResetAndDecreaseAdviceExpiresWithCaptureAndOriginalReceiverReport() throws {
+        for timing in StreamingTimingProfile.allCases {
+            for reset in [true, false] {
+                for pastBoundary in [false, true] {
+                    var policy = try controller(timing, applied: .init(profileID: "small", videoBitrate: 900_000))
+                    let source = Q.Window(attemptID: attempt, sequence: 1, appliedRevision: 0, start: 0, end: 4,
+                        capturedFreshFrames: 120, encodedFreshFrames: 120,
+                        receiver: .init(freshFrames: reset ? 80 : 120, observedAt: 4.1),
+                        sourceLoss: .init(expectedFrames: 120, lostFrames: reset ? 40 : 0),
+                        meanQueueOccupancy: reset ? 0.1 : 0.8, usableVideoCapacity: nil, connectivity: .connected,
+                        thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal)
+                    let advice = try XCTUnwrap(policy.evaluate(source, at: 4.2).recommendation)
+                    XCTAssertEqual(advice.kind, reset ? .reset : .decrease)
+                    let deadline = min(4 + timing.maximumCaptureWindowEvaluationAge, 6.1)
+                    XCTAssertEqual(advice.validUntil, deadline)
+                    if pastBoundary {
+                        XCTAssertThrowsError(try policy.beginApplication(advice, at: deadline + 0.000001)) {
+                            XCTAssertEqual($0 as? Q.ValidationError, .staleRecommendation)
+                        }
+                    } else { XCTAssertNoThrow(try policy.beginApplication(advice, at: deadline)) }
+                }
+            }
+        }
+    }
+    func testMissingOrStaleReceiverPreservesOnlyHistoricalIndependentPressureAdvice() throws {
+        for timing in StreamingTimingProfile.allCases {
+            for receiver in [Q.Receiver?.none, .some(.init(freshFrames: 120, observedAt: 3.9))] {
+                for evaluatedAt in [4.2, 6.1] {
+                    var policy = try controller(timing, applied: .init(profileID: "small", videoBitrate: 900_000))
+                    let source = Q.Window(attemptID: attempt, sequence: 1, appliedRevision: 0, start: 0, end: 4,
+                        capturedFreshFrames: 120, encodedFreshFrames: 120, receiver: receiver,
+                        sourceLoss: .init(expectedFrames: 120, lostFrames: 0), meanQueueOccupancy: 0.8,
+                        usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal,
+                        workerPressure: .nominal, transportPressure: .nominal)
+                    if timing == .strict1500 && evaluatedAt > 6 {
+                        XCTAssertThrowsError(try policy.evaluate(source, at: evaluatedAt)); continue
+                    }
+                    let advice = try XCTUnwrap(policy.evaluate(source, at: evaluatedAt).recommendation)
+                    XCTAssertEqual(advice.kind, .decrease)
+                    XCTAssertEqual(advice.validUntil, 6)
+                    if evaluatedAt < 6 { XCTAssertNoThrow(try policy.beginApplication(advice, at: 6)) }
+                    else { XCTAssertThrowsError(try policy.beginApplication(advice, at: evaluatedAt)) }
+                }
+            }
+        }
     }
     func testSharedHostNativeContractTable() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "streaming-timing-contracts", withExtension: "json", subdirectory: "Fixtures"))

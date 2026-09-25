@@ -6,6 +6,45 @@ import ScorebugStreaming
 import XCTest
 
 final class PublishingQualitySessionTests: XCTestCase {
+    func testDelayedSourceAdviceCannotInvokeNativeEffectsAfterReceiverReportExpires() async throws {
+        for timing in StreamingTimingProfile.allCases {
+            for reset in [true, false] {
+                for pastBoundary in [false, true] {
+                    let native = QualityNative()
+                    var operations = native.operations
+                    operations.videoStartup = { native.startup }
+                    let owner = try PublishingQualitySession(operations: operations,
+                        profiles: [.init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)],
+                        attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000),
+                        strategy: .measuredCandidateTrials, behavior: .progressive, timingProfile: timing, uptime: { native.now })
+                    try await owner.bootstrap()
+                    native.setNow(105.2)
+                    let source = QualityController.Window(attemptID: attempt, sequence: 1, appliedRevision: 0, start: 100, end: 105,
+                        capturedFreshFrames: 150, encodedFreshFrames: 150,
+                        receiver: .init(freshFrames: reset ? 100 : 150, observedAt: 105.1),
+                        sourceLoss: .init(expectedFrames: 150, lostFrames: reset ? 50 : 0),
+                        meanQueueOccupancy: reset ? 0.1 : 0.8, usableVideoCapacity: nil, connectivity: .connected,
+                        thermalPressure: .nominal, workerPressure: .nominal, transportPressure: .nominal)
+                    let decision = try await owner.evaluate(source)
+                    let advice = try XCTUnwrap(decision.recommendation)
+                    let deadline = min(105 + timing.maximumCaptureWindowEvaluationAge, 107.1)
+                    XCTAssertEqual(advice.validUntil, deadline)
+                    native.setNow(deadline + (pastBoundary ? 0.000001 : 0))
+                    if pastBoundary {
+                        await fails(.staleAdvice) { try await owner.apply(advice) }
+                        XCTAssertEqual(native.calls, 1, "Expired source advice must not dispatch a native mutation")
+                        let snapshot = await owner.snapshot
+                        XCTAssertEqual(snapshot.revision, 0)
+                    } else {
+                        try await owner.apply(advice)
+                        XCTAssertEqual(native.calls, 2)
+                    }
+                    await owner.stop()
+                }
+            }
+        }
+    }
+
     func testSuccessfulSourceEvaluationDiagnosticRetainsOriginalDecisionAndSequence() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
         let source = try XCTUnwrap(f.source), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
@@ -431,6 +470,11 @@ private final class QualityNative: @unchecked Sendable {
     private var gate: QualityWriteGate?
     private var stopGate: QualityWriteGate?
     private let session = UUID(), configuration = UUID()
+    var startup: PublishingVideoStartup? {
+        .init(profile: .hd1080, width: 1920, height: 1080, publishingGeneration: 7,
+            encoderSessionID: session, firstSourcePTS: .zero,
+            submittedAt: 99, completedAt: 99.1, observedAt: 99.2)
+    }
     var now: Double { lock.withLock { time } }
     var calls: Int { lock.withLock { count } }
     var stops: Int { lock.withLock { stopped } }

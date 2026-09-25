@@ -681,6 +681,14 @@ public struct QualityController: Sendable {
             if receiver.observedAt < window.end || now - receiver.observedAt > 2 { missing(.staleReceiver) }
             else { received = receiver.freshFrames }
         } else { missing(.missingReceiver) }
+        // Freeze both lifetimes into advice. A later application must not renew
+        // the report that justified this source decision. Without a usable report,
+        // independent downward pressure retains only its historical two-second
+        // window allowance; local-pressure inputs likewise never gain media grace.
+        let reportDeadline: Double
+        if received != nil, let receiver = window.receiver { reportDeadline = receiver.observedAt + 2 }
+        else { reportDeadline = window.end + 2 }
+        let recommendationDeadline = min(window.end + maximumWindowAge, reportDeadline)
         if window.sourceLoss == nil { missing(.missingSourceLoss) }
         if window.meanQueueOccupancy == nil { missing(.missingQueue) }
         if window.usableVideoCapacity == nil { missing(.missingCapacity) }
@@ -716,7 +724,7 @@ public struct QualityController: Sendable {
             latchMinimumReset()
         }
         if minimumResetRequired {
-            pending = recommendation(minimumSettings, for: window, maximumAge: maximumWindowAge, kind: .reset)
+            pending = recommendation(minimumSettings, for: window, validUntil: recommendationDeadline, kind: .reset)
             recoveryStart = nil
             return .init(state: window.connectivity == .disconnected ? .disconnected
                 : stalled ? .stalled : unknown ? .unknown : .degraded,
@@ -738,8 +746,8 @@ public struct QualityController: Sendable {
                 recoveryStart = nil
                 if behavior == .progressive {
                     latchMinimumReset()
-                    pending = recommendation(minimumSettings, for: window, maximumAge: maximumWindowAge, kind: .reset)
-                } else { pending = recommendation(active.baseline, for: window, maximumAge: maximumWindowAge, kind: .rollback) }
+                    pending = recommendation(minimumSettings, for: window, validUntil: recommendationDeadline, kind: .reset)
+                } else { pending = recommendation(active.baseline, for: window, validUntil: recommendationDeadline, kind: .rollback) }
                 let state: State = window.connectivity == .disconnected ? .disconnected
                     : stalled ? .stalled : unknown ? .unknown : .degraded
                 if window.connectivity == .disconnected { reasons.append(.disconnected) }
@@ -759,7 +767,7 @@ public struct QualityController: Sendable {
         if unhealthy {
             recoveryStart = nil
             let reduced = lowerSettings(profileIndex: profileIndex, capacity: window.usableVideoCapacity)
-            if let reduced { pending = recommendation(reduced, for: window, maximumAge: maximumWindowAge) }
+            if let reduced { pending = recommendation(reduced, for: window, validUntil: recommendationDeadline) }
             else { reasons.append(.minimumProfileInsufficient) }
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded
             return .init(state: state, reasons: reasons, recommendation: pending)
@@ -788,7 +796,7 @@ public struct QualityController: Sendable {
             if strongObservations && fitsKnownCapacity {
                 if recoveryStart == nil { recoveryStart = window.start }
                 if window.end - recoveryStart! >= requiredHealthyDuration, now >= trialCooldownUntil, let candidate {
-                    pending = recommendation(candidate, for: window, maximumAge: maximumWindowAge, kind: .trial)
+                    pending = recommendation(candidate, for: window, validUntil: recommendationDeadline, kind: .trial)
                     reasons.append(.trialRecommended)
                 }
             } else { recoveryStart = nil }
@@ -806,7 +814,7 @@ public struct QualityController: Sendable {
         if qualified {
             if recoveryStart == nil { recoveryStart = window.start }
             if window.end - recoveryStart! >= requiredHealthyDuration, let higher {
-                pending = recommendation(higher, for: window, maximumAge: maximumWindowAge, kind: behavior == .progressive ? .trial : .increase)
+                pending = recommendation(higher, for: window, validUntil: recommendationDeadline, kind: behavior == .progressive ? .trial : .increase)
                 reasons.append(.recoveryQualified)
             }
         } else { recoveryStart = nil }
@@ -1003,10 +1011,10 @@ public struct QualityController: Sendable {
         return pending
     }
 
-    private func recommendation(_ settings: Settings, for window: Window, maximumAge: Double,
+    private func recommendation(_ settings: Settings, for window: Window, validUntil: Double,
                                 kind: Recommendation.Kind = .decrease) -> Recommendation {
         .init(kind: kind, attemptID: attemptID, windowSequence: window.sequence, appliedRevision: appliedRevision,
-              validUntil: window.end + maximumAge, settings: settings)
+              validUntil: validUntil, settings: settings)
     }
     private func lowerSettings(profileIndex: Int, capacity: Double?) -> Settings? {
         let profile = profiles[profileIndex]
