@@ -597,11 +597,12 @@ Implementation/verification sequence:
 - [x] Test and build the native fixture with the existing installed iOS26.2 runtime.
   Keep normal capacity success denied; select the reconnectable recorder only via
   explicit diagnostics. Verify larger hold fits existing evidence budgets.
-- [ ] Prepare/hash at least330s of representative footage using the existing
+- [x] Prepare/hash at least330s of representative footage using the existing
   frame-identity/audio integrity workflow. Run one frozen210s native diagnostic
   campaign, join every owned process, and preserve all session evidence and
-  original failures. Independently determine whether confirmation preceded the
-  limit, an owned reduction occurred and minimum media recovered after restoration.
+  original failures.
+- [ ] Complete independent causal qualification that confirmation preceded the
+  limit, an owned pressure decrease occurred and minimum media recovered after restoration.
 - [ ] Only after those facts are established, implement full causal recovery and
   fresh post-recovery measured ramp qualification. A true outage remains separate.
 
@@ -623,3 +624,80 @@ found no actionable issues. Evidence is saved in
 `artifacts/qa/repeated-live-checkpoint-capacity750-*`.
 The 330-second fixture preparation and frozen native experiment are next;
 no new capacity downshift or recovery claim follows from these checks.
+
+
+### Frozen 750kbps native experiment
+
+The implemented profile ran at commit `8a39b31` against the qualified 330-second
+real-match fixture (`prepared-native-capacity750-GM019e`, SHA-256
+`1b941060e76921c1dec03c8f9459baf5679aaf1b479fc0abb166b70575cf0a19`).
+Preparation fully decoded both streams and verified all 9,900 consecutive source
+identities and continuous audio. The prepared source and original longer fixture
+were fingerprinted and unchanged; supplied Downloads recordings were not modified.
+
+Native evidence: `artifacts/qa/native-app-5UYvcA`; frozen driver evidence:
+`artifacts/qa/capacity750-diagnostics-freeze-5z50643n`.
+The UI workflow passes in 299.821 seconds. The diagnostic harness deliberately
+returns exit 1 with its explicit unqualified-result error, after joining collection.
+All 1,248 frozen code/input/driver hashes remain unchanged. Its temporary iPhone
+simulator was deleted, and no runtime was installed or user simulator removed.
+
+Observed controller history (seconds after bootstrap):
+
+- Higher-profile application: 47.303; logged trial confirmation: 66.545.
+- Actual limit is independently bracketed at 88.966–89.470.
+- Transport-pressure event: 91.728; owned `decrease` application to 240p: 92.190.
+- Restoration is independently bracketed at 148.962–149.465.
+- The app stays at 240p until publishing stops at 237.523. There is no fresh
+  post-restoration increase, and no complete causal recovery verdict yet.
+
+Both clock boundaries pass the unchanged four-challenge verifier. The worker
+maintains one RTMP session; the recorder closes naturally with no rejected
+connections, interruption, listener error or finish timeout. Collection errors
+are empty. The limited phase forwards 4,599,264 wire bytes, with maximum queue
+residence 503.989ms and no overflow. These are raw diagnostic observations, not
+an accepted transport verdict.
+
+Full `-xerror` audio/video decoding passes for both saved files. The clean 1080p
+archive has 7,499 consecutive IDs 0–7,498 (249.967 seconds), continuous audio and
+16ms of audio tail; archive queue diagnostics report no rejected/dropped samples.
+The live file has 7,043 consecutive IDs 230–7,272 with no interior identity gaps.
+It retains 1.383s of initial audio lead, within the existing acquisition allowance,
+and 20.825ms of audio tail. The archive continues 226 source frames, about 7.53s,
+after the last live frame. Media reports and hashes are in `diagnostic-media750`.
+This does not establish instant startup or physical camera recording reliability.
+
+Independent raw native media replay and three-phase compressed-frame/profile
+replay pass. All 327 classified delivery windows are healthy at 30fps, with zero
+late, missing, uncertain or below-24fps rows. The initial live phase still loses
+60 acquisition frames before its first decoded identity. These component passes
+must not be promoted to a complete policy/recovery result.
+
+Two remaining verifier mismatches are preserved:
+
+1. The strict transport verifier rejects missing phase traffic during export after
+   intentional publisher stop. In both directions, last traffic is at about 238.1s
+   after proxy start; the proxy closes at 268.7s. Every required baseline bin is
+   populated; the missing restored bins are 242.35–267.35s. Do not trim or rewrite
+   the original timeline. Design explicit scheduled observation coverage while
+   retaining full-lifetime counter/prefix/conservation/queue validation, and test
+   gaps within the requested observation separately from cleanup silence.
+2. Full native evidence replay rejects action `decrease` where the existing
+   decoder-recovery lifecycle expects `reset`. The genuine network-pressure
+   action must retain its own raw pressure, receipt, application and source joins.
+   Add an explicit capacity-only policy/lifecycle case; keep decoder-fault and
+   historical defaults strict. Merely accepting either action name is insufficient.
+
+Natural-audio checks of the unchanged files pass at 53 additional phase/grid
+anchors: 56 archive probes and 55 live probes. Maximum absolute live A/V offset
+is 65.949ms with 0.667ms spread; archive alignment is within 0.001ms. Both score
+glyph states pass with full agreement. Reports and input hashes are in
+`diagnostic-audio-score750`. This samples waveform alignment, not every audio
+sample or physical capture fidelity.
+
+Next: implement the explicit transport observation and capacity-pressure lifecycle
+contracts with negative
+regressions, then replay the unchanged artifacts. Full causal recovery, a fresh
+post-restoration ramp, a true outage, production ladder integration and physical
+phone/Watch tests remain open. A repeat native run requires a changed implementation
+or distinct experiment, not an attempt to erase these recorded failures.

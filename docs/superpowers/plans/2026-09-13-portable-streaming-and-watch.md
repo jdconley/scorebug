@@ -24,13 +24,26 @@ adapters. No runtime code was changed while preparing this plan.
 
 ## Current assessment — September 24
 
-Saved proxy traffic now supports the next diagnostic stimulus:750kbps falls above
-the observed minimum-profile one-second maximum736.8kbps and below every measured
-higher-profile five-second average (minimum835.4kbps). The next experiment will
-apply the limit at90s and restore at150s, with a210s hold; the latest upgrade was
-confirmed61.8s after bootstrap, too late for the old60s fault. This is a measured
-experiment design, not an implemented or passed recovery route. See the
-[rate evidence and next steps](2026-09-24-measured-capacity-uplink.md#measured-next-stimulus-design).
+The delayed 750kbps experiment is implemented and has run with real match footage.
+All 4,285 tooling tests and 567 app-model tests pass; the arm64 simulator build and
+the 210-second native UI workflow also pass. The observed upload sequence is
+240p → 360p → 240p, with the decrease following actual network pressure. The
+worker remains connected through the limit and restoration.
+
+Both files fully decode: the clean local archive has 7,499 consecutive frames,
+and the saved stream has 7,043 consecutive frames. Raw media/profile replay and
+all 327 reconstructed delivery windows pass at 30fps. Score glyphs and phase/grid
+audio checks also pass; live A/V offset peaks at about 66ms. Full recovery is still
+**unqualified**: transport replay currently treats post-stop export silence as a
+traffic gap, while lifecycle replay expects a decoder `reset` rather than the
+observed transport-pressure `decrease`. Those failures are preserved. Fresh
+post-restoration ramp-up and physical camera/Watch tests remain open.
+
+No simulator runtime was installed, only this run's temporary simulator was
+removed, and all 1,248 frozen source/input hashes are unchanged. See the
+[latest evidence and next steps](2026-09-24-measured-capacity-uplink.md#frozen-750kbps-native-experiment).
+
+Earlier recorder and calibration checkpoints:
 
 The diagnostic output recorder now accepts reconnections through one persistent
 loopback endpoint and preserves each session separately. Two real publishers using
