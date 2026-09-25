@@ -64,6 +64,10 @@ public actor SRTPublisher {
     private var configuring = false
     private var probeOperation: Task<PublishingBandwidthProbeSnapshot, Error>?
     private var probeIdentity: PublishingBandwidthProbeSnapshot?
+    private var probeOwner: PublishingProbeOperationOwner?
+    private var probeRetirement: (owner: PublishingProbeOperationOwner, task: Task<Void, Error>)?
+    private var probeRetiring = false
+    private var probeCleanupFailed = false
     private var probeRevision: UInt64 = 0
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
@@ -253,14 +257,14 @@ public actor SRTPublisher {
         guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw PublishingBandwidthProbeError.obsolete }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
-        guard probeOperation == nil, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        guard probeOperation == nil, !probeRetiring, !probeCleanupFailed, probeIdentity == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
-        return try await runProbeOperation(generation: generation, revision: revision) {
+        return try await runProbeOperation(generation: generation, revision: revision) { owner in
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.beginBandwidthProbe(
                     bitRate: bitRate, publishingGeneration: generation, staged: staged, repeatable: repeatable, policy: policy))
+                owner.capture(value)
                 guard value.publishingGeneration == generation, value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable, policy: policy) else {
-                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }
                 return value
@@ -273,13 +277,13 @@ public actor SRTPublisher {
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
-        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        guard probeOperation == nil, !probeRetiring, !probeCleanupFailed, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
-        return try await runProbeOperation(generation: generation, revision: revision) {
+        return try await runProbeOperation(generation: generation, revision: revision) { owner in
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.renewBandwidthProbe(id: id, publishingGeneration: generation))
+                owner.capture(value)
                 guard value.isValidRenewal(of: prior) else {
-                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }
                 return value
@@ -293,14 +297,14 @@ public actor SRTPublisher {
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
-        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        guard probeOperation == nil, !probeRetiring, !probeCleanupFailed, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
-        return try await runProbeOperation(generation: generation, revision: revision) {
+        return try await runProbeOperation(generation: generation, revision: revision) { owner in
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.replaceBandwidthProbe(
                     id: id, publishingGeneration: generation, stage: stage, bitRate: bitRate))
+                owner.capture(value)
                 guard value.isValidReplacement(of: prior, bitRate: bitRate) else {
-                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }
                 return value
@@ -317,16 +321,16 @@ public actor SRTPublisher {
               prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
         guard let campaign = prior.campaign, campaign > 0, campaign < UInt32.max else { throw PublishingBandwidthProbeError.obsolete }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
-        guard probeOperation == nil, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        guard probeOperation == nil, !probeRetiring, !probeCleanupFailed, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
         let revision = probeRevision
-        return try await runProbeOperation(generation: generation, revision: revision) {
+        return try await runProbeOperation(generation: generation, revision: revision) { owner in
             try await self.performProbeOperation(generation: generation, revision: revision) {
                 let requestedAt = ProcessInfo.processInfo.systemUptime
                 let value = PublishingBandwidthProbeSnapshot(try await self.stream.restartBandwidthProbe(
                     id: id, publishingGeneration: generation, stage: stage, bitRate: bitRate))
+                owner.capture(value)
                 guard value.isValidRestart(of: prior, bitRate: bitRate,
                     requestedAt: requestedAt, observedAt: ProcessInfo.processInfo.systemUptime) else {
-                    try? await self.stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
                     throw PublishingBandwidthProbeError.obsolete
                 }
                 return value
@@ -335,10 +339,40 @@ public actor SRTPublisher {
     }
 
     public func cancelBandwidthProbe(id: UUID, publishingGeneration: UInt64) async {
-        guard probeIdentity?.id == id, probeIdentity?.publishingGeneration == publishingGeneration else { return }
+        guard let owner = probeOwner, owner.matches(id: id, generation: publishingGeneration),
+              let target = owner.target else { return }
         probeRevision &+= 1
         probeOperation?.cancel()
-        try? await stream.cancelBandwidthProbe(id: id, publishingGeneration: publishingGeneration)
+        try? await stream.cancelBandwidthProbe(id: target.id, publishingGeneration: target.generation)
+    }
+
+    /// Revoke immediately and join only work captured for this exact owner.
+    /// A failed replacement receipt also recognizes its predecessor, so a caller
+    /// that never received the replacement UUID can still join its cleanup.
+    public func retireBandwidthProbe(id: UUID, publishingGeneration: UInt64) async throws {
+        if let retirement = probeRetirement, retirement.owner.matches(id: id, generation: publishingGeneration) {
+            try await retirement.task.value
+            return
+        }
+        guard let owner = probeOwner, owner.matches(id: id, generation: publishingGeneration) else {
+            throw PublishingBandwidthProbeError.obsolete
+        }
+        guard !probeRetiring else { throw PublishingBandwidthProbeError.busy }
+        probeRetiring = true
+        probeRevision &+= 1
+        let operation = probeOperation
+        operation?.cancel()
+        let target = owner.target
+        let task = Task {
+            defer {
+                if self.probeRetirement?.owner === owner { self.probeRetiring = false }
+            }
+            if let target { try? await self.stream.cancelBandwidthProbe(id: target.id, publishingGeneration: target.generation) }
+            _ = await operation?.result
+            try await self.joinProbeOwner(owner)
+        }
+        probeRetirement = (owner, task)
+        try await task.value
     }
 
     public func bandwidthProbeSnapshot() async -> PublishingBandwidthProbeSnapshot? {
@@ -347,8 +381,8 @@ public actor SRTPublisher {
 
     private func invalidateBandwidthProbe() async {
         probeRevision &+= 1
-        if let probe = probeIdentity {
-            try? await stream.cancelBandwidthProbe(id: probe.id, publishingGeneration: probe.publishingGeneration)
+        if let target = probeOwner?.target {
+            try? await stream.cancelBandwidthProbe(id: target.id, publishingGeneration: target.generation)
         }
     }
 
@@ -359,36 +393,66 @@ public actor SRTPublisher {
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
         guard probeRevision == revision, !encoderUpdating else { throw PublishingBandwidthProbeError.obsolete }
         let value = try await operation()
+        // An allocator can return after revocation while ignoring cancellation.
+        // Retire its captured raw handle before another health read can suspend.
+        guard !stopping, activeGeneration == generation, !Task.isCancelled,
+              probeRevision == revision, !encoderUpdating else {
+            throw Task.isCancelled ? PublishingBandwidthProbeError.cancelled : .obsolete
+        }
         let stillHealthy = await isPublishing()
         guard stillHealthy, !stopping, activeGeneration == generation,
               !Task.isCancelled, probeRevision == revision, !encoderUpdating else {
-            try? await stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
             throw Task.isCancelled ? PublishingBandwidthProbeError.cancelled : .obsolete
         }
-        probeIdentity = value
         return value
     }
 
+    private func joinProbeOwner(_ owner: PublishingProbeOperationOwner) async throws {
+        do {
+            let stream = stream
+            try await owner.join(retire: { id, generation in
+                _ = try await stream.retireBandwidthProbe(id: id, publishingGeneration: generation)
+            }, cancel: { id, generation in
+                try? await stream.cancelBandwidthProbe(id: id, publishingGeneration: generation)
+            }).value
+        } catch {
+            // A real failed join remains a cleanup obligation. Never discard it
+            // by admitting another probe; stop remains available to close/join.
+            if probeOwner === owner { probeCleanupFailed = true }
+            throw error
+        }
+    }
+
     private func runProbeOperation(generation: UInt64, revision: UInt64,
-        _ operation: @escaping @Sendable () async throws -> PublishingBandwidthProbeSnapshot) async throws -> PublishingBandwidthProbeSnapshot {
+        _ operation: @escaping @Sendable (PublishingProbeOperationOwner) async throws -> PublishingBandwidthProbeSnapshot) async throws -> PublishingBandwidthProbeSnapshot {
+        let owner = PublishingProbeOperationOwner(predecessor: probeIdentity)
+        probeOwner = owner
         let pending = Task {
-            do { return try await operation() }
+            do { return try await operation(owner) }
             catch {
-                // Revocation belongs to the joined operation, including a renewal
-                // that throws before returning its updated snapshot.
-                await self.invalidateBandwidthProbe()
+                if self.probeOwner === owner, self.probeRevision == revision { self.probeRevision &+= 1 }
+                // Preserve the operation error; a retirement caller separately
+                // observes any cleanup failure through the same retained task.
+                _ = try? await self.joinProbeOwner(owner)
                 throw error
             }
         }
         probeOperation = pending
-        defer { probeOperation = nil }
+        defer { if probeOwner === owner { probeOperation = nil } }
         return try await withTaskCancellationHandler {
             do {
                 let value = try await pending.value
                 guard !Task.isCancelled, !stopping, activeGeneration == generation,
                       probeRevision == revision, !encoderUpdating else {
-                    try? await stream.cancelBandwidthProbe(id: value.id, publishingGeneration: value.publishingGeneration)
+                    _ = try? await joinProbeOwner(owner)
                     throw Task.isCancelled ? PublishingBandwidthProbeError.cancelled : .obsolete
+                }
+                probeIdentity = value
+                owner.accept()
+                // Keep the old public retirement inert through suspended restart,
+                // and discard it only when the new allocation is accepted.
+                if let prior = probeRetirement, !prior.owner.matches(id: value.id, generation: value.publishingGeneration) {
+                    probeRetirement = nil
                 }
                 return value
             } catch { throw publishingProbeError(error) }
@@ -446,6 +510,7 @@ public actor SRTPublisher {
         let changing = profileChange
         let starting = startup
         let probing = probeOperation
+        let retirement = probeRetirement?.task
         probing?.cancel()
         changing?.cancel()
         starting?.cancel()
@@ -463,6 +528,7 @@ public actor SRTPublisher {
             _ = await changing?.result
             _ = await starting?.result
             _ = await probing?.result
+            _ = await retirement?.result
             if starting != nil || changing != nil || probing != nil {
                 // A native actor call admitted before shutdown can complete after
                 // the first close. Its owner must finish before this final close.

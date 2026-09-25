@@ -69,8 +69,12 @@ The first retry prerequisite now passes its SDK checks: exact probe retirement
 revokes sends and joins the captured task, including cancellation and shutdown
 races. All **333 vendor tests** pass, independent specification and code reviews
 approve the change, and all **162 original upstream hashes** still verify. The
-publishing adapters are being integrated next. This adds cleanup guarantees;
-automatic post-restoration increases remain unqualified.
+publishing adapters now pass **202 tests**, including cancellation during a late
+allocation, duplicate retirement, held cleanup and shutdown. Both layers retain
+and join rejected allocations without granting them authority to change quality.
+Task 1 is complete and independently reviewed. Next come the owned terminal
+receipt/restart path and Core/Session retry lifecycle; automatic post-restoration
+increases remain unqualified.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains

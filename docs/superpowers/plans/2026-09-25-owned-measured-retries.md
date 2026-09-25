@@ -78,10 +78,10 @@ and their probe tests, maintained SDK patch/provenance.
       before suspension. Duplicate joins should coalesce; cancellation of a
       waiter must not abandon cleanup. Completion must not clear a replacement
       probe or overwrite its state. Preserve restart from the terminal identity.
-- [ ] Propagate trusted retirement through adapters with exact identity checks
+- [x] Propagate trusted retirement through adapters with exact identity checks
       and joined allocation/renewal/replacement work. Reject foreign owners
       without mutating current state. Avoid self-await in operation error cleanup.
-- [ ] Test a cancellation-ignoring held wake, concurrent waiters, a replacement
+- [x] Test a cancellation-ignoring held wake, concurrent waiters, a replacement
       crossing retirement completion, stop, canceled waiter, and no further sends
       after revocation. Run focused and full relevant SDK/Streaming suites;
       verify the maintained patch against all original hashes. This component
@@ -96,7 +96,23 @@ test processes joined. The maintained patch verifies all **162 original hashes**
 and an exact round trip. Logs are
 `artifacts/qa/owned-probe-retirement-sdk-final-{focused,full}.log`; this is a
 component checkpoint, not a new native media or automatic retry qualification.
-Adapter integration is in progress.
+
+Adapter checkpoint: **45 focused / 202 full Streaming tests pass**, including
+13 new regressions. Both adapters retain raw returned allocations before
+validation, route cancellation to the actual owned target, and join rejected
+work before reporting its original failure. Public retirement coalesces cleanup;
+foreign identities and old accepted predecessors cannot revoke a replacement.
+Real cleanup failure blocks further probe admission. Downward encoder changes
+remain available while cleanup waits, and shutdown joins its captured work.
+
+Independent review found a late-allocation ordering gap: retirement could cancel
+A while its replacement was still allocating, then returned B could suspend in a
+health read before cleanup. The regression first failed both cleanup and ordering
+assertions; both bridges now check revocation before that read. Final logs are
+`artifacts/qa/probe-retirement-late-allocation-{red,focused-green,full-green}-20260925.log`.
+All processes joined, specification and code-quality reviews approve the final
+checkpoint, and `git diff --check` passes. Task 1 is complete; it enables joined
+cleanup, not automatic retry scheduling or production quality increases.
 
 ### Adapter cleanup contract
 
@@ -121,8 +137,24 @@ close. It must preserve the original terminal reason and cannot mutate a newer
 publication. An obsolete error alone is never proof of joined cleanup. An adapter
 operation must not await its own shutdown, since shutdown already joins it.
 
+The adapter retirement barrier is cleanup-only. A valid native replacement B
+that loses admission after allocation is joined through its predecessor A, but B
+does not become accepted scheduling authority. The existing restart API therefore
+cannot recover that case merely by changing its argument from A to B. Task 2
+needs a separate owned restart path: retain a validated allocation chain apart
+from live-health admission, combine it with the SDK's exact joined terminal
+snapshot, and issue an opaque retired-probe receipt only when both match. Session
+rechecks its current configuration before using that receipt for a new attempt.
+Malformed or unproven allocations require stop/recreation; a global snapshot
+cannot supply the missing ownership proof.
+
 ## Task 2: Core token and Session campaign lease
 
+- [ ] Add the owned terminal receipt/restart path described above, preserving
+      legacy accepted-identity APIs. A canceled valid late allocation must be
+      recoverable without a global snapshot; malformed, foreign and unjoined
+      receipts cannot authorize another campaign. Test canceled initial and
+      replacement allocations through both adapter layers.
 - [ ] Implement the complete lifecycle: begin, bound candidate admission,
       unsuccessful settlement and verified ownership retirement. Token creation
       is private. Preserve ordinary admission when no owned attempt exists;
@@ -142,6 +174,35 @@ operation must not await its own shutdown, since shutdown already joins it.
       UUIDs, foreign snapshot rejection, cancellation during allocation and
       replacement, pending-candidate renewal, expected profile-write revocation,
       held cleanup with immediate downward action, and unchanged default callers.
+
+### Core lifecycle implementation notes
+
+Use a public opaque token with private construction, controller identity and
+nonce, held privately by Session. Registration recomputes readiness. Bound
+admission and application transfer require that exact token and its expected
+phase; application transfer consumes measurement authority. SPI visibility and a
+caller-provided cleanup flag would not prove retirement and are unnecessary.
+
+Put token/scope/duplicate checks before the existing candidate validation's
+`do/catch`: that path advances time and invalidates telemetry on rejection, so an
+obsolete owned callback must never enter it. Preserve ordinary callers' existing
+validation behavior when no owned attempt exists. Factor episode counting out of
+`latchMinimumReset`; failure settlement must not fabricate an application/reset or
+clear unrelated downward advice. Keep one episode through measurement, admission,
+application and probation. Only confirmed trial success clears the counter.
+
+Non-counting Core retirement requires an exact retained token whose applied
+revision has already changed, with no time argument or other state mutation.
+Same-revision cancellation must use unsuccessful settlement after actual joined
+cleanup. Terminal Session stop can revoke access and discard its controller.
+Receiver/configuration changes that do not advance Core's revision need an
+explicit verifiable owner-scope identity before qualifying for non-counting
+retirement; a caller-selected reason is insufficient.
+
+Session settlement clears source/shared-delivery recovery credit but retains
+all consumed-evidence watermarks. Exclude complete windows crossing the settlement
+boundary. `PublishingCandidateRecoveryCoverage.clear()` alone is insufficient
+because it also clears `resumedAt`; apply the monotonic boundary on future input.
 
 ## Task 3: Bounded scheduler and fresh native four-phase experiment
 
@@ -163,6 +224,20 @@ operation must not await its own shutdown, since shutdown already joins it.
       bracketed restoration, complete full-file archive/live/score/audio checks,
       and at least 24 fps under the existing delivery/loss gates. Preserve any
       failure, all frozen hashes and only-owned-simulator cleanup.
+
+Resource preflight against the passing `native-app-uG39s5` artifacts: the
+210-second hold retained 2,356 cadence rows (9,089,096 file bytes) and 325 delivery
+rows (21,732,386 file bytes). A prospective 270-second hold, assuming unchanged
+polling and delivery cadence, adds about 600 and 90 rows: 2,956/3,072 cadence rows
+and 415/512 delivery rows. Scaling by current mean row size estimates 11.4 MB and
+27.8 MB, below the unchanged 16 MiB/32 MiB bounds; these averages are not worst-case
+guarantees, especially with more campaign fields and failure events. The passing
+archive lasted 248.9 seconds, so adding 60 seconds would consume about 308.9 of the
+prepared input's 330 seconds, leaving only 21.1 seconds of source margin. Existing
+generic test budgets permit a 270-second hold (450-second XCTest allowance and
+690-second workflow timeout). No duration is selected or route qualified by these
+estimates. Recheck complete event/byte bounds and source margin after the scheduler
+and four-phase export exist; fail explicitly on exhaustion, never truncate history.
 
 Physical iPhone/Watch camera, cellular and thermal tests and remote proxy/GPU
 qualification remain later gates. No production upgrade flag changes merely
