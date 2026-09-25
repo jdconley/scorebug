@@ -61,13 +61,21 @@ after suspension. Capture a raw allocation before these checks so rejection can
 still revoke and join it. Never upgrade cleanup lineage into current configuration
 authority.
 
+Both adapters expose `validateOwnedProbeContext(_:)` as an explicit point-in-time
+recheck. Native health is read before the final actual native receipt; each actor
+rechecks its local issuer, epoch and lifecycle after suspension. The upper context
+retains its private lower context and validates through the trusted lower
+capability. Injected capture/validation capabilities default to disabled.
+
 Session transfer must freshly check native configuration and then recheck its
 token, applied revision/receipt, source/delivery diagnostics, candidate and probe
 authority after suspension. A read alone cannot close the later read-to-write
 race. Before enabling owned application transfer, add either a revocable native
 configuration permit or an expected-configuration check at native mutation
-admission. This is a separate application gate, not a reason to expose new probe
-allocation authority in the read-only accessor checkpoint.
+admission. The [guarded native admission plan](2026-09-25-owned-application-admission.md)
+chooses the latter, including a replacement-to-bitrate continuation and typed
+safe rejection. This is a separate application gate, not a reason to expose new
+probe allocation authority in the read-only accessor checkpoint.
 
 Joined native cleanup lineage survives encoder changes in the same publication.
 An old context and its Session lease do not. After a downshift and verified write,
@@ -122,6 +130,14 @@ Diagnostic reads remain observational. Internal encoder invalidation and stop
 route directly to owned handles, bypassing legacy entry-point guards. Legacy
 callers that never opt in retain their existing behavior.
 
+Context capture performs that opt-in: reject legacy ownership and reserve owned
+mode before its first suspension. A failed capture does not reopen the legacy
+route. This allows context checks to be delivered before owned operation handles
+without exposing a second competing allocator. Context-only delivery does not
+create or claim a probe. Admitted encoder mutation attempts advance the
+configuration epoch before suspension even if subsequently canceled; fresh capture may select the
+unchanged actual receipt, but previously issued contexts remain obsolete.
+
 Reuse the existing command-reservation and cleanup machinery where practical;
 do not wrap the legacy public APIs in a second independent coordinator. No global
 busy flag may block a downward encoder change while cleanup waits. Add trusted
@@ -132,6 +148,9 @@ owned factories to injected operations with disabled defaults, not fake receipts
 - [x] Native current-receipt read: absent before verified write, exact after it,
       nil during/after invalidation, replacement, failure, finish and close; no
       write side effect. Verify maintained SDK patch and original hashes.
+- [x] Context-only adapter capture/validation: exact selectors, separate issuer
+      and epoch, actual native read after health, mutation/stop suspension races,
+      disabled defaults and lifetime exclusive opt-in; no probe allocation.
 - [ ] Canceled initial operation before dispatch and after a late valid return;
       lower replacement rejected without ever reaching upper `value()`.
 - [ ] Held renewal/allocation joins, duplicate/canceled retirement waiters,
@@ -169,5 +188,28 @@ joined. The maintained patch verifies **162 original upstream hashes** and an
 exact round trip. Logs:
 `artifacts/qa/verified-bitrate-receipt-focused-4-20260925.log` and
 `artifacts/qa/verified-bitrate-receipt-full-20260925.log`.
-This is a point-in-time configuration read. Adapter contexts, owned operation
-handles and Session transfer protections remain separate implementation gates.
+This is a point-in-time configuration read. Owned operation handles and Session
+transfer protections remain separate implementation gates.
+
+### Adapter context checkpoint
+
+Both publisher adapters now capture and revalidate the opaque
+`PublishingBandwidthProbeContext`. Native validation compares the actual current
+receipt after health reads, including exact source-PTS representation. Each actor
+checks its own issuer/epoch/lifecycle after suspension. Admitted encoder changes
+invalidate the epoch before awaiting native work; pre-canceled calls rejected
+before admission preserve the existing context. Stop invalidates it immediately.
+
+Capture reserves lifetime exclusive owned mode before suspension. Even failed
+capture leaves legacy probe mutations disabled; legacy cancellation becomes
+inert. Existing legacy callers that never opt in retain their behavior. Neither
+capture nor validation allocates probes or establishes capacity.
+
+Verification passes **62 focused / 213 full Streaming tests**, including 11 new
+context cases. All jobs joined; independent specification and code-quality
+reviews approve the checkpoint. Logs:
+`artifacts/qa/owned-probe-context-focused-3-20260925.log` and
+`artifacts/qa/owned-probe-context-full-20260925.log`.
+No operation handles, terminal continuation receipts, Session lease or automatic
+retry scheduler are implemented by this checkpoint. The next implementation is
+the exact owned operation/retirement path described above.

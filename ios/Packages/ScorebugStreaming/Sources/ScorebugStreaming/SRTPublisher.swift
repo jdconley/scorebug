@@ -69,6 +69,9 @@ public actor SRTPublisher {
     private var probeRetiring = false
     private var probeCleanupFailed = false
     private var probeRevision: UInt64 = 0
+    private let probeContextIssuer = UUID()
+    private var probeConfigurationEpoch = UUID()
+    private var ownedProbeMode = false
     private var encoderUpdating = false
     private var profileChange: Task<PublishingVideoProfileChange, Error>?
     private var startup: Task<Void, Error>?
@@ -185,6 +188,7 @@ public actor SRTPublisher {
         try Task.checkCancellation()
         guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
         guard !encoderUpdating else { throw PublisherError.mutationInProgress }
+        probeConfigurationEpoch = UUID()
         encoderUpdating = true
         await invalidateBandwidthProbe()
         defer { encoderUpdating = false }
@@ -212,6 +216,7 @@ public actor SRTPublisher {
         try Task.checkCancellation()
         guard !stopping, let generation = activeGeneration else { throw PublisherError.notPublishing }
         guard !encoderUpdating else { throw PublisherError.mutationInProgress }
+        probeConfigurationEpoch = UUID()
         encoderUpdating = true
         await invalidateBandwidthProbe()
         guard !stopping, activeGeneration == generation, !Task.isCancelled else { encoderUpdating = false; throw PublisherError.notPublishing }
@@ -253,7 +258,42 @@ public actor SRTPublisher {
         return receipt
     }
 
+    /// Permanently selects the owned route for this publisher, including when the
+    /// subsequent read fails. Context acquisition does not allocate native work.
+    public func captureOwnedProbeContext(matching selected: PublishingBitRateChange) async throws -> PublishingBandwidthProbeContext {
+        guard !stopping, activeGeneration != nil else { throw PublishingBandwidthProbeError.notPublishing }
+        guard probeOwner == nil, probeOperation == nil, probeRetirement == nil,
+              !probeRetiring, !probeCleanupFailed, !encoderUpdating else { throw PublishingBandwidthProbeError.busy }
+        ownedProbeMode = true
+        let context = PublishingBandwidthProbeContext(issuer: probeContextIssuer, epoch: probeConfigurationEpoch, selected: selected)
+        try await validateOwnedProbeContext(context)
+        try checkProbeContext(context)
+        return context
+    }
+
+    /// Point-in-time validation only; later operations must recheck configuration.
+    public func validateOwnedProbeContext(_ context: PublishingBandwidthProbeContext) async throws {
+        try checkProbeContext(context)
+        let healthy = await isPublishing()
+        try checkProbeContext(context)
+        guard healthy else { throw PublishingBandwidthProbeError.notPublishing }
+        // The current native receipt, read after health, detects implicit encoder
+        // invalidation too. Historical startup evidence or cached writes cannot.
+        let current = await stream.verifiedVideoBitRateReceipt
+        try checkProbeContext(context)
+        guard let current, context.matches(current) else { throw PublishingBandwidthProbeError.obsolete }
+    }
+
+    private func checkProbeContext(_ context: PublishingBandwidthProbeContext) throws {
+        guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
+        guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
+        guard ownedProbeMode, context.issuer == probeContextIssuer, context.epoch == probeConfigurationEpoch,
+              context.lower == nil, context.selected.publishingGeneration == generation,
+              !encoderUpdating else { throw PublishingBandwidthProbeError.obsolete }
+    }
+
     public func beginBandwidthProbe(bitRate: Int, staged: Bool = false, repeatable: Bool = false, policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw PublishingBandwidthProbeError.obsolete }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard !Task.isCancelled else { throw PublishingBandwidthProbeError.cancelled }
@@ -273,6 +313,7 @@ public actor SRTPublisher {
     }
 
     public func renewBandwidthProbe(id: UUID, publishingGeneration: UInt64) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation else { throw PublishingBandwidthProbeError.obsolete }
@@ -293,6 +334,7 @@ public actor SRTPublisher {
 
     public func replaceBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
                                       bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
@@ -316,6 +358,7 @@ public actor SRTPublisher {
     /// Requires repeatable opt-in from the first probe and a campaign-aware receiver.
     public func restartBandwidthProbe(id: UUID, publishingGeneration: UInt64, stage: UInt32,
                                       bitRate: Int) async throws -> PublishingBandwidthProbeSnapshot {
+        guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         guard !stopping, let generation = activeGeneration else { throw PublishingBandwidthProbeError.notPublishing }
         guard generation == publishingGeneration, let prior = probeIdentity, prior.id == id,
               prior.publishingGeneration == generation, prior.stage == stage else { throw PublishingBandwidthProbeError.obsolete }
@@ -339,6 +382,7 @@ public actor SRTPublisher {
     }
 
     public func cancelBandwidthProbe(id: UUID, publishingGeneration: UInt64) async {
+        guard !ownedProbeMode else { return }
         guard let owner = probeOwner, owner.matches(id: id, generation: publishingGeneration),
               let target = owner.target else { return }
         probeRevision &+= 1
@@ -350,6 +394,7 @@ public actor SRTPublisher {
     /// A failed replacement receipt also recognizes its predecessor, so a caller
     /// that never received the replacement UUID can still join its cleanup.
     public func retireBandwidthProbe(id: UUID, publishingGeneration: UInt64) async throws {
+        guard !ownedProbeMode else { throw PublishingBandwidthProbeError.busy }
         if let retirement = probeRetirement, retirement.owner.matches(id: id, generation: publishingGeneration) {
             try await retirement.task.value
             return
@@ -504,6 +549,7 @@ public actor SRTPublisher {
         return snapshot.isPublishing
     }
     public func stop() async {
+        probeConfigurationEpoch = UUID()
         stopping = true
         activeGeneration = nil
         if let shutdown { await shutdown.value; return }

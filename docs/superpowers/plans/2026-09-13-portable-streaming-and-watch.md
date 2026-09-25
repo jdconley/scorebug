@@ -84,8 +84,12 @@ The native current-configuration accessor is implemented and passes **335 SDK
 tests**, including pending mutation/replacement, implicit encoder invalidation,
 failure, finish and close. It reads the existing verified receipt without writing
 or measuring encoder properties. The maintained patch still verifies all 162
-upstream hashes. Adapter context/operation wiring remains next; application
-transfer must also guard against configuration changes between its read and write.
+upstream hashes. Adapter context capture/validation now passes **213 Streaming
+tests**. Exact configuration selection, mutation/stop races and exclusive probe
+ownership are covered; independent reviews approve both checkpoints. Owned probe
+operation handles and Session integration remain next. The
+[guarded application plan](2026-09-25-owned-application-admission.md) closes the
+configuration read-to-write gap before the owned upward route can be enabled.
 
 Earlier `YnfAvU`, `DhjMLB` and `YAQo8F` failures remain unchanged. Bounded live-loss
 accounting grants no healthy recovery time, and clean archive validation remains
