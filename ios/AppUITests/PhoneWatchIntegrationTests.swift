@@ -25,7 +25,7 @@ final class PhoneWatchIntegrationTests: XCTestCase {
         // The button stays disabled until the real paired Watch advertises identity.
         // No manual Watch ID or simulator setup fixture may bypass this handshake.
         tap(app, app.buttons["phoneWatch.connect.0"], timeout: 180)
-        let connected = app.descendants(matching: .any).matching(identifier: "phoneWatch.status").firstMatch
+        let connected = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
         let confirmed = NSPredicate(format: "exists == true AND label CONTAINS %@", "Watch reports connected")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: confirmed, object: connected)], timeout: 180), .completed, app.debugDescription)
         attach(app, "Phone received real paired Watch confirmation")

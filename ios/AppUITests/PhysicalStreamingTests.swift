@@ -132,7 +132,9 @@ final class PhysicalStreamingTests: XCTestCase {
                         "Live output stopped before offering paired Watch setup.")
             try selectTab("Watch", app)
             try tap(connect, in: app)
-            let status = app.descendants(matching: .any).matching(identifier: "phoneWatch.status").firstMatch
+            // SwiftUI propagates the Label identifier to its image and text.
+            // Select the status text; firstMatch across all types picks the icon.
+            let status = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
             try wait("Paired Watch did not confirm native setup.", seconds: 100) {
                 status.exists && status.label.contains("Watch reports connected")
             }
