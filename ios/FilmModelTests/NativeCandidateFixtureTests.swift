@@ -943,6 +943,66 @@ extension NativeCandidateFixtureTests {
         XCTAssertFalse(fake.events.contains("candidateStart"))
     }
 
+    func testMeasuredReadinessNotificationWakesLongPollAndRequeriesContext() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+        let context = try XCTUnwrap(value), contexts = RepeatedCandidateContextBox(context)
+        contexts.set(nil)
+        let firstRead = AsyncStream<Void>.makeStream()
+        let fake = CandidateFixtureFake(); fake.setProbe(stage: 3)
+        let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+            operations: fake.operations, timing: .init(delay: .zero, poll: .seconds(30)),
+            candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360)
+        await wrapper.setDiagnostics { fake.pressure }
+        _ = await wrapper.setMeasurementContextProvider {
+            let result = contexts.read()
+            firstRead.continuation.finish()
+            return result
+        }
+        try await wrapper.start()
+        for await _ in firstRead.stream {}
+        XCTAssertFalse(fake.events.contains("candidateStart"))
+        contexts.set(context)
+        wrapper.measurementReadinessChanged()
+        await wait { fake.waiting }
+        XCTAssertTrue(fake.events.contains("candidateStart"))
+        fake.finish(); await wrapper.stop(); await f.owner.stop()
+    }
+
+    func testMeasuredReadinessNotificationDuringProbeOrContextReadIsNotLost() async throws {
+        for duringProbe in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            let context = try XCTUnwrap(value), contexts = RepeatedCandidateContextBox(context)
+            if !duringProbe { contexts.set(nil) }
+            let firstRead = AsyncStream<Void>.makeStream(), releaseRead = AsyncStream<Void>.makeStream()
+            let fake = CandidateFixtureFake()
+            fake.setProbe(stage: duringProbe ? 2 : 3)
+            if duringProbe { fake.blockNextProbeRead() }
+            let wrapper = NativeCandidatePublisher(publisher: fake, scope: context.scope, liveProfile: .low240,
+                operations: fake.operations, timing: .init(delay: .zero, poll: .seconds(30)),
+                candidateHeadroom: true, requiresMeasurementReadiness: true, measurementProfile: .low360)
+            await wrapper.setDiagnostics { fake.pressure }
+            _ = await wrapper.setMeasurementContextProvider {
+                let result = contexts.read()
+                firstRead.continuation.finish()
+                if !duringProbe { for await _ in releaseRead.stream {} }
+                return result
+            }
+            try await wrapper.start()
+            if duringProbe { await wait { fake.probeReadIsBlocked } }
+            else { for await _ in firstRead.stream {} }
+            XCTAssertFalse(fake.events.contains("candidateStart"))
+            contexts.set(context); fake.setProbe(stage: 3)
+            wrapper.measurementReadinessChanged()
+            fake.releaseProbeRead(); releaseRead.continuation.finish()
+            await wait { fake.waiting }
+            XCTAssertTrue(fake.events.contains("candidateStart"))
+            XCTAssertGreaterThanOrEqual(fake.probeReads, 2)
+            fake.finish(); await wrapper.stop(); await f.owner.stop()
+        }
+    }
+
     func testMeasuredRouteRechecksProbeAfterSuspendedReadiness() async throws {
         for expired in [false, true] {
             let f = try await CandidateQualityFixture.make()

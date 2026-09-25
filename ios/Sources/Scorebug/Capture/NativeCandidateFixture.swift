@@ -294,6 +294,9 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
         candidateStop = nil
     }
+    nonisolated func measurementReadinessChanged() {
+        measurementContext.signalMeasurementReadinessChanged()
+    }
     nonisolated var videoStartup: PublishingVideoStartup? { publisher.videoStartup }
     func setDiagnostics(_ read: @escaping @Sendable () -> Pressure?) { diagnostics = read }
     @discardableResult func setMeasurementContextProvider(_ read: @escaping @Sendable () async -> PublishingQualitySession.CandidateMeasurementContext?) async -> Bool {
@@ -513,6 +516,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 if event.outcome == .cancelled { event.at = ProcessInfo.processInfo.systemUptime }
                 waitTrace?.record(event)
             }
+            let readinessRevision = measurementContext.readinessRevision
             let readStartedAt = ProcessInfo.processInfo.systemUptime
             let value = await probeObservation()
             let readFinishedAt = ProcessInfo.processInfo.systemUptime
@@ -551,7 +555,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                           }) ?? true else {
                         event.at = ProcessInfo.processInfo.systemUptime
                         event.outcome = context == nil ? .contextUnavailable : .contextMismatch
-                        try await Task.sleep(for: timing.poll)
+                        try await waitForProbeRetry(after: readinessRevision)
                         continue
                     }
                     currentMeasurementContext = context
@@ -563,7 +567,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                     event.at = boundAt
                     event.outcome = boundAt >= deadline ? .deadline :
                         (boundAt >= value.leaseDeadline ? .leaseExpiredAfterAwait : .probeRejectedAfterAwait)
-                    try await Task.sleep(for: timing.poll)
+                    try await waitForProbeRetry(after: readinessRevision)
                     continue
                 }
                 pinnedProbe = value; currentProbe = value; probeBoundAt = boundAt
@@ -573,10 +577,17 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
                 return
             }
             event.at = now; event.outcome = value == nil ? .probeUnavailable : .probeRejectedOrNotReady
-            try await Task.sleep(for: timing.poll)
+            try await waitForProbeRetry(after: readinessRevision)
         }
         revoke(.deadline)
         throw CancellationError()
+    }
+    private func waitForProbeRetry(after readinessRevision: UInt64) async throws {
+        if requiresMeasurementReadiness {
+            try await measurementContext.wait(after: readinessRevision, timeout: timing.poll)
+        } else {
+            try await Task.sleep(for: timing.poll)
+        }
     }
     private func refreshProbe(requiresSampling: Bool = false, recordDiagnostic: Bool = true) async -> Bool {
         guard candidateHeadroom else { return true }

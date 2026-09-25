@@ -169,6 +169,52 @@ final class NativeCandidateContextReader: @unchecked Sendable {
     private let lock = NSLock()
     private var provider: Provider?
     private var closed = false
+    private var revision: UInt64 = 0
+    private var waiter: (id: UUID, continuation: AsyncStream<Void>.Continuation)?
+
+    var readinessRevision: UInt64 { lock.withLock { revision } }
+    var readinessWaitIsPending: Bool { lock.withLock { waiter != nil } }
+
+    /// Notifications carry no authority. A single candidate consumer re-reads
+    /// its probe and context after waking; multiple notifications coalesce.
+    func signalMeasurementReadinessChanged() {
+        let continuation = lock.withLock { () -> AsyncStream<Void>.Continuation? in
+            guard !closed else { return nil }
+            revision += 1
+            let continuation = waiter?.continuation
+            waiter = nil
+            return continuation
+        }
+        continuation?.finish()
+    }
+
+    /// Capture the revision before any asynchronous probe/context reads, so a
+    /// change during those reads cannot be lost before waiter registration.
+    func wait(after observedRevision: UInt64, timeout: Duration) async throws {
+        try Task.checkCancellation()
+        let id = UUID(), pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let previous = lock.withLock { () -> AsyncStream<Void>.Continuation? in
+            guard !closed, revision == observedRevision else { return pair.continuation }
+            let previous = waiter?.continuation
+            waiter = (id, pair.continuation)
+            return previous
+        }
+        // Keep one waiter even if an overlapping consumer replaces this one.
+        previous?.finish()
+        defer {
+            lock.withLock { if waiter?.id == id { waiter = nil } }
+            pair.continuation.finish()
+        }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for await _ in pair.stream {} }
+            group.addTask { try? await Task.sleep(for: timeout) }
+            await group.next()
+            group.cancelAll()
+        }
+        // The task group joins both cancellation-aware children, including the
+        // losing timer, before removing this waiter's final reference.
+        try Task.checkCancellation()
+    }
 
     @discardableResult func install(_ provider: @escaping Provider) -> Bool {
         lock.withLock {
@@ -183,7 +229,13 @@ final class NativeCandidateContextReader: @unchecked Sendable {
         return lock.withLock { closed ? nil : context }
     }
     func close() {
-        lock.withLock { closed = true; provider = nil }
+        let continuation = lock.withLock { () -> AsyncStream<Void>.Continuation? in
+            closed = true; provider = nil
+            let continuation = waiter?.continuation
+            waiter = nil
+            return continuation
+        }
+        continuation?.finish()
     }
 }
 #endif

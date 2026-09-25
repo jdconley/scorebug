@@ -472,11 +472,16 @@ struct PublishingClockObservation: Equatable, Sendable {
                 qualityDriver = try qualityFactory(session, attempt)
                 #if DEBUG
                 if let candidate = publisher as? NativeCandidatePublisher, let driver = qualityDriver {
-                    await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
+                    let installed = await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
                         guard let self, let session, let driver else { return nil }
                         return await self.candidateMeasurementContext(session: session, attempt: attempt, driver: driver)
                     }
                     try check(context, attempt)
+                    if installed {
+                        driver.sourceEvaluationDidComplete = { [weak candidate] in
+                            candidate?.measurementReadinessChanged()
+                        }
+                    }
                 }
                 #endif
                 if let readCandidate = measuredCandidateFactory(publisher) {

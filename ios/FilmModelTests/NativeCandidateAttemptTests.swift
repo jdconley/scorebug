@@ -222,6 +222,96 @@ final class NativeCandidateAttemptTests: XCTestCase {
         let value = await read.value; XCTAssertNil(value)
         await f.owner.stop()
     }
+    func testContextReaderCoalescesSignalsBeforeWaitRegistration() async throws {
+        let reader = NativeCandidateContextReader(), finished = AttemptFlag()
+        let revision = reader.readinessRevision
+        for _ in 0..<100 { reader.signalMeasurementReadinessChanged() }
+        XCTAssertGreaterThan(reader.readinessRevision, revision)
+        let task = Task {
+            defer { finished.set() }
+            try await reader.wait(after: revision, timeout: .seconds(30))
+        }
+        await wait { finished.value }
+        task.cancel(); try await task.value
+        XCTAssertFalse(reader.readinessWaitIsPending)
+        // A subsequent wait uses the current revision, with no queued signals.
+        let nextFinished = AttemptFlag(), nextRevision = reader.readinessRevision
+        let next = Task {
+            defer { nextFinished.set() }
+            try await reader.wait(after: nextRevision, timeout: .seconds(30))
+        }
+        await wait { reader.readinessWaitIsPending }
+        XCTAssertFalse(nextFinished.value)
+        reader.signalMeasurementReadinessChanged()
+        await wait { nextFinished.value }
+        next.cancel(); try await next.value
+        XCTAssertFalse(reader.readinessWaitIsPending)
+    }
+
+    func testContextReaderSignalAndCloseWakeRegisteredWaiter() async throws {
+        for close in [false, true] {
+            let reader = NativeCandidateContextReader(), finished = AttemptFlag()
+            let revision = reader.readinessRevision
+            let task = Task {
+                defer { finished.set() }
+                try await reader.wait(after: revision, timeout: .seconds(30))
+            }
+            await wait { reader.readinessWaitIsPending }
+            if close { reader.close() } else { reader.signalMeasurementReadinessChanged() }
+            await wait { finished.value }
+            task.cancel(); try await task.value
+            XCTAssertFalse(reader.readinessWaitIsPending)
+            if close {
+                reader.close()
+                try await reader.wait(after: reader.readinessRevision, timeout: .seconds(30))
+                XCTAssertFalse(reader.readinessWaitIsPending)
+            }
+        }
+    }
+
+    func testContextReaderCancellationBeforeAndAfterRegistrationRemovesWaiter() async throws {
+        for cancelBeforeWait in [false, true] {
+            let reader = NativeCandidateContextReader(), finished = AttemptFlag()
+            let gate = AttemptGate(open: !cancelBeforeWait), revision = reader.readinessRevision
+            let task = Task {
+                defer { finished.set() }
+                await gate.wait()
+                do {
+                    try await reader.wait(after: revision, timeout: .seconds(30))
+                    return false
+                } catch is CancellationError { return true }
+                catch { return false }
+            }
+            if !cancelBeforeWait { await wait { reader.readinessWaitIsPending } }
+            task.cancel(); gate.open()
+            await wait { finished.value }
+            let cancelled = await task.value
+            XCTAssertTrue(cancelled)
+            XCTAssertFalse(reader.readinessWaitIsPending)
+            // Cancellation retires this waiter without closing the reader.
+            reader.signalMeasurementReadinessChanged()
+            try await reader.wait(after: revision, timeout: .seconds(30))
+        }
+    }
+
+    func testContextReaderTimeoutRemovesWaiterWithoutChangingRevision() async throws {
+        let reader = NativeCandidateContextReader(), revision = reader.readinessRevision
+        try await reader.wait(after: revision, timeout: .zero)
+        XCTAssertFalse(reader.readinessWaitIsPending)
+        XCTAssertEqual(reader.readinessRevision, revision)
+        let finished = AttemptFlag()
+        let task = Task {
+            defer { finished.set() }
+            try await reader.wait(after: revision, timeout: .seconds(30))
+        }
+        await wait { reader.readinessWaitIsPending }
+        XCTAssertFalse(finished.value)
+        reader.signalMeasurementReadinessChanged()
+        await wait { finished.value }
+        task.cancel(); try await task.value
+        XCTAssertFalse(reader.readinessWaitIsPending)
+    }
+
     private func currentContext(_ f: CandidateQualityFixture) async throws -> PublishingQualitySession.CandidateMeasurementContext {
         let value = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
         return try XCTUnwrap(value)

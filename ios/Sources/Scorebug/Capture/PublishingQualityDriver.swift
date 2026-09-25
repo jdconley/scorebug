@@ -5,6 +5,8 @@ import ScorebugMedia
 
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
+    /// Wake measurement scheduling after a source decision; this grants no admission.
+    var sourceEvaluationDidComplete: (() -> Void)?
     var candidateInputProvider: ((PublishingQualitySession.Snapshot) async -> PublishingCandidateAdmission?)?
     var deliveryInputProvider: (() -> PublishingDeliveryMonitor.Input?)?
     struct CadenceInput {
@@ -273,6 +275,7 @@ import ScorebugMedia
         }
         try Task.checkCancellation()
         guard !isClosed else { return true }
+        sourceEvaluationDidComplete?()
         localRejection = nil
         await record("evaluated", source: source, decision: decision, diagnostics: diagnostics)
         if let advice = decision.recommendation {
@@ -295,7 +298,7 @@ import ScorebugMedia
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { owner.invalidateCandidateRecovery(); isClosed = true; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() { owner.invalidateCandidateRecovery(); isClosed = true; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()

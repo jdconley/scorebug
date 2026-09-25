@@ -5,6 +5,27 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testFreshSourceEvaluationNotifiesOnceAndStopRevokesNotification() async throws {
+        for stale in [false, true] {
+            let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+            let source = try XCTUnwrap(f.source), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+            if stale { f.native.setNow(source.interval.captureBoundaryEndTime + 2.01) }
+            let driver = PublishingQualityDriver(owner: f.owner,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now }, enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true)
+            var notifications = 0
+            driver.sourceEvaluationDidComplete = { notifications += 1 }
+            await driver.tick(encoderReady: true, source: source, diagnostics: diagnostics)?.value
+            XCTAssertEqual(notifications, stale ? 0 : 1)
+            await driver.tick(encoderReady: true, source: source, diagnostics: diagnostics)?.value
+            XCTAssertEqual(notifications, stale ? 0 : 1, "A consumed source must not generate another wake-up")
+            await driver.stop()
+            XCTAssertNil(driver.sourceEvaluationDidComplete)
+            XCTAssertNil(driver.tick(encoderReady: true, source: source, diagnostics: diagnostics))
+        }
+    }
+
     func testQualityExportVersionsTheSelectedRecoveryPressurePolicy() async throws {
         for policy in [PublishingQualityTelemetry.TransportLimits.Policy.legacyThreshold, .senderDelay, .recoveryBudget] {
             let f = try await CandidateQualityFixture.make()

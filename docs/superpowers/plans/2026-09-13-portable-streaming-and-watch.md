@@ -42,8 +42,13 @@ policy event, and at least ten seconds of shared source/delivery recovery after
 restoration. Checks reject missing terminal source decisions or delivery buckets;
 one final pending encoder interval earns no healthy credit.
 
-A complete native harness success route and a fresh measured ramp-up remain
-**unqualified**. The original strict transport result remains failed on post-stop
+The native success route is connected, but the fresh end-to-end run remains
+**unqualified**. Its UI and full media decodes passed; it stayed at 240p because
+candidate polling missed a roughly 76ms fresh-health opportunity. With insufficient
+offered traffic it correctly failed the congestion gate. A notification-based
+measurement wake-up is implemented and all 574 app-model tests pass; its next
+native experiment and fresh ramp-up remain unqualified.
+The original strict transport result remains failed on post-stop
 export silence; only an explicitly selected scheduled-window replay passes. A
 pre-trial stale-delivery rejection is retained as an invalidation with zero healthy
 credit. Physical camera, phone/Watch concurrency and remote proxy tests remain open.

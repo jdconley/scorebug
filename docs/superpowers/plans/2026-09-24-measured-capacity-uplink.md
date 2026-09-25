@@ -967,3 +967,51 @@ capacity runs to stop at that guard is replaced with an incomplete-route rejecti
 before any artifacts/resources. Independent integration review found no actionable
 issues. A fresh frozen native run is required to establish this route's actual
 end-to-end outcome; this wiring alone is not a passing media experiment.
+
+
+### Fresh native run exposed a measurement wake-up race
+
+Runner wiring is committed at `9409438`; all 4,457 tooling tests pass. A fresh run
+`native-app-V7e8Zi` on the existing iOS26.2 iPhone14 simulator completed its UI
+workflow in 300.064 seconds. Both full A/V decodes, source identity checks,
+natural-audio checks and score glyph checks completed before transport qualification
+failed with **Insufficient offered load**. The archive contains 7,497 consecutive
+frames (0–7,496); the live file contains 7,045 (230–7,274). The run remained at240p
+and offered at most741,792bps during the750,000bps limit, so it correctly cannot
+qualify a congestion/decrease/recovery campaign. Its original failed result remains
+preserved. All1,255 frozen source/input/driver hashes were unchanged; the wrapper
+joined with exit1 and the owned simulator was deleted. Evidence:
+`capacity750-qualified-freeze-2orvqqbd` and the run's
+`candidate-wakeup-assessment.json` (eight independently checked raw-input hashes).
+
+The candidate trace records68 `contextUnavailable` reads and a deadline without
+starting measurement. Final stage3 had the correct active probe; its final reason
+was later `byteLimit`. After probe warmup, source7 was evaluated at bootstrap
++41.762214 seconds and remained eligible only through+41.838049 (~75.69ms).
+Candidate context reads at+41.760305 and+41.862261 straddled that interval. Source6
+had expired before the final probe's warmup; source8 arrived after the candidate
+wait deadline. No context read began inside these recorded freshness windows.
+This identifies a polling race rather than permission to reuse stale health.
+
+The implemented fix is a coalesced notification after a successful native
+source evaluation. It wakes the candidate scheduler immediately but carries no
+context, receipt, probe or admission authority. The scheduler must requery all
+current ownership/freshness/lease checks. Capture a change revision before async
+probe/context reads to avoid a lost wake-up, retain the existing timeout as fallback,
+and cancel/join the pending wait on stop. Keep the current two-second source age,
+probe leases, scope checks, trial thresholds and campaign deadlines unchanged.
+Two focused native model regressions have failed on the original behavior: a
+long-poll candidate misses newly available readiness, and the driver neither
+notifies nor clears its notification callback on stop. Green tests, full model
+coverage, review and a fresh frozen native run must follow before claiming repair.
+
+
+Wake-up verification: all 574 app-model tests pass (89.514 seconds), including
+coalescing before registration, signal/close after registration, cancellation,
+timeout, signals during suspended probe/context reads, immediate candidate retry,
+and driver notification/stop revocation. Independent review found no actionable
+issues. The initial red run had a test-only clock setter typo; after correcting it,
+the two regression methods failed with six intended assertions. The full green run
+is `repeated-live-checkpoint-capacity-readiness-wakeup-model-green.log`. The next
+native run will retain the same750kbps profile and media input; no threshold,
+probe lifetime or campaign deadline was relaxed.
