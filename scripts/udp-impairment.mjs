@@ -3,6 +3,7 @@ import { createSocket } from 'node:dgram';
 import { once } from 'node:events';
 import { RateLedgerObserver } from './rate-ledger-observer.mjs';
 import { SRTPacketDiagnostics } from './srt-packet-diagnostics.mjs';
+import { isPrivateLabIPv4, validatePrivateLabBind } from './private-lab-network.mjs';
 
 const defaults = Object.freeze({
   rateBitsPerSecond: null,
@@ -437,6 +438,7 @@ export async function createUDPImpairmentProxy(configuration) {
       [
         'receiverPort',
         'receiverHost',
+        'bindHost',
         'forward',
         'reverse',
         'forwardRateSchedule',
@@ -449,10 +451,12 @@ export async function createUDPImpairmentProxy(configuration) {
   const {
     receiverPort,
     receiverHost = '127.0.0.1',
+    bindHost = '127.0.0.1',
     forward = {},
     reverse = {},
     forwardRateSchedule = null,
   } = configuration;
+  validatePrivateLabBind(bindHost);
   validateReceiverHost(receiverHost);
   const control = validateControl(configuration, forward.rateBitsPerSecond ?? null);
   const { recordPacketDiagnostics = false, packetDiagnosticsWindow = null } = configuration;
@@ -676,7 +680,9 @@ export async function createUDPImpairmentProxy(configuration) {
   frontend.on('message', (data, rinfo) => {
     if (closing) return;
     if (
-      rinfo.address !== '127.0.0.1' ||
+      (bindHost === '127.0.0.1'
+        ? rinfo.address !== '127.0.0.1'
+        : !isPrivateLabIPv4(rinfo.address)) ||
       (peer && (peer.address !== rinfo.address || peer.port !== rinfo.port))
     ) {
       foreignPeerPackets++;
@@ -708,7 +714,7 @@ export async function createUDPImpairmentProxy(configuration) {
     peakPendingPayloadBytes: d.peakPendingBytes,
   });
   try {
-    frontend.bind(0, '127.0.0.1');
+    frontend.bind(0, bindHost);
     await once(frontend, 'listening');
     backend.connect(receiverPort, receiverHost);
     await once(backend, 'connect');

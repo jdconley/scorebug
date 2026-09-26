@@ -147,6 +147,7 @@ targets:
       - path: Sources/Scorebug/Companion/PhoneWatchModel.swift
       - path: Sources/ScorebugWatch/WatchScoringModel.swift
       - path: Sources/WatchSupport/WatchRelaySessionGate.swift
+      - path: AppUITests/RecoveryControlConfiguration.swift
       - path: FilmModelTests
     settings:
       base:

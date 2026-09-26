@@ -136,3 +136,52 @@ test('API-only geometry diagnostics validate before allocation and clear inherit
     deviceLabOptions(['--host', '192.168.1.130', '--decoded-geometry', 'true'], interfaces),
   );
 });
+
+test('physical recovery is API-only and derives all public endpoints from one validated host', async () => {
+  const module = await import('../device-lab.mjs');
+  assert.equal(typeof module.deviceLabRecoveryBind, 'function');
+  for (const publisherRecovery of [undefined, false, true]) {
+    for (const physicalRecovery of [undefined, false])
+      assert.equal(
+        module.deviceLabRecoveryBind({ publisherRecovery, physicalRecovery }, interfaces),
+        '127.0.0.1',
+      );
+  }
+  assert.equal(
+    module.deviceLabRecoveryBind(
+      { publisherRecovery: true, physicalRecovery: true, host: '192.168.1.130' },
+      interfaces,
+    ),
+    '192.168.1.130',
+  );
+  for (const physicalRecovery of [null, 'true', 1, {}, []]) {
+    assert.throws(
+      () => module.deviceLabRecoveryBind({ publisherRecovery: true, physicalRecovery }, interfaces),
+      /physical recovery/i,
+    );
+    await assert.rejects(
+      module.startDeviceLab({ publisherRecovery: true, physicalRecovery }),
+      /physical recovery/i,
+    );
+  }
+  for (const publisherRecovery of [undefined, false]) {
+    assert.throws(
+      () => module.deviceLabRecoveryBind({ publisherRecovery, physicalRecovery: true }, interfaces),
+      /requires publisher/i,
+    );
+    await assert.rejects(
+      module.startDeviceLab({ publisherRecovery, physicalRecovery: true }),
+      /requires publisher/i,
+    );
+  }
+  for (const host of ['127.0.0.1', '0.0.0.0', '192.168.1.131', '8.8.8.8', 'localhost'])
+    assert.throws(() =>
+      module.deviceLabRecoveryBind(
+        { publisherRecovery: true, physicalRecovery: true, host },
+        interfaces,
+      ),
+    );
+  assert.throws(() =>
+    deviceLabOptions(['--host', '192.168.1.130', '--physical-recovery', 'true'], interfaces),
+  );
+});

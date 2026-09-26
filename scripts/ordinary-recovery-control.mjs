@@ -3,9 +3,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { validatePrivateLabBind } from './private-lab-network.mjs';
 
 /** XCTest controls the owned network fixture, never the app's quality policy. */
-export async function startOrdinaryRecoveryControl({ uplink, artifact }) {
+export async function startOrdinaryRecoveryControl(options) {
+  const { bindHost = '127.0.0.1' } = options;
+  validatePrivateLabBind(bindHost);
+  const { uplink, artifact } = options;
   assert.equal(typeof uplink.constrainForward, 'function');
   assert.equal(typeof uplink.restoreForward, 'function');
   const token = randomBytes(32).toString('hex'),
@@ -124,10 +128,10 @@ export async function startOrdinaryRecoveryControl({ uplink, artifact }) {
   server.setTimeout(2000, (socket) => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(0, bindHost, resolve);
   });
   return {
-    endpoint: `http://127.0.0.1:${server.address().port}`,
+    endpoint: `http://${bindHost}:${server.address().port}`,
     token,
     runID,
     stop() {

@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { createWriteStream } from 'node:fs';
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { createServer, isIPv4 } from 'node:net';
+import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,6 +15,7 @@ import { startReconnectingRTMPRecorder } from './reconnecting-rtmp-recorder.mjs'
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
 import { createUplinkEvidenceStopper } from './uplink-proxy-evidence.mjs';
 import { startOrdinaryRecoveryControl } from './ordinary-recovery-control.mjs';
+import { validatePrivateLabBind } from './private-lab-network.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const execute = promisify(execFile);
@@ -32,20 +33,8 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
     values.set(key, value);
   }
   const host = values.get('--host');
-  assert(host && isIPv4(host), 'Supply --host with this Mac’s private LAN IPv4 address');
-  const octets = host.split('.').map(Number);
-  assert(
-    octets[0] === 10 ||
-      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-      (octets[0] === 192 && octets[1] === 168),
-    'Lab host must be a private LAN address',
-  );
-  assert(
-    Object.values(interfaces)
-      .flat()
-      .some((entry) => entry && !entry.internal && entry.address === host),
-    'Lab host must be assigned to this machine',
-  );
+  assert.notEqual(host, '127.0.0.1', 'Lab host must be a private LAN address');
+  validatePrivateLabBind(host, interfaces);
   const durationText = values.get('--duration') ?? '1800';
   const duration = Number(durationText);
   assert(/^[1-9][0-9]*$/.test(durationText) && duration <= 7200, 'Duration must be 1–7200 seconds');
@@ -202,15 +191,28 @@ export function deviceLabDiagnosticEnvironment(decodedGeometry) {
   };
 }
 
+/** API-only physical recovery; every exposed recovery endpoint uses this exact host. */
+export function deviceLabRecoveryBind(options, interfaces = networkInterfaces()) {
+  assert(
+    options.publisherRecovery === undefined || typeof options.publisherRecovery === 'boolean',
+    'Invalid publisher recovery selection',
+  );
+  assert(
+    options.physicalRecovery === undefined || typeof options.physicalRecovery === 'boolean',
+    'Invalid physical recovery selection',
+  );
+  if (!options.physicalRecovery) return '127.0.0.1';
+  assert.equal(options.publisherRecovery, true, 'Physical recovery requires publisher recovery');
+  assert.notEqual(options.host, '127.0.0.1', 'Physical recovery requires a private LAN host');
+  return validatePrivateLabBind(options.host, interfaces);
+}
+
 /** Owned development stack; media and credentials remain under one private artifact directory. */
 export async function startDeviceLab(options, { signal } = {}) {
   signal?.throwIfAborted();
   const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
   const publishEnvironment = deviceLabPublishEnvironment(options.publishPeerLatencyMs);
-  assert(
-    options.publisherRecovery === undefined || typeof options.publisherRecovery === 'boolean',
-    'Invalid publisher recovery selection',
-  );
+  const recoveryBind = deviceLabRecoveryBind(options);
   // Validate exported API callers too, before creating any processes or files.
   deviceLabOptions([
     '--host',
@@ -341,6 +343,7 @@ export async function startDeviceLab(options, { signal } = {}) {
     let publisherEnvironment = {};
     if (options.publisherRecovery) {
       const uplink = await createUDPImpairmentProxy({
+        bindHost: recoveryBind,
         receiverHost: options.host,
         receiverPort: ingestPort,
         forward: { recordTimeline: true, recordRateLedger: true },
@@ -360,9 +363,13 @@ export async function startDeviceLab(options, { signal } = {}) {
         artifact,
         capacityEvidencePolicy: 'rate-ledger-v1',
       });
-      recoveryControl = await startOrdinaryRecoveryControl({ uplink, artifact });
+      recoveryControl = await startOrdinaryRecoveryControl({
+        uplink,
+        artifact,
+        bindHost: recoveryBind,
+      });
       publisherEnvironment = {
-        INGEST_PUBLISH_HOST: '127.0.0.1',
+        INGEST_PUBLISH_HOST: recoveryBind,
         INGEST_PUBLISH_PORT: String(uplink.port),
       };
     }

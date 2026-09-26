@@ -4,30 +4,36 @@ import { createSocket } from 'node:dgram';
 import { createConnection } from 'node:net';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createUDPImpairmentProxy } from '../udp-impairment.mjs';
 import { startOrdinaryRecoveryControl } from '../ordinary-recovery-control.mjs';
 
-async function fixture(t) {
+async function fixture(t, bindHost = '127.0.0.1') {
   const artifact = await mkdtemp(join(tmpdir(), 'scorebug-recovery-control-'));
   const receiver = createSocket('udp4'),
     publisher = createSocket('udp4');
+  let uplink, control;
+  t.after(async () => {
+    await control?.stop();
+    await uplink?.close();
+    await Promise.all([receiver, publisher].map((s) => new Promise((resolve) => s.close(resolve))));
+    await rm(artifact, { recursive: true, force: true });
+  });
   await new Promise((resolve) => receiver.bind(0, '127.0.0.1', resolve));
-  await new Promise((resolve) => publisher.bind(0, '127.0.0.1', resolve));
-  const uplink = await createUDPImpairmentProxy({
+  await new Promise((resolve) => publisher.bind(0, bindHost, resolve));
+  uplink = await createUDPImpairmentProxy({
+    ...(bindHost === '127.0.0.1' ? {} : { bindHost }),
     receiverPort: receiver.address().port,
     forward: { recordTimeline: true, recordRateLedger: true },
     reverse: { recordTimeline: true },
     forwardRateControl: { rateBitsPerSecond: 750000 },
   });
-  const control = await startOrdinaryRecoveryControl({ uplink, artifact });
-  t.after(async () => {
-    await control.stop();
-    await uplink.close();
-    await Promise.all([receiver, publisher].map((s) => new Promise((resolve) => s.close(resolve))));
-    await rm(artifact, { recursive: true, force: true });
+  control = await startOrdinaryRecoveryControl({
+    uplink,
+    artifact,
+    ...(bindHost === '127.0.0.1' ? {} : { bindHost }),
   });
   const diagnostic = {
     policyOwnerKey: 'a'.repeat(64),
@@ -42,13 +48,13 @@ async function fixture(t) {
       signal: AbortSignal.timeout(3000),
     });
   async function peer() {
-    publisher.send(Buffer.from('actual-publisher'), uplink.port, '127.0.0.1');
+    publisher.send(Buffer.from('actual-publisher'), uplink.port, bindHost);
     const end = performance.now() + 1000;
     while (!uplink.snapshot().forwardRateControl.startedAt && performance.now() < end)
       await delay(2);
     assert(uplink.snapshot().forwardRateControl.startedAt);
   }
-  return { artifact, control, uplink, request, peer };
+  return { artifact, control, uplink, request, peer, publisher, receiver };
 }
 
 test('authenticated native requests apply exactly two real UDP phases and preserve host brackets', async (t) => {
@@ -136,4 +142,71 @@ test('control joins an unfinished request and retains incomplete phase evidence'
   const audit = JSON.parse(await readFile(join(f.artifact, 'ordinary-recovery-control.json')));
   assert.equal(audit.records.length, 0);
   assert.equal(f.uplink.snapshot().forwardRateControl.phases.length, 1);
+});
+
+test('explicit private interface carries authenticated real UDP constrain and restore with pinned peer', async (t) => {
+  const host = Object.values(networkInterfaces())
+    .flat()
+    .find(
+      (v) =>
+        !v.internal &&
+        v.family === 'IPv4' &&
+        /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(v.address),
+    )?.address;
+  if (!host) return t.skip('No assigned RFC1918 interface is available');
+  const f = await fixture(t, host);
+  assert.equal(new URL(f.control.endpoint).hostname, host);
+  assert.match(f.control.token, /^[a-f0-9]{64}$/);
+  assert.equal((await fetch(`${f.control.endpoint}/constrain`, { method: 'POST' })).status, 401);
+  const received = [],
+    replies = [];
+  f.receiver.on('message', (data, rinfo) => {
+    received.push(data.toString());
+    f.receiver.send(data, rinfo.port, rinfo.address);
+  });
+  f.publisher.on('message', (data) => replies.push(data.toString()));
+  await f.peer();
+  async function roundtrip(value) {
+    f.publisher.send(Buffer.from(value), f.uplink.port, host);
+    const end = performance.now() + 1000;
+    while (!replies.includes(value) && performance.now() < end) await delay(2);
+    assert(replies.includes(value), 'LAN payload must traverse both directions');
+  }
+  assert.equal((await f.request('constrain', 1)).status, 200);
+  await roundtrip('constrained-data');
+  assert.equal((await f.request('restore', 2)).status, 200);
+  await roundtrip('restored-data');
+  const foreign = createSocket('udp4');
+  await new Promise((resolve) => foreign.bind(0, host, resolve));
+  t.after(() => new Promise((resolve) => foreign.close(resolve)));
+  foreign.send(Buffer.from('foreign'), f.uplink.port, host);
+  const end = performance.now() + 1000;
+  while (!f.uplink.snapshot().foreignPeerPackets && performance.now() < end) await delay(2);
+  assert.equal(f.uplink.snapshot().foreignPeerPackets, 1);
+  assert(!received.includes('foreign'));
+  await f.control.stop();
+  await f.uplink.close();
+  assert.deepEqual(f.uplink.snapshot().errors, []);
+  assert.deepEqual(
+    f.uplink.snapshot().forwardRateControl.phases.map((p) => p.rateBitsPerSecond),
+    [null, 750000, null],
+  );
+  const audit = JSON.parse(await readFile(join(f.artifact, 'ordinary-recovery-control.json')));
+  assert.equal(audit.closed, true);
+  assert.equal(audit.records.length, 2);
+  assert(!JSON.stringify(audit).includes(f.control.token));
+});
+
+test('controller rejects an unsafe bind before server allocation', async () => {
+  for (const bindHost of ['0.0.0.0', '8.8.8.8', 'localhost', '192.168.001.2']) {
+    await assert.rejects(
+      startOrdinaryRecoveryControl({
+        bindHost,
+        get uplink() {
+          throw new Error('Resources touched before validation');
+        },
+      }),
+      /bind/,
+    );
+  }
 });

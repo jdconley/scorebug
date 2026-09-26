@@ -16,7 +16,7 @@ import {
   requireOrdinaryTestResult,
   recoverOrdinaryOwnership,
 } from '../test-ordinary-native-app.mjs';
-const interfaces = { en0: [{ address: '192.168.1.130', internal: false }] };
+const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
 test('ordinary upload budget comparison is explicit and restricted to recovery720', () => {
   const base = ['--host', '192.168.1.130', '--source', '/p.mov'];
   assert.deepEqual(

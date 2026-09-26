@@ -82,6 +82,7 @@ struct OrdinaryRecoverySample {
 /// Run only against a seeded, disposable HOME/AWAY match on a private LAN.
 final class PhysicalStreamingTests: XCTestCase {
     private var evidencePrefix = "PhysicalStreaming"
+    private var completedRecordingID: String?
     private var deadline = Date.distantPast
     private enum SmokeFailure: Error { case failed(String) }
 
@@ -142,6 +143,8 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recoveryScope: String?
     private var recoveryFailure: String?
     private var recovery720 = false
+    private var physicalRecovery = false
+    private var recoveryControlConfiguration: RecoveryControlConfiguration?
 
     private func recoveryMilestone(_ phase: String, sample: Bool = false) {
         var record: [String: Any] = ["phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime]
@@ -155,10 +158,11 @@ final class PhysicalStreamingTests: XCTestCase {
             "samples": recoverySamples, "gates": recoveryGates,
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
         if recovery720 { report["contract"] = "recovery720" }
+        if physicalRecovery { report["captureSource"] = "physical-camera" }
         report["failure"] = recoveryFailure
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-            attachment.name = recovery720 ? "OrdinaryRecovery720Streaming-recovery-phases" : "OrdinaryRecoveryStreaming-recovery-phases"
+            attachment.name = "\(evidencePrefix)-recovery-phases"
             attachment.lifetime = .keepAlways; add(attachment)
         }
     }
@@ -247,16 +251,47 @@ final class PhysicalStreamingTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }; return result
         }
     }
+    @MainActor private func preflightPhysicalRecoveryControl() throws {
+        guard let control = recoveryControlConfiguration else {
+            throw SmokeFailure.failed("Physical recovery controller configuration missing.")
+        }
+        // Resolve the runner's first local-network permission before recording
+        // and before any timed mutation. This endpoint cannot change lab state.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20; configuration.timeoutIntervalForResource = 20
+        configuration.waitsForConnectivity = true
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: control.endpoint)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(control.token)", forHTTPHeaderField: "Authorization")
+        let response = RecoveryResponse()
+        let end = ProcessInfo.processInfo.systemUptime + 20
+        session.dataTask(with: request) { data, value, error in
+            response.set(data, value, error)
+        }.resume()
+        while response.get() == nil && ProcessInfo.processInfo.systemUptime < end {
+            allowExpectedPermissions()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard ProcessInfo.processInfo.systemUptime <= end,
+              let result = response.get(), result.2 == nil,
+              let http = result.1 as? HTTPURLResponse, http.statusCode == 404,
+              let data = result.0, data.count <= 4096,
+              let body = try JSONSerialization.jsonObject(with: data) as? [String: String],
+              body == ["error": "Unknown operation"] else {
+            throw SmokeFailure.failed("Physical recovery controller preflight failed before recording.")
+        }
+    }
     @MainActor private func recoveryRequest(_ operation: String, sequence: Int, sample: OrdinaryRecoverySample) throws -> Double {
-        let env = ProcessInfo.processInfo.environment
-        guard let endpoint = env["SCOREBUG_RECOVERY_CONTROL_URL"], let components = URLComponents(string: endpoint),
-              components.scheme == "http", components.host == "127.0.0.1", components.port != nil,
-              components.user == nil, components.password == nil, components.query == nil, components.fragment == nil,
-              ["", "/"].contains(components.path), let base = components.url,
-              let token = env["SCOREBUG_RECOVERY_CONTROL_TOKEN"], token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-              let runID = env["SCOREBUG_RECOVERY_RUN_ID"], UUID(uuidString: runID) != nil else {
+        let control: RecoveryControlConfiguration
+        do {
+            if let recoveryControlConfiguration { control = recoveryControlConfiguration }
+            else { control = try RecoveryControlConfiguration(environment: ProcessInfo.processInfo.environment) }
+        } catch {
             throw SmokeFailure.failed("Private recovery controller configuration missing or invalid.")
         }
+        let base = control.endpoint, token = control.token, runID = control.runID
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 4; configuration.timeoutIntervalForResource = 4
         configuration.waitsForConnectivity = false
@@ -358,6 +393,23 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testPhysicalIPhoneRecover720ScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical recovery720 requires an actual iPhone camera.")
+        #else
+        guard ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_RECOVERY_720"] == "1" else {
+            throw XCTSkip("Use the explicit physical recovery720 launcher.")
+        }
+        recovery720 = true; physicalRecovery = true; evidencePrefix = "PhysicalRecovery720Streaming"
+        defer { attachRecoveryEvidence() }
+        do {
+            recoveryControlConfiguration = try RecoveryControlConfiguration(
+                environment: ProcessInfo.processInfo.environment, allowLAN: true)
+            try runVertical(watchScoring: false, recovery: true)
+        } catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
+        #endif
+    }
+
     @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
@@ -448,6 +500,7 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try tap(app.buttons["streaming.closeSetup"], in: app)
 
+        if physicalRecovery { try preflightPhysicalRecoveryControl() }
         if recovery {
             recoveryRecordingStarted = ProcessInfo.processInfo.systemUptime
             recoveryRecordingDeadline = recoveryRecordingStarted + 540
@@ -578,20 +631,20 @@ final class PhysicalStreamingTests: XCTestCase {
                 try tap(app.buttons["streaming.stop"], in: app)
             }
         } else if !watchScoring {
-            try selectTab("Score", app)
-            try tap(app.buttons["scoring.homePoint"], in: app)
             do {
+                try selectTab("Score", app)
+                try tap(app.buttons["scoring.homePoint"], in: app)
                 try wait("Native HOME point was not acknowledged as 1.", seconds: 12) {
                     app.buttons["scoring.homePoint"].value as? String == "1"
                 }
             } catch {
-                guard ordinarySimulator else { throw error }
+                guard ordinarySimulator || recovery else { throw error }
                 scoreFailure = error
                 evidence(app, phase: "native-score-gate-failed", screenshot: true)
             }
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
-            if ordinarySimulator { try adaptiveGate() }
+            if ordinarySimulator || recovery { try adaptiveGate() }
             try preservingRecoveryFailure {
                 if recovery { recoveryMilestone("live-hold-started") }
                 let holdStarted = Date()
@@ -644,7 +697,18 @@ final class PhysicalStreamingTests: XCTestCase {
         try wait("No new completed recording appeared; existing recordings were preserved.", seconds: 10) {
             exports.firstMatch.exists && exports.firstMatch.identifier != oldNewestExport
         }
-        try tap(exports.firstMatch, in: app)
+        let exportIdentifier = exports.firstMatch.identifier
+        let exportPrefix = "recordings.export."
+        let recordingID = String(exportIdentifier.dropFirst(exportPrefix.count))
+        guard exportIdentifier != oldNewestExport, exportIdentifier.hasPrefix(exportPrefix),
+              let parsedID = UUID(uuidString: recordingID),
+              recordingID.lowercased() == parsedID.uuidString.lowercased() else {
+            throw SmokeFailure.failed("New recording export has an invalid recording identity.")
+        }
+        // Preserve the actual folder spelling; collection must not select an
+        // earlier recording or infer identity from a timestamp or export order.
+        completedRecordingID = recordingID
+        try tap(app.buttons[exportIdentifier], in: app)
         try wait("The new recording could not be exported to MP4.", seconds: 35) {
             app.staticTexts["recordings.exportReady"].exists
         }
@@ -985,12 +1049,13 @@ final class PhysicalStreamingTests: XCTestCase {
         let quality = value(app, "streaming.appliedQuality")
         let safeQuality = quality.range(of: #"^(240p30|360p30):[0-9,. ]{1,16}$"#, options: .regularExpression) != nil
         let diagnostic = value(app, "streaming.qualityDiagnostic")
-        let report: [String: Any] = ["phase": phase, "durationSeconds": elapsed(app),
+        var report: [String: Any] = ["phase": phase, "durationSeconds": elapsed(app),
                                    "qualityDiagnostic": diagnostic.utf8.count <= 4096 ? diagnostic : "oversized",
                                    "appliedQuality": safeQuality ? quality : "unavailable-or-other",
                                    "localStatus": statuses.contains(local) ? local : "other",
                                    "workerStatus": statuses.contains(worker) ? worker : "other",
                                    "exportReady": app.staticTexts["recordings.exportReady"].exists]
+        if let completedRecordingID { report["recordingID"] = completedRecordingID }
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
             attachment.name = "\(evidencePrefix)-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)

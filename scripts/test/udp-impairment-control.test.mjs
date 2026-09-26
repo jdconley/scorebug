@@ -446,3 +446,14 @@ test('control captures and validates one rate value from caller configuration', 
   assert.equal(reads, 1);
   assert.equal(proxy.snapshot().forwardRateControl.requested.rateBitsPerSecond, 1024);
 });
+
+test('frontend rejects unsafe binds before allocation and leaves receiver validation unchanged', async (t) => {
+  const bindings = [];
+  t.mock.method(Socket.prototype, 'bind', (...args) => {
+    bindings.push(args);
+    throw new Error('Allocated socket');
+  });
+  for (const bindHost of ['0.0.0.0', '8.8.8.8', 'localhost', '192.168.001.2'])
+    await assert.rejects(createUDPImpairmentProxy({ receiverPort: 9999, bindHost }), /bind/);
+  assert.deepEqual(bindings, []);
+});
