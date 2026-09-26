@@ -9,7 +9,16 @@ Fixed wall-clock capture is simpler but may miss a variable-time climb. Whole-ru
 - [x] Add socket tests to `scripts/test/srt-packet-diagnostics-integration.test.mjs`: real baseline traffic excluded, exact receipt origin, constrained and restored packets captured with original/retransmit flags, terminal joined export, late traffic excluded, never-constrained closed capture empty, invalid origins/control combinations rejected. Observe causal red.
 - [x] Implement validation/anchoring in `scripts/udp-impairment.mjs`; enable the explicit25s window in `scripts/device-lab.mjs` only inside publisherRecovery. No app/encoder/policy changes.
 - [x] Run packet parser/integration, UDP control/socket/timeline, device-lab and ordinary-runner tests; format/check diff. Independently review the source and tests before capture and commit the reviewed slice.
-- [ ] Run the same ordinary720/700ms source and faults after all test jobs join. Confirm packet origin equals the retained constrain receipt, no observer/capture overflow, and retain native/transport/geometry plus full three-output media results.
-- [ ] Attribute first overflow burst, unique originals, retransmissions, NAK/ACK activity and affected MPEG-TS source intervals. Report observed facts and unresolved boundaries; select the next root-cause action. Failed results remain failed.
+- [x] Run the same ordinary720/700ms source and faults after all test jobs join. Confirm packet origin equals the retained constrain receipt, no observer/capture overflow, and retain native/transport/geometry plus full three-output media results.
+- [x] Attribute first overflow burst, unique originals, retransmissions, NAK/ACK activity and affected MPEG-TS source intervals. Report observed facts and unresolved boundaries; select the next root-cause action. Failed results remain failed.
 
 Evidence/session history: [current session](../../session-logs/2026-09-26-collapse-packet-diagnostics.md). Physical paired acceptance remains pending Watch unlock and takes priority if devices become ready before a new capture.
+
+**Current result:** Complete trace shows original-data overload, all261overflow drops,
+and delayed NAKs answered with sender drop requests. Payload encryption prevents
+PES/frame attribution. Native recovery passes; both live media outputs fail with
+100missing frames and23audio gaps each, while independent archive passes. Next
+controlled intervention is existing source-cadence pacing in the ordinary factory;
+retain current timing/cap/admission and all media gates. Earlier pressure scheduling
+is the next candidate if pacing alone remains insufficient. Full details belong
+in the session log, not this plan.

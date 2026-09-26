@@ -6,7 +6,7 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEAD5634bea, with a small diagnostic slice under review. No PR requested. All current capture/build/media jobs are joined.
+HEAD3128283 runtime source. No PR requested. All jobs are joined.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns goals/status/todos. [Current session](2026-09-26-collapse-packet-diagnostics.md)
@@ -16,11 +16,13 @@ during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-Current source slice: constrain-anchored packet diagnostics, bounded to25s in the
-recovery lab, with app/queue/rate behavior unchanged.132focused tests and formatting
-pass; spec review approved, quality review pending. See the collapse diagnostic
-plan. Commit reviewed source before repeating ordinary720/700ms to attribute the
-burst. No native capture active.
+All capture/build/media jobs joined. Source3128283 packet diagnostic slice passes
+both reviews/132tests. Completed uDznjI native recovery passes; full media fails.
+Next root action: integrate existing source-cadence pacing in ordinary constructor
+as controlled intervention, proving propagation and preserving candidate ownership,
+source freshness, finish/cancellation/overflow. Keep3000/700ms/ladder/cap/gates
+unchanged. If pacing alone fails, test faster transport sampling and local tick
+while retaining250ms evidence windows and thresholds. Do not invent a new pacer.
 
 1. Finish physical paired vertical when the Watch is unlocked. User approved phone
    automation, but fresh Xcode preflight still explicitly reports Watch locked.
@@ -31,16 +33,25 @@ burst. No native capture active.
    receiver finished/no sessions, failures:[]. Fresh e147ac4 signed phone/Watch
    builds pass; Watch paired/connected with developer services. Reuse helper
    `artifacts/qa/run-physical-paired-instrumented-20260926.mjs` after fresh readiness.
-2. Diagnose collapse loss, not timing rejection. Ordinary `ordinary-native-JZQQai`
-   / `device-lab-vVhC6B` completes full720recovery under broadcast3000ms + negotiated
-   700ms upload recovery, but both live outputs fail media continuity. Preserve
-   failed evidence and use existing bounded SRT packet diagnostics to distinguish
-   original/drain traffic from retransmissions near collapse before choosing a fix.
-   Existing source-cadence pacing is opt-in and did not qualify prior media; read
-   September16 pacing/encoder-low-latency and September17 frame-delay plans first.
-   Do not repeat unchanged runs or treat a wider deadline/queue as a loss fix.
+2. Collapse diagnosis is complete enough for the next intervention. Run
+   `ordinary-native-uDznjI` / `device-lab-9fjCGU` (source3128283) has complete25s
+   packet evidence exactly bound to constraint receipt. All261drops captured:
+   228original data+33ACKACK, no retransmitted data. Firstdrop895ms, first matching
+   NAK3686ms, sender answers Message Drop Request; maxqueue residence2796ms.
+   Initial800ms backlog lower bound198744bytes before185688byte/200ms burst.
+   Burst overlaps first decrease but encrypted TS prevents drain/frame attribution.
+   Reviewed analysis/correlation reports are in the run directory. No native or
+   transport pass changes its media failure.
 
 ## Latest verified result
+
+uDznjI: workflow/native/transport/geometry pass;174segment native export. Archive
+10349sequentialframes/30fps/no audio gaps,71waveform+clean-glyph probes pass. Both
+live9992frames lose100IDs4679→4780,23audio gaps,3.367s maxvideo gap.119frame archive
+continuation passes. Original failed manifest retained;57-file preservation hash
+manifest. AV diagnostic exits1 on live summed-audio coverage~1105ms; no inference
+of permanent sync offset. Phase9A636314-0320-49A2-AF70-038AA82AD491.json.
+Offline packet helper and eight regression cases reviewed after four findings fixed.
 
 Production timing source passed199app/8Core tests, DebugUI/Release builds and both
 exact-blob reviews. Normal factory uses3000ms decoder/3500ms capture evaluation;
