@@ -2,7 +2,7 @@
 
 ## Objective and workspace
 
-Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Goal active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
+Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Execution blocked pending device access; goal remains incomplete. See [blocker audit](2026-09-26-device-acceptance-blocked.md). Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-runner-network-setting.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
 
