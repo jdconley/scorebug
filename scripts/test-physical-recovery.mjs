@@ -9,19 +9,23 @@ import { runOrdinaryCommand, requireOrdinaryTestResult } from './test-ordinary-n
 const root = fileURLToPath(new URL('..', import.meta.url));
 export const physicalRecoveryTest =
   'ScorebugAppUITests/PhysicalStreamingTests/testPhysicalIPhoneRecover720ScoreStopAndExport';
+export const physicalNetworkProbeTest =
+  'ScorebugAppUITests/PhysicalStreamingTests/testPhysicalRecoveryNetworkProbe';
 export function physicalRecoveryOptions(args, interfaces) {
   const values = new Map();
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i],
       value = args[i + 1];
     assert(
-      ['--host', '--device', '--team', '--encoder', '--publish-peer-latency-ms'].includes(key) &&
+      ['--host', '--device', '--team', '--encoder', '--publish-peer-latency-ms', '--lane'].includes(key) &&
         value &&
         !values.has(key),
       'Invalid or duplicate physical option',
     );
     values.set(key, value);
   }
+  const lane = values.get('--lane') ?? 'recovery720';
+  assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
   const device = values.get('--device'),
     team = values.get('--team') ?? 'B222J9J7B8';
   assert(
@@ -34,7 +38,7 @@ export function physicalRecoveryOptions(args, interfaces) {
       '--host',
       values.get('--host'),
       '--duration',
-      '900',
+      lane === 'network-probe' ? '240' : '900',
       '--encoder',
       values.get('--encoder') ?? 'software',
       '--publish-peer-latency-ms',
@@ -42,9 +46,10 @@ export function physicalRecoveryOptions(args, interfaces) {
     ],
     interfaces,
   );
-  return { ...options, device, team };
+  return { ...options, device, team, lane };
 }
-export function physicalRecoveryEnvironment(lab) {
+export function physicalRecoveryEnvironment(lab, lane = 'recovery720') {
+  assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
   const api = new URL(lab.setup.endpoint),
     control = new URL(lab.recoveryControl.endpoint);
   // WHATWG URL parsing normalizes decimal/hex and percent-encoded hostnames.
@@ -89,7 +94,7 @@ export function physicalRecoveryEnvironment(lab) {
   assert.match(lab.recoveryControl.runID, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i);
   assert(typeof lab.setup.installationToken === 'string' && lab.setup.installationToken.length > 0);
   return {
-    SCOREBUG_PHYSICAL_RECOVERY_720: '1',
+    ...(lane === 'network-probe' ? {SCOREBUG_PHYSICAL_NETWORK_PROBE: '1'} : {SCOREBUG_PHYSICAL_RECOVERY_720: '1'}),
     SCOREBUG_DEVICE_API_URL: lab.setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: lab.setup.installationToken,
     SCOREBUG_RECOVERY_CONTROL_URL: lab.recoveryControl.endpoint,
@@ -131,6 +136,8 @@ os.chmod(destination,0o600)
 async function main() {
   assert.equal(process.platform, 'darwin', 'Physical Apple workflow requires macOS');
   const options = physicalRecoveryOptions(process.argv.slice(2));
+  const probe = options.lane === 'network-probe';
+  const selectedTest = probe ? physicalNetworkProbeTest : physicalRecoveryTest;
   await mkdir(join(root, 'artifacts/qa'), { recursive: true });
   const artifact = await mkdtemp(join(root, 'artifacts/qa/physical-recovery-'));
   await chmod(artifact, 0o700);
@@ -153,7 +160,7 @@ async function main() {
     failure,
     workflowPassed = false;
   console.log(
-    JSON.stringify({ artifact, scope: 'Physical camera recovery; no fixture media qualification' }),
+    JSON.stringify({ artifact, scope: probe ? 'Runner network diagnostic; no camera or phase mutations' : 'Physical camera recovery; no fixture media qualification' }),
   );
   try {
     sourceHead = await run('git', ['rev-parse', 'HEAD'], 'source-head');
@@ -236,7 +243,7 @@ async function main() {
         const environmentPath = join(artifact, 'phone-environment.json'),
           configure = join(artifact, 'configure.py'),
           testRun = join(artifact, 'phone.xctestrun');
-        await writeFile(environmentPath, JSON.stringify(physicalRecoveryEnvironment(lab)), {
+        await writeFile(environmentPath, JSON.stringify(physicalRecoveryEnvironment(lab, options.lane)), {
           flag: 'wx',
           mode: 0o600,
         });
@@ -270,11 +277,11 @@ async function main() {
             '-parallel-testing-enabled',
             'NO',
             '-maximum-test-execution-time-allowance',
-            '780',
-            `-only-testing:${physicalRecoveryTest}`,
+            probe ? '120' : '780',
+            `-only-testing:${selectedTest}`,
           ],
           'workflow',
-          900000,
+          probe ? 180000 : 900000,
         );
         const summary = JSON.parse(
           await run(
@@ -304,7 +311,7 @@ async function main() {
             'test-leaves',
           ),
         );
-        requireOrdinaryTestResult(summary, tests, physicalRecoveryTest);
+        requireOrdinaryTestResult(summary, tests, selectedTest);
         await verifyPhysicalRecoveryInputs(inputs);
         await verifyPhysicalRecoveryInputs(configuredInputs);
       },
@@ -318,7 +325,7 @@ async function main() {
       JSON.stringify(
         {
           formatVersion: 1,
-          lane: 'physical-recovery720',
+          lane: probe ? 'physical-network-probe' : 'physical-recovery720',
           sourceHead,
           device: options.device,
           host: options.host,

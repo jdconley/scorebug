@@ -161,3 +161,15 @@ test('binds the actual Debug implementation image and rejects changes after exec
   await writeFile(join(products,names[1]),'changed implementation');
   await assert.rejects(verifyPhysicalRecoveryInputs(inputs),/changed/);
 });
+
+test('network probe is explicit, selects no camera recovery flag and has a short lab budget', () => {
+  const options = physicalRecoveryOptions([...args, '--lane', 'network-probe'], interfaces);
+  assert.equal(options.lane, 'network-probe');
+  assert.equal(options.duration, 240);
+  assert.equal(physicalRecoveryOptions(args, interfaces).lane, 'recovery720');
+  assert.throws(() => physicalRecoveryOptions([...args, '--lane', 'unknown'], interfaces));
+  const environment = physicalRecoveryEnvironment(lab(), 'network-probe');
+  assert.equal(environment.SCOREBUG_PHYSICAL_NETWORK_PROBE, '1');
+  assert.equal(environment.SCOREBUG_PHYSICAL_RECOVERY_720, undefined);
+  assert.throws(() => physicalRecoveryEnvironment(lab(), 'unknown'));
+});

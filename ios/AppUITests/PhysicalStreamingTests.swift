@@ -1,4 +1,5 @@
 import XCTest
+import Network
 
 // BEGIN RECOVERY GUARDS
 /// Pure predicates shared by the UI workflow and host-compiled regression tests.
@@ -250,6 +251,186 @@ final class PhysicalStreamingTests: XCTestCase {
         func get() -> (Data?, URLResponse?, Error?)? {
             lock.lock(); defer { lock.unlock() }; return result
         }
+    }
+    private final class NetworkProbeMetrics: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private let started: Date
+        private var records: [[String: Any]] = []
+        init(started: Date) { self.started = started }
+        func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+            let records: [[String: Any]] = metrics.transactionMetrics.prefix(4).map { transaction in
+                let proto = transaction.networkProtocolName ?? "missing"
+                var row: [String: Any] = ["protocol": ["http/1.0", "http/1.1", "h2", "h3"].contains(proto) ? proto : "other",
+                                          "isProxyConnection": transaction.isProxyConnection]
+                for (key, value) in [("connectStartOffsetSeconds", transaction.connectStartDate),
+                                     ("connectEndOffsetSeconds", transaction.connectEndDate),
+                                     ("requestStartOffsetSeconds", transaction.requestStartDate),
+                                     ("requestEndOffsetSeconds", transaction.requestEndDate),
+                                     ("responseStartOffsetSeconds", transaction.responseStartDate),
+                                     ("responseEndOffsetSeconds", transaction.responseEndDate)] {
+                    if let value { row[key] = value.timeIntervalSince(started) }
+                }
+                return row
+            }
+            lock.lock(); self.records = records; lock.unlock()
+        }
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil) // Probe only the validated endpoint; never forward credentials.
+        }
+        func snapshot() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return records }
+    }
+    private final class NetworkProbeTCPState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var events: [[String: Any]] = []
+        private var finished = false
+        let cancelled = DispatchSemaphore(value: 0)
+        func observe(_ state: NWConnection.State, path: NWPath?, started: Double) {
+            let label: String
+            switch state {
+            case .setup: label = "setup"
+            case .preparing: label = "preparing"
+            case .waiting: label = "waiting"
+            case .ready: label = "ready"
+            case .failed: label = "failed"
+            case .cancelled: label = "cancelled"
+            @unknown default: label = "unknown"
+            }
+            var event: [String: Any] = ["state": label, "offsetSeconds": ProcessInfo.processInfo.systemUptime - started]
+            if let path {
+                switch path.status {
+                case .satisfied: event["pathStatus"] = "satisfied"
+                case .unsatisfied: event["pathStatus"] = "unsatisfied"
+                case .requiresConnection: event["pathStatus"] = "requiresConnection"
+                @unknown default: event["pathStatus"] = "unknown"
+                }
+                switch path.unsatisfiedReason {
+                case .notAvailable: event["unsatisfiedReason"] = "notAvailable"
+                case .cellularDenied: event["unsatisfiedReason"] = "cellularDenied"
+                case .wifiDenied: event["unsatisfiedReason"] = "wifiDenied"
+                case .localNetworkDenied: event["unsatisfiedReason"] = "localNetworkDenied"
+                @unknown default: event["unsatisfiedReason"] = "unknown"
+                }
+            }
+            lock.lock()
+            if events.count < 12 { events.append(event) }
+            if ["ready", "failed", "cancelled"].contains(label) { finished = true }
+            lock.unlock()
+            if label == "cancelled" { cancelled.signal() }
+        }
+        func isFinished() -> Bool { lock.lock(); defer { lock.unlock() }; return finished }
+        func snapshot() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return events }
+    }
+    @MainActor private func probeHTTP(_ url: URL, token: String?, controller: Bool) -> (Bool, [String: Any]) {
+        let started = ProcessInfo.processInfo.systemUptime
+        let metrics = NetworkProbeMetrics(started: Date())
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 8; configuration.timeoutIntervalForResource = 8
+        configuration.waitsForConnectivity = false
+        let session = URLSession(configuration: configuration, delegate: metrics, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: url); request.httpMethod = "GET"
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let response = RecoveryResponse()
+        session.dataTask(with: request) { data, value, error in response.set(data, value, error) }.resume()
+        while response.get() == nil && ProcessInfo.processInfo.systemUptime - started < 10 {
+            allowExpectedPermissions()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        let ended = ProcessInfo.processInfo.systemUptime
+        let result = response.get()
+        let http = result?.1 as? HTTPURLResponse
+        var report: [String: Any] = ["operation": controller ? "controller-root" : "api-root",
+            "startedUptimeSeconds": started, "endedUptimeSeconds": ended,
+            "completed": result != nil, "metrics": metrics.snapshot()]
+        if let http { report["httpStatus"] = http.statusCode }
+        func errorScalars(_ error: NSError) -> [String: Any] {
+            let domains = [NSURLErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain,
+                           "kCFErrorDomainCFNetwork", "kCFErrorDomainPOSIX", "kCFErrorDomainOSStatus"]
+            var scalars: [String: Any] = ["domain": domains.contains(error.domain) ? error.domain : "other", "code": error.code]
+            for key in ["_kCFStreamErrorDomainKey", "_kCFStreamErrorCodeKey"] {
+                if let number = error.userInfo[key] as? NSNumber { scalars[key] = number.intValue }
+            }
+            return scalars
+        }
+        if let error = result?.2 as NSError? {
+            report["error"] = errorScalars(error)
+            if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+                report["underlyingError"] = errorScalars(underlying)
+            }
+        }
+        var accepted = result != nil && result?.2 == nil && http != nil && ended - started <= 10
+        if controller {
+            let body = result?.0.flatMap { data -> [String: String]? in
+                guard data.count <= 4096 else { return nil }
+                return (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
+            }
+            accepted = accepted && http?.statusCode == 404 && body == ["error": "Unknown operation"]
+        }
+        report["accepted"] = accepted
+        return (accepted, report)
+    }
+    @MainActor func testPhysicalRecoveryNetworkProbe() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical network probe requires an actual iPhone.")
+        #else
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["SCOREBUG_PHYSICAL_NETWORK_PROBE"] == "1" else {
+            throw XCTSkip("Use the explicit physical network probe launcher.")
+        }
+        let control = try RecoveryControlConfiguration(environment: environment, allowLAN: true)
+        guard let endpoint = environment["SCOREBUG_DEVICE_API_URL"], isPrivateLANEndpoint(endpoint),
+              var api = URLComponents(string: endpoint),
+              let runnerID = Bundle.main.bundleIdentifier, runnerID == "live.scorebug.app.uitests.xctrunner" else {
+            throw SmokeFailure.failed("Physical network probe configuration invalid.")
+        }
+        api.path = "/"; api.query = nil; api.fragment = nil
+        guard let apiRoot = api.url else { throw SmokeFailure.failed("Physical network probe API root invalid.") }
+        deadline = Date().addingTimeInterval(75)
+        executionTimeAllowance = 90
+        let app = XCUIApplication(); app.activate()
+        try selectTab("Film", app)
+        try wait("Film did not become ready for network probe.", seconds: 12) {
+            app.buttons["film.start"].exists || app.buttons["film.stop"].exists
+        }
+        try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
+                    "Existing capture prevents network probe; existing state was preserved.")
+        let runner = XCUIApplication(bundleIdentifier: runnerID)
+        try require(runner.state == .runningBackground || runner.state == .runningForeground,
+                    "Network probe requires the existing test runner process.")
+        defer { app.activate() }
+        runner.activate()
+        try wait("Network probe runner did not enter foreground.", seconds: 10) { runner.state == .runningForeground }
+        let apiResult = probeHTTP(apiRoot, token: nil, controller: false)
+        let controllerResult = probeHTTP(control.endpoint, token: control.token, controller: true)
+        var report: [String: Any] = ["formatVersion": 1, "requests": [apiResult.1, controllerResult.1]]
+        if !controllerResult.0, let host = control.endpoint.host, let port = control.endpoint.port,
+           let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) {
+            let started = ProcessInfo.processInfo.systemUptime
+            let state = NetworkProbeTCPState()
+            let queue = DispatchQueue(label: "scorebug.physical-network-probe")
+            let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+            connection.stateUpdateHandler = { [weak connection] update in
+                state.observe(update, path: connection?.currentPath, started: started)
+            }
+            connection.start(queue: queue)
+            while !state.isFinished() && ProcessInfo.processInfo.systemUptime - started < 5 {
+                allowExpectedPermissions()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            connection.cancel()
+            let joined = state.cancelled.wait(timeout: .now() + 2) == .success
+            queue.sync { connection.stateUpdateHandler = nil }
+            report["tcp"] = ["startedUptimeSeconds": started, "endedUptimeSeconds": ProcessInfo.processInfo.systemUptime,
+                             "events": state.snapshot(), "cancelJoined": joined]
+        }
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        try require(data.count <= 16384, "Network probe attachment exceeded its bound.")
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "PhysicalRecoveryNetworkProbe-results"; attachment.lifetime = .keepAlways; add(attachment)
+        try require(apiResult.0 && controllerResult.0, "Physical network probe HTTP checks failed; inspect bounded diagnostic attachment.")
+        #endif
     }
     @MainActor private func preflightPhysicalRecoveryControl(_ app: XCUIApplication) throws {
         guard let control = recoveryControlConfiguration,
