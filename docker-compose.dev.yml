@@ -3,7 +3,9 @@ name: scorebug-qa
 # Local fixtures only. These credentials are public test values.
 services:
   ingest:
-    image: bluenviron/mediamtx:1.21.0
+    image: scorebug/ingest:campaign-probe-v3
+    build:
+      context: ./vendor/MediaMTX
     ports:
       - '127.0.0.1:18890:8890/udp'
       - '127.0.0.1:19997:9997'

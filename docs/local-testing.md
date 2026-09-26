@@ -145,6 +145,9 @@ Do not point automated local tests at YouTube.
 ### Start and stop the local services
 
 ```sh
+# First use only; retain an already installed qualified image.
+docker image inspect scorebug/ingest:campaign-probe-v3 >/dev/null 2>&1 || \
+  docker compose -f docker-compose.dev.yml build ingest
 pnpm local:up
 pnpm dev:api
 # Ctrl-C stops the API. In another terminal, or after stopping it:
@@ -158,8 +161,13 @@ shell without production token/host overrides. No `.env` with production secrets
 is read. The API is still the in-memory prototype and can only support the older
 contracts until milestone 1.
 
-`docker-compose.dev.yml` pins MediaMTX 1.21.0, with independent ingest and output
-services. Host listeners are loopback-only: SRT 18890/UDP, RTMP 11935/TCP,
+`docker-compose.dev.yml` selects the maintained `scorebug/ingest:campaign-probe-v3`
+ingest image and includes the pinned `./vendor/MediaMTX` build context for clean
+hosts. The independent mock output sink remains stock `bluenviron/mediamtx:1.21.0`.
+The normal worker reports every 100 ms; explicit 100–5000 ms overrides remain
+valid, although slower reports can exceed the current 250 ms adaptive freshness
+limit. This local selection does not qualify remote deployment or media delivery.
+Host listeners are loopback-only: SRT 18890/UDP, RTMP 11935/TCP,
 ingest management 19997/TCP, sink management 19998/TCP. Management requires
 `qa-admin` / `qa-admin-not-production`. Media credentials and encryption passphrases
 are visibly test-only in `infra/local/ingest.yml` and `sink.yml`.

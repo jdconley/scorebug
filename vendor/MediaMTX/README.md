@@ -1,6 +1,6 @@
 # MediaMTX relay metadata, recovery and probe accounting
 
-Scorebug's qualification build uses MediaMTX 1.21.0, revision
+Scorebug's maintained local relay build uses MediaMTX 1.21.0, revision
 `2c6727904fbf233615de74a6c54a9b94dbf6025d`, with relay metadata, bounded H.264 reader recovery and pre-demux probe accounting patches.
 The MIT notice is retained in `LICENSE`. `upstream.json` pins the upstream archive
 and touched-file hashes; `scorebug.patch` contains the source changes and Go tests.
@@ -8,6 +8,15 @@ Go dependencies remain pinned by the original `go.mod` / `go.sum`. The Docker bu
 checks the source archive SHA-256 and uses the pinned Go 1.26.1 builder image
 with Alpine's version-pinned `patch=2.8-r0` build dependency.
 Upstream asset downloaders independently check pinned HLS and RPi asset hashes.
+
+Current normal local selection: `scripts/device-lab.mjs` and Compose ingest use
+`scorebug/ingest:campaign-probe-v3`. Compose builds from `./vendor/MediaMTX` on a
+clean host; its mock output sink stays stock. The ordinary worker defaults to
+100 ms reports, and device-lab explicitly uses that cadence for the current
+250 ms adaptive status freshness limit. Explicit 100–5000 ms worker overrides
+remain valid. These selections do not qualify media delivery or remote deployment;
+remote templates remain unchanged and unqualified. The sections below retain
+the historical qualification boundaries of each earlier image.
 
 The patch observes the actual first supported MPEG-TS callback passed through the
 shared timestamp decoder, without changing the decoder output. A publisher's
@@ -42,14 +51,15 @@ alwaysAvailable paths omit it. The publisher-only clock metadata stays unchanged
 Production worker pipeline reads still need their own authenticated association;
 the qualification fixture's read query is only a unique test marker.
 
-Build on an ARM64 or AMD64 Docker host from the repository root:
+On a clean ARM64 or AMD64 Docker host, build from the repository root. Reuse an
+already installed qualified `campaign-probe-v3` image rather than overwriting it:
 
 ```sh
 docker build --platform linux/arm64 -t scorebug/ingest:campaign-probe-v3 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
-Current cumulative source must use the fresh `campaign-probe-v3` tag. Preserve the
+Current cumulative source uses the `campaign-probe-v3` tag. Preserve the
 previously qualified `staged-probe-hd-v2`, `staged-probe-v2`, `receiver-probe-v1`
 and `recovery-v1` images.
 
@@ -85,8 +95,9 @@ it has no origin metadata. Neither omission is filled with a guessed constant.
 See the [origin plan](../../docs/superpowers/plans/2026-09-15-relay-origin-metadata.md),
 [reader-source plan](../../docs/superpowers/plans/2026-09-15-relay-reader-source.md)
 and [boundary contract](../../docs/relay-clock-correspondence.md) for qualification
-results and remaining production association work. This build is not yet selected
-by the regular local or remote deployment configurations.
+results and the association work required at that historical stage. Those early
+builds were not selected by regular deployments; current normal local selection
+is the cumulative campaign-v3 image described above.
 
 ## H.264 recovery qualification build
 
@@ -115,7 +126,8 @@ go test -race ./internal/protocols/mpegts ./internal/servers/srt ./internal/forw
 
 See the [recovery plan](../../docs/superpowers/plans/2026-09-16-ingest-h264-recovery.md)
 for red regressions, packaging evidence and pending native pressure qualification.
-The regular local/remote deployment configurations remain unchanged.
+Deployment configurations were unchanged at this qualification stage. Current
+normal local selection is documented above; remote deployment remains unqualified.
 
 ## Receiver probe accounting
 
@@ -145,17 +157,15 @@ correspondence and requires all accepted probe messages to arrive. Production
 freshness/interval and candidate-cost admission are still separate work.
 
 See the [receiver accounting plan](../../docs/superpowers/plans/2026-09-16-receiver-probe-accounting.md).
-The regular deployment configurations and previously tagged recovery-v1 image
-remain unchanged.
+Deployment configurations were unchanged at this qualification stage. The
+previously tagged recovery-v1 image remains frozen; current local selection is above.
 
 ## Staged probe wire foundation
 
 The cumulative `staged-probe-wire-v2` build preserves `SBUGPRB1` accounting and
-adds explicit `SBUGPRB2` parsing. Build a fresh tag for this source:
-
-```sh
-docker build --platform linux/arm64 -t scorebug/ingest:staged-probe-v2 vendor/MediaMTX
-```
+adds explicit `SBUGPRB2` parsing. That historical source was built as
+`scorebug/ingest:staged-probe-v2`; preserve that qualified image. Build current
+cumulative source only as `campaign-probe-v3` using the command above.
 
 V2 keeps bytes 0–48 of each packet's v1 layout except for the version marker.
 Bytes 49–52 carry a big-endian stage in 1...32; bytes 53–187 remain `0xff`.
@@ -178,7 +188,8 @@ This is a wire and accounting foundation only. Default native probes emit v1;
 explicit staged native APIs and a bounded DEBUG scheduler emit v2. Finite
 simulator relay/media qualification is recorded below. Authenticated status validates v2 stage and cumulative counters;
 shared native matching additionally requires the locally owned stage.
-Fixture defaults and regular deployments are unchanged. The previously qualified
+Fixture defaults and regular deployments were unchanged at this qualification
+stage; current normal local selection is documented above. The previously qualified
 `receiver-probe-v1` image remains frozen; its qualification does not cover this
 new cumulative source. Repeated native SRT stages, capacity/admission decisions,
 physical-device behavior and deployment have not been qualified by these Go tests.
@@ -254,6 +265,7 @@ The fixed cross-language vector uses campaign UInt32.max, stage 31, UUID
 `01020304-0506-4708-890a-0b0c0d0e0f10`, generation `0x0102030405060708`, sequence
 zero and 12 Mbps. Its 1316-byte SHA-256 is
 `cf9b15b536c40fe65844f463057ac7c190cc580ef3fe45d9f4ea6f5e03a51b2a`.
-This source foundation does not select v3 for production publishing, change
-regular deployment images, or qualify spare capacity, adaptive quality,
-physical devices or remote deployments.
+At this source-foundation stage, v3 was not selected for ordinary publishing or
+regular deployment. Current normal local selection is documented above. These
+source tests alone do not qualify spare capacity, adaptive quality, physical
+devices or remote deployments.

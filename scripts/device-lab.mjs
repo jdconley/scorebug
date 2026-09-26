@@ -49,6 +49,23 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
   return { host, duration, encoder };
 }
 
+/** Docker arguments for the ordinary local relay, with a loopback-only management API. */
+export function deviceLabRelayArgs({ name, host, ingestPort, relayPort, configPath }) {
+  return [
+    'run',
+    '-d',
+    '--name',
+    name,
+    '-p',
+    `${host}:${ingestPort}:8890/udp`,
+    '-p',
+    `127.0.0.1:${relayPort}:9997`,
+    '-v',
+    `${configPath}:/mediamtx.yml:ro`,
+    'scorebug/ingest:campaign-probe-v3',
+  ];
+}
+
 async function port(host, udp = false) {
   const socket = udp ? createSocket('udp4') : createServer();
   await new Promise((resolve, reject) => {
@@ -233,19 +250,13 @@ export async function startDeviceLab(options, { signal } = {}) {
     relayStarted = true;
     await execute(
       'docker',
-      [
-        'run',
-        '-d',
-        '--name',
-        relayName,
-        '-p',
-        `${options.host}:${ingestPort}:8890/udp`,
-        '-p',
-        `127.0.0.1:${relayPort}:9997`,
-        '-v',
-        `${relayConfig}:/mediamtx.yml:ro`,
-        'bluenviron/mediamtx:1.21.0',
-      ],
+      deviceLabRelayArgs({
+        name: relayName,
+        host: options.host,
+        ingestPort,
+        relayPort,
+        configPath: relayConfig,
+      }),
       { timeout: 30000 },
     );
     let relayReady = false;
@@ -313,7 +324,7 @@ export async function startDeviceLab(options, { signal } = {}) {
         FONT_PATH: font,
         LOG_LEVEL: 'info',
         WORKER_PROCESSING: 'auto',
-        WORKER_REPORT_INTERVAL_MS: '1000',
+        WORKER_REPORT_INTERVAL_MS: '100',
         SCOREBUG_TEST_WORKER_TERMINAL: '',
         SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
       },

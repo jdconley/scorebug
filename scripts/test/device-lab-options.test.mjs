@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deviceLabOptions } from '../device-lab.mjs';
+import { deviceLabOptions, deviceLabRelayArgs } from '../device-lab.mjs';
 
 const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
 test('device lab requires an explicit assigned private LAN address', () => {
@@ -63,4 +63,27 @@ test('worker shutdown joins delayed graceful exit and distinguishes forced termi
       await closed;
     }
   }
+});
+
+test('ordinary relay uses the maintained image with LAN media and private management', () => {
+  const args = deviceLabRelayArgs({
+    name: 'owned-lab-relay',
+    host: '192.168.1.130',
+    ingestPort: 18890,
+    relayPort: 19997,
+    configPath: '/private/lab/ingest.yml',
+  });
+  assert.deepEqual(args, [
+    'run',
+    '-d',
+    '--name',
+    'owned-lab-relay',
+    '-p',
+    '192.168.1.130:18890:8890/udp',
+    '-p',
+    '127.0.0.1:19997:9997',
+    '-v',
+    '/private/lab/ingest.yml:/mediamtx.yml:ro',
+    'scorebug/ingest:campaign-probe-v3',
+  ]);
 });

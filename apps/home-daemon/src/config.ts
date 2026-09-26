@@ -18,7 +18,7 @@ const schema = z
       .optional(),
     ENCODER: z.enum(['software', 'videotoolbox', 'nvenc']),
     DECODER_THREADING: z.enum(['automatic', 'slice']).default('automatic'),
-    WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(1000),
+    WORKER_REPORT_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(100),
     WORKER_PROCESSING: z.enum(['auto', 'off']).default('auto'),
     VIDEO_PROFILE: z
       .enum(['240p30', '360p30', '540p30', '720p30', '1080p30', '2160p30'])
