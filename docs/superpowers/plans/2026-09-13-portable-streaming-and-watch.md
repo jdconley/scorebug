@@ -13,7 +13,7 @@ This document tracks goals, current evidence, delivery tasks and acceptance gate
 - **The timing comparison now explains the failed increases.** At 2 seconds/1000 ms SRT, usable bandwidth evidence arrives after source-health expiry. The 3-second/1000 ms setting restores all four phases, but repeated runs retain live audio/video loss or report-coverage failures. One run has a recorder socket error; a fresh replay with reviewed diagnostics closes cleanly while reproducing media loss. Timestamp-aware analysis confirmed stable post-gap alignment in the earlier run only. These are experimental settings, not selected production defaults.
 - **Next delivery work:** finish complete recovery qualification, integrate the controller into real-camera publishing with bounded state suitable for a full match, and verify the paired physical route. The wider quality ladder, sustained operation, outages, other native scoring devices and remote workers remain open.
 
-Detailed test counts, source checkpoints, artifacts, failures and reviews belong in the [current session log](../../session-logs/2026-09-25-continuous-delivery-control.md), rather than this status summary.
+Detailed test counts, source checkpoints, artifacts, failures and reviews belong in the [current session log](../../session-logs/2026-09-25-production-owned-measurement.md), rather than this status summary.
 
 ## Baseline and owner decisions
 
@@ -53,8 +53,8 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [ ] Integrate the qualified controller, candidate measurement and delivery feedback into the real-camera app path without fixture/environment selectors. Verify start-low, increase, congestion fallback and recovery on the actual phone while its clean archive and paired Watch scoring remain active.
 - [ ] Separate long-running adaptation state from finite lab audit storage and attempt caps. Preserve complete bounded lab evidence, but verify that production adaptation continues through a full match without audit exhaustion disabling feedback or further recovery. Construct worker limits and the supported quality ladder explicitly for the selected backend and device.
 - [x] Extract the continuous delivery classifier; verify control beyond512windows and256identity changes with bounded state. Preserve the laboratory audit’s fail-closed completeness contract. See the [implementation plan](2026-09-25-continuous-delivery-control.md).
-- [ ] Promote owned candidate lifecycle types into production and replace the lifetime16attempt gate with one active owner, joined retirement and policy cooldown.
-- [ ] Size bounded probes for the next candidate and validate production transport-overhead costing for Wi-Fi/cellular and IPv4/IPv6. Preserve source/probe authority and cancellation semantics.
+- [x] Promote owned candidate lifecycle types into Release and replace the lifetime16attempt gate with one active owner, joined retirement and policy cooldown. Continuous and laboratory construction remain explicit; both reviews and the Release build pass. See [implementation plan](2026-09-25-production-owned-measurement.md).
+- [ ] Size bounded probes for the next candidate and validate production transport-overhead costing for Wi-Fi/cellular and IPv4/IPv6. Preserve source/probe authority and cancellation semantics. See [implementation plan](2026-09-25-production-probe-cost.md) and [counter research](../../research/2026-09-25-srt-transport-cost.md).
 
 ## Remaining integration and vertical work
 

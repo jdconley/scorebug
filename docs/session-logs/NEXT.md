@@ -4,8 +4,8 @@
 
 - Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Do not edit `/Users/jd/src/scorebug`.
 - Active goal: native clean recording, phone/Watch scoring, progressive SRT, portable overlay proxy, mock RTMP MP4 and optional proxy-overlay MP4. Production camera publishing remains minimum-only.
-- [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) contains current goals/status/todos. [Current session log](2026-09-25-continuous-delivery-control.md) contains implementation/review evidence and failed experiments. [Research](../research/2026-09-25-live-platform-adaptation.md) distinguishes established sender adaptation from experimental product timing.
-- Current runtime60fb8bb adds reviewed continuous delivery control; focused89tests/full model630tests and arm64simulator build pass. No production camera factory is enabled.
+- [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) contains current goals/status/todos. [Current session log](2026-09-25-production-owned-measurement.md) contains implementation/review evidence and failed experiments. [Research](../research/2026-09-25-live-platform-adaptation.md) distinguishes established sender adaptation from experimental product timing.
+- Current runtime `db429947` adds reviewed Release owned measurement and continuous retries beyond16attempts with bounded state. Focused89/fullFilmModel635tests and actual arm64Release simulator app build pass. Continuous delivery runtime60fb8bb is also reviewed. No production camera factory is enabled.
 - Runtime HEAD of the latest native experiment: `27a502d` (launched at documentation checkpoint `116765b`). No root process or review remains active. Preserve all failures and original Downloads/device recordings. Use installed runtimes only.
 
 ## Latest result
@@ -23,6 +23,8 @@ Artifacts: `owned-recording-diagnostic/`, `owned-av-overlay-diagnostic/`, `audio
 
 ## Reviewed changes
 
+- `db429947`: Release owned candidate lifecycle and actual session/driver joins; explicit continuous/laboratory construction; selected immutable stage plan; no lifetime cap/audit history in continuous mode.18real-policy failures/retries pass with bounded retention, lab16cap preserved. Finalhold>=0.5s, stagedrates<=12Mbps. Both reviews approve; specification independently4tests, quality validates11log hashes and635test/Releasebuild evidence.
+
 - `60fb8bb`: shared delivery classifier, bounded Continuous consumer, explicit exclusive driver selection. Soaks pass900positive windows and300authority changes; driver still resets from fresh negative delivery after600polls. Current authority retained to prevent address reuse. Continuous cancellation is immediate; audited closure preserves joined teardown. Original audit caps/schema remain unchanged. Both reviews approve (spec independently89tests;quality inspected630testlog/diff).
 
 - `27a502d`: both SRTSocket constructors use shared srt_bistats; demand(clear0,instantaneous1), periodic(1,1). Timestamp/failure/cancellation/counter contracts unchanged.71focused/80related/8final tests and bundled simulator build pass. Both independent reviews reran8tests;162upstream hashes and patch round trip pass. Controlled realSRT1.5.6 and bundled1.5.4 experiments prove bstats averaging hides current queue pressure.
@@ -31,8 +33,8 @@ Artifacts: `owned-recording-diagnostic/`, `owned-av-overlay-diagnostic/`, `audio
 
 ## Next implementation
 
-1. Promote owned candidate runtime types and replace lifetime16attempt cap with one active owner, joined predecessor and policy cooldown. Driver512event cap only truncates diagnostics; delivery runtime now has explicit Continuous consumer independent of Audit.
-2. Parameterize next-candidate probes: current lab ladder500kbps→2Mbps→12Mbps and stage3 assumption must not simply be enabled on phones. Replace laboratoryIPv4 fixed44byte/message cost with a validated production Wi-Fi/cellular/IPv4/IPv6 basis.
+1. Execute [production probe/cost plan](../superpowers/plans/2026-09-25-production-probe-cost.md): per-next-profile rates and explicit64byte base-IP transport estimate, while preserving measured admission and laboratory44byte schema. BundledSRT1.5.4 real IPv4/IPv6 loopback tests confirm its reported counters both add44bytes; this is not exactIPv6 wire cost. Source/binary/library hashes and results: `artifacts/qa/srt-ip-accounting-20260925/`.
+2. The owned runtime now accepts validated explicit stage plans and selected final binding. Preserve this and the continuous delivery consumer while connecting production factories; do not inherit the laboratory12Mbps final probe.
 3. Wire ordinary camera through a production factory using continuous delivery feedback, existing guarded mutation, freshness, compressed AAC and owned lifecycle paths. Qualify240p350k→360p600k first, then wider backend/device ladder. Verify release construction, sustained state, thermal/archive independence and paired scoring.
 4. Resolve complete laboratory evidence within existing budgets. Exact-value interning of9IVqF0 capture/encoded/timeline data reduces33.5MB to11.4MB with identical reconstruction; original overflow remains. Runtime encoding needs bounded validated references and transactional retention before a fresh run. See delivery-storage-diagnosis.json.
 5. Trace residual audio discontinuity across full-run native post-mux and worker demux/mux boundaries using scalar continuity counters and bounded first-gap neighborhoods. All12,726AAC packet payloads in9IVqF0 direct/overlay match in order: gap already exists before tee, not separately in RTMP recorder. Current startup-only traces cannot localize it further. Saved audio-boundary-packet-hash-diagnosis.json includes commands/hashes. Do not rerun the same scenario without a change or new observation.

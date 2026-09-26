@@ -24,12 +24,12 @@ Primary: `ios/Sources/Scorebug/Capture/NativeCandidateAttempt.swift`, `NativeOwn
 
 ## Tasks
 
-- [ ] Add failing tests for explicit continuous configuration, more than16settled failed/retried attempts with fresh healthy holds, and laboratory16attempt exhaustion. Use actual session policy and owned lifecycle; repeating a fake admission flag is insufficient.
-- [ ] Add stage-plan validation/binding tests: bounded positive rates, initial native rate cap, bounded stage count/holds, final stage identity, cancellation and source wait before final binding. Preserve original lab plan assertions and whole-history evidence.
-- [ ] Extract neutral runtime values, promote lifecycle types and session/driver branches, and make audit observation optional/lazy without unbounded retained history. Runtime construction must compile with DEBUG absent.
-- [ ] Separate continuous attempt lifetime from diagnostic limits. Verify no retry before prior cleanup joins; exercise stop/replacement with held startup, probe allocation, application and late completion using existing regressions.
-- [ ] Run focused tests then full FilmModel suite. Build the actual Scorebug Release app for arm64 simulator without fixture selectors; do not infer release availability from Debug tests.
-- [ ] Commit and complete independent specification then quality review; fix findings and record exact validation in the session log.
+- [x] Add failing tests for explicit continuous configuration, more than16settled failed/retried attempts with fresh healthy holds, and laboratory16attempt exhaustion. Use actual session policy and owned lifecycle; repeating a fake admission flag is insufficient.
+- [x] Add stage-plan validation/binding tests: positive staged rates up to the native12Mbps cap, bounded stage count/holds, final settling at least0.5s, final stage identity, cancellation and source wait before final binding. Preserve original lab plan assertions and whole-history evidence.
+- [x] Extract neutral runtime values, promote lifecycle types and session/driver branches, and make audit observation optional/lazy without unbounded retained history. Runtime construction must compile with DEBUG absent.
+- [x] Separate continuous attempt lifetime from diagnostic limits. Verify no retry before prior cleanup joins; exercise stop/replacement with held startup, probe allocation, application and late completion using existing regressions.
+- [x] Run focused tests then full FilmModel suite. Build the actual Scorebug Release app for arm64 simulator without fixture selectors; do not infer release availability from Debug tests.
+- [x] Commit and complete independent specification then quality review; fix findings and record exact validation in the session log.
 
 Use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`.
 
