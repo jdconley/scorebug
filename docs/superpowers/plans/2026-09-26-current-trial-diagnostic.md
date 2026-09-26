@@ -22,13 +22,13 @@
 
 Primary files: `ios/Packages/ScorebugCore/Sources/ScorebugCore/QualityController.swift`, `ios/Sources/Scorebug/Capture/PublishingQualitySession.swift`; existing driver/model only if needed for safe bounded serialization. Tests: Core `QualityTrialTests.swift`; `ios/FilmModelTests/PublishingQualitySessionTests.swift`, existing driver/model diagnostic tests. Avoid unrelated UI/policy changes.
 
-- [ ] Extend real session trial fixtures with dictionary assertions that fail behaviorally before adding the diagnostic. Existing methods `testAcknowledgedTrialKeepsSameDeliveryAuthorityWithoutResettingProbation` and `testOwnedApplicationOutlivesCandidateAuthorityAndConfirmsTrial` already exercise actual admission/acknowledgment/confirmation.
-- [ ] Implement the pure diagnostic and coherent owner serialization above. Preserve all freshness,10second trial coverage, timeout, reset, backoff, candidate costs and native operation limits.
-- [ ] Verify before advice, pending/application, after acknowledgment, after5seconds and10seconds of actual accepted healthy coverage. Repeated reads must not change policy decisions or native-call counts. A settled snapshot never contains a synthetic confirmed flag.
-- [ ] Verify source/telemetry invalidation and timeout cannot look like confirmation; owner changes for each scope/receipt/revision change, accepted source sequence changes independently, minimum reset/fallback revision is visible, and closed diagnostic omits owner/trial data. Verify same source/revision determinism.
-- [ ] Verify complete populated diagnostic serialization remains within4096bytes and existing stopped/replaced callback guards still pass. If a proposed field causes overflow, reduce diagnostic representation without dropping required owner components or increasing the limit.
-- [ ] Run focused session/driver/model tests and Core trial tests, then relevant related suites; build Debug UI and Release arm64 app. Retain exact commands/exits/counts and source/log hashes under `artifacts/qa/current-trial-diagnostic-validation/`. No live capture alongside builds or tests.
-- [ ] Independent specification and quality review, resolve findings, verify final blobs, commit source/tests, and update current plan/session evidence.
+- [x] Extend real session trial fixtures with dictionary assertions that fail behaviorally before adding the diagnostic. Existing methods `testAcknowledgedTrialKeepsSameDeliveryAuthorityWithoutResettingProbation` and `testOwnedApplicationOutlivesCandidateAuthorityAndConfirmsTrial` already exercise actual admission/acknowledgment/confirmation.
+- [x] Implement the pure diagnostic and coherent owner serialization above. Preserve all freshness,10second trial coverage, timeout, reset, backoff, candidate costs and native operation limits.
+- [x] Verify before advice, pending/application, after acknowledgment, after5seconds and10seconds of actual accepted healthy coverage. Repeated reads must not change policy decisions or native-call counts. A settled snapshot never contains a synthetic confirmed flag.
+- [x] Verify source/telemetry invalidation and timeout cannot look like confirmation; owner changes for each scope/receipt/revision change, accepted source sequence changes independently, minimum reset/fallback revision is visible, and closed diagnostic omits owner/trial data. Verify same source/revision determinism.
+- [x] Verify complete populated diagnostic serialization remains within4096bytes and existing stopped/replaced callback guards still pass. If a proposed field causes overflow, reduce diagnostic representation without dropping required owner components or increasing the limit.
+- [x] Run focused session/driver/model tests and Core trial tests, then relevant related suites; build Debug UI and Release arm64 app. Retain exact commands/exits/counts and source/log hashes under `artifacts/qa/current-trial-diagnostic-validation/`. No live capture alongside builds or tests.
+- [x] Independent specification and quality review, resolve findings, verify final blobs, commit source/tests, and update current plan/session evidence.
 
 Representative pre-implementation behavioral assertion uses the existing diagnostic API:
 
@@ -45,3 +45,7 @@ unscoped Core windows; absence of a coherent source must omit the owner key.
 Mac test invocation pattern:
 `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer xcodebuild -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests -destination 'platform=macOS,arch=arm64' -derivedDataPath ios/DerivedData/FilmModel test -only-testing:ScorebugFilmModelTests/PublishingQualitySessionTests`.
 Use the installed toolchain/runtime; no device, signing or simulator changes are required for model tests.
+
+## Verified result
+
+Implemented at `56338ff`; independent specification and code-quality reviews approve the exact five source/test blobs. Full Core502 and focused app252 tests pass; Debug UI and Release arm64 builds pass. The populated diagnostic is2703bytes within4096. Evidence and root hash verification: `artifacts/qa/current-trial-diagnostic-validation/`. This qualifies observations only; native congestion/recovery remains pending.
