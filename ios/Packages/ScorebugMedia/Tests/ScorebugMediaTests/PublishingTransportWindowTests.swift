@@ -10,6 +10,25 @@ final class PublishingTransportWindowTests: XCTestCase {
               rttMilliseconds: rtt ?? Double(gauge), estimatedBandwidthMbps: 999,
               senderBufferedBytes: gauge, senderBufferMilliseconds: gauge, availableSenderBytes: 1000)!
     }
+    func testHundredMillisecondHistoryRetainsAgedSourceAndMeasurementPressure() throws {
+        var tracker = PublishingTransportStatisticsTracker()
+        for i in 0...200 {
+            tracker.observe(sample(Double(i) / 10, sent: UInt64(1000 + i * 100),
+                retrans: UInt64(i), gauge: i == 113 ? 900 : 0))
+        }
+        // A 5.25-second source window evaluated 3.5 seconds after its end.
+        let source = try XCTUnwrap(tracker.snapshot.interval(from: 11.25, to: 16.5))
+        XCTAssertEqual(source.enclosingStart, 11.2)
+        XCTAssertEqual(source.enclosingEnd, 16.5)
+        XCTAssertEqual(source.enclosingSentBytes, 5300)
+        XCTAssertEqual(source.enclosingRetransmittedBytes, 53)
+        XCTAssertEqual(source.enclosingMaximumBufferMilliseconds, 900)
+        XCTAssertEqual(source.enclosingMaximumRTTMilliseconds, 900)
+        XCTAssertNotNil(tracker.snapshot.interval(from: 13, to: 20), "Seven-second candidate measurement must remain bracketed")
+        XCTAssertNil(tracker.snapshot.interval(from: 13, to: 20.001), "No future extrapolation")
+        XCTAssertEqual(tracker.snapshot.samples.count, 160)
+        XCTAssertEqual(tracker.snapshot.samples.first?.sampledAt, 4.1)
+    }
     func testRetainedQueryCanExceedRollingFiveSecondWindow() throws {
         var tracker = PublishingTransportStatisticsTracker()
         for i in 0...10 { tracker.observe(sample(Double(i), gauge: Int32(i * 10))) }
@@ -50,9 +69,9 @@ final class PublishingTransportWindowTests: XCTestCase {
         tracker.observe(sample(15, generation: 2))
         XCTAssertNil(tracker.snapshot.interval(from: 13.2, to: 14))
         var evicted = PublishingTransportStatisticsTracker()
-        for i in 0...100 { evicted.observe(sample(Double(i) / 10)) }
-        XCTAssertNil(evicted.snapshot.interval(from: 0, to: 10))
-        XCTAssertNotNil(evicted.snapshot.interval(from: 9, to: 10))
+        for i in 0...200 { evicted.observe(sample(Double(i) / 10)) }
+        XCTAssertNil(evicted.snapshot.interval(from: 0, to: 20))
+        XCTAssertNotNil(evicted.snapshot.interval(from: 19, to: 20))
     }
     func testIntervalSnapshotsAreHistoricalAndDuplicateReadsDoNotExtendCoverage() throws {
         var tracker = PublishingTransportStatisticsTracker()
@@ -119,11 +138,11 @@ final class PublishingTransportWindowTests: XCTestCase {
     func testRingEvictionNeverInventsEvictedCoverage() throws {
         var tracker = PublishingTransportStatisticsTracker()
         for i in 0...1000 { tracker.observe(sample(Double(i) / 1000)) }
-        XCTAssertNil(tracker.snapshot.window, "Only 63ms remain in the bounded ring")
+        XCTAssertNil(tracker.snapshot.window, "Only 159ms remain in the bounded ring")
         tracker.observe(sample(2))
         let w = try XCTUnwrap(tracker.snapshot.window)
-        XCTAssertEqual(w.sampleCount, 64)
-        XCTAssertEqual(w.start, 0.938)
+        XCTAssertEqual(w.sampleCount, 160)
+        XCTAssertEqual(w.start, 0.842)
         XCTAssertEqual(w.end, 2)
     }
     func testDuplicateMissingAndQueriesCannotExtendCoverageOrRefreshLease() throws {

@@ -53,7 +53,8 @@ public struct PublishingThermalSnapshot: Equatable, Sendable {
     }
 }
 public struct PublishingThermalTracker: Sendable {
-    // This is sampled off the capture path, with an absolute 64-scalar bound.
+    // This is sampled off the capture path, with an absolute 160-scalar bound.
+    // Matches transport retention for aged source windows at 100ms cadence.
     private var samples: [PublishingThermalSample] = []
     private var quarantined = false, closed = false
     public init() {}
@@ -72,7 +73,7 @@ public struct PublishingThermalTracker: Sendable {
             }
             if sample.sampledAt - last.sampledAt > 2 { samples.removeAll(keepingCapacity: true) }
         }
-        if samples.count == 64 { samples.removeFirst() }
+        if samples.count == 160 { samples.removeFirst() }
         samples.append(sample)
     }
     public mutating func close() { closed = true }

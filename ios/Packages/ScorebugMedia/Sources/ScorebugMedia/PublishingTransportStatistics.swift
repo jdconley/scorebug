@@ -46,7 +46,7 @@ public struct PublishingTransportStatistics: Equatable, Sendable {
 }
 
 public struct PublishingTransportStatisticsSnapshot: Equatable, Sendable {
-    /// At most 64 actual validated collections; closed snapshots stay historical.
+    /// At most 160 actual validated collections; closed snapshots stay historical.
     public let samples: [PublishingTransportStatistics]
     public let latest: PublishingTransportStatistics?
     public let window: PublishingTransportWindow?

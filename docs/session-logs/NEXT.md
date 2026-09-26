@@ -6,7 +6,7 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEADbc7930e plus reviewed exact ordinary-pacing rollback; no capture active at this checkpoint. No PR requested.
+HEADf100f36 plus reviewed earlier-pressure-sampling changes; no capture active at this checkpoint. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns goals/status/todos. [Current session](2026-09-26-ordinary-source-cadence-pacing.md)
@@ -16,9 +16,9 @@ during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-Pacing run qxuAwl and all analysis joined. Native/transport/geometry pass; live media fails. Ordinary factory/test files restored to15a0036 exactly; focused regression passes. Fresh signed phone/Watch builds pass. User now reports both devices ready; run the paired helper before further simulator changes.
+Earlier pressure sampling implementation is reviewed: shared app100ms health sleep, both scalar histories160points; no policy/threshold/evidence-window changes. Media79/Core22tests and DebugUI/Release builds pass. App2928 joined0; all validation jobs joined. Ready for the same recovery720 capture. Source f100f36 plus seven reviewed Swift files. Plan: `../superpowers/plans/2026-09-26-earlier-pressure-sampling.md`. Current log: `2026-09-26-earlier-pressure-sampling.md`.
 
-1. Complete paired physical vertical with fresh readiness. Prior BIKKzC/MObUL1 attempt stopped before phone capture on Watch lock; do not erase it. Helper: `artifacts/qa/run-physical-paired-instrumented-20260926.mjs`.
+1. User confirmed automation approval/devices ready, but fresh paired attempt8qxiOg again reports Watch locked. Root stopped exact owned PID19966 and joined13680exit1; no phone capture started. LabQAAoGp clean shutdown, failures[]. Await actual Watch unlock before another physical attempt.
 2. Collapse diagnosis is complete enough for the next intervention. Run
    `ordinary-native-uDznjI` / `device-lab-9fjCGU` (source3128283) has complete25s
    packet evidence exactly bound to constraint receipt. All261drops captured:

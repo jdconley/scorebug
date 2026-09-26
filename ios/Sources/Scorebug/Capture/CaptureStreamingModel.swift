@@ -16,6 +16,8 @@ struct PublishingClockObservation: Equatable, Sendable {
 /// Only a synchronous tap is shared with capture. No network operation owns it.
 @MainActor final class CaptureStreamingModel: ObservableObject {
     enum LocalState: String { case idle, starting, publishing, failed }
+    // Sleep interval only; awaited publisher work can extend actual collection cadence.
+    static let publishingHealthInterval: Duration = .milliseconds(100)
     @Published var endpoint = "http://localhost:18787"
     @Published var installationToken = ""
     @Published var workerId = "local-worker"
@@ -519,6 +521,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 do {
                     publisher = try publisherFactory(access.publishUrl, observations)
                     session = try PublishingSession(publisher: publisher,
+                        healthCheckInterval: Self.publishingHealthInterval,
                         ingressObservation: ingressConfiguration(for: videoObservation))
                     ingressObservation = session.snapshot.ingressObservation
                 } catch {

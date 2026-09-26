@@ -66,7 +66,7 @@ struct ContentView: View {
         guard scenePhase == .active else { return }
         while !Task.isCancelled {
             streaming.pollLocalHealth()
-            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            do { try await Task.sleep(for: CaptureStreamingModel.publishingHealthInterval) } catch { return }
         }
     }
     @MainActor private func updateIdleTimer(_ state: FilmModel.State) {

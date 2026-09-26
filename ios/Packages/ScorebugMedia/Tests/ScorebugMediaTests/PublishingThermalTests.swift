@@ -3,6 +3,20 @@ import XCTest
 @testable import ScorebugMedia
 
 final class PublishingThermalTests: XCTestCase {
+    func testHundredMillisecondHistoryRetainsAgedSourceAndMeasurementPressure() throws {
+        var tracker = PublishingThermalTracker()
+        for i in 0...200 {
+            tracker.observe(.init(state: i == 113 ? .serious : .nominal, sampledAt: Double(i) / 10))
+        }
+        let source = try XCTUnwrap(tracker.snapshot.interval(from: 11.25, to: 16.5))
+        XCTAssertEqual(source.enclosingStart, 11.2)
+        XCTAssertEqual(source.enclosingEnd, 16.5)
+        XCTAssertEqual(source.enclosingMaximumState, .serious)
+        XCTAssertNotNil(tracker.snapshot.interval(from: 13, to: 20))
+        XCTAssertNil(tracker.snapshot.interval(from: 13, to: 20.001))
+        XCTAssertEqual(tracker.snapshot.samples.count, 160)
+        XCTAssertEqual(tracker.snapshot.samples.first?.sampledAt, 4.1)
+    }
     func testNonuniformFractionalBoundsUseEnclosingReportedMaximum() throws {
         var tracker = PublishingThermalTracker()
         for (time, state) in [(0.0, PublishingThermalState.nominal), (0.4, .fair), (1.1, .nominal), (2, .serious)] {
@@ -38,15 +52,15 @@ final class PublishingThermalTests: XCTestCase {
     }
     func testHistoryBoundEvictsCoverageAndSnapshotsRemainImmutable() throws {
         var tracker = PublishingThermalTracker()
-        for time in 0..<64 { tracker.observe(.init(state: .nominal, sampledAt: Double(time))) }
+        for time in 0..<160 { tracker.observe(.init(state: .nominal, sampledAt: Double(time))) }
         let saved = tracker.snapshot
-        for time in 64..<20_000 { tracker.observe(.init(state: .nominal, sampledAt: Double(time))) }
-        XCTAssertEqual(tracker.snapshot.samples.count, 64)
-        XCTAssertEqual(tracker.snapshot.samples.first?.sampledAt, 19_936)
-        XCTAssertNil(tracker.snapshot.interval(from: 19_935.9, to: 19_999))
-        XCTAssertNotNil(tracker.snapshot.interval(from: 19_936, to: 19_999))
+        for time in 160..<20_000 { tracker.observe(.init(state: .nominal, sampledAt: Double(time))) }
+        XCTAssertEqual(tracker.snapshot.samples.count, 160)
+        XCTAssertEqual(tracker.snapshot.samples.first?.sampledAt, 19_840)
+        XCTAssertNil(tracker.snapshot.interval(from: 19_839.9, to: 19_999))
+        XCTAssertNotNil(tracker.snapshot.interval(from: 19_840, to: 19_999))
         XCTAssertEqual(saved.samples.first?.sampledAt, 0)
-        XCTAssertEqual(try XCTUnwrap(saved.interval(from: 0, to: 63)).sampleCount, 64)
+        XCTAssertEqual(try XCTUnwrap(saved.interval(from: 0, to: 159)).sampleCount, 160)
     }
     func testDuplicateDoesNotExtendCoverageAndConflictingDuplicateQuarantines() {
         var tracker = PublishingThermalTracker()

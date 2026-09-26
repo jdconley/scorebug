@@ -22,7 +22,8 @@ public struct PublishingTransportWindow: Equatable, Sendable {
 /// Already validated actual collections only. Caller owns generation/counter and
 /// lifecycle validation. Fixed storage bounds work independently of sampling rate.
 struct PublishingTransportWindowHistory: Sendable {
-    private var storage = [PublishingTransportStatistics?](repeating: nil, count: 64)
+    // Preserve ~16 seconds at the app's 100ms cadence, including aged source-window brackets.
+    private var storage = [PublishingTransportStatistics?](repeating: nil, count: 160)
     private var head = 0
     private var count = 0
     private(set) var window: PublishingTransportWindow?
