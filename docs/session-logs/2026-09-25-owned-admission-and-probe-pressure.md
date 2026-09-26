@@ -32,3 +32,11 @@ Current WebRTC source uses bounded probe clusters and waits for feedback; the in
 The controlled statistics experiment also passes against the bundled macOS SRT1.5.4 static archive (same dependency version as the app), with source and binary retained separately: compileexit0,run9506exit0. At packet44,current512ms versus average127ms; maxima985ms/current and380ms/average. `bundled-provenance.json` records the library hash and result. This strengthens the API diagnosis; no phone or media-loss fix is claimed.
 
 Runtime implementation is now assigned to switch the native call boundary to instantaneous sampling, preserve clear flags0(demand)/1(periodic), add selection/failure/cancellation regression tests, and compile/test the bundled target. No buffer/rate thresholds are being changed. Reviews and a fresh native replay must follow.
+
+## Instantaneous statistics correction
+
+Runtime commit `27a502d` switches both socket constructors to one `srt_bistats` reader. Demand reads retain clear=0 and periodic reads retain clear=1; both request instantaneous=1. Timestamp ordering, failed-read invalidation, cached access and closed/cancelled ownership remain unchanged. No policy, buffer or bitrate thresholds change.
+
+The regression first failed with five assertions against averaged readings, then passed:71focused tests,80related recovery/staged/replacement/transport tests, and8final sampling tests. The bundled arm64 iOS simulator app builds successfully. The maintained patch verifies all162upstream hashes and exact round trip. Logs are under `artifacts/qa/srt-instantaneous-statistics-20260925/`. Independent specification review reran8sampling tests and patch verification and approved without findings. Independent quality review also reran8sampling tests and diff checking and approved without findings. Both reviews are closed.
+
+The next launcher is `artifacts/qa/run-owned-reliability3000-peer1000-native-20260925-instantaneous.py 3000`: the same prepared source,3000ms decoder budget,1000ms SRT,750kbps restriction90–150s and270s hold. It uses exclusive new outputs and records its source checkpoint. This replay must establish media behavior independently of the statistics regression; no media-loss fix is claimed yet.

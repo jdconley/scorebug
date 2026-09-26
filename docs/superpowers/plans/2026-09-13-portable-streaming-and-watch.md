@@ -60,7 +60,8 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [x] Compare explicit 2/3-second diagnostic profiles on identical footage and faults. Both complete four native phases, but the 3-second run still suffers one lost frame and subsequent decoded identity damage at 700 ms SRT; retain the failed result.
 - [x] Test retransmission margin using the 2-second profile with 1000 ms SRT; preserve its failed audio, deadline and progression results.
 - [x] Diagnose the candidate timing overlap and verify progression with the existing 3-second profile and 1000 ms SRT. Preserve failed experiments under their original contracts.
-- [ ] Replace smoothed SRT queue-duration sampling with instantaneous native statistics for pressure decisions; preserve counter, freshness and lifecycle contracts. Verify the bundled native path and fresh media before claiming the loss is fixed.
+- [x] Replace smoothed SRT queue-duration sampling with instantaneous native statistics for pressure decisions, preserving counter, freshness and lifecycle contracts. Bundled simulator build and both reviews pass.
+- [ ] Verify the instantaneous statistics correction in a fresh complete native replay before claiming the live media loss is fixed.
 - [ ] Diagnose missing live audio and recorder shutdown, and separate timestamp-aware A/V alignment from audio continuity in qualification. Preserve explicit gap counts and original failures; silence padding cannot recover lost content.
 - [ ] Verify control behavior during stale-report gaps and select a production timing policy from complete evidence.
 
