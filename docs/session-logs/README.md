@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 26 pipeline geometry correlation](2026-09-26-pipeline-geometry-correlation.md) — exact stream identity and accepted decoder-window evidence for higher-rung qualification.
+
 - [September 26 recovery repeatability and 720p](2026-09-26-recovery-repeatability.md) — second complete ordinary recovery pass and the next native quality profile.
 - [September 26 ordinary recovery](2026-09-26-ordinary-recovery.md) — causal diagnostics, first verified recovery, and the physical Watch unlock boundary.
 - [September 25 ordinary recovery](2026-09-25-ordinary-recovery.md) — production upload routing, event-driven congestion qualification and longer finite media.

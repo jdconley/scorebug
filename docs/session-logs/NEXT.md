@@ -4,7 +4,7 @@
 
 Active unbounded goal: complete the native recording/scoring/Watch/progressive-streaming vertical through a portable overlay proxy to mock RTMP MP4 and optional overlay MP4. Do not mark complete from component tests. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`; never edit original `/Users/jd/src/scorebug`.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-recovery-repeatability.md) owns commands, review history and artifacts. No PR requested/created. Keep source reviews before commits, preserve failed artifacts/Downloads originals/user recordings, and do not download runtimes or delete unrelated simulators. No heavy builds/media analysis during live capture.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-pipeline-geometry-correlation.md) owns commands, review history and artifacts. No PR requested/created. Keep source reviews before commits, preserve failed artifacts/Downloads originals/user recordings, and do not download runtimes or delete unrelated simulators. No heavy builds/media analysis during live capture.
 
 ## Current execution — recovery repeatability
 
@@ -29,15 +29,15 @@ commands joined; no lab/camera started. Evidence labels `phone-720-build-2026092
 the Watch itself on their wrist near the Mac. Phone automation approval persists.
 Do not repeat unchanged while waiting. Use retained paired helper after readiness.
 
-Decoded geometry dependency is reviewed and committed as `038a4ec`. All jobs
-joined; no active implementation/capture/build/media jobs.29parser/470worker tests
+Decoded geometry dependency is reviewed and committed as `038a4ec`; its jobs
+joined before the current correlation implementation started. No capture is active.29parser/470worker tests
 pass with zero skips, typecheck/build pass, actual built pipeline/guardian verifies
 18decoded frames in three6frame runs240/360/720 with18actual1080output frames.
 Root verified66manifest hashes and independently recomputed ranges from ffprobe.
 See `decoded-geometry-validation/root-verification.json`. Source recipe/native
 720 remains coded-geometry evidence only; production ladder is still240/360.
 
-**NEXT implementation:** [pipeline geometry correlation](../superpowers/plans/2026-09-26-pipeline-geometry-correlation.md) has read-only design
+**ACTIVE implementation:** `/root/applied_transition_implementation` owns [pipeline geometry correlation](../superpowers/plans/2026-09-26-pipeline-geometry-correlation.md) has read-only design
 approval. Supervisor passes existing private readUUID through optional typed third
 callback metadata; worker and authenticated publicationStatus derive the same
 domain-separated SHA256 key. Raw private ID remains private. Swift publication
@@ -46,11 +46,12 @@ signed exact decodedPTS endpoints/count atomically; include key in source hash
 only when present. Validate complete4096budget with protected appliedTransition.
 One source slice, tests and spec→quality reviews before commit.
 
-Then ordinary recovery720 integration: append production7203Mbps, explicit new
+Then [ordinary recovery720 integration](../superpowers/plans/2026-09-26-ordinary-720-recovery.md): append production7203Mbps, explicit new
 XCTest/Node lane, four confirmed climbs360/720 before and after750kbps cap. Keep
 old recovery lane meaningful as360prefix on same production app; no policyfixture
 selector. Actual ACK-bound appliedTransition must expose nativeformat/encoder/PTS
-receipt. New independent tenmilestone/fourACK contract, unchanged150sACK/30sconfirm/
+receipt. New independent tenmilestone/fourACK contract (consecutive climbs; constrained
+descent may pass through360 before minimum), unchanged150sACK/30sconfirm/
 60sfallback gates and540s overallrecording budget. Enable geometry only explicit
 newlane. Join by derived key and accepteddecoded endpoints; do not reconstruct
 interiorPTS from condensed geometry runs or infer inputresolution from1080output.
