@@ -23,12 +23,12 @@ The continuous consumer is preferable to increasing the audit limits, which only
 
 Files: `ios/Sources/Scorebug/Capture/PublishingDeliveryMonitor.swift`, `PublishingQualityDriver.swift`, and focused tests in `ios/FilmModelTests/PublishingDeliveryMonitorTests.swift`, `PublishingDeliverySourceWindowTests.swift`, plus existing driver test fixtures as needed.
 
-- [ ] Add failing continuous-consumer tests using real `PublishingDeliveryObservation.classify` inputs. Advance history, clock and delivery evidence with time; stale repeated fixtures cannot prove a soak. Require positive classifications beyond512windows and after more than256ownership changes.
-- [ ] Cover missing input, suspension, clock reversal, closed consumer, changed authority, request-time mismatch and mixed healthy/unhealthy batches. Compare continuous and audit outputs before audit exhaustion; verify audit stops while continuous feedback remains live.
-- [ ] Extract the common classifier and bounded ownership schedule. Keep audit formatting and retention gates separate; preserve every existing audit assertion.
-- [ ] Wire explicit continuous mode into the driver without changing simulator fixture selection. Add a driver integration regression showing fresh feedback continues beyond audit limits and stop prevents later control. Avoid a new fallback that silently changes requested mode.
-- [ ] Run focused tests, then the FilmModel suite once; fix failures based on evidence. Build the simulator app if changed driver construction is not covered by the model target.
-- [ ] Commit implementation and complete independent specification then quality review. Fix/review findings before marking this slice complete.
+- [x] Add failing continuous-consumer tests using real `PublishingDeliveryObservation.classify` inputs. Advance history, clock and delivery evidence with time; stale repeated fixtures cannot prove a soak. Require positive classifications beyond512windows and after more than256ownership changes.
+- [x] Cover missing input, suspension, clock reversal, closed consumer, changed authority, request-time mismatch and mixed healthy/unhealthy batches. Compare continuous and audit outputs before audit exhaustion; verify audit stops while continuous feedback remains live.
+- [x] Extract the common classifier and bounded ownership schedule. Keep audit formatting and retention gates separate; preserve every existing audit assertion.
+- [x] Wire explicit continuous mode into the driver without changing simulator fixture selection. Add a driver integration regression showing fresh feedback continues beyond audit limits and stop prevents later control. Avoid a new fallback that silently changes requested mode.
+- [x] Run focused tests, then the FilmModel suite once; fix failures based on evidence. Build the simulator app if changed driver construction is not covered by the model target.
+- [x] Commit implementation and complete independent specification then quality review. Fix/review findings before marking this slice complete.
 
 Commands use `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`:
 
@@ -41,3 +41,5 @@ xcodebuild test -project ios/Scorebug.xcodeproj -scheme ScorebugFilmModelTests \
 ```
 
 For the full model suite omit the two `-only-testing` arguments. Save red/green/full logs under a new `artifacts/qa` prefix, and explicitly join each process. Passing this slice proves bounded delivery-control operation only; it does not qualify residual audio loss, full recovery, production enablement or paired hardware.
+
+Component complete in60fb8bb; both reviews approve. Final focused89tests/full FilmModel630tests and arm64simulator build pass. Current evidence and remaining production work are in the [session log](../../session-logs/2026-09-25-continuous-delivery-control.md).

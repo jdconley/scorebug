@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 continuous delivery control](2026-09-25-continuous-delivery-control.md) — bounded full-match control extraction and lossless audit-storage diagnosis.
+
 - [September 25 owned admission and probe pressure](2026-09-25-owned-admission-and-probe-pressure.md) — complete admission/application joins and reproduced smoothed-versus-current SRT queue readings.
 
 - [September 25 native recovery and audio timeline](2026-09-25-native-recovery-and-audio-timeline.md) — completed3000/1000experiment, preserved telemetry/audio failures, and presentation-time analysis.
