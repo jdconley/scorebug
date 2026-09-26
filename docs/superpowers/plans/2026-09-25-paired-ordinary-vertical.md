@@ -4,7 +4,7 @@
 
 **Goal:** Qualify real paired-simulator WatchConnectivity setup and native Watch scoring while the ordinary phone route records clean A/V and progressively streams through the proxy to both scored MP4 outputs.
 
-**Current status:** The explicit paired simulator lane is implemented with 32 passing focused tests, both Debug UI builds and final specification/quality approval. The launcher now selects the exact Xcode platform/SDK/architecture configuration; the focused fix passes 33 tests and both reviews. A fresh combined run remains to qualify media. The current phone-only progressive checkpoint and full media qualification pass. Physical phone build/install passes, but Xcode cannot establish the Watch developer connection; hardware qualification remains separate. Installed iOS 26.2/watchOS 26.2 runtimes are available. Do not download runtimes or alter unrelated simulators.
+**Current status:** Harness implementation passes 33 focused tests, both Debug UI builds and independent specification/quality reviews. The combined run reaches 360p and preserves recording/export, but Watch setup fails: the simulator reports its companion missing (WCError 7018), including on immediate messaging, despite installed bundles and an active pair. No Watch pairing or scoring command occurs. Physical phone build/install passes; Xcode cannot establish the physical Watch developer connection. Prioritize physical paired acceptance; any further simulator attempt needs a concrete registration change or isolated framework reproducer. See [registration evidence and Apple guidance](../../research/2026-09-25-watch-companion-registration.md). Do not download runtimes or alter unrelated simulators.
 
 ## Design
 
