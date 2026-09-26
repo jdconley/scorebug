@@ -28,7 +28,7 @@ Detailed test counts, source checkpoints, artifacts, failures and reviews belong
 
 ## Order and release gates
 
-**Immediate priority is a complete physical end-to-end smoke test. Advanced adaptive scheduler/research completion is not a prerequisite for this basic vertical.** Physical iPhone/Watch testing is explicitly authorized and the devices are available now. A smoke pass does not close sustained/device/adaptive release gates.
+**Immediate priority is a complete physical end-to-end smoke test. Advanced adaptive scheduler/research completion is not a prerequisite for this basic vertical.** Physical iPhone/Watch testing is explicitly authorized; current connection readiness is tracked in NEXT. A smoke pass does not close sustained/device/adaptive release gates.
 
 1. Resolve signing against the available physical iPhone/Watch, build/install, and establish camera/microphone permission, trust and networking. Record exact hardware, OS and profile.
 2. Record clean local camera A/V and use native phone scoring; start SRT to the Mac proxy and verify a live initial 0–0 overlay followed by a scored change.
@@ -48,7 +48,7 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [ ] Add direct minimum reset, precedence over trial rollback, recovery holds and bounded retry backoff to the existing policy.
 - [ ] Start the actual native encoder at the minimum before its first sample; acknowledge actual dimensions and configuration during policy bootstrap.
 - [x] Qualify candidate-cost, staged admission and two native upward/fault/minimum-reset/ recovery cycles in the local instrumented fixture (`89926f4`, September 24).
-- [ ] Extend that qualification to realistic networks, physical devices and remote workers before enabling production automatic adaptation.
+- [ ] Qualify the ordinary automatic-adaptation route on realistic networks, physical devices and remote workers before release.
 - [ ] Measure startup, collapse/reset and recovery on this Mac, then physical phone/watch and portable remote workers, preserving independent local A/V.
 - [ ] Integrate the qualified controller, candidate measurement and delivery feedback into the real-camera app path without fixture/environment selectors. Verify start-low, increase, congestion fallback and recovery on the actual phone while its clean archive and paired Watch scoring remain active.
 - [ ] Separate long-running adaptation state from finite lab audit storage and attempt caps. Preserve complete bounded lab evidence, but verify that production adaptation continues through a full match without audit exhaustion disabling feedback or further recovery. Construct worker limits and the supported quality ladder explicitly for the selected backend and device.

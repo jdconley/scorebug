@@ -29,3 +29,19 @@ Implementation is committed as `2b48876884611a0ff49795eace49d72a281d50c8`. Full 
 ## Device readiness update
 
 The user approved the phone automation prompt and reported both devices ready. A fresh `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer xcrun devicectl list devices` completed successfully but still reports both physical devices unavailable. Requested reconnection/unlock; no new automation test has been launched. Prompt approval is recorded and must not be requested again without a new prompt.
+
+## Normal stack implementation started
+
+Both runtime reviews approve `2b48876884611a0ff49795eace49d72a281d50c8`; documentation checkpoint `c99f752` records the result. Sole implementer `normal_local_stack` now owns regular relay selection, worker cadence, configuration tests and usage documentation. Root prepared the ordinary native UI/test-launcher design in the local-stack plan. No other source implementer or new hardware test is active.
+
+## Signed device products refreshed
+
+Generic physical `build-for-testing` succeeds for both Scorebug/iOS and ScorebugWatch/watchOS at documentation checkpoint `c99f752` (runtime `2b48876884611a0ff49795eace49d72a281d50c8`). Commands use selected Xcode 26.2, separate existing Physical/PhysicalWatch derived data, automatic signing and team `B222J9J7B8`. Both wrapper processes joined with exit 0. Exact commands and logs are `artifacts/qa/repeated-live-checkpoint-ordinary-camera-{phone,watch}-build-20260925{-exit.json,.log}`. Independently decoded code-sign entitlements and embedded provisioning profiles both report the selected team; summary saved to `artifacts/qa/ordinary-camera-runtime-20260925/signed-builds.json`. No installation, app activation or automation was performed. Rebuild again if native app/test source changes before the physical run.
+
+## Normal local stack result
+
+Implementation `be2216ef11a178282ea3bedc87995f5f864a9370` selects campaign-v3 for device-lab and regular Compose ingest, includes its vendor build context, and changes worker default/device-lab reports to 100 ms. Explicit supported report overrides and existing freshness/timing/decoder behavior remain. Stock mock sink, authenticated loopback management and LAN validation are preserved. Usage/vendor documentation distinguishes the current local route from historical/remote qualifications.
+
+Checks all exit 0: `pnpm --filter @scorebug/home-daemon exec vitest run test/config.test.ts test/worker-reporter.test.ts test/worker-processing.test.ts test/worker-startup.test.ts` (102 tests); `node --test scripts/test/device-lab-options.test.mjs` (4 tests); home-daemon typecheck; `docker compose -f docker-compose.dev.yml config --format json`; interpreted Compose assertions; bounded real lifecycle smoke. Exact helper scripts, red/green logs, results and SHA-256 manifest are in `artifacts/qa/normal-local-stack-checks/`.
+
+Lifecycle artifact `artifacts/qa/device-lab-JRN4CL/` used existing arm64 image `sha256:3b21c9f328586ac2dbebc7bbef217a5a0d6e517b1dee6b195d733f98c0a4ee23`. Authenticated readiness succeeds and anonymous management returns 401. Worker exits 0 without forced stop, receiver closes without timeout, shutdown failures are empty, owned relay is removed and all three observed child processes are gone. No image rebuild/retag and no media publication occurred; this is startup/cleanup evidence only. Independent specification and quality reviews both approve. Specification additionally checks current Compose interpretation and image identity; quality reviews scheduling and lifecycle evidence without rerunning services or broad tests.
