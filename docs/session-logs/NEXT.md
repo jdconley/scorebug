@@ -5,107 +5,82 @@
 Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
-branch `codex/local-validation`; never edit the original checkout.
-HEAD73536ea; production timing source changes are under test/review. No PR requested.
+branch `codex/local-validation`; never edit the original checkout. Runtime source
+HEAD e147ac4. No PR requested. All current capture/build/media jobs are joined.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns goals/status/todos. [Current session](2026-09-26-production-broadcast-timing.md)
-owns chronology and artifacts. Preserve Downloads originals, user recordings and
-failed evidence. No runtime downloads, unrelated simulator deletion, or heavy
-build/media jobs during capture. Sign Conley Chaos LLC B222J9J7B8.
+owns chronology and artifacts. Preserve Downloads originals and failed evidence.
+No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
+during capture. Sign Conley Chaos LLC B222J9J7B8.
 
-## Physical readiness
+## Immediate priorities
 
-All jobs joined:199app tests,8Core timing boundary tests, DebugUI/Release pass.
-Production factory now selects existing3000ms profile and protects timing metadata.
-Spec review approved four exact blobs; quality review ongoing. Commit reviewed
-source before fresh full700ms recovery720 capture. Sourcef9c5b26 option reviews/25tests pass. Requested700ms
-comparison `ordinary-native-3ux2FX` / `device-lab-Jc3NLf` fails initial240p10s
-policy-ready gate: sourceRejection:time,0on-time/24–26late frames per sampled
-window under strict1500ms. No ramp/cap took place. All three media outputs PASS:
-archive1505/live1237sequential frames,30fps,no audio gaps,12/10/10waveformprobes,
-scoreglyphs/cleanarchive/123framecontinuation pass.44producing hashes root verified.
-No negotiated-delay ACK witness exists;700ms is a recorded requested parameter.
-See current session for exact artifacts. Do not call this recovery qualification.
+1. Finish physical paired vertical when the Watch is unlocked. User approved phone
+   automation, but fresh Xcode preflight still explicitly reports Watch locked.
+   Async request asks to unlock the Watch and keep it on wrist; do not repeat an
+   unchanged attempt. Latest `physical-paired-live-BIKKzC` / `device-lab-MObUL1`
+   never starts phone capture, times out its240s Watch readiness gate, then joins
+   after root interrupts owned runner77189. Clean lab shutdown: worker0/notforced,
+   receiver finished/no sessions, failures:[]. Fresh e147ac4 signed phone/Watch
+   builds pass; Watch paired/connected with developer services. Reuse helper
+   `artifacts/qa/run-physical-paired-instrumented-20260926.mjs` after fresh readiness.
+2. Diagnose collapse loss, not timing rejection. Ordinary `ordinary-native-JZQQai`
+   / `device-lab-vVhC6B` completes full720recovery under broadcast3000ms + negotiated
+   700ms upload recovery, but both live outputs fail media continuity. Preserve
+   failed evidence and use existing bounded SRT packet diagnostics to distinguish
+   original/drain traffic from retransmissions near collapse before choosing a fix.
+   Existing source-cadence pacing is opt-in and did not qualify prior media; read
+   September16 pacing/encoder-low-latency and September17 frame-delay plans first.
+   Do not repeat unchanged runs or treat a wider deadline/queue as a loss fix.
 
-Next available streaming action: choose a coherent reliability-first production
-budget using existing3000ms profile as starting point, retain strict1500benchmark,
-and expose timing identity/budget in ordinary diagnostics. Keep report freshness,
-stall detection, quality/loss gates and resource bounds. Review/test source then
-run full ordinary720 with explicit700ms again. Deadline change alone is not a loss
-fix; all three media outputs and full ramp/cap/recovery must qualify.
+## Latest verified result
 
-Physical paired attempt `physical-paired-live-iuYDle` / `device-lab-pcgG8w`,
-source1941623, stopped before camera capture: Xcode waited for Watch unlock and
-never reached the companion-offer wait within240s. Root interrupted only its owned
-runner after that gate expired; resultjoined:true, Watch interrupted, no phone
-workflow started. Async unlock question remains pending. Preserve this failure.
+Production timing source passed199app/8Core tests, DebugUI/Release builds and both
+exact-blob reviews. Normal factory uses3000ms decoder/3500ms capture evaluation;
+strict1500 remains explicitly constructible. Other freshness/stall/loss limits stay.
 
-Both current phone and Watch builds PASS. Watch developer tunnel connected, but
-an unlocked destination remains necessary. Recheck readiness before another
-attempt; do not repeat unchanged or ask again for already approved phone automation.
-Helper: `artifacts/qa/run-physical-paired-instrumented-20260926.mjs`.
-Build/readiness evidence: `physical-paired-current-mtc1mc54`, labels
-`phone-720-paired-ready-20260926`, `watch-720-connected-20260926`,
-`watch-user-ready-details-20260926`. Sign Conley Chaos LLC.
+JZQQai workflow, independent native/actual750kbps transport and geometry replay
+PASS.157segment actual native export collected. All129samples report3000/3500;
+pressure receipts revisions3/4 confirm actual700ms sender delay. Six applied
+transitions cover240→360→720→360→240→360→720. Phase attachment:
+`401C06B8-279F-456A-A430-EC5A61C41722.json`.
 
-## Current720 finding and next streaming work
+MEDIA FAILS: archive9328consecutive frames/30fps/no audio gaps;64waveform and clean
+glyph checks pass. Both live outputs8995frames with identical IDs,28barcode breaks,
+26audio gaps, minimum1freshfps and0.933s maximum video gap during one collapse.
+Archive111frame continuation passes. Upstream315overflow drops/297900wire bytes.
+Live summed-audio coverage fails by about1234.7ms; this is not proof of permanent
+presentation offset. Original producing manifest remains failed.49-file preservation
+manifest `failed-media-evidence-manifest.json`. No accepted-window media mapping.
 
-`ordinary-native-TJzyrf` / `device-lab-XyI9PU` has joined completely.
-Native workflow, actual750kbps transport replay and ten accepted pre-scale
-geometry windows PASS. Four climbs revisions1,2,5,6; minimum fallback revision4.
-Actual native export173segments. Production ladder240/360/720.
+Previous `ordinary-native-TJzyrf`120ms run also fails collapse media; original
+223packet loss and45barcode/24audio discontinuities are retained. Requested700ms
+with strict1500 (`ordinary-native-3ux2FX`) passes initial240p media but cannot ramp.
+Historical details are in the current session and transport/pipeline session logs.
 
-Full live MEDIA FAILS: clean archive10313 sequential frames at30fps, no audio gaps;
-both live outputs9942frames,45 barcode discontinuities,24 audio gaps and2.033s
-maximum videoPTS gap. All damage localizes to one constrained-transition episode.
-Archive71 waveform probes and clean glyph samples pass; live A/V coverage fails
-by about1.35s. Keep producing manifest failed.70-file preservation manifest:
-`ordinary-native-TJzyrf/failed-media-evidence-manifest.json`.
+## Baseline and open limits
 
-Read-only diagnosis:223 upstream queue overflow drops,262116byte peak,2795ms max
-residence, first overflow162–262ms after cap. Actual publishing-hop SRT delay120ms;
-ACK witness RTT238ms/buffer909ms. Sampling250ms; encoder applications457–465ms;
-confirmed pressure descends one rung. A274KB/100ms burst needs attribution to
-original/retransmitted data and encoder drain. Worker read URL has no explicit
-latency override; legacy1s route is unrelated. Strict1500ms decoder deadline is
-separate from SRT recovery. Do not change bounds or relabel failed evidence.
+Two complete ordinary360recovery passes:93koj3 and rpRZ6E, including three-output
+media and six accepted-window mappings. Earlier te5IoU rollback remains unexplained;
+older9IVqF0 audio/evidence failures remain failed. Separate physical phone camera
+and Watch scoring baselines pass; combined acceptance is open. Paired simulator
+companion registration remains unresolved. Sustained hardware, wider profiles,
+outages/routes, other scorers, remote hosts and YouTube acceptance remain open.
 
-Before new encoder experiments, read existing September16 low-latency and
-source-cadence pacing plans plus September17 candidate-frame-delay results.
-Low-latency creation and MaxFrameDelayCount were unsupported on the tested simulator.
-An existing opt-in cadence pacer removed drain batches but did not qualify live
-media under an over-capacity trial. Do not reinvent it or claim it solves this run.
-
-The700ms/strict1500comparison above could not reach a ramp/cap. Do not repeat it
-unchanged. Existing2000/3000profiles provide a coherent timing starting point;
-the failed120ms720 run remains failed and is the media-loss baseline.
-
-## Verified baseline and open limits
-
-Two complete ordinary360recovery passes: `ordinary-native-93koj3` and
-`ordinary-native-rpRZ6E`;30freshfps, audio/score/clean archive and six mappings.
-Earlier `ordinary-native-te5IoU` rollback remains unexplained; preserve it.
-Older `native-app-9IVqF0` audio gap/evidence exhaustion remains failed.
-Phone camera baseline and separate physical Watch scoring passed previously;
-combined acceptance still open. Paired simulator WC7018/companion-not-installed
-is unresolved; do not inject identity/setup or infer physical behavior from it.
-Sustained hardware, higher profiles, outages/routes, other scorers, remote hosts
-and YouTube acceptance remain in the delivery plan.
-
-Reviewed source evidence: `pipeline-geometry-correlation-validation/root-verification.json`
-and `ordinary-720-integration-validation/root-verification.json`.
-Offline720 helper hashes/review: `artifacts/qa/ordinary-720-helper-review.json`.
-Ten-window mapper requires a successful producing manifest and must not qualify
-this failed run. Old six-window helper is unchanged.
+Reviewed offline helpers live under artifacts/qa; hashes/review in
+`ordinary-720-helper-review.json`. The mapper requires successful producing media
+and must not qualify either failed720run. Use existing helpers, not substitute
+archive concatenation or weakened frame/audio checks.
 
 ## Environment
 
-Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; use installed runtimes.
+Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installed runtimes only.
 FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130.
 Phone16Pro `00008140-001474110C13001C`, iOS26.7; Ultra2
 `00008310-0000B2CE3E08A01E`, watchOS26.6.
-Verified600s fixture `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`:
-18000consecutive IDs,1080p30/48kPCM, sourcePTS123.25,
-SHA256 `6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
-Full historical commands/counts are in session logs, not this handoff.
+Current physical build/readiness evidence: `physical-paired-current-mtc1mc54`,
+phone-broadcast-ready/watch-broadcast-build/watch-broadcast-ready-20260926 labels.
+Verified600s source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`,
+18000IDs,1080p30/48kPCM, SHA256
+`6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
