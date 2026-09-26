@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { estimateAudioAlignment } from '../audio-alignment.mjs';
+import { AUDIO_ALIGNMENT_SUPPORT_SAMPLES, estimateAudioAlignment } from '../audio-alignment.mjs';
 
 const length = 1024,
   radius = 128,
-  padding = 32;
+  padding = AUDIO_ALIGNMENT_SUPPORT_SAMPLES;
 function wave(t) {
   return [
     [397.3, 0.2, 0.3],
@@ -32,6 +32,28 @@ for (const delay of [-99.43, -17.2, -0.43, 0, 0.27, 31.46, 99.27]) {
     const result = estimateAudioAlignment(fixture(delay));
     assert.ok(Math.abs(result.lagSamples - delay) <= 1 / 64);
     assert.ok(result.correlation > 0.999);
+    assert.equal(result.atSearchBoundary, false);
+  });
+}
+
+for (const delay of [-17.6875, 10.4375]) {
+  test(`lossless near-band-edge multitone retains correlation at signed delay ${delay}`, () => {
+    // Evaluate the continuous signal independently at each sample time. No
+    // interpolation, codec, resampler, or estimator kernel generates this pair.
+    const signal = (t) =>
+      0.4 * Math.sin((2 * Math.PI * 397.3 * t) / 8000 + 0.2) +
+      0.3 * Math.sin((2 * Math.PI * 1431.7 * t) / 8000 + 0.7) +
+      0.8 * Math.sin((2 * Math.PI * 3950.3 * t) / 8000 + 0.4);
+    const result = estimateAudioAlignment({
+      reference: Float64Array.from({ length }, (_, i) => signal(i)),
+      target: Float64Array.from({ length: length + 2 * (radius + padding) }, (_, i) =>
+        signal(i - radius - padding - delay),
+      ),
+      maxLagSamples: radius,
+    });
+    assert.ok(result.correlation >= 0.98, JSON.stringify(result));
+    assert.ok(Math.abs(result.lagSamples - delay) <= 1 / 64, JSON.stringify(result));
+    assert.equal(result.ambiguous, false);
     assert.equal(result.atSearchBoundary, false);
   });
 }

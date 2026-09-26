@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { estimateAudioAlignment } from './audio-alignment.mjs';
+import { AUDIO_ALIGNMENT_SUPPORT_SAMPLES, estimateAudioAlignment } from './audio-alignment.mjs';
 
 /** Source-identity-anchored waveform samples; not all-audio fidelity or latency. */
 export function qualifyNaturalAudio({
@@ -14,7 +14,7 @@ export function qualifyNaturalAudio({
   const rate = 8000,
     window = rate,
     radius = 1200,
-    guard = 32;
+    guard = AUDIO_ALIGNMENT_SUPPORT_SAMPLES;
   for (const samples of [sourceSamples, targetSamples]) {
     assert(
       samples instanceof Float32Array || samples instanceof Float64Array,

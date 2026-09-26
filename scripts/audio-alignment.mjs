@@ -1,6 +1,9 @@
 // Sampled waveform alignment, not an all-audio fidelity or delivery-latency proof.
-// Target includes the declared search radius and 32 interpolation guard samples
-// on both sides. Positive lag means matching target content occurs later.
+// Finite-window interpolation still has band-edge error; it is not ideal sinc.
+// Target includes the declared search radius and this many actual neighboring
+// samples on both sides. Positive lag means matching target content occurs later.
+export const AUDIO_ALIGNMENT_SUPPORT_SAMPLES = 256;
+
 export function estimateAudioAlignment({ reference, target, maxLagSamples }) {
   for (const samples of [reference, target]) {
     if (!(samples instanceof Float32Array || samples instanceof Float64Array)) {
@@ -14,7 +17,7 @@ export function estimateAudioAlignment({ reference, target, maxLagSamples }) {
   if (!Number.isInteger(maxLagSamples) || maxLagSamples < 0 || maxLagSamples > 2400) {
     throw new RangeError('Search radius must be an integer from 0 to 2400');
   }
-  const guard = 32,
+  const guard = AUDIO_ALIGNMENT_SUPPORT_SAMPLES,
     origin = maxLagSamples + guard,
     n = reference.length;
   if (target.length !== n + 2 * origin) {
@@ -31,7 +34,7 @@ export function estimateAudioAlignment({ reference, target, maxLagSamples }) {
   const interpolated = new Float64Array(count);
   const sums = new Float64Array(count + 1),
     energies = new Float64Array(count + 1);
-  const kernel = new Float64Array(65);
+  const kernel = new Float64Array(2 * guard + 1);
   const scores = new Float64Array(2 * maxLagSamples * 32 + 1).fill(-Infinity);
   let lagSamples = 0,
     bestCorrelation = -Infinity;
@@ -46,7 +49,7 @@ export function estimateAudioAlignment({ reference, target, maxLagSamples }) {
       for (let k = -guard; k <= guard; k++) {
         const distance = k - fraction;
         const sinc = Math.sin(Math.PI * distance) / (Math.PI * distance);
-        const hann = 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + guard)) / 64);
+        const hann = 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + guard)) / (2 * guard));
         sum += kernel[k + guard] = sinc * hann;
       }
       for (let k = 0; k < kernel.length; k++) kernel[k] /= sum;
@@ -101,6 +104,6 @@ export function estimateAudioAlignment({ reference, target, maxLagSamples }) {
       : null,
     peakMargin,
     ambiguous: peakMargin !== null && peakMargin < 0.005,
-    method: 'normalized correlation; 65-tap Hann sinc; exhaustive 1/32-sample grid',
+    method: `normalized correlation; ${kernel.length}-tap Hann sinc; exhaustive 1/32-sample grid`,
   };
 }
