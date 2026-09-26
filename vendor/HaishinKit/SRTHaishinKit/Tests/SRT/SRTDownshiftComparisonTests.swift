@@ -14,6 +14,9 @@ import Testing
         let environment = ProcessInfo.processInfo.environment
         let mode = try #require(environment["SCOREBUG_DOWNSHIFT_CASE"])
         try #require(["resize", "rate", "rate-resize"].contains(mode))
+        let phase = environment["SCOREBUG_DOWNSHIFT_MUTATION_FRAME"] ?? "180"
+        try #require(["180", "181"].contains(phase))
+        let mutationFrame = try #require(Int(phase))
         let source = try #require(environment["SCOREBUG_DOWNSHIFT_SOURCE"])
         let destination = try #require(environment["SCOREBUG_DOWNSHIFT_OUTPUT"])
         try #require(source.hasPrefix("/") && destination.hasPrefix("/"))
@@ -80,7 +83,7 @@ import Testing
             await stream.setExpectedMedias([.video]); await stream.publish()
             let generation = try #require(await stream.publishingGeneration)
             trace.record("started", fields: ["generation": String(generation), "source": source, "mode": mode,
-                "sourceMediaStart": exactPTS(range.start), "selectedStart": exactPTS(selectedStart)])
+                "mutationFrame": phase, "sourceMediaStart": exactPTS(range.start), "selectedStart": exactPTS(selectedStart)])
             let clock = ContinuousClock(), start = ContinuousClock.now
             var baseline: SRTStream.VideoBitRateReceipt?
             for index in 0..<360 {
@@ -94,7 +97,7 @@ import Testing
                     baseline = receipt
                     trace.recordRate("baseline", receipt)
                 }
-                if index == 180 {
+                if index == mutationFrame {
                     let original = try #require(baseline)
                     trace.record("mutation-requested")
                     mutation = Task {

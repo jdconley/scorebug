@@ -2,90 +2,29 @@
 
 ## Objective and workspace
 
-Complete native phone recording/scoring and paired Watch scoring, progressive
-SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
-The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
-branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEAD e29f774; all capture/build/analysis jobs joined. No PR requested.
+Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Goal active. Use only `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-native-downshift-comparison.md)
-owns chronology and artifacts. Preserve Downloads originals and failed evidence.
-No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
-during capture. Sign Conley Chaos LLC B222J9J7B8.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-simulator-downshift-comparison.md) owns results, failures and artifacts. Preserve Downloads originals; no runtime downloads, unrelated simulator deletion, or heavy builds/media analysis during capture.
 
-## Immediate priorities
+## Current work
 
-Native host comparison completed on e29f774: native-downshift-unjlrzpt, all3 processes and analyzers joined0, same360sourcePTS/hardware. Resize peak100ms162919bytes, pending keyframe150389; rate-resize peak102409, pendingkeyframe89879; rate-only peak96631. No network/A/V qualification. Reviewed bounded harness/analyzer;11validator tests pass. Priorfzpw74ak failed fixtureselection and remains failed; corrected selection starts at243.25, past MOV emptyedit. Both result/design reviews complete. Entire60510byte reduction comes from pending scheduled keyframe180; subsequent resized frame sizes match. Next run resize/rate-resize on the native iOS simulator and check an adjacent non-keyframe phase before production generalization. Do not blindly add production pre-rate: must chain intermediate native receipt, track partial native effect and preserve one deadline/stop ownership. Current log:2026-09-26-native-downshift-comparison.md; plan:../superpowers/plans/2026-09-26-native-downshift-output-comparison.md.
+All native captures joined. Reviewed frame180 simulator comparison `native-downshift-simulator-m2_n26dz` shows a pending-keyframe reduction234633→142553bytes but unchanged~480ms replacement. The initial lowercase-UUID launcher failure `bltk_6u5` remains failed with successful cleanup.
 
-Earlier pressure sampling5ee827a remains active. Its xjv6RI full720recovery passes native/transport/geometry but fails91missingvideo IDs/21audio gaps, while the clean archive10250frames/70waveform probes passes. All54failure-evidence hashes retained. This does not qualify720recovery; no unchanged full run.
+Reviewed frame181 host `native-downshift-adjacent-taykc_ic` and simulator `native-downshift-simulator-adjacent-_g_m04ab` pass strict analysis/provenance. Host only shrinks pending nonsync frame7677→5500bytes, with unchanged37166byte peak100ms output. Simulator has identical frame sizes and14pending frames298550bytes in both modes. Benefit is phase-dependent, not a general burst fix.14validator tests, native unit build and iOS simulator test build pass. Details/hashes in current session log.
 
-1. User confirmed automation approval/devices ready, but fresh paired attempt8qxiOg again reports Watch locked. Root stopped exact owned PID19966 and joined13680exit1; no phone capture started. LabQAAoGp clean shutdown, failures[]. Await actual Watch unlock before another physical attempt.
-2. Collapse diagnosis is complete enough for the next intervention. Run
-   `ordinary-native-uDznjI` / `device-lab-9fjCGU` (source3128283) has complete25s
-   packet evidence exactly bound to constraint receipt. All261drops captured:
-   228original data+33ACKACK, no retransmitted data. Firstdrop895ms, first matching
-   NAK3686ms, sender answers Message Drop Request; maxqueue residence2796ms.
-   Initial800ms backlog lower bound198744bytes before185688byte/200ms burst.
-   Burst overlaps first decrease but encrypted TS prevents drain/frame attribution.
-   Reviewed analysis/correlation reports are in the run directory. No native or
-   transport pass changes its media failure.
+The [guarded downshift experiment](../superpowers/plans/2026-09-26-guarded-downshift-experiment.md) is being implemented by existing agent `/root/applied_transition_implementation` in two files: PublishingQualitySession.swift and PublishingQualitySessionTests.swift. This is an isolated candidate, not deployment or proven fix. Wait for tests/processes to join, review exact source, then run one full unchanged720p media campaign. Restore the previous production sequence if the experiment lacks support. No intermediate policy ACK or relaxed media limits.
 
-## Latest verified result
+## Acceptance still open
 
-uDznjI: workflow/native/transport/geometry pass;174segment native export. Archive
-10349sequentialframes/30fps/no audio gaps,71waveform+clean-glyph probes pass. Both
-live9992frames lose100IDs4679→4780,23audio gaps,3.367s maxvideo gap.119frame archive
-continuation passes. Original failed manifest retained;57-file preservation hash
-manifest. AV diagnostic exits1 on live summed-audio coverage~1105ms; no inference
-of permanent sync offset. Phase9A636314-0320-49A2-AF70-038AA82AD491.json.
-Offline packet helper and eight regression cases reviewed after four findings fixed.
+- Latest full720p `ordinary-native-xjv6RI` (source5ee827a, labJeoRqF) passes native/transport/geometry but loses91video IDs and has21audio gaps. Archive10250sequentialframes/30fps plus70waveform/clean-glyph probes passes.54-file failure manifest retained. Earlier100ms pressure sampling remains active; ordinary SDK source-cadence pacing remains reverted. See [sampling log](2026-09-26-earlier-pressure-sampling.md).
+- Two ordinary360p recovery runs93koj3/rpRZ6E pass all three outputs and accepted-window mappings. No720p recovery qualification yet. Keep all historical failures under original contracts.
+- Separate physical phone camera and Watch scoring baselines pass. Combined acceptance remains open. User approved automation, but the latest direct Watch lockState again reports passcodeRequired:true; do not repeat paired capture without an actual unlock change. Last paired8qxiOg stopped before phone capture and joined cleanly. Paired simulator companion registration remains unresolved.
+- Sustained hardware, higher profiles, outages/routes, other native scorers, remote workers and real YouTube remain open. Prefer a physical-phone collapse comparison over assuming simulator buffering represents iPhone hardware.
 
-Production timing source passed199app/8Core tests, DebugUI/Release builds and both
-exact-blob reviews. Normal factory uses3000ms decoder/3500ms capture evaluation;
-strict1500 remains explicitly constructible. Other freshness/stall/loss limits stay.
+## Tools and environment
 
-JZQQai workflow, independent native/actual750kbps transport and geometry replay
-PASS.157segment actual native export collected. All129samples report3000/3500;
-pressure receipts revisions3/4 confirm actual700ms sender delay. Six applied
-transitions cover240→360→720→360→240→360→720. Phase attachment:
-`401C06B8-279F-456A-A430-EC5A61C41722.json`.
+Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130; Docker `scorebug/ingest:campaign-probe-v3`. Phone16Pro00008140-001474110C13001C/iOS26.7; Ultra200008310-0000B2CE3E08A01E/watchOS26.6.
 
-MEDIA FAILS: archive9328consecutive frames/30fps/no audio gaps;64waveform and clean
-glyph checks pass. Both live outputs8995frames with identical IDs,28barcode breaks,
-26audio gaps, minimum1freshfps and0.933s maximum video gap during one collapse.
-Archive111frame continuation passes. Upstream315overflow drops/297900wire bytes.
-Live summed-audio coverage fails by about1234.7ms; this is not proof of permanent
-presentation offset. Original producing manifest remains failed.49-file preservation
-manifest `failed-media-evidence-manifest.json`. No accepted-window media mapping.
+Source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`:600s,18000IDs,1080p30,48kPCM, SHA2566c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6. Originals unchanged.
 
-Previous `ordinary-native-TJzyrf`120ms run also fails collapse media; original
-223packet loss and45barcode/24audio discontinuities are retained. Requested700ms
-with strict1500 (`ordinary-native-3ux2FX`) passes initial240p media but cannot ramp.
-Historical details are in the current session and transport/pipeline session logs.
-
-## Baseline and open limits
-
-Two complete ordinary360recovery passes:93koj3 and rpRZ6E, including three-output
-media and six accepted-window mappings. Earlier te5IoU rollback remains unexplained;
-older9IVqF0 audio/evidence failures remain failed. Separate physical phone camera
-and Watch scoring baselines pass; combined acceptance is open. Paired simulator
-companion registration remains unresolved. Sustained hardware, wider profiles,
-outages/routes, other scorers, remote hosts and YouTube acceptance remain open.
-
-Reviewed offline helpers live under artifacts/qa; hashes/review in
-`ordinary-720-helper-review.json`. The mapper requires successful producing media
-and must not qualify either failed720run. Use existing helpers, not substitute
-archive concatenation or weakened frame/audio checks.
-
-## Environment
-
-Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installed runtimes only.
-FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130.
-Phone16Pro `00008140-001474110C13001C`, iOS26.7; Ultra2
-`00008310-0000B2CE3E08A01E`, watchOS26.6.
-Current physical build/readiness evidence: `physical-paired-current-mtc1mc54`,
-phone-broadcast-ready/watch-broadcast-build/watch-broadcast-ready-20260926 labels.
-Verified600s source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`,
-18000IDs,1080p30/48kPCM, SHA256
-`6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
+Full run: `node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source <absolute-source-path> --lane recovery720 --publish-peer-latency-ms 700` with Xcode environment. Reviewed root-owned helpers under artifacts/qa: collect-ordinary-export-20260925.py, replay-ordinary-720-recovery-20260926.mjs, verify-ordinary-720-media-20260926.py, verify-ordinary-av-overlay-20260925.mjs and analyze-collapse-packets-20260926.py. Export actual native archive; never substitute concatenated segments. Accepted-window mapper requires a successful producing media manifest.

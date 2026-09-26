@@ -58,6 +58,10 @@ export function analyzeDownshift(report) {
       mutation.at <= end.at &&
       end.at <= finish.at,
   );
+  // Earlier traces used a fixed frame180 boundary. Preserve that exact contract.
+  const phase = start.fields.mutationFrame ?? '180';
+  assert(['180', '181'].includes(phase), 'Unsupported mutation frame');
+  const mutationFrame = Number(phase);
   const generation = start.fields.generation,
     oldEncoder = baseline.fields.encoder;
   assert(generation && oldEncoder && baseline.fields.configuration);
@@ -85,8 +89,8 @@ export function analyzeDownshift(report) {
     }
   }
   assert(
-    inputs[180].at <= requested.at && requested.at < inputs[181].at,
-    'Mutation request is not at frame180',
+    inputs[mutationFrame].at <= requested.at && requested.at < inputs[mutationFrame + 1].at,
+    'Mutation request is not at declared frame',
   );
   // Exclude startup/baseline initialization. This 30fps harness tolerance is not
   // a product loss threshold: reject catch-up/stalls as a measurement confound.
@@ -225,6 +229,7 @@ export function analyzeDownshift(report) {
     source: report.source,
     sourcePTS: [...input.keys()],
     scope: 'Host native video encoder/mux only; mocked sink, no network/A/V qualification',
+    mutationFrame,
     mutationMilliseconds: (end.at - mutation.at) * 1000,
     preMutationSubmittedTailFrames: tail.length,
     preMutationSubmittedTailBytes: tail.reduce((s, f) => s + f.bytes, 0),
@@ -242,6 +247,7 @@ export function compareDownshifts(reports) {
   assert.deepEqual(reports.map((r) => r.mode).sort(), ['rate', 'rate-resize', 'resize']);
   const cases = reports.map(analyzeDownshift);
   for (const c of cases.slice(1)) {
+    assert.equal(c.mutationFrame, cases[0].mutationFrame, 'Cases used different mutation frames');
     assert.equal(c.source, cases[0].source);
     assert.deepEqual(c.sourcePTS, cases[0].sourcePTS, 'Cases consumed different source frames');
   }

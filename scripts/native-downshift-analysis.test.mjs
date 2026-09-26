@@ -1,10 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeDownshift, compareDownshifts } from './native-downshift-analysis.mjs';
-function fixture(mode = 'resize') {
+function fixture(mode = 'resize', { mutationFrame = 180 } = {}) {
+  const offset = mutationFrame / 30 - 6;
   const events = [];
   const add = (kind, at, fields = {}) => events.push({ kind, at, fields });
-  add('started', 0, { generation: '1', selectedStart: '0/30:0:1' });
+  add('started', 0, {
+    generation: '1',
+    selectedStart: '0/30:0:1',
+    mutationFrame: String(mutationFrame),
+  });
   add('baseline', 1.001, {
     generation: '1',
     encoder: 'old',
@@ -12,45 +17,45 @@ function fixture(mode = 'resize') {
     bitrate: '3000000',
     lastPTS: '30/30:0:1',
   });
-  add('mutation-requested', 6.009);
-  add('mutation-started', 6.01);
+  add('mutation-requested', 6.009 + offset);
+  add('mutation-started', 6.01 + offset);
   if (mode !== 'resize')
-    add('rate-receipt', 6.012, {
+    add('rate-receipt', 6.012 + offset, {
       encoder: 'old',
       configuration: 'rate',
       bitrate: '600000',
       generation: '1',
-      lastPTS: '180/30:0:1',
+      lastPTS: `${mutationFrame}/30:0:1`,
     });
   if (mode !== 'rate') {
-    add('resize-requested', 6.013);
-    add('resize-receipt', 6.037, {
+    add('resize-requested', 6.013 + offset);
+    add('resize-receipt', 6.037 + offset, {
       generation: '1',
-      oldPTS: '180/30:0:1',
-      newPTS: '181/30:0:1',
+      oldPTS: `${mutationFrame}/30:0:1`,
+      newPTS: `${mutationFrame + 1}/30:0:1`,
       previousEncoder: 'old',
       encoder: 'new',
       width: '640',
       height: '360',
       rawDropped: '0',
     });
-    add('final-rate-receipt', 6.038, {
+    add('final-rate-receipt', 6.038 + offset, {
       encoder: 'new',
       configuration: 'final',
       bitrate: '600000',
       generation: '1',
-      lastPTS: '181/30:0:1',
+      lastPTS: `${mutationFrame + 1}/30:0:1`,
     });
   }
-  add('mutation-finished', mode === 'rate' ? 6.013 : 6.039);
+  add('mutation-finished', mode === 'rate' ? 6.013 + offset : 6.039 + offset);
   for (let i = 0; i < 360; i++) {
     const t = i / 30,
       pts = `${i}/30:0:1`,
-      old = mode === 'rate' || i <= 180;
+      old = mode === 'rate' || i <= mutationFrame;
     let configuration = i >= 31 ? 'base' : undefined,
       bitrate = '3000000';
-    if (i >= 181) {
-      configuration = mode === 'rate' ? 'rate' : i === 181 ? undefined : 'final';
+    if (i > mutationFrame) {
+      configuration = mode === 'rate' ? 'rate' : i === mutationFrame + 1 ? undefined : 'final';
       bitrate = '600000';
     }
     add('input', t, { index: String(i), pts });
@@ -74,12 +79,12 @@ function fixture(mode = 'resize') {
       generation: '1',
       width: old ? '1280' : '640',
       height: old ? '720' : '360',
-      bytes: i <= 180 ? '12500' : '2500',
+      bytes: i <= mutationFrame ? '12500' : '2500',
       codec: '1635148593',
       valid: 'true',
       encoded: 'true',
       paced: 'false',
-      sync: i % 60 === 0 || (mode !== 'rate' && i === 181) ? 'true' : 'false',
+      sync: i % 60 === 0 || (mode !== 'rate' && i === mutationFrame + 1) ? 'true' : 'false',
     });
     add('muxed', t + 0.004, { pts, generation: '1', media: 'video' });
   }
@@ -94,7 +99,7 @@ function fixture(mode = 'resize') {
   };
 }
 test('compares matching native cases without pretending pre-rate has an output witness', () => {
-  const reports = compareDownshifts(['resize', 'rate', 'rate-resize'].map(fixture));
+  const reports = compareDownshifts(['resize', 'rate', 'rate-resize'].map((mode) => fixture(mode)));
   assert.equal(reports.length, 3);
   assert.equal(reports[2].rateOutputWitnessCounts.find((x) => x.kind === 'rate-receipt').frames, 0);
   assert.equal(
@@ -133,7 +138,7 @@ test('rejects foreign native configuration and final rate without matching outpu
   assert.throws(() => analyzeDownshift(missing));
 });
 test('rejects unmatched source provenance across cases', () => {
-  const reports = ['resize', 'rate', 'rate-resize'].map(fixture);
+  const reports = ['resize', 'rate', 'rate-resize'].map((mode) => fixture(mode));
   reports[1].source = '/different.mov';
   assert.throws(() => compareDownshifts(reports));
 });
@@ -187,4 +192,29 @@ test('rejects first input outside recorded selected interval', () => {
   const r = fixture();
   r.events.find((e) => e.kind === 'started').fields.selectedStart = '1/30:0:1';
   assert.throws(() => analyzeDownshift(r), /Input starts outside/);
+});
+
+test('accepts adjacent phase and binds comparisons to the same mutation frame', () => {
+  const reports = ['resize', 'rate', 'rate-resize'].map((mode) =>
+    fixture(mode, { mutationFrame: 181 }),
+  );
+  assert.equal(analyzeDownshift(reports[0]).mutationFrame, 181);
+  assert.equal(compareDownshifts(reports).length, 3);
+  reports[0] = fixture('resize');
+  assert.throws(() => compareDownshifts(reports), /different mutation frames/);
+});
+test('rejects unsupported or falsely labelled mutation phases', () => {
+  for (const phase of ['0', '180.5', '182', 'garbage']) {
+    const r = fixture();
+    r.events.find((e) => e.kind === 'started').fields.mutationFrame = phase;
+    assert.throws(() => analyzeDownshift(r), /mutation frame/);
+  }
+  const r = fixture();
+  r.events.find((e) => e.kind === 'started').fields.mutationFrame = '181';
+  assert.throws(() => analyzeDownshift(r), /Mutation request/);
+});
+test('legacy trace without explicit mutation phase remains bound to frame180', () => {
+  const r = fixture();
+  delete r.events.find((e) => e.kind === 'started').fields.mutationFrame;
+  assert.equal(analyzeDownshift(r).mutationFrame, 180);
 });
