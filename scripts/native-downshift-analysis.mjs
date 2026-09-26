@@ -133,6 +133,7 @@ export function analyzeDownshift(report) {
       'Rate lastPTS is not an acknowledged encoder submission',
     );
   }
+  let replacementTiming = null;
   if (report.mode !== 'rate') {
     const old = inputs.filter(
       (i) => completed.get(timeKey(i.fields.pts))?.fields.encoder === oldEncoder,
@@ -154,6 +155,29 @@ export function analyzeDownshift(report) {
       firstOutput && firstOutput.fields.sync === 'true' && firstOutput.at <= resize.at,
       'First new output must precede receipt and be sync',
     );
+    const firstPTS = timeKey(firstNew.fields.pts);
+    const firstSubmission = submitted.get(firstPTS);
+    const firstCompletion = completed.get(firstPTS);
+    assert(
+      firstSubmission.at >= resizeRequest.at,
+      'First new submission precedes replacement request',
+    );
+    // Per-frame validation below binds these native times and encoder identity.
+    // Request-to-submission includes actor scheduling, old drain and new setup;
+    // it does not identify the duration of any one of those operations.
+    replacementTiming = {
+      scope:
+        'Matched native first-new-frame boundaries; not a direct drain measurement or network/media qualification',
+      firstNewSourcePTS: firstPTS,
+      requestToFirstSubmissionMs: (firstSubmission.at - resizeRequest.at) * 1000,
+      firstSubmissionToCompletionMs: (firstCompletion.at - firstSubmission.at) * 1000,
+      firstCompletionToCompressedMs: (firstOutput.at - firstCompletion.at) * 1000,
+      compressedToReceiptMs: (resize.at - firstOutput.at) * 1000,
+      requestToReceiptMs: (resize.at - resizeRequest.at) * 1000,
+      newSubmissionsBeforeFirstCompletion: [...submitted.values()].filter(
+        (e) => e.fields.encoder === resize.fields.encoder && e.at < firstCompletion.at,
+      ).length,
+    };
   }
   const configurations = new Map(rates.map((r) => [r.fields.configuration, r]));
   assert.equal(configurations.size, rates.length);
@@ -231,6 +255,7 @@ export function analyzeDownshift(report) {
     scope: 'Host native video encoder/mux only; mocked sink, no network/A/V qualification',
     mutationFrame,
     mutationMilliseconds: (end.at - mutation.at) * 1000,
+    replacementTiming,
     preMutationSubmittedTailFrames: tail.length,
     preMutationSubmittedTailBytes: tail.reduce((s, f) => s + f.bytes, 0),
     rateOutputWitnessCounts: rates.map((r) => ({

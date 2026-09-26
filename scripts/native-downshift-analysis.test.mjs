@@ -218,3 +218,24 @@ test('legacy trace without explicit mutation phase remains bound to frame180', (
   delete r.events.find((e) => e.kind === 'started').fields.mutationFrame;
   assert.equal(analyzeDownshift(r).mutationFrame, 180);
 });
+
+test('separates matched first new submission, completion, output and receipt', () => {
+  const r = fixture();
+  const result = analyzeDownshift(r).replacementTiming;
+  assert(result);
+  assert.equal(result.firstNewSourcePTS, '181/30');
+  assert.equal(result.newSubmissionsBeforeFirstCompletion, 1);
+  assert(Math.abs(result.requestToFirstSubmissionMs - (181 / 30 + 0.0005 - 6.013) * 1000) < 1e-8);
+  assert(Math.abs(result.firstSubmissionToCompletionMs - 1.5) < 1e-8);
+  assert(Math.abs(result.firstCompletionToCompressedMs - 1) < 1e-8);
+  assert(Math.abs(result.requestToReceiptMs - 24) < 1e-8);
+  assert.match(result.scope, /not a direct drain measurement/);
+});
+test('rate-only mutation has no invented replacement timing', () => {
+  assert.equal(analyzeDownshift(fixture('rate')).replacementTiming, null);
+});
+test('rejects first new submission before replacement request', () => {
+  const r = fixture();
+  r.events.find((e) => e.kind === 'resize-requested').at = 6.034;
+  assert.throws(() => analyzeDownshift(r), /First new submission precedes replacement request/);
+});
