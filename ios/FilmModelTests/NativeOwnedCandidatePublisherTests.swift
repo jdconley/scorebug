@@ -9,6 +9,121 @@ import libsrt
 import XCTest
 
 final class NativeOwnedCandidatePublisherTests: XCTestCase {
+    @MainActor func testContinuousMeasurementsRetryBeyondLaboratoryLimitWithFreshHealth() async throws {
+        try await exerciseRetryLimit(continuous: true)
+    }
+    @MainActor func testLaboratoryMeasurementsKeepSixteenAttemptLimitAndCompleteAudit() async throws {
+        try await exerciseRetryLimit(continuous: false)
+    }
+    @MainActor private func exerciseRetryLimit(continuous: Bool) async throws {
+        let f = try await CandidateQualityFixture.make()
+        var diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let fixture = OwnedAppRouteFixture(selected: f.native.receipt!)
+        let lower = SRTMediaPublisher(operations: await fixture.operations())
+        let wrapper = continuous
+            ? NativeOwnedCandidatePublisher(publisher: lower, scope: diagnostics.ingress!.scope,
+                campaignOwner: PublishingCandidateCampaignOwner(),
+                stagePlan: try NativeCandidateStagePlan(bitRates: [500_000, 2_000_000], holds: [0.8, 0.5]))
+            : NativeOwnedCandidatePublisher(publisher: lower, scope: diagnostics.ingress!.scope,
+                campaignOwner: PublishingCandidateCampaignOwner())
+        try await wrapper.start()
+        try await f.owner.installOwnedMeasurementPublisher(wrapper)
+        var sequence: Int64 = 3
+        for attempt in 1...18 {
+            await fixture.failNextAllocation()
+            let started = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+            XCTAssertEqual(started, continuous || attempt <= 16, "Attempt \(attempt)")
+            await f.owner.joinOwnedMeasurement()
+            let premature = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+            XCTAssertFalse(premature, "Settlement still requires a new healthy hold")
+            var start = f.native.now + 1
+            // The policy caps failure backoff at 60 seconds; every retry earns it anew.
+            for _ in 0..<12 {
+                f.native.setNow(start + 5.1)
+                let fresh = try await f.freshSource(start: start, sequence: sequence)
+                _ = try await f.owner.evaluate(source: fresh.0, diagnostics: fresh.1,
+                    workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                    transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+                diagnostics = fresh.1; sequence += 1; start += 5
+            }
+        }
+        let allocated = await fixture.counts.allocations
+        XCTAssertEqual(allocated, continuous ? 18 : 16)
+        let retained = await fixture.retainedOperationCount
+        XCTAssertLessThanOrEqual(retained, 1, "Settled attempts must release their exact operation owners")
+        if continuous { XCTAssertNil(wrapper.audit, "Continuous ownership must not allocate an event history") }
+        else {
+            let rows = try auditRows(wrapper)
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "registered" }.count, 16)
+            XCTAssertEqual(rows.filter { $0["kind"] as? String == "settledFailure" }.count, 16)
+            XCTAssertEqual(wrapper.stagePlan, .laboratory)
+        }
+        await f.owner.stop(); await wrapper.stop()
+    }
+
+    func testStagePlanRejectsInvalidRatesCountsAndHolds() throws {
+        for rates in [[], [0], [-1], [12_000_001], [500_000, 0], [500_000, 12_000_001], Array(repeating: 500_000, count: 33)] {
+            XCTAssertThrowsError(try NativeCandidateStagePlan(bitRates: rates, holds: Array(repeating: 0.8, count: rates.count)))
+        }
+        for holds in [[], [0.8], [-1, 0.5], [0.8, 0], [0.8, 0.499], [Double.nan, 0.5], [Double.infinity, 0.5], [59.5, 0.5]] {
+            XCTAssertThrowsError(try NativeCandidateStagePlan(bitRates: [500_000, 2_000_000], holds: holds))
+        }
+        let plan = try NativeCandidateStagePlan(bitRates: [800_000, 3_000_000], holds: [0.8, 0.5])
+        XCTAssertNoThrow(try NativeCandidateStagePlan(bitRates: [12_000_000], holds: [0.5]))
+        XCTAssertEqual(plan.finalStage, 2)
+        XCTAssertEqual(plan.bitRates, [800_000, 3_000_000])
+        XCTAssertEqual(NativeCandidateStagePlan.laboratory.bitRates, [500_000, 2_000_000, 12_000_000])
+        XCTAssertEqual(NativeCandidateStagePlan.laboratory.holds, [0.8, 0.8, 0.5])
+    }
+
+    @MainActor func testContinuousRetryWaitsForHeldCleanupThenEarnsFreshHealth() async throws {
+        let f = try await CandidateQualityFixture.make()
+        var diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let fixture = OwnedAppRouteFixture(selected: f.native.receipt!)
+        await fixture.hold(.retire)
+        let lower = SRTMediaPublisher(operations: await fixture.operations())
+        let wrapper = NativeOwnedCandidatePublisher(publisher: lower, scope: diagnostics.ingress!.scope,
+            campaignOwner: PublishingCandidateCampaignOwner(),
+            stagePlan: try NativeCandidateStagePlan(bitRates: [500_000, 1_000_000, 2_000_000], holds: [0.8, 0.8, 0.5]))
+        try await wrapper.start(); try await f.owner.installOwnedMeasurementPublisher(wrapper)
+        let started = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertTrue(started)
+        await fixture.waitForEntry()
+        try await f.owner.noteUnavailableCadence(diagnostics: diagnostics)
+        var start = f.native.now + 1
+        for sequence in 3...16 {
+            f.native.setNow(start + 5.1)
+            let fresh = try await f.freshSource(start: start, sequence: Int64(sequence))
+            _ = try await f.owner.evaluate(source: fresh.0, diagnostics: fresh.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+            diagnostics = fresh.1; start += 5
+            let retried = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+            XCTAssertFalse(retried, "Healthy telemetry cannot release the still-unjoined native owner")
+        }
+        let heldCounts = await fixture.counts
+        XCTAssertEqual(heldCounts.allocations, 1)
+        await fixture.release(); await f.owner.joinOwnedMeasurement()
+        let premature = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertFalse(premature, "Pre-join health cannot satisfy post-settlement retry backoff")
+        start = f.native.now + 1
+        for sequence in 17...18 {
+            f.native.setNow(start + 5.1)
+            let fresh = try await f.freshSource(start: start, sequence: Int64(sequence))
+            _ = try await f.owner.evaluate(source: fresh.0, diagnostics: fresh.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+            diagnostics = fresh.1; start += 5
+        }
+        await fixture.failNextAllocation()
+        let retried = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+        XCTAssertTrue(retried)
+        await f.owner.joinOwnedMeasurement()
+        let finalCounts = await fixture.counts
+        XCTAssertEqual(finalCounts.allocations, 2)
+        await f.owner.stop(); await wrapper.stop()
+    }
+
     func testOwnedFixtureRequiresCompleteDedicatedCapacityRoute() throws {
         var environment = ["SCOREBUG_TEST_OWNED_MEASUREMENT": "1", "SCOREBUG_TEST_CAPACITY_RECOVERY": "1",
             "SCOREBUG_TEST_UPLINK_PROFILE": "capacity750k-retry", "SCOREBUG_TEST_UPLINK_PROXY_PORT": "1234",
@@ -94,7 +209,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testFourSecondCandidateUsesActualFiveSecondSourceCadenceWithReportLag() async throws {
         try await exerciseOwnedApplication(.sourceCadence)
     }
-    private enum ApplicationOutcome { case sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    func testContinuousTwoStagePlanBindsItsFinalStageAndKeepsItImmutable() async throws {
+        try await exerciseOwnedApplication(.continuousPlan)
+    }
+    private enum ApplicationOutcome { case continuousPlan, sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
     @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
         let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
@@ -124,7 +242,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             return .init(id: result.id, start: { result.start() }, offer: { _ in true }, observeAudio: { _ in },
                 cancel: { result.cancel($0) }, result: { await result.result() })
         })
-        let wrapper = NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign)
+        let wrapper = outcome == .continuousPlan
+            ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign,
+                stagePlan: try NativeCandidateStagePlan(bitRates: [800_000, 3_000_000], holds: [0.8, 0.5]))
+            : NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign)
         router.install(wrapper)
         try await wrapper.start(); await fixture.enableSending()
         try await f.owner.installOwnedMeasurementPublisher(wrapper, diagnostics: {
@@ -190,6 +311,22 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             if witness == nil { try await Task.sleep(for: .milliseconds(10)) }
         }
         let completedWitness = try XCTUnwrap(witness, "Actual registered stages must produce the joined candidate")
+        if outcome == .continuousPlan {
+            XCTAssertEqual(completedWitness.probe.stage, 2)
+            XCTAssertEqual(completedWitness.probe.bitRate, 3_000_000)
+            XCTAssertEqual(completedWitness.binding.id, completedWitness.probe.id)
+            XCTAssertTrue(completedWitness.permitsCurrentCandidate(completedWitness.cost.id))
+            try await Task.sleep(for: .milliseconds(150))
+            let reread = await wrapper.candidateSnapshot()
+            XCTAssertEqual(reread?.binding.id, completedWitness.binding.id)
+            XCTAssertEqual(reread?.probe.id, completedWitness.probe.id)
+            XCTAssertEqual(reread?.boundAt, completedWitness.boundAt)
+            let counts = await fixture.counts
+            XCTAssertEqual(counts.allocations, 2)
+            XCTAssertNil(wrapper.audit)
+            await f.owner.stop(); await wrapper.stop()
+            return
+        }
         while ProcessInfo.processInfo.systemUptime < max(start + 10.15, completedWitness.cost.endedAt + 0.1) { try await Task.sleep(for: .milliseconds(10)) }
         f.native.setNow(ProcessInfo.processInfo.systemUptime)
         let covered = try await f.freshSource(start: start + 5, sequence: 5)
@@ -217,10 +354,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             if outcome == .heldRejectionStop {
                 let stopping = Task { await driver.stop() }
                 while !(await f.owner.snapshot).isClosed { await Task.yield() }
-                let before = try XCTUnwrap(try JSONSerialization.jsonObject(with: wrapper.audit.data()) as? [String: Any])
+                let before = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(wrapper.audit).data()) as? [String: Any])
                 XCTAssertEqual(before["isClosed"] as? Bool, false)
                 await fixture.release(); await stopping.value; await completion.value
-                let after = try XCTUnwrap(try JSONSerialization.jsonObject(with: wrapper.audit.data()) as? [String: Any])
+                let after = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(wrapper.audit).data()) as? [String: Any])
                 XCTAssertEqual(after["isClosed"] as? Bool, true)
                 let rows = try auditRows(wrapper)
                 XCTAssertEqual(rows.filter { $0["kind"] as? String == "cleanupJoined" }.count, 1)
@@ -279,7 +416,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
-        case .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
+        case .continuousPlan, .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])
@@ -444,7 +581,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         await f.owner.stop(); await wrapper.stop(); await foreign.owner.stop()
     }
     private func auditRows(_ wrapper: NativeOwnedCandidatePublisher) throws -> [[String: Any]] {
-        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: wrapper.audit.data()) as? [String: Any])
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(wrapper.audit).data()) as? [String: Any])
         return try XCTUnwrap(object["events"] as? [[String: Any]])
     }
 
@@ -631,6 +768,8 @@ private actor OwnedAppRouteFixture {
         }
     }
     private var slot: PublishingBandwidthProbeOperation?, foreign: PublishingBandwidthProbeOperation?
+    private var weakOperations: [WeakOwnedOperation] = []
+    var retainedOperationCount: Int { weakOperations.filter { $0.value != nil }.count }
     private var probe: SRTBandwidthProbe?
     private var failAllocation = false, rejectFactory = false, invalidateAllocation = false
     private var defect = "", revision = 0
@@ -696,6 +835,7 @@ private actor OwnedAppRouteFixture {
                 cancel: { await self.cancel($0, generation: $1) },
                 retire: { try await self.retire($0, generation: $1) })))
         slot = operation
+        weakOperations.append(WeakOwnedOperation(operation))
         if defect == "foreignContext" || defect == "wrongRate" { foreign = operation }
         if defect == "cancelBeforeStart" { defect = ""; operation.revoke() }
         operation.start()
@@ -860,4 +1000,9 @@ private func ownedCandidateResult(id: UUID, scope: VideoFrameObservationScope, s
     return .init(id: id, scope: scope, profile: profile, reason: reason,
         startedAt: start, endedAt: end, acceptedInputCount: 121,
         firstInputPTS: .zero, lastInputPTS: CMTime(value: 4, timescale: 1), encoding: encoding)
+}
+
+private final class WeakOwnedOperation {
+    weak var value: PublishingBandwidthProbeOperation?
+    init(_ value: PublishingBandwidthProbeOperation) { self.value = value }
 }

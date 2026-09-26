@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 import ScorebugCore
 import ScorebugMedia
@@ -7,6 +6,7 @@ import ScorebugStreaming
 /// Raw-input forwarding only. PublishingQualitySession owns probe allocation,
 /// policy registration and retirement; this wrapper never schedules a campaign.
 final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserving, @unchecked Sendable {
+    #if DEBUG
     static func requested(environment: [String: String]) throws -> Bool {
         guard let flag = environment["SCOREBUG_TEST_OWNED_MEASUREMENT"], !flag.isEmpty else { return false }
         guard flag == "1", environment["SCOREBUG_TEST_UPLINK_PROFILE"] == "capacity750k-retry",
@@ -15,9 +15,15 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
         }
         return true
     }
+    #endif
     let publisher: any MediaPublisher
     let scope: VideoFrameObservationScope
-    let audit: PublishingOwnedMeasurementAudit
+    #if DEBUG
+    private(set) var audit: PublishingOwnedMeasurementAudit?
+    private var lifecycle: NativeCandidateLifecycleAudit?
+    #endif
+    let stagePlan: NativeCandidateStagePlan
+    private(set) var maximumAttempts: Int?
     let campaignOwner: PublishingCandidateCampaignOwner
     struct Probes: Sendable {
         let capture: @Sendable (PublishingBitRateChange) async throws -> PublishingBandwidthProbeContext
@@ -42,39 +48,51 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
     }
     let probes: Probes?
     private let lock = NSLock()
-    private var candidateReader: (@Sendable () async -> NativeCandidatePublisher.CandidateSnapshot?)?
+    private var candidateReader: (@Sendable () async -> NativeCandidateSnapshot?)?
     private var probeReader: (@Sendable () async -> PublishingProbeObservation?)?
-    private var pressureReader: (@Sendable () -> NativeCandidatePublisher.Pressure?)?
-    func installReaders(candidate: @escaping @Sendable () async -> NativeCandidatePublisher.CandidateSnapshot?,
+    private var pressureReader: (@Sendable () -> NativeCandidatePressure?)?
+    func installReaders(candidate: @escaping @Sendable () async -> NativeCandidateSnapshot?,
         probe: @escaping @Sendable () async -> PublishingProbeObservation?,
-        pressure: @escaping @Sendable () -> NativeCandidatePublisher.Pressure?) -> Bool {
+        pressure: @escaping @Sendable () -> NativeCandidatePressure?) -> Bool {
         lock.withLock {
             guard !stopped, candidateReader == nil else { return false }
             candidateReader = candidate; probeReader = probe; pressureReader = pressure; return true
         }
     }
-    func candidateSnapshot() async -> NativeCandidatePublisher.CandidateSnapshot? {
+    func candidateSnapshot() async -> NativeCandidateSnapshot? {
         await lock.withLock { stopped ? nil : candidateReader }?()
     }
-    var pressure: NativeCandidatePublisher.Pressure? { lock.withLock { pressureReader }?() }
+    var pressure: NativeCandidatePressure? { lock.withLock { pressureReader }?() }
     private var candidate: NativeCandidateAttempt?
     private var stopped = false
     private var shutdown: Task<Void, Never>?
     private var mutations: [UUID: @Sendable () async -> Void] = [:]
-    private let lifecycle: NativeCandidateLifecycleAudit?
-    private let profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)?
-    private let joinedStop: (@Sendable () async -> Void)?
+    private var profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)?
+    private var joinedStop: (@Sendable () async -> Void)?
 
+    /// Continuous ownership requires a caller-selected plan and has no audit
+    /// history or lifetime attempt cap. Core still gates each retry on health.
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
+         campaignOwner: PublishingCandidateCampaignOwner, stagePlan: NativeCandidateStagePlan,
+         probes: Probes? = nil) {
+        self.publisher = publisher; self.scope = scope; self.campaignOwner = campaignOwner
+        self.stagePlan = stagePlan
+        self.probes = probes ?? (publisher as? SRTMediaPublisher).map(Probes.init)
+        self.profileReceipt = nil; self.joinedStop = nil
+    }
+    #if DEBUG
+    /// Compatibility laboratory construction retains the complete bounded audit.
+    convenience init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
          campaignOwner: PublishingCandidateCampaignOwner, timingProfile: StreamingTimingProfile = .strict1500, probes: Probes? = nil,
          lifecycle: NativeCandidateLifecycleAudit? = nil,
          profileReceipt: (@Sendable (PublishingVideoProfileChange) -> Void)? = nil,
          joinedStop: (@Sendable () async -> Void)? = nil) {
-        self.publisher = publisher; self.scope = scope; self.campaignOwner = campaignOwner
+        self.init(publisher: publisher, scope: scope, campaignOwner: campaignOwner, stagePlan: .laboratory, probes: probes)
         self.lifecycle = lifecycle; self.profileReceipt = profileReceipt; self.joinedStop = joinedStop
         self.audit = PublishingOwnedMeasurementAudit(scope: scope, timingProfile: timingProfile)
-        self.probes = probes ?? (publisher as? SRTMediaPublisher).map(Probes.init)
+        self.maximumAttempts = PublishingOwnedMeasurementAudit.maximumAttempts
     }
+    #endif
     func installCandidate(_ value: NativeCandidateAttempt) {
         let accepted = lock.withLock { () -> Bool in
             guard !stopped else { return false }
@@ -111,22 +129,31 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
         try await mutateProfile(profile, expected: expected)
     }
     private func mutateBitRate(_ rate: Int, expected: PublishingVideoMutationExpectation?) async throws -> PublishingBitRateChange {
+        #if DEBUG
+        let lifecycle = self.lifecycle
+        #endif
         let id = UUID()
         let task: Task<PublishingBitRateChange, Error> = try lock.withLock {
             guard !stopped else { throw PublishingSessionError.invalidState }
             let selected = candidate
+            #if DEBUG
             lifecycle?.beginBitRate(id: id, target: rate, requestedAt: ProcessInfo.processInfo.systemUptime)
-            let task = Task { [publisher, lifecycle] in
+            #endif
+            let task = Task { [publisher] in
                 do {
                     if expected == nil { selected?.cancel(.ownerChanged) }
                     let result: PublishingBitRateChange
                     if let expected { result = try await publisher.setVideoBitRate(rate, expecting: expected) }
                     else { result = try await publisher.setVideoBitRate(rate) }
                     selected?.cancel(.ownerChanged)
+                    #if DEBUG
                     lifecycle?.finishBitRate(id: id, completedAt: ProcessInfo.processInfo.systemUptime, receipt: result, failure: nil)
+                    #endif
                     return result
                 } catch {
+                    #if DEBUG
                     lifecycle?.finishBitRate(id: id, completedAt: ProcessInfo.processInfo.systemUptime, receipt: nil, failure: String(describing: error))
+                    #endif
                     throw error
                 }
             }
@@ -137,14 +164,20 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func mutateProfile(_ profile: PublishingVideoProfile, expected: PublishingBitRateChange?) async throws -> PublishingVideoProfileChange {
-        let witness = await candidateSnapshot(), id = UUID()
+        #if DEBUG
+        let lifecycle = self.lifecycle
+        let witness = lifecycle == nil ? nil : await candidateSnapshot()
+        #endif
+        let id = UUID()
         let task: Task<PublishingVideoProfileChange, Error> = try lock.withLock {
             guard !stopped else { throw PublishingSessionError.invalidState }
             let selected = candidate
+            #if DEBUG
             lifecycle?.beginProfile(id: id, target: profile, requestedAt: ProcessInfo.processInfo.systemUptime,
                 measurementID: witness?.cost.id, authorityPermitted: witness.map { $0.permitsCurrentCandidate($0.cost.id) } ?? false,
                 binding: witness?.binding, boundAt: witness?.boundAt, candidateCompletedAt: witness?.completedAt, currentProbe: witness?.probe)
-            let task = Task { [publisher, lifecycle, profileReceipt] in
+            #endif
+            let task = Task { [publisher, profileReceipt] in
                 let result: Result<PublishingVideoProfileChange, Error>
                 do {
                     if expected == nil { selected?.cancel(.ownerChanged) }
@@ -153,16 +186,20 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
                     else { value = try await publisher.setVideoProfile(profile) }
                     selected?.cancel(.ownerChanged); profileReceipt?(value); result = .success(value)
                 } catch { result = .failure(error) }
-                let completedAt = ProcessInfo.processInfo.systemUptime
-                let readStartedAt = ProcessInfo.processInfo.systemUptime
-                let terminal = await (publisher as? any PublishingProbeObserving)?.probeObservation()
-                let readCompletedAt = ProcessInfo.processInfo.systemUptime
-                switch result {
-                case .success(let value): lifecycle?.finishProfile(id: id, completedAt: completedAt, receipt: value, failure: nil,
-                    readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: terminal)
-                case .failure(let error): lifecycle?.finishProfile(id: id, completedAt: completedAt, receipt: nil, failure: String(describing: error),
-                    readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: terminal)
+                #if DEBUG
+                if lifecycle != nil {
+                    let completedAt = ProcessInfo.processInfo.systemUptime
+                    let readStartedAt = ProcessInfo.processInfo.systemUptime
+                    let terminal = await (publisher as? any PublishingProbeObserving)?.probeObservation()
+                    let readCompletedAt = ProcessInfo.processInfo.systemUptime
+                    switch result {
+                    case .success(let value): lifecycle?.finishProfile(id: id, completedAt: completedAt, receipt: value, failure: nil,
+                        readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: terminal)
+                    case .failure(let error): lifecycle?.finishProfile(id: id, completedAt: completedAt, receipt: nil, failure: String(describing: error),
+                        readStartedAt: readStartedAt, readCompletedAt: readCompletedAt, observation: terminal)
+                    }
                 }
+                #endif
                 return try result.get()
             }
             mutations[id] = { _ = await task.result }
@@ -180,12 +217,17 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
             candidate = nil
             selected?.cancel(.publisherStopped)
             let mutations = Array(mutations.values)
-            let task = Task.detached { [publisher, campaignOwner, lifecycle, joinedStop] in
+            #if DEBUG
+            let lifecycle = self.lifecycle
+            #endif
+            let task = Task.detached { [publisher, campaignOwner, joinedStop] in
                 await publisher.stop()
                 await selected?.retire()
                 await campaignOwner.stop()
                 for join in mutations { await join() }
+                #if DEBUG
                 await lifecycle?.closeAndExport()
+                #endif
                 await joinedStop?()
             }
             shutdown = task
@@ -194,4 +236,3 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
         await task.value
     }
 }
-#endif

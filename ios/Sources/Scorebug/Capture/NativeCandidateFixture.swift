@@ -111,29 +111,7 @@ enum NativeCandidateFixture {
 /// A simulator opt-in observer of the existing publisher's raw input. The primary
 /// append finishes first; this owner adds neither capture admission nor raw queues.
 actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
-    struct Pressure: Sendable {
-        let observedAt: Double, sampledAt: Double
-        let thermal: Int, dropped: Int, rejected: Int
-        let publishing: Bool
-        var valid: Bool {
-            observedAt.isFinite && sampledAt.isFinite && observedAt >= sampledAt && sampledAt >= 0 &&
-            observedAt - sampledAt <= 2 && (0...1).contains(thermal) && dropped >= 0 && rejected >= 0 && publishing
-        }
-        var object: [String: Any] {
-            ["observedAt": observedAt, "sampledAt": sampledAt, "thermal": thermal, "dropped": dropped, "rejected": rejected, "publishing": publishing]
-        }
-        init(observedAt: Double, sampledAt: Double, thermal: Int, dropped: Int, rejected: Int, publishing: Bool) {
-            self.observedAt = observedAt; self.sampledAt = sampledAt; self.thermal = thermal
-            self.dropped = dropped; self.rejected = rejected; self.publishing = publishing
-        }
-        init?(_ snapshot: PublishingSessionSnapshot?) {
-            let now = ProcessInfo.processInfo.systemUptime
-            guard let snapshot, let sample = snapshot.thermalObservation.freshSample(at: now) else { return nil }
-            self.init(observedAt: now, sampledAt: sample.sampledAt, thermal: sample.state.rawValue,
-                dropped: snapshot.queue.droppedCount, rejected: snapshot.queue.rejectedCount,
-                publishing: snapshot.state == .publishing && snapshot.failure == nil)
-        }
-    }
+    typealias Pressure = NativeCandidatePressure
     struct Operations: Sendable {
         let start: @Sendable () async throws -> Void
         let offer: @Sendable (CapturedMediaSample) -> Bool
@@ -154,14 +132,7 @@ actor NativeCandidatePublisher: MediaPublisher, PublishingProbeObserving {
             self.retire = retire
         }
     }
-    struct CandidateSnapshot: Sendable {
-        let cost: PublishingCandidateCost
-        let binding: PublishingProbeObservation
-        let probe: PublishingProbeObservation
-        let boundAt: Double
-        let completedAt: Double
-        let permitsCurrentCandidate: @Sendable (UUID) -> Bool
-    }
+    typealias CandidateSnapshot = NativeCandidateSnapshot
     /// Cached snapshots hold only this bounded token, never the actor or native
     /// result. Revocation is synchronous and cannot be undone by a late join.
     private final class CandidateAuthority: @unchecked Sendable {

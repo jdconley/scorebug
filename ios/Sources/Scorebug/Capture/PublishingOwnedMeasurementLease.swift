@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 import ScorebugCore
 import ScorebugMedia
@@ -10,12 +9,16 @@ actor PublishingOwnedMeasurementLease {
     struct SourceCoverage: Sendable {
         let sequence: UInt64
         let start: Double, end: Double, observedAt: Double
+        #if DEBUG
         var object: [String: Any] { ["sequence": String(sequence), "start": start, "end": end, "observedAt": observedAt] }
+        #endif
     }
     private let sourceCoverage: @Sendable (QualityController.CandidateMeasurementAttempt) async -> SourceCoverage?
     private let sourceDeadline = ProcessInfo.processInfo.systemUptime + QualityController.maximumWindowDuration + 2
     nonisolated let id = UUID()
-    private nonisolated let audit: PublishingOwnedMeasurementAudit
+    #if DEBUG
+    private nonisolated let audit: PublishingOwnedMeasurementAudit?
+    #endif
     nonisolated let token: QualityController.CandidateMeasurementAttempt
     nonisolated let context: PublishingQualitySession.CandidateMeasurementContext
     private let publisher: NativeOwnedCandidatePublisher
@@ -36,10 +39,13 @@ actor PublishingOwnedMeasurementLease {
     private var keeper: Task<Void, Never>?
     private var retirement: PublishingBandwidthProbeRetirement?
     private var joined = false
-    private var pressure: NativeCandidatePublisher.Pressure?
-    nonisolated func record(_ kind: String, fields: [String: Any] = [:]) {
-        audit.record(kind, owner: id, registeredAt: token.registeredAt, revision: token.readiness.appliedRevision, fields: fields)
+    private var pressure: NativeCandidatePressure?
+    #if DEBUG
+    nonisolated func record(_ kind: String, fields: @autoclosure () -> [String: Any] = [:]) {
+        guard let audit else { return }
+        audit.record(kind, owner: id, registeredAt: token.registeredAt, revision: token.readiness.appliedRevision, fields: fields())
     }
+    #endif
 
     private final class Authority: @unchecked Sendable {
         private let lock = NSLock()
@@ -65,7 +71,10 @@ actor PublishingOwnedMeasurementLease {
         guard let target = PublishingVideoProfile(rawValue: context.readiness.settings.profileID),
               target.bitRate == context.readiness.settings.videoBitrate else { throw PublishingQualitySession.Failure.unsupportedProfile }
         self.token = token; self.context = context; self.publisher = publisher; self.probes = probes; self.predecessor = predecessor; self.retirement = predecessor
-        self.audit = publisher.audit; self.diagnostic = diagnostic; self.sourceCoverage = sourceCoverage
+        #if DEBUG
+        self.audit = publisher.audit
+        #endif
+        self.diagnostic = diagnostic; self.sourceCoverage = sourceCoverage
         let owner = publisher.campaignOwner, generation = context.applied.receipt.publishingGeneration, scope = context.scope
         candidate = NativeCandidateAttempt(operations: .init(begin: { _ in
             try await owner.begin(scope: scope, profile: target, publishingGeneration: generation).id
@@ -80,14 +89,21 @@ actor PublishingOwnedMeasurementLease {
     func start(policy: PublishingBandwidthProbeSnapshot.Policy,
                completed: @escaping @Sendable (PublishingOwnedMeasurementLease) async -> Void) {
         guard work == nil else { return }
+        #if DEBUG
         record("registered", fields: ["baselineProfile": context.applied.settings.profileID,
             "baselineBitRate": context.applied.settings.videoBitrate, "targetProfile": context.readiness.settings.profileID,
             "targetBitRate": context.readiness.settings.videoBitrate, "receipt": PublishingOwnedMeasurementAudit.receipt(context.applied.receipt),
             "healthySince": context.readiness.healthySince, "healthyThrough": context.readiness.healthyThrough,
             "healthSequence": String(context.readiness.healthSequence), "readinessValidUntil": context.readiness.validUntil,
             "policy": policy.rawValue, "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(diagnostic)])
+        #endif
         let task = Task { [self] in
-            do { try await run(policy: policy) } catch { record("failed", fields: ["reason": String(describing: error)]); revoke() }
+            do { try await run(policy: policy) } catch {
+                #if DEBUG
+                record("failed", fields: ["reason": String(describing: error)])
+                #endif
+                revoke()
+            }
             await cleanup()
             await completed(self)
         }
@@ -101,8 +117,10 @@ actor PublishingOwnedMeasurementLease {
     }
     private func allocate(in context: PublishingBandwidthProbeContext, after prior: PublishingBandwidthProbeRetirement?,
                           rate: Int, policy: PublishingBandwidthProbeSnapshot.Policy, replacement: Bool) async throws {
+        #if DEBUG
         record("allocationRequested", fields: ["kindOfAllocation": replacement ? "replace" : prior == nil ? "begin" : "restart", "bitRate": rate,
             "predecessor": prior?.terminalSnapshot.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
+        #endif
         let task = Task { [probes] in
             if let prior {
                 return try await replacement ? probes.replace(prior, context, rate) : probes.restart(prior, context, rate)
@@ -113,30 +131,40 @@ actor PublishingOwnedMeasurementLease {
         let returned: PublishingBandwidthProbeOperation
         do { returned = try await task.value }
         catch {
+            #if DEBUG
             record("allocationRejected", fields: ["reason": String(describing: error)])
+            #endif
             throw error
         }
         operation = returned // Retain the exact handle before cancellation or validation.
         allocation = nil
         try check()
         sample = try await returned.value()
+        #if DEBUG
         record("allocated", fields: ["snapshot": PublishingOwnedMeasurementAudit.snapshot(sample!)])
+        #endif
         try check()
     }
     private func renew() async throws {
         try check()
         guard let operation else { throw PublishingQualitySession.Failure.notReady }
+        #if DEBUG
         record("renewalRequested", fields: ["snapshot": sample.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
+        #endif
         let renewed: PublishingBandwidthProbeSnapshot
         do { renewed = try await operation.renew() }
         catch {
+            #if DEBUG
             record("renewalRejected", fields: ["reason": String(describing: error)])
+            #endif
             throw error
         }
         sample = renewed
         let currentPressure = pressure == nil ? nil : publisher.pressure
+        #if DEBUG
         record("renewed", fields: ["snapshot": PublishingOwnedMeasurementAudit.snapshot(renewed),
             "pressure": currentPressure?.object as Any? ?? NSNull()])
+        #endif
         try check()
         if let pressure {
             guard let current = currentPressure, current.valid, current.dropped == pressure.dropped,
@@ -155,20 +183,28 @@ actor PublishingOwnedMeasurementLease {
     // Use observed source progress to schedule collection from the lower-rate
     // stage. This grants no admission authority and does not extend evidence age.
     private func awaitNextSourceCoverage() async throws {
+        #if DEBUG
         record("sourceWaitStarted", fields: ["deadline": sourceDeadline])
+        #endif
         while true {
             try check()
             guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
+                #if DEBUG
                 record("sourceWaitTimedOut")
+                #endif
                 throw PublishingQualitySession.Failure.staleAdvice
             }
             if let coverage = await sourceCoverage(token) {
                 try check()
                 guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
+                    #if DEBUG
                     record("sourceWaitTimedOut")
+                    #endif
                     throw PublishingQualitySession.Failure.staleAdvice
                 }
+                #if DEBUG
                 record("sourceReady", fields: ["source": coverage.object])
+                #endif
                 return
             }
             try await Task.sleep(for: .milliseconds(100))
@@ -176,43 +212,62 @@ actor PublishingOwnedMeasurementLease {
         }
     }
     private func run(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
+        #if DEBUG
         record("contextRequested")
+        #endif
         let selected = try await probes.capture(context.applied.receipt)
+        #if DEBUG
         record("contextCaptured", fields: ["receipt": PublishingOwnedMeasurementAudit.receipt(context.applied.receipt),
             "scope": NativeCandidateFixture.scope(context.scope), "publishingGeneration": String(context.clock.publishingGeneration)])
+        #endif
         nativeContext = selected
         try check()
-        try await allocate(in: selected, after: predecessor, rate: 500_000, policy: policy, replacement: false)
-        for rate in [2_000_000, 12_000_000] {
-            try await hold(for: 0.8)
-            if rate == 12_000_000 { try await awaitNextSourceCoverage() }
+        let plan = publisher.stagePlan
+        try await allocate(in: selected, after: predecessor, rate: plan.bitRates[0], policy: policy, replacement: false)
+        for index in 1..<plan.bitRates.count {
+            try await hold(for: plan.holds[index - 1])
+            if index == plan.bitRates.count - 1 { try await awaitNextSourceCoverage() }
+            let rate = plan.bitRates[index]
             guard let operation else { throw PublishingQualitySession.Failure.notReady }
+            #if DEBUG
             record("retirementRequested", fields: ["snapshot": sample.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
+            #endif
             let retired = try await operation.retire()
             retirement = retired
+            #if DEBUG
             record("retired", fields: ["snapshot": retired.terminalSnapshot.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
+            #endif
             try check()
             try await allocate(in: selected, after: retired, rate: rate, policy: policy, replacement: true)
         }
-        try await hold(for: 0.5)
+        if plan.bitRates.count == 1 { try await awaitNextSourceCoverage() }
+        try await hold(for: plan.holds[plan.holds.count - 1])
         guard let sample else { throw PublishingQualitySession.Failure.notReady }
         binding = PublishingProbeObservation(sample); boundAt = ProcessInfo.processInfo.systemUptime
         guard let pressure = publisher.pressure, pressure.valid else { throw PublishingQualitySession.Failure.notReady }
         self.pressure = pressure
+        #if DEBUG
         record("candidateBound", fields: ["snapshot": PublishingOwnedMeasurementAudit.snapshot(sample), "boundAt": boundAt!, "pressure": pressure.object])
+        #endif
         publisher.installCandidate(candidate)
         // No stage replacement is reachable after the binding above.
         keeper = Task { [self] in
             do { try await hold(for: 9) } catch { revoke() }
         }
+        #if DEBUG
         record("candidateStartRequested")
+        #endif
         try await candidate.start()
+        #if DEBUG
         record("candidateStarted")
+        #endif
         let result = await candidate.result()
         let finalPressure = publisher.pressure
-        if let result, let object = try? JSONSerialization.jsonObject(with: NativeCandidateFixture.data(result)) {
+        #if DEBUG
+        if audit != nil, let result, let object = try? JSONSerialization.jsonObject(with: NativeCandidateFixture.data(result)) {
             record("candidateJoined", fields: ["measurement": object, "pressure": finalPressure?.object as Any? ?? NSNull()])
         }
+        #endif
         try check()
         guard let finalPressure, finalPressure.valid, finalPressure.dropped == pressure.dropped,
               finalPressure.rejected == pressure.rejected, finalPressure.observedAt >= pressure.observedAt else {
@@ -231,9 +286,9 @@ actor PublishingOwnedMeasurementLease {
         try await probes.validate(nativeContext)
         try check()
     }
-    func snapshot() -> NativeCandidatePublisher.CandidateSnapshot? {
+    func snapshot() -> NativeCandidateSnapshot? {
         guard isActive, let cost, let binding, let sample, let boundAt, let completedAt,
-              sample.id == binding.id, sample.stage == 3,
+              sample.id == binding.id, sample.stage == publisher.stagePlan.finalStage,
               ProcessInfo.processInfo.systemUptime - cost.endedAt <= 2 else { return nil }
         let current = PublishingProbeObservation(sample), authority = authority
         guard current.isActive(at: ProcessInfo.processInfo.systemUptime) else { return nil }
@@ -250,16 +305,28 @@ actor PublishingOwnedMeasurementLease {
         if let allocation, let returned = try? await allocation.value { operation = returned }
         candidate.cancel(.ownerChanged)
         await candidate.retire()
+        #if DEBUG
         record("candidateRetired")
+        #endif
         publisher.removeCandidate(candidate)
         if let operation {
+            #if DEBUG
             record("retirementRequested", fields: ["snapshot": sample.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
+            #endif
             do {
                 retirement = try await operation.retire(); joined = true
+                #if DEBUG
                 record("retired", fields: ["snapshot": retirement?.terminalSnapshot.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
-            } catch { joined = false; record("cleanupFailed", fields: ["reason": String(describing: error)]) }
+                #endif
+            } catch {
+                joined = false
+                #if DEBUG
+                record("cleanupFailed", fields: ["reason": String(describing: error)])
+                #endif
+            }
         } else { joined = true }
+        #if DEBUG
         if joined { record("cleanupJoined") }
+        #endif
     }
 }
-#endif

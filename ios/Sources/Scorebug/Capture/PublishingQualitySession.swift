@@ -105,8 +105,7 @@ actor PublishingQualitySession {
     private var deliveryRevision: UInt64?
     private var deliveryEnds: [Int: Double] = [:]
     private var evaluatedAt: Double?
-    #if DEBUG
-    private var ownedAttempts = 0
+    private var ownedLaboratoryAttempts = 0
     private var ownedPublisher: NativeOwnedCandidatePublisher?
     private var ownedMeasurement: PublishingOwnedMeasurementLease?
     private var ownedPredecessor: PublishingBandwidthProbeRetirement?
@@ -126,8 +125,8 @@ actor PublishingQualitySession {
         ownedPublisher = publisher; ownedProbePolicy = policy; ownedDiagnostics = diagnostics
     }
     @discardableResult func startOwnedMeasurement(diagnostics: PublishingQualityTelemetry.Diagnostics) async throws -> Bool {
-        guard ownedAttempts < PublishingOwnedMeasurementAudit.maximumAttempts,
-              ownedMeasurement == nil, let publisher = ownedPublisher, let probes = publisher.probes,
+        guard ownedMeasurement == nil, let publisher = ownedPublisher, let probes = publisher.probes,
+              publisher.maximumAttempts.map({ ownedLaboratoryAttempts < $0 }) ?? true,
               let context = candidateMeasurementContext(diagnostics: diagnostics),
               context.scope == publisher.scope, var current = policy else { return false }
         let token: QualityController.CandidateMeasurementAttempt
@@ -137,7 +136,7 @@ actor PublishingQualitySession {
             publisher: publisher, probes: probes, predecessor: ownedPredecessor,
             diagnostic: current.candidateMeasurementDiagnostic,
             sourceCoverage: { [weak self] token in await self?.ownedCandidateSourceCoverage(for: token) })
-        ownedAttempts += 1
+        if publisher.maximumAttempts != nil { ownedLaboratoryAttempts += 1 }
         policy = current; ownedMeasurement = lease; ownedSource = candidateHealthSource
         await lease.start(policy: ownedProbePolicy) { [weak self] lease in await self?.ownedMeasurementFinished(lease) }
         return true
@@ -166,7 +165,7 @@ actor PublishingQualitySession {
             await self?.ownedMeasurementFinished(lease)
         }
     }
-    func ownedCandidateSnapshot() async -> NativeCandidatePublisher.CandidateSnapshot? {
+    func ownedCandidateSnapshot() async -> NativeCandidateSnapshot? {
         guard let ownedMeasurement else { return nil }
         return await ownedMeasurement.snapshot()
     }
@@ -181,35 +180,40 @@ actor PublishingQualitySession {
         do {
             if ownedAcknowledged === lease {
                 ownedAcknowledged = nil
+                #if DEBUG
                 lease.record("settledAcknowledged", fields: ["policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                #endif
             } else if current.appliedRevision != lease.token.readiness.appliedRevision {
                 try current.retireObsoleteCandidateMeasurement(lease.token)
+                #if DEBUG
                 lease.record("retiredObsolete", fields: ["currentAppliedRevision": String(current.appliedRevision),
                     "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                #endif
             } else if let rejected = ownedRejected {
                 try current.settleCandidateApplicationRejection(rejected, for: lease.token, at: time())
+                #if DEBUG
                 lease.record("settledApplicationRejection", fields: ["applicationID": rejected.id.uuidString.lowercased(),
                     "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                #endif
                 candidateHealthSource = nil
             } else {
                 try current.settleCandidateMeasurementFailure(lease.token, at: time())
+                #if DEBUG
                 lease.record("settledFailure", fields: ["policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                #endif
                 candidateHealthSource = nil
             }
             policy = current; ownedPredecessor = predecessor
             ownedMeasurement = nil; ownedSource = nil; ownedTransferred = nil; ownedRejected = nil
         } catch { /* Retain an unsettled exact owner; it cannot authorize another allocation. */ }
     }
-    #endif
     private var pendingCandidate: PublishingCandidateAdmission?
     private nonisolated let candidateRecovery: PublishingCandidateRecoveryCoverage?
     private var recoveryDelivery: PublishingDeliveryObservation?
     private var candidateHealthSource: SourceScope? {
         didSet {
             if candidateHealthSource == nil { candidateRecovery?.invalidate(); recoveryDelivery = nil }
-            #if DEBUG
             if ownedTransferred == nil, candidateHealthSource != ownedSource { ownedMeasurement?.revoke() }
-            #endif
         }
     }
     nonisolated func invalidateCandidateRecovery() { candidateRecovery?.invalidate() }
@@ -429,16 +433,12 @@ actor PublishingQualitySession {
                 throw Failure.staleAdvice
             }
             let decision: QualityController.Decision
-            #if DEBUG
             if ownedPublisher != nil {
                 guard let lease = ownedMeasurement, lease.isActive, lease.permits(admission), candidateHealthSource == ownedSource else { throw Failure.staleAdvice }
                 decision = try policy.evaluateCandidate(admission.value, for: lease.token, at: now)
             } else {
                 decision = try policy.evaluateCandidate(admission.value, at: now)
             }
-            #else
-            decision = try policy.evaluateCandidate(admission.value, at: now)
-            #endif
             pendingCandidate = decision.recommendation?.candidateID == admission.value.id ? admission : nil
             // A candidate no-op revokes earlier candidate advice, but Core keeps
             // a known downward/reset recommendation until applied or superseded.
@@ -672,7 +672,6 @@ actor PublishingQualitySession {
         } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
     }
     func apply(_ advice: QualityController.Recommendation) async throws {
-        #if DEBUG
         let measurement = advice.candidateID == nil ? nil : ownedMeasurement
         if let measurement {
             do { try await measurement.validateForApplication() }
@@ -693,7 +692,6 @@ actor PublishingQualitySession {
                   diagnostics.ingress?.scope == measurement.context.scope,
                   diagnostics.ingress?.isClosed == false else { throw Failure.staleAdvice }
         }
-        #endif
         try admit()
         guard var policy else { throw Failure.notReady }
         let start: Double
@@ -723,24 +721,20 @@ actor PublishingQualitySession {
             }
         }
         let admitted: QualityController.Application
-        #if DEBUG
         if let measurement {
             admitted = try policy.beginApplication(advice, for: measurement.token, at: start)
             ownedTransferred = admitted
+            #if DEBUG
             measurement.record("applicationTransferred", fields: ["applicationID": admitted.id.uuidString.lowercased(),
                 "candidateID": advice.candidateID!.uuidString.lowercased(), "admittedAt": admitted.admittedAt,
                 "completionDeadline": admitted.completionDeadline])
+            #endif
         } else { admitted = try policy.beginApplication(advice, at: start) }
-        #else
-        admitted = try policy.beginApplication(advice, at: start)
-        #endif
         // Publish authoritative policy and private ownership before native work
         // suspends. A selector is never proof that this application changed it.
         self.policy = policy
         applicationOwner = .init(application: admitted)
-        #if DEBUG
         if advice.candidateID == nil { ownedMeasurement?.revoke() }
-        #endif
         // Once admitted, the owned native application has its independent two-
         // second deadline. Native changes normally retire the probe authority.
         pendingCandidate = nil; candidateHealthSource = nil
@@ -800,16 +794,16 @@ actor PublishingQualitySession {
             // source/configuration windows start their own delivery watermarks.
             deliveryRevision = current.appliedRevision; deliveryEnds = [:]
             if let format { profileReceipt = format }
-            #if DEBUG
             if let measurement {
                 measurement.revoke()
                 ownedTransferred = nil; ownedAcknowledged = measurement
+                #if DEBUG
                 measurement.record("acknowledged", fields: ["applicationID": admitted.id.uuidString.lowercased(),
                     "receipt": PublishingOwnedMeasurementAudit.receipt(result), "currentAppliedRevision": String(current.appliedRevision),
                     "policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(current.candidateMeasurementDiagnostic)])
+                #endif
                 scheduleOwnedSettlement(measurement)
             }
-            #endif
         } catch {
             guard let owner = applicationOwner, owner.application == admitted else {
                 // stop() already retired this owner. Join its existing shutdown;
@@ -823,12 +817,13 @@ actor PublishingQualitySession {
                 // application against the current authoritative policy after
                 // its measurement cleanup also joins.
                 var retainedOwnedRejection = false
-                #if DEBUG
                 if let measurement, var current = self.policy {
                     try current.noteCandidateApplicationRejection(admitted, for: measurement.token)
                     self.policy = current
                     ownedRejected = admitted
+                    #if DEBUG
                     measurement.record("applicationRejected", fields: ["applicationID": admitted.id.uuidString.lowercased()])
+                    #endif
                     measurement.revoke()
                     // The native call has joined. Track the measurement join
                     // separately so Driver telemetry remains available, including
@@ -836,7 +831,6 @@ actor PublishingQualitySession {
                     scheduleOwnedSettlement(measurement)
                     retainedOwnedRejection = true
                 }
-                #endif
                 if !retainedOwnedRejection, var current = self.policy {
                     do { try current.acknowledge(admitted, applied: nil, at: time()) }
                     catch { current.invalidateTelemetry() }
@@ -853,10 +847,8 @@ actor PublishingQualitySession {
     }
     /// All callers join one shielded stop, even if their own task is cancelled.
     func stop() async {
-        #if DEBUG
         let measurement = ownedMeasurement, settlement = ownedSettlement
         measurement?.revoke()
-        #endif
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
         applicationOwner = nil; busy = false
         let task: Task<Void, Never>
@@ -865,16 +857,14 @@ actor PublishingQualitySession {
             let stop = operations.stop
             task = Task.detached {
                 await stop()
-                #if DEBUG
                 await measurement?.join()
                 await settlement?.value
-                #endif
             }
             shutdown = task
         }
         await task.value
         #if DEBUG
-        if let ownedPublisher { ownedPublisher.audit.close(); await ownedPublisher.audit.persist() }
+        if let audit = ownedPublisher?.audit { audit.close(); await audit.persist() }
         #endif
     }
     private func admit() throws {

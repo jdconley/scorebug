@@ -53,16 +53,14 @@ import ScorebugStreaming
         self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
-    #if DEBUG
     func installOwnedMeasurementPublisher(_ publisher: NativeOwnedCandidatePublisher, session: PublishingSession,
         policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         try await owner.installOwnedMeasurementPublisher(publisher, policy: policy,
             diagnostics: { .init(snapshot: session.snapshot) })
         guard publisher.installReaders(candidate: { [weak owner] in await owner?.ownedCandidateSnapshot() },
             probe: { [weak owner] in await owner?.ownedProbeObservation() },
-            pressure: { [weak session] in NativeCandidatePublisher.Pressure(session?.snapshot) }) else { throw PublishingQualitySession.Failure.staleAdvice }
+            pressure: { [weak session] in NativeCandidatePressure(session?.snapshot) }) else { throw PublishingQualitySession.Failure.staleAdvice }
     }
-    #endif
     func candidateMeasurementContext(diagnostics: PublishingQualityTelemetry.Diagnostics) async -> PublishingQualitySession.CandidateMeasurementContext? {
         guard !isClosed, !Task.isCancelled else { return nil }
         let context = await owner.candidateMeasurementContext(diagnostics: diagnostics)
@@ -225,9 +223,7 @@ import ScorebugStreaming
                 return
             }
             if canEvaluateCandidate {
-                #if DEBUG
                 _ = try await owner.startOwnedMeasurement(diagnostics: currentDiagnostics)
-                #endif
                 try await evaluateCandidateInput()
             }
         } catch {

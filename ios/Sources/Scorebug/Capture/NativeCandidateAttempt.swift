@@ -1,7 +1,61 @@
-#if DEBUG
 import Foundation
 import ScorebugMedia
 import ScorebugStreaming
+
+struct NativeCandidatePressure: Sendable {
+    let observedAt: Double, sampledAt: Double
+    let thermal: Int, dropped: Int, rejected: Int
+    let publishing: Bool
+    var valid: Bool {
+        observedAt.isFinite && sampledAt.isFinite && observedAt >= sampledAt && sampledAt >= 0 &&
+        observedAt - sampledAt <= 2 && (0...1).contains(thermal) && dropped >= 0 && rejected >= 0 && publishing
+    }
+    #if DEBUG
+    var object: [String: Any] {
+        ["observedAt": observedAt, "sampledAt": sampledAt, "thermal": thermal, "dropped": dropped, "rejected": rejected, "publishing": publishing]
+    }
+    #endif
+    init(observedAt: Double, sampledAt: Double, thermal: Int, dropped: Int, rejected: Int, publishing: Bool) {
+        self.observedAt = observedAt; self.sampledAt = sampledAt; self.thermal = thermal
+        self.dropped = dropped; self.rejected = rejected; self.publishing = publishing
+    }
+    init?(_ snapshot: PublishingSessionSnapshot?) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let snapshot, let sample = snapshot.thermalObservation.freshSample(at: now) else { return nil }
+        self.init(observedAt: now, sampledAt: sample.sampledAt, thermal: sample.state.rawValue,
+            dropped: snapshot.queue.droppedCount, rejected: snapshot.queue.rejectedCount,
+            publishing: snapshot.state == .publishing && snapshot.failure == nil)
+    }
+}
+
+struct NativeCandidateSnapshot: Sendable {
+    let cost: PublishingCandidateCost
+    let binding: PublishingProbeObservation
+    let probe: PublishingProbeObservation
+    let boundAt: Double
+    let completedAt: Double
+    let permitsCurrentCandidate: @Sendable (UUID) -> Bool
+}
+
+/// An explicitly selected bounded campaign. Holds follow each allocation; the
+/// final hold preserves the existing 0.5-second settling before immutable binding. Native deadlines and budgets
+/// remain authoritative, including while waiting for fresh source coverage.
+struct NativeCandidateStagePlan: Sendable, Equatable {
+    enum Failure: Error { case invalidPlan }
+    let bitRates: [Int]
+    let holds: [Double]
+    var finalStage: UInt32 { UInt32(bitRates.count) }
+    init(bitRates: [Int], holds: [Double]) throws {
+        guard (1...32).contains(bitRates.count), holds.count == bitRates.count,
+              bitRates.allSatisfy({ (1...12_000_000).contains($0) }),
+              holds.allSatisfy({ $0.isFinite && $0 >= 0 }),
+              holds.last! >= 0.5, holds.reduce(0, +) < 60 else { throw Failure.invalidPlan }
+        self.bitRates = bitRates; self.holds = holds
+    }
+    #if DEBUG
+    static let laboratory = try! Self(bitRates: [500_000, 2_000_000, 12_000_000], holds: [0.8, 0.8, 0.5])
+    #endif
+}
 
 /// One native attempt owns its begin task even before the campaign owner returns
 /// an id. Cancellation and retirement always join that exact task and owner.
@@ -238,4 +292,3 @@ final class NativeCandidateContextReader: @unchecked Sendable {
         continuation?.finish()
     }
 }
-#endif
