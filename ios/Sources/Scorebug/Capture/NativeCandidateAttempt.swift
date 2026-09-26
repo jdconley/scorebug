@@ -55,11 +55,17 @@ struct NativeCandidateStagePlan: Sendable, Equatable {
     /// Scheduling estimate only: nominal 20% mux/framing allowance times the
     /// existing 25% headroom. It is neither an upper bound nor an admission rule;
     /// measured complete candidate cost and receiver delivery decide admission.
-    static func productionSRT(videoBitRate: Int) throws -> Self {
+    static func productionSRT(videoBitRate: Int, measuredCost: Double? = nil) throws -> Self {
         let (mediaRate, overflow) = videoBitRate.addingReportingOverflow(SRTPublisher.audioBitRate)
         guard videoBitRate > 0, !overflow, mediaRate <= 8_000_000 else { throw Failure.invalidPlan }
         // Integer ceil(mediaRate * 1.5), after bounding the sum for safe arithmetic.
-        let finalRate = (mediaRate * 3 + 1) / 2
+        var finalRate = (mediaRate * 3 + 1) / 2
+        if let measuredCost {
+            guard measuredCost.isFinite, measuredCost > 0, measuredCost <= 8_000_000 else { throw Failure.invalidPlan }
+            // Scheduling reserve only: 25% admission headroom with 20% reserve.
+            // A new measurement and receiver proof must still qualify the retry.
+            finalRate = max(finalRate, Int(ceil(measuredCost * 1.5)))
+        }
         return try Self(bitRates: [finalRate / 2, finalRate], holds: [0.8, 0.5])
     }
     #if DEBUG
@@ -76,7 +82,7 @@ enum NativeCandidateStagePlanSelection: Sendable, Equatable {
     func resolve(_ context: PublishingQualitySession.CandidateMeasurementContext) throws -> NativeCandidateStagePlan {
         switch self {
         case .fixed(let plan): return plan
-        case .productionSRT: return try .productionSRT(videoBitRate: context.readiness.settings.videoBitrate)
+        case .productionSRT: return try .productionSRT(videoBitRate: context.readiness.settings.videoBitrate, measuredCost: context.measuredCost)
         }
     }
 }

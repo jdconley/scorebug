@@ -71,6 +71,8 @@ struct PublishingCandidateAdmission: Sendable {
     let probe: PublishingProbeObservation
     private let currentReceipt: @Sendable () -> PublishingBitRateChange?
     private let candidateIsCurrent: @Sendable () -> Bool
+    private let convention: TransportConvention
+    var isProductionSRT: Bool { convention == .productionSRT }
     #if DEBUG
     private struct AuditWitness: Sendable {
         let measurement: Measurement
@@ -188,7 +190,7 @@ struct PublishingCandidateAdmission: Sendable {
             measuredStart: m.startedAt, measuredEnd: m.endedAt, evaluatedAt: now, validUntil: deadline,
             candidateTransportBitsPerSecond: cost, deliveredPaddingBitsPerSecond: padding)
         var admission = Self(value: value, applied: applied, authority: authority, receiver: receiver,
-            probe: probe, currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent)
+            probe: probe, currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, convention: convention)
         #if DEBUG
         if convention == .laboratoryIPv4 {
             admission.auditWitness = .init(measurement: m, binding: binding, boundAt: boundAt,

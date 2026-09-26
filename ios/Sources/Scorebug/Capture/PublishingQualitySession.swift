@@ -56,7 +56,19 @@ actor PublishingQualitySession {
         let applied: PublishingQualityTelemetry.Applied
         let scope: VideoFrameObservationScope
         let clock: PublishingTransportClock
+        var measuredCost: Double? = nil
     }
+    /// One scheduling hint, never admission evidence or a retained candidate.
+    struct CandidateProbeDemand: Sendable {
+        let baseline: QualityController.Settings
+        let revision: UInt64
+        let target: QualityController.Settings
+        let measuredCost: Double
+        func cost(for readiness: QualityController.CandidateMeasurementReadiness) -> Double? {
+            baseline == readiness.baseline && revision == readiness.appliedRevision && target == readiness.settings ? measuredCost : nil
+        }
+    }
+    private var candidateProbeDemand: CandidateProbeDemand?
     /// Explicit capability: rejection promises that the individual native call
     /// had no effect and its cleanup has joined before returning.
     struct GuardedMutations: Sendable {
@@ -82,6 +94,8 @@ actor PublishingQualitySession {
     private let sampleInstant: @Sendable () -> ContinuousClock.Instant
     private var policy: QualityController? {
         didSet {
+            if let demand = candidateProbeDemand,
+               policy?.applied != demand.baseline || policy?.appliedRevision != demand.revision { candidateProbeDemand = nil }
             #if DEBUG
             if let policy, oldValue?.candidateMeasurementDiagnostic != policy.candidateMeasurementDiagnostic {
                 ownedMeasurement?.record("policyState", fields: ["policyDiagnostic": PublishingOwnedMeasurementAudit.diagnostic(policy.candidateMeasurementDiagnostic)])
@@ -133,6 +147,9 @@ actor PublishingQualitySession {
               publisher.maximumAttempts.map({ ownedLaboratoryAttempts < $0 }) ?? true,
               let context = candidateMeasurementContext(diagnostics: diagnostics),
               context.scope == publisher.scope, var current = policy else { return false }
+        // Unsupported measured demand must not terminate the live baseline.
+        // Nominal unsupported-plan behavior remains unchanged.
+        if context.measuredCost != nil, (try? publisher.stagePlanSelection.resolve(context)) == nil { return false }
         let token: QualityController.CandidateMeasurementAttempt
         do { token = try current.beginCandidateMeasurement(at: time()) }
         catch QualityController.ValidationError.staleMeasurement { return false }
@@ -335,6 +352,7 @@ actor PublishingQualitySession {
             result["sharedRecoveryReady"] = String(candidateRecovery?.permits(healthySince: readiness.healthySince,
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
         }
+        result["candidateProbeDemandBitsPerSecond"] = candidateProbeDemand.map { String($0.measuredCost) }
         result.merge(lastMeasurementDiagnostic) { _, latest in latest }
         result.merge(candidateSourceDiagnostic) { _, latest in latest }
         result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
@@ -390,7 +408,8 @@ actor PublishingQualitySession {
         }
         return .init(readiness: readiness,
             applied: .init(attemptID: attemptID, revision: readiness.appliedRevision, settings: readiness.baseline,
-                receipt: receipt, acknowledgedAt: acknowledgedAt), scope: ingress.scope, clock: clock)
+                receipt: receipt, acknowledgedAt: acknowledgedAt), scope: ingress.scope, clock: clock,
+            measuredCost: candidateProbeDemand?.cost(for: readiness))
     }
 
     /// Call only after the native encoder exists. No initial setting is claimed
@@ -492,6 +511,13 @@ actor PublishingQualitySession {
                 decision = try policy.evaluateCandidate(admission.value, for: lease.token, at: now)
             } else {
                 decision = try policy.evaluateCandidate(admission.value, at: now)
+            }
+            if decision.recommendation == nil, decision.reasons.contains(.capacityHeadroom),
+               ownedPublisher?.stagePlanSelection == .productionSRT, admission.isProductionSRT, !Task.isCancelled,
+               let lease = ownedMeasurement, lease.isActive, lease.permits(admission),
+               admission.value.candidateTransportBitsPerSecond.isFinite, admission.value.candidateTransportBitsPerSecond > 0 {
+                candidateProbeDemand = .init(baseline: policy.applied, revision: policy.appliedRevision,
+                    target: admission.value.settings, measuredCost: admission.value.candidateTransportBitsPerSecond)
             }
             pendingCandidate = decision.recommendation?.candidateID == admission.value.id ? admission : nil
             // A candidate no-op revokes earlier candidate advice, but Core keeps
@@ -903,7 +929,7 @@ actor PublishingQualitySession {
     func stop() async {
         let measurement = ownedMeasurement, settlement = ownedSettlement
         measurement?.revoke()
-        closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
+        closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil; candidateProbeDemand = nil
         #if DEBUG
         lastMeasurementDiagnostic = [:]; candidateSourceDiagnostic = [:]
         #endif
