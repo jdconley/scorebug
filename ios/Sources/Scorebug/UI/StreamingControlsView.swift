@@ -15,6 +15,12 @@ struct StreamingControlsView: View {
                 .accessibilityValue(model.localState.rawValue)
             Text(workerStatus).font(.callout).foregroundStyle(.secondary)
                 .accessibilityIdentifier("streaming.workerStatus").accessibilityValue(model.workerState.rawValue)
+            if let applied = model.appliedPublishingSettings {
+                Text("Sending: \(applied.profileID) · \(applied.videoBitrate / 1_000) kbps")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("streaming.appliedQuality")
+                    .accessibilityValue("\(applied.profileID):\(applied.videoBitrate)")
+            }
             if let game = model.connectedGameID {
                 Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)
             }

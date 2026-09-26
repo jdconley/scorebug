@@ -531,7 +531,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 qualityDriver?.appliedSettingsDidChange = { [weak self, weak session] settings in
                     guard let self, let session, let live = self.publishing,
                           live.session === session, live.attempt == attempt,
-                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          (self.localState == .starting || self.localState == .publishing), self.diagnosticAttemptID == attempt,
                           self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
                           session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
                     self.appliedPublishingSettings = settings

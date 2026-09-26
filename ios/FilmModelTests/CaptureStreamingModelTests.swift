@@ -34,6 +34,30 @@ import XCTest
         XCTAssertNil(stale)
     }
 
+    func testAppliedAcknowledgmentSurvivesStartupAndRejectsStoppedOwner() async throws {
+        var driver: PublishingQualityDriver?
+        var callback: ((QualityController.Settings) -> Void)?
+        let acknowledged = QualityController.Settings(profileID: "240p30", videoBitrate: 350_000)
+        let model = makeModel(server: CaptureTestServer(), qualityFactory: { session, attempt in
+            driver = try PublishingQualityDriver.standard(session: session, attemptID: attempt)
+            return driver
+        })
+        model.measuredCandidateFactory = { _ in
+            XCTAssertEqual(model.localState, .starting)
+            XCTAssertNil(model.appliedPublishingSettings)
+            callback = driver?.appliedSettingsDidChange
+            // Bootstrap can complete while owned-publisher installation suspends startup.
+            callback?(acknowledged)
+            XCTAssertEqual(model.appliedPublishingSettings, acknowledged)
+            return nil
+        }
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        XCTAssertEqual(model.appliedPublishingSettings, acknowledged)
+        await model.stopStreaming()
+        callback?(acknowledged)
+        XCTAssertNil(model.appliedPublishingSettings, "A stopped owner cannot restore stale acknowledgment")
+    }
+
     func testStandardQualityFactoryKeepsMissingObservationsOptional() async throws {
         for available in [true, false] {
             var driver: PublishingQualityDriver?

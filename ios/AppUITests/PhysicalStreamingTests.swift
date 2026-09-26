@@ -3,24 +3,42 @@ import XCTest
 /// Opt-in hardware smoke: the normal app launch selects IOSCameraCaptureSource.
 /// Run only against a seeded, disposable HOME/AWAY match on a private LAN.
 final class PhysicalStreamingTests: XCTestCase {
+    private var evidencePrefix = "PhysicalStreaming"
     private var deadline = Date.distantPast
     private enum SmokeFailure: Error { case failed(String) }
 
     @MainActor func testPhysicalIPhoneCameraPublishScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical iPhone camera smoke is not a simulator test.")
+        #else
         try runVertical(watchScoring: false)
+        #endif
     }
 
     @MainActor func testPhysicalPairedWatchWhileCameraPublishes() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical paired Watch smoke is not a simulator test.")
+        #else
         guard ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" else {
             throw XCTSkip("Set SCOREBUG_DEVICE_WATCH_SCORING=1 and concurrently run the paired Watch companion test.")
         }
         try runVertical(watchScoring: true)
+        #endif
     }
 
-    @MainActor private func runVertical(watchScoring: Bool) throws {
+    @MainActor func testOrdinarySimulatorPublishScoreAdaptStopAndExport() throws {
         #if targetEnvironment(simulator)
-        throw XCTSkip("Physical iPhone camera smoke is not a simulator test.")
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1" else {
+            throw XCTSkip("Use the dedicated disposable ordinary simulator launcher.")
+        }
+        evidencePrefix = "OrdinarySimulatorStreaming"
+        try runVertical(watchScoring: false, ordinarySimulator: true)
         #else
+        throw XCTSkip("Ordinary file-source smoke requires a disposable simulator.")
+        #endif
+    }
+
+    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
               let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
@@ -28,15 +46,21 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try require(isPrivateLANEndpoint(endpoint), "Device smoke requires an HTTP(S) URL with a numeric RFC1918 IPv4 host and no credentials, query, or fragment.")
         continueAfterFailure = true // Thrown failures still run the stop cleanup below.
-        executionTimeAllowance = watchScoring ? 600 : 240
+        executionTimeAllowance = watchScoring ? 600 : (ordinarySimulator ? 480 : 240)
         // Reserve 35 seconds for independent stream and recording cleanup,
         // plus a little headroom for final evidence within the 240-second test.
-        deadline = Date().addingTimeInterval(watchScoring ? 550 : 200)
+        deadline = Date().addingTimeInterval(watchScoring ? 550 : (ordinarySimulator ? 430 : 200))
         let app = XCUIApplication()
         // Never inject SCOREBUG_TEST_* environments or bypass the actual setup UI.
         // activate() preserves an existing process so the prior-capture guard
         // below can refuse the run without terminating someone's recording.
-        app.activate()
+        if ordinarySimulator {
+            // Source injection alone: the normal publishing/quality factories remain in charge.
+            app.launchEnvironment = ["SCOREBUG_TEST_FILE_CAPTURE": "1"]
+            app.launch()
+        } else {
+            app.activate()
+        }
         var recordingRequested = false
         var streamingRequested = false
         defer {
@@ -105,7 +129,7 @@ final class PhysicalStreamingTests: XCTestCase {
 
         recordingRequested = true
         try tap(app.buttons["film.start"], in: app)
-        try wait("Hardware camera/microphone recording did not advance.", seconds: 25) {
+        try wait("Recording did not advance.", seconds: 25) {
             self.allowExpectedPermissions()
             return self.elapsed(app) >= 2 && app.buttons["film.stop"].exists
         }
@@ -118,7 +142,13 @@ final class PhysicalStreamingTests: XCTestCase {
         try wait("Worker did not report producing_output.", seconds: 35) {
             self.value(app, "streaming.workerStatus") == "producing_output"
         }
-        evidence(app, phase: "hardware-publishing", screenshot: true)
+        evidence(app, phase: ordinarySimulator ? "ordinary-publishing" : "hardware-publishing", screenshot: true)
+        if ordinarySimulator {
+            try wait("Ordinary startup did not acknowledge 240p30 at 350000 bps.", seconds: 10) {
+                self.value(app, "streaming.appliedQuality") == "240p30:350000"
+            }
+            evidence(app, phase: "minimum-quality-acknowledged", screenshot: true)
+        }
 
         if watchScoring {
             try selectTab("Watch", app)
@@ -174,6 +204,15 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             evidence(app, phase: "native-home-point-acknowledged", screenshot: true)
             try selectTab("Film", app)
+            if ordinarySimulator {
+                try wait("Adaptive gate failed: ordinary publishing did not acknowledge 360p30 at 600000 bps within 150 seconds.", seconds: 150) {
+                    self.value(app, "streaming.appliedQuality") == "360p30:600000"
+                }
+                try require(value(app, "streaming.localStatus") == "publishing" &&
+                            value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
+                            "Ordinary recording and worker output did not remain live at the acknowledged increase.")
+                evidence(app, phase: "increased-quality-acknowledged", screenshot: true)
+            }
             let holdStarted = Date()
             let initialDuration = elapsed(app)
             try wait("Recording did not advance throughout the 12-second live hold.", seconds: 18) {
@@ -205,9 +244,8 @@ final class PhysicalStreamingTests: XCTestCase {
         try wait("The new recording could not be exported to MP4.", seconds: 35) {
             app.staticTexts["recordings.exportReady"].exists
         }
-        evidence(app, phase: "new-hardware-recording-export-ready", screenshot: true)
+        evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)
         // No recording/keychain deletion, external share, or Photos-library write.
-        #endif
     }
 
     private func explicitValue(_ value: String?) -> String? {
@@ -341,14 +379,14 @@ final class PhysicalStreamingTests: XCTestCase {
                                    "windowFrame": windowExists ? String(describing: window.frame) : "missing"]
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-            attachment.name = "PhysicalStreaming-tab-selection-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
+            attachment.name = "\(evidencePrefix)-tab-selection-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
         }
         // Crop to the app's tab bar: a full screen may contain setup fields.
         let tabBar = app.tabBars.firstMatch
         if phase == "failed" && tabBar.exists && !tabBar.frame.isEmpty && app.frame.contains(tabBar.frame) &&
             !app.keyboards.firstMatch.exists && !app.alerts.firstMatch.exists {
             let attachment = XCTAttachment(screenshot: tabBar.screenshot())
-            attachment.name = "PhysicalStreaming-tab-bar"; attachment.lifetime = .keepAlways; add(attachment)
+            attachment.name = "\(evidencePrefix)-tab-bar"; attachment.lifetime = .keepAlways; add(attachment)
         }
     }
 
@@ -474,17 +512,20 @@ final class PhysicalStreamingTests: XCTestCase {
                         "not_requested", "waiting_source", "stopping", "retrying", "closed", "missing"]
         let local = value(app, "streaming.localStatus")
         let worker = value(app, "streaming.workerStatus")
+        let quality = value(app, "streaming.appliedQuality")
+        let allowedQuality = ["240p30:350000", "360p30:600000"]
         let report: [String: Any] = ["phase": phase, "durationSeconds": elapsed(app),
+                                   "appliedQuality": allowedQuality.contains(quality) ? quality : "unavailable-or-other",
                                    "localStatus": statuses.contains(local) ? local : "other",
                                    "workerStatus": statuses.contains(worker) ? worker : "other",
                                    "exportReady": app.staticTexts["recordings.exportReady"].exists]
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-            attachment.name = "PhysicalStreaming-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
+            attachment.name = "\(evidencePrefix)-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
         }
         if screenshot {
             let attachment = XCTAttachment(screenshot: app.screenshot())
-            attachment.name = "PhysicalStreaming-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
+            attachment.name = "\(evidencePrefix)-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
         }
     }
 
