@@ -7,7 +7,7 @@
 - [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns current goals/status/todos. [Current session log](2026-09-25-ordinary-camera-adaptation.md) owns chronology, failed artifacts, exact hashes and reviews.
 - Runtime: production probe source-wait scheduling `3926e83`; point-refresh fix `ce482b7`; measured-cost feedback `8946937`. Offline audio checker `de6ebfb`. Paired harness `2544de8`, exact Xcode configuration selector `0b5b171`. Later commits may be docs only.
 - No root or agent process remains active. All live runners, labs, decoders and waveform jobs joined. Every failed artifact is preserved. No PR created/requested.
-- Sole source implementer has been `/root/ordinary_native_vertical`; independent reviewers `/root/continuous_delivery_spec` and `/root/srt_instantaneous_pressure` are idle and available. Root owns docs/independent media analysis. Continue specification then quality review for new implementation slices.
+- Latest independent components used fresh source implementers and separate specification/quality reviewers. All are idle/completed. Root owns docs/independent media analysis. Continue one source implementer at a time and specification then quality review for each new slice.
 
 ## Verified checkpoint
 
@@ -33,10 +33,18 @@ The user approved the automation prompt and reported both devices ready. One fre
 
 Read-only ordinary congestion proposal is retained at `artifacts/qa/ordinary-congestion-design-proposal-20260925.md`: separate publish/read addresses, bounded event-triggered impairment after confirmed360 and restoration after acknowledged240, longer finite source. No source implementation yet.
 
+## Ordinary recovery work in progress
+
+Publisher-only normal server configuration is implemented at `488c50b`: paired `INGEST_PUBLISH_HOST/PORT`, native publish authority only, unchanged reader grants/paths/credentials/attestation. All599control-plane tests,128focused tests, typecheck and both reviews pass; root verifies all11source/17artifact hashes. See `publisher-ingest-address-validation/manifest.json` and [current recovery session](2026-09-25-ordinary-recovery.md).
+
+New finite source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov` is600seconds,18000consecutive sourceframes0–17999, fullA/Vdecode/continuity pass, source/checker hashes unchanged. SHA256`6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`. Use it for the longer recovery lane; keep original390secondsource/oldresults intact.
+
+The [bounded manual UDP phase API](../superpowers/plans/2026-09-25-event-driven-uplink.md) is committed at `09cef26`. Both reviews approve;392regression tests pass, including12new socket/control cases with actual token denial and ledger qualification. Root verifies source blobs/copies/log hashes. All jobs joined; no live app/media/device process remains. The separate trial-state proposal is saved at `artifacts/qa/ordinary-trial-diagnostic-proposal-20260925.md`; no Swift changes yet. Next integration must bind real native confirmed360→network constraint→acknowledged240→restoration→fresh360 to actual phase clocks, complete ledger and all3recordings.
+
 ## Next work
 
 1. Inspect Xcode after the pending Mac-unlock reply, then resume physical paired acceptance once destination preparation succeeds. Automation approval is already granted; do not request it again without an observed new prompt. Do not blindly rerun Watch preparation.
-2. If hardware readiness remains unresolved, progress independent ordinary congestion/reset/recovery qualification. Read the [owned recovery plan](../superpowers/plans/2026-09-25-owned-recovery-qualification.md) and preserved failures before changing anything. Wider profiles, sustained operation, route changes, other scorer devices and remote workers remain open.
+2. Continue ordinary congestion/reset/recovery qualification under the [new design](../superpowers/specs/2026-09-25-ordinary-recovery-design.md): add truthful computed current trial/owner diagnostics, then integrate publisher-only manual impairment into device-lab and an explicit ordinary recovery lane. Use the new600secondsource, preserved150secondincrease gates, actual confirmed-trial and minimum acknowledgments, real phase clock brackets, complete transport ledger and all3media checks. Existing [owned recovery](../superpowers/plans/2026-09-25-owned-recovery-qualification.md) failures remain separate; do not import its laboratory selectors or fixed-time fault schedule. Wider profiles, sustained operation, route changes, other scorers and remote hosts remain open.
 3. Preserve the older `native-app-9IVqF0` failures: experimental3000ms/1000ms has four phases but32MiB audit exhaustion leaves20.4s uncovered, plus21ms liveaudio gap. Exact-value interning experiment33.5→11.4MB is not integrated. The513tap checker fix does not fix that gap. No cap increase or unchanged rerun; boundary/evidence diagnosis comes first.
 
 ## Environment and commands

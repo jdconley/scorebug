@@ -10,7 +10,7 @@
 
 ## Contract
 
-- `receiverHost` defaults to `127.0.0.1`. Accept numeric loopback or RFC1918 IPv4 only; reject wildcard, multicast, broadcast, public IPs, IPv6, DNS and URL syntax before socket allocation. The frontend stays bound to127.0.0.1 and permits one loopback publisher. This helper change enables the simulator route to the local LAN relay, not physical-phone ingress.
+- `receiverHost` defaults to `127.0.0.1`. Accept numeric loopback or RFC1918 IPv4 only; reject wildcard, multicast, limited broadcast255.255.255.255, public IPs, IPv6, DNS and URL syntax before socket allocation. Subnet-directed broadcast detection is outside this helper because no subnet mask is supplied; do not reject a valid private host solely for its final octet. The frontend stays bound to127.0.0.1 and permits one loopback publisher. This helper change enables the simulator route to the local LAN relay, not physical-phone ingress.
 - Optional `forwardRateControl: { rateBitsPerSecond: number }` declares one finite rate in the existing allowed finite range. Reject unknown keys, null/array/malformed controls, initial finite forward rate and any simultaneous `forwardRateSchedule`. Copy configuration so caller mutation cannot change the rate.
 - Only selected control mode exposes `constrainForward()` and `restoreForward()`. A first accepted publisher packet starts baseline evidence. Constrain requires a peer and baseline state; restore requires the constrained state. Duplicate, reversed, pre-peer or post-close calls fail before queue mutation.
 - Each transition uses one actual monotonic timestamp and the existing queue `setRate`. Capture the after-change/pre-pump boundary required by the rate ledger, then pump so restoration drains the existing FIFO promptly. Never clear the queue, reset tokens, alter deadlines or affect reverse configuration.
@@ -21,12 +21,12 @@
 
 Files: `scripts/udp-impairment.mjs`, `scripts/test/udp-impairment-sockets.test.mjs`, and a separate `scripts/test/udp-impairment-control.test.mjs` if this keeps the socket suite focused. No app, policy, worker, legacy qualifier or lab integration changes in this slice.
 
-- [ ] Add and run behavioral failing tests for explicit receiver routing and event-controlled constraint/restoration.
-- [ ] Implement validated receiver selection and the bounded control state machine above.
-- [ ] Verify real UDP forward/reverse payloads, foreign-peer rejection, pre-peer/out-of-order/duplicate/post-close rejection without mutation, caller/receipt mutation isolation, pending FIFO restoration and interrupted close. Test socket destination with a locally bound receiver and inspect the actual connect address; never send test data to an arbitrary LAN host.
-- [ ] Verify a real constrained phase produces token denial, bounded queue/pending counts, exact conservation and rate-ledger qualification using the new boundary receipts. Default and scheduled socket/ledger tests must stay green.
-- [ ] Run `node --test scripts/test/udp-impairment*.test.mjs scripts/test/rate-ledger*.test.mjs scripts/test/uplink-schedule-qualification.test.mjs scripts/test/measured-capacity-uplink.test.mjs` and syntax/format checks for touched files. Preserve red/green logs and exact final blobs.
-- [ ] Independent specification review followed by quality review, resolve findings, then commit. A proxy unit/socket pass is not an ordinary native recovery pass.
+- [x] Add and run behavioral failing tests for explicit receiver routing and event-controlled constraint/restoration.
+- [x] Implement validated receiver selection and the bounded control state machine above.
+- [x] Verify real UDP forward/reverse payloads, foreign-peer rejection, pre-peer/out-of-order/duplicate/post-close rejection without mutation, caller/receipt mutation isolation, pending FIFO restoration and interrupted close. Test socket destination with a locally bound receiver and inspect the actual connect address; never send test data to an arbitrary LAN host.
+- [x] Verify a real constrained phase produces token denial, bounded queue/pending counts, exact conservation and rate-ledger qualification using the new boundary receipts. Default and scheduled socket/ledger tests must stay green.
+- [x] Run `node --test scripts/test/udp-impairment*.test.mjs scripts/test/rate-ledger*.test.mjs scripts/test/uplink-schedule-qualification.test.mjs scripts/test/measured-capacity-uplink.test.mjs` and syntax/format checks for touched files. Preserve red/green logs and exact final blobs.
+- [x] Independent specification review followed by quality review, resolve findings, then commit. A proxy unit/socket pass is not an ordinary native recovery pass.
 
 Representative integration shape:
 

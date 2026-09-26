@@ -57,3 +57,36 @@ The next proxy component preserves full bounded boundary timelines because the
 existing rate-ledger qualifier checks their exact bins. It will snapshot only at
 baseline/constraint/restoration, retaining the current queue/accounting limits;
 it will not substitute scalar totals for complete required evidence.
+
+Read-only trial-state investigation is retained at
+`artifacts/qa/ordinary-trial-diagnostic-proposal-20260925.md`. The later confirmation
+gate must observe active probation followed by settlement at unchanged owner,
+native receipt, revision and source scope with a newer accepted source window.
+A lone absent trial or retained Session.application is insufficient. Current
+run14 diagnostic samples occupy 603–2225 bytes, leaving room for bounded fields
+under the existing 4096-byte guard; verify worst-case serialization when adding
+them. No Swift behavior or diagnostic implementation changes yet.
+
+## Event-driven UDP control component
+
+Commit `09cef26` adds an optional local IPv4 receiver address and opt-in one-constraint
+control mode to the existing owned UDP helper. The default/scheduled paths remain
+unchanged. Baseline starts with a real publisher peer; constraints and restoration
+are ordered, bounded and preserve the existing queue, token budget and deadlines.
+Exact after-change/pre-pump snapshots retain the full required boundary timelines.
+
+Retained initial red contains eight missing-feature failures. A later getter-copy
+regression fails before the rate is read and copied once. Final regression passes
+392 tests, with no skips, including 12 new control/socket cases: actual token
+denial, exact ledger qualification, payload order in both directions, preserved
+delay, caller/receipt isolation, rejected invalid phase calls, interrupted close
+and pending-send cleanup. Syntax, formatting and diff checks pass. Both independent
+reviews approve helper blob `30b2524899398e3cb6066b2965919ad9f2685864` and test blob
+`b1217c766b61ed53aa25b2dfe80d3075ae45098a`. Root verifies source copies/hashes and
+retains report hashes in `event-driven-uplink-validation/root-verification.json`.
+
+All source/media/test jobs have joined. There was no fresh native capture or
+hardware attempt in this session. The goal remains active: next expose truthful
+current trial state, integrate the event-controlled route into the ordinary lab/UI
+runner, then qualify the actual four-phase native run and all three recordings.
+The Watch still needs Xcode connection inspection after the pending Mac unlock.
