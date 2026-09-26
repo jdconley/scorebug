@@ -317,7 +317,7 @@ import Testing
         await stream.finish(); await connection.close()
     }
 }
-private func probeStatistics(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+private func probeStatistics(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32, _ instantaneous: Int32) -> Int32 {
     mon.msRTT = 2; return 0
 }
 private final class StreamPaddingBytes: @unchecked Sendable {
@@ -356,7 +356,7 @@ private final class PaddingStatisticsGate: @unchecked Sendable {
     var entered: Bool { gate.entered }
     func arm() { gate.arm() }
     func release() { gate.release() }
-    func read(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+    func read(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32, _ instantaneous: Int32) -> Int32 {
         if clear == 0 { gate.enter() }
         mon.msRTT = 2; return 0
     }
@@ -728,7 +728,7 @@ private final class StagedProbeStatistics: @unchecked Sendable {
     private let lock = NSLock()
     private var nextFails = false
     func failNext() { lock.withLock { nextFails = true } }
-    func read(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+    func read(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32, _ instantaneous: Int32) -> Int32 {
         let invalid = lock.withLock {
             if clear == 0 && nextFails { nextFails = false; return true }
             return false
@@ -944,7 +944,7 @@ extension SRTStreamPaddingTests {
 }
 
 private func restartFixture(
-    statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32 = probeStatistics,
+    statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32, Int32) -> Int32 = probeStatistics,
     probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { _, _ in }
 ) async throws -> (SRTStream, SRTConnection, UInt64) {
     let output = StreamPaddingBytes()
@@ -988,7 +988,7 @@ private func expectRestartInterruption(_ pending: Task<SRTBandwidthProbeSnapshot
 
 extension SRTStreamPaddingTests {
     @Test func recoveryPolicyIsExplicitAndInheritedAcrossReplacementAndRestart() async throws {
-        let (stream, connection, generation) = try await restartFixture(statisticsReader: { _, mon, _ in
+        let (stream, connection, generation) = try await restartFixture(statisticsReader: { _, mon, _, _ in
             mon.msRTT = 65; mon.msSndBuf = 67; mon.msSndTsbPdDelay = 400
             mon.byteSentTotal = 10_000; mon.byteRetransTotal = 100; return 0
         })

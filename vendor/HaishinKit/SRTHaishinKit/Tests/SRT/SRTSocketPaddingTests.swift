@@ -22,7 +22,7 @@ import Testing
     }
     @Test func revocationAndMissingStatisticsCannotWriteOrFailOrdinaryMedia() async throws {
         let sent = PaddingBytes()
-        let socket = SRTSocket(sender: { sent.append($0); return Int32($0.count) }, statisticsReader: { _, _, _ in SRT_ERROR })
+        let socket = SRTSocket(sender: { sent.append($0); return Int32($0.count) }, statisticsReader: { _, _, _, _ in SRT_ERROR })
         await socket.startRunning()
         let now = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: 2_000_000, generation: 1, statistics: sample(now - 0.02), at: now - 0.02)
@@ -43,7 +43,7 @@ import Testing
         return .init(mon: mon, sampledAt: at)
     }
 }
-private func healthy(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32) -> Int32 {
+private func healthy(_ socket: SRTSOCKET, _ mon: inout CBytePerfMon, _ clear: Int32, _ instantaneous: Int32) -> Int32 {
     mon.msRTT = 2; return 0
 }
 private final class PaddingBytes: @unchecked Sendable {

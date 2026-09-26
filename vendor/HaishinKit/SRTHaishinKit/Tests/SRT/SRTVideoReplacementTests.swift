@@ -226,7 +226,7 @@ import Testing
         let codec = VideoCodec(sessionFactory: { mode, codec in
             AdmissionSession(try mode.makeSession(codec), gate: gate, counts: counts)
         })
-        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: { _, mon, _ in mon.msRTT = 2; return 0 }))
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: { _, mon, _, _ in mon.msRTT = 2; return 0 }))
         let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
             compressedVideoObserver: observed.record, allowsBandwidthProbes: true, probeWakeRunner: { _, _ in })
         await connection.addStream(stream)
@@ -264,7 +264,7 @@ import Testing
             AdmissionSession(try mode.makeSession(codec), gate: gate, counts: counts)
         })
         let invalidation = ReplacementInvalidation(codec)
-        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: { _, mon, _ in mon.msRTT = 2; return 0 }))
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: { _, mon, _, _ in mon.msRTT = 2; return 0 }))
         let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
             compressedVideoObserver: observed.record, allowsBandwidthProbes: true, probeWakeRunner: { _, _ in })
         await connection.addStream(stream)

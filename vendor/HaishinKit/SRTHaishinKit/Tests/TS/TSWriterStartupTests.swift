@@ -334,7 +334,7 @@ import libsrt
         defer { gate.release() }
         let codec = VideoCodec(sessionFactory: { _, _ in PumpBlockedSession(gate: gate) })
         let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) },
-            statisticsReader: { _, mon, _ in mon.msRTT = 2; return 0 }))
+            statisticsReader: { _, mon, _, _ in mon.msRTT = 2; return 0 }))
         let stream = SRTStream(connection: connection, outgoing: OutgoingStream(videoCodec: codec),
             allowsBandwidthProbes: true, probeWakeRunner: { _, _ in })
         await connection.addStream(stream)

@@ -1110,7 +1110,7 @@
 
  final actor SRTSocket {
      static let payloadSize: Int = 1316
-@@ -75,56 +81,95 @@
+@@ -75,56 +81,99 @@
      }
 
      var performanceData: SRTPerformanceData {
@@ -1138,7 +1138,11 @@
 +    private let maxPayloadBytes: Int
 +    private let sender: (@Sendable (Data) -> Int32)?
 +    private let statusProvider: (@Sendable () -> Status)?
-+    private let statisticsReader: @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32
++    // Both socket constructors use current queue state, not SRT's moving averages.
++    private static let nativeStatisticsReader: @Sendable (SRTSOCKET, inout CBytePerfMon, Int32, Int32) -> Int32 = {
++        srt_bistats($0, &$1, $2, $3)
++    }
++    private let statisticsReader: @Sendable (SRTSOCKET, inout CBytePerfMon, Int32, Int32) -> Int32
 +    private var generation: UInt64 = 0
 +    private let failure = PublishingFailureLatch()
 +    var publishingError: PublishingError? { failure.error }
@@ -1152,7 +1156,7 @@
 -    init() {
 +    init(maxPayloadBytes: Int = 2 * 1024 * 1024 + 64 * 1024,
 +         sender: (@Sendable (Data) -> Int32)? = nil, statusProvider: (@Sendable () -> Status)? = nil,
-+         statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32) -> Int32 = { srt_bstats($0, &$1, $2) }) {
++         statisticsReader: @escaping @Sendable (SRTSOCKET, inout CBytePerfMon, Int32, Int32) -> Int32 = SRTSocket.nativeStatisticsReader) {
 +        precondition(maxPayloadBytes > 0)
 +        self.maxPayloadBytes = maxPayloadBytes
 +        self.sender = sender
@@ -1166,7 +1170,7 @@
 +        self.maxPayloadBytes = 2 * 1024 * 1024 + 64 * 1024
 +        self.sender = nil
 +        self.statusProvider = nil
-+        self.statisticsReader = { srt_bstats($0, &$1, $2) }
++        self.statisticsReader = SRTSocket.nativeStatisticsReader
          self.socket = socket
          guard configure(options, restriction: .post) else {
              throw makeSocketError()
@@ -1214,7 +1218,7 @@
          let status: Int32 = try {
              switch url.mode {
              case .caller:
-@@ -163,6 +208,7 @@
+@@ -163,6 +212,7 @@
              guard configure(url.options, restriction: .post) else {
                  throw makeSocketError()
              }
@@ -1222,7 +1226,7 @@
              if incomingBuffer.count < windowSizeC {
                  incomingBuffer = .init(count: Int(windowSizeC))
              }
-@@ -188,12 +234,84 @@
+@@ -188,12 +238,84 @@
          }
      }
 
@@ -1313,7 +1317,7 @@
          }
      }
 
-@@ -213,11 +331,33 @@
+@@ -213,11 +335,34 @@
          return true
      }
 
@@ -1336,7 +1340,8 @@
 +        guard isRunning, connected, !Task.isCancelled else { return nil }
 +        let currentSocket = socket
 +        // Demand observations do not reset the bandwidth monitor's interval data.
-+        guard collectPerformanceData(using: { statisticsReader(currentSocket, &$0, 0) }) == 0,
++        // Instantaneous queue occupancy is required for immediate pressure checks.
++        guard collectPerformanceData(using: { statisticsReader(currentSocket, &$0, 0, 1) }) == 0,
 +              !Task.isCancelled else { return nil }
 +        return performanceData
 +    }
@@ -1347,11 +1352,11 @@
 -        }
 -        return srt_bstats(socket, &perf, 1)
 +        let currentSocket = socket
-+        return collectPerformanceData { statisticsReader(currentSocket, &$0, 1) }
++        return collectPerformanceData { statisticsReader(currentSocket, &$0, 1, 1) }
      }
 
      private func makeSocketError() -> Error {
-@@ -234,6 +374,7 @@
+@@ -234,6 +379,7 @@
 
      @inline(__always)
      private func sendmsg(_ data: Data) -> Int32 {
@@ -1359,7 +1364,7 @@
          return data.withUnsafeBytes { pointer in
              guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
                  return SRT_ERROR
-@@ -256,38 +397,37 @@
+@@ -256,38 +402,37 @@
  extension SRTSocket: AsyncRunner {
      // MARK: AsyncRunner
      func startRunning() async {
