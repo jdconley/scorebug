@@ -6,17 +6,19 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-Runtime source5ee827a; all capture/build/analysis jobs joined. No PR requested.
+HEAD e29f774; all capture/build/analysis jobs joined. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-earlier-pressure-sampling.md)
+owns goals/status/todos. [Current session](2026-09-26-native-downshift-comparison.md)
 owns chronology and artifacts. Preserve Downloads originals and failed evidence.
 No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
 during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-Earlier pressure sampling5ee827a is reviewed and tested (259app/79Media/22Core, DebugUI/Release). Runxjv6RI/labJeoRqF passes native/transport/geometry but fails live media:91missingIDs3799→3891,21audio gaps,3.067s maxgap. Clean archive10250sequential30fps/no audio gaps,70waveform+clean-glyph probes pass;128frame tail. Full failure hashes preserved.209packetoverflow,first713ms,peak92612bytes/100ms,maxqueue2793ms. Only revision4 sampled: evaluation1533–1558ms,ACK1993–2018ms,application459.5ms. No inferred revision3. Earlier checking is insufficient; next execute the bounded native resize/rate-only/rate-then-resize comparison in `../superpowers/plans/2026-09-26-native-downshift-output-comparison.md`. Do not prepend a production bitrate write or repeat full capture without new evidence. Plan: `../superpowers/plans/2026-09-26-earlier-pressure-sampling.md`; log: `2026-09-26-earlier-pressure-sampling.md`.
+Native host comparison completed on e29f774: native-downshift-unjlrzpt, all3 processes and analyzers joined0, same360sourcePTS/hardware. Resize peak100ms162919bytes, pending keyframe150389; rate-resize peak102409, pendingkeyframe89879; rate-only peak96631. No network/A/V qualification. Reviewed bounded harness/analyzer;11validator tests pass. Priorfzpw74ak failed fixtureselection and remains failed; corrected selection starts at243.25, past MOV emptyedit. Both result/design reviews complete. Entire60510byte reduction comes from pending scheduled keyframe180; subsequent resized frame sizes match. Next run resize/rate-resize on the native iOS simulator and check an adjacent non-keyframe phase before production generalization. Do not blindly add production pre-rate: must chain intermediate native receipt, track partial native effect and preserve one deadline/stop ownership. Current log:2026-09-26-native-downshift-comparison.md; plan:../superpowers/plans/2026-09-26-native-downshift-output-comparison.md.
+
+Earlier pressure sampling5ee827a remains active. Its xjv6RI full720recovery passes native/transport/geometry but fails91missingvideo IDs/21audio gaps, while the clean archive10250frames/70waveform probes passes. All54failure-evidence hashes retained. This does not qualify720recovery; no unchanged full run.
 
 1. User confirmed automation approval/devices ready, but fresh paired attempt8qxiOg again reports Watch locked. Root stopped exact owned PID19966 and joined13680exit1; no phone capture started. LabQAAoGp clean shutdown, failures[]. Await actual Watch unlock before another physical attempt.
 2. Collapse diagnosis is complete enough for the next intervention. Run

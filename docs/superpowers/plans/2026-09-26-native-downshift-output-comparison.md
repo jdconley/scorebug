@@ -2,7 +2,7 @@
 
 **Goal:** Identify a measured intervention for the encoder/output burst during720p bandwidth collapse, while preserving recording, guarded receipts and bounded lifetime.
 
-**Status:** Harness and analyzer implemented, tested and reviewed; native comparison pending. Earlier100ms pressure sampling remains enabled. Full720p recovery is still unqualified. No production bitrate-before-resize behavior is authorized by evidence yet; investigate it locally under the user's standing implementation authorization.
+**Status:** Harness/analyzer reviewed and native comparison completed. Preliminary bitrate write reduces the observed pending-keyframe payload in this host experiment; both result reviews complete; simulator/platform and adjacent-phase comparisons remain before production activation. Earlier100ms pressure sampling remains enabled. Full720p recovery is still unqualified. No production bitrate-before-resize behavior is authorized by evidence yet; investigate it locally under the user's standing implementation authorization.
 
 ## Comparison
 
@@ -18,8 +18,9 @@ A mocked successful transport sink may isolate native encoder/mux behavior. It c
 
 - [x] Inspect/reuse existing native harness and callbacks; choose finite duration/event bounds without changing production behavior.
 - [x] Test trace validation, case ownership and bounded shutdown; preserve failed evidence.
-- [ ] Run all three cases with the same source/configuration and compare measured output, including frames already admitted before mutation.
-- [ ] Review results independently before selecting the production change.
+- [x] Run all three cases with the same source/configuration and compare measured output, including frames already admitted before mutation.
+- [x] Review results independently before selecting the production change.
+- [ ] Repeat resize/rate-resize with the native iOS simulator encoder; check an adjacent non-keyframe mutation phase before generalizing the host keyframe result.
 - [ ] If evidence supports immediate pre-rate, design receipt chaining, intermediate native-effect ownership, one original deadline and no recovery credit for partial state. Cover refusal, stale resize after successful rate change, cancellation, timeout and receipt disagreement.
 - [ ] If only bitrate-only operation helps, design rate-first adaptation with deferred geometry explicitly; the fixed min=max profile ladder cannot silently acknowledge a temporary720p/600kbps state.
 - [ ] Retain a bounded first-downshift cause/ACK record to remove the recurring UI sampling blind spot. This is complementary evidence, not a substitute for measured output bytes.
@@ -29,3 +30,5 @@ The verified bitrate API reports configuration acceptance, not achieved rate or 
 Evidence: [earlier sampling result](../../session-logs/2026-09-26-earlier-pressure-sampling.md). Earlier failures retain their original contracts.
 
 Harness: one case per process,360frames/12seconds,20,000scalar-event cap. Native trace data must pass exact frame/receipt reconciliation and stable input cadence before interpretation. See [current log](../../session-logs/2026-09-26-native-downshift-comparison.md).
+
+Reviewed candidate: one existing downward-resolution application and original deadline; old verified receipt → target bitrate on old encoder → resize using that new receipt → final verified rate → one final Core acknowledgment. Treat any successful native write as a native effect: later refusal/failure/cancellation must stop and join, never settle as untouched. Host data alone do not enable this path.
