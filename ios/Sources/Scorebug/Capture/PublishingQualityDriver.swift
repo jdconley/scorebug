@@ -752,9 +752,16 @@ import ScorebugStreaming
         // This is a deadline allowance, not an inserted delay. Report freshness,
         // stall detection and local transport pressure remain independent.
         let timing: StreamingTimingProfile = .broadcastReliability3000
+        let appliedTransitionExport: (@Sendable (Data) async -> Void)?
+        #if DEBUG
+        appliedTransitionExport = { data in PublishingAppliedTransitionAudit.persist(data, attemptID: attemptID) }
+        #else
+        appliedTransitionExport = nil
+        #endif
         let owner = try PublishingQualitySession(session: session, profiles: profiles, attemptID: attemptID,
             initial: .init(profileID: "240p30", videoBitrate: 350_000), strategy: .measuredCandidateTrials,
-            behavior: .progressive, requiresSharedCandidateRecovery: true, usesGuardedMutations: true, timingProfile: timing)
+            behavior: .progressive, requiresSharedCandidateRecovery: true, usesGuardedMutations: true, timingProfile: timing,
+            appliedTransitionExport: appliedTransitionExport)
         return .init(owner: owner, timingProfile: timing, workerLimits: nil,
             workerLimitsProvider: productionWorkerLimits,
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,

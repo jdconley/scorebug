@@ -131,6 +131,8 @@ actor PublishingQualitySession {
     private var transitionCause: (advice: QualityController.Recommendation, fields: [String: String])?
     private var invalidationCause: (revision: UInt64, fields: [String: String])?
     private var appliedTransition: String?
+    private var appliedTransitionAudit: PublishingAppliedTransitionAudit?
+    private let appliedTransitionExport: (@Sendable (Data) async -> Void)?
 
     private func recordDecision(_ decision: QualityController.Decision, input: String, at now: Double,
                                 window: QualityController.Window? = nil,
@@ -456,7 +458,8 @@ actor PublishingQualitySession {
     init(session: PublishingSession, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
          behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
-         usesGuardedMutations: Bool = false, timingProfile: StreamingTimingProfile = .strict1500) throws {
+         usesGuardedMutations: Bool = false, timingProfile: StreamingTimingProfile = .strict1500,
+         appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) throws {
         try self.init(operations: .init(setBitRate: { try await session.setVideoBitRate($0, before: $1) },
             stop: { await session.stop() },
             guarded: usesGuardedMutations ? .init(setBitRate: {
@@ -468,14 +471,16 @@ actor PublishingQualitySession {
             videoStartup: { session.videoStartup },
             setProfile: { try await session.setVideoProfile($0, before: $1) }),
             profiles: profiles, attemptID: attemptID, initial: initial, strategy: strategy, behavior: behavior,
-            requiresSharedCandidateRecovery: requiresSharedCandidateRecovery, timingProfile: timingProfile, uptime: { ProcessInfo.processInfo.systemUptime })
+            requiresSharedCandidateRecovery: requiresSharedCandidateRecovery, timingProfile: timingProfile, uptime: { ProcessInfo.processInfo.systemUptime },
+            appliedTransitionExport: appliedTransitionExport)
     }
     init(operations: Operations, profiles: [QualityController.Profile], attemptID: UUID,
          initial: QualityController.Settings, strategy: QualityController.RecoveryStrategy = .receiverValidatedTrials,
          behavior: QualityController.Behavior = .legacy, requiresSharedCandidateRecovery: Bool = false,
          timingProfile: StreamingTimingProfile = .strict1500,
          uptime: @escaping @Sendable () -> Double,
-         instant: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) throws {
+         instant: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+         appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) throws {
         let now = uptime()
         _ = try QualityController(profiles: profiles, attemptID: attemptID, applied: initial, at: now, recoveryStrategy: strategy, behavior: behavior, timingProfile: timingProfile)
         guard now <= 1e12 else { throw QualityController.ValidationError.invalidTime }
@@ -483,6 +488,10 @@ actor PublishingQualitySession {
         self.initial = initial; self.strategy = strategy; self.behavior = behavior; self.uptime = uptime; self.lastNow = now
         self.sampleInstant = instant; self.timingProfile = timingProfile
         self.candidateRecovery = requiresSharedCandidateRecovery ? PublishingCandidateRecoveryCoverage() : nil
+        #if DEBUG
+        self.appliedTransitionExport = appliedTransitionExport
+        self.appliedTransitionAudit = appliedTransitionExport == nil ? nil : .init(attemptID: attemptID, timingProfile: timingProfile)
+        #endif
     }
     var snapshot: Snapshot { .init(attemptID: attemptID, applied: policy?.applied, revision: policy?.appliedRevision,
         receipt: receipt, profileReceipt: profileReceipt, application: application, acknowledgedAt: acknowledgedAt,
@@ -1129,7 +1138,13 @@ actor PublishingQualitySession {
         do {
             var format: PublishingVideoProfileChange?
             var rateStart = start
+            #if DEBUG
+            var profileRequestedAt: Double?
+            #endif
             if let profile {
+                #if DEBUG
+                if appliedTransitionAudit != nil { profileRequestedAt = uptime() }
+                #endif
                 let result: PublishingVideoProfileChange
                 if let guarded = operations.guarded {
                     guard let receipt else { throw Failure.notReady }
@@ -1145,6 +1160,9 @@ actor PublishingQualitySession {
                 guard rateStart < deadline else { throw Failure.invalidReceipt }
                 format = result
             }
+            #if DEBUG
+            let rateRequestedAt = appliedTransitionAudit == nil ? nil : uptime()
+            #endif
             let result: PublishingBitRateChange
             if let guarded = operations.guarded {
                 guard let receipt else { throw Failure.notReady }
@@ -1202,6 +1220,14 @@ actor PublishingQualitySession {
             fields["ratePTS"] = exactPTS(result.lastSubmittedSourcePTS)
             appliedTransition = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
                 .flatMap { String(data: $0, encoding: .utf8) }
+            if appliedTransitionAudit != nil {
+                var auditFields = fields
+                auditFields["admittedAt"] = String(admitted.admittedAt)
+                auditFields["completionDeadline"] = String(admitted.completionDeadline)
+                auditFields["profileRequestedAt"] = profileRequestedAt.map { String($0) }
+                auditFields["rateRequestedAt"] = rateRequestedAt.map { String($0) }
+                appliedTransitionAudit?.append(auditFields)
+            }
             transitionCause = nil; invalidationCause = nil
             #endif
             // This revision change is our acknowledged write, not replacement
@@ -1274,10 +1300,20 @@ actor PublishingQualitySession {
         if let shutdown { task = shutdown }
         else {
             let stop = operations.stop
+            #if DEBUG
+            // Close before the first suspension. Retired native completions can
+            // neither append nor change the immutable snapshot captured here.
+            let auditData = try? appliedTransitionAudit?.close()
+            let export = appliedTransitionExport
+            appliedTransitionAudit = nil
+            #endif
             task = Task.detached {
                 await stop()
                 await measurement?.join()
                 await settlement?.value
+                #if DEBUG
+                if let auditData, let export { await export(auditData) }
+                #endif
             }
             shutdown = task
         }

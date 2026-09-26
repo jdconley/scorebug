@@ -140,11 +140,12 @@ final class PublishingQualitySessionTests: XCTestCase {
          .init(id: "hd", width: 1920, height: 1080, minimumBitrate: 1_000_000, maximumBitrate: 6_000_000)]
     }
     private func owner(_ native: QualityNative, initial: Int = 2_000_000,
-                       guarded: PublishingQualitySession.GuardedMutations? = nil) throws -> PublishingQualitySession {
+                       guarded: PublishingQualitySession.GuardedMutations? = nil,
+                       appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) throws -> PublishingQualitySession {
         var operations = native.operations
         operations.guarded = guarded
         return try .init(operations: operations, profiles: profiles, attemptID: attempt,
-            initial: .init(profileID: "hd", videoBitrate: initial), uptime: { native.now })
+            initial: .init(profileID: "hd", videoBitrate: initial), uptime: { native.now }, appliedTransitionExport: appliedTransitionExport)
     }
     private func window(_ start: Double, revision: UInt64 = 0, good: Bool = false, attemptID: UUID? = nil) -> QualityController.Window {
         .init(attemptID: attemptID ?? attempt, sequence: UInt64(start), appliedRevision: revision, start: start, end: start + 5,
@@ -468,6 +469,71 @@ final class PublishingQualitySessionTests: XCTestCase {
         let state = await owner.snapshot
         XCTAssertTrue(state.isClosed); XCTAssertNil(state.applied); XCTAssertNil(state.receipt)
     }
+    func testAppliedTransitionAuditRetainsEarlierACKAndExportsOnlyAfterJoinedShutdown() async throws {
+        let native = QualityNative(), exported = AppliedTransitionExportCapture()
+        let owner = try owner(native, appliedTransitionExport: { exported.append($0) })
+        try await owner.bootstrap()
+        let first = try await advice(owner, native)
+        try await owner.apply(first)
+        let earlyDiagnostic = await owner.currentDiagnostic()
+        let early = try XCTUnwrap(earlyDiagnostic["appliedTransition"])
+        let second = try await advice(owner, native, start: 105, revision: 1)
+        try await owner.apply(second)
+        let laterDiagnostic = await owner.currentDiagnostic()
+        let later = try XCTUnwrap(laterDiagnostic["appliedTransition"])
+        XCTAssertNotEqual(early, later); XCTAssertEqual(exported.values.count, 0)
+        let stopGate = QualityWriteGate(), exportFinished = QualityFinished()
+        native.installStop(stopGate); defer { stopGate.release() }
+        let one = Task { await owner.stop(); exportFinished.increment() }
+        try await entered(stopGate)
+        one.cancel()
+        let two = Task { await owner.stop(); exportFinished.increment() }
+        await Task.yield()
+        XCTAssertEqual(exported.values.count, 0); XCTAssertEqual(exportFinished.count, 0)
+        stopGate.release(); await one.value; await two.value
+        XCTAssertEqual(exportFinished.count, 2); XCTAssertEqual(native.stops, 1)
+        XCTAssertEqual(exported.values.count, 1)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+        let records = try XCTUnwrap(value["records"] as? [[String: String]])
+        XCTAssertEqual(records.count, 2)
+        for (row, original) in zip(records, [early, later]) {
+            let ui = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: String])
+            XCTAssertEqual(row.filter { !["admittedAt", "completionDeadline", "rateRequestedAt"].contains($0.key) }, ui)
+            XCTAssertNil(ui["admittedAt"]); XCTAssertNil(ui["rateRequestedAt"])
+            XCTAssertEqual(row["admittedAt"], row["rateRequestedAt"])
+            XCTAssertEqual(Double(try XCTUnwrap(row["completionDeadline"])), try XCTUnwrap(Double(try XCTUnwrap(row["admittedAt"]))) + 2)
+            XCTAssertNil(row["profileRequestedAt"])
+        }
+        XCTAssertEqual(value["closed"] as? Bool, true)
+        await owner.stop(); XCTAssertEqual(exported.values.count, 1)
+    }
+
+    func testAppliedTransitionAuditNeverRecordsRejectedCancelledOrPendingApplication() async throws {
+        for mode in ["pending", "cancelled", "invalid", "rejected"] {
+            let native = QualityNative(), exported = AppliedTransitionExportCapture(), gate = QualityWriteGate()
+            let guarded: PublishingQualitySession.GuardedMutations? = mode == "rejected" ? .init(
+                setBitRate: { _, _, _ in throw PublishingVideoMutationAdmissionError.stale },
+                setProfile: { _, _, _ in throw PublishingVideoMutationAdmissionError.stale }) : nil
+            let owner = try owner(native, guarded: guarded, appliedTransitionExport: { exported.append($0) })
+            try await owner.bootstrap()
+            let next = try await advice(owner, native)
+            if mode == "pending" || mode == "cancelled" { native.install(gate) }
+            if mode == "invalid" { native.setMode(.wrongRate) }
+            let operation = Task { try await owner.apply(next) }
+            if mode == "pending" || mode == "cancelled" {
+                try await entered(gate)
+                XCTAssertEqual(exported.values.count, 0)
+                if mode == "cancelled" { operation.cancel(); gate.release() }
+                else { await owner.stop() }
+            }
+            do { try await operation.value; XCTFail("Unacknowledged application") } catch {}
+            await owner.stop()
+            XCTAssertEqual(exported.values.count, 1)
+            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+            XCTAssertEqual(value["records"] as? [[String: String]], [], mode)
+        }
+    }
+
     func testConcurrentStopsJoinOneSuspendedShutdown() async throws {
         let native = QualityNative(), owner = try owner(native)
         try await owner.bootstrap()
@@ -564,14 +630,15 @@ private final class QualityFinished: @unchecked Sendable {
 final class PublishingQualityProfileTests: XCTestCase {
     private let attempt = UUID()
     private func owner(_ native: ProfileQualityNative, width: Int = 960, fps: Int = 30,
-                       supportsProfile: Bool = true, guarded: PublishingQualitySession.GuardedMutations? = nil) throws -> PublishingQualitySession {
+                       supportsProfile: Bool = true, guarded: PublishingQualitySession.GuardedMutations? = nil,
+                       appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) throws -> PublishingQualitySession {
         var operations = native.operations
         if !supportsProfile { operations.setProfile = nil }
         operations.guarded = guarded
         return try .init(operations: operations, profiles: [
             .init(id: "540p30", width: width, height: 540, targetFPS: fps, minimumBitrate: 1_000_000, maximumBitrate: 2_000_000),
             .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
-        ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000), uptime: { native.now })
+        ], attemptID: attempt, initial: .init(profileID: "1080p30", videoBitrate: 2_000_000), uptime: { native.now }, appliedTransitionExport: appliedTransitionExport)
     }
     private func progressiveOwner(_ native: ProfileQualityNative, startupMode: Int = 0) throws -> PublishingQualitySession {
         var operations = native.operations
@@ -759,6 +826,27 @@ final class PublishingQualityProfileTests: XCTestCase {
         let deadline = ContinuousClock.now + .seconds(2)
         while !gate.entered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
         guard gate.entered else { XCTFail("Operation never entered"); throw PublishingQualitySession.Failure.notReady }
+    }
+
+    func testProfileTransitionAuditRecordsActualRequestTimesWithoutChangingUIDiagnostic() async throws {
+        let native = ProfileQualityNative(), exported = AppliedTransitionExportCapture()
+        let owner = try owner(native, appliedTransitionExport: { exported.append($0) })
+        let advice = try await decrease(owner, native)
+        try await owner.apply(advice)
+        let diagnostic = await owner.currentDiagnostic()
+        let ui = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(diagnostic["appliedTransition"]).utf8)) as? [String: String])
+        XCTAssertNil(ui["profileRequestedAt"]); XCTAssertNil(ui["rateRequestedAt"])
+        XCTAssertEqual(exported.values.count, 0)
+        await owner.stop()
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+        let row = try XCTUnwrap((document["records"] as? [[String: String]])?.first)
+        XCTAssertEqual(row["admittedAt"], "105.0"); XCTAssertEqual(row["completionDeadline"], "107.0")
+        XCTAssertEqual(row["profileRequestedAt"], "105.0"); XCTAssertEqual(row["profileNativeAt"], "105.25")
+        XCTAssertEqual(row["rateRequestedAt"], "105.25"); XCTAssertEqual(row["nativeAt"], "105.5")
+        XCTAssertEqual(row["ackAt"], "105.5")
+        XCTAssertEqual(row.filter { !["admittedAt", "completionDeadline", "profileRequestedAt", "rateRequestedAt"].contains($0.key) }, ui)
+        XCTAssertEqual(native.calls, ["rate:2000000", "profile:540p30", "rate:1600000"])
+        XCTAssertEqual(native.deadlines, [102, 107, 107])
     }
 
     func testProfileDecreaseCommitsOnlyAfterNewEncoderBitrateAndSharesDeadline() async throws {
@@ -2194,4 +2282,11 @@ final class QualityEvaluationTestCapture: @unchecked Sendable {
     var observer: @Sendable (PublishingQualitySession.EvaluationDiagnostic) -> Void {
         { [self] value in lock.withLock { records.append(value) } }
     }
+}
+
+private final class AppliedTransitionExportCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: [Data] = []
+    var values: [Data] { lock.withLock { data } }
+    func append(_ value: Data) { lock.withLock { data.append(value) } }
 }
