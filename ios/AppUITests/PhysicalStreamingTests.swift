@@ -86,6 +86,7 @@ final class PhysicalStreamingTests: XCTestCase {
     private var completedRecordingID: String?
     private var deadline = Date.distantPast
     private var scorerNetworkPermissionOnly = false
+    private var runnerNetworkSettingReadOnly = false
     private enum SmokeFailure: Error { case failed(String) }
 
     @MainActor func testPhysicalIPhoneCameraPublishScoreStopAndExport() throws {
@@ -573,6 +574,150 @@ final class PhysicalStreamingTests: XCTestCase {
         try require(apiResult.0 && controllerResult.0, "Physical network probe HTTP checks failed; inspect bounded diagnostic attachment.")
         #endif
     }
+    @MainActor func testPhysicalRunnerNetworkSetting() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Runner network-setting inspection requires an actual iPhone.")
+        #else
+        guard ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_NETWORK_SETTING"] == "1" else {
+            throw XCTSkip("Use the explicit physical runner network-setting launcher.")
+        }
+        executionTimeAllowance = 180
+        let totalDeadline = Date().addingTimeInterval(150)
+        deadline = totalDeadline.addingTimeInterval(-15) // Reserve foreground restoration.
+        runnerNetworkSettingReadOnly = true
+        let expectedRunner = "live.scorebug.app.uitests.xctrunner"
+        let target = "ScorebugAppUITests-Runner"
+        let app = XCUIApplication()
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        var visitedSettings = false, found = false, restored = false
+        var phase = "runner-identity", normalized = "unknown"
+        defer {
+            if visitedSettings {
+                app.activate()
+                let restoreEnd = min(totalDeadline, Date().addingTimeInterval(10))
+                while app.state != .runningForeground && Date() < restoreEnd {
+                    RunLoop.current.run(until: min(restoreEnd, Date().addingTimeInterval(0.2)))
+                }
+                restored = app.state == .runningForeground
+                if !restored {
+                    phase = "foreground-restoration-failed"
+                    XCTFail("Scorebug foreground restoration failed after read-only Settings inspection.")
+                }
+            }
+            runnerNetworkSettingReadOnly = false
+            let report: [String: Any] = ["phase": phase, "expectedRunnerBundleID": expectedRunner,
+                                       "expectedEntry": target, "entryFound": found, "value": normalized,
+                                       "settingsVisited": visitedSettings, "scorebugRestored": restored]
+            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), data.count <= 4096 {
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = "PhysicalRunnerNetworkSetting-result"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        try require(Bundle.main.bundleIdentifier == expectedRunner, "Runner network-setting identity mismatch.")
+        phase = "capture-preflight"
+        app.activate()
+        if app.buttons["streaming.closeSetup"].exists {
+            try tap(app.buttons["streaming.closeSetup"], in: app,
+                    failure: "Scorebug setup could not be dismissed for read-only inspection.")
+        }
+        try selectTab("Film", app)
+        try wait("Film did not become ready for read-only inspection.", seconds: 12) {
+            app.buttons["film.start"].exists || app.buttons["film.stop"].exists
+        }
+        try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
+                    "Existing capture prevents Settings inspection; existing state was preserved.")
+        try enforceScorerPermissionPolicy()
+        phase = "settings-navigation"
+        visitedSettings = true
+        settings.activate()
+        try wait("Settings did not enter foreground for read-only inspection.", seconds: 10) {
+            settings.state == .runningForeground
+        }
+        // Normal navigation only. An unfamiliar page without an allowlisted
+        // navigation-bar back control fails closed; no URLs or guessed taps.
+        for _ in 0..<5 {
+            try enforceScorerPermissionPolicy()
+            if settings.navigationBars["Settings"].exists { break }
+            let back = settings.navigationBars.buttons.matching(NSPredicate(
+                format: "identifier == %@ OR label == %@ OR label == %@", "Back", "Settings", "Privacy & Security"))
+            try require(back.count == 1 && back.firstMatch.isEnabled && back.firstMatch.isHittable && Date() < deadline,
+                        "Settings navigation is not recognized; inspection is inconclusive.")
+            back.firstMatch.tap()
+        }
+        try require(settings.navigationBars["Settings"].exists, "Settings root was not reached; inspection is inconclusive.")
+        try openRunnerNetworkSettingsPage("Privacy & Security", from: "Settings", in: settings)
+        phase = "privacy-navigation"
+        try openRunnerNetworkSettingsPage("Local Network", from: "Privacy & Security", in: settings)
+        phase = "entry-search"
+        // Query only the exact runner label, never the Scorebug app's switch or
+        // an enumeration of installed apps. Missing after this bound is unknown.
+        for direction in [false, true] {
+            for step in 0..<9 {
+                try require(Date() < deadline, "Runner entry search exceeded its bound; inspection is inconclusive.")
+                try enforceScorerPermissionPolicy()
+                try require(settings.navigationBars["Local Network"].exists,
+                            "Local Network page changed; inspection is inconclusive.")
+                let exact = NSPredicate(format: "label == %@", target)
+                let direct = settings.switches.matching(exact)
+                let rows = settings.cells.containing(.staticText, identifier: target)
+                let labels = settings.staticTexts.matching(exact)
+                found = direct.count > 0 || labels.count > 0
+                if found {
+                    var toggle: XCUIElement?
+                    if direct.count == 1 { toggle = direct.firstMatch }
+                    else if direct.count == 0 && rows.count == 1 && rows.firstMatch.switches.count == 1 {
+                        toggle = rows.firstMatch.switches.firstMatch
+                    }
+                    if let toggle {
+                        // Only normalized scalars leave the device UI inspection.
+                        switch (toggle.value as? String)?.lowercased() {
+                        case "1", "on": normalized = "on"
+                        case "0", "off": normalized = "off"
+                        default: normalized = "unknown"
+                        }
+                    }
+                    try enforceScorerPermissionPolicy()
+                    phase = normalized == "unknown" ? "inconclusive-value" : "observed"
+                    return
+                }
+                if step < 8 { try scrollRunnerNetworkSettings(settings, up: direction) }
+            }
+        }
+        phase = "inconclusive-entry-not-found"
+        #endif
+    }
+
+    @MainActor private func openRunnerNetworkSettingsPage(_ target: String, from source: String,
+                                                         in settings: XCUIApplication) throws {
+        for direction in [false, true] {
+            for step in 0..<7 {
+                try enforceScorerPermissionPolicy()
+                try require(Date() < deadline && settings.navigationBars[source].exists,
+                            "Settings page is not recognized or timed out; inspection is inconclusive.")
+                let label = settings.staticTexts.matching(NSPredicate(format: "label == %@", target)).firstMatch
+                if label.exists && label.isHittable {
+                    label.tap()
+                    try wait("Expected Settings page did not open; inspection is inconclusive.", seconds: 8) {
+                        settings.navigationBars[target].exists
+                    }
+                    return
+                }
+                if step < 6 { try scrollRunnerNetworkSettings(settings, up: direction) }
+            }
+        }
+        throw SmokeFailure.failed("Expected Settings navigation entry was not found; inspection is inconclusive.")
+    }
+
+    @MainActor private func scrollRunnerNetworkSettings(_ settings: XCUIApplication, up: Bool) throws {
+        try enforceScorerPermissionPolicy()
+        try require(Date() < deadline, "Settings search exceeded its bound; inspection is inconclusive.")
+        let container = settings.tables.firstMatch.exists ? settings.tables.firstMatch : settings.collectionViews.firstMatch
+        try require(container.exists && container.isHittable, "Settings list is not recognized; inspection is inconclusive.")
+        if up { container.swipeUp() } else { container.swipeDown() }
+    }
+
     @MainActor private func preflightPhysicalRecoveryControl(_ app: XCUIApplication) throws {
         guard let control = recoveryControlConfiguration,
               let runnerID = Bundle.main.bundleIdentifier,
@@ -1206,6 +1351,7 @@ final class PhysicalStreamingTests: XCTestCase {
     @MainActor private func dismissSetupKeyboard(_ app: XCUIApplication) throws {
         let keyboard = app.keyboards.firstMatch
         guard keyboard.exists else { return }
+        try require(!runnerNetworkSettingReadOnly, "A keyboard covers read-only inspection; dismiss it manually.")
         let scoreField = app.textFields["scoring.endpoint"]
         let filmField = app.textFields["streaming.endpoint"]
         let setupVisible = (scoreField.exists && scoreField.isHittable) ||
@@ -1232,6 +1378,7 @@ final class PhysicalStreamingTests: XCTestCase {
     }
 
     @MainActor private func tabEvidence(_ app: XCUIApplication, requested: String, phase: String = "failed") {
+        guard !runnerNetworkSettingReadOnly else { return }
         let names = ["Film", "Score", "Watch", "Recordings"]
         let safeLabels = names + ["video", "sportscourt", "applewatch", "rectangle.stack"]
         let appFrame = app.frame
@@ -1393,6 +1540,12 @@ final class PhysicalStreamingTests: XCTestCase {
     }
 
     @MainActor private func enforceScorerPermissionPolicy() throws {
+        if runnerNetworkSettingReadOnly {
+            try require(Date() < deadline && !XCUIApplication().alerts.firstMatch.exists &&
+                        !XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists &&
+                        !XCUIApplication(bundleIdentifier: "com.apple.Preferences").alerts.firstMatch.exists,
+                        "Read-only Settings inspection encountered a prompt or its deadline; no prompt was approved.")
+        }
         guard scorerNetworkPermissionOnly else { return }
         let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         guard alert.exists else { return }
@@ -1402,6 +1555,7 @@ final class PhysicalStreamingTests: XCTestCase {
     }
 
     @MainActor private func allowExpectedPermissions() {
+        guard !runnerNetworkSettingReadOnly else { return }
         let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         guard alert.exists else { return }
         let text = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ").lowercased()
