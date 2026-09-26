@@ -4,7 +4,7 @@
 
 **Goal:** Qualify real paired-simulator WatchConnectivity setup and native Watch scoring while the ordinary phone route records clean A/V and progressively streams through the proxy to both scored MP4 outputs.
 
-**Current status:** One ordinary phone progressive checkpoint and its media checks pass, but later runs leave ramp repeatability open. Phone point-refresh fix passes tests/reviews/builds and two subsequent native single taps. Separate paired Watch/archive evidence exists; the combined progressive route is unqualified. Both physical devices now report available; installed iOS 26.2/watchOS 26.2 runtimes are available. Do not download runtimes or alter unrelated simulators.
+**Current status:** The explicit paired simulator lane is implemented with 32 passing focused tests, both Debug UI builds and final specification/quality approval. The launcher now selects the exact Xcode platform/SDK/architecture configuration; the focused fix passes 33 tests and both reviews. A fresh combined run remains to qualify media. The current phone-only progressive checkpoint and full media qualification pass. Physical phone build/install passes, but Xcode cannot establish the Watch developer connection; hardware qualification remains separate. Installed iOS 26.2/watchOS 26.2 runtimes are available. Do not download runtimes or alter unrelated simulators.
 
 ## Design
 
@@ -22,9 +22,9 @@ Independently check actual native export and both live MP4s: full A/V decode, so
 
 ## Tasks
 
-- [ ] Implement explicit paired options/lifecycle and focused option/environment/process-cleanup tests, preserving phone-only defaults and secret handling.
-- [ ] Add the opted-in simulator phone/Watch test gates and durable command/result assertions. Build both schemes on installed runtimes.
-- [ ] Resolve independent specification and quality review; commit only intended harness/test changes.
+- [x] Implement explicit paired options/lifecycle and focused option/environment/process-cleanup tests, preserving phone-only defaults and secret handling.
+- [x] Add the opted-in simulator phone/Watch test gates and durable command/result assertions. Build both schemes on installed runtimes.
+- [x] Resolve independent specification and quality review; commit only intended harness/test changes.
 - [ ] Run the combined native paired lane; inspect setup, adaptive, Watch command and archive/export evidence. Preserve failures and diagnose before retrying.
 - [ ] Independently qualify all three outputs and Watch score phases. Update the current delivery status and session log without claiming hardware or fault recovery.
 

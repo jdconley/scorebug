@@ -8,8 +8,8 @@
 - Source through `3926e83` (production source scheduling), `ce482b7` (point-refresh fix), `8946937` (measured-cost feedback), test sampler `c3ea5e1`. Later commits are documentation. One source implementer: `/root/ordinary_native_vertical`; root owns docs and independent analysis.
 - **Scheduling implemented:** [production probe scheduling](../superpowers/plans/2026-09-25-production-probe-scheduling.md), `3926e83`, passes 216 targeted tests, final two timing controls, both reviews and Debug UI/Release builds. Run14 now passes native 240p→360p, scoring/export and cleanup; one passing changed run does not establish repeatability.
 - **Completed measurement correction:** [audio alignment correction](../superpowers/plans/2026-09-25-audio-alignment-kernel.md), `de6ebfb`, 89 tests and both reviews pass. Root complete revised waveform/glyph qualification passes for frozen run12 and run14, preserving original failure/report hashes. Both offline jobs joined0.
-- **Active source implementation:** [paired simulator vertical](../superpowers/plans/2026-09-25-paired-ordinary-vertical.md); resume hardware once Watch developer connection is available. Phone signed build/install at current source passes; Watch build failed destination connection before compilation. No unchanged Watch retry.
-- No live media or root offline process is active. All run14 children joined; artifacts and simulator state were preserved before owned simulator deletion.
+- **Active native run:** [paired simulator vertical](../superpowers/plans/2026-09-25-paired-ordinary-vertical.md); resume hardware once Watch developer connection is available. Phone signed build/install at current source passes; Watch build failed destination connection before compilation. No unchanged Watch retry.
+- Paired run1 `ordinary-native-LM7oKh` at `2544de8` failed before UI/capture: two built xctestrun configurations matched. Launcher76575 joined1, cleanup[]. Selector fix0b5b171 passes33tests and both reviews. Fresh paired attempt2 `ordinary-native-LhOSEV` is active (launcher27472). Its eight-file harness passed32tests, both Debug UI builds and both reviews. Paired attempt2 is active; no root offline process. Preserve run1/configuration artifacts. Do not run heavy analysis/tests alongside capture.
 
 
 ## Current evidence
@@ -25,7 +25,7 @@
 
 ## Next verification
 
-1. Complete paired ordinary simulator lane under its plan, sole implementer `ordinary_native_vertical`; relevant focused tests/builds, independent specification then quality review before source commit/live.
+1. Wait for paired attempt2 `ordinary-native-LhOSEV` to finish and all children to join. Inspect both intended-test results/no skips, durable Watch command and broadcast evidence, and cleanup. Preserve any failure without an unchanged blind rerun.
 2. Run paired lane with unchanged390ssource and150sincreasegate, realWatchConnectivity and native Watch commands. Both tests must execute/pass; preserve failures and all owned cleanup.
 3. Independently qualify new paired media/score phases. Do not reuse phone-only final1–0 assumption; expect observed Watch1–0 and0–1 phases. No heavy offline jobs during live capture.
 
@@ -33,7 +33,7 @@
 
 ## Physical devices and environment
 
-- Signing: Conley Chaos LLC `B222J9J7B8`. iPhone16Pro `00008140-001474110C13001C` iOS26.7; Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6. User already approved automation. CoreDevice lists both available (paired), but Watch destination preparation times out connecting. A new connectivity-warning/USB check is pending; this is not an automation denial. Do not ask for the same prompt approval again. Hardware builds are stale; rebuild before running when reachable.
+- Signing: Conley Chaos LLC `B222J9J7B8`. iPhone16Pro `00008140-001474110C13001C` iOS26.7; Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6. User already approved automation. CoreDevice lists both available (paired), but Watch destination preparation times out connecting. A new connectivity-warning/USB check is pending; this is not an automation denial. Do not ask for the same prompt approval again. The phone app is freshly signed/installed at runtime3926e83. The fresh Watch build did not reach compilation; rebuild it before hardware testing.
 - Earlier visible phone pass `device-lab-yk1iYl/run11`; separate Watch commands `mmTL6h`; combined paired progressive hardware remains open. See [device runbook](../device-testing.md).
 - Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installed iOS26.2/watchOS26.2 available. No downloads or unrelated simulator cleanup.
 - FFmpeg/ffprobe `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130. Normal stack maintained `scorebug/ingest:campaign-probe-v3`,100ms worker reports. Remote templates still unqualified.

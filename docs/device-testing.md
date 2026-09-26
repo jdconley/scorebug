@@ -76,6 +76,12 @@ node scripts/test-ordinary-native-app.mjs \
 
 The runner requires the installed iOS 26.2 runtime and creates its own iPhone 14 simulator. It uses the normal device lab, preserves private setup/results/app data in unique artifact directories, joins its processes, and deletes only its own simulator after preservation. Its Settings preflight turns AutoFill off only in that disposable simulator to prevent saving temporary test tokens. Physical devices and Mac settings are untouched. Current failures and qualification results belong in the [ordinary integration log](session-logs/2026-09-25-ordinary-camera-adaptation.md). A UI pass must still be followed by independent checks of all three recordings; it does not qualify fault recovery or physical camera/Watch behavior.
 
+## Paired ordinary simulator route (qualification in progress)
+
+Add `--lane paired` to the ordinary command to create a temporary iPhone 14 / Series 7 41 mm pair on the installed iOS 26.2/watchOS 26.2 runtimes. Both app builds finish before capture begins. The phone must acknowledge the same 240p → 360p increase before offering the match through real WatchConnectivity. The Watch takes over, awards HOME, undoes, awards AWAY and ends the match while the phone records and streams.
+
+The launcher requires both intended UI tests to execute and pass, checks durable Watch commands and broadcast transitions, and preserves both apps' data before removing its owned pair. Watch credentials and identity are not injected. A workflow pass still requires independent checks of all three recordings, including the visible 0–0 → 1–0 → 0–1 phases. The finite source and adaptive time limit are unchanged. This lane does not qualify physical radios, wrist/background behavior or hardware capture.
+
 ## Opt-in physical UI tests
 
 On this device setup, the first automation attempt in a new session prompts for the passcode on the **phone**. Announce the session before starting so the owner can notice and approve it. An unattended prompt can cause an automation-enablement timeout; that error alone does not establish that Watch automation is disabled. The owner enters the passcode directly on the phone; never request it in chat.
