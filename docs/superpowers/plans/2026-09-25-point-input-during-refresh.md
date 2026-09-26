@@ -4,7 +4,7 @@
 
 **Goal:** A normal background score refresh must not disable or silently discard an otherwise valid HOME/AWAY point tap. Preserve one-command persistence, authority checks and confirmed/destructive action behavior.
 
-**Current status:** Read-only investigation confirms deterministic input suppression because refresh holds the same busy flag used to disable point buttons. This does not prove the cause of the earlier missed native point. Ordinary progressive simulator vertical is independently qualified; this followup addresses a separate reliability issue.
+**Current status:** The point-specific reservation/refresh join is implemented. Held-refresh and restored-receipt regressions were reproduced and fixed;24scoring and48relatedCoretests pass. Independent specification and quality reviews approve the final slice. DebugUI and Releasearm64builds pass; fresh native integration verification is running. This fixes a controlled input-suppression case; it does not prove the cause of the earlier missed native point.
 
 ## Design
 
@@ -18,10 +18,10 @@ Use this point route for both HOME and AWAY buttons. Existing confirmed end-matc
 
 ## Tasks
 
-- [ ] Add a failing held-refresh point regression that establishes eligibility, reserves one point, sends nothing before release and sends/persists exactly one command afterward. Preserve red evidence.
-- [ ] Implement the point-specific single reservation and exact refresh join with scoped revalidation, cancellation, explicit feedback and cleanup.
-- [ ] Cover second tap/foreground exclusion, changed revision/authority/status/scope, refresh failure, cancellation, pre-existing pending, and lost-response receipt recovery using the same durable command UUID. Keep generic confirmation tests passing.
-- [ ] Run relevant scoring/Core suites and app Debug/Release builds. Resolve independent specification and quality reviews before committing.
+- [x] Add a failing held-refresh point regression that establishes eligibility, reserves one point, sends nothing before release and sends/persists exactly one command afterward. Preserve red evidence.
+- [x] Implement the point-specific single reservation and exact refresh join with scoped revalidation, cancellation, explicit feedback and cleanup.
+- [x] Cover second tap/foreground exclusion, changed revision/authority/status/scope, refresh failure, cancellation, pre-existing pending, and lost-response receipt recovery using the same durable command UUID. Keep generic confirmation tests passing.
+- [x] Run relevant scoring/Core suites and app Debug/Release builds. Resolve independent specification and quality reviews before committing.
 - [ ] Run the ordinary native vertical with one score tap and unchanged progressive/media gates; preserve failures and verify outputs. Qualify a deliberate held-refresh UI path if the model-to-button wiring cannot otherwise be demonstrated.
 
 Unit tests prove the controlled refresh race, not the cause of an earlier unreproduced live event. Native and paired-device acceptance remain separately tracked in the delivery plan.
