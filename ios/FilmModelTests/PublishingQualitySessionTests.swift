@@ -872,6 +872,8 @@ final class PublishingQualityProfileTests: XCTestCase {
             do { try await owner.apply(advice); XCTFail("Invalid bitrate: \(mode)") }
             catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt) }
             let state = await owner.snapshot
+            let diagnostic = await owner.currentDiagnostic()
+            XCTAssertNil(diagnostic["appliedTransition"])
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0); XCTAssertNil(state.profileReceipt)
             XCTAssertEqual(state.receipt?.configuration.encoderSessionID, native.oldEncoder)
             XCTAssertEqual(native.calls.count, 3); XCTAssertEqual(native.stops, 1)
@@ -889,6 +891,8 @@ final class PublishingQualityProfileTests: XCTestCase {
                 while !gate.entered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
                 guard gate.entered else { gate.release(); _ = try? await operation.value; XCTFail("Write did not enter"); continue }
                 let suspended = await owner.snapshot
+                let pendingDiagnostic = await owner.currentDiagnostic()
+                XCTAssertNil(pendingDiagnostic["appliedTransition"])
                 XCTAssertTrue(suspended.isBusy); XCTAssertEqual(suspended.revision, 0); XCTAssertNil(suspended.profileReceipt)
                 do { try await owner.apply(advice); XCTFail("Concurrent write") }
                 catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .busy) }
@@ -1316,6 +1320,48 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             await f.owner.stop()
         }
     }
+    func testProductionLadderMeasuresNextRungAndAcknowledgesActualFormat() async throws {
+        let profiles = PublishingQualityDriver.productionProfiles
+        XCTAssertEqual(profiles.map(\.id), ["240p30", "360p30", "720p30"])
+        XCTAssertEqual(profiles.map(\.width), [426, 640, 1280])
+        XCTAssertEqual(profiles.map(\.height), [240, 360, 720])
+        XCTAssertEqual(profiles.map(\.minimumBitrate), [350_000, 600_000, 3_000_000])
+        XCTAssertEqual(profiles.map(\.maximumBitrate), [350_000, 600_000, 3_000_000])
+        for (initial, next) in [(PublishingVideoProfile.low240, PublishingVideoProfile.low360), (.low360, .hd720)] {
+            let f = try await CandidateQualityFixture.make(initialProfile: initial, useProductionProfiles: true)
+            let context = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            XCTAssertEqual(context?.readiness.settings.profileID, next.rawValue)
+            let decision = try await f.owner.evaluateCandidate(f.admission)
+            let advice = try XCTUnwrap(decision.recommendation)
+            XCTAssertEqual(advice.settings.profileID, next.rawValue)
+            let pending = await f.owner.currentDiagnostic()
+            XCTAssertNil(pending["appliedTransition"])
+            try await f.owner.apply(advice)
+            let state = await f.owner.snapshot, diagnostic = await f.owner.currentDiagnostic()
+            let format = try XCTUnwrap(state.profileReceipt), rate = try XCTUnwrap(state.receipt)
+            let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(diagnostic["appliedTransition"]).utf8)) as? [String: String])
+            XCTAssertEqual(witness["formatWidth"], String(format.width))
+            XCTAssertEqual(witness["formatHeight"], String(format.height))
+            XCTAssertEqual(witness["profileGeneration"], String(format.publishingGeneration))
+            XCTAssertEqual(witness["oldEncoder"], format.previousEncoderSessionID.uuidString.lowercased())
+            XCTAssertEqual(witness["newEncoder"], format.encoderSessionID.uuidString.lowercased())
+            XCTAssertNotEqual(witness["oldEncoder"], witness["newEncoder"])
+            XCTAssertEqual(witness["oldPTS"], "\(format.lastOldSourcePTS.value)/\(format.lastOldSourcePTS.timescale)")
+            XCTAssertEqual(witness["newPTS"], "\(format.firstNewSourcePTS.value)/\(format.firstNewSourcePTS.timescale)")
+            XCTAssertEqual(witness["rateEncoder"], rate.configuration.encoderSessionID.uuidString.lowercased())
+            XCTAssertEqual(witness["rateGeneration"], String(rate.publishingGeneration))
+            XCTAssertEqual(witness["nativeBitrate"], String(rate.configuration.bitRate))
+            let pts = try XCTUnwrap(rate.lastSubmittedSourcePTS)
+            XCTAssertEqual(witness["ratePTS"], "\(pts.value)/\(pts.timescale)")
+            XCTAssertEqual(witness["rateEncoder"], witness["newEncoder"])
+            XCTAssertEqual(witness["rateGeneration"], witness["profileGeneration"])
+            XCTAssertEqual(witness["profileNativeAt"], String(format.acknowledgedAt))
+            XCTAssertEqual(witness["nativeAt"], String(rate.acceptedAt))
+            XCTAssertEqual(witness["ackAt"], state.acknowledgedAt.map { String($0) })
+            await f.owner.stop()
+        }
+    }
+
     func testCandidateOnlyEventAdmitsExactProfileAndDoesNotReconsumeHealth() async throws {
         let f = try await CandidateQualityFixture.make()
         let before = await f.owner.snapshot
@@ -1990,7 +2036,7 @@ struct CandidateQualityFixture: Sendable {
     }
     static func make(sourceHealth: Bool = true, foreignPublication: Bool = false,
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
-                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil, includeHighProfiles: Bool = false,
+                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil, includeHighProfiles: Bool = false, useProductionProfiles: Bool = false,
                      requiresSharedCandidateRecovery: Bool = false,
                      guarded: PublishingQualitySession.GuardedMutations? = nil) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
@@ -2001,7 +2047,7 @@ struct CandidateQualityFixture: Sendable {
         let probeID = try XCTUnwrap(UUID(uuidString: template.status.receiverProbe!.snapshot.id))
         var operations = native.operations
         operations.guarded = guarded
-        let owner = try PublishingQualitySession(operations: operations, profiles: [
+        let owner = try PublishingQualitySession(operations: operations, profiles: useProductionProfiles ? PublishingQualityDriver.productionProfiles : [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
             .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
             .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)] + (includeHighProfiles ? [
@@ -2068,7 +2114,7 @@ struct CandidateQualityFixture: Sendable {
         probe.leaseDeadline = 115.3; probe.acceptedPayloadBytes = 6000 * 1316; probe.lastAcceptedAt = 115.09
         let admission = try XCTUnwrap(PublishingCandidateAdmission.laboratoryIPv4(measurement: .init(id: UUID(),
             scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1),
-            profile: initialProfile == .low240 ? .low360 : .sd540, publishingGeneration: 7, startedAt: 110, endedAt: 114.06, firstInputAt: 110, lastInputAt: 114,
+            profile: initialProfile == .low240 ? .low360 : (useProductionProfiles ? .hd720 : .sd540), publishingGeneration: 7, startedAt: 110, endedAt: 114.06, firstInputAt: 110, lastInputAt: 114,
             sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400),
             applied: applied, binding: binding, boundAt: 109.6, completedAt: 114.07, probe: probe, pair: pair,
             authority: PublishingCandidateAuthority(pair.newer.end),

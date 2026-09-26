@@ -277,6 +277,18 @@ test('recovery credentials are explicit and restricted to the recovery phone run
   assert.equal(env.SCOREBUG_RECOVERY_CONTROL_TOKEN, recoveryControl.token);
   assert.equal(env.SCOREBUG_RECOVERY_RUN_ID, recoveryControl.runID);
   assert.equal(env.SCOREBUG_ORDINARY_RECOVERY, '1');
+  assert.equal(env.SCOREBUG_ORDINARY_RECOVERY_720, undefined);
+  const higher = ordinaryTestEnvironment({
+    paired: false,
+    recovery: true,
+    recovery720: true,
+    setup,
+    recoveryControl,
+  });
+  assert.equal(higher.SCOREBUG_ORDINARY_RECOVERY_720, '1');
+  assert.throws(() =>
+    ordinaryTestEnvironment({ paired: false, recovery720: true, setup, recoveryControl }),
+  );
   assert.equal(
     Object.keys(env).some((k) => k.includes('FILE_CAPTURE')),
     false,
@@ -330,6 +342,10 @@ assert(!probation.acknowledges(profile:"360p30", bitrate:600000, after:95, newer
 assert(!probation.acknowledges(profile:"360p30", bitrate:600000, after:94, newerThan:1))
 var settled = d; settled["policyTrialActive"]="false"; settled.removeValue(forKey:"policyTrialRollbackRequired"); settled["policyAcceptedSourceSequence"]="5"; settled["policyAcceptedSourceWindowEnd"]="100"
 let confirmed = try sample(settled); assert(confirmed.confirms(probation))
+assert(probation.acknowledgesNext(profile:"360p30", bitrate:600000, after:94, revision:0))
+assert(!probation.acknowledgesNext(profile:"360p30", bitrate:600000, after:94, revision:UInt64.max))
+var skipped = d; skipped["policyAppliedRevision"]="3"
+let skippedSample = try sample(skipped); assert(!skippedSample.acknowledgesNext(profile:"360p30", bitrate:600000, after:94, revision:0))
 for (key,value) in [("policyOwnerKey",String(repeating:"c",count:64)),("policyAppliedRevision","2"),("policyAttemptID","replacement"),("policySourceScopeKey",String(repeating:"c",count:64)),("policyAcceptedSourceSequence","4"),("policyAcceptedSourceWindowEnd","99"),("policyRecommendationPending","true"),("policyApplicationPending","true"),("policyMinimumResetRequired","true"),("policyTrialRollbackRequired","true")] {
  var bad=settled; bad[key]=value; let rejected = try sample(bad); assert(!rejected.confirms(probation),key)
 }
@@ -449,3 +465,22 @@ print("native export failure preservation passed")
     }
   },
 );
+
+test('recovery720 is explicit and retains ordinary recovery budgets and private controller', () => {
+  const config = ordinaryLaneConfiguration('recovery720');
+  assert.equal(
+    config.phoneTest,
+    'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport',
+  );
+  assert.equal(config.recovery, true);
+  assert.equal(config.recovery720, true);
+  assert.equal(config.allowance, 780);
+  assert.equal(config.timeout, 900000);
+  assert.equal(
+    ordinaryNativeOptions(
+      ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'recovery720'],
+      interfaces,
+    ).lane,
+    'recovery720',
+  );
+});

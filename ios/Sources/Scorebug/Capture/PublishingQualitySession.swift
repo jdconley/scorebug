@@ -1182,6 +1182,24 @@ actor PublishingQualitySession {
             fields["revision"] = String(current.appliedRevision)
             fields["ackAt"] = String(now); fields["nativeAt"] = String(result.acceptedAt)
             fields["profileNativeAt"] = format.map { String($0.acknowledgedAt) }
+            // Receipt-derived coded geometry and exact source coordinates only.
+            // This is emitted after both native receipts and Core ACK succeed.
+            func exactPTS(_ pts: CMTime?) -> String? {
+                guard let pts, pts.isNumeric, pts.epoch == 0, pts.timescale > 0 else { return nil }
+                return "\(pts.value)/\(pts.timescale)"
+            }
+            if let format {
+                fields["formatWidth"] = String(format.width); fields["formatHeight"] = String(format.height)
+                fields["profileGeneration"] = String(format.publishingGeneration)
+                fields["oldEncoder"] = format.previousEncoderSessionID.uuidString.lowercased()
+                fields["newEncoder"] = format.encoderSessionID.uuidString.lowercased()
+                fields["oldPTS"] = exactPTS(format.lastOldSourcePTS)
+                fields["newPTS"] = exactPTS(format.firstNewSourcePTS)
+            }
+            fields["rateEncoder"] = result.configuration.encoderSessionID.uuidString.lowercased()
+            fields["rateGeneration"] = String(result.publishingGeneration)
+            fields["nativeBitrate"] = String(result.configuration.bitRate)
+            fields["ratePTS"] = exactPTS(result.lastSubmittedSourcePTS)
             appliedTransition = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
                 .flatMap { String(data: $0, encoding: .utf8) }
             transitionCause = nil; invalidationCause = nil

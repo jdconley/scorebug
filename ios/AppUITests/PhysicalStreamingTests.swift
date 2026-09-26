@@ -61,6 +61,10 @@ struct OrdinaryRecoverySample {
         diagnostic["policyAppliedProfile"] == profile && diagnostic["policyAppliedBitrate"] == String(bitrate) &&
         acknowledgedAt > after && (newerThan.map { revision > $0 } ?? true)
     }
+    func acknowledgesNext(profile: String, bitrate: Int, after: Double, revision previous: UInt64) -> Bool {
+        previous < .max && revision == previous + 1 &&
+        acknowledges(profile: profile, bitrate: bitrate, after: after, newerThan: previous)
+    }
     func confirms(_ probation: Self) -> Bool {
         probation.isProbation && owner != nil && owner == probation.owner &&
         attempt == probation.attempt && scope == probation.scope && revision == probation.revision &&
@@ -137,6 +141,7 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recoveryAttempt: String?
     private var recoveryScope: String?
     private var recoveryFailure: String?
+    private var recovery720 = false
 
     private func recoveryMilestone(_ phase: String, sample: Bool = false) {
         var record: [String: Any] = ["phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime]
@@ -144,15 +149,16 @@ final class PhysicalStreamingTests: XCTestCase {
         recoveryMilestones.append(record)
     }
     private func attachRecoveryEvidence() {
-        var report: [String: Any] = ["formatVersion": 1,
+        var report: [String: Any] = ["formatVersion": recovery720 ? 2 : 1,
             "recordingStartedUptimeSeconds": recoveryRecordingStarted,
             "recordingDeadlineUptimeSeconds": recoveryRecordingDeadline,
             "samples": recoverySamples, "gates": recoveryGates,
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
+        if recovery720 { report["contract"] = "recovery720" }
         report["failure"] = recoveryFailure
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-            attachment.name = "OrdinaryRecoveryStreaming-recovery-phases"
+            attachment.name = recovery720 ? "OrdinaryRecovery720Streaming-recovery-phases" : "OrdinaryRecoveryStreaming-recovery-phases"
             attachment.lifetime = .keepAlways; add(attachment)
         }
     }
@@ -200,9 +206,15 @@ final class PhysicalStreamingTests: XCTestCase {
         throw SmokeFailure.failed("Recovery \(phase) exceeded its finite gate.")
     }
     @MainActor private func recoveryIncrease(_ app: XCUIApplication, prefix: String, after: Double,
-                                            previous: OrdinaryRecoverySample) throws -> OrdinaryRecoverySample {
-        let acknowledged = try recoveryWait(app, phase: "\(prefix)-increase", seconds: 150) {
-            $0.acknowledges(profile: "360p30", bitrate: 600000, after: after, newerThan: previous.revision)
+                                            previous: OrdinaryRecoverySample, profile: String = "360p30", bitrate: Int = 600000,
+                                            consecutive: Bool = false) throws -> OrdinaryRecoverySample {
+        let acknowledged = try recoveryWait(app, phase: "\(prefix)-increase", seconds: 150) { sample in
+            if consecutive {
+                try self.require(previous.revision < .max && sample.revision <= previous.revision + 1,
+                                 "An intervening applied transition invalidated this climb.")
+                return sample.acknowledgesNext(profile: profile, bitrate: bitrate, after: after, revision: previous.revision)
+            }
+            return sample.acknowledges(profile: profile, bitrate: bitrate, after: after, newerThan: previous.revision)
         }
         recoveryMilestone("\(prefix)-increase-acknowledged", sample: true)
         var probation: OrdinaryRecoverySample?
@@ -284,16 +296,35 @@ final class PhysicalStreamingTests: XCTestCase {
             $0.acknowledges(profile: "240p30", bitrate: 350000, after: self.recoveryRecordingStarted, newerThan: nil)
         }
         recoveryMilestone("initial-minimum", sample: true)
-        let increased = try recoveryIncrease(app, prefix: "initial", after: minimum.acknowledgedAt, previous: minimum)
+        let first = try recoveryIncrease(app, prefix: recovery720 ? "initial-360" : "initial",
+            after: recovery720 ? minimum.ended : minimum.acknowledgedAt, previous: minimum, consecutive: recovery720)
+        let increased = recovery720 ? try recoveryIncrease(app, prefix: "initial-720", after: first.ended,
+            previous: first, profile: "720p30", bitrate: 3000000, consecutive: true) : first
         let constrainedAt = try recoveryRequest("constrain", sequence: 1, sample: increased)
-        let fallback = try recoveryWait(app, phase: "fallback", seconds: 60) {
-            $0.owner != nil && $0.unencumbered && $0.diagnostic["policyTrialActive"] == "false" &&
-            $0.acknowledges(profile: "240p30", bitrate: 350000, after: constrainedAt, newerThan: increased.revision)
+        var constrainedRevision = increased.revision
+        var constrainedBitrate = Int(increased.diagnostic["policyAppliedBitrate"] ?? "") ?? 0
+        let fallback = try recoveryWait(app, phase: "fallback", seconds: 60) { sample in
+            if self.recovery720, sample.revision > constrainedRevision {
+                let bitrate = Int(sample.diagnostic["policyAppliedBitrate"] ?? "") ?? 0
+                let witness = sample.diagnostic["appliedTransition"].flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] }
+                try self.require(bitrate > 0 && bitrate <= constrainedBitrate &&
+                    witness?["kind"] != "trial" && witness?["kind"] != "increase",
+                    "Observed quality increase while constrained.")
+                constrainedRevision = sample.revision; constrainedBitrate = bitrate
+                self.recoveryMilestone("fallback-intermediate-acknowledged", sample: true)
+            }
+            return sample.owner != nil && sample.unencumbered && sample.diagnostic["policyTrialActive"] == "false" &&
+                sample.acknowledges(profile: "240p30", bitrate: 350000, after: constrainedAt, newerThan: increased.revision)
         }
         try require(fallback.owner != increased.owner, "Fallback revision reused the increase owner.")
         recoveryMilestone("fallback-acknowledged", sample: true)
         let restoredAt = try recoveryRequest("restore", sequence: 2, sample: fallback)
-        _ = try recoveryIncrease(app, prefix: "recovery", after: restoredAt, previous: fallback)
+        let recovered = try recoveryIncrease(app, prefix: recovery720 ? "recovery-360" : "recovery",
+            after: restoredAt, previous: fallback, consecutive: recovery720)
+        if recovery720 {
+            _ = try recoveryIncrease(app, prefix: "recovery-720", after: recovered.ended, previous: recovered,
+                profile: "720p30", bitrate: 3000000, consecutive: true)
+        }
     }
 
     @MainActor func testOrdinarySimulatorRecoverScoreStopAndExport() throws {
@@ -308,6 +339,22 @@ final class PhysicalStreamingTests: XCTestCase {
         catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
         #else
         throw XCTSkip("Ordinary recovery requires a disposable simulator.")
+        #endif
+    }
+
+    @MainActor func testOrdinarySimulatorRecover720ScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_RECOVERY"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_RECOVERY_720"] == "1" else {
+            throw XCTSkip("Use the explicit ordinary recovery720 simulator lane.")
+        }
+        recovery720 = true; evidencePrefix = "OrdinaryRecovery720Streaming"
+        defer { attachRecoveryEvidence() }
+        do { try runVertical(watchScoring: false, ordinarySimulator: true, recovery: true) }
+        catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
+        #else
+        throw XCTSkip("Ordinary recovery720 requires a disposable simulator.")
         #endif
     }
 

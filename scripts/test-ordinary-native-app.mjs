@@ -43,20 +43,28 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   );
   const lane = values.get('--lane');
   assert(
-    lane === undefined || ['phone', 'paired', 'recovery'].includes(lane),
+    lane === undefined || ['phone', 'paired', 'recovery', 'recovery720'].includes(lane),
     'Unsupported ordinary lane',
   );
   return { host, source, encoder, ...(lane === undefined ? {} : { lane }) };
 }
 
 export function ordinaryLaneConfiguration(lane) {
-  assert(lane === undefined || ['phone', 'paired', 'recovery'].includes(lane));
+  assert(lane === undefined || ['phone', 'paired', 'recovery', 'recovery720'].includes(lane));
   const paired = lane === 'paired',
-    recovery = lane === 'recovery';
+    recovery = lane === 'recovery' || lane === 'recovery720';
   return {
     paired,
     recovery,
-    phoneTest: recovery ? recoveryTestID : paired ? pairedTestID : testID,
+    ...(lane === 'recovery720' ? { recovery720: true } : {}),
+    phoneTest:
+      lane === 'recovery720'
+        ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
+        : recovery
+          ? recoveryTestID
+          : paired
+            ? pairedTestID
+            : testID,
     allowance: recovery ? 780 : paired ? 600 : 480,
     timeout: recovery ? 900_000 : paired ? 720_000 : 600_000,
   };
@@ -65,10 +73,12 @@ export function ordinaryLaneConfiguration(lane) {
 export function ordinaryTestEnvironment({
   paired,
   recovery = false,
+  recovery720 = false,
   watch = false,
   setup,
   recoveryControl,
 }) {
+  assert(!recovery720 || recovery, '720 recovery requires recovery controller');
   assert(!recovery || (!paired && !watch), 'Recovery requires the standalone phone lane');
   if (recovery) {
     assert(recoveryControl, 'Recovery controller required');
@@ -97,6 +107,7 @@ export function ordinaryTestEnvironment({
     ...(recovery
       ? {
           SCOREBUG_ORDINARY_RECOVERY: '1',
+          ...(recovery720 ? { SCOREBUG_ORDINARY_RECOVERY_720: '1' } : {}),
           SCOREBUG_RECOVERY_CONTROL_URL: recoveryControl.endpoint,
           SCOREBUG_RECOVERY_CONTROL_TOKEN: recoveryControl.token,
           SCOREBUG_RECOVERY_RUN_ID: recoveryControl.runID,
@@ -273,9 +284,8 @@ export async function runOrdinaryCommand(
 
 async function main() {
   const options = ordinaryNativeOptions(process.argv.slice(2));
-  const { paired, recovery, phoneTest, allowance, timeout } = ordinaryLaneConfiguration(
-    options.lane,
-  );
+  const { paired, recovery, recovery720, phoneTest, allowance, timeout } =
+    ordinaryLaneConfiguration(options.lane);
   const phoneName = `Scorebug Ordinary ${randomUUID()}`;
   const watchName = `Scorebug Ordinary Watch ${randomUUID()}`;
   assert.equal(process.platform, 'darwin', 'Installed Xcode and iOS simulator required');
@@ -448,6 +458,7 @@ async function main() {
         encoder: options.encoder,
         duration: 600,
         ...(recovery ? { publisherRecovery: true } : {}),
+        ...(recovery720 ? { decodedGeometry: true } : {}),
       },
       { signal: controller.signal },
     );
@@ -490,6 +501,7 @@ os.chmod(destination, 0o600)
           ordinaryTestEnvironment({
             paired,
             recovery,
+            recovery720,
             watch: isWatch,
             setup: lab.setup,
             recoveryControl: lab.recoveryControl,

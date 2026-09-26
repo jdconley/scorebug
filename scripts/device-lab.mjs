@@ -162,9 +162,23 @@ function startWorker(environment, artifact) {
   };
 }
 
+/** API-only observer selection; no app or worker profile/timing controls. */
+export function deviceLabDiagnosticEnvironment(decodedGeometry) {
+  assert(
+    decodedGeometry === undefined || typeof decodedGeometry === 'boolean',
+    'Invalid decoded geometry selection',
+  );
+  return {
+    SCOREBUG_TEST_WORKER_TERMINAL: decodedGeometry ? '1' : '',
+    SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
+    SCOREBUG_TEST_WORKER_DECODED_GEOMETRY: decodedGeometry ? '1' : '',
+  };
+}
+
 /** Owned development stack; media and credentials remain under one private artifact directory. */
 export async function startDeviceLab(options, { signal } = {}) {
   signal?.throwIfAborted();
+  const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
   assert(
     options.publisherRecovery === undefined || typeof options.publisherRecovery === 'boolean',
     'Invalid publisher recovery selection',
@@ -367,8 +381,7 @@ export async function startDeviceLab(options, { signal } = {}) {
         LOG_LEVEL: 'info',
         WORKER_PROCESSING: 'auto',
         WORKER_REPORT_INTERVAL_MS: '100',
-        SCOREBUG_TEST_WORKER_TERMINAL: '',
-        SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
+        ...diagnosticEnvironment,
       },
       artifact,
     );

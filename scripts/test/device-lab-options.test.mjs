@@ -87,3 +87,26 @@ test('ordinary relay uses the maintained image with LAN media and private manage
     'scorebug/ingest:campaign-probe-v3',
   ]);
 });
+
+test('API-only geometry diagnostics validate before allocation and clear inherited flags', async () => {
+  const module = await import('../device-lab.mjs');
+  assert.equal(typeof module.deviceLabDiagnosticEnvironment, 'function');
+  for (const value of [undefined, false])
+    assert.deepEqual(module.deviceLabDiagnosticEnvironment(value), {
+      SCOREBUG_TEST_WORKER_TERMINAL: '',
+      SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
+      SCOREBUG_TEST_WORKER_DECODED_GEOMETRY: '',
+    });
+  assert.deepEqual(module.deviceLabDiagnosticEnvironment(true), {
+    SCOREBUG_TEST_WORKER_TERMINAL: '1',
+    SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
+    SCOREBUG_TEST_WORKER_DECODED_GEOMETRY: '1',
+  });
+  for (const value of [null, '1', 1, {}, []]) {
+    assert.throws(() => module.deviceLabDiagnosticEnvironment(value));
+    await assert.rejects(module.startDeviceLab({ decodedGeometry: value }), /geometry/);
+  }
+  assert.throws(() =>
+    deviceLabOptions(['--host', '192.168.1.130', '--decoded-geometry', 'true'], interfaces),
+  );
+});

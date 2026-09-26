@@ -178,8 +178,16 @@ function freshSession(diagnostic, readEnd) {
 }
 
 /** Native transition/clock evidence only; transport and recorded media remain separate gates. */
-export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
-  assert.equal(native.formatVersion, 1);
+export function qualifyOrdinaryRecoveryNativeEvidence(input) {
+  return qualifyNative(input, false);
+}
+/** Explicit closed contract; never infer the required ladder from submitted milestones. */
+export function qualifyOrdinary720RecoveryNativeEvidence(input) {
+  return qualifyNative(input, true);
+}
+function qualifyNative({ native, audit }, recovery720) {
+  assert.equal(native.formatVersion, recovery720 ? 2 : 1);
+  if (recovery720) assert.equal(native.contract, 'recovery720');
   assert.equal(native.failure, undefined, 'Native recovery retained a failure');
   assert.equal(audit.formatVersion, 1);
   assert.equal(audit.closed, true);
@@ -193,16 +201,31 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
     'Recording deadline exceeds finite source allowance',
   );
   assert(
-    Array.isArray(native.samples) && native.samples.length > 0 && native.samples.length <= 300,
+    Array.isArray(native.samples) &&
+      native.samples.length > 0 &&
+      native.samples.length <= (recovery720 ? 270 : 300),
   );
-  const phases = [
-    'initial-minimum',
-    'initial-probation',
-    'initial-confirmed',
-    'fallback-acknowledged',
-    'recovery-probation',
-    'recovery-confirmed',
-  ];
+  const phases = recovery720
+    ? [
+        'initial-minimum',
+        'initial-360-probation',
+        'initial-360-confirmed',
+        'initial-720-probation',
+        'initial-720-confirmed',
+        'fallback-acknowledged',
+        'recovery-360-probation',
+        'recovery-360-confirmed',
+        'recovery-720-probation',
+        'recovery-720-confirmed',
+      ]
+    : [
+        'initial-minimum',
+        'initial-probation',
+        'initial-confirmed',
+        'fallback-acknowledged',
+        'recovery-probation',
+        'recovery-confirmed',
+      ];
   const selected = phases.map((phase) => {
     const matches = native.milestones.filter((m) => m.phase === phase);
     assert.equal(matches.length, 1, `Exactly one ${phase} milestone required`);
@@ -219,6 +242,7 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
       before >= previousReadEnd && after >= before && after - before <= 5 && after <= deadline,
       'Invalid intermediate read bracket',
     );
+    if (recovery720) assert(after <= deadline - 45, 'Cleanup reserve consumed');
     previousReadEnd = after;
     assert(
       d &&
@@ -286,6 +310,17 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
       );
     }
   }
+  if (recovery720) {
+    const owners = new Map();
+    for (const { diagnostic: d } of selected) {
+      const revision = owners.get(d.policyOwnerKey);
+      assert(
+        revision === undefined || revision === d.policyAppliedRevision,
+        'Owner reused across revisions',
+      );
+      owners.set(d.policyOwnerKey, d.policyAppliedRevision);
+    }
+  }
   function applied(s, profile, bitrate) {
     assert.equal(s.diagnostic.policyAppliedProfile, profile);
     assert.equal(s.diagnostic.policyAppliedBitrate, String(bitrate));
@@ -297,9 +332,9 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
     ])
       assert.equal(s.diagnostic[field], 'false', `Unsettled ${field}`);
   }
-  function trial(probation, confirmed) {
-    applied(probation, '360p30', 600000);
-    applied(confirmed, '360p30', 600000);
+  function trial(probation, confirmed, profile, bitrate) {
+    applied(probation, profile, bitrate);
+    applied(confirmed, profile, bitrate);
     const p = probation.diagnostic,
       c = confirmed.diagnostic;
     assert.equal(p.policyTrialActive, 'true', 'Actual probation must be observed');
@@ -324,7 +359,23 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
     );
     assert(scalar(c.policyAcceptedSourceWindowEnd) > scalar(p.policyAcceptedSourceWindowEnd));
   }
-  const [minimum, probation, confirmed, fallback, recovery, recovered] = selected;
+  const minimum = selected[0],
+    probation = selected[1],
+    confirmed = selected[recovery720 ? 4 : 2],
+    fallback = selected[recovery720 ? 5 : 3],
+    recovery = selected[recovery720 ? 6 : 4],
+    recovered = selected.at(-1);
+  const trials = recovery720
+    ? [
+        ['initial-360', selected[1], selected[2], minimum, '360p30', 600000],
+        ['initial-720', selected[3], selected[4], selected[2], '720p30', 3000000],
+        ['recovery-360', selected[6], selected[7], fallback, '360p30', 600000],
+        ['recovery-720', selected[8], selected[9], selected[7], '720p30', 3000000],
+      ]
+    : [
+        ['initial', probation, confirmed, minimum, '360p30', 600000],
+        ['recovery', recovery, recovered, fallback, '360p30', 600000],
+      ];
   applied(minimum, '240p30', 350000);
   applied(fallback, '240p30', 350000);
   assert.equal(minimum.diagnostic.policyTrialActive, 'false');
@@ -342,8 +393,88 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
     scalar(probation.diagnostic.policyAcknowledgedAtUptimeSeconds) >
       scalar(minimum.diagnostic.policyAcknowledgedAtUptimeSeconds),
   );
-  trial(probation, confirmed);
-  trial(recovery, recovered);
+  for (const [, p, c, previous, profile, bitrate] of trials) {
+    trial(p, c, profile, bitrate);
+    if (recovery720) {
+      assert.equal(
+        ordinal(p.diagnostic.policyAppliedRevision),
+        ordinal(previous.diagnostic.policyAppliedRevision) + 1n,
+        'Non-consecutive climb',
+      );
+      assert(
+        scalar(p.diagnostic.policyAcknowledgedAtUptimeSeconds) > previous.readEndedUptimeSeconds,
+        'Climb preceded prior confirmation',
+      );
+      assert.notEqual(
+        p.diagnostic.policyOwnerKey,
+        previous.diagnostic.policyOwnerKey,
+        'Climb reused prior owner',
+      );
+      assert(
+        ordinal(p.diagnostic.policyAcceptedSourceSequence) >
+          ordinal(previous.diagnostic.policyAcceptedSourceSequence),
+      );
+      assert(
+        scalar(p.diagnostic.policyAcceptedSourceWindowEnd) >
+          scalar(previous.diagnostic.policyAcceptedSourceWindowEnd),
+      );
+      for (const sample of native.samples.slice(previous.index + 1, p.index + 1))
+        if (sample.diagnostic.policyAppliedRevision !== undefined)
+          assert(
+            ordinal(sample.diagnostic.policyAppliedRevision) <=
+              ordinal(p.diagnostic.policyAppliedRevision),
+            'Hidden applied rollback during climb',
+          );
+      const first = validateFormat(p.diagnostic, profile, bitrate);
+      assert.equal(first.kind, 'trial', 'Climb must own measured probation');
+      if (previous.diagnostic.appliedTransition !== undefined) {
+        const prior = JSON.parse(previous.diagnostic.appliedTransition);
+        assert.equal(
+          first.oldEncoder,
+          prior.rateEncoder,
+          'Climb did not replace preceding encoder',
+        );
+        validateReceiptContinuity(first, prior);
+      }
+      const last = validateFormat(c.diagnostic, profile, bitrate);
+      assert.deepEqual(last, first, 'Trial receipt changed before confirmation');
+    }
+  }
+  if (recovery720) {
+    validateFormat(fallback.diagnostic, '240p30', 350000);
+    let precedingReceipt = validateFormat(confirmed.diagnostic, '720p30', 3000000);
+    let revision = ordinal(confirmed.diagnostic.policyAppliedRevision),
+      rate = 3000000;
+    const restoredAt = time(native.exchanges[1].responseEndedUptimeSeconds);
+    // The selected minimum is only a milestone; the constraint remains active
+    // through the restoration response, including any intervening observations.
+    for (const sample of native.samples
+      .slice(confirmed.index + 1)
+      .filter((sample) => sample.readStartedUptimeSeconds <= restoredAt)) {
+      const d = sample.diagnostic;
+      if (d.policyAppliedRevision === undefined) continue;
+      const next = ordinal(d.policyAppliedRevision);
+      assert(next >= revision, 'Observed revision rewind');
+      if (next > revision) {
+        const witness = validateFormat(d, d.policyAppliedProfile, scalar(d.policyAppliedBitrate));
+        // Sampling can miss an intermediate descent. Compare exact source/time
+        // lower bounds and generation with the last observed receipt, without
+        // claiming an exhaustive encoder chain through unsampled revisions.
+        validateReceiptContinuity(witness, precedingReceipt);
+        precedingReceipt = witness;
+        assert.equal(witness.revision, d.policyAppliedRevision);
+        assert(!['trial', 'increase'].includes(witness.kind), 'Observed constrained increase');
+        const nextRate = scalar(d.policyAppliedBitrate);
+        assert(nextRate <= rate, 'Observed constrained increase');
+        assert(
+          scalar(d.policyAcknowledgedAtUptimeSeconds) >
+            time(native.exchanges[0].responseEndedUptimeSeconds),
+        );
+        revision = next;
+        rate = nextRate;
+      }
+    }
+  }
   for (const [a, b] of [
     [minimum, probation],
     [confirmed, fallback],
@@ -359,50 +490,55 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
         ordinal(a.diagnostic.policyAcceptedSourceSequence),
     );
   }
-  const acknowledgments = ['initial-increase-acknowledged', 'recovery-increase-acknowledged'].map(
-    (phase, i) => {
-      const matches = native.milestones.filter((m) => m.phase === phase);
-      assert.equal(matches.length, 1, `Missing ${phase}`);
-      const index = matches[0].sampleIndex;
-      assert(Number.isSafeInteger(index) && index >= 0 && index < native.samples.length);
-      const sample = native.samples[index],
-        d = sample.diagnostic,
-        trialSample = i === 0 ? probation : recovery;
-      const before = time(sample.readStartedUptimeSeconds),
-        after = time(sample.readEndedUptimeSeconds);
-      assert(before >= start && after >= before && after <= deadline && after - before <= 5);
-      assert(index <= trialSample.index && after <= trialSample.readEndedUptimeSeconds);
-      const observed = scalar(d.observedAtUptimeSeconds);
-      assert(observed >= before - 5 && observed <= after);
-      assert(
-        scalar(d.policyAcknowledgedAtUptimeSeconds) <= freshSession(d, after),
-        'Acknowledgment follows its observation',
+  const acknowledgments = trials.map(([prefix, trialSample, , , profile, bitrate]) => {
+    const phase = `${prefix}-increase-acknowledged`;
+    const matches = native.milestones.filter((m) => m.phase === phase);
+    assert.equal(matches.length, 1, `Missing ${phase}`);
+    const index = matches[0].sampleIndex;
+    assert(Number.isSafeInteger(index) && index >= 0 && index < native.samples.length);
+    const sample = native.samples[index],
+      d = sample.diagnostic;
+    const before = time(sample.readStartedUptimeSeconds),
+      after = time(sample.readEndedUptimeSeconds);
+    assert(before >= start && after >= before && after <= deadline && after - before <= 5);
+    assert(index <= trialSample.index && after <= trialSample.readEndedUptimeSeconds);
+    const observed = scalar(d.observedAtUptimeSeconds);
+    assert(observed >= before - 5 && observed <= after);
+    assert(
+      scalar(d.policyAcknowledgedAtUptimeSeconds) <= freshSession(d, after),
+      'Acknowledgment follows its observation',
+    );
+    for (const field of [
+      'policyAttemptID',
+      'policyAppliedRevision',
+      'policyAppliedProfile',
+      'policyAppliedBitrate',
+      'policyAcknowledgedAtUptimeSeconds',
+    ])
+      assert.equal(
+        d[field],
+        trialSample.diagnostic[field],
+        'Acknowledgment does not own the observed trial',
       );
-      for (const field of [
-        'policyAttemptID',
-        'policyAppliedRevision',
-        'policyAppliedProfile',
-        'policyAppliedBitrate',
-        'policyAcknowledgedAtUptimeSeconds',
-      ])
-        assert.equal(
-          d[field],
-          trialSample.diagnostic[field],
-          'Acknowledgment does not own the observed trial',
-        );
-      assert.equal(d.sessionClosed, 'false');
-      assert.equal(d.driverClosed, 'false');
-      return sample;
-    },
-  );
+    assert.equal(d.sessionClosed, 'false');
+    assert.equal(d.driverClosed, 'false');
+    if (recovery720)
+      assert.deepEqual(
+        validateFormat(d, profile, bitrate),
+        validateFormat(trialSample.diagnostic, profile, bitrate),
+        'ACK receipt does not own trial',
+      );
+    return sample;
+  });
   const gateContracts = [
     ['initial-minimum', 10, minimum],
-    ['initial-increase', 150, acknowledgments[0]],
-    ['initial-confirmation', 30, confirmed],
     ['fallback', 60, fallback],
-    ['recovery-increase', 150, acknowledgments[1]],
-    ['recovery-confirmation', 30, recovered],
+    ...trials.flatMap(([prefix, , c], i) => [
+      [`${prefix}-increase`, 150, acknowledgments[i]],
+      [`${prefix}-confirmation`, 30, c],
+    ]),
   ];
+  if (recovery720) assert.equal(native.gates.length, 10, 'Closed ten-gate contract');
   for (const [phase, limit, observation] of gateContracts) {
     const gates = native.gates.filter((g) => g.phase === phase);
     assert.equal(gates.length, 1, `Missing/duplicate ${phase} gate`);
@@ -413,11 +549,16 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
     assert(observation.readEndedUptimeSeconds <= began + limit, `${phase} exceeded its gate`);
   }
   for (const [phase, anchor] of [
-    ['initial-increase', minimum.readEndedUptimeSeconds],
-    ['initial-confirmation', acknowledgments[0].readEndedUptimeSeconds],
     ['fallback', native.exchanges[0].responseEndedUptimeSeconds],
-    ['recovery-increase', native.exchanges[1].responseEndedUptimeSeconds],
-    ['recovery-confirmation', acknowledgments[1].readEndedUptimeSeconds],
+    ...trials.flatMap(([prefix, , , previous], i) => [
+      [
+        `${prefix}-increase`,
+        previous === fallback
+          ? native.exchanges[1].responseEndedUptimeSeconds
+          : previous.readEndedUptimeSeconds,
+      ],
+      [`${prefix}-confirmation`, acknowledgments[i].readEndedUptimeSeconds],
+    ]),
   ]) {
     const began = native.gates.find((g) => g.phase === phase).startedUptimeSeconds;
     assert(began >= time(anchor) && began - anchor <= 2, 'Gate detached from preceding phase');
@@ -479,7 +620,9 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
       'Acknowledgment predates applied network boundary',
     );
     const nextGate = native.gates.find(
-      (g) => g.phase === (i === 0 ? 'fallback' : 'recovery-increase'),
+      (g) =>
+        g.phase ===
+        (i === 0 ? 'fallback' : recovery720 ? 'recovery-360-increase' : 'recovery-increase'),
     );
     assert(nextGate.startedUptimeSeconds >= after);
   }
@@ -495,4 +638,75 @@ export function qualifyOrdinaryRecoveryNativeEvidence({ native, audit }) {
       observedAtUptimeSeconds: scalar(s.diagnostic.observedAtUptimeSeconds),
     })),
   };
+}
+
+/** Exact CoreMedia epoch-zero numeric serialization; no floating point PTS conversion. */
+function rational(value) {
+  assert(
+    typeof value === 'string' && /^(0|[1-9][0-9]*)\/([1-9][0-9]*)$/.test(value),
+    'Invalid exact PTS',
+  );
+  const [n, d] = value.split('/').map(BigInt);
+  assert(n <= 9223372036854775807n && d <= 2147483647n, 'PTS integer overflow');
+  return [n, d];
+}
+function compare(a, b) {
+  return a[0] * b[1] - b[0] * a[1];
+}
+function validateReceiptContinuity(current, previous) {
+  assert.equal(current.profileGeneration, previous.rateGeneration, 'Publishing generation changed');
+  assert(
+    compare(rational(current.oldPTS), rational(previous.ratePTS)) >= 0n,
+    'Transition source PTS predates preceding receipt',
+  );
+  assert(
+    scalar(current.profileNativeAt) >= scalar(previous.nativeAt),
+    'Transition native time predates preceding receipt',
+  );
+}
+function validateFormat(d, profile, bitrate) {
+  assert(typeof d.appliedTransition === 'string', 'Missing ACK format receipt');
+  const w = JSON.parse(d.appliedTransition);
+  assert(w && Object.values(w).every((v) => typeof v === 'string'));
+  for (const [field, current] of [
+    ['revision', 'policyAppliedRevision'],
+    ['attemptID', 'policyAttemptID'],
+    ['profile', 'policyAppliedProfile'],
+    ['bitrate', 'policyAppliedBitrate'],
+    ['ackAt', 'policyAcknowledgedAtUptimeSeconds'],
+  ])
+    assert.equal(w[field], d[current]);
+  assert.equal(ordinal(w.revision), ordinal(w.fromRevision) + 1n);
+  assert.equal(w.profile, profile);
+  assert.equal(w.nativeBitrate, String(bitrate));
+  const dimensions = {
+    '240p30': ['426', '240'],
+    '360p30': ['640', '360'],
+    '720p30': ['1280', '720'],
+  }[profile];
+  assert.deepEqual(
+    [w.formatWidth, w.formatHeight],
+    dimensions,
+    'Actual receipt dimensions mismatch',
+  );
+  for (const field of ['oldEncoder', 'newEncoder', 'rateEncoder'])
+    assert(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(w[field]),
+      'Invalid encoder identity',
+    );
+  assert.notEqual(w.oldEncoder, w.newEncoder);
+  assert.equal(w.newEncoder, w.rateEncoder);
+  assert(ordinal(w.profileGeneration) > 0n);
+  assert.equal(w.profileGeneration, w.rateGeneration);
+  assert(ordinal(w.profileGeneration) <= 18446744073709551615n);
+  assert(compare(rational(w.oldPTS), rational(w.newPTS)) < 0n, 'Profile PTS did not advance');
+  assert(
+    compare(rational(w.newPTS), rational(w.ratePTS)) <= 0n,
+    'Rate receipt preceded profile PTS',
+  );
+  assert(
+    scalar(w.profileNativeAt) <= scalar(w.nativeAt) && scalar(w.nativeAt) <= scalar(w.ackAt),
+    'Receipt follows ACK',
+  );
+  return w;
 }
