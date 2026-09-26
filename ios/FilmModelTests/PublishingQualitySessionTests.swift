@@ -1083,7 +1083,24 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         let ready = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
         XCTAssertNil(ready, "Joined failure clears source and strong health")
         XCTAssertEqual(f.native.calls, ["rate:350000"])
+        let diagnostic = await f.owner.currentDiagnostic()
+        XCTAssertEqual(diagnostic["lastMeasurementOutcome"], "runFailed")
+        XCTAssertEqual(diagnostic["lastMeasurementPhase"], "contextRequested")
+        XCTAssertEqual(diagnostic["lastMeasurementCostReady"], "false")
+        XCTAssertNotNil(diagnostic["lastMeasurementFailure"])
         await f.owner.stop()
+        let stopped = await f.owner.currentDiagnostic()
+        XCTAssertNil(stopped["lastMeasurementOutcome"])
+    }
+
+    func testCompletedCandidateCostWithoutApplicationIsNotReportedAsRunFailure() {
+        var diagnostic = PublishingOwnedMeasurementLease.CurrentDiagnostic()
+        diagnostic.phase = "costReady"
+        diagnostic.costReady = true
+        XCTAssertEqual(diagnostic.fields(settlement: "unapplied", at: 10)["lastMeasurementOutcome"], "costReadyWithoutApplication")
+        diagnostic.failure = "cancelled"
+        XCTAssertEqual(diagnostic.fields(settlement: "unapplied", at: 10)["lastMeasurementOutcome"], "runFailedAfterCostReady")
+        XCTAssertEqual(diagnostic.fields(settlement: "acknowledged", at: 10)["lastMeasurementOutcome"], "acknowledged")
     }
 
     func testMeasurementReadinessBindsAuthenticatedSourceAndVerifiedCurrentReceiptWithoutWrites() async throws {

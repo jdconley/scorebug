@@ -108,6 +108,9 @@ actor PublishingQualitySession {
     private var ownedLaboratoryAttempts = 0
     private var ownedPublisher: NativeOwnedCandidatePublisher?
     private var ownedMeasurement: PublishingOwnedMeasurementLease?
+    #if DEBUG
+    private var lastMeasurementDiagnostic: [String: String] = [:]
+    #endif
     private var ownedPredecessor: PublishingBandwidthProbeRetirement?
     private var ownedSource: SourceScope?
     private var ownedDiagnostics: (@Sendable () -> PublishingQualityTelemetry.Diagnostics)?
@@ -174,9 +177,16 @@ actor PublishingQualitySession {
     }
     private func ownedMeasurementFinished(_ lease: PublishingOwnedMeasurementLease) async {
         let (joined, predecessor) = await lease.joinedRetirement()
+        #if DEBUG
+        let diagnostic = await lease.currentOutcomeDiagnostic()
+        #endif
         guard joined, ownedMeasurement === lease, !closed,
               ownedTransferred == nil || (ownedRejected != nil && ownedTransferred == ownedRejected),
               var current = policy else { return }
+        #if DEBUG
+        let settlement = ownedAcknowledged === lease ? "acknowledged" : current.appliedRevision != lease.token.readiness.appliedRevision
+            ? "obsolete" : ownedRejected != nil ? "applicationRejected" : "unapplied"
+        #endif
         do {
             if ownedAcknowledged === lease {
                 ownedAcknowledged = nil
@@ -204,6 +214,9 @@ actor PublishingQualitySession {
                 candidateHealthSource = nil
             }
             policy = current; ownedPredecessor = predecessor
+            #if DEBUG
+            lastMeasurementDiagnostic = diagnostic.fields(settlement: settlement, at: ProcessInfo.processInfo.systemUptime)
+            #endif
             ownedMeasurement = nil; ownedSource = nil; ownedTransferred = nil; ownedRejected = nil
         } catch { /* Retain an unsettled exact owner; it cannot authorize another allocation. */ }
     }
@@ -321,6 +334,7 @@ actor PublishingQualitySession {
             result["sharedRecoveryReady"] = String(candidateRecovery?.permits(healthySince: readiness.healthySince,
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
         }
+        result.merge(lastMeasurementDiagnostic) { _, latest in latest }
         result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
         result["lastRecoveryDeliveryWindowAgeSeconds"] = recoveryDelivery.map { String(now - $0.source.windowEnd) }
         return result
@@ -875,6 +889,9 @@ actor PublishingQualitySession {
         let measurement = ownedMeasurement, settlement = ownedSettlement
         measurement?.revoke()
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
+        #if DEBUG
+        lastMeasurementDiagnostic = [:]
+        #endif
         applicationOwner = nil; busy = false
         let task: Task<Void, Never>
         if let shutdown { task = shutdown }

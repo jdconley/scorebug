@@ -18,6 +18,33 @@ actor PublishingOwnedMeasurementLease {
     nonisolated let id = UUID()
     #if DEBUG
     private nonisolated let audit: PublishingOwnedMeasurementAudit?
+    struct CurrentDiagnostic: Sendable {
+        var phase = "registered", failure: String?, failurePhase: String?, candidateReason: String?
+        var costReady = false
+        var boundAt: Double?, completedAt: Double?
+        func fields(settlement: String, at now: Double) -> [String: String] {
+            let outcome = settlement != "unapplied" ? settlement : failure != nil
+                ? (costReady ? "runFailedAfterCostReady" : "runFailed")
+                : (costReady ? "costReadyWithoutApplication" : "revokedWithoutCost")
+            var result = ["lastMeasurementOutcome": outcome, "lastMeasurementPhase": phase,
+                "lastMeasurementCostReady": String(costReady), "lastMeasurementObservedAtUptimeSeconds": String(now)]
+            result["lastMeasurementFailure"] = failure
+            result["lastMeasurementFailurePhase"] = failurePhase
+            result["lastMeasurementCandidateReason"] = candidateReason
+            result["lastMeasurementBoundAgeAtSettlementSeconds"] = boundAt.map { String(now - $0) }
+            result["lastMeasurementCompletedAgeAtSettlementSeconds"] = completedAt.map { String(now - $0) }
+            return result
+        }
+    }
+    private var currentDiagnostic = CurrentDiagnostic()
+    func currentOutcomeDiagnostic() -> CurrentDiagnostic { currentDiagnostic }
+    private func diagnosticFailure(_ error: Error) {
+        guard currentDiagnostic.failure == nil else { return }
+        currentDiagnostic.failurePhase = currentDiagnostic.phase
+        if let value = error as? PublishingQualitySession.Failure { currentDiagnostic.failure = String(describing: value) }
+        else if let value = error as? PublishingBandwidthProbeError { currentDiagnostic.failure = String(describing: value) }
+        else { currentDiagnostic.failure = error is CancellationError ? "cancelled" : "unavailable" }
+    }
     #endif
     nonisolated let token: QualityController.CandidateMeasurementAttempt
     nonisolated let context: PublishingQualitySession.CandidateMeasurementContext
@@ -102,6 +129,7 @@ actor PublishingOwnedMeasurementLease {
         let task = Task { [self] in
             do { try await run(policy: policy) } catch {
                 #if DEBUG
+                diagnosticFailure(error)
                 record("failed", fields: ["reason": String(describing: error)])
                 #endif
                 revoke()
@@ -120,6 +148,7 @@ actor PublishingOwnedMeasurementLease {
     private func allocate(in context: PublishingBandwidthProbeContext, after prior: PublishingBandwidthProbeRetirement?,
                           rate: Int, policy: PublishingBandwidthProbeSnapshot.Policy, replacement: Bool) async throws {
         #if DEBUG
+        currentDiagnostic.phase = "allocationRequested"
         record("allocationRequested", fields: ["kindOfAllocation": replacement ? "replace" : prior == nil ? "begin" : "restart", "bitRate": rate,
             "predecessor": prior?.terminalSnapshot.map(PublishingOwnedMeasurementAudit.snapshot) as Any? ?? NSNull()])
         #endif
@@ -134,6 +163,7 @@ actor PublishingOwnedMeasurementLease {
         do { returned = try await task.value }
         catch {
             #if DEBUG
+            currentDiagnostic.phase = "allocationRejected"
             record("allocationRejected", fields: ["reason": String(describing: error)])
             #endif
             throw error
@@ -157,6 +187,7 @@ actor PublishingOwnedMeasurementLease {
         do { renewed = try await operation.renew() }
         catch {
             #if DEBUG
+            currentDiagnostic.phase = "renewalRejected"
             record("renewalRejected", fields: ["reason": String(describing: error)])
             #endif
             throw error
@@ -186,12 +217,14 @@ actor PublishingOwnedMeasurementLease {
     // stage. This grants no admission authority and does not extend evidence age.
     private func awaitNextSourceCoverage() async throws {
         #if DEBUG
+        currentDiagnostic.phase = "sourceWaitStarted"
         record("sourceWaitStarted", fields: ["deadline": sourceDeadline])
         #endif
         while true {
             try check()
             guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
                 #if DEBUG
+                currentDiagnostic.phase = "sourceWaitTimedOut"
                 record("sourceWaitTimedOut")
                 #endif
                 throw PublishingQualitySession.Failure.staleAdvice
@@ -200,11 +233,13 @@ actor PublishingOwnedMeasurementLease {
                 try check()
                 guard ProcessInfo.processInfo.systemUptime < sourceDeadline else {
                     #if DEBUG
+                    currentDiagnostic.phase = "sourceWaitTimedOut"
                     record("sourceWaitTimedOut")
                     #endif
                     throw PublishingQualitySession.Failure.staleAdvice
                 }
                 #if DEBUG
+                currentDiagnostic.phase = "sourceReady"
                 record("sourceReady", fields: ["source": coverage.object])
                 #endif
                 return
@@ -215,6 +250,7 @@ actor PublishingOwnedMeasurementLease {
     }
     private func run(policy: PublishingBandwidthProbeSnapshot.Policy) async throws {
         #if DEBUG
+        currentDiagnostic.phase = "contextRequested"
         record("contextRequested")
         #endif
         let selected = try await probes.capture(context.applied.receipt)
@@ -249,23 +285,34 @@ actor PublishingOwnedMeasurementLease {
         guard let pressure = publisher.pressure, pressure.valid else { throw PublishingQualitySession.Failure.notReady }
         self.pressure = pressure
         #if DEBUG
+        currentDiagnostic.boundAt = boundAt
+        currentDiagnostic.phase = "candidateBound"
         record("candidateBound", fields: ["snapshot": PublishingOwnedMeasurementAudit.snapshot(sample), "boundAt": boundAt!, "pressure": pressure.object])
         #endif
         publisher.installCandidate(candidate)
         // No stage replacement is reachable after the binding above.
         keeper = Task { [self] in
-            do { try await hold(for: 9) } catch { revoke() }
+            do { try await hold(for: 9) } catch {
+                #if DEBUG
+                if isActive { diagnosticFailure(error) }
+                #endif
+                revoke()
+            }
         }
         #if DEBUG
+        currentDiagnostic.phase = "candidateStartRequested"
         record("candidateStartRequested")
         #endif
         try await candidate.start()
         #if DEBUG
+        currentDiagnostic.phase = "candidateStarted"
         record("candidateStarted")
         #endif
         let result = await candidate.result()
         let finalPressure = publisher.pressure
         #if DEBUG
+        currentDiagnostic.phase = "candidateJoined"
+        currentDiagnostic.candidateReason = result?.reason.rawValue
         if audit != nil, let result, let object = try? JSONSerialization.jsonObject(with: NativeCandidateFixture.data(result)) {
             record("candidateJoined", fields: ["measurement": object, "pressure": finalPressure?.object as Any? ?? NSNull()])
         }
@@ -278,6 +325,10 @@ actor PublishingOwnedMeasurementLease {
         guard let result, let value = PublishingCandidateCost(result), value.startedAt >= boundAt!,
               value.endedAt <= ProcessInfo.processInfo.systemUptime else { throw PublishingQualitySession.Failure.staleAdvice }
         cost = value; completedAt = ProcessInfo.processInfo.systemUptime
+        #if DEBUG
+        currentDiagnostic.phase = "costReady"; currentDiagnostic.costReady = true
+        currentDiagnostic.completedAt = completedAt
+        #endif
         authority.bind(candidate: value.id, probe: sample.id)
         try await Task.sleep(for: .seconds(2))
         revoke()
