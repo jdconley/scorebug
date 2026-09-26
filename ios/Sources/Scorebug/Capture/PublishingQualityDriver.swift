@@ -8,6 +8,11 @@ import ScorebugStreaming
 @MainActor final class PublishingQualityDriver {
     /// Current acknowledged settings only; presentation grants no admission.
     var appliedSettingsDidChange: ((QualityController.Settings) -> Void)?
+    #if DEBUG
+    var currentDiagnosticDidChange: ((String) -> Void)?
+    private var currentEvent = "starting", currentReason: String?, sourceRejection: String?
+    private var currentDeliveryDiagnostic: [String: String] = [:]
+    #endif
     /// Wake measurement scheduling after a source decision; this grants no admission.
     var sourceEvaluationDidComplete: (() -> Void)?
     var candidateInputProvider: ((PublishingQualitySession.Snapshot) async -> PublishingCandidateAdmission?)?
@@ -82,6 +87,9 @@ import ScorebugStreaming
         task = Task { [self] in
             defer { task = nil }
             await cycle(encoderReady: encoderReady, source: source, cadence: cadence, diagnostics: diagnostics, selectedAt: selectedAt)
+            #if DEBUG
+            await publishCurrentDiagnostic(source: source)
+            #endif
         }
         return task
     }
@@ -131,6 +139,15 @@ import ScorebugStreaming
             }
             if enableDeliveryFailures {
                 for observation in deliveryObservations {
+                    #if DEBUG
+                    currentDeliveryDiagnostic = ["deliveryObservedAtUptimeSeconds": String(uptime()),
+                        "deliveryWindowSeconds": String(observation.result.duration),
+                        "deliveryExpectedFrames": String(observation.result.expectedFrames),
+                        "deliveryOnTimeFrames": String(observation.result.onTimeFrames),
+                        "deliveryLateFrames": String(observation.result.lateFrames),
+                        "deliveryMissingFrames": String(observation.result.missingFrames),
+                        "deliveryUncertainFrames": String(observation.result.uncertainFrames)]
+                    #endif
                     guard let authority = observation.authority else { continue }
                     let decision: QualityController.Decision?
                     do {
@@ -332,9 +349,36 @@ import ScorebugStreaming
         guard !isClosed, !Task.isCancelled, !state.isClosed, let settings = state.applied else { return }
         appliedSettingsDidChange?(settings)
     }
+    #if DEBUG
+    private func publishCurrentDiagnostic(source: WorkerSourceIntervalObservation?) async {
+        guard currentDiagnosticDidChange != nil, !Task.isCancelled else { return }
+        var fields = await owner.currentDiagnostic()
+        guard currentDiagnosticDidChange != nil, !Task.isCancelled else { return }
+        let now = uptime(), instant = ContinuousClock.now
+        fields.merge(currentDeliveryDiagnostic) { _, newest in newest }
+        fields["observedAtUptimeSeconds"] = String(now)
+        fields["driverClosed"] = String(isClosed)
+        fields["event"] = currentEvent; fields["reason"] = currentReason
+        fields["sourceRejection"] = sourceRejection
+        fields["cadenceRejection"] = cadenceRejection; fields["localRejection"] = localRejection
+        fields["cycleInputSourceCaptureAgeSeconds"] = source.map { String(now - $0.interval.captureBoundaryEndTime) }
+        func seconds(_ age: Duration?) -> String? {
+            age.map { String(Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18) }
+        }
+        fields["cycleInputSourceSampleAgeUpperBoundSeconds"] = seconds(source?.freshness.ageUpperBound(at: instant))
+        fields["cadenceSampleAgeUpperBoundSeconds"] = seconds(cadenceInputProvider?()?.cadence?.sampleAgeUpperBound(at: instant))
+        fields["deliverySampleAgeUpperBoundSeconds"] = seconds(deliveryInputProvider?()?.delivery.sampleAgeUpperBound(at: instant))
+        if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), data.count <= 4096,
+           let value = String(data: data, encoding: .utf8) { currentDiagnosticDidChange?(value) }
+    }
+    #endif
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; appliedSettingsDidChange = nil; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() {
+        #if DEBUG
+        currentDiagnosticDidChange = nil; currentDeliveryDiagnostic = [:]; currentEvent = "stopped"; currentReason = nil; sourceRejection = nil
+        #endif
+        deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; appliedSettingsDidChange = nil; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -457,6 +501,10 @@ import ScorebugStreaming
                         candidate: PublishingCandidateAdmission? = nil,
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false,
                         evaluationDiagnostic: [String: Any]? = nil) async {
+        #if DEBUG
+        currentEvent = kind; currentReason = reason
+        if source != nil { sourceRejection = kind == "rejected" ? reason : (kind == "transition" ? "transition" : nil) }
+        #endif
         guard retainsDiagnosticHistory else { return }
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }

@@ -21,6 +21,13 @@ struct StreamingControlsView: View {
                     .accessibilityIdentifier("streaming.appliedQuality")
                     .accessibilityValue(Text(verbatim: "\(applied.profileID):\(applied.videoBitrate)"))
             }
+            #if DEBUG
+            if let diagnostic = model.qualityDiagnostic {
+                Text("Adaptive quality checks").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("streaming.qualityDiagnostic")
+                    .accessibilityValue(Text(verbatim: diagnostic))
+            }
+            #endif
             if let game = model.connectedGameID {
                 Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)
             }

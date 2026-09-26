@@ -13,13 +13,22 @@ import XCTest
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
             uptime: { f.native.now }, retainsDiagnosticHistory: false,
             enableMeasuredSourceEvaluation: true, export: { exported = $0 })
+        var diagnostic: String?
+        driver.currentDiagnosticDidChange = { diagnostic = $0 }
         var applied: QualityController.Settings?
         driver.appliedSettingsDidChange = { applied = $0 }
         driver.candidateInputProvider = { _ in f.admission }
         await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
         XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
         XCTAssertEqual(applied, .init(profileID: "360p30", videoBitrate: 600_000))
+        let current = try XCTUnwrap(diagnostic)
+        XCTAssertLessThanOrEqual(current.utf8.count, 4096)
+        let scalars = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(current.utf8)) as? [String: String])
+        XCTAssertEqual(scalars["observedAtUptimeSeconds"], String(f.native.now))
+        XCTAssertNotNil(scalars["cycleInputSourceCaptureAgeSeconds"])
+        XCTAssertNotNil(scalars["sessionClosed"])
         await driver.stop()
+        XCTAssertNil(driver.currentDiagnosticDidChange)
         let quality = try checkpointObject(XCTUnwrap(exported))
         XCTAssertEqual((quality["events"] as? [[String: Any]])?.count, 0)
         XCTAssertNil(quality["evidenceDictionary"])

@@ -91,6 +91,9 @@ struct PublishingClockObservation: Equatable, Sendable {
     private var receiverProbeOwner: PublishingProbeObservation?
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
+    #if DEBUG
+    @Published private(set) var qualityDiagnostic: String?
+    #endif
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
@@ -361,6 +364,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
         let previous = current
         if context?.id != previous?.id || context?.tap !== previous?.tap {
+            appliedPublishingSettings = nil
+            #if DEBUG
+            qualityDiagnostic = nil
+            #endif
             // Revoke before recording/report/control work can suspend, including
             // replacement taps that deliberately reuse a recording identifier.
             candidateAuthority?.revoke()
@@ -536,6 +543,16 @@ struct PublishingClockObservation: Equatable, Sendable {
                           session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
                     self.appliedPublishingSettings = settings
                 }
+                #if DEBUG
+                qualityDriver?.currentDiagnosticDidChange = { [weak self, weak session] value in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
+                    self.qualityDiagnostic = value
+                }
+                #endif
                 if let candidate = publisher as? NativeOwnedCandidatePublisher, let driver = qualityDriver {
                     let policy: PublishingBandwidthProbeSnapshot.Policy
                     #if DEBUG
@@ -1105,6 +1122,9 @@ struct PublishingClockObservation: Equatable, Sendable {
 
     private func detachPublisher() {
         appliedPublishingSettings = nil
+        #if DEBUG
+        qualityDiagnostic = nil
+        #endif
         let statusRequest = workerStatusRequest?.task
         statusRequest?.cancel()
         candidateAuthority?.revoke()

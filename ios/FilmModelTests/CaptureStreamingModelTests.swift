@@ -58,6 +58,40 @@ import XCTest
         XCTAssertNil(model.appliedPublishingSettings, "A stopped owner cannot restore stale acknowledgment")
     }
 
+    func testCurrentQualityDiagnosticRejectsReplacedAndStoppedPublisher() async throws {
+        var driver: PublishingQualityDriver?
+        let model = makeModel(server: CaptureTestServer(),
+            publisherFactory: { _, _ in CaptureTestPublisher() }, qualityFactory: { session, attempt in
+            driver = try PublishingQualityDriver.standard(session: session, attemptID: attempt)
+            return driver
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let oldCallback = try XCTUnwrap(driver?.currentDiagnosticDidChange)
+        let oldAppliedCallback = try XCTUnwrap(driver?.appliedSettingsDidChange)
+        oldAppliedCallback(.init(profileID: "240p30", videoBitrate: 350_000))
+        XCTAssertNotNil(model.appliedPublishingSettings)
+        oldCallback("{\"event\":\"evaluated\"}")
+        XCTAssertNotNil(model.qualityDiagnostic)
+        model.captureChanged(captureContext())
+        XCTAssertNil(model.qualityDiagnostic)
+        XCTAssertNil(model.appliedPublishingSettings)
+        oldAppliedCallback(.init(profileID: "240p30", videoBitrate: 350_000))
+        XCTAssertNil(model.appliedPublishingSettings)
+        oldCallback("{\"event\":\"replaced-tap\"}")
+        XCTAssertNil(model.qualityDiagnostic)
+        await model.stopStreaming()
+        await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+        oldCallback("{\"event\":\"stale-owner\"}")
+        XCTAssertNil(model.qualityDiagnostic)
+        let currentCallback = try XCTUnwrap(driver?.currentDiagnosticDidChange)
+        currentCallback("{\"event\":\"current-owner\"}")
+        XCTAssertNotNil(model.qualityDiagnostic)
+        await model.stopStreaming()
+        currentCallback("{\"event\":\"stopped-owner\"}")
+        XCTAssertNil(model.qualityDiagnostic)
+    }
+
     func testStandardQualityFactoryKeepsMissingObservationsOptional() async throws {
         for available in [true, false] {
             var driver: PublishingQualityDriver?

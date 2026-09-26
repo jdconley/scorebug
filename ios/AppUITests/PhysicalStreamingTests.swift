@@ -61,6 +61,7 @@ final class PhysicalStreamingTests: XCTestCase {
         } else {
             app.activate()
         }
+        var adaptiveFailure: Error?
         var recordingRequested = false
         var streamingRequested = false
         defer {
@@ -205,13 +206,18 @@ final class PhysicalStreamingTests: XCTestCase {
             evidence(app, phase: "native-home-point-acknowledged", screenshot: true)
             try selectTab("Film", app)
             if ordinarySimulator {
-                try wait("Adaptive gate failed: ordinary publishing did not acknowledge 360p30 at 600000 bps within 150 seconds.", seconds: 150) {
-                    self.value(app, "streaming.appliedQuality") == "360p30:600000"
+                do {
+                    try wait("Adaptive gate failed: ordinary publishing did not acknowledge 360p30 at 600000 bps within 150 seconds.", seconds: 150) {
+                        self.value(app, "streaming.appliedQuality") == "360p30:600000"
+                    }
+                } catch {
+                    adaptiveFailure = error
+                    evidence(app, phase: "adaptive-gate-failed", screenshot: true)
                 }
                 try require(value(app, "streaming.localStatus") == "publishing" &&
                             value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
-                            "Ordinary recording and worker output did not remain live at the acknowledged increase.")
-                evidence(app, phase: "increased-quality-acknowledged", screenshot: true)
+                            "Ordinary recording and worker output did not remain live after the adaptive gate.")
+                if adaptiveFailure == nil { evidence(app, phase: "increased-quality-acknowledged", screenshot: true) }
             }
             let holdStarted = Date()
             let initialDuration = elapsed(app)
@@ -245,6 +251,9 @@ final class PhysicalStreamingTests: XCTestCase {
             app.staticTexts["recordings.exportReady"].exists
         }
         evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)
+        // An expired adaptive gate stays failed even if quality changes while
+        // completing the independent stop, archive-continuation and export gates.
+        if let adaptiveFailure { throw adaptiveFailure }
         // No recording/keychain deletion, external share, or Photos-library write.
     }
 
@@ -536,7 +545,9 @@ final class PhysicalStreamingTests: XCTestCase {
         let worker = value(app, "streaming.workerStatus")
         let quality = value(app, "streaming.appliedQuality")
         let safeQuality = quality.range(of: #"^(240p30|360p30):[0-9,. ]{1,16}$"#, options: .regularExpression) != nil
+        let diagnostic = value(app, "streaming.qualityDiagnostic")
         let report: [String: Any] = ["phase": phase, "durationSeconds": elapsed(app),
+                                   "qualityDiagnostic": diagnostic.utf8.count <= 4096 ? diagnostic : "oversized",
                                    "appliedQuality": safeQuality ? quality : "unavailable-or-other",
                                    "localStatus": statuses.contains(local) ? local : "other",
                                    "workerStatus": statuses.contains(worker) ? worker : "other",

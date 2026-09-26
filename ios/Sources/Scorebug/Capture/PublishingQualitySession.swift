@@ -302,6 +302,31 @@ actor PublishingQualitySession {
         lastWindow: lastWindow, lastDecoderStall: lastDecoderStall, lastDeliveryFailure: lastDeliveryFailure,
         evaluatedAt: evaluatedAt, isClosed: closed, isBusy: busy) }
 
+    #if DEBUG
+    /// Current scalars only; reading this neither grants nor revokes authority.
+    func currentDiagnostic() -> [String: String] {
+        let now = uptime()
+        let readiness = policy?.candidateMeasurementReadiness(at: now)
+        let health = policy?.candidateMeasurementDiagnostic
+        var result = ["sessionObservedAtUptimeSeconds": String(now), "sessionClosed": String(closed), "sessionBusy": String(busy),
+            "measurementActive": String(ownedMeasurement?.isActive ?? false),
+            "candidateHealthSourcePresent": String(candidateHealthSource != nil),
+            "policyReady": String(readiness != nil), "recoveryDeliveryPresent": String(recoveryDelivery != nil)]
+        if let health {
+            result["candidateConsecutiveFailures"] = String(health.consecutiveFailures)
+            result["requiredHealthyDurationSeconds"] = String(health.requiredHealthyDuration)
+            result["strongHealthDurationSeconds"] = health.strongHealthStart.flatMap { start in health.strongHealthEnd.map { String($0 - start) } }
+        }
+        if let readiness {
+            result["sharedRecoveryReady"] = String(candidateRecovery?.permits(healthySince: readiness.healthySince,
+                healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
+        }
+        result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
+        result["lastRecoveryDeliveryWindowAgeSeconds"] = recoveryDelivery.map { String(now - $0.source.windowEnd) }
+        return result
+    }
+    #endif
+
     /// Derive scheduling readiness from the current policy and acknowledged
     /// encoder, never from the immutable first-frame startup receipt. This query
     /// neither changes policy state nor performs native work.
