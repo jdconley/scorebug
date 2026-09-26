@@ -93,6 +93,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
     @Published private(set) var qualityDiagnostic: String?
+    private var candidateInputDiagnostic: [String: String] = [:]
     #endif
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
@@ -366,7 +367,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         if context?.id != previous?.id || context?.tap !== previous?.tap {
             appliedPublishingSettings = nil
             #if DEBUG
-            qualityDiagnostic = nil
+            qualityDiagnostic = nil; candidateInputDiagnostic = [:]
             #endif
             // Revoke before recording/report/control work can suspend, including
             // replacement taps that deliberately reuse a recording identifier.
@@ -544,6 +545,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                     self.appliedPublishingSettings = settings
                 }
                 #if DEBUG
+                qualityDriver?.candidateInputDiagnosticProvider = { [weak self, weak session] in
+                    guard let self, let session, let live = self.publishing, live.session === session,
+                          live.attempt == attempt, self.current?.tap === live.context.tap else { return [:] }
+                    return self.candidateInputDiagnostic
+                }
                 qualityDriver?.currentDiagnosticDidChange = { [weak self, weak session] value in
                     guard let self, let session, let live = self.publishing,
                           live.session === session, live.attempt == attempt,
@@ -1000,34 +1006,50 @@ struct PublishingClockObservation: Equatable, Sendable {
                 activeRecordingID == original.context.id && current?.tap === tap &&
                 live.session.snapshot.state == .publishing && live.session.snapshot.failure == nil
         }
-        guard ownsCurrent(), state.attemptID == attempt, !state.isClosed, !state.isBusy else { return nil }
+        func note(_ gate: String) {
+            #if DEBUG
+            guard ownsCurrent() else { return }
+            candidateInputDiagnostic["candidateProviderGate"] = gate
+            candidateInputDiagnostic["candidateProviderObservedAtUptimeSeconds"] = String(ProcessInfo.processInfo.systemUptime)
+            #endif
+        }
+        guard ownsCurrent(), state.attemptID == attempt, !state.isClosed, !state.isBusy else { note("owner-unavailable"); return nil }
         let refreshSequence = nextProbeReadSequence()
         let nativeProbe = await original.probeObserver?.probeObservation()
         guard ownsCurrent() else { return nil }
         // This observes a real native lease even before candidate completion.
         // Receiver report timestamps remain anchored to the original response.
-        guard acceptProbeObservation(nativeProbe, sequence: refreshSequence) != nil else { return nil }
+        guard acceptProbeObservation(nativeProbe, sequence: refreshSequence) != nil else { note("native-probe-unavailable"); return nil }
         guard let revision = state.revision, let settings = state.applied, let receipt = state.receipt,
               let acknowledgedAt = state.acknowledgedAt,
-              let boundAuthority = candidateAuthority else { return nil }
+              let boundAuthority = candidateAuthority else { note("applied-or-authority-unavailable"); return nil }
         let candidateSequence = nextProbeReadSequence()
         let candidate = await readCandidate()
-        guard ownsCurrent(), candidateAuthority === boundAuthority, let candidate else { return nil }
-        guard let probe = acceptProbeObservation(candidate.probe, sequence: candidateSequence) else { return nil }
+        guard ownsCurrent(), candidateAuthority === boundAuthority else { note("owner-changed"); return nil }
+        guard let candidate else { note("candidate-not-ready"); return nil }
+        guard let probe = acceptProbeObservation(candidate.probe, sequence: candidateSequence) else { note("candidate-probe-unavailable"); return nil }
         // Read every mutable input only after the final await. Exact scope also
         // binds recording/tap observations, not just the publishing attempt.
         guard candidate.measurement.scope == publishing?.observations?.snapshot.scope,
               let pair = receiverProbeTracker.latestPair, let authority = candidateAuthority,
-              authority.permits(pair.newer.end), authority.permits(pair.older.end) else { return nil }
+              authority.permits(pair.newer.end), authority.permits(pair.older.end) else { note("candidate-scope-or-receiver-pair-unavailable"); return nil }
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: revision,
             settings: settings, receipt: receipt, acknowledgedAt: acknowledgedAt)
         let id = candidate.measurement.id, permitsCandidate = candidate.permitsCurrentCandidate
         let admit = admissionMode == .productionSRT ? PublishingCandidateAdmission.productionSRT : PublishingCandidateAdmission.laboratoryIPv4
-        return admit(candidate.measurement, applied,
+        note("validating-admission")
+        let admission = admit(candidate.measurement, applied,
             candidate.binding, candidate.boundAt, candidate.completedAt,
             probe, pair, authority, .sample(),
             { [weak session] in session?.snapshot.lastBitRateChange },
-            { permitsCandidate(id) })
+            { permitsCandidate(id) }, { gate in
+                #if DEBUG
+                self.candidateInputDiagnostic["lastCandidateAdmissionGate"] = gate
+                self.candidateInputDiagnostic["lastCandidateAdmissionObservedAtUptimeSeconds"] = String(ProcessInfo.processInfo.systemUptime)
+                #endif
+            })
+        note(admission == nil ? "admission-unavailable" : "admitted")
+        return admission
     }
 
     private func updateReceiverProbe(response: WorkerMediaStatusResponse, probe: PublishingProbeObservation?,
@@ -1123,7 +1145,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     private func detachPublisher() {
         appliedPublishingSettings = nil
         #if DEBUG
-        qualityDiagnostic = nil
+        qualityDiagnostic = nil; candidateInputDiagnostic = [:]
         #endif
         let statusRequest = workerStatusRequest?.task
         statusRequest?.cancel()

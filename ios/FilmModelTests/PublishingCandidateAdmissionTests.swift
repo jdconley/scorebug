@@ -23,11 +23,22 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         var authority: PublishingCandidateAuthority
         var clock: PublishingCandidateAdmission.Clock
         var currentReceipt: PublishingBitRateChange
-        func admit(production: Bool = false, candidateIsCurrent: @escaping @Sendable () -> Bool = { true }) -> PublishingCandidateAdmission? {
+        func admit(production: Bool = false, observeValidation: ((String) -> Void)? = nil, candidateIsCurrent: @escaping @Sendable () -> Bool = { true }) -> PublishingCandidateAdmission? {
             let receipt = currentReceipt
             let admit = production ? PublishingCandidateAdmission.productionSRT : PublishingCandidateAdmission.laboratoryIPv4
-            return admit(measurement, applied, binding, boundAt, completedAt, probe, pair, authority, clock, { receipt }, candidateIsCurrent)
+            return admit(measurement, applied, binding, boundAt, completedAt, probe, pair, authority, clock, { receipt }, candidateIsCurrent, observeValidation)
         }
+    }
+    func testValidationDiagnosticIdentifiesRejectedGroupWithoutChangingAdmission() throws {
+        for (fault, expected) in [(Fault.staleCost, "measurement"), (.wrongMatch, "scope-receipt"),
+            (.revokedAuthority, "receiver-authority"), (.expiredLease, "probe"), (.noOverlap, "receiver-time-bounds")] {
+            var gate: String?
+            XCTAssertNil(try fixture(fault).admit(production: true, observeValidation: { gate = $0 }))
+            XCTAssertEqual(gate, expected)
+        }
+        var gate: String?
+        XCTAssertNotNil(try fixture().admit(production: true, observeValidation: { gate = $0 }))
+        XCTAssertEqual(gate, "admitted")
     }
     private func fixture(_ fault: Fault? = nil, campaign: UInt32? = nil) throws -> Fixture {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()

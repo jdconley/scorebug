@@ -110,6 +110,7 @@ actor PublishingQualitySession {
     private var ownedMeasurement: PublishingOwnedMeasurementLease?
     #if DEBUG
     private var lastMeasurementDiagnostic: [String: String] = [:]
+    private var candidateSourceDiagnostic: [String: String] = [:]
     #endif
     private var ownedPredecessor: PublishingBandwidthProbeRetirement?
     private var ownedSource: SourceScope?
@@ -335,6 +336,7 @@ actor PublishingQualitySession {
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
         }
         result.merge(lastMeasurementDiagnostic) { _, latest in latest }
+        result.merge(candidateSourceDiagnostic) { _, latest in latest }
         result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
         result["lastRecoveryDeliveryWindowAgeSeconds"] = recoveryDelivery.map { String(now - $0.source.windowEnd) }
         return result
@@ -432,23 +434,36 @@ actor PublishingQualitySession {
         try admit()
         guard let policy, let receipt, let acknowledgedAt else { throw Failure.notReady }
         let now = try time(), instant = sampleInstant()
+        func note(_ gate: String) {
+            #if DEBUG
+            candidateSourceDiagnostic = ["lastCandidateSourceGate": gate, "lastCandidateSourceObservedAtUptimeSeconds": String(now)]
+            candidateSourceDiagnostic["lastCandidateSourceMaximumWindowAgeSeconds"] = String(timingProfile.maximumCaptureWindowEvaluationAge)
+            candidateSourceDiagnostic["lastCandidateSourceWindowAgeSeconds"] = lastWindow.map { String(now - $0.end) }
+            candidateSourceDiagnostic["lastCandidateSourceReceiverAgeSeconds"] = lastWindow?.receiver.map { String(now - $0.observedAt) }
+            candidateSourceDiagnostic["lastCandidateSourceOverlapsMeasurement"] = lastWindow.map {
+                String($0.end > admission.value.measuredStart && $0.start < admission.value.measuredEnd)
+            }
+            #endif
+        }
         let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
             settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)
         // Revoked or changed owners retain the existing rejection behavior;
         // deferral is solely for absent/incompatible temporal source coverage.
         guard admission.permits(applied: applied, at: now, instant: instant) else {
+            note("authority-rejected")
             return try evaluateCandidate(admission, instant: instant)
         }
         let receiver = admission.receiver
         guard let source = candidateHealthSource,
               source.gameID == receiver.expected.gameId, source.generation == receiver.expected.generation,
               source.workerId == receiver.expected.workerId, source.epoch == receiver.workerEpoch,
-              source.attempt == receiver.workerAttempt, source.publication == receiver.publication,
-              let window = lastWindow, let observedReceiver = window.receiver,
+              source.attempt == receiver.workerAttempt, source.publication == receiver.publication else { note("source-scope"); return nil }
+        guard let window = lastWindow, let observedReceiver = window.receiver,
               window.attemptID == attemptID, window.appliedRevision == policy.appliedRevision,
-              window.end <= now, now - window.end <= timingProfile.maximumCaptureWindowEvaluationAge,
-              observedReceiver.observedAt <= now, now - observedReceiver.observedAt <= 2,
-              window.end > admission.value.measuredStart, window.start < admission.value.measuredEnd else { return nil }
+              window.end <= now, now - window.end <= timingProfile.maximumCaptureWindowEvaluationAge else { note("source-window-age"); return nil }
+        guard observedReceiver.observedAt <= now, now - observedReceiver.observedAt <= 2 else { note("source-receiver-age"); return nil }
+        guard window.end > admission.value.measuredStart, window.start < admission.value.measuredEnd else { note("source-candidate-overlap"); return nil }
+        note("ready")
         return try evaluateCandidate(admission, instant: instant)
     }
 
@@ -890,7 +905,7 @@ actor PublishingQualitySession {
         measurement?.revoke()
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil
         #if DEBUG
-        lastMeasurementDiagnostic = [:]
+        lastMeasurementDiagnostic = [:]; candidateSourceDiagnostic = [:]
         #endif
         applicationOwner = nil; busy = false
         let task: Task<Void, Never>

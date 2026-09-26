@@ -10,6 +10,8 @@ import ScorebugStreaming
     var appliedSettingsDidChange: ((QualityController.Settings) -> Void)?
     #if DEBUG
     var currentDiagnosticDidChange: ((String) -> Void)?
+    var candidateInputDiagnosticProvider: (() -> [String: String])?
+    private var currentCandidateDiagnostic: [String: String] = [:]
     private var currentEvent = "starting", currentReason: String?, sourceRejection: String?
     private var currentDeliveryDiagnostic: [String: String] = [:]
     #endif
@@ -274,12 +276,31 @@ import ScorebugStreaming
         guard !isClosed, let candidate, candidate.value.id != consumedCandidateID else { return }
         let decision: QualityController.Decision
         do {
-            guard let evaluated = try await owner.evaluateCandidateWhenSourceReady(candidate) else { return }
+            #if DEBUG
+            currentCandidateDiagnostic = ["lastCandidateObservedAtUptimeSeconds": String(uptime()),
+                "lastCandidateCostBitsPerSecond": String(candidate.value.candidateTransportBitsPerSecond),
+                "lastCandidatePaddingBitsPerSecond": String(candidate.value.deliveredPaddingBitsPerSecond)]
+            #endif
+            guard let evaluated = try await owner.evaluateCandidateWhenSourceReady(candidate) else {
+                #if DEBUG
+                currentCandidateDiagnostic["lastCandidateGate"] = "source-deferred"
+                #endif
+                return
+            }
             consumedCandidateID = candidate.value.id
             decision = evaluated
+            #if DEBUG
+            currentCandidateDiagnostic["lastCandidateGate"] = "evaluated"
+            currentCandidateDiagnostic["lastCandidateReasons"] = evaluated.reasons.map { String(describing: $0) }.joined(separator: ",")
+            currentCandidateDiagnostic["lastCandidateAdvice"] = evaluated.recommendation.map { String(describing: $0.kind) } ?? "none"
+            #endif
         } catch {
             consumedCandidateID = candidate.value.id
             guard !isClosed, !Task.isCancelled else { return }
+            #if DEBUG
+            currentCandidateDiagnostic["lastCandidateGate"] = "rejected"
+            currentCandidateDiagnostic["lastCandidateRejection"] = Self.reason(error)
+            #endif
             await record("rejected", candidate: candidate, reason: "candidate-" + Self.reason(error))
             return
         }
@@ -356,6 +377,8 @@ import ScorebugStreaming
         guard currentDiagnosticDidChange != nil, !Task.isCancelled else { return }
         let now = uptime(), instant = ContinuousClock.now
         fields.merge(currentDeliveryDiagnostic) { _, newest in newest }
+        fields.merge(candidateInputDiagnosticProvider?() ?? [:]) { _, newest in newest }
+        fields.merge(currentCandidateDiagnostic) { _, newest in newest }
         fields["observedAtUptimeSeconds"] = String(now)
         fields["driverClosed"] = String(isClosed)
         fields["event"] = currentEvent; fields["reason"] = currentReason
@@ -376,7 +399,7 @@ import ScorebugStreaming
     /// stop callers share the shielded task; an in-flight write cannot revive it.
     func cancel() {
         #if DEBUG
-        currentDiagnosticDidChange = nil; currentDeliveryDiagnostic = [:]; currentEvent = "stopped"; currentReason = nil; sourceRejection = nil
+        currentDiagnosticDidChange = nil; candidateInputDiagnosticProvider = nil; currentCandidateDiagnostic = [:]; currentDeliveryDiagnostic = [:]; currentEvent = "stopped"; currentReason = nil; sourceRejection = nil
         #endif
         deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; appliedSettingsDidChange = nil; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {

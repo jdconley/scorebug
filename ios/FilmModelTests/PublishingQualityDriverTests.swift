@@ -399,12 +399,22 @@ import XCTest
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
             uptime: { f.native.now }, export: { data = $0 })
+        var currentDiagnostic = ""
+        driver.currentDiagnosticDidChange = { currentDiagnostic = $0 }
         driver.candidateInputProvider = { _ in calls += 1; return f.admission }
         await driver.tick(encoderReady: true, source: nil, diagnostics: try f.diagnostics())?.value
         XCTAssertEqual(f.native.calls, ["rate:350000"])
+        let deferred = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(currentDiagnostic.utf8)) as? [String: String])
+        XCTAssertEqual(deferred["lastCandidateGate"], "source-deferred")
+        XCTAssertNotNil(deferred["lastCandidateSourceGate"])
         await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
         XCTAssertEqual(calls, 2)
         XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        let applied = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(currentDiagnostic.utf8)) as? [String: String])
+        XCTAssertEqual(applied["lastCandidateGate"], "evaluated")
+        XCTAssertEqual(applied["lastCandidateAdvice"], "trial")
+        XCTAssertNotNil(applied["lastCandidateCostBitsPerSecond"])
+        XCTAssertNotNil(applied["lastCandidatePaddingBitsPerSecond"])
         await driver.stop()
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
         let events = try XCTUnwrap(json["events"] as? [[String: Any]])

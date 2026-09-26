@@ -98,10 +98,11 @@ struct PublishingCandidateAdmission: Sendable {
         probe: PublishingProbeObservation, pair: WorkerReceiverProbeIntervalPair,
         authority: PublishingCandidateAuthority, clock: Clock,
         currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
-        candidateIsCurrent: @escaping @Sendable () -> Bool) -> Self? {
+        candidateIsCurrent: @escaping @Sendable () -> Bool,
+        observeValidation: ((String) -> Void)? = nil) -> Self? {
         return validate(measurement: m, applied: applied, binding: binding, boundAt: boundAt,
             completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
-            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, convention: .productionSRT)
+            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, observeValidation: observeValidation, convention: .productionSRT)
     }
 
     // An explicit IPv4 laboratory convention. This is not a generic estimate for
@@ -111,10 +112,11 @@ struct PublishingCandidateAdmission: Sendable {
         probe: PublishingProbeObservation, pair: WorkerReceiverProbeIntervalPair,
         authority: PublishingCandidateAuthority, clock: Clock,
         currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
-        candidateIsCurrent: @escaping @Sendable () -> Bool) -> Self? {
+        candidateIsCurrent: @escaping @Sendable () -> Bool,
+        observeValidation: ((String) -> Void)? = nil) -> Self? {
         return validate(measurement: m, applied: applied, binding: binding, boundAt: boundAt,
             completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
-            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, convention: .laboratoryIPv4)
+            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, observeValidation: observeValidation, convention: .laboratoryIPv4)
     }
 
     private static func validate(measurement m: Measurement, applied: PublishingQualityTelemetry.Applied,
@@ -122,7 +124,13 @@ struct PublishingCandidateAdmission: Sendable {
         probe: PublishingProbeObservation, pair: WorkerReceiverProbeIntervalPair,
         authority: PublishingCandidateAuthority, clock: Clock,
         currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
-        candidateIsCurrent: @escaping @Sendable () -> Bool, convention: TransportConvention) -> Self? {
+        candidateIsCurrent: @escaping @Sendable () -> Bool, observeValidation: ((String) -> Void)?, convention: TransportConvention) -> Self? {
+        func note(_ gate: String) {
+            #if DEBUG
+            observeValidation?(gate)
+            #endif
+        }
+        func rejected(_ gate: String) -> Self? { note(gate); return nil }
         func time(_ value: Double) -> Bool { value.isFinite && (0...1e12).contains(value) }
         let now = clock.after, receiver = pair.newer.end, expected = receiver.expected
         guard time(clock.before), time(now), clock.before <= now, now - clock.before <= 0.1,
@@ -134,27 +142,27 @@ struct PublishingCandidateAdmission: Sendable {
               m.submissionDuration.isFinite, m.submissionDuration > 0, m.submissionDuration < 5,
               (1...40 * 1024 * 1024).contains(m.transportBytes), m.transportBytes % 188 == 0,
               (1...250_000).contains(m.transportMessageCount),
-              m.transportMessageCount * 188 <= m.transportBytes, m.transportBytes <= m.transportMessageCount * 1316,
-              m.scope.publishingAttemptID == applied.attemptID, m.scope.matchID == expected.gameId,
+              m.transportMessageCount * 188 <= m.transportBytes, m.transportBytes <= m.transportMessageCount * 1316 else { return rejected("measurement") }
+        guard m.scope.publishingAttemptID == applied.attemptID, m.scope.matchID == expected.gameId,
               m.scope.broadcastGeneration == expected.generation,
               expected.publishingAttemptId == applied.attemptID.uuidString.lowercased(),
               m.publishingGeneration == applied.receipt.publishingGeneration,
               m.publishingGeneration == expected.publishingGeneration,
               applied.settings.videoBitrate == applied.receipt.configuration.bitRate,
-              Self.sameReceipt(currentReceipt(), applied.receipt),
-              candidateIsCurrent(), authority.permits(receiver), authority.permits(pair.older.end),
-              pair.older.end.snapshot == pair.newer.start,
-              binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
+              Self.sameReceipt(currentReceipt(), applied.receipt) else { return rejected("scope-receipt") }
+        guard candidateIsCurrent(), authority.permits(receiver), authority.permits(pair.older.end),
+              pair.older.end.snapshot == pair.newer.start else { return rejected("receiver-authority") }
+        guard binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
               binding.policy == probe.policy, binding.stage == probe.stage, binding.campaign == probe.campaign, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
               binding.startedAt + 0.5 <= boundAt, boundAt <= m.startedAt, binding.isActive(at: boundAt),
               probe.id.uuidString.lowercased() == expected.probeId, probe.publishingGeneration == expected.publishingGeneration,
               probe.stage == expected.stage, probe.campaign == expected.campaign, probe.bitRate == expected.bitRate, probe.stage != nil,
               probe.acceptedPayloadBytes >= binding.acceptedPayloadBytes, probe.leaseDeadline >= binding.leaseDeadline,
-              probe.isActive(at: now), probe.leaseDeadline - now <= 0.300001,
-              let receiverBytes = UInt64(receiver.snapshot.deliveredPayloadBytes), receiverBytes <= probe.acceptedPayloadBytes,
+              probe.isActive(at: now), probe.leaseDeadline - now <= 0.300001 else { return rejected("probe") }
+        guard let receiverBytes = UInt64(receiver.snapshot.deliveredPayloadBytes), receiverBytes <= probe.acceptedPayloadBytes,
               let age = receiver.snapshotAgeUpperBound(at: clock.instant),
               let deliveryAge = receiver.lastDeliveryAgeUpperBound(at: clock.instant),
-              age <= .milliseconds(1500), deliveryAge <= .milliseconds(1500) else { return nil }
+              age <= .milliseconds(1500), deliveryAge <= .milliseconds(1500) else { return rejected("receiver-freshness") }
         // The newer intersection is at least as tight as the older interval's
         // bounds. Apply one offset to both intervals rather than splice clocks.
         let offset = pair.newer.receiverClockOffsetBounds
@@ -167,13 +175,13 @@ struct PublishingCandidateAdmission: Sendable {
               let lastEnd = bounds(receiver.snapshot.observedAtNanoseconds),
               firstStart.lowerBound >= max(m.firstInputAt, now - 5),
               firstEnd.lowerBound > m.firstInputAt, firstStart.upperBound < m.lastInputAt,
-              lastEnd.lowerBound > m.endedAt, lastEnd.upperBound <= now else { return nil }
+              lastEnd.lowerBound > m.endedAt, lastEnd.upperBound <= now else { return rejected("receiver-time-bounds") }
         let cost = Double(m.transportBytes + convention.headerBytesPerMessage * m.transportMessageCount) * 8 / min(m.sourceDuration, m.submissionDuration)
         let padding = min(pair.older.payloadBitsPerSecondLowerBound, pair.newer.payloadBitsPerSecondLowerBound)
-        guard cost.isFinite, cost > 0, padding.isFinite, padding > 0 else { return nil }
+        guard cost.isFinite, cost > 0, padding.isFinite, padding > 0 else { return rejected("cost") }
         let deadline = min(m.endedAt + 2, probe.leaseDeadline,
             clock.before + 1.5 - Clock.seconds(age), clock.before + 1.5 - Clock.seconds(deliveryAge))
-        guard deadline > now else { return nil }
+        guard deadline > now else { return rejected("deadline") }
         let value = QualityController.CandidateAdmission(id: m.id, attemptID: applied.attemptID,
             appliedRevision: applied.revision, baseline: applied.settings,
             settings: .init(profileID: m.profile.rawValue, videoBitrate: m.profile.bitRate),
@@ -187,6 +195,7 @@ struct PublishingCandidateAdmission: Sendable {
                 completedAt: completedAt, pair: pair, clock: clock)
         }
         #endif
+        note("admitted")
         return admission
     }
     func permits(applied: PublishingQualityTelemetry.Applied, at now: Double,
