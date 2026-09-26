@@ -34,7 +34,7 @@ import XCTest
         let model = CaptureStreamingModel(storage: CaptureMemoryStorage(captureSetup()), pendingStore: CaptureMemoryPending(),
             clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
             publisherFactory: { url, observations in
-                let value = CaptureStreamingModel.productionPublisher(url: url, observations: observations) { _, _, _, _, _ in lower }
+                let value = CaptureStreamingModel.productionPublisher(url: url, observations: observations) { _, _, _, _, _, _ in lower }
                 owned = value as? NativeOwnedCandidatePublisher
                 return value
             })
@@ -138,12 +138,13 @@ import XCTest
         for available in [true, false] {
             let observations = available ? try VideoFrameObservationOwner(scope: scope) : nil
             let native = CaptureTestPublisher()
-            var selected: PublishingVideoProfile?, probes: Bool?, audio: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
-            let publisher = CaptureStreamingModel.productionPublisher(url: URL(string: "srt://127.0.0.1:8890")!, observations: observations) { _, _, profile, audioObserver, allowsProbes in
-                selected = profile; audio = audioObserver; probes = allowsProbes; return native
+            var selected: PublishingVideoProfile?, probes: Bool?, pacing: Bool?, audio: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
+            let publisher = CaptureStreamingModel.productionPublisher(url: URL(string: "srt://127.0.0.1:8890")!, observations: observations) { _, _, profile, audioObserver, allowsProbes, pacesVideo in
+                selected = profile; audio = audioObserver; probes = allowsProbes; pacing = pacesVideo; return native
             }
             XCTAssertEqual(selected, .minimumStartup)
             XCTAssertEqual(probes, available)
+            XCTAssertEqual(pacing, true, "Ordinary publishing must preserve encoded source cadence even without diagnostics")
             XCTAssertEqual(audio != nil, available)
             if available {
                 let owned = try XCTUnwrap(publisher as? NativeOwnedCandidatePublisher)

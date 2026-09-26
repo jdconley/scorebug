@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September26 ordinary source-cadence pacing](2026-09-26-ordinary-source-cadence-pacing.md) — controlled integration of the existing pacer after packet-loss attribution.
+
 - [September26 collapse packet diagnosis](2026-09-26-collapse-packet-diagnostics.md) — bounded packet evidence at the actual bandwidth-collapse boundary.
 
 - [September26 production broadcast timing](2026-09-26-production-broadcast-timing.md) — coherent ordinary timing after clean media failed the strict benchmark.

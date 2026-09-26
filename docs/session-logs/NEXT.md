@@ -6,23 +6,22 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEAD3128283 runtime source. No PR requested. All jobs are joined.
+HEAD15a0036; ordinary pacing slice under test/review. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-collapse-packet-diagnostics.md)
+owns goals/status/todos. [Current session](2026-09-26-ordinary-source-cadence-pacing.md)
 owns chronology and artifacts. Preserve Downloads originals and failed evidence.
 No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
 during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-All capture/build/media jobs joined. Source3128283 packet diagnostic slice passes
-both reviews/132tests. Completed uDznjI native recovery passes; full media fails.
-Next root action: integrate existing source-cadence pacing in ordinary constructor
-as controlled intervention, proving propagation and preserving candidate ownership,
-source freshness, finish/cancellation/overflow. Keep3000/700ms/ladder/cap/gates
-unchanged. If pacing alone fails, test faster transport sampling and local tick
-while retaining250ms evidence windows and thresholds. Do not invent a new pacer.
+Ordinary pacing slice:221app tests and74native SDK pacing/finish/replacement/startup
+tests pass. Both exact-blob source reviews approve. DebugUI build88971 and Release
+build56235 are active; join before capture. Two source/test files only, selecting
+existing immutable pacing in both ordinary factory branches. Commit once builds
+pass, then run matched ordinary720/700ms/3000ms/750kbps with packet diagnostics.
+No app environment selector, new pacer, queue-limit or threshold change.
 
 1. Finish physical paired vertical when the Watch is unlocked. User approved phone
    automation, but fresh Xcode preflight still explicitly reports Watch locked.
