@@ -112,7 +112,7 @@ export async function withPhysicalRecoveryLab(start, workflow) {
     await lab.stop();
   }
 }
-const configurePython = `import json,plistlib,sys,os
+export const configurePhysicalTestRunPython = `import json,plistlib,sys,os
 source,destination,target,environment_path,products=sys.argv[1:]
 with open(source,'rb') as f:config=plistlib.load(f)
 with open(environment_path) as f:environment=json.load(f)
@@ -247,7 +247,7 @@ async function main() {
           flag: 'wx',
           mode: 0o600,
         });
-        await writeFile(configure, configurePython, { flag: 'wx', mode: 0o600 });
+        await writeFile(configure, configurePhysicalTestRunPython, { flag: 'wx', mode: 0o600 });
         await run(
           'python3',
           [

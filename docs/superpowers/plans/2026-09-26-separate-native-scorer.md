@@ -4,7 +4,7 @@
 
 **Architecture:** Reuse the physical phone vertical and its guarded archive/export teardown. Add an explicitly selected separate-scorer mode and a native scorer UI method on one owned iOS26.2 simulator. The scorer uses the full Scorebug app, normal setup and buttons; no camera source injection, browser, direct scoring requests or changes to production policy. The lab remains unimpeded for this smoke; adaptive collapse and paired Watch qualification stay separate.
 
-**Status:** Design ready; implementation and verification pending. Physical phone runner LAN privacy does not gate this route: only the Scorebug app connects to the API. The simulator scorer does not use a recovery controller.
+**Status:** Implementation and focused regression checks complete; device execution and media verification pending. Physical phone runner LAN privacy does not gate this route: only the Scorebug app connects to the API. The simulator scorer does not use a recovery controller.
 
 ## Interaction and evidence contract
 
@@ -18,9 +18,9 @@
 
 ## Implementation tasks
 
-- [ ] Add two explicitly gated UI methods in `ios/AppUITests/PhysicalStreamingTests.swift`: hardware camera with separate scorer and simulator-only native scorer. Reuse setup/tap/deadline helpers. Add a `separateScorer` argument defaultfalse to the camera workflow; keep existing paths unchanged. Complete failures through stop/export.
-- [ ] Add `scripts/test-separate-native-scorer.mjs`: required physicalUDID/privatehost; existing installedruntime26.2; fresh lab; private environment/xctestruns; finite ordered workflow starts; joined cleanup; actual executable hashes; owned-simulator-only teardown. Reuse `runOrdinaryCommand`, `requireOrdinaryTestResult`, `startDeviceLab` and physical input verifier. Test argument selection and exact role/env segregation without starting devices.
-- [ ] Add an independent durable-command/evidence verifier and meaningful rejection cases for wrong actor, extra point/retap, wrong ordering, camera-free scorer recording association, skipped/missing test, and missing media. Keep workflow and media qualification flags separate.
+- [x] Add two explicitly gated UI methods in `ios/AppUITests/PhysicalStreamingTests.swift`: hardware camera with separate scorer and simulator-only native scorer. Reuse setup/tap/deadline helpers. Add a `separateScorer` argument defaultfalse to the camera workflow; keep existing paths unchanged. Complete failures through stop/export.
+- [x] Add `scripts/test-separate-native-scorer.mjs`: required physicalUDID/privatehost; existing installedruntime26.2; fresh lab; private environment/xctestruns; finite ordered workflow starts; joined cleanup; actual executable hashes; owned-simulator-only teardown. Reuse `runOrdinaryCommand`, `requireOrdinaryTestResult`, `startDeviceLab` and physical input verifier. Test argument selection and exact role/env segregation without starting devices.
+- [x] Add an independent durable-command/evidence verifier and meaningful rejection cases for wrong actor, extra point/retap, wrong ordering, camera-free scorer recording association, skipped/missing test, and missing media. Keep workflow and media qualification flags separate.
 - [ ] Review source, run relevant Node checks and signed/simulator builds sequentially, then execute the physical-plus-simulator workflow with no heavy builds/analysis during capture. Collect and verify output media only after both native commands and lab shutdown join.
 
 ## Alternatives considered

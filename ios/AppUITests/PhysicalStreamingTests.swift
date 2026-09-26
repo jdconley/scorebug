@@ -85,6 +85,7 @@ final class PhysicalStreamingTests: XCTestCase {
     private var evidencePrefix = "PhysicalStreaming"
     private var completedRecordingID: String?
     private var deadline = Date.distantPast
+    private var scorerNetworkPermissionOnly = false
     private enum SmokeFailure: Error { case failed(String) }
 
     @MainActor func testPhysicalIPhoneCameraPublishScoreStopAndExport() throws {
@@ -93,6 +94,146 @@ final class PhysicalStreamingTests: XCTestCase {
         #else
         try runVertical(watchScoring: false)
         #endif
+    }
+
+    @MainActor func testPhysicalIPhoneWhileSeparateNativePhoneScores() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Separate scorer camera lane requires an actual iPhone camera.")
+        #else
+        guard ProcessInfo.processInfo.environment["SCOREBUG_PHYSICAL_SEPARATE_SCORER"] == "1" else {
+            throw XCTSkip("Use the explicit separate native scorer launcher.")
+        }
+        evidencePrefix = "SeparateScorerCamera"
+        try runVertical(watchScoring: false, separateScorer: true)
+        #endif
+    }
+
+    @MainActor func testSeparateNativeScorerWhileOtherPhonePublishes() throws {
+        #if targetEnvironment(simulator)
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["SCOREBUG_SEPARATE_NATIVE_SCORER"] == "1" else {
+            throw XCTSkip("Use the dedicated disposable separate native scorer simulator launcher.")
+        }
+        guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
+              let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
+            throw SmokeFailure.failed("Separate scorer requires explicit app connection configuration.")
+        }
+        try require(isPrivateLANEndpoint(endpoint), "Separate scorer requires a private LAN endpoint.")
+        continueAfterFailure = true
+        executionTimeAllowance = 480
+        deadline = Date().addingTimeInterval(430)
+        evidencePrefix = "SeparateNativeScorer"
+        scorerNetworkPermissionOnly = true
+        try prepareOrdinarySimulator()
+        let app = XCUIApplication()
+        app.launch()
+        defer { separateScorerCheckpoint(app, role: "scorer", phase: "final-observation") }
+        // This is the full app on a fresh owned simulator. Leave Film immediately;
+        // no source injection, camera request, or runner-side network request.
+        try selectTab("Score", app)
+        try replace(app.textFields["scoring.endpoint"], with: endpoint, in: app)
+        try replace(app.secureTextFields["scoring.token"], with: token, in: app)
+        try tap(app.buttons["scoring.connect"], in: app)
+        try wait("Separate scorer did not join the seeded active match.", seconds: 20) {
+            self.allowExpectedPermissions()
+            return app.buttons["scoring.homePoint"].exists
+        }
+        try validateSeparateScore(app, allowed: ["0:0"])
+        try require(app.buttons["scoring.takeover"].exists && !app.buttons["scoring.homePoint"].isEnabled,
+                    "Separate scorer must join without owning scoring.")
+        separateScorerCheckpoint(app, role: "scorer", phase: "ready", ready: true)
+        // The coordinator launches the camera only after the ready attachment.
+        try waitForSeparateScore(app, home: 1, away: 0, previous: "0:0", seconds: 240,
+                                 requireWorker: true)
+        separateScorerCheckpoint(app, role: "scorer", phase: "camera-home-observed", ready: true)
+        try tap(app.buttons["scoring.takeover"], in: app)
+        try wait("Separate scorer did not gain scoring control.", seconds: 12) {
+            app.buttons["scoring.homePoint"].isEnabled && app.buttons["scoring.awayPoint"].isEnabled
+        }
+        try validateSeparateScore(app, allowed: ["1:0"])
+        separateScorerCheckpoint(app, role: "scorer", phase: "takeover-acknowledged", ready: true)
+        for (phase, action, away, previous, hold) in [
+            ("away-point", "scoring.awayPoint", 1, "1:0", 12.0),
+            ("undo", "scoring.undo", 0, "1:1", 12.0),
+            ("final-away-point", "scoring.awayPoint", 1, "1:0", 30.0)
+        ] {
+            try validateSeparateScore(app, allowed: [previous])
+            try require(separateWorkerLabel(app) == "Worker encoding video", "Worker was not fresh before the scorer action.")
+            // Exactly one tap per action. A timeout fails rather than retrying.
+            try tap(app.buttons[action], in: app)
+            try waitForSeparateScore(app, home: 1, away: away, previous: previous, seconds: 12, requireWorker: true)
+            separateScorerCheckpoint(app, role: "scorer", phase: phase + "-acknowledged", ready: true)
+            try holdSeparateScore(app, home: 1, away: away, seconds: hold)
+            separateScorerCheckpoint(app, role: "scorer", phase: phase + "-hold-complete", ready: true)
+        }
+        #else
+        throw XCTSkip("Separate native scorer requires a disposable simulator.")
+        #endif
+    }
+
+    @MainActor private func separateWorkerLabel(_ app: XCUIApplication) -> String {
+        let status = app.staticTexts["scoring.broadcastStatus"]
+        return status.exists ? status.label : "missing"
+    }
+
+    @MainActor private func separatePermissionAlertAbsent(_ app: XCUIApplication) -> Bool {
+        !app.alerts.firstMatch.exists && !XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists
+    }
+
+    @MainActor private func validateSeparateScore(_ app: XCUIApplication, allowed: [String]) throws {
+        let home = app.buttons["scoring.homePoint"], away = app.buttons["scoring.awayPoint"]
+        try require(home.exists && away.exists && home.label == "Award point to HOME" && away.label == "Award point to AWAY" &&
+                    !app.staticTexts["scoring.ended"].exists, "Separate scorer observed an unexpected or ended match.")
+        let score = "\(home.value as? String ?? "missing"):\(away.value as? String ?? "missing")"
+        try require(allowed.contains(score), "Separate scorer observed an unexpected score; no action was retried.")
+        try require(separatePermissionAlertAbsent(app), "A permission or app alert covers the separate scoring workflow.")
+    }
+
+    @MainActor private func waitForSeparateScore(_ app: XCUIApplication, home: Int, away: Int, previous: String,
+                                               seconds: Double, requireWorker: Bool = false, reserveTerminal: Bool = false, allowImmediatePeerPoint: Bool = false) throws {
+        let end = min(deadline.addingTimeInterval(reserveTerminal ? -100 : 0), Date().addingTimeInterval(seconds))
+        let target = "\(home):\(away)"
+        while Date() < end {
+            // Only the camera's initial HOME acknowledgment permits the peer's
+            // immediate AWAY response. The subsequent three ordered gates stay exact.
+            try validateSeparateScore(app, allowed: [previous, target] + (allowImmediatePeerPoint ? ["1:1"] : []))
+            let observedAway = app.buttons["scoring.awayPoint"].value as? String
+            let reached = app.buttons["scoring.homePoint"].value as? String == String(home) &&
+                (observedAway == String(away) || (allowImmediatePeerPoint && observedAway == "1"))
+            if reached && (!requireWorker || separateWorkerLabel(app) == "Worker encoding video") && Date() < end { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        throw SmokeFailure.failed("Separate scorer transition did not arrive within its finite gate.")
+    }
+
+    @MainActor private func holdSeparateScore(_ app: XCUIApplication, home: Int, away: Int, seconds: Double) throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        while ProcessInfo.processInfo.systemUptime - started < seconds {
+            try require(Date() < deadline, "Separate scorer hold exceeded its finite budget.")
+            try validateSeparateScore(app, allowed: ["\(home):\(away)"])
+            try require(separateWorkerLabel(app) == "Worker encoding video", "Worker status stopped being fresh during the scorer hold.")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        try validateSeparateScore(app, allowed: ["\(home):\(away)"])
+    }
+
+    @MainActor private func separateScorerCheckpoint(_ app: XCUIApplication, role: String, phase: String, ready: Bool = false) {
+        let statuses = ["Broadcast not requested", "Waiting for worker status", "Worker status unavailable", "Worker idle",
+                        "Worker waiting for video source", "Worker starting", "Worker encoding video", "Worker stopping",
+                        "Worker retrying", "Worker failed", "Worker closed", "missing"]
+        let worker = separateWorkerLabel(app)
+        func safeScore(_ id: String) -> String {
+            let score = app.buttons[id].value as? String ?? "missing"
+            return ["0", "1", "missing"].contains(score) ? score : "other"
+        }
+        let report: [String: Any] = ["role": role, "phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime,
+                                   "home": safeScore("scoring.homePoint"), "away": safeScore("scoring.awayPoint"),
+                                   "ready": ready, "status": statuses.contains(worker) ? worker : "other",
+                                   "permissionAlertAbsent": separatePermissionAlertAbsent(app)]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "\(evidencePrefix)-\(phase)"; attachment.lifetime = .keepAlways; add(attachment)
+        }
     }
 
     @MainActor func testPhysicalPairedWatchWhileCameraPublishes() throws {
@@ -606,7 +747,7 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
-    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false) throws {
+    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false, separateScorer: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
               let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
@@ -614,10 +755,10 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try require(isPrivateLANEndpoint(endpoint), "Device smoke requires an HTTP(S) URL with a numeric RFC1918 IPv4 host and no credentials, query, or fragment.")
         continueAfterFailure = true // Thrown failures still run the stop cleanup below.
-        executionTimeAllowance = recovery ? 780 : (watchScoring ? 600 : (ordinarySimulator ? 480 : 240))
+        executionTimeAllowance = recovery ? 780 : (watchScoring ? 600 : ((ordinarySimulator || separateScorer) ? 480 : 240))
         // Reserve 35 seconds for independent stream and recording cleanup,
         // plus a little headroom for final evidence within the 240-second test.
-        deadline = Date().addingTimeInterval(recovery ? 735 : (watchScoring ? 550 : (ordinarySimulator ? 430 : 200)))
+        deadline = Date().addingTimeInterval(recovery ? 735 : (watchScoring ? 550 : ((ordinarySimulator || separateScorer) ? 430 : 200)))
         if ordinarySimulator { try prepareOrdinarySimulator() }
         let app = XCUIApplication()
         // Physical runs preserve an existing process so the prior-capture guard
@@ -849,6 +990,58 @@ final class PhysicalStreamingTests: XCTestCase {
             if app.buttons["streaming.stop"].exists {
                 try tap(app.buttons["streaming.stop"], in: app)
             }
+        } else if separateScorer {
+            do {
+                let initialDuration = elapsed(app)
+                try require(initialDuration.isFinite && initialDuration >= 0, "Camera recording duration is unavailable before scoring.")
+                try selectTab("Score", app)
+                try validateSeparateScore(app, allowed: ["0:0"])
+                try tap(app.buttons["scoring.homePoint"], in: app)
+                try waitForSeparateScore(app, home: 1, away: 0, previous: "0:0", seconds: 12, reserveTerminal: true, allowImmediatePeerPoint: true)
+                separateScorerCheckpoint(app, role: "camera", phase: "native-home-point-acknowledged", ready: true)
+                var previousDuration = initialDuration
+                for (phase, away, previous) in [("peer-away-point", 1, "1:0"), ("peer-undo", 0, "1:1"), ("peer-final-away-point", 1, "1:0")] {
+                    try waitForSeparateScore(app, home: 1, away: away, previous: previous, seconds: 60, reserveTerminal: true)
+                    separateScorerCheckpoint(app, role: "camera", phase: phase + "-observed", ready: true)
+                    try selectTab("Film", app)
+                    let currentDuration = elapsed(app)
+                    try require(app.buttons["film.stop"].exists && currentDuration.isFinite && currentDuration > previousDuration &&
+                                value(app, "streaming.localStatus") == "publishing" &&
+                                value(app, "streaming.workerStatus") == "producing_output",
+                                "Camera recording or live output failed between separate scorer transitions.")
+                    previousDuration = currentDuration
+                    evidence(app, phase: phase + "-while-publishing", screenshot: false)
+                    try selectTab("Score", app)
+                }
+                try validateSeparateScore(app, allowed: ["1:1"])
+                try selectTab("Film", app)
+                let holdStarted = ProcessInfo.processInfo.systemUptime
+                let initialHoldDuration = elapsed(app)
+                try require(initialHoldDuration.isFinite && initialHoldDuration >= 0 && initialHoldDuration >= previousDuration,
+                            "Camera final score hold has an invalid recording duration baseline.")
+                while true {
+                    try require(Date() < deadline.addingTimeInterval(-100), "Camera final score hold exceeded its finite gate.")
+                    let currentDuration = elapsed(app)
+                    try require(currentDuration.isFinite && currentDuration >= initialHoldDuration,
+                                "Camera recording duration became invalid during the final score hold.")
+                    try require(app.buttons["film.stop"].exists && value(app, "streaming.localStatus") == "publishing" &&
+                                value(app, "streaming.workerStatus") == "producing_output" && separatePermissionAlertAbsent(app),
+                                "Camera recording or live output stopped during the final score hold.")
+                    if ProcessInfo.processInfo.systemUptime - holdStarted >= 30 && currentDuration >= initialHoldDuration + 30 { break }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                }
+                evidence(app, phase: "final-score-live-hold-complete", screenshot: false)
+                try selectTab("Score", app)
+                try validateSeparateScore(app, allowed: ["1:1"])
+                separateScorerCheckpoint(app, role: "camera", phase: "final-score-hold-complete", ready: true)
+            } catch {
+                scoreFailure = error
+                separateScorerCheckpoint(app, role: "camera", phase: "score-gate-failed")
+            }
+            // Keep the score failure through the existing independent stop,
+            // continued archive, actual recording identity, and export checks.
+            try selectTab("Film", app)
+            try tap(app.buttons["streaming.stop"], in: app)
         } else if !watchScoring {
             do {
                 try selectTab("Score", app)
@@ -968,13 +1161,17 @@ final class PhysicalStreamingTests: XCTestCase {
     @MainActor private func wait(_ message: String, seconds: Double, until condition: () -> Bool) throws {
         let end = min(deadline, Date().addingTimeInterval(seconds))
         while Date() < end {
-            if condition() { return }
+            try enforceScorerPermissionPolicy()
+            let satisfied = condition()
+            try enforceScorerPermissionPolicy()
+            if satisfied { return }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         throw SmokeFailure.failed(message)
     }
 
     @MainActor private func selectTab(_ name: String, _ app: XCUIApplication) throws {
+        try enforceScorerPermissionPolicy()
         let button = app.tabBars.buttons[name]
         tabEvidence(app, requested: name, phase: "before-selection")
         do {
@@ -994,6 +1191,7 @@ final class PhysicalStreamingTests: XCTestCase {
                 button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 let selectionEnd = min(deadline, Date().addingTimeInterval(3))
                 while Date() < selectionEnd {
+                    try enforceScorerPermissionPolicy()
                     if button.exists && button.isSelected { return }
                     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
                 }
@@ -1098,6 +1296,7 @@ final class PhysicalStreamingTests: XCTestCase {
         // bar or a system permission dialog, and check hittability after each move.
         for direction in [true, false] {
             for _ in 0..<4 {
+                try enforceScorerPermissionPolicy()
                 if element.exists && element.isHittable { return }
                 try require(Date() < deadline, "Device UI smoke exceeded its time budget.")
                 allowExpectedPermissions()
@@ -1193,12 +1392,24 @@ final class PhysicalStreamingTests: XCTestCase {
         settings.terminate()
     }
 
+    @MainActor private func enforceScorerPermissionPolicy() throws {
+        guard scorerNetworkPermissionOnly else { return }
+        let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        guard alert.exists else { return }
+        let text = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ").lowercased()
+        try require(!(text.contains("scorebug") && (text.contains("camera") || text.contains("microphone"))),
+                    "Separate scorer unexpectedly requested capture permission; the permission was not granted.")
+    }
+
     @MainActor private func allowExpectedPermissions() {
         let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         guard alert.exists else { return }
         let text = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ").lowercased()
         guard text.contains("scorebug") else { return }
         let cameraOrMic = text.contains("camera") || text.contains("microphone")
+        // All shared helpers obey the scorer-only policy, including setup and
+        // reveal/tap polling. The throwing polling guards report the failure.
+        if scorerNetworkPermissionOnly && cameraOrMic { return }
         let network = text.contains("local network") || text.contains("devices on your local")
         guard cameraOrMic || network else { return }
         // Match both alert subject and exact affirmative title. Never tap a

@@ -429,6 +429,14 @@ test(
       )
       .replace('Date().addingTimeInterval(0.2)', 'Date().addingTimeInterval(0.001)')
       .replace('throw SmokeFailure.failed(message)', 'throw Failure.gate');
+    // This harness exercises the existing ordinary/recovery routes. Match the
+    // production scorer policy's default-false early return without requiring
+    // XCTest's application/alert types in the host Swift interpreter.
+    assert.match(source, /private var scorerNetworkPermissionOnly = false/);
+    assert.match(
+      source,
+      /private func enforceScorerPermissionPolicy\(\) throws \{\s*guard scorerNetworkPermissionOnly else \{ return \}/,
+    );
     const terminal = source
       .split('// BEGIN RECOVERY TERMINATION')[1]
       .split('// END RECOVERY TERMINATION')[0];
@@ -451,6 +459,11 @@ class Harness {
   var recoveryFailure: String?
   var recoveryRecordingDeadline: Double = 0
   var deadline = Date.distantPast
+  var scorerNetworkPermissionOnly = false
+  func enforceScorerPermissionPolicy() throws {
+    guard scorerNetworkPermissionOnly else { return }
+    fatalError("Scorer permission handling is outside this ordinary/recovery harness")
+  }
   func elapsed(_ app: App) -> Double { 0 }
 ${deadlineWait}
   func require(_ condition: Bool, _ message: String) throws { if !condition { throw Failure.gate } }
