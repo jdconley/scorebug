@@ -4,7 +4,7 @@
 
 **Goal:** Supply ordinary camera integration with an explicit production admission estimate and a bounded probe plan for the next candidate, without importing laboratory IPv4 accounting or a fixed12Mbps probe.
 
-**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Measured-cost feedback for subsequent production probes is implemented, tested and independently reviewed. The ordinary simulator vertical now passes startup, measured360p increase, native score, stop/export and independent media checks. Physical, congestion recovery and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
+**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Measured-cost feedback for subsequent production probes is implemented, tested and independently reviewed. One ordinary simulator vertical passes startup, measured360p increase, native score, stop/export and independent media checks. A subsequent run retains valid feedback but misses the increase deadline after four earlier candidate failures; repeatable ramp-up remains open. Physical, congestion recovery and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
 
 ## Design
 
@@ -41,3 +41,11 @@ Keep the native 12 Mbps/16 MiB/60-second limits. An unsupported measured hint mu
 - [x] Implement the bounded hint and immutable production-plan resolution without changing admission, probe authority, timing, cooldown, archive behavior or laboratory evidence.
 - [x] Run affected app/Core/streaming checks plus Debug and Release builds; review the implementation and preserve failures.
 - [x] Run a fresh ordinary native vertical. Require minimum startup, measured increase, native score, stop/export and independent complete media verification of all three outputs before claiming this feedback fix works.
+
+## Current follow-up: explain intermittent pre-feedback failures
+
+A later run passes native scoring/export but misses the unchanged adaptive deadline. Its final snapshot retains a learned scheduling hint and a nominal no-headroom decision after four candidate failures, without the first three causes. Preserve both the earlier pass and later failure; do not infer that the hint was ignored or that a5second latest health window means accumulated recovery stalled.
+
+- [x] Add test-only bounded snapshots during the ordinary150second adaptive wait: at most76samples, spaced at least2seconds, only existing bounded4096byte current quality diagnostics, allowlisted applied quality and elapsed time. No production history, screenshots, extra source selectors, gate extensions or automatic retaps. Avoid rereading unrelated UI fields.
+- [ ] Review/build the harness change, then run once after all offline analysis joins. Preserve every failed attempt and inspect the collected sequence before choosing a runtime fix or latency-profile change.
+- [ ] Resolve the evidenced cause and requalify repeatable progressive behavior before expanding to the paired simulator lane.

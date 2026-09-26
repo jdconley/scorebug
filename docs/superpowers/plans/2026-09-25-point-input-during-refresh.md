@@ -4,7 +4,7 @@
 
 **Goal:** A normal background score refresh must not disable or silently discard an otherwise valid HOME/AWAY point tap. Preserve one-command persistence, authority checks and confirmed/destructive action behavior.
 
-**Current status:** The point-specific reservation/refresh join is implemented. Held-refresh and restored-receipt regressions were reproduced and fixed;24scoring and48relatedCoretests pass. Independent specification and quality reviews approve the final slice. DebugUI and Releasearm64builds pass; fresh native integration verification is running. This fixes a controlled input-suppression case; it does not prove the cause of the earlier missed native point.
+**Current status:** The point-specific reservation/refresh join is implemented. Held-refresh and restored-receipt regressions were reproduced and fixed;24scoring and48relatedCoretests pass. Independent specification and quality reviews approve the final slice. DebugUI and Releasearm64builds pass; fresh native single-tap scoring and export pass, but the overall run fails adaptive and one live audio-correlation check. Those separate failures remain open. This fixes a controlled input-suppression case; it does not prove the cause of the earlier missed native point.
 
 ## Design
 
