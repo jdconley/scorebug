@@ -6,17 +6,20 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout.
-HEADf9c5b26; reviewed app source8495c79. No PR requested.
+HEAD73536ea; production timing source changes are under test/review. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-ordinary-transport-budget.md)
+owns goals/status/todos. [Current session](2026-09-26-production-broadcast-timing.md)
 owns chronology and artifacts. Preserve Downloads originals, user recordings and
 failed evidence. No runtime downloads, unrelated simulator deletion, or heavy
 build/media jobs during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Physical readiness
 
-All jobs have joined. Sourcef9c5b26 option reviews/25tests pass. Requested700ms
+All jobs joined:199app tests,8Core timing boundary tests, DebugUI/Release pass.
+Production factory now selects existing3000ms profile and protects timing metadata.
+Spec review approved four exact blobs; quality review ongoing. Commit reviewed
+source before fresh full700ms recovery720 capture. Sourcef9c5b26 option reviews/25tests pass. Requested700ms
 comparison `ordinary-native-3ux2FX` / `device-lab-Jc3NLf` fails initial240p10s
 policy-ready gate: sourceRejection:time,0on-time/24–26late frames per sampled
 window under strict1500ms. No ramp/cap took place. All three media outputs PASS:

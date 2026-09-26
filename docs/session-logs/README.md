@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September26 production broadcast timing](2026-09-26-production-broadcast-timing.md) — coherent ordinary timing after clean media failed the strict benchmark.
+
 - [September26 ordinary upload recovery budget](2026-09-26-ordinary-transport-budget.md) — isolated publishing-hop comparison after720media loss.
 
 - [September 26 pipeline geometry correlation](2026-09-26-pipeline-geometry-correlation.md) — exact stream identity and accepted decoder-window evidence for higher-rung qualification.

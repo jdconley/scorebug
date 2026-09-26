@@ -1,8 +1,8 @@
 import Foundation
 
-/// Immutable experimental capture-to-decoder contracts. Selecting these values
-/// never authorizes a route: the fixture boundary must validate the entire owned
-/// capacity diagnostic. Production and omitted selectors retain strict timing.
+/// Immutable capture-to-decoder contracts. The app's production factory selects
+/// broadcastReliability3000; strict1500 remains the default for explicit legacy
+/// construction and fixture benchmarks. Selecting a value never authorizes a route.
 public enum StreamingTimingProfile: String, CaseIterable, Sendable {
     case strict1500 = "strict1500-v1"
     case broadcastReliability2000 = "broadcast-reliability2000-v1"
@@ -19,7 +19,8 @@ public enum StreamingTimingProfile: String, CaseIterable, Sendable {
     public var maximumCadenceDeliveryReportAgeMs: Int { 250 }
     public var decoderStallThresholdMs: Int { 1000 }
 
-    /// Historical artifacts must remain unchanged and reject new metadata.
+    /// Historical fixture artifacts retain their original diagnostic scope.
+    /// Ordinary production diagnostics report the profile and budgets separately.
     public var evidence: [String: Any]? {
         guard self != .strict1500 else { return nil }
         return ["formatVersion": 1, "profileId": rawValue, "decoderBudgetMs": decoderBudgetMs,

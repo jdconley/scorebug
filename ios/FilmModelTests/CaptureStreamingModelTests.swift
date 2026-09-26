@@ -7,6 +7,25 @@ import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testOrdinaryQualityUsesExplicitBroadcastTiming() async throws {
+        var driver: PublishingQualityDriver?
+        var publishing: PublishingSession?
+        let model = makeModel(server: CaptureTestServer(), qualityFactory: { session, attempt in
+            publishing = session
+            driver = try PublishingQualityDriver.standard(session: session, attemptID: attempt)
+            return driver
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        let active = try XCTUnwrap(driver), session = try XCTUnwrap(publishing)
+        await active.tick(encoderReady: false, source: nil, diagnostics: .init(snapshot: session.snapshot))?.value
+        let text = try XCTUnwrap(model.qualityDiagnostic)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        XCTAssertEqual(fields["timingProfileID"], "broadcast-reliability3000-v1")
+        XCTAssertEqual(fields["decoderBudgetMilliseconds"], "3000")
+        XCTAssertEqual(fields["captureWindowMaximumAgeMilliseconds"], "3500")
+        await model.stopStreaming()
+    }
+
     func testDefaultModelInstallsContinuousOwnerAndWithdrawsReadersOnStop() async throws {
         let server = CaptureTestServer()
         var owned: NativeOwnedCandidatePublisher?

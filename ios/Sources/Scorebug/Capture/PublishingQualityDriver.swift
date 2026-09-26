@@ -379,6 +379,9 @@ import ScorebugStreaming
         fields.merge(currentDeliveryDiagnostic) { _, newest in newest }
         fields.merge(candidateInputDiagnosticProvider?() ?? [:]) { _, newest in newest }
         fields.merge(currentCandidateDiagnostic) { _, newest in newest }
+        fields["timingProfileID"] = timingProfile.rawValue
+        fields["decoderBudgetMilliseconds"] = String(timingProfile.decoderBudgetMs)
+        fields["captureWindowMaximumAgeMilliseconds"] = String(timingProfile.maximumCaptureWindowEvaluationAgeMs)
         fields["observedAtUptimeSeconds"] = String(now)
         fields["driverClosed"] = String(isClosed)
         fields["event"] = currentEvent; fields["reason"] = currentReason
@@ -399,7 +402,8 @@ import ScorebugStreaming
         if let size = data?.count, size > 4096 {
             fields["diagnosticCompacted"] = "true"
             let protected = Set(["appliedTransition", "observedAtUptimeSeconds", "sessionObservedAtUptimeSeconds",
-                "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted"])
+                "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted",
+                "timingProfileID", "decoderBudgetMilliseconds", "captureWindowMaximumAgeMilliseconds"])
             let removable = fields.keys.filter { !$0.hasPrefix("policy") && !protected.contains($0) }.sorted {
                 let lhsHistory = $0.hasPrefix("lastCandidate") || $0.hasPrefix("lastMeasurement")
                 let rhsHistory = $1.hasPrefix("lastCandidate") || $1.hasPrefix("lastMeasurement")
@@ -744,7 +748,10 @@ import ScorebugStreaming
     static func production(session: PublishingSession, attemptID: UUID,
         profiles: [QualityController.Profile] = productionProfiles) throws -> PublishingQualityDriver? {
         guard session.snapshot.ingressObservation != nil else { return nil }
-        let timing: StreamingTimingProfile = .strict1500
+        // Broadcast recovery needs room for encoder, SRT and worker buffering.
+        // This is a deadline allowance, not an inserted delay. Report freshness,
+        // stall detection and local transport pressure remain independent.
+        let timing: StreamingTimingProfile = .broadcastReliability3000
         let owner = try PublishingQualitySession(session: session, profiles: profiles, attemptID: attemptID,
             initial: .init(profileID: "240p30", videoBitrate: 350_000), strategy: .measuredCandidateTrials,
             behavior: .progressive, requiresSharedCandidateRecovery: true, usesGuardedMutations: true, timingProfile: timing)
