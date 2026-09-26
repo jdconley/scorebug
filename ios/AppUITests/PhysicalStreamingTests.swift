@@ -213,9 +213,7 @@ final class PhysicalStreamingTests: XCTestCase {
             try selectTab("Film", app)
             if ordinarySimulator {
                 do {
-                    try wait("Adaptive gate failed: ordinary publishing did not acknowledge 360p30 at 600000 bps within 150 seconds.", seconds: 150) {
-                        self.value(app, "streaming.appliedQuality") == "360p30:600000"
-                    }
+                    try waitForOrdinaryIncrease(app)
                 } catch {
                     adaptiveFailure = error
                     evidence(app, phase: "adaptive-gate-failed", screenshot: true)
@@ -543,6 +541,43 @@ final class PhysicalStreamingTests: XCTestCase {
         let element = app.staticTexts[id]
         guard element.exists else { return "missing" }
         return element.value as? String ?? "missing"
+    }
+
+    @MainActor private func waitForOrdinaryIncrease(_ app: XCUIApplication) throws {
+        let started = ContinuousClock.now
+        let end = min(deadline, Date().addingTimeInterval(150))
+        var lastSample: ContinuousClock.Instant?
+        var samples: [[String: Any]] = []
+        defer {
+            if let data = try? JSONSerialization.data(withJSONObject: samples, options: [.sortedKeys]) {
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = "OrdinarySimulatorStreaming-adaptive-samples"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        while Date() < end {
+            let quality = value(app, "streaming.appliedQuality")
+            if Date() < end, quality == "360p30:600000" { return }
+            let now = ContinuousClock.now
+            if Date() < end, samples.count < 76,
+               lastSample.map({ $0.duration(to: now) >= .seconds(2) }) ?? true {
+                lastSample = now
+                let diagnostic = value(app, "streaming.qualityDiagnostic")
+                // AX reads consume the existing budget; never extend the gate
+                // to finish a sample or accept an acknowledgment after its end.
+                if Date() < end {
+                    let elapsed = started.duration(to: now).components
+                    samples.append([
+                        "sampleStartedElapsedSeconds": Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18,
+                        "appliedQuality": ["240p30:350000", "360p30:600000"].contains(quality) ? quality : "unavailable-or-other",
+                        "qualityDiagnostic": diagnostic.utf8.count <= 4096 ? diagnostic : "oversized"
+                    ])
+                }
+            }
+            RunLoop.current.run(until: min(end, Date().addingTimeInterval(0.2)))
+        }
+        throw SmokeFailure.failed("Adaptive gate failed: ordinary publishing did not acknowledge 360p30 at 600000 bps within 150 seconds.")
     }
 
     @MainActor private func evidence(_ app: XCUIApplication, phase: String, screenshot: Bool) {
