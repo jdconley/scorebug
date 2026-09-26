@@ -21,6 +21,7 @@ actor PublishingOwnedMeasurementLease {
     #endif
     nonisolated let token: QualityController.CandidateMeasurementAttempt
     nonisolated let context: PublishingQualitySession.CandidateMeasurementContext
+    private let stagePlan: NativeCandidateStagePlan
     private let publisher: NativeOwnedCandidatePublisher
     private let probes: NativeOwnedCandidatePublisher.Probes
     private let diagnostic: QualityController.CandidateMeasurementDiagnostic
@@ -70,6 +71,7 @@ actor PublishingOwnedMeasurementLease {
          sourceCoverage: @escaping @Sendable (QualityController.CandidateMeasurementAttempt) async -> SourceCoverage?) throws {
         guard let target = PublishingVideoProfile(rawValue: context.readiness.settings.profileID),
               target.bitRate == context.readiness.settings.videoBitrate else { throw PublishingQualitySession.Failure.unsupportedProfile }
+        self.stagePlan = try publisher.stagePlanSelection.resolve(context)
         self.token = token; self.context = context; self.publisher = publisher; self.probes = probes; self.predecessor = predecessor; self.retirement = predecessor
         #if DEBUG
         self.audit = publisher.audit
@@ -222,7 +224,7 @@ actor PublishingOwnedMeasurementLease {
         #endif
         nativeContext = selected
         try check()
-        let plan = publisher.stagePlan
+        let plan = stagePlan
         try await allocate(in: selected, after: predecessor, rate: plan.bitRates[0], policy: policy, replacement: false)
         for index in 1..<plan.bitRates.count {
             try await hold(for: plan.holds[index - 1])
@@ -288,7 +290,7 @@ actor PublishingOwnedMeasurementLease {
     }
     func snapshot() -> NativeCandidateSnapshot? {
         guard isActive, let cost, let binding, let sample, let boundAt, let completedAt,
-              sample.id == binding.id, sample.stage == publisher.stagePlan.finalStage,
+              sample.id == binding.id, sample.stage == stagePlan.finalStage,
               ProcessInfo.processInfo.systemUptime - cost.endedAt <= 2 else { return nil }
         let current = PublishingProbeObservation(sample), authority = authority
         guard current.isActive(at: ProcessInfo.processInfo.systemUptime) else { return nil }

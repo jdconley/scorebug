@@ -23,11 +23,10 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         var authority: PublishingCandidateAuthority
         var clock: PublishingCandidateAdmission.Clock
         var currentReceipt: PublishingBitRateChange
-        func admit(candidateIsCurrent: @escaping @Sendable () -> Bool = { true }) -> PublishingCandidateAdmission? {
+        func admit(production: Bool = false, candidateIsCurrent: @escaping @Sendable () -> Bool = { true }) -> PublishingCandidateAdmission? {
             let receipt = currentReceipt
-            return .laboratoryIPv4(measurement: measurement, applied: applied, binding: binding, boundAt: boundAt,
-                completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
-                currentReceipt: { receipt }, candidateIsCurrent: candidateIsCurrent)
+            let admit = production ? PublishingCandidateAdmission.productionSRT : PublishingCandidateAdmission.laboratoryIPv4
+            return admit(measurement, applied, binding, boundAt, completedAt, probe, pair, authority, clock, { receipt }, candidateIsCurrent)
         }
     }
     private func fixture(_ fault: Fault? = nil, campaign: UInt32? = nil) throws -> Fixture {
@@ -89,6 +88,45 @@ final class PublishingCandidateAdmissionTests: XCTestCase {
         if fault == .wrongRevision { f.applied.revision = 1 }
         return f
     }
+    func testProductionCostsCompleteTransportMessagesWithoutExportingLaboratoryWitness() throws {
+        for (bytes, messages, duration) in [(188 * 400, 400, 4.0), (1316 * 400, 400, 4.0), (376000, 400, 3.5), (376000, 400, 4.5)] {
+            var f = try fixture()
+            let m = f.measurement
+            f.measurement = .init(id: m.id, scope: m.scope, profile: m.profile, publishingGeneration: m.publishingGeneration,
+                startedAt: m.startedAt, endedAt: m.endedAt, firstInputAt: m.firstInputAt, lastInputAt: m.lastInputAt,
+                sourceDuration: m.sourceDuration, submissionDuration: duration, transportBytes: bytes, transportMessageCount: messages)
+            let production = try XCTUnwrap(f.admit(production: true)), laboratory = try XCTUnwrap(f.admit())
+            XCTAssertEqual(production.value.candidateTransportBitsPerSecond, Double(bytes + 64 * messages) * 8 / min(4, duration), accuracy: 1e-6)
+            XCTAssertEqual(laboratory.value.candidateTransportBitsPerSecond, Double(bytes + 44 * messages) * 8 / min(4, duration), accuracy: 1e-6)
+            XCTAssertEqual(production.value.deliveredPaddingBitsPerSecond,
+                min(f.pair.older.payloadBitsPerSecondLowerBound, f.pair.newer.payloadBitsPerSecondLowerBound))
+            XCTAssertThrowsError(try production.auditData(), "Production cannot export the legacy IPv4 laboratory witness")
+            XCTAssertNoThrow(try laboratory.auditData())
+        }
+    }
+    func testBothConventionsRejectInvalidCompleteTransportAccounting() throws {
+        for (bytes, messages) in [(0, 1), (189, 1), (188, 0), (188, 2), (1504, 1), (188, 250001), (Int.max, Int.max)] {
+            var f = try fixture()
+            let m = f.measurement
+            f.measurement = .init(id: m.id, scope: m.scope, profile: m.profile, publishingGeneration: m.publishingGeneration,
+                startedAt: m.startedAt, endedAt: m.endedAt, firstInputAt: m.firstInputAt, lastInputAt: m.lastInputAt,
+                sourceDuration: m.sourceDuration, submissionDuration: m.submissionDuration, transportBytes: bytes, transportMessageCount: messages)
+            XCTAssertNil(f.admit())
+            XCTAssertNil(f.admit(production: true))
+        }
+    }
+
+    func testProductionSharesInvalidEvidenceAndRevocationGuards() throws {
+        for fault in Fault.allCases where fault != .wrongRevision {
+            XCTAssertNil(try fixture(fault).admit(production: true), "\(fault)")
+        }
+        let f = try fixture(), token = CandidateAdmissionTestToken()
+        let admission = try XCTUnwrap(f.admit(production: true, candidateIsCurrent: { token.isCurrent }))
+        token.revoke()
+        XCTAssertNil(f.admit(production: true, candidateIsCurrent: { token.isCurrent }))
+        XCTAssertFalse(admission.permits(applied: f.applied, at: 115.1, instant: anchor + .seconds(115.1)))
+    }
+
     func testCandidateBindingMustRespectHalfSecondProbeWarmup() throws {
         var f = try fixture()
         f.binding.lastAcceptedAt = 109.49

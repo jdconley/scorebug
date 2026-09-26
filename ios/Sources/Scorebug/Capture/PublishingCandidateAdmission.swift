@@ -83,6 +83,27 @@ struct PublishingCandidateAdmission: Sendable {
     private var auditWitness: AuditWitness? = nil
     #endif
 
+    private enum TransportConvention {
+        case laboratoryIPv4, productionSRT
+        var headerBytesPerMessage: Int { self == .laboratoryIPv4 ? 44 : 64 }
+    }
+    /// Base SRT/UDP/IP header estimate for ordinary unfragmented IPv4/IPv6.
+    /// Complete measured MPEG-TS bytes already include audio and mux framing.
+    /// Extensions, fragmentation, VPN, control and retransmissions are excluded:
+    /// this is not physical wire cost. Pressure and same-path delivery remain
+    /// authoritative. SRT byte counters are not exact wire accounting (bundled
+    /// 1.5.4 adds 44 bytes on IPv6 too).
+    static func productionSRT(measurement m: Measurement, applied: PublishingQualityTelemetry.Applied,
+        binding: PublishingProbeObservation, boundAt: Double, completedAt: Double,
+        probe: PublishingProbeObservation, pair: WorkerReceiverProbeIntervalPair,
+        authority: PublishingCandidateAuthority, clock: Clock,
+        currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
+        candidateIsCurrent: @escaping @Sendable () -> Bool) -> Self? {
+        return validate(measurement: m, applied: applied, binding: binding, boundAt: boundAt,
+            completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
+            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, convention: .productionSRT)
+    }
+
     // An explicit IPv4 laboratory convention. This is not a generic estimate for
     // cellular, IPv6, encapsulated routes, or a production admission default.
     static func laboratoryIPv4(measurement m: Measurement, applied: PublishingQualityTelemetry.Applied,
@@ -91,6 +112,17 @@ struct PublishingCandidateAdmission: Sendable {
         authority: PublishingCandidateAuthority, clock: Clock,
         currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
         candidateIsCurrent: @escaping @Sendable () -> Bool) -> Self? {
+        return validate(measurement: m, applied: applied, binding: binding, boundAt: boundAt,
+            completedAt: completedAt, probe: probe, pair: pair, authority: authority, clock: clock,
+            currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent, convention: .laboratoryIPv4)
+    }
+
+    private static func validate(measurement m: Measurement, applied: PublishingQualityTelemetry.Applied,
+        binding: PublishingProbeObservation, boundAt: Double, completedAt: Double,
+        probe: PublishingProbeObservation, pair: WorkerReceiverProbeIntervalPair,
+        authority: PublishingCandidateAuthority, clock: Clock,
+        currentReceipt: @escaping @Sendable () -> PublishingBitRateChange?,
+        candidateIsCurrent: @escaping @Sendable () -> Bool, convention: TransportConvention) -> Self? {
         func time(_ value: Double) -> Bool { value.isFinite && (0...1e12).contains(value) }
         let now = clock.after, receiver = pair.newer.end, expected = receiver.expected
         guard time(clock.before), time(now), clock.before <= now, now - clock.before <= 0.1,
@@ -136,7 +168,7 @@ struct PublishingCandidateAdmission: Sendable {
               firstStart.lowerBound >= max(m.firstInputAt, now - 5),
               firstEnd.lowerBound > m.firstInputAt, firstStart.upperBound < m.lastInputAt,
               lastEnd.lowerBound > m.endedAt, lastEnd.upperBound <= now else { return nil }
-        let cost = Double(m.transportBytes + 44 * m.transportMessageCount) * 8 / min(m.sourceDuration, m.submissionDuration)
+        let cost = Double(m.transportBytes + convention.headerBytesPerMessage * m.transportMessageCount) * 8 / min(m.sourceDuration, m.submissionDuration)
         let padding = min(pair.older.payloadBitsPerSecondLowerBound, pair.newer.payloadBitsPerSecondLowerBound)
         guard cost.isFinite, cost > 0, padding.isFinite, padding > 0 else { return nil }
         let deadline = min(m.endedAt + 2, probe.leaseDeadline,
@@ -150,8 +182,10 @@ struct PublishingCandidateAdmission: Sendable {
         var admission = Self(value: value, applied: applied, authority: authority, receiver: receiver,
             probe: probe, currentReceipt: currentReceipt, candidateIsCurrent: candidateIsCurrent)
         #if DEBUG
-        admission.auditWitness = .init(measurement: m, binding: binding, boundAt: boundAt,
-            completedAt: completedAt, pair: pair, clock: clock)
+        if convention == .laboratoryIPv4 {
+            admission.auditWitness = .init(measurement: m, binding: binding, boundAt: boundAt,
+                completedAt: completedAt, pair: pair, clock: clock)
+        }
         #endif
         return admission
     }

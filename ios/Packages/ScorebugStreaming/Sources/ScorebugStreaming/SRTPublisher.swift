@@ -8,6 +8,8 @@ import ScorebugMedia
 /// Its caller owns bounded raw-media admission and lifecycle serialization.
 /// Construct a fresh adapter for every publishing attempt.
 public actor SRTPublisher {
+    /// Shared by the actual AAC encoder configuration and candidate probe planning.
+    public static let audioBitRate = 128_000
     /// Diagnostic values from the existing sequential health reads, not an atomic
     /// observation or proof of receiver delivery. Never includes destination URLs.
     public struct HealthSnapshot: Sendable {
@@ -142,7 +144,7 @@ public actor SRTPublisher {
         configuring = true
         defer { configuring = false }
         try await stream.setVideoSettings(videoProfile.settings)
-        try await stream.setAudioSettings(AudioCodecSettings(bitRate: 128_000))
+        try await stream.setAudioSettings(AudioCodecSettings(bitRate: Self.audioBitRate))
         await stream.setExpectedMedias([.video, .audio])
         await stream.setVideoInputBufferCounts(4)
         try Task.checkCancellation()

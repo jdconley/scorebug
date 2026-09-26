@@ -52,9 +52,33 @@ struct NativeCandidateStagePlan: Sendable, Equatable {
               holds.last! >= 0.5, holds.reduce(0, +) < 60 else { throw Failure.invalidPlan }
         self.bitRates = bitRates; self.holds = holds
     }
+    /// Scheduling estimate only: nominal 20% mux/framing allowance times the
+    /// existing 25% headroom. It is neither an upper bound nor an admission rule;
+    /// measured complete candidate cost and receiver delivery decide admission.
+    static func productionSRT(videoBitRate: Int) throws -> Self {
+        let (mediaRate, overflow) = videoBitRate.addingReportingOverflow(SRTPublisher.audioBitRate)
+        guard videoBitRate > 0, !overflow, mediaRate <= 8_000_000 else { throw Failure.invalidPlan }
+        // Integer ceil(mediaRate * 1.5), after bounding the sum for safe arithmetic.
+        let finalRate = (mediaRate * 3 + 1) / 2
+        return try Self(bitRates: [finalRate / 2, finalRate], holds: [0.8, 0.5])
+    }
     #if DEBUG
     static let laboratory = try! Self(bitRates: [500_000, 2_000_000, 12_000_000], holds: [0.8, 0.8, 0.5])
     #endif
+}
+
+/// The lease resolves this selection from its immutable next-candidate context
+/// before allocating a native owner. Fixed plans remain explicit for tests/labs.
+enum NativeCandidateStagePlanSelection: Sendable, Equatable {
+    case fixed(NativeCandidateStagePlan)
+    case productionSRT
+
+    func resolve(_ context: PublishingQualitySession.CandidateMeasurementContext) throws -> NativeCandidateStagePlan {
+        switch self {
+        case .fixed(let plan): return plan
+        case .productionSRT: return try .productionSRT(videoBitRate: context.readiness.settings.videoBitrate)
+        }
+    }
 }
 
 /// One native attempt owns its begin task even before the campaign owner returns

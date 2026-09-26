@@ -56,8 +56,47 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             let rows = try auditRows(wrapper)
             XCTAssertEqual(rows.filter { $0["kind"] as? String == "registered" }.count, 16)
             XCTAssertEqual(rows.filter { $0["kind"] as? String == "settledFailure" }.count, 16)
-            XCTAssertEqual(wrapper.stagePlan, .laboratory)
+            XCTAssertEqual(wrapper.stagePlanSelection, .fixed(.laboratory))
         }
+        await f.owner.stop(); await wrapper.stop()
+    }
+
+    func testProductionPlanUsesNextVideoAndActualAACForDistinctBoundedProbes() throws {
+        var rates: [Int] = []
+        for profile: PublishingVideoProfile in [.low360, .sd540, .hd1080] {
+            let plan = try NativeCandidateStagePlan.productionSRT(videoBitRate: profile.bitRate)
+            let final = try XCTUnwrap(plan.bitRates.last)
+            XCTAssertEqual(final, Int(ceil(Double(profile.bitRate + SRTPublisher.audioBitRate) * 1.5)))
+            XCTAssertEqual(plan.bitRates.first, final / 2)
+            XCTAssertLessThan(final, 12_000_000)
+            XCTAssertEqual(plan.holds, [0.8, 0.5])
+            rates.append(final)
+        }
+        XCTAssertEqual(Set(rates).count, 3)
+        let boundary = try NativeCandidateStagePlan.productionSRT(videoBitRate: 8_000_000 - SRTPublisher.audioBitRate)
+        XCTAssertEqual(boundary.bitRates.last, 12_000_000)
+        for rate in [0, -1, 8_000_001 - SRTPublisher.audioBitRate, PublishingVideoProfile.uhd2160.bitRate, Int.max] {
+            XCTAssertThrowsError(try NativeCandidateStagePlan.productionSRT(videoBitRate: rate))
+        }
+    }
+
+    @MainActor func testUnsupportedProductionPlanLeavesNoOwnerOrRegisteredPolicy() async throws {
+        let f = try await CandidateQualityFixture.make(initialProfile: .hd1080, includeHighProfiles: true)
+        let diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        let fixture = OwnedAppRouteFixture(selected: f.native.receipt!)
+        let wrapper = NativeOwnedCandidatePublisher(publisher: SRTMediaPublisher(operations: await fixture.operations()),
+            scope: diagnostics.ingress!.scope, campaignOwner: PublishingCandidateCampaignOwner(), stagePlanSelection: .productionSRT)
+        try await wrapper.start(); try await f.owner.installOwnedMeasurementPublisher(wrapper)
+        for _ in 0..<2 {
+            do { _ = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics); XCTFail("4K plan must fail before registration") }
+            catch NativeCandidateStagePlan.Failure.invalidPlan { }
+            let context = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
+            XCTAssertEqual(context?.readiness.settings.profileID, "2160p30", "Failed construction cannot leave policy registered")
+        }
+        let counts = await fixture.counts
+        XCTAssertEqual(counts.allocations, 0)
+        let probe = await f.owner.ownedProbeObservation()
+        XCTAssertNil(probe)
         await f.owner.stop(); await wrapper.stop()
     }
 
@@ -212,7 +251,10 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testContinuousTwoStagePlanBindsItsFinalStageAndKeepsItImmutable() async throws {
         try await exerciseOwnedApplication(.continuousPlan)
     }
-    private enum ApplicationOutcome { case continuousPlan, sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    func testProductionPlanBindsSelectedNextProfileThroughSnapshotAndCleanup() async throws {
+        try await exerciseOwnedApplication(.productionPlan)
+    }
+    private enum ApplicationOutcome { case productionPlan, continuousPlan, sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
     @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
         let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
@@ -242,7 +284,9 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             return .init(id: result.id, start: { result.start() }, offer: { _ in true }, observeAudio: { _ in },
                 cancel: { result.cancel($0) }, result: { await result.result() })
         })
-        let wrapper = outcome == .continuousPlan
+        let wrapper = outcome == .productionPlan
+            ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign, stagePlanSelection: .productionSRT)
+            : outcome == .continuousPlan
             ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign,
                 stagePlan: try NativeCandidateStagePlan(bitRates: [800_000, 3_000_000], holds: [0.8, 0.5]))
             : NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign)
@@ -311,9 +355,9 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             if witness == nil { try await Task.sleep(for: .milliseconds(10)) }
         }
         let completedWitness = try XCTUnwrap(witness, "Actual registered stages must produce the joined candidate")
-        if outcome == .continuousPlan {
+        if outcome == .continuousPlan || outcome == .productionPlan {
             XCTAssertEqual(completedWitness.probe.stage, 2)
-            XCTAssertEqual(completedWitness.probe.bitRate, 3_000_000)
+            XCTAssertEqual(completedWitness.probe.bitRate, outcome == .productionPlan ? 1_092_000 : 3_000_000)
             XCTAssertEqual(completedWitness.binding.id, completedWitness.probe.id)
             XCTAssertTrue(completedWitness.permitsCurrentCandidate(completedWitness.cost.id))
             try await Task.sleep(for: .milliseconds(150))
@@ -416,7 +460,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
-        case .continuousPlan, .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
+        case .productionPlan, .continuousPlan, .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])

@@ -22,7 +22,7 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
     private(set) var audit: PublishingOwnedMeasurementAudit?
     private var lifecycle: NativeCandidateLifecycleAudit?
     #endif
-    let stagePlan: NativeCandidateStagePlan
+    let stagePlanSelection: NativeCandidateStagePlanSelection
     private(set) var maximumAttempts: Int?
     let campaignOwner: PublishingCandidateCampaignOwner
     struct Probes: Sendable {
@@ -73,12 +73,18 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
     /// Continuous ownership requires a caller-selected plan and has no audit
     /// history or lifetime attempt cap. Core still gates each retry on health.
     init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
-         campaignOwner: PublishingCandidateCampaignOwner, stagePlan: NativeCandidateStagePlan,
+         campaignOwner: PublishingCandidateCampaignOwner, stagePlanSelection: NativeCandidateStagePlanSelection,
          probes: Probes? = nil) {
         self.publisher = publisher; self.scope = scope; self.campaignOwner = campaignOwner
-        self.stagePlan = stagePlan
+        self.stagePlanSelection = stagePlanSelection
         self.probes = probes ?? (publisher as? SRTMediaPublisher).map(Probes.init)
         self.profileReceipt = nil; self.joinedStop = nil
+    }
+    convenience init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
+         campaignOwner: PublishingCandidateCampaignOwner, stagePlan: NativeCandidateStagePlan,
+         probes: Probes? = nil) {
+        self.init(publisher: publisher, scope: scope, campaignOwner: campaignOwner,
+            stagePlanSelection: .fixed(stagePlan), probes: probes)
     }
     #if DEBUG
     /// Compatibility laboratory construction retains the complete bounded audit.

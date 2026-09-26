@@ -1535,7 +1535,7 @@ struct CandidateQualityFixture: Sendable {
     }
     static func make(sourceHealth: Bool = true, foreignPublication: Bool = false,
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
-                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil,
+                     unhealthySource: Bool = false, priorHealthEnd: Double? = nil, includeHighProfiles: Bool = false,
                      requiresSharedCandidateRecovery: Bool = false,
                      guarded: PublishingQualitySession.GuardedMutations? = nil) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
@@ -1549,7 +1549,9 @@ struct CandidateQualityFixture: Sendable {
         let owner = try PublishingQualitySession(operations: operations, profiles: [
             .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
             .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
-            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)],
+            .init(id: "540p30", width: 960, height: 540, minimumBitrate: 1_500_000, maximumBitrate: 1_500_000)] + (includeHighProfiles ? [
+            .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000),
+            .init(id: "2160p30", width: 3840, height: 2160, minimumBitrate: 24_000_000, maximumBitrate: 24_000_000)] : []),
             attemptID: attempt, initial: .init(profileID: initialProfile.rawValue, videoBitrate: initialProfile.bitRate),
             strategy: .measuredCandidateTrials, behavior: .progressive, requiresSharedCandidateRecovery: requiresSharedCandidateRecovery,
             uptime: { native.now }, instant: { native.instant })
