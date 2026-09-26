@@ -38,6 +38,19 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testOrdinaryPairedSimulatorAdaptWatchScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_PAIRED_ORDINARY_SIMULATOR"] == "1" else {
+            throw XCTSkip("Use the explicit disposable paired ordinary simulator lane.")
+        }
+        evidencePrefix = "OrdinaryPairedSimulatorStreaming"
+        try runVertical(watchScoring: true, ordinarySimulator: true)
+        #else
+        throw XCTSkip("Paired ordinary file-source smoke requires disposable simulators.")
+        #endif
+    }
+
     @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
@@ -151,53 +164,85 @@ final class PhysicalStreamingTests: XCTestCase {
             evidence(app, phase: "minimum-quality-acknowledged", screenshot: true)
         }
 
-        if watchScoring {
-            try selectTab("Watch", app)
-            let connect = app.buttons["phoneWatch.connect.0"]
-            try wait("Paired Watch did not advertise its identity to the phone.", seconds: 150) {
-                connect.exists && connect.isEnabled
+        func adaptiveGate() throws {
+            do {
+                try waitForOrdinaryIncrease(app)
+            } catch {
+                adaptiveFailure = error
+                evidence(app, phase: "adaptive-gate-failed", screenshot: true)
             }
-            try selectTab("Film", app)
             try require(value(app, "streaming.localStatus") == "publishing" &&
-                        value(app, "streaming.workerStatus") == "producing_output",
-                        "Live output stopped before offering paired Watch setup.")
-            try selectTab("Watch", app)
-            try tap(connect, in: app)
-            // SwiftUI propagates the Label identifier to its image and text.
-            // Select the status text; firstMatch across all types picks the icon.
-            let status = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
-            try wait("Paired Watch did not confirm native setup.", seconds: 100) {
-                status.exists && status.label.contains("Watch reports connected")
+                        value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
+                        "Ordinary recording and worker output did not remain live after the adaptive gate.")
+            if adaptiveFailure == nil { evidence(app, phase: "increased-quality-acknowledged", screenshot: true) }
+        }
+        if watchScoring && ordinarySimulator { try adaptiveGate() }
+
+        if watchScoring && adaptiveFailure == nil {
+            do {
+                try selectTab("Watch", app)
+                let connect = app.buttons["phoneWatch.connect.0"]
+                try wait("Paired Watch did not advertise its identity to the phone.", seconds: 150) {
+                    connect.exists && connect.isEnabled
+                }
+                try selectTab("Film", app)
+                try require(value(app, "streaming.localStatus") == "publishing" &&
+                            value(app, "streaming.workerStatus") == "producing_output",
+                            "Live output stopped before offering paired Watch setup.")
+                try selectTab("Watch", app)
+                try tap(connect, in: app)
+                // SwiftUI propagates the Label identifier to its image and text.
+                // Select the status text; firstMatch across all types picks the icon.
+                let status = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
+                try wait("Paired Watch did not confirm native setup.", seconds: 100) {
+                    status.exists && status.label.contains("Watch reports connected")
+                }
+                evidence(app, phase: ordinarySimulator ? "ordinary-watch-setup-confirmed" : "physical-watch-setup-confirmed", screenshot: true)
+                try selectTab("Score", app)
+                // The opt-in physical/paired ordinary Watch runner holds its first point for 30s
+                // so the phone can observe both that point and concurrent output.
+                try wait("Phone did not observe the Watch's first point before match end.", seconds: 60) {
+                    app.buttons["scoring.homePoint"].value as? String == "1" &&
+                        app.buttons["scoring.awayPoint"].value as? String == "0"
+                }
+                try selectTab("Film", app)
+                try require(value(app, "streaming.localStatus") == "publishing" &&
+                            value(app, "streaming.workerStatus") == "producing_output" &&
+                            app.buttons["film.stop"].exists,
+                            "Recording and live output did not remain active during Watch scoring.")
+                evidence(app, phase: ordinarySimulator ? "ordinary-watch-point-while-publishing" : "physical-watch-point-while-publishing", screenshot: true)
+                try selectTab("Score", app)
+                if ordinarySimulator {
+                    try wait("Phone did not observe the Watch's final AWAY point during its hold.", seconds: 100) {
+                        app.buttons["scoring.homePoint"].value as? String == "0" &&
+                            app.buttons["scoring.awayPoint"].value as? String == "1"
+                    }
+                    try selectTab("Film", app)
+                    try require(value(app, "streaming.localStatus") == "publishing" &&
+                                value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
+                                "Output did not remain live during the Watch's final AWAY hold.")
+                    evidence(app, phase: "watch-away-point-while-publishing", screenshot: true)
+                    try selectTab("Score", app)
+                }
+                try wait("Watch did not complete point, undo, away point, and end-match workflow.", seconds: 180) {
+                    app.staticTexts["scoring.ended"].exists
+                }
+                try require(app.buttons["scoring.homePoint"].value as? String == "0" &&
+                            app.buttons["scoring.awayPoint"].value as? String == "1",
+                            "Phone did not observe the expected Watch 0–1 final score.")
+                evidence(app, phase: ordinarySimulator ? "ordinary-watch-score-and-end-observed" : "physical-watch-score-and-end-observed", screenshot: true)
+            } catch {
+                guard ordinarySimulator else { throw error }
+                scoreFailure = error
+                evidence(app, phase: "watch-score-gate-failed", screenshot: true)
             }
-            evidence(app, phase: "physical-watch-setup-confirmed", screenshot: true)
-            try selectTab("Score", app)
-            // The opt-in physical Watch runner holds its first point for 30s
-            // so the phone can observe both that point and concurrent output.
-            try wait("Phone did not observe the Watch's first point before match end.", seconds: 60) {
-                app.buttons["scoring.homePoint"].value as? String == "1" &&
-                    app.buttons["scoring.awayPoint"].value as? String == "0"
-            }
-            try selectTab("Film", app)
-            try require(value(app, "streaming.localStatus") == "publishing" &&
-                        value(app, "streaming.workerStatus") == "producing_output" &&
-                        app.buttons["film.stop"].exists,
-                        "Recording and live output did not remain active during Watch scoring.")
-            evidence(app, phase: "physical-watch-point-while-publishing", screenshot: true)
-            try selectTab("Score", app)
-            try wait("Watch did not complete point, undo, away point, and end-match workflow.", seconds: 180) {
-                app.staticTexts["scoring.ended"].exists
-            }
-            try require(app.buttons["scoring.homePoint"].value as? String == "0" &&
-                        app.buttons["scoring.awayPoint"].value as? String == "1",
-                        "Phone did not observe the expected Watch 0–1 final score.")
-            evidence(app, phase: "physical-watch-score-and-end-observed", screenshot: true)
             try selectTab("Film", app)
             // Remote match end may already stop publishing; the archive must
             // still be active and advance through the common checks below.
             if app.buttons["streaming.stop"].exists {
                 try tap(app.buttons["streaming.stop"], in: app)
             }
-        } else {
+        } else if !watchScoring {
             try selectTab("Score", app)
             try tap(app.buttons["scoring.homePoint"], in: app)
             do {
@@ -211,18 +256,7 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
-            if ordinarySimulator {
-                do {
-                    try waitForOrdinaryIncrease(app)
-                } catch {
-                    adaptiveFailure = error
-                    evidence(app, phase: "adaptive-gate-failed", screenshot: true)
-                }
-                try require(value(app, "streaming.localStatus") == "publishing" &&
-                            value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
-                            "Ordinary recording and worker output did not remain live after the adaptive gate.")
-                if adaptiveFailure == nil { evidence(app, phase: "increased-quality-acknowledged", screenshot: true) }
-            }
+            if ordinarySimulator { try adaptiveGate() }
             let holdStarted = Date()
             let initialDuration = elapsed(app)
             try wait("Recording did not advance throughout the 12-second live hold.", seconds: 18) {
@@ -232,6 +266,10 @@ final class PhysicalStreamingTests: XCTestCase {
                         value(app, "streaming.workerStatus") == "producing_output",
                         "Live publishing or worker output stopped during the recording hold.")
             evidence(app, phase: "live-hold-complete", screenshot: true)
+            try tap(app.buttons["streaming.stop"], in: app)
+        } else {
+            // A failed adaptive gate never offers Watch setup, but still exports
+            // the finite source recording and retains the adaptive failure.
             try tap(app.buttons["streaming.stop"], in: app)
         }
         try wait("Streaming did not return to idle.", seconds: 15) {

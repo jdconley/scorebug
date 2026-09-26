@@ -12,8 +12,15 @@ import { nativeFileFixtureHash, stageNativeFileFixture } from './native-file-fix
 const root = fileURLToPath(new URL('..', import.meta.url));
 const developer = '/Applications/Xcode-26.2.0.app/Contents/Developer';
 const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-2';
+const watchRuntime = 'com.apple.CoreSimulator.SimRuntime.watchOS-26-2';
+const phoneType = 'com.apple.CoreSimulator.SimDeviceType.iPhone-14';
+const watchType = 'com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-7-41mm';
 const testID =
   'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorPublishScoreAdaptStopAndExport';
+const pairedTestID =
+  'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryPairedSimulatorAdaptWatchScoreStopAndExport';
+const watchTestID =
+  'ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingRealCompanionSetup';
 
 export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   const values = new Map();
@@ -21,7 +28,7 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     const key = args[index],
       value = args[index + 1];
     assert(
-      ['--host', '--source', '--encoder'].includes(key) && value && !values.has(key),
+      ['--host', '--source', '--encoder', '--lane'].includes(key) && value && !values.has(key),
       'Invalid or duplicate ordinary simulator option',
     );
     values.set(key, value);
@@ -32,7 +39,85 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     ['--host', values.get('--host'), '--encoder', values.get('--encoder') ?? 'software'],
     interfaces,
   );
-  return { host, source, encoder };
+  const lane = values.get('--lane');
+  assert(lane === undefined || ['phone', 'paired'].includes(lane), 'Unsupported ordinary lane');
+  return { host, source, encoder, ...(lane === undefined ? {} : { lane }) };
+}
+
+export function ordinaryTestEnvironment({ paired, watch = false, setup }) {
+  assert(!watch || paired, 'Watch runner requires the paired lane');
+  if (watch) return { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' };
+  return {
+    SCOREBUG_DEVICE_API_URL: setup.endpoint,
+    SCOREBUG_DEVICE_TOKEN: setup.installationToken,
+    SCOREBUG_ORDINARY_SIMULATOR: '1',
+    ...(paired ? { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' } : {}),
+  };
+}
+
+// Let the other bounded test finish its stop/export path after a peer fails.
+// External cancellation still aborts both process groups through their signal.
+export async function joinOrdinaryWorkflows(actions) {
+  const results = await Promise.allSettled(actions.map((action) => Promise.resolve().then(action)));
+  const failures = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length)
+    throw new AggregateError(failures, 'Ordinary workflow failed; inspect both private test logs');
+}
+
+export async function recoverOrdinaryOwnership(owner, run) {
+  const recovered = { ...owner, failures: [] };
+  if (!recovered.simulator || (owner.paired && !recovered.watch)) {
+    try {
+      const devices = JSON.parse(
+        await run('xcrun', ['simctl', 'list', 'devices', '--json'], 'recover-owned-devices'),
+      );
+      const all = Object.values(devices.devices).flat();
+      recovered.simulator ??= all.find((device) => device.name === owner.phoneName)?.udid;
+      if (owner.paired)
+        recovered.watch ??= all.find((device) => device.name === owner.watchName)?.udid;
+    } catch {
+      recovered.failures.push('owned simulator discovery');
+    }
+  }
+  if (owner.paired && recovered.simulator && recovered.watch && !recovered.pairId) {
+    try {
+      const pairs = JSON.parse(
+        await run('xcrun', ['simctl', 'list', 'pairs', '--json'], 'recover-owned-pair'),
+      );
+      recovered.pairId = Object.entries(pairs.pairs).find(
+        ([, pair]) =>
+          pair.phone?.udid === recovered.simulator && pair.watch?.udid === recovered.watch,
+      )?.[0];
+    } catch {
+      recovered.failures.push('owned pair discovery');
+    }
+  }
+  return recovered;
+}
+
+export function requireOrdinaryTestResult(summary, tests, expectedTest) {
+  assert(
+    summary.result === 'Passed' &&
+      summary.totalTestCount === 1 &&
+      summary.passedTests === 1 &&
+      summary.failedTests === 0 &&
+      summary.skippedTests === 0,
+    'Ordinary method must execute and pass exactly once without skips',
+  );
+  const cases = [];
+  function visit(node) {
+    if (node.nodeType === 'Test Case') cases.push(node);
+    for (const child of node.children ?? []) visit(child);
+  }
+  for (const node of tests.testNodes ?? []) visit(node);
+  assert(
+    cases.length === 1 &&
+      cases[0].result === 'Passed' &&
+      cases[0].nodeIdentifierURL?.endsWith(`/${expectedTest}`),
+    'The intended ordinary method must execute',
+  );
 }
 
 export function ordinaryEnvironment(environment = process.env) {
@@ -125,6 +210,10 @@ export async function runOrdinaryCommand(
 
 async function main() {
   const options = ordinaryNativeOptions(process.argv.slice(2));
+  const paired = options.lane === 'paired';
+  const phoneTest = paired ? pairedTestID : testID;
+  const phoneName = `Scorebug Ordinary ${randomUUID()}`;
+  const watchName = `Scorebug Ordinary Watch ${randomUUID()}`;
   assert.equal(process.platform, 'darwin', 'Installed Xcode and iOS simulator required');
   const sourceSHA256 = await nativeFileFixtureHash(options.source);
   await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -146,6 +235,9 @@ async function main() {
     });
   const cleanup = (command, args, label) => run(command, args, label, { signal: undefined });
   let simulator,
+    watch,
+    pairId,
+    watchContainer,
     lab,
     container,
     failure,
@@ -157,23 +249,40 @@ async function main() {
     const runtimes = JSON.parse(
       await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], 'runtimes'),
     );
-    assert(
-      runtimes.runtimes.some((entry) => entry.identifier === runtime && entry.isAvailable),
-      'Installed iOS 26.2 runtime required; no downloads are performed',
+    for (const required of paired ? [runtime, watchRuntime] : [runtime]) {
+      assert(
+        runtimes.runtimes.some((entry) => entry.identifier === required && entry.isAvailable),
+        `Installed ${required} runtime required; no downloads are performed`,
+      );
+    }
+    const types = JSON.parse(
+      await run('xcrun', ['simctl', 'list', 'devicetypes', '--json'], 'device-types'),
     );
-    simulator = await run(
-      'xcrun',
-      [
-        'simctl',
-        'create',
-        `Scorebug Ordinary ${randomUUID()}`,
-        'com.apple.CoreSimulator.SimDeviceType.iPhone-14',
-        runtime,
-      ],
-      'create',
-    );
+    for (const required of paired ? [phoneType, watchType] : [phoneType]) {
+      assert(
+        types.devicetypes.some((entry) => entry.identifier === required),
+        'Required simulator device type missing',
+      );
+    }
+    simulator = await run('xcrun', ['simctl', 'create', phoneName, phoneType, runtime], 'create');
     assert.match(simulator, /^[0-9a-f-]{36}$/i);
+    if (paired) {
+      watch = await run(
+        'xcrun',
+        ['simctl', 'create', watchName, watchType, watchRuntime],
+        'create-watch',
+      );
+      assert.match(watch, /^[0-9a-f-]{36}$/i);
+      pairId = await run('xcrun', ['simctl', 'pair', watch, simulator], 'pair');
+      assert.match(pairId, /^[0-9a-f-]{36}$/i);
+    }
     await run('xcrun', ['simctl', 'boot', simulator], 'boot');
+    if (watch) {
+      await run('xcrun', ['simctl', 'boot', watch], 'boot-watch');
+      await run('xcrun', ['simctl', 'bootstatus', watch, '-b'], 'watch-ready', {
+        timeout: 120_000,
+      });
+    }
     await run('xcrun', ['simctl', 'bootstatus', simulator, '-b'], 'boot-ready', {
       timeout: 120_000,
     });
@@ -194,7 +303,7 @@ async function main() {
         '-destination-timeout',
         '60',
         'build-for-testing',
-        `-only-testing:${testID}`,
+        `-only-testing:${phoneTest}`,
         'ARCHS=arm64',
         'ONLY_ACTIVE_ARCH=YES',
         'CODE_SIGNING_ALLOWED=YES',
@@ -203,12 +312,51 @@ async function main() {
       'build',
       { timeout: 900_000 },
     );
+    if (watch) {
+      await run(
+        'xcodebuild',
+        [
+          '-project',
+          'ios/Scorebug.xcodeproj',
+          '-scheme',
+          'ScorebugWatch',
+          '-configuration',
+          'Debug',
+          '-derivedDataPath',
+          derived,
+          '-destination',
+          `platform=watchOS Simulator,id=${watch}`,
+          '-destination-timeout',
+          '60',
+          'build-for-testing',
+          `-only-testing:${watchTestID}`,
+          'ARCHS=arm64',
+          'ONLY_ACTIVE_ARCH=YES',
+          'CODE_SIGNING_ALLOWED=YES',
+          'CODE_SIGN_IDENTITY=-',
+        ],
+        'build-watch',
+        { timeout: 900_000 },
+      );
+    }
     const products = join(derived, 'Build/Products');
     await run(
       'xcrun',
       ['simctl', 'install', simulator, join(products, 'Debug-iphonesimulator/Scorebug.app')],
       'install',
     );
+    if (watch) {
+      await run(
+        'xcrun',
+        ['simctl', 'install', watch, join(products, 'Debug-watchsimulator/ScorebugWatch.app')],
+        'install-watch',
+      );
+      watchContainer = await run(
+        'xcrun',
+        ['simctl', 'get_app_container', watch, 'live.scorebug.app.watchkitapp', 'data'],
+        'watch-container',
+      );
+    }
     container = await run(
       'xcrun',
       ['simctl', 'get_app_container', simulator, 'live.scorebug.app', 'data'],
@@ -234,29 +382,59 @@ async function main() {
       { host: options.host, encoder: options.encoder, duration: 600 },
       { signal: controller.signal },
     );
-    const configs = (await readdir(products)).filter(
-      (name) => name.startsWith('Scorebug_') && name.endsWith('.xctestrun'),
-    );
-    assert.equal(configs.length, 1, 'One built test configuration required');
-    // Private plist carries credentials to the test runner. No credentials in argv, command manifests or console output.
-    const privateRun = join(artifact, 'ordinary.xctestrun');
+    // Private plists carry only each target's explicit environment; no credentials in argv.
     const configure = join(artifact, 'configure.py');
     await writeFile(
       configure,
-      `import json, plistlib, sys, os\nsource, destination, setup_path, products = sys.argv[1:]\nwith open(source, 'rb') as f: config = plistlib.load(f)\nwith open(setup_path) as f: setup = json.load(f)\ndef clean(value):\n    if isinstance(value, dict): return {key: clean(item) for key, item in value.items() if 'SCOREBUG' not in key}\n    if isinstance(value, list): return [clean(item) for item in value]\n    if isinstance(value, str): return value.replace('__TESTROOT__', products)\n    return value\nconfig = clean(config)\nconfigured = []\ndef configure(value):\n    if isinstance(value, dict):\n        if value.get('BlueprintName') == 'ScorebugAppUITests':\n            configured.append(value['BlueprintName'])\n            value.setdefault('EnvironmentVariables', {}).update({'SCOREBUG_DEVICE_API_URL': setup['endpoint'], 'SCOREBUG_DEVICE_TOKEN': setup['installationToken'], 'SCOREBUG_ORDINARY_SIMULATOR': '1'})\n        for child in value.values(): configure(child)\n    elif isinstance(value, list):\n        for child in value: configure(child)\nconfigure(config)\nassert len(configured) == 1, 'Exactly one ScorebugAppUITests target required'\nwith open(destination, 'xb') as f: plistlib.dump(config, f)\nos.chmod(destination, 0o600)\n`,
+      `import json, plistlib, sys, os
+source, destination, target, environment_path, products = sys.argv[1:]
+with open(source, 'rb') as f: config = plistlib.load(f)
+with open(environment_path) as f: environment = json.load(f)
+def clean(value):
+    if isinstance(value, dict): return {key: clean(item) for key, item in value.items() if 'SCOREBUG' not in key}
+    if isinstance(value, list): return [clean(item) for item in value]
+    if isinstance(value, str): return value.replace('__TESTROOT__', products)
+    return value
+config = clean(config)
+configured = []
+def configure(value):
+    if isinstance(value, dict):
+        if value.get('BlueprintName') == target:
+            configured.append(target)
+            value.setdefault('EnvironmentVariables', {}).update(environment)
+        for child in value.values(): configure(child)
+    elif isinstance(value, list):
+        for child in value: configure(child)
+configure(config)
+assert len(configured) == 1, 'Exactly one intended UI test target required'
+with open(destination, 'xb') as f: plistlib.dump(config, f)
+os.chmod(destination, 0o600)
+`,
       { mode: 0o600 },
     );
-    await run(
-      'python3',
-      [
-        configure,
-        join(products, configs[0]),
-        privateRun,
-        join(lab.artifact, 'setup.json'),
-        products,
-      ],
-      'configure',
-    );
+    async function privateTestRun(scheme, target, name, isWatch) {
+      const configs = (await readdir(products)).filter(
+        (file) => file.startsWith(`${scheme}_`) && file.endsWith('.xctestrun'),
+      );
+      assert.equal(configs.length, 1, 'One built test configuration required');
+      const environmentPath = join(artifact, `${name}-environment.json`);
+      await writeFile(
+        environmentPath,
+        JSON.stringify(ordinaryTestEnvironment({ paired, watch: isWatch, setup: lab.setup })),
+        { mode: 0o600 },
+      );
+      const destination = join(artifact, `${name}.xctestrun`);
+      await run(
+        'python3',
+        [configure, join(products, configs[0]), destination, target, environmentPath, products],
+        `configure-${name}`,
+      );
+      return destination;
+    }
+    const privateRun = await privateTestRun('Scorebug', 'ScorebugAppUITests', 'ordinary', false);
+    const privateWatchRun = watch
+      ? await privateTestRun('ScorebugWatch', 'ScorebugWatchUITests', 'watch', true)
+      : null;
     console.log(
       JSON.stringify({
         simulator,
@@ -266,61 +444,93 @@ async function main() {
         phase: 'launching ordinary workflow',
       }),
     );
-    await run(
-      'xcodebuild',
-      [
-        'test-without-building',
-        '-xctestrun',
-        privateRun,
-        '-destination',
-        `platform=iOS Simulator,id=${simulator}`,
-        '-destination-timeout',
-        '60',
-        '-parallel-testing-enabled',
-        'NO',
-        '-maximum-concurrent-test-simulator-destinations',
-        '1',
-        '-collect-test-diagnostics',
-        'never',
-        '-test-timeouts-enabled',
-        'YES',
-        '-default-test-execution-time-allowance',
-        '480',
-        '-maximum-test-execution-time-allowance',
-        '480',
-        '-resultBundlePath',
-        join(artifact, 'workflow.xcresult'),
-        `-only-testing:${testID}`,
-      ],
-      'workflow',
-      { timeout: 600_000 },
+    const workflows = [
+      { device: simulator, platform: 'iOS', config: privateRun, test: phoneTest, name: 'workflow' },
+    ];
+    if (watch)
+      workflows.push({
+        device: watch,
+        platform: 'watchOS',
+        config: privateWatchRun,
+        test: watchTestID,
+        name: 'watch-workflow',
+      });
+    await joinOrdinaryWorkflows(
+      workflows.map((workflow) => async () => {
+        await run(
+          'xcodebuild',
+          [
+            'test-without-building',
+            '-xctestrun',
+            workflow.config,
+            '-destination',
+            `platform=${workflow.platform} Simulator,id=${workflow.device}`,
+            '-destination-timeout',
+            '60',
+            '-parallel-testing-enabled',
+            'NO',
+            '-maximum-concurrent-test-simulator-destinations',
+            '1',
+            '-collect-test-diagnostics',
+            'never',
+            '-test-timeouts-enabled',
+            'YES',
+            '-default-test-execution-time-allowance',
+            paired ? '600' : '480',
+            '-maximum-test-execution-time-allowance',
+            paired ? '600' : '480',
+            '-resultBundlePath',
+            join(artifact, `${workflow.name}.xcresult`),
+            `-only-testing:${workflow.test}`,
+          ],
+          workflow.name,
+          { timeout: paired ? 720_000 : 600_000 },
+        );
+        const result = [];
+        for (const type of ['summary', 'tests'])
+          result.push(
+            JSON.parse(
+              await run(
+                'xcrun',
+                [
+                  'xcresulttool',
+                  'get',
+                  'test-results',
+                  type,
+                  '--path',
+                  join(artifact, `${workflow.name}.xcresult`),
+                ],
+                `${workflow.name}-${type}`,
+              ),
+            ),
+          );
+        requireOrdinaryTestResult(result[0], result[1], workflow.test);
+      }),
     );
-    const summary = JSON.parse(
-      await run(
-        'xcrun',
-        [
-          'xcresulttool',
-          'get',
-          'test-results',
-          'summary',
-          '--path',
-          join(artifact, 'workflow.xcresult'),
-        ],
-        'test-summary',
-      ),
-    );
-    assert(
-      summary.result === 'Passed' &&
-        summary.totalTestCount === 1 &&
-        summary.passedTests === 1 &&
-        summary.failedTests === 0 &&
-        summary.skippedTests === 0,
-      'Ordinary method must execute and pass exactly once without skips',
-    );
+    if (paired) {
+      const { readOrdinaryPairedEvidence } = await import('./ordinary-paired-evidence.mjs');
+      const evidence = await readOrdinaryPairedEvidence(
+        join(lab.artifact, 'scorebug.sqlite'),
+        lab.setup.matchId,
+      );
+      await writeFile(
+        join(artifact, 'paired-evidence.json'),
+        JSON.stringify(evidence, null, 2) + '\n',
+        { mode: 0o600 },
+      );
+    }
     workflowPassed = true;
   } catch (error) {
     failure = error.message;
   } finally {
+    // A create/pair command may finish just as its process is interrupted.
+    // Recover exact per-run names and both matching IDs, never unrelated devices.
+    const ownership = await recoverOrdinaryOwnership(
+      { paired, phoneName, watchName, simulator, watch, pairId },
+      cleanup,
+    );
+    ({ simulator, watch, pairId } = ownership);
+    cleanupFailures.push(...ownership.failures);
     // Preserve app-owned media even if the UI workflow failed. Never delete an unpreserved container.
     let preserved = !container;
     if (simulator && container) {
@@ -355,16 +565,61 @@ async function main() {
         cleanupFailures.push('app-data preservation');
       }
     }
+    let watchPreserved = !watchContainer;
+    if (watch && watchContainer) {
+      try {
+        const devices = JSON.parse(
+          await cleanup('xcrun', ['simctl', 'list', 'devices', '--json'], 'watch-preserve-state'),
+        );
+        const device = Object.values(devices.devices)
+          .flat()
+          .find((entry) => entry.udid === watch);
+        assert(device, 'Owned Watch disappeared before preservation');
+        if (device.state !== 'Booted')
+          await cleanup('xcrun', ['simctl', 'boot', watch], 'watch-boot-for-preservation');
+        await cleanup('xcrun', ['simctl', 'bootstatus', watch, '-b'], 'watch-preserve-ready');
+        const latest = await cleanup(
+          'xcrun',
+          ['simctl', 'get_app_container', watch, 'live.scorebug.app.watchkitapp', 'data'],
+          'watch-final-container',
+        );
+        await cleanup(
+          'xcrun',
+          ['simctl', 'terminate', watch, 'live.scorebug.app.watchkitapp'],
+          'watch-terminate-app',
+        ).catch(() => {});
+        await cp(latest, join(artifact, 'watch-app-data'), {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+        });
+        watchPreserved = true;
+      } catch {
+        cleanupFailures.push('Watch app-data preservation');
+      }
+    }
     try {
       await lab?.stop();
     } catch {
       cleanupFailures.push('device lab shutdown');
     }
+    if (watch)
+      await cleanup('xcrun', ['simctl', 'shutdown', watch], 'watch-shutdown').catch(() =>
+        cleanupFailures.push('Watch shutdown'),
+      );
+    if (pairId && preserved && watchPreserved)
+      await cleanup('xcrun', ['simctl', 'unpair', pairId], 'unpair').catch(() =>
+        cleanupFailures.push('pair removal'),
+      );
+    if (watch && preserved && watchPreserved)
+      await cleanup('xcrun', ['simctl', 'delete', watch], 'watch-delete').catch(() =>
+        cleanupFailures.push('Watch deletion'),
+      );
     if (simulator) {
       await cleanup('xcrun', ['simctl', 'shutdown', simulator], 'shutdown').catch(() => {
         cleanupFailures.push('simulator shutdown');
       });
-      if (preserved)
+      if (preserved && watchPreserved)
         await cleanup('xcrun', ['simctl', 'delete', simulator], 'delete').catch(() => {
           cleanupFailures.push('simulator deletion');
         });
@@ -375,6 +630,9 @@ async function main() {
       head,
       sourceSHA256,
       simulator,
+      watch,
+      pairId,
+      lane: paired ? 'paired' : 'phone',
       labArtifact: lab?.artifact,
       workflowPassed,
       mediaQualified: false,

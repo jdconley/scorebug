@@ -9,7 +9,7 @@ for (const [profile, size, fontSize, border, x, bottom, crop, bytes] of [
   ['240p30', '426x240', 14, 4, 9, 22, '166:26:0:206', 4316],
 ])
   test(`${profile} score raster uses actual worker dimensions and minimum font size`, () => {
-    for (const score of ['0-0', '1-0']) {
+    for (const score of ['0-0', '1-0', '0-1']) {
       const result = nativeScoreTemplate({ profile, font, score });
       assert.equal(result.input, `color=black:s=${size}:r=30`);
       assert.equal(

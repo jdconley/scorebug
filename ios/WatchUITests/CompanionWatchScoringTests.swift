@@ -5,20 +5,27 @@ import XCTest
 final class CompanionWatchScoringTests: XCTestCase {
     @MainActor func testScoreUsingRealCompanionSetup() {
         continueAfterFailure = false
-        executionTimeAllowance = 420
+        #if targetEnvironment(simulator)
+        let pairedOrdinary = ProcessInfo.processInfo.environment["SCOREBUG_PAIRED_ORDINARY_SIMULATOR"] == "1"
+        #else
+        let pairedOrdinary = false
+        #endif
+        // Only the opted-in paired simulator waits for phone preparation and
+        // its unchanged 150-second adaptive gate before receiving the offer.
+        executionTimeAllowance = pairedOrdinary ? 600 : 420
         let app = XCUIApplication()
         // Explicitly defeat any inherited debug fixture from another test lane.
         app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
         app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = "1"
         app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = "1"
         app.launch()
-        tap(app, "watch.joinOffered", timeout: 180)
+        tap(app, "watch.joinOffered", timeout: pairedOrdinary ? 360 : 180)
         value(app.staticTexts["watch.phase"], "paired")
         attach(app, "Watch accepted setup delivered by paired iPhone")
         tap(app, "watch.takeover")
         tap(app, "watch.homePoint")
         value(app.staticTexts["watch.score"], "1-0")
-        if ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
+        if pairedOrdinary || ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
             // Physical phone UI must observe the point and concurrent live
             // output before this runner proceeds to undo and match shutdown.
             RunLoop.current.run(until: Date().addingTimeInterval(30))
@@ -28,6 +35,9 @@ final class CompanionWatchScoringTests: XCTestCase {
         tap(app, "watch.awayPoint")
         value(app.staticTexts["watch.score"], "0-1")
         attach(app, "Watch scoring while companion records")
+        if pairedOrdinary {
+            RunLoop.current.run(until: Date().addingTimeInterval(15))
+        }
         tap(app, "watch.endMatch")
         // watchOS confirmation dialogs do not retain the SwiftUI identifiers.
         tap(app, "End match", confirmation: true)
