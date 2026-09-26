@@ -529,3 +529,63 @@ test('recovery720 is explicit and retains ordinary recovery budgets and private 
     'recovery720',
   );
 });
+
+test('ordinary publishing pacing is explicit, recovery720-only, and preserves the upload budget', () => {
+  const base = ['--host', '192.168.1.130', '--source', '/p.mov'];
+  assert.equal(Object.hasOwn(ordinaryNativeOptions(base, interfaces), 'publishPacing'), false);
+  for (const latency of [[], ['--publish-peer-latency-ms', '700']]) {
+    assert.deepEqual(
+      ordinaryNativeOptions(
+        [...base, '--lane', 'recovery720', '--publish-pacing', 'relative', ...latency],
+        interfaces,
+      ),
+      {
+        host: '192.168.1.130',
+        source: '/p.mov',
+        encoder: 'software',
+        lane: 'recovery720',
+        publishPacing: 'relative',
+        ...(latency.length ? { publishPeerLatencyMs: 700 } : {}),
+      },
+    );
+  }
+  for (const lane of [undefined, 'phone', 'paired', 'recovery']) {
+    assert.throws(
+      () =>
+        ordinaryNativeOptions(
+          [...base, ...(lane ? ['--lane', lane] : []), '--publish-pacing', 'relative'],
+          interfaces,
+        ),
+      /requires recovery720/,
+    );
+  }
+});
+
+test('ordinary publishing pacing rejects malformed values and duplicate options', () => {
+  const base = ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'recovery720'];
+  for (const value of [
+    '',
+    'RELATIVE',
+    'Relative',
+    ' relative',
+    'relative ',
+    'relative\n',
+    'absolute',
+    '0',
+    null,
+    true,
+    1,
+    {},
+    [],
+    ['relative'],
+  ]) {
+    assert.throws(() => ordinaryNativeOptions([...base, '--publish-pacing', value], interfaces));
+  }
+  assert.throws(() => ordinaryNativeOptions([...base, '--publish-pacing'], interfaces));
+  assert.throws(() =>
+    ordinaryNativeOptions(
+      [...base, '--publish-pacing', 'relative', '--publish-pacing', 'relative'],
+      interfaces,
+    ),
+  );
+});

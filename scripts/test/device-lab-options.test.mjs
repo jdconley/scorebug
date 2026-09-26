@@ -22,8 +22,12 @@ test('explicit publishing recovery budget is bounded and default remains unset',
   assert.equal(typeof module.deviceLabPublishEnvironment, 'function');
   assert.deepEqual(module.deviceLabPublishEnvironment(undefined), {
     SRT_PUBLISH_PEER_LATENCY_MS: undefined,
+    SRT_PUBLISH_PACING: undefined,
   });
-  assert.deepEqual(module.deviceLabPublishEnvironment(700), { SRT_PUBLISH_PEER_LATENCY_MS: '700' });
+  assert.deepEqual(module.deviceLabPublishEnvironment(700), {
+    SRT_PUBLISH_PEER_LATENCY_MS: '700',
+    SRT_PUBLISH_PACING: undefined,
+  });
   for (const value of [null, '700', 119, 2001, NaN, {}, []]) {
     assert.throws(() => module.deviceLabPublishEnvironment(value));
     await assert.rejects(module.startDeviceLab({ publishPeerLatencyMs: value }), /recovery budget/);
@@ -183,5 +187,94 @@ test('physical recovery is API-only and derives all public endpoints from one va
     );
   assert.throws(() =>
     deviceLabOptions(['--host', '192.168.1.130', '--physical-recovery', 'true'], interfaces),
+  );
+});
+
+test('publishing pacing accepts only explicit relative and clears inherited pacing at the child boundary', async () => {
+  const { deviceLabPublishEnvironment } = await import('../device-lab.mjs');
+  const { execFileSync } = await import('node:child_process');
+  const base = ['--host', '192.168.1.130'];
+  assert.equal(Object.hasOwn(deviceLabOptions(base, interfaces), 'publishPacing'), false);
+  assert.equal(
+    deviceLabOptions([...base, '--publish-pacing', 'relative'], interfaces).publishPacing,
+    'relative',
+  );
+  for (const latency of [undefined, 700]) {
+    for (const pacing of [undefined, 'relative']) {
+      const environment = deviceLabPublishEnvironment(latency, pacing);
+      assert.deepEqual(environment, {
+        SRT_PUBLISH_PEER_LATENCY_MS: latency === undefined ? undefined : '700',
+        SRT_PUBLISH_PACING: pacing,
+      });
+      const inherited = {
+        ...process.env,
+        SRT_PUBLISH_PEER_LATENCY_MS: '2000',
+        SRT_PUBLISH_PACING: 'relative',
+      };
+      const observed = JSON.parse(
+        execFileSync(
+          process.execPath,
+          [
+            '-e',
+            'console.log(JSON.stringify({latency: process.env.SRT_PUBLISH_PEER_LATENCY_MS, pacing: process.env.SRT_PUBLISH_PACING}))',
+          ],
+          { env: { ...inherited, ...environment }, encoding: 'utf8' },
+        ),
+      );
+      assert.deepEqual(observed, {
+        ...(latency === undefined ? {} : { latency: '700' }),
+        ...(pacing === undefined ? {} : { pacing: 'relative' }),
+      });
+    }
+  }
+});
+
+test('publishing pacing rejects malformed CLI options and API values before allocation', async () => {
+  const { deviceLabPublishEnvironment, startDeviceLab } = await import('../device-lab.mjs');
+  const base = ['--host', '192.168.1.130'];
+  for (const value of [
+    '',
+    'RELATIVE',
+    'Relative',
+    ' relative',
+    'relative ',
+    'relative\n',
+    'absolute',
+    '0',
+  ]) {
+    assert.throws(() => deviceLabOptions([...base, '--publish-pacing', value], interfaces));
+  }
+  assert.throws(() => deviceLabOptions([...base, '--publish-pacing'], interfaces));
+  assert.throws(() =>
+    deviceLabOptions(
+      [...base, '--publish-pacing', 'relative', '--publish-pacing', 'relative'],
+      interfaces,
+    ),
+  );
+  for (const value of [
+    null,
+    false,
+    true,
+    0,
+    1,
+    NaN,
+    {},
+    [],
+    ['relative'],
+    new String('relative'),
+    '',
+    'RELATIVE',
+    ' relative',
+    'relative ',
+    'relative\n',
+    'absolute',
+  ]) {
+    assert.throws(() => deviceLabPublishEnvironment(undefined, value), /pacing/i);
+    await assert.rejects(startDeviceLab({ publishPacing: value }), /pacing/i);
+  }
+  assert.throws(() => deviceLabPublishEnvironment('700', 'relative'), /recovery budget/);
+  await assert.rejects(
+    startDeviceLab({ publishPeerLatencyMs: '700', publishPacing: 'relative' }),
+    /recovery budget/,
   );
 });

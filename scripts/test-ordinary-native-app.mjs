@@ -30,7 +30,14 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     const key = args[index],
       value = args[index + 1];
     assert(
-      ['--host', '--source', '--encoder', '--lane', '--publish-peer-latency-ms'].includes(key) &&
+      [
+        '--host',
+        '--source',
+        '--encoder',
+        '--lane',
+        '--publish-peer-latency-ms',
+        '--publish-pacing',
+      ].includes(key) &&
         value &&
         !values.has(key),
       'Invalid or duplicate ordinary simulator option',
@@ -39,7 +46,7 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   }
   const source = values.get('--source');
   assert(source && isAbsolute(source), 'Supply --source with the absolute prepared input path');
-  const { host, encoder, publishPeerLatencyMs } = deviceLabOptions(
+  const { host, encoder, publishPeerLatencyMs, publishPacing } = deviceLabOptions(
     [
       '--host',
       values.get('--host'),
@@ -47,6 +54,9 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
       values.get('--encoder') ?? 'software',
       ...(values.has('--publish-peer-latency-ms')
         ? ['--publish-peer-latency-ms', values.get('--publish-peer-latency-ms')]
+        : []),
+      ...(values.has('--publish-pacing')
+        ? ['--publish-pacing', values.get('--publish-pacing')]
         : []),
     ],
     interfaces,
@@ -60,12 +70,17 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     publishPeerLatencyMs === undefined || lane === 'recovery720',
     'Upload recovery budget comparison requires recovery720',
   );
+  assert(
+    publishPacing === undefined || lane === 'recovery720',
+    'Upload pacing comparison requires recovery720',
+  );
   return {
     host,
     source,
     encoder,
     ...(lane === undefined ? {} : { lane }),
     ...(publishPeerLatencyMs === undefined ? {} : { publishPeerLatencyMs }),
+    ...(publishPacing === undefined ? {} : { publishPacing }),
   };
 }
 
@@ -480,6 +495,7 @@ async function main() {
         ...(options.publishPeerLatencyMs === undefined
           ? {}
           : { publishPeerLatencyMs: options.publishPeerLatencyMs }),
+        ...(options.publishPacing === undefined ? {} : { publishPacing: options.publishPacing }),
         ...(recovery ? { publisherRecovery: true } : {}),
         ...(recovery720 ? { decodedGeometry: true } : {}),
       },
@@ -745,6 +761,9 @@ os.chmod(destination, 0o600)
       ...(options.publishPeerLatencyMs === undefined
         ? {}
         : { requestedPublishPeerLatencyMs: options.publishPeerLatencyMs }),
+      ...(options.publishPacing === undefined
+        ? {}
+        : { requestedPublishPacing: options.publishPacing }),
       labArtifact: lab?.artifact,
       workflowPassed,
       mediaQualified: false,

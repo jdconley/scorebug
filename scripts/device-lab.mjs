@@ -25,7 +25,13 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
     const key = args[index],
       value = args[index + 1];
     assert(
-      ['--host', '--duration', '--encoder', '--publish-peer-latency-ms'].includes(key) &&
+      [
+        '--host',
+        '--duration',
+        '--encoder',
+        '--publish-peer-latency-ms',
+        '--publish-pacing',
+      ].includes(key) &&
         value &&
         !values.has(key),
       'Invalid or duplicate lab option',
@@ -44,17 +50,19 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
   if (latencyText !== undefined)
     assert(/^[1-9][0-9]*$/.test(latencyText), 'Invalid publishing recovery budget');
   const publishPeerLatencyMs = latencyText === undefined ? undefined : Number(latencyText);
-  deviceLabPublishEnvironment(publishPeerLatencyMs);
+  const publishPacing = values.get('--publish-pacing');
+  deviceLabPublishEnvironment(publishPeerLatencyMs, publishPacing);
   return {
     host,
     duration,
     encoder,
     ...(publishPeerLatencyMs === undefined ? {} : { publishPeerLatencyMs }),
+    ...(publishPacing === undefined ? {} : { publishPacing }),
   };
 }
 
 /** Explicit server-side upload setting; never inherited from the calling shell. */
-export function deviceLabPublishEnvironment(publishPeerLatencyMs) {
+export function deviceLabPublishEnvironment(publishPeerLatencyMs, publishPacing) {
   assert(
     publishPeerLatencyMs === undefined ||
       (Number.isInteger(publishPeerLatencyMs) &&
@@ -62,7 +70,9 @@ export function deviceLabPublishEnvironment(publishPeerLatencyMs) {
         publishPeerLatencyMs <= 2000),
     'Invalid publishing recovery budget',
   );
+  assert(publishPacing === undefined || publishPacing === 'relative', 'Invalid publishing pacing');
   return {
+    SRT_PUBLISH_PACING: publishPacing,
     SRT_PUBLISH_PEER_LATENCY_MS:
       publishPeerLatencyMs === undefined ? undefined : String(publishPeerLatencyMs),
   };
@@ -211,7 +221,10 @@ export function deviceLabRecoveryBind(options, interfaces = networkInterfaces())
 export async function startDeviceLab(options, { signal } = {}) {
   signal?.throwIfAborted();
   const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
-  const publishEnvironment = deviceLabPublishEnvironment(options.publishPeerLatencyMs);
+  const publishEnvironment = deviceLabPublishEnvironment(
+    options.publishPeerLatencyMs,
+    options.publishPacing,
+  );
   const recoveryBind = deviceLabRecoveryBind(options);
   // Validate exported API callers too, before creating any processes or files.
   deviceLabOptions([
@@ -443,6 +456,9 @@ export async function startDeviceLab(options, { signal } = {}) {
       ...(options.publishPeerLatencyMs === undefined
         ? {}
         : { requestedPublishPeerLatencyMs: options.publishPeerLatencyMs }),
+      ...(options.publishPacing === undefined
+        ? {}
+        : { requestedPublishPacing: options.publishPacing }),
       mediaQualified: false,
     };
     await writeFile(join(artifact, 'setup.json'), JSON.stringify(setup, null, 2) + '\n', {
