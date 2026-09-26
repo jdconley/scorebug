@@ -487,7 +487,12 @@ final class PhysicalStreamingTests: XCTestCase {
         try tap(settings.descendants(matching: .any).matching(identifier: "AUTOFILL").firstMatch, in: settings)
         let autofill = settings.switches["AutoFillToggle"]
         try wait("Disposable simulator AutoFill setting was unavailable.", seconds: 8) { autofill.exists }
-        if autofill.value as? String == "1" { try tap(autofill, in: settings) }
+        if autofill.value as? String == "1" {
+            try require(autofill.isHittable && settings.frame.contains(autofill.frame), "AutoFill switch is not visible.")
+            // On iOS 26.2 this switch's AX frame includes its whole labeled row.
+            // A center tap lands on inert text; the observed toggle is at its right.
+            autofill.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
         try wait("Disposable simulator AutoFill was not disabled.", seconds: 5) { autofill.value as? String == "0" }
         let attachment = XCTAttachment(screenshot: settings.screenshot())
         attachment.name = "OrdinarySimulatorStreaming-autofill-disabled"; attachment.lifetime = .keepAlways; add(attachment)
