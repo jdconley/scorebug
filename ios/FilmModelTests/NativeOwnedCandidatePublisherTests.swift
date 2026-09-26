@@ -63,7 +63,8 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
 
     func testProductionPlanUsesNextVideoAndActualAACForDistinctBoundedProbes() throws {
         var rates: [Int] = []
-        for profile: PublishingVideoProfile in [.low360, .sd540, .hd1080] {
+        let hd720 = try XCTUnwrap(PublishingVideoProfile(rawValue: "720p30"))
+        for profile: PublishingVideoProfile in [.low360, .sd540, .hd1080, hd720] {
             let plan = try NativeCandidateStagePlan.productionSRT(videoBitRate: profile.bitRate)
             let final = try XCTUnwrap(plan.bitRates.last)
             XCTAssertEqual(final, Int(ceil(Double(profile.bitRate + SRTPublisher.audioBitRate) * 1.5)))
@@ -72,7 +73,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             XCTAssertEqual(plan.holds, [0.8, 0.5])
             rates.append(final)
         }
-        XCTAssertEqual(Set(rates).count, 3)
+        XCTAssertEqual(Set(rates).count, 4)
         let boundary = try NativeCandidateStagePlan.productionSRT(videoBitRate: 8_000_000 - SRTPublisher.audioBitRate)
         XCTAssertEqual(boundary.bitRates.last, 12_000_000)
         for rate in [0, -1, 8_000_001 - SRTPublisher.audioBitRate, PublishingVideoProfile.uhd2160.bitRate, Int.max] {

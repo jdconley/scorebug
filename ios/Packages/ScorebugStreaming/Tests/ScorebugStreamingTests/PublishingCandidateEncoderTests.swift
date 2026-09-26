@@ -98,6 +98,37 @@ final class PublishingCandidateEncoderTests: XCTestCase {
     }
 
     @MainActor
+    func test720RecipeProducesActualVideoToolboxH264At720Dimensions() async throws {
+        let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "720p30"))
+        let scope = scope()
+        let candidate = try PublishingCandidateEncoder(scope: scope, profile: profile)
+        do {
+            try await candidate.start()
+            for n in 0..<3 {
+                XCTAssertTrue(candidate.offer(try sample(pts: CMTime(value: Int64(n), timescale: 30))))
+            }
+            let result = await candidate.finish()
+            XCTAssertEqual(result.profile, profile)
+            XCTAssertEqual(result.scope, scope)
+            XCTAssertEqual(result.encoding.outcome, .completed, result.encoding.failure ?? "")
+            XCTAssertEqual(result.encoding.acceptedInputCount, 3)
+            XCTAssertEqual(result.encoding.outputCount, 3)
+            XCTAssertEqual(result.encoding.frames.count, 3)
+            XCTAssertNotNil(result.encoding.encoderSessionID)
+            XCTAssertEqual(result.encoding.frames.first?.isSync, true)
+            for frame in result.encoding.frames {
+                XCTAssertEqual(frame.width, 1280); XCTAssertEqual(frame.height, 720)
+                XCTAssertGreaterThan(frame.byteCount, 0)
+                XCTAssertEqual(frame.encoderSessionID, result.encoding.encoderSessionID)
+            }
+            // finish() joins the native session; a repeated join is terminal.
+            let joined = await candidate.finish()
+            XCTAssertEqual(joined.encoding.outputCount, 3)
+            XCTAssertEqual(joined.encoding.outcome, .completed)
+        } catch { _ = await candidate.cancel(); throw error }
+    }
+
+    @MainActor
     func testOptionalTransportJoinsActualCandidateVideoWithCopiedLiveAAC() async throws {
         let scope = scope(), transport = PublishingCandidateTransport(scope: scope, profile: .low240)
         let candidate = try PublishingCandidateEncoder(scope: scope, profile: .low240, transport: transport)

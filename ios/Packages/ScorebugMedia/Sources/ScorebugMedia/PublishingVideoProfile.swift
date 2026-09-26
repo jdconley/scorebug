@@ -9,17 +9,18 @@ public enum PublishingVideoProfile: String, Sendable, CaseIterable {
     /// Explicit high-resolution recipe; not part of the automatic app ladder.
     case uhd2160 = "2160p30"
     case hd1080 = "1080p30"
+    case hd720 = "720p30"
     case sd540 = "540p30"
     case low360 = "360p30"
     case low240 = "240p30"
     public var width: Int {
-        switch self { case .uhd2160: 3840; case .hd1080: 1920; case .sd540: 960; case .low360: 640; case .low240: 426 }
+        switch self { case .uhd2160: 3840; case .hd1080: 1920; case .hd720: 1280; case .sd540: 960; case .low360: 640; case .low240: 426 }
     }
     public var height: Int {
-        switch self { case .uhd2160: 2160; case .hd1080: 1080; case .sd540: 540; case .low360: 360; case .low240: 240 }
+        switch self { case .uhd2160: 2160; case .hd1080: 1080; case .hd720: 720; case .sd540: 540; case .low360: 360; case .low240: 240 }
     }
     public var bitRate: Int {
-        switch self { case .uhd2160: 24_000_000; case .hd1080: 6_000_000; case .sd540: 1_500_000; case .low360: 600_000; case .low240: 350_000 }
+        switch self { case .uhd2160: 24_000_000; case .hd1080: 6_000_000; case .hd720: 3_000_000; case .sd540: 1_500_000; case .low360: 600_000; case .low240: 350_000 }
     }
 }
 

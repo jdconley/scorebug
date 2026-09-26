@@ -1,7 +1,23 @@
+import VideoToolbox
 import XCTest
 @testable import ScorebugStreaming
 
 final class PublishingVideoProfileTests: XCTestCase {
+    func test720RecipeUsesSharedRealtimeSettingsWithoutChangingMinimumStartup() throws {
+        let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "720p30"))
+        XCTAssertEqual(profile.width, 1280); XCTAssertEqual(profile.height, 720)
+        XCTAssertEqual(profile.bitRate, 3_000_000)
+        let settings = profile.settings
+        XCTAssertEqual(settings.videoSize.width, 1280); XCTAssertEqual(settings.videoSize.height, 720)
+        XCTAssertEqual(settings.bitRate, 3_000_000)
+        XCTAssertEqual(settings.profileLevel, kVTProfileLevel_H264_High_AutoLevel as String)
+        XCTAssertEqual(settings.expectedFrameRate, 30)
+        XCTAssertEqual(settings.allowFrameReordering, false)
+        XCTAssertEqual(settings.maxKeyFrameIntervalDuration, 2)
+        XCTAssertFalse(settings.isLowLatencyRateControlEnabled)
+        XCTAssertEqual(PublishingVideoProfile.minimumStartup, .low240)
+    }
+
     func testExplicit4KRecipePreservesMinimumStartup() throws {
         let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "2160p30"))
         XCTAssertEqual(profile.width, 3840); XCTAssertEqual(profile.height, 2160)
