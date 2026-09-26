@@ -80,6 +80,39 @@ class QueueTimeline {
 function validateRate(rate) {
   assert.ok(rate === null || (Number.isFinite(rate) && rate >= 1 && rate <= 1e12), 'Invalid rate');
 }
+function validateReceiverHost(host) {
+  assert.ok(
+    typeof host === 'string' && /^(0|[1-9]\d{0,2})(\.(0|[1-9]\d{0,2})){3}$/.test(host),
+    'Invalid receiver host',
+  );
+  const octets = host.split('.').map(Number);
+  assert.ok(
+    octets.every((octet) => octet <= 255) &&
+      (octets[0] === 127 ||
+        octets[0] === 10 ||
+        (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] === 192 && octets[1] === 168)),
+    'Invalid receiver host',
+  );
+}
+function validateControl(configuration, initialRate) {
+  if (!('forwardRateControl' in configuration)) return null;
+  const control = configuration.forwardRateControl;
+  assert.ok(
+    control &&
+      typeof control === 'object' &&
+      !Array.isArray(control) &&
+      Reflect.ownKeys(control).length === 1 &&
+      Object.hasOwn(control, 'rateBitsPerSecond'),
+    'Invalid forward rate control',
+  );
+  const rateBitsPerSecond = control.rateBitsPerSecond;
+  assert.ok(Number.isFinite(rateBitsPerSecond), 'Invalid forward rate control');
+  validateRate(rateBitsPerSecond);
+  assert.equal(initialRate, null, 'Rate control requires an unlimited initial rate');
+  assert.ok(!('forwardRateSchedule' in configuration), 'Rate control cannot select a schedule');
+  return Object.freeze({ mode: 'single-constraint', rateBitsPerSecond });
+}
 function validateSchedule(schedule, initialRate) {
   if (schedule === null) return null;
   assert.ok(
@@ -394,7 +427,8 @@ export class DatagramImpairmentQueue {
   }
 }
 
-/** Owned loopback-only fixture. Forwarded counters are UDP send attempts, not
+/** Owned loopback-frontend fixture with a loopback/private IPv4 receiver.
+ * Forwarded counters are UDP send attempts, not
  * remote receipt; any socket error invalidates qualification and closes the proxy. */
 export async function createUDPImpairmentProxy(configuration) {
   assert.ok(configuration && typeof configuration === 'object');
@@ -402,15 +436,25 @@ export async function createUDPImpairmentProxy(configuration) {
     assert.ok(
       [
         'receiverPort',
+        'receiverHost',
         'forward',
         'reverse',
         'forwardRateSchedule',
+        'forwardRateControl',
         'recordPacketDiagnostics',
         'packetDiagnosticsWindow',
       ].includes(key),
       'Unknown proxy option',
     );
-  const { receiverPort, forward = {}, reverse = {}, forwardRateSchedule = null } = configuration;
+  const {
+    receiverPort,
+    receiverHost = '127.0.0.1',
+    forward = {},
+    reverse = {},
+    forwardRateSchedule = null,
+  } = configuration;
+  validateReceiverHost(receiverHost);
+  const control = validateControl(configuration, forward.rateBitsPerSecond ?? null);
   const { recordPacketDiagnostics = false, packetDiagnosticsWindow = null } = configuration;
   assert.equal(typeof recordPacketDiagnostics, 'boolean', 'Invalid packet diagnostic selection');
   assert.equal(
@@ -482,6 +526,40 @@ export async function createUDPImpairmentProxy(configuration) {
     scheduleTimer = null,
     phaseIndex = 0;
   const phases = [];
+  let controlStartedAt = null,
+    controlStoppedAt = null;
+  const controlPhases = [];
+  function applyControlPhase(phase, rateBitsPerSecond) {
+    const now = performance.now();
+    outgoing.queue.setRate(rateBitsPerSecond, now);
+    if (phase === 'baseline') controlStartedAt = now;
+    const receipt = {
+      phase,
+      rateBitsPerSecond,
+      appliedAt: now,
+      forward: directionSnapshot(outgoing),
+      reverse: directionSnapshot(incoming),
+    };
+    controlPhases.push(receipt);
+    // Preserve the exact after-change/pre-pump ledger boundary, including its
+    // bounded timeline. Restoration then drains the existing FIFO immediately.
+    pump(outgoing, sendForward);
+    return structuredClone(receipt);
+  }
+  function constrainForward() {
+    assert.ok(
+      !closing && peer && controlPhases.length === 1,
+      'Invalid control phase or closed peer',
+    );
+    return applyControlPhase('constrained', control.rateBitsPerSecond);
+  }
+  function restoreForward() {
+    assert.ok(
+      !closing && peer && controlPhases.length === 2,
+      'Invalid control phase or closed peer',
+    );
+    return applyControlPhase('restored', null);
+  }
   function applyDuePhases() {
     if (closing || !schedule || scheduleStartedAt === null) return;
     clearTimeout(scheduleTimer);
@@ -525,6 +603,7 @@ export async function createUDPImpairmentProxy(configuration) {
     if (closePromise) return closePromise;
     closing = true;
     scheduleStoppedAt = performance.now();
+    if (control) controlStoppedAt = scheduleStoppedAt;
     clearTimeout(scheduleTimer);
     scheduleTimer = null;
     for (const direction of [outgoing, incoming]) {
@@ -600,6 +679,7 @@ export async function createUDPImpairmentProxy(configuration) {
         scheduleStartedAt = performance.now();
         applyDuePhases();
       }
+      if (control) applyControlPhase('baseline', null);
     }
     outgoing.queue.enqueue(data, performance.now());
     pump(outgoing, sendForward);
@@ -619,13 +699,14 @@ export async function createUDPImpairmentProxy(configuration) {
   try {
     frontend.bind(0, '127.0.0.1');
     await once(frontend, 'listening');
-    backend.connect(receiverPort, '127.0.0.1');
+    backend.connect(receiverPort, receiverHost);
     await once(backend, 'connect');
     assert.ok(!closing, 'Proxy closed during startup');
     const port = frontend.address().port;
     return {
       port,
       close,
+      ...(control ? { constrainForward, restoreForward } : {}),
       rateLedgerSnapshot: () => outgoing.queue.rateLedgerSnapshot(),
       packetDiagnosticsSnapshot: () =>
         packetDiagnostics
@@ -643,6 +724,16 @@ export async function createUDPImpairmentProxy(configuration) {
         closed,
         foreignPeerPackets,
         errors: [...errors],
+        ...(control
+          ? {
+              forwardRateControl: {
+                requested: { ...control },
+                startedAt: controlStartedAt,
+                stoppedAt: controlStoppedAt,
+                phases: structuredClone(controlPhases),
+              },
+            }
+          : {}),
         ...(schedule
           ? {
               forwardRateSchedule: {
