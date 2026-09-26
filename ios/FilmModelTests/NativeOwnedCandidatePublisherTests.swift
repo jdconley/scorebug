@@ -590,7 +590,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             let rows = try auditRows(wrapper)
             XCTAssertEqual(rows.filter { $0["kind"] as? String == "retiredObsolete" }.count, 1)
             XCTAssertFalse(rows.contains { $0["kind"] as? String == "settledApplicationRejection" })
-            XCTAssertEqual(f.native.calls, ["rate:600000", "rate:350000", "profile:240p30", "rate:350000"])
+            XCTAssertEqual(f.native.calls, ["rate:600000", "profile:240p30", "rate:350000"])
             await driver.stop(); await wrapper.stop()
             return
         }

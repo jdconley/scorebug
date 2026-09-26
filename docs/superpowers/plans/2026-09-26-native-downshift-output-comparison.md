@@ -2,7 +2,7 @@
 
 **Goal:** Identify a measured intervention for the encoder/output burst during720p bandwidth collapse, while preserving recording, guarded receipts and bounded lifetime.
 
-**Status:** Reviewed host and simulator comparisons completed at frames180/181. Preliminary bitrate reduction can shrink one pending frame, but the benefit is phase-dependent: simulator frame181 produces identical output and the host's100ms burst peak does not improve there. No network/A/V qualification. Earlier100ms pressure sampling remains enabled; full720p recovery remains unqualified. The next guarded application is an isolated experiment, not a proven fix.
+**Status:** Reviewed host and simulator comparisons completed at frames180/181. Preliminary bitrate reduction can shrink one pending frame, but the benefit is phase-dependent: simulator frame181 produces identical output and the host's100ms burst peak does not improve there. No network/A/V qualification. Earlier100ms pressure sampling remains enabled; full720p recovery remains unqualified. The guarded bitrate-first experiment also failed complete live media verification and is reverted.
 
 ## Comparison
 
@@ -34,4 +34,4 @@ Harness: one case per process,360frames/12seconds,20,000scalar-event cap. Native
 Reviewed candidate: one existing downward-resolution application and original deadline; old verified receipt → target bitrate on old encoder → resize using that new receipt → final verified rate → one final Core acknowledgment. Treat any successful native write as a native effect: later refusal/failure/cancellation must stop and join, never settle as untouched. Host data alone do not enable this path.
 
 
-Next implementation and acceptance: [guarded downshift experiment](2026-09-26-guarded-downshift-experiment.md). The simulator's fourteen-frame flush remains unresolved; preliminary-rate acceptance alone neither drains it nor guarantees smaller pending frames. [Simulator and adjacent-phase evidence](../../session-logs/2026-09-26-simulator-downshift-comparison.md).
+Completed candidate and acceptance outcome: [guarded downshift experiment](2026-09-26-guarded-downshift-experiment.md). The simulator's fourteen-frame flush remains unresolved; preliminary-rate acceptance alone neither drains it nor guarantees smaller pending frames. [Simulator and adjacent-phase evidence](../../session-logs/2026-09-26-simulator-downshift-comparison.md).

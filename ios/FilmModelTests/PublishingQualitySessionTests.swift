@@ -671,15 +671,14 @@ final class PublishingQualityProfileTests: XCTestCase {
         XCTAssertEqual(advice.settings, .init(profileID: "540p30", videoBitrate: 1_600_000))
         return advice
     }
-    func testGuardedPreliminaryRateRejectionPreservesPublicationAndConsumesAdvice() async throws {
+    func testGuardedProfileRejectionPreservesPublicationAndConsumesAdvice() async throws {
         for rejection in [PublishingVideoMutationAdmissionError.stale, .unavailable] {
             let native = ProfileQualityNative()
-            let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { _, expected, _ in
-                guard case .verified(let baseline) = expected else { XCTFail("Expected baseline"); throw rejection }
-                XCTAssertEqual(baseline.configuration.encoderSessionID, native.oldEncoder)
+            let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { _, _, _ in
+                XCTFail("Rejected profile cannot dispatch bitrate"); throw rejection
+            }, setProfile: { _, expected, _ in
+                XCTAssertEqual(expected.configuration.encoderSessionID, native.oldEncoder)
                 throw rejection
-            }, setProfile: { _, _, _ in
-                XCTFail("Rejected preliminary rate cannot dispatch profile"); throw rejection
             })
             let owner = try owner(native, guarded: guarded)
             let advice = try await decrease(owner, native)
@@ -700,8 +699,7 @@ final class PublishingQualityProfileTests: XCTestCase {
         let native = ProfileQualityNative(), stopGate = QualityWriteGate(), finished = QualityFinished()
         native.installStop(stopGate)
         defer { stopGate.release() }
-        let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { rate, expected, deadline in
-            if case .verified = expected { return try await native.operations.setBitRate(rate, deadline) }
+        let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { _, expected, _ in
             guard case .replacement(let replacement) = expected else {
                 XCTFail("Followup must select the exact replacement"); throw PublishingVideoMutationAdmissionError.stale
             }
@@ -725,7 +723,7 @@ final class PublishingQualityProfileTests: XCTestCase {
         XCTAssertNil(state.profileReceipt)
         stopGate.release(); await operation.value
         XCTAssertEqual(finished.count, 1)
-        XCTAssertEqual(native.calls, ["rate:2000000", "rate:1600000", "profile:540p30"])
+        XCTAssertEqual(native.calls, ["rate:2000000", "profile:540p30"])
         await owner.stop()
         XCTAssertEqual(native.stops, 1)
     }
@@ -734,10 +732,10 @@ final class PublishingQualityProfileTests: XCTestCase {
         let native = ProfileQualityNative(), gate = QualityWriteGate()
         defer { gate.release() }
         let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { _, _, _ in
+            XCTFail("Rejected profile cannot dispatch bitrate"); throw PublishingVideoMutationAdmissionError.stale
+        }, setProfile: { _, _, _ in
             await gate.wait()
             throw PublishingVideoMutationAdmissionError.stale
-        }, setProfile: { _, _, _ in
-            XCTFail("Rejected preliminary rate cannot dispatch profile"); throw PublishingVideoMutationAdmissionError.stale
         })
         let oldOwner = try owner(native, guarded: guarded)
         let oldAdvice = try await decrease(oldOwner, native)
@@ -755,204 +753,6 @@ final class PublishingQualityProfileTests: XCTestCase {
         XCTAssertEqual(after.receipt?.configuration, before.receipt?.configuration)
         XCTAssertEqual(after.revision, 0)
         await newOwner.stop()
-    }
-
-    private func guardedOperations(_ native: ProfileQualityNative) -> PublishingQualitySession.GuardedMutations {
-        .init(setBitRate: { rate, expected, deadline in
-            switch expected {
-            case .verified(let baseline):
-                XCTAssertEqual(baseline.configuration.encoderSessionID, native.oldEncoder)
-                XCTAssertEqual(baseline.configuration.bitRate, 2_000_000)
-            case .replacement(let format):
-                XCTAssertEqual(format.encoderSessionID, native.newEncoder)
-            }
-            return try await native.operations.setBitRate(rate, deadline)
-        }, setProfile: { profile, expected, deadline in
-            XCTAssertEqual(expected.configuration.id, native.latestRate?.configuration.id)
-            XCTAssertEqual(expected.configuration.bitRate, 1_600_000)
-            XCTAssertEqual(expected.configuration.encoderSessionID, native.oldEncoder)
-            XCTAssertEqual(expected.lastSubmittedSourcePTS, CMTime(value: 150, timescale: 30))
-            return try await native.operations.setProfile!(profile, deadline)
-        })
-    }
-
-    func testGuardedDownshiftChainsExactReceiptsAndCommitsOnceAfterFinalRate() async throws {
-        let native = ProfileQualityNative(), gate = QualityWriteGate()
-        let owner = try owner(native, guarded: guardedOperations(native))
-        let advice = try await decrease(owner, native)
-        let baseline = await owner.snapshot.receipt
-        native.install(gate, stage: "profile")
-        let operation = Task { try await owner.apply(advice) }
-        defer { gate.release() }
-        try await entered(gate)
-        let pending = await owner.snapshot
-        XCTAssertTrue(pending.isBusy); XCTAssertEqual(pending.revision, 0)
-        XCTAssertEqual(pending.receipt?.configuration.id, baseline?.configuration.id)
-        XCTAssertNil(pending.profileReceipt); XCTAssertNil(pending.application)
-        XCTAssertEqual(native.calls, ["rate:2000000", "rate:1600000", "profile:540p30"])
-        gate.release(); try await operation.value
-        let result = await owner.snapshot
-        XCTAssertEqual(result.revision, 1); XCTAssertEqual(result.applied, advice.settings)
-        XCTAssertEqual(result.receipt?.configuration.encoderSessionID, native.newEncoder)
-        XCTAssertEqual(result.acknowledgedAt, 105.75)
-        XCTAssertEqual(native.deadlines, [102, 107, 107, 107])
-        await owner.stop()
-    }
-
-    func testGuardedDownshiftRejectsInvalidPreliminaryReceiptBeforeResize() async throws {
-        for fault in ["encoder", "generation", "configuration", "rate", "time", "future", "source", "missing", "deadline", "expired"] {
-            let native = ProfileQualityNative()
-            let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { rate, expected, deadline in
-                guard case .verified(let baseline) = expected else { throw PublishingVideoMutationAdmissionError.stale }
-                let result = try await native.operations.setBitRate(rate, deadline)
-                if fault == "deadline" || fault == "expired" { native.setNow(deadline + (fault == "expired" ? 0.001 : 0)) }
-                return .init(publishingGeneration: fault == "generation" ? 8 : 7,
-                    configuration: .init(id: fault == "configuration" ? baseline.configuration.id : result.configuration.id,
-                        encoderSessionID: fault == "encoder" ? native.newEncoder : native.oldEncoder,
-                        bitRate: fault == "rate" ? rate + 1 : rate)!,
-                    acceptedAt: fault == "time" ? 104 : fault == "future" ? result.acceptedAt + 1 : result.acceptedAt,
-                    lastSubmittedSourcePTS: fault == "missing" ? nil : .init(value: fault == "source" ? 99 : 150, timescale: 30))!
-            }, setProfile: { _, _, _ in
-                XCTFail("Invalid preliminary receipt must prevent resize: \(fault)")
-                throw PublishingVideoMutationAdmissionError.stale
-            })
-            let owner = try owner(native, guarded: guarded), advice = try await decrease(owner, native)
-            do { try await owner.apply(advice); XCTFail("Invalid preliminary receipt: \(fault)") }
-            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt, fault) }
-            let state = await owner.snapshot
-            XCTAssertTrue(state.isClosed, fault); XCTAssertEqual(state.revision, 0)
-            XCTAssertEqual(native.stops, 1); XCTAssertEqual(native.calls.count, 2)
-        }
-    }
-
-    func testGuardedDownshiftResizeRejectionAfterPreliminaryEffectJoinsShutdown() async throws {
-        let native = ProfileQualityNative(), stopGate = QualityWriteGate(), finished = QualityFinished()
-        native.installStop(stopGate); defer { stopGate.release() }
-        let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { rate, _, deadline in
-            try await native.operations.setBitRate(rate, deadline)
-        }, setProfile: { _, _, _ in throw PublishingVideoMutationAdmissionError.unavailable })
-        let owner = try owner(native, guarded: guarded), advice = try await decrease(owner, native)
-        let operation = Task {
-            defer { finished.increment() }
-            do { try await owner.apply(advice); XCTFail("Partially applied rate must fail") }
-            catch { XCTAssertEqual(error as? PublishingVideoMutationAdmissionError, .unavailable) }
-        }
-        try await entered(stopGate)
-        XCTAssertEqual(finished.count, 0)
-        let state = await owner.snapshot
-        XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
-        XCTAssertEqual(native.calls, ["rate:2000000", "rate:1600000"])
-        stopGate.release(); await operation.value
-        XCTAssertEqual(finished.count, 1); XCTAssertEqual(native.stops, 1)
-    }
-
-    func testGuardedDownshiftRejectsReplacementThatDoesNotContinueIntermediateReceipt() async throws {
-        for fault in ["encoder", "source", "time"] {
-            let native = ProfileQualityNative()
-            let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { rate, _, deadline in
-                try await native.operations.setBitRate(rate, deadline)
-            }, setProfile: { profile, _, deadline in
-                let result = try await native.operations.setProfile!(profile, deadline)
-                return .init(profile: profile, publishingGeneration: 7,
-                    previousEncoderSessionID: fault == "encoder" ? UUID() : native.oldEncoder,
-                    encoderSessionID: native.newEncoder,
-                    lastOldSourcePTS: .init(value: fault == "source" ? 149 : 150, timescale: 30),
-                    firstNewSourcePTS: result.firstNewSourcePTS, width: profile.width, height: profile.height,
-                    rawVideoFramesDropped: 0, acknowledgedAt: fault == "time" ? 105.1 : result.acknowledgedAt)!
-            })
-            let owner = try owner(native, guarded: guarded), advice = try await decrease(owner, native)
-            do { try await owner.apply(advice); XCTFail("Broken intermediate continuity: \(fault)") }
-            catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt) }
-            let state = await owner.snapshot
-            XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
-            XCTAssertEqual(native.calls.count, 3); XCTAssertEqual(native.stops, 1)
-        }
-    }
-
-    func testGuardedDownshiftFinalRateCannotReuseIntermediateConfigurationID() async throws {
-        let native = ProfileQualityNative()
-        let guarded = PublishingQualitySession.GuardedMutations(setBitRate: { rate, expected, deadline in
-            let prior = native.latestRate
-            let result = try await native.operations.setBitRate(rate, deadline)
-            guard case .replacement = expected else { return result }
-            return .init(publishingGeneration: result.publishingGeneration,
-                configuration: .init(id: try XCTUnwrap(prior).configuration.id,
-                    encoderSessionID: result.configuration.encoderSessionID, bitRate: rate)!,
-                acceptedAt: result.acceptedAt, lastSubmittedSourcePTS: result.lastSubmittedSourcePTS)!
-        }, setProfile: { profile, _, deadline in try await native.operations.setProfile!(profile, deadline) })
-        let owner = try owner(native, guarded: guarded), advice = try await decrease(owner, native)
-        do { try await owner.apply(advice); XCTFail("Each successful write must have a distinct configuration") }
-        catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .invalidReceipt) }
-        let state = await owner.snapshot
-        XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0); XCTAssertEqual(native.stops, 1)
-    }
-
-    func testGuardedSameProfileIncreaseAndNonLowerRateSkipPreliminaryWrite() async throws {
-        for scenario in ["sameProfile", "increase", "nonLowerRate"] {
-            let native = ProfileQualityNative()
-            var operations = native.operations
-            operations.guarded = .init(setBitRate: { rate, expected, deadline in
-                if scenario == "sameProfile" {
-                    guard case .verified = expected else { throw PublishingVideoMutationAdmissionError.stale }
-                } else {
-                    guard case .replacement = expected else {
-                        XCTFail("No preliminary rate for \(scenario)"); throw PublishingVideoMutationAdmissionError.stale
-                    }
-                }
-                return try await native.operations.setBitRate(rate, deadline)
-            }, setProfile: { profile, expected, deadline in
-                XCTAssertEqual(expected.configuration.id, native.latestRate?.configuration.id)
-                XCTAssertEqual(native.calls.count, 1, "Profile change directly follows bootstrap")
-                return try await native.operations.setProfile!(profile, deadline)
-            })
-            let owner = try PublishingQualitySession(operations: operations, profiles: [
-                .init(id: "540p30", width: 960, height: 540,
-                    minimumBitrate: scenario == "nonLowerRate" ? 2_000_000 : 1_000_000, maximumBitrate: 2_000_000),
-                .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 2_000_000, maximumBitrate: 6_000_000)
-            ], attemptID: attempt, initial: .init(profileID: scenario == "increase" ? "540p30" : "1080p30",
-                videoBitrate: scenario == "sameProfile" ? 3_000_000 : 2_000_000),
-                strategy: .receiverValidatedProfileTrials, uptime: { native.now })
-            try await owner.bootstrap()
-            var advice: QualityController.Recommendation?
-            for start in stride(from: 100.0, through: scenario == "increase" ? 125 : 100, by: 5) {
-                native.setNow(start + 5)
-                advice = try await owner.evaluate(.init(attemptID: attempt, sequence: UInt64((start - 100) / 5 + 1), appliedRevision: 0,
-                    start: start, end: start + 5, capturedFreshFrames: 150, encodedFreshFrames: 150,
-                    receiver: .init(freshFrames: 150, observedAt: start + 5), sourceLoss: .init(expectedFrames: 150, lostFrames: 0),
-                    meanQueueOccupancy: scenario == "increase" ? 0 : 0.9, usableVideoCapacity: nil,
-                    connectivity: .connected, thermalPressure: .nominal, workerPressure: .nominal,
-                    transportPressure: .nominal)).recommendation
-            }
-            let proposed = try XCTUnwrap(advice)
-            XCTAssertEqual(proposed.settings.profileID, scenario == "nonLowerRate" ? "540p30" : "1080p30")
-            try await owner.apply(proposed)
-            let state = await owner.snapshot
-            XCTAssertEqual(state.revision, 1)
-            XCTAssertEqual(native.calls.count, scenario == "sameProfile" ? 2 : 3)
-            await owner.stop()
-        }
-    }
-
-    func testGuardedDownshiftStopOrCancelDuringEveryWriteCannotCommit() async throws {
-        for stage in ["preliminary", "profile", "bitrate"] {
-            for cancel in [false, true] {
-                let native = ProfileQualityNative(), gate = QualityWriteGate()
-                let owner = try owner(native, guarded: guardedOperations(native))
-                let advice = try await decrease(owner, native)
-                native.install(gate, stage: stage)
-                let operation = Task { try await owner.apply(advice) }
-                defer { gate.release() }
-                try await entered(gate)
-                let before = await owner.snapshot
-                XCTAssertEqual(before.revision, 0); XCTAssertTrue(before.isBusy)
-                if cancel { operation.cancel(); gate.release() } else { await owner.stop() }
-                do { try await operation.value; XCTFail("Retired application") } catch {}
-                let after = await owner.snapshot
-                XCTAssertTrue(after.isClosed); XCTAssertEqual(after.revision, 0)
-                XCTAssertEqual(native.stops, 1)
-                XCTAssertEqual(native.calls.count, stage == "preliminary" ? 2 : stage == "profile" ? 3 : 4)
-            }
-        }
     }
 
     private func entered(_ gate: QualityWriteGate) async throws {
@@ -1137,8 +937,6 @@ private final class ProfileQualityNative: @unchecked Sendable {
     private let lock = NSLock()
     let oldEncoder = UUID(), newEncoder = UUID()
     private var time = 100.0, mode = Mode.normal, stopped = 0
-    private var replaced = false, lastRate: PublishingBitRateChange?
-    var latestRate: PublishingBitRateChange? { lock.withLock { lastRate } }
     private var history: [String] = [], limits: [Double] = []
     private var gate: QualityWriteGate?, stage: String?
     private var stopGate: QualityWriteGate?
@@ -1155,21 +953,19 @@ private final class ProfileQualityNative: @unchecked Sendable {
               setProfile: { await self.profile($0, deadline: $1) })
     }
     private func bitrate(_ rate: Int, deadline: Double) async -> PublishingBitRateChange {
-        let (bootstrap, replaced, mode, gate) = lock.withLock {
+        let (bootstrap, mode, gate) = lock.withLock {
             let bootstrap = history.isEmpty
             history.append("rate:\(rate)"); limits.append(deadline)
-            return (bootstrap, self.replaced, self.mode, stage == (self.replaced ? "bitrate" : "preliminary") ? self.gate : nil)
+            return (bootstrap, self.mode, stage == "bitrate" ? self.gate : nil)
         }
         if let gate { await gate.wait() }
         let at = lock.withLock { if !bootstrap { time += mode == .expiredBitrate ? 3 : 0.25 }; return time }
-        let result = PublishingBitRateChange(publishingGeneration: !bootstrap && mode == .wrongBitrateGeneration ? 8 : 7,
-            configuration: .init(id: UUID(), encoderSessionID: !replaced || mode == .wrongBitrateEncoder ? oldEncoder : newEncoder,
+        return .init(publishingGeneration: !bootstrap && mode == .wrongBitrateGeneration ? 8 : 7,
+            configuration: .init(id: UUID(), encoderSessionID: bootstrap || mode == .wrongBitrateEncoder ? oldEncoder : newEncoder,
                                  bitRate: !bootstrap && mode == .wrongRate ? rate + 1 : rate)!,
             acceptedAt: !bootstrap && mode == .oldBitrateTime ? 105 : at,
             lastSubmittedSourcePTS: !bootstrap && mode == .missingBitrateSource ? nil :
-                CMTime(value: bootstrap ? 100 : !replaced || mode == .oldBitrateSource ? 150 : 152, timescale: 30))!
-        lock.withLock { lastRate = result }
-        return result
+                CMTime(value: bootstrap ? 100 : mode == .oldBitrateSource ? 150 : 152, timescale: 30))!
     }
     private func profile(_ requested: PublishingVideoProfile, deadline: Double) async -> PublishingVideoProfileChange {
         let (mode, gate) = lock.withLock {
@@ -1177,7 +973,7 @@ private final class ProfileQualityNative: @unchecked Sendable {
             return (self.mode, stage == "profile" ? self.gate : nil)
         }
         if let gate { await gate.wait() }
-        let at = lock.withLock { time += mode == .expiredProfile ? 3 : 0.25; replaced = true; return time }
+        let at = lock.withLock { time += mode == .expiredProfile ? 3 : 0.25; return time }
         let profile: PublishingVideoProfile = mode == .wrongProfile ? .hd1080 : requested
         return .init(profile: profile, publishingGeneration: mode == .wrongProfileGeneration ? 8 : 7,
             previousEncoderSessionID: mode == .reusedEncoder ? UUID() : oldEncoder,
