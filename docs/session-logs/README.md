@@ -8,6 +8,7 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 Watch readiness retry](2026-09-25-watch-readiness-retry.md) — approved prompt, bounded physical preparation retry, connection evidence and ordinary recovery prerequisites.
 - [September 25 ordinary camera adaptation](2026-09-25-ordinary-camera-adaptation.md) — normal Debug/Release runtime, independent reviews and local-stack/native qualification.
 - [September 25 production probe sizing and cost](2026-09-25-production-probe-cost.md) — next-profile plans, explicit transport estimate, Release verification and ordinary camera integration handoff.
 - [September 25 production owned measurement](2026-09-25-production-owned-measurement.md) — Release lifecycle, bounded retries beyond laboratory limits, independent reviews and IPv4/IPv6 accounting research.

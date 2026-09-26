@@ -27,15 +27,21 @@ Scheduling change passes216 targetedtests plus final2timingcontrols, both review
 - Root full decode60943 joined0: actual export114segments, archive6762consecutiveIDs0–6761; bothlive6481identicalIDs154–6634,30freshfps, no identity/audioPTSerrors, tail127. No Watch-score or sampled waveform/glyph qualification claimed for this failed run.
 - [Apple guidance and evidence](../research/2026-09-25-watch-companion-registration.md): Apple's official sample calls for physical iPhone/Watch testing. This is not proof all simulator APIs are unsupported or a confirmed Apple defect. Further simulator work needs a concrete registration change or minimal independent framework reproducer; no speculative immediate-message fallback.
 
+## Latest device readiness reply
+
+The user approved the automation prompt and reported both devices ready. One fresh Watch build retry still exits70 before compilation after181.326s; `watch-ready-retry-build*` artifacts are preserved under the physical preparation directory. Follow-up readiness still shows the developer tunnel disconnected/DDI unavailable. Computer-use inspection found the Mac locked; a new question asks the user to unlock the Mac so Xcode’s connection window can be inspected. Do not ask for automation approval again. No capture/test started; all children joined. See the [new session log](2026-09-25-watch-readiness-retry.md).
+
+Read-only ordinary congestion proposal is retained at `artifacts/qa/ordinary-congestion-design-proposal-20260925.md`: separate publish/read addresses, bounded event-triggered impairment after confirmed360 and restoration after acknowledged240, longer finite source. No source implementation yet.
+
 ## Next work
 
-1. Resume physical paired acceptance when the outstanding connection question is answered or there is concrete new readiness evidence. Automation approval is already granted; do not request it again without an observed new prompt. Do not blindly rerun Watch preparation.
+1. Inspect Xcode after the pending Mac-unlock reply, then resume physical paired acceptance once destination preparation succeeds. Automation approval is already granted; do not request it again without an observed new prompt. Do not blindly rerun Watch preparation.
 2. If hardware readiness remains unresolved, progress independent ordinary congestion/reset/recovery qualification. Read the [owned recovery plan](../superpowers/plans/2026-09-25-owned-recovery-qualification.md) and preserved failures before changing anything. Wider profiles, sustained operation, route changes, other scorer devices and remote workers remain open.
 3. Preserve the older `native-app-9IVqF0` failures: experimental3000ms/1000ms has four phases but32MiB audit exhaustion leaves20.4s uncovered, plus21ms liveaudio gap. Exact-value interning experiment33.5→11.4MB is not integrated. The513tap checker fix does not fix that gap. No cap increase or unchanged rerun; boundary/evidence diagnosis comes first.
 
 ## Environment and commands
 
-- Signing Conley Chaos LLC `B222J9J7B8`; phone16Pro `00008140-001474110C13001C` iOS26.7, Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6. Physical artifacts `physical-paired-current-mtc1mc54`: phone fresh signedbuild/install at runtime3926e83 passes, existing881appfiles preserved; Watchbuild exits70 connecting before compilation. Watch booted/DeveloperModeenabled/paired but developer tunnel disconnected/DDI unavailable. User was asked for USB/unlocked-nearby and Xcode connection warning; answer pending.
+- Signing Conley Chaos LLC `B222J9J7B8`; phone16Pro `00008140-001474110C13001C` iOS26.7, Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6. Physical artifacts `physical-paired-current-mtc1mc54`: phone fresh signedbuild/install at runtime3926e83 passes, existing881appfiles preserved; Watchbuild exits70 connecting before compilation. Watch booted/DeveloperModeenabled/paired but developer tunnel disconnected/DDI unavailable. User was asked for USB/unlocked-nearby and Xcode connection warning; the newer Mac-unlock question is pending; see latest readiness reply above.
 - Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installediOS26.2/watchOS26.2. No downloads or unrelated simulator cleanup. Disk lastchecked233GiBfree.
 - FFmpeg/ffprobe `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130. Normal maintained `scorebug/ingest:campaign-probe-v3`, worker100ms reports. Remote templates unqualified.
 - Source `artifacts/qa/prepared-native-owned-recovery-hHjv1n/input.mov`,390s/391321588bytes, SHA256 `c1d0642bb102ca27733f39ece227c77135699e89f9ad29a67ddec34d5d2af814`. Downloads originals untouched.
