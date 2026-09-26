@@ -6,7 +6,7 @@
 - Active goal: native recording, native phone/Watch scoring, progressive SRT, portable overlay proxy, mock RTMP MP4 and optional proxy-overlay MP4.
 - [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) is current goals/status/todos. [Current session log](2026-09-25-native-recovery-and-audio-timeline.md) preserves commands, evidence and failed experiments; [research](../research/2026-09-25-live-platform-adaptation.md) explains the timing choices.
 - Runtime timing contracts `aaa9afc` and expiry fix `c4c30cd` passed specification and quality reviews. New whole-history receiver conservation `d59fdcd` and interval replay `5535489` also passed both reviews. Root122 interval/conservation tests pass; quality reviewer236 related tests pass. Raw candidate-cost joins through `ce91204` also passed specification and quality review. Witness/application/retry-policy joins remain unfinished.
-- No root test/lab/analysis process is currently running. All native/analysis processes are joined; recorder socket diagnostics `157c48f` passed both reviews; the next run repeats the3000/1000native scenario once to collect those observations. Preserve failures, original Downloads footage and device recordings. Use installed runtimes only.
+- No root test/lab/analysis process is currently running. All native/analysis processes are joined; recorder socket diagnostics `157c48f` passed both reviews; the3000/1000native repeat is complete; all root processes are joined and all current reviews are closed. Preserve failures, original Downloads footage and device recordings. Use installed runtimes only.
 
 ## Current evidence and next experiment
 
@@ -16,6 +16,7 @@
 | `native-app-pzZozK` | 3000 / 700 ms | Four phases, but one missing live frame and decoded identity damage. Archive clean. |
 | `native-app-D4EhKU` | 2000 / 1000 ms | Clean video identities, but one live audio gap, two problematic delivery windows and no quality applications. Archive clean. |
 | `native-app-uE9hUY` | 3000 / 1000 ms | Four phases and continuous video; short audio gap, late health report and socket error at recorder shutdown remain. Archive clean. |
+| `native-app-iUAsQ6` | 3000 / 1000 ms | Four phases and clean shutdown; one missing live video frame, short audio gap and below24fps window. Archive clean. |
 
 - D4EhKU launched at `c62cf61`; root14560 joined intentional diagnosticexit1, UI1/0. Analysis29983 joined0; A/V70595 joined1. Both live files8865sequentialframes227–9091; archive9307frames0–9306. Live waveform/timestamps reveal ~21ms audio gap around133.374s. Four-phase gates correctly reject one phase; no score/phase-audio pass claimed.
 - D4EhKU retains1317nativeevents, six failed attempts, five completed candidates. Diagnosis finds source-health expiry precedes the first usable post-candidate receiver interval in each completed attempt. Do not confuse missing readiness with bad encoding. The source and receiver evidence must overlap; preserve independent freshness limits.
@@ -27,13 +28,16 @@
 - Reviewed receiver intervals pass LvDNAy10covered/3unbracketed,pzZozK10/4,D4EhKU27/9,uE9hUY8/4. Result `owned-native-receiver-intervals-replay.json` denies higher authority.
 - Candidate cost join `e34926f`, retirement index followup `39a3122`: implementer226focused tests, root37new tests, spec37pass+byteexactprovenance. Root replay at e34926f passes LvDNAy and uE9hUY (4owners/2candidates each), saved `owned-native-candidate-measurements-replay.json`. Quality review found and verified the startup upper-bound fix `ce91204`; final38/38tests pass and both reviews are closed. The renamed baseline flag grants frame consistency only. All failed owners retained; original quality receipts bind revisions, not fixed capture-scope revision1.
 
+- Fresh repeat `native-app-iUAsQ6` at `f79460d`: root42912 joined diagnosticexit1,UI1/0,collectionerrors empty. Recorder code0/noforcedstop; eight clean lifecycle events.562owned events, four phases. Analysis91468 joined0:archive9302sequentialframes;live8860each with one missing sourceframe4575,maxgap~66.7ms,archiveextra214frames. Accountedmedia fails a below24fps window; other five leaves pass.374deliverywindows372onTime/2failed (overlapping missing observations).
+- A/V46096 joined1:archive64probespass;bothlive reproduce~21ms audio gap near143.312s. No presentation-time/glyph/phase pass claimed for iUAsQ6. All originals retained; no root process or reviewer remains active. This repeat isolates media loss from clean shutdown; don't run an identical scenario again without new boundary observations.
+- Short real recorder baselines: `reconnecting-rtmp-MgJTzt` clean; `reconnecting-vt-tee-13aGVC` two12second hardwareVideoToolbox sessions,360frames each in all four direct/tee outputs,all decode,clean shutdown. Reviewed instrumentation `157c48f` is not a fix for the prior intermittent error.
+
 ## Remaining implementation
 
-1. Run the existing3000/1000native scenario once with reviewed recorder lifecycle diagnostics `157c48f`. Short baselines `reconnecting-rtmp-MgJTzt` and hardwareVideoToolbox/RTMP+MP4tee `reconnecting-vt-tee-13aGVC` pass (two360frame sessions in the latter), but do not reproduce the long-run shutdown error. Preserve failed session metadata; do not treat decodable media as clean process completion.
-2. Complete [whole-history recovery qualification](../superpowers/plans/2026-09-25-owned-recovery-qualification.md): admission witnesses, native application receipts, healthy holds/backoff, capacity causality and all recorded media. Native acceptance, receiver intervals and raw candidate costs now have independent joins. Reuse original complete history and reviewed bounded helpers.
-3. Diagnose the live audio gap and recorder shutdown; add timestamp-aware synchronization and separate audio-gap accounting with tests. Preserve existing failures and contracts. Verify stale-report behavior instead of crediting unusable reports.
-4. Integrate qualified adaptation into the real-camera path. Current physical publisher is minimum-only; `PublishingQualityDriver.fixture` and owned measurement are debug routes. Production must use bounded current state that continues throughout a match, independently of finite laboratory audit/attempt caps. Preserve lab caps and history.
-5. Complete paired phone/Watch three-output acceptance, then wider ladder, sustained capture/outages, other native scorers and remote workers. Fixed-profile physical success does not prove progressive streaming.
+1. Complete [whole-history recovery qualification](../superpowers/plans/2026-09-25-owned-recovery-qualification.md): admission witnesses, native application receipts, healthy holds/backoff, capacity causality and all recorded media. Native acceptance, receiver intervals and raw candidate costs now have independent joins. Reuse original complete history and reviewed bounded helpers.
+2. Diagnose the live audio gap and recorder shutdown; add timestamp-aware synchronization and separate audio-gap accounting with tests. Preserve existing failures and contracts. Verify stale-report behavior instead of crediting unusable reports.
+3. Integrate qualified adaptation into the real-camera path. Current physical publisher is minimum-only; `PublishingQualityDriver.fixture` and owned measurement are debug routes. Production must use bounded current state that continues throughout a match, independently of finite laboratory audit/attempt caps. Preserve lab caps and history.
+4. Complete paired phone/Watch three-output acceptance, then wider ladder, sustained capture/outages, other native scorers and remote workers. Fixed-profile physical success does not prove progressive streaming.
 
 ## Physical devices
 

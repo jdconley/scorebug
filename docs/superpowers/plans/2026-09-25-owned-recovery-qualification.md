@@ -26,6 +26,11 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       and decoded baseline frames across all original owners; retain failed owners,
       original receipt revisions and lifecycle event indices. This slice grants no
       admission, application, recovery or full-media authority.
+- [ ] Join original owned admission witnesses and application receipts across all
+      owners. Reuse reviewed candidate/interval checks and shared clock/load
+      arithmetic without fabricated legacy envelopes or final snapshots. Match
+      candidate, interval, application, profile/bitrate request and acknowledgement
+      identities and chronology.
 - [ ] Add whole-history owned lifecycle, witness and policy replay. Reuse complete
       media, capacity clock/rate-ledger, delivery ownership and coverage checks.
       Never call the old one-candidate qualifier with a fabricated three-phase
