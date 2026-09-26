@@ -10,6 +10,71 @@ final class QualityTrialTests: XCTestCase {
             .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
         ], attemptID: attempt, applied: .init(profileID: "540p30", videoBitrate: 1_500_000), at: 0, recoveryStrategy: strategy)
     }
+    func testCurrentDiagnosticTracksActualPendingApplicationAndTrialWithoutMutation() throws {
+        var policy = try controller()
+        let advice = try ready(&policy)
+        let baseline = policy.currentDiagnostic
+        XCTAssertEqual(baseline.pendingRecommendation, advice)
+        XCTAssertNil(baseline.application)
+        XCTAssertNil(baseline.trial)
+        XCTAssertFalse(baseline.minimumResetRequired)
+        let application = try policy.beginApplication(advice, at: 30)
+        XCTAssertEqual(policy.currentDiagnostic.application, application)
+        XCTAssertNil(policy.currentDiagnostic.trial)
+        try policy.acknowledge(application, applied: advice.settings, at: 30)
+        let acknowledged = policy.currentDiagnostic
+        XCTAssertEqual(acknowledged.applied, advice.settings)
+        XCTAssertEqual(acknowledged.appliedRevision, 1)
+        XCTAssertNil(acknowledged.pendingRecommendation)
+        XCTAssertNil(acknowledged.application)
+        XCTAssertEqual(acknowledged.trial?.baseline, baseline.applied)
+        XCTAssertEqual(acknowledged.trial?.healthyCoverage, 0)
+        XCTAssertEqual(acknowledged.trial?.rollbackRequired, false)
+        XCTAssertEqual(policy.currentDiagnostic, acknowledged)
+        _ = try policy.evaluate(window(30, revision: 1), at: 35)
+        XCTAssertEqual(policy.currentDiagnostic.trial?.healthyStart, 30)
+        XCTAssertEqual(policy.currentDiagnostic.trial?.healthyEnd, 35)
+        XCTAssertEqual(policy.currentDiagnostic.trial?.healthyCoverage, 5)
+        _ = try policy.evaluate(window(35, revision: 1), at: 40)
+        XCTAssertNil(policy.currentDiagnostic.trial)
+        XCTAssertNil(policy.currentDiagnostic.pendingRecommendation)
+        XCTAssertEqual(policy.currentDiagnostic.appliedRevision, 1)
+        XCTAssertEqual(policy.currentDiagnostic.applied, advice.settings)
+    }
+
+    func testCurrentDiagnosticShowsInvalidationTimeoutAndFallbackRevision() throws {
+        for invalidate in [false, true] {
+            var policy = try probing()
+            if invalidate { policy.invalidateTelemetry() }
+            let rollback = try XCTUnwrap(policy.checkTrialDeadline(at: 53))
+            XCTAssertEqual(policy.currentDiagnostic.trial?.rollbackRequired, true)
+            XCTAssertEqual(policy.currentDiagnostic.pendingRecommendation, rollback)
+            try policy.acknowledge(rollback, applied: rollback.settings, at: 53)
+            XCTAssertNil(policy.currentDiagnostic.trial)
+            XCTAssertNil(policy.currentDiagnostic.pendingRecommendation)
+            XCTAssertEqual(policy.currentDiagnostic.appliedRevision, 2)
+            XCTAssertEqual(policy.currentDiagnostic.applied, rollback.settings)
+        }
+        var progressive = try QualityController(profiles: [
+            .init(id: "240", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 600_000)],
+            attemptID: attempt, applied: .init(profileID: "240", videoBitrate: 400_000), at: 0,
+            recoveryStrategy: .receiverValidatedTrials, behavior: .progressive)
+        var advice: QualityController.Recommendation?
+        for start in stride(from: 0.0, to: 10, by: 5) {
+            advice = try progressive.evaluate(window(start), at: start + 5).recommendation
+        }
+        let trial = try XCTUnwrap(advice)
+        try progressive.acknowledge(trial, applied: trial.settings, at: 10)
+        progressive.invalidateTelemetry()
+        XCTAssertTrue(progressive.currentDiagnostic.minimumResetRequired)
+        XCTAssertNil(progressive.currentDiagnostic.trial)
+        let reset = try XCTUnwrap(progressive.checkTrialDeadline(at: 11))
+        XCTAssertEqual(progressive.currentDiagnostic.pendingRecommendation?.kind, .reset)
+        try progressive.acknowledge(reset, applied: reset.settings, at: 11)
+        XCTAssertFalse(progressive.currentDiagnostic.minimumResetRequired)
+        XCTAssertEqual(progressive.currentDiagnostic.appliedRevision, 2)
+    }
+
     func testProfileTrialRequiresExplicitStrategyAndThirtySecondsOfHealthyEvidence() throws {
         var policy = try profileController(), unchanged = try profileController(strategy: .receiverValidatedTrials)
         let trial = try ready(&policy)

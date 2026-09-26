@@ -88,6 +88,34 @@ public struct QualityController: Sendable {
             recoveryStart: recoveryStart, strongHealthSequence: latestStrongHealth?.sequence,
             strongHealthStart: latestStrongHealth?.start, strongHealthEnd: latestStrongHealth?.end)
     }
+    /// Current policy state only. Unlike a retained application receipt, an
+    /// application here is still in flight. Reading never advances policy time.
+    public struct CurrentDiagnostic: Equatable, Sendable {
+        public struct Trial: Equatable, Sendable {
+            public let baseline: Settings
+            public let deadline: Double
+            public let healthyStart: Double?
+            public let healthyEnd: Double?
+            public let rollbackRequired: Bool
+            public var healthyCoverage: Double {
+                guard let healthyStart, let healthyEnd else { return 0 }
+                return healthyEnd - healthyStart
+            }
+        }
+        public let applied: Settings
+        public let appliedRevision: UInt64
+        public let pendingRecommendation: Recommendation?
+        public let application: Application?
+        public let trial: Trial?
+        public let minimumResetRequired: Bool
+    }
+    public var currentDiagnostic: CurrentDiagnostic {
+        .init(applied: applied, appliedRevision: appliedRevision, pendingRecommendation: pending,
+            application: application, trial: trial.map {
+                .init(baseline: $0.baseline, deadline: $0.deadline, healthyStart: $0.healthyStart,
+                    healthyEnd: $0.healthyEnd, rollbackRequired: $0.rollbackRequired)
+            }, minimumResetRequired: minimumResetRequired)
+    }
     /// Actual candidate transport cost and delivered probe padding, qualified
     /// independently by the caller and bound to one publication and exact target.
     public struct CandidateAdmission: Sendable {

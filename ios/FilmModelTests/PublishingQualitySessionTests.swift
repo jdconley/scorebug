@@ -1174,6 +1174,13 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         XCTAssertTrue(gate.entered)
         let duringWrite = await f.owner.candidateMeasurementContext(diagnostics: diagnostics)
         XCTAssertNil(duringWrite)
+        let inflight = await f.owner.currentDiagnostic()
+        XCTAssertEqual(inflight["policyApplicationPending"], "true")
+        XCTAssertEqual(inflight["policyApplicationKind"], "trial")
+        XCTAssertEqual(inflight["policyApplicationProfile"], "360p30")
+        XCTAssertEqual(inflight["policyApplicationBitrate"], "600000")
+        XCTAssertEqual(inflight["policyTrialActive"], "false")
+        XCTAssertNil(inflight["policyOwnerKey"])
         gate.release(); try await applying.value
         await f.owner.stop()
     }
@@ -1195,6 +1202,9 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         let unbound = try await CandidateQualityFixture.make(sourceHealth: false)
         let absent = await unbound.owner.candidateMeasurementContext(diagnostics: try unbound.diagnostics())
         XCTAssertNil(absent)
+        let diagnostic = await unbound.owner.currentDiagnostic()
+        XCTAssertNil(diagnostic["policyOwnerKey"])
+        XCTAssertNil(diagnostic["policyAcceptedSourceSequence"])
         await unbound.owner.stop()
         let f = try await CandidateQualityFixture.make()
         let original = try XCTUnwrap(f.sourceDiagnostics)
@@ -1347,6 +1357,107 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         }
     }
 
+    func testCurrentTrialDiagnosticTimeoutIsResetNotConfirmation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        f.native.setNow(138)
+        let recommendation = try await f.owner.checkTrialDeadline()
+        let reset = try XCTUnwrap(recommendation)
+        let timedOut = await f.owner.currentDiagnostic()
+        XCTAssertEqual(timedOut["policyTrialActive"], "false")
+        XCTAssertEqual(timedOut["policyMinimumResetRequired"], "true")
+        XCTAssertEqual(timedOut["policyPendingKind"], "reset")
+        XCTAssertEqual(timedOut["policyAppliedRevision"], "1")
+        try await f.owner.apply(reset)
+        let fallback = await f.owner.currentDiagnostic()
+        XCTAssertEqual(fallback["policyMinimumResetRequired"], "false")
+        XCTAssertEqual(fallback["policyAppliedRevision"], "2")
+        XCTAssertEqual(fallback["policyAppliedProfile"], "240p30")
+        XCTAssertNil(fallback["policyOwnerKey"])
+        await f.owner.stop()
+    }
+
+    func testCurrentOwnerDigestChangesForAcceptedWorkerPublicationAndProcessingScopes() async throws {
+        for variant in ["epoch", "worker", "attempt", "reader", "publisher", "processing", "profileRevision"] {
+            let f = try await CandidateQualityFixture.make()
+            let before = await f.owner.currentDiagnostic()
+            let original = try XCTUnwrap(before["policyOwnerKey"])
+            f.native.setNow(120.1)
+            let changed = try await f.freshSource(start: 115, sequence: 3, identityVariant: variant)
+            _ = try await f.owner.evaluate(source: changed.0, diagnostics: changed.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            let after = await f.owner.currentDiagnostic()
+            let replacement = try XCTUnwrap(after["policyOwnerKey"], variant)
+            XCTAssertNotEqual(original, replacement, variant)
+            XCTAssertEqual(after["policyAppliedRevision"], before["policyAppliedRevision"])
+            await f.owner.stop()
+        }
+    }
+
+    func testCurrentTrialDiagnosticUsesBoundSourceAndStableOwnerThroughConfirmation() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let initial = await f.owner.currentDiagnostic()
+        XCTAssertNotNil(initial["policyOwnerKey"])
+        let decision = try await f.owner.evaluateCandidate(f.admission)
+        let pending = await f.owner.currentDiagnostic()
+        XCTAssertEqual(pending["policyPendingKind"], "trial")
+        XCTAssertEqual(pending["policyPendingProfile"], "360p30")
+        XCTAssertEqual(pending["policyTrialActive"], "false")
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        let acknowledged = await f.owner.currentDiagnostic()
+        XCTAssertEqual(acknowledged["policyTrialActive"], "true")
+        XCTAssertNil(acknowledged["policyOwnerKey"], "Application invalidates the old source binding")
+        XCTAssertEqual(acknowledged["policyApplicationPending"], "false")
+        let retained = await f.owner.snapshot
+        XCTAssertNotNil(retained.application, "Historical receipt must not appear in flight")
+        var observations: [[String: String]] = []
+        for (start, sequence) in [(115.1, Int64(3)), (120.1, Int64(4))] {
+            f.native.setNow(start + 5.1)
+            let source = try await f.freshSource(start: start, sequence: sequence)
+            _ = try await f.owner.evaluate(source: source.0, diagnostics: source.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            let diagnostic = await f.owner.currentDiagnostic()
+            let repeated = await f.owner.currentDiagnostic()
+            XCTAssertEqual(diagnostic, repeated)
+            observations.append(diagnostic)
+        }
+        let probing = observations[0], confirmed = observations[1]
+        XCTAssertEqual(probing["policyTrialActive"], "true")
+        XCTAssertEqual(probing["policyTrialHealthyCoverageSeconds"], "5.0")
+        XCTAssertEqual(confirmed["policyTrialActive"], "false")
+        XCTAssertEqual(probing["policyOwnerKey"]?.count, 64)
+        XCTAssertEqual(probing["policyOwnerKey"], confirmed["policyOwnerKey"])
+        XCTAssertNotEqual(initial["policyOwnerKey"], confirmed["policyOwnerKey"])
+        XCTAssertEqual(confirmed["policyAppliedRevision"], "1")
+        XCTAssertEqual(confirmed["policyAppliedProfile"], "360p30")
+        XCTAssertEqual(confirmed["policyRecommendationPending"], "false")
+        XCTAssertEqual(confirmed["policyApplicationPending"], "false")
+        XCTAssertEqual(confirmed["policyMinimumResetRequired"], "false")
+        XCTAssertNotEqual(probing["policyAcceptedSourceSequence"], confirmed["policyAcceptedSourceSequence"])
+        XCTAssertNotEqual(probing["policyAcceptedSourceWindowEnd"], confirmed["policyAcceptedSourceWindowEnd"])
+        f.native.setNow(130.2)
+        let replacement = try await f.freshSource(start: 125.1, sequence: 5, recordingID: "replacement")
+        _ = try await f.owner.evaluate(source: replacement.0, diagnostics: replacement.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant)
+        let changed = await f.owner.currentDiagnostic()
+        XCTAssertNotEqual(confirmed["policyOwnerKey"], changed["policyOwnerKey"])
+        try await f.owner.noteUnavailableCadence(diagnostics: replacement.1)
+        let invalidated = await f.owner.currentDiagnostic()
+        XCTAssertNil(invalidated["policyOwnerKey"])
+        await f.owner.stop()
+        let closed = await f.owner.currentDiagnostic()
+        XCTAssertNil(closed["policyOwnerKey"])
+        XCTAssertNil(closed["policyTrialActive"])
+        XCTAssertNil(closed["policyAppliedRevision"])
+    }
+
     func testAcknowledgedTrialKeepsSameDeliveryAuthorityWithoutResettingProbation() async throws {
         for hadDeliveryBeforeTrial in [false, true] {
         let f = try await CandidateQualityFixture.make()
@@ -1381,6 +1492,12 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         let advice = try XCTUnwrap(decision.recommendation)
         f.native.setProfileAction { f.admission.authority.revoke(); f.native.setNow(115.6) }
         try await f.owner.apply(advice)
+        let acknowledged = await f.owner.currentDiagnostic()
+        XCTAssertEqual(acknowledged["policyTrialActive"], "true")
+        XCTAssertEqual(acknowledged["policyApplicationPending"], "false")
+        XCTAssertEqual(acknowledged["policyAppliedRevision"], "1")
+        XCTAssertEqual(acknowledged["policyAttemptID"], f.attempt.uuidString.lowercased())
+        XCTAssertEqual(acknowledged["policyAcknowledgedAtUptimeSeconds"], "115.6")
         f.native.setNow(120.6)
         let probing = try await f.owner.evaluate(f.window(start: 115.6, duration: 5, sequence: 2, revision: 1))
         XCTAssertEqual(probing.state, .probing)
@@ -1483,7 +1600,7 @@ struct CandidateQualityFixture: Sendable {
     private var admissionMeasurementScope: VideoFrameObservationScope {
         .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1)
     }
-    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording", unhealthy: Bool = false) async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording", unhealthy: Bool = false, identityVariant: String? = nil) async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
@@ -1492,12 +1609,18 @@ struct CandidateQualityFixture: Sendable {
             settings: try XCTUnwrap(state.applied), receipt: try XCTUnwrap(state.receipt), acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
         let afterReceipt = applied.receipt.lastSubmittedSourcePTS.map { Int64((CMTimeGetSeconds($0) * 30).rounded(.up)) + 1 } ?? 300
         let firstFrame = max(300 + Int64(max(0, start - 110) * 30), afterReceipt)
-        return try Self.source(native: native, template: template, applied: applied, unhealthy: unhealthy, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame)
+        return try Self.source(native: native, template: template, applied: applied, unhealthy: unhealthy, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame, identityVariant: identityVariant)
     }
     private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
-                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300, identityVariant: String? = nil) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+        var template = template
+        if identityVariant == "epoch" { template.status.workerEpoch = "10000000-0000-4000-8000-000000000098" }
+        if identityVariant == "worker" { template.status.workerId = "replacement" }
+        if identityVariant == "attempt" { template.status.observation?.attempt = 2 }
+        if identityVariant == "reader" { template.status.publication?.readerId = "10000000-0000-4000-8000-000000000099" }
+        if identityVariant == "publisher" { template.status.publication?.publisherId = "10000000-0000-4000-8000-000000000097" }
         let scope = VideoFrameObservationScope(recordingID: recordingID, matchID: "match", broadcastGeneration: 2,
-            publishingAttemptID: applied.attemptID, appliedProfileRevision: 1)
+            publishingAttemptID: applied.attemptID, appliedProfileRevision: identityVariant == "profileRevision" ? 2 : 1)
         var history = try VideoSourceHistory(scope: scope, capacity: 1024)
         for index in 0...150 {
             let time = start + Double(index) / 30, pts = CMTime(value: firstFrame + Int64(index), timescale: 30)
@@ -1517,13 +1640,13 @@ struct CandidateQualityFixture: Sendable {
             invalidReason: nil, ended: false, clock: "mpegts-pts-90k-v1")
         let freshness = try XCTUnwrap(WorkerDecodedVideoFreshness(response: response, receivedAt: native.instant,
             requestDuration: .milliseconds(10)))
-        let processing = WorkerProcessingReport(scopeID: "55555555-5555-4555-8555-555555555555", encoder: "videotoolbox",
+        let processing = WorkerProcessingReport(scopeID: identityVariant == "processing" ? "10000000-0000-4000-8000-000000000096" : "55555555-5555-4555-8555-555555555555", encoder: "videotoolbox",
             previousSequence: sequence - 1, sequence: sequence, firstPTS: first,
             interval: .init(sourceStartExclusive: previous, sourceEndInclusive: last, decodedFrames: 150,
                 submittedFrames: 150, completedFrames: 150, pendingFrames: 0, omittedBeforeEncoderFrames: 0,
                 filterDuration: .init(meanMs: 1, maximumMs: 4), processingDuration: .init(meanMs: 20, maximumMs: 30)))
-        let source = WorkerSourceIntervalObservation(interval: interval, nativeClock: clock, workerId: "mac",
-            workerEpoch: template.status.workerEpoch!, workerAttempt: 1, publication: template.status.publication!,
+        let source = WorkerSourceIntervalObservation(interval: interval, nativeClock: clock, workerId: template.status.workerId!,
+            workerEpoch: template.status.workerEpoch!, workerAttempt: template.status.observation!.attempt, publication: template.status.publication!,
             previousSequence: sequence - 1, sequence: sequence, previousDecodedPTS: previous, firstDecodedPTS: first, lastDecodedPTS: last,
             freshness: freshness, processing: processing)
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)

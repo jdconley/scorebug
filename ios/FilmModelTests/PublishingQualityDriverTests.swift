@@ -34,6 +34,49 @@ import XCTest
         XCTAssertNil(quality["evidenceDictionary"])
     }
 
+    func testFullyPopulatedCurrentTrialDiagnosticFitsExistingAXBudget() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        f.native.useActualInstant()
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, export: { _ in })
+        var measurement = PublishingOwnedMeasurementLease.CurrentDiagnostic()
+        measurement.phase = "applicationAcknowledged"; measurement.failure = "unavailable"
+        measurement.failurePhase = "applicationDispatched"; measurement.candidateReason = "completed"
+        measurement.costReady = true; measurement.boundAt = 109; measurement.completedAt = 114.07
+        // Populate the other existing producers' optional fields, including
+        // rejected-input fields that may coexist with retained candidate output.
+        var additional = measurement.fields(settlement: "acknowledged", at: 115.1)
+        for key in ["candidateProviderGate", "lastCandidateAdmissionGate", "sourceRejection", "cadenceRejection", "localRejection"] {
+            additional[key] = "source-configuration"
+        }
+        for key in ["candidateProviderObservedAtUptimeSeconds", "lastCandidateAdmissionObservedAtUptimeSeconds",
+                    "deliveryObservedAtUptimeSeconds", "deliveryWindowSeconds", "deliveryExpectedFrames", "deliveryOnTimeFrames",
+                    "deliveryLateFrames", "deliveryMissingFrames", "deliveryUncertainFrames", "lastRecoveryDeliveryWindowAgeSeconds"] {
+            additional[key] = "1234567.123456789"
+        }
+        driver.candidateInputDiagnosticProvider = { additional }
+        driver.candidateInputProvider = { _ in f.admission }
+        var values: [String] = []
+        driver.currentDiagnosticDidChange = { values.append($0) }
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        f.native.setNow(120.2)
+        let source = try await f.freshSource(start: 115.1, sequence: 3)
+        await driver.tick(encoderReady: true, source: source.0, diagnostics: source.1)?.value
+        XCTAssertEqual(values.count, 2, "Overflow must not silently suppress the new callback")
+        let value = try XCTUnwrap(values.last)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: String])
+        XCTAssertEqual(fields["policyTrialActive"], "true")
+        XCTAssertEqual(fields["policyOwnerKey"]?.count, 64)
+        XCTAssertNotNil(fields["lastMeasurementOutcome"])
+        XCTAssertNotNil(fields["lastCandidateCostBitsPerSecond"])
+        XCTAssertNotNil(fields["deliveryUncertainFrames"])
+        XCTAssertLessThanOrEqual(value.utf8.count, 4096)
+        print("Populated current trial diagnostic bytes: \(value.utf8.count)")
+        await driver.stop()
+    }
+
     func testProductionWorkerLimitsRecognizeOnlyReportedSupportedBackend() async throws {
         for encoder in ["software", "videotoolbox", "nvenc", "unknown", "", "VideoToolbox", nil] {
             let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)

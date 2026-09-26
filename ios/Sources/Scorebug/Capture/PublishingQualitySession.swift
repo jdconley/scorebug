@@ -3,6 +3,9 @@ import CoreMedia
 import ScorebugCore
 import ScorebugMedia
 import ScorebugStreaming
+#if DEBUG
+import CryptoKit
+#endif
 
 /// Opt-in application binding. The caller must qualify profiles and telemetry.
 /// No capture model starts this owner until source/pressure alignment is qualified.
@@ -357,7 +360,78 @@ actor PublishingQualitySession {
         result.merge(candidateSourceDiagnostic) { _, latest in latest }
         result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
         result["lastRecoveryDeliveryWindowAgeSeconds"] = recoveryDelivery.map { String(now - $0.source.windowEnd) }
+        if !closed, let policy {
+            let current = policy.currentDiagnostic
+            if let receipt, let acknowledgedAt, acknowledgedAt.isFinite,
+               acknowledgedAt >= receipt.acceptedAt, acknowledgedAt <= now,
+               receipt.configuration.bitRate == current.applied.videoBitrate {
+                result["policyAttemptID"] = attemptID.uuidString.lowercased()
+                result["policyAcknowledgedAtUptimeSeconds"] = String(acknowledgedAt)
+            }
+            result["policyAppliedProfile"] = current.applied.profileID
+            result["policyAppliedBitrate"] = String(current.applied.videoBitrate)
+            result["policyAppliedRevision"] = String(current.appliedRevision)
+            result["policyRecommendationPending"] = String(current.pendingRecommendation != nil)
+            result["policyPendingKind"] = current.pendingRecommendation.map { String(describing: $0.kind) }
+            result["policyPendingProfile"] = current.pendingRecommendation?.settings.profileID
+            result["policyPendingBitrate"] = current.pendingRecommendation.map { String($0.settings.videoBitrate) }
+            result["policyApplicationPending"] = String(current.application != nil)
+            result["policyApplicationKind"] = current.application.map { String(describing: $0.recommendation.kind) }
+            result["policyApplicationProfile"] = current.application?.recommendation.settings.profileID
+            result["policyApplicationBitrate"] = current.application.map { String($0.recommendation.settings.videoBitrate) }
+            result["policyTrialActive"] = String(current.trial != nil)
+            result["policyTrialHealthyCoverageSeconds"] = current.trial.map { String($0.healthyCoverage) }
+            result["policyTrialRollbackRequired"] = current.trial.map { String($0.rollbackRequired) }
+            result["policyMinimumResetRequired"] = String(current.minimumResetRequired)
+            result["policyOwnerKey"] = currentPolicyOwnerKey(policy: policy, now: now)
+            if candidateHealthSource != nil {
+                result["policyAcceptedSourceSequence"] = lastSource.map { String($0.sequence) }
+                result["policyAcceptedSourceWindowEnd"] = lastWindow.map { String($0.end) }
+            }
+        }
         return result
+    }
+    /// Correlation only: no retained confirmation, authority, or source watermark
+    /// participates in this identity. A new accepted window keeps the same key.
+    private func currentPolicyOwnerKey(policy: QualityController, now: Double) -> String? {
+        guard let source = candidateHealthSource, lastSource?.scope == source,
+              let receipt, let acknowledgedAt, let window = lastWindow,
+              policy.attemptID == attemptID, window.attemptID == attemptID,
+              window.appliedRevision == policy.appliedRevision,
+              receipt.configuration.bitRate == policy.applied.videoBitrate,
+              acknowledgedAt.isFinite, acknowledgedAt >= receipt.acceptedAt, acknowledgedAt <= now,
+              source.clock.publishingGeneration == receipt.publishingGeneration,
+              source.observationScope.publishingAttemptID == attemptID,
+              source.observationScope.matchID == source.gameID,
+              source.observationScope.broadcastGeneration == source.generation,
+              source.publication.publishingAttemptId == attemptID.uuidString.lowercased() else { return nil }
+        var profile: Any = NSNull()
+        if let value = profileReceipt {
+            guard value.profile.rawValue == policy.applied.profileID,
+                  value.publishingGeneration == receipt.publishingGeneration,
+                  value.encoderSessionID == receipt.configuration.encoderSessionID else { return nil }
+            profile = ["profile": value.profile.rawValue, "publishingGeneration": String(value.publishingGeneration),
+                "previousEncoderSessionID": value.previousEncoderSessionID.uuidString,
+                "encoderSessionID": value.encoderSessionID.uuidString,
+                "lastOldSourcePTS": NativeCandidateFixture.time(value.lastOldSourcePTS),
+                "firstNewSourcePTS": NativeCandidateFixture.time(value.firstNewSourcePTS),
+                "width": value.width, "height": value.height,
+                "rawVideoFramesDropped": String(value.rawVideoFramesDropped), "acknowledgedAt": value.acknowledgedAt] as [String: Any]
+        }
+        let fields: [String: Any] = ["attempt": attemptID.uuidString, "revision": String(policy.appliedRevision),
+            "settings": ["profile": policy.applied.profileID, "bitrate": policy.applied.videoBitrate],
+            "receipt": PublishingOwnedMeasurementAudit.receipt(receipt), "profileReceipt": profile,
+            "source": ["observationScope": NativeCandidateFixture.scope(source.observationScope),
+                "clock": ["sourceOrigin": NativeCandidateFixture.time(source.clock.sourceOrigin),
+                    "publishingGeneration": String(source.clock.publishingGeneration)],
+                "gameID": source.gameID, "generation": source.generation,
+                "workerID": source.workerId, "epoch": source.epoch, "attempt": source.attempt,
+                "publication": ["readerId": source.publication.readerId, "publisherId": source.publication.publisherId,
+                    "publishingAttemptId": source.publication.publishingAttemptId,
+                    "clock": ["convention": source.publication.clock.convention, "originPTS": source.publication.clock.originPTS]],
+                "processingScope": source.processingScope as Any? ?? NSNull()] as [String: Any]]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
     #endif
 
