@@ -78,10 +78,15 @@ enum PublishingDeliveryMonitor {
         var authority: PublishingDeliveryAuthority? = nil
     }
 
-    /// Explicit qualification export. Legacy storage remains bounded to 256 rows;
-    /// the validated repeated fixture uses a separate row and serialized-byte budget.
-    /// Caller serializes access. Only the explicit deadline-reset fixture consumes results.
-    final class Audit {
+    /// Shared synchronous ownership, scheduling and classification. Retains only
+    /// the current ownership key and the two schedule cursors; no evidence rows.
+    private struct Classifier {
+        private struct AuthorityIdentity: Equatable {
+            // Retain only the current authority to prevent ObjectIdentifier ABA
+            // if a retired authority is deallocated between polls.
+            let value: PublishingDeliveryAuthority
+            static func == (lhs: Self, rhs: Self) -> Bool { lhs.value === rhs.value }
+        }
         private struct Key: Equatable {
             let scope: VideoFrameObservationScope
             let clock: PublishingTransportClock
@@ -94,8 +99,107 @@ enum PublishingDeliveryMonitor {
             let acceptedAt: Double
             let submittedPTS: CMTime?
             let acknowledgedAt: Double
-            let authorityID: ObjectIdentifier?
+            let authorityID: AuthorityIdentity?
         }
+        private(set) var schedule: Schedule
+        private var key: Key?
+        private var identity = false
+        let usesRequestTiming: Bool
+
+        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool) throws {
+            schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
+            self.usesRequestTiming = usesRequestTiming
+        }
+        mutating func windows(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
+            onOwnershipChange: () -> Bool = { true }, onUnavailable: (() -> Void)?) -> [Window] {
+            guard let input else {
+                key = nil
+                return schedule.poll(at: now, identity: nil, onUnavailable: onUnavailable)
+            }
+            let next = Key(scope: input.history.scope, clock: input.clock.transportClock,
+                context: input.delivery.context, deliveryScope: input.delivery.snapshot.scopeID,
+                attempt: applied.attemptID, revision: applied.revision, configuration: applied.receipt.configuration,
+                generation: applied.receipt.publishingGeneration, acceptedAt: applied.receipt.acceptedAt,
+                submittedPTS: applied.receipt.lastSubmittedSourcePTS, acknowledgedAt: applied.acknowledgedAt,
+                authorityID: input.authority.map { AuthorityIdentity(value: $0) })
+            if key != next {
+                guard onOwnershipChange() else { onUnavailable?(); return [] }
+                key = next
+                identity.toggle()
+            }
+            return schedule.poll(at: now, identity: identity ? "a" : "b", onUnavailable: onUnavailable)
+        }
+        func classify(input: Input, applied: PublishingQualityTelemetry.Applied, window: Window,
+            at now: Double, instant: ContinuousClock.Instant, onUnavailable: (() -> Void)?) throws -> PublishingDeliveryObservation {
+            guard usesRequestTiming == (input.delivery.sampleTimeBounds != nil) else { throw PublishingDeliveryObservation.Failure.freshness }
+            let observation = try PublishingDeliveryObservation.classify(history: input.history, clock: input.clock,
+                applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
+                windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
+                maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget, authority: input.authority)
+            if !PublishingCandidateRecoveryCoverage.acceptsDelivery(observation.result) { onUnavailable?() }
+            return observation
+        }
+    }
+
+    /// Continuous control has no lifetime row/phase budget and retains no input
+    /// history or classification results. Caller serializes access. Every batch
+    /// is fully assessed before returning at most two transient observations.
+    final class Continuous {
+        private var classifier: Classifier
+        private var closed = false
+        init(latencyBudget: Double, maximumSampleAge: Double, usesRequestTiming: Bool = false) throws {
+            classifier = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge,
+                usesRequestTiming: usesRequestTiming)
+        }
+        @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
+            instant: ContinuousClock.Instant, onUnavailable: (() -> Void)? = nil) -> [PublishingDeliveryObservation] {
+            guard !closed else { onUnavailable?(); return [] }
+            let windows = classifier.windows(input: input, applied: applied, at: now, onUnavailable: onUnavailable)
+            guard let input else { return [] }
+            var observations: [PublishingDeliveryObservation] = []
+            for window in windows {
+                do {
+                    observations.append(try classifier.classify(input: input, applied: applied, window: window,
+                        at: now, instant: instant, onUnavailable: onUnavailable))
+                } catch { onUnavailable?() }
+            }
+            return observations
+        }
+        func close() { closed = true }
+    }
+
+    /// Selection is explicit: audit exhaustion never falls back to continuous control.
+    enum Consumer {
+        case audited(Audit)
+        case continuous(Continuous)
+
+        func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
+            instant: ContinuousClock.Instant, onUnavailable: (() -> Void)?) -> [PublishingDeliveryObservation] {
+            switch self {
+            case .audited(let audit): return audit.record(input: input, applied: applied, at: now, instant: instant, onUnavailable: onUnavailable)
+            case .continuous(let consumer): return consumer.record(input: input, applied: applied, at: now, instant: instant, onUnavailable: onUnavailable)
+            }
+        }
+        /// Preserve audited teardown/export ordering; live control closes now.
+        func cancel() {
+            if case .continuous(let consumer) = self { consumer.close() }
+        }
+        func close() {
+            switch self {
+            case .audited(let audit): audit.close()
+            case .continuous(let consumer): consumer.close()
+            }
+        }
+        func auditData() throws -> Data? {
+            guard case .audited(let audit) = self else { return nil }
+            return try audit.data()
+        }
+    }
+
+    /// Explicit qualification export. Legacy storage remains bounded to 256 rows;
+    /// the validated repeated fixture uses a separate row and serialized-byte budget.
+    /// Caller serializes access. Only the explicit deadline-reset fixture consumes results.
+    final class Audit {
         private let timingProfile: StreamingTimingProfile
         private let usesRequestTiming: Bool
         private let extendedMode: String?
@@ -106,8 +210,7 @@ enum PublishingDeliveryMonitor {
         private static let envelopeAllowance = 4096
         private var serializedRowBytes = 0
         private var serializationInvalid = false
-        private var schedule: Schedule
-        private var key: Key?
+        private var classifier: Classifier
         private var phase = 0
         private var rows: [[String: Any]] = []
         private var closed = false
@@ -131,24 +234,20 @@ enum PublishingDeliveryMonitor {
             self.timingProfile = .strict1500
             extendedMode = nil
             #endif
-            schedule = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge)
+            classifier = try .init(latencyBudget: latencyBudget, maximumSampleAge: maximumSampleAge, usesRequestTiming: usesRequestTiming)
         }
         @discardableResult func record(input: Input?, applied: PublishingQualityTelemetry.Applied, at now: Double,
                     instant: ContinuousClock.Instant, onUnavailable: (() -> Void)? = nil) -> [PublishingDeliveryObservation] {
             guard !closed, !overflow, !serializationInvalid else { onUnavailable?(); return [] }
-            guard let input else { key = nil; _ = schedule.poll(at: now, identity: nil, onUnavailable: onUnavailable); return [] }
+            let windows = classifier.windows(input: input, applied: applied, at: now,
+                onOwnershipChange: {
+                    guard self.phase < 256 else { self.overflow = true; return false }
+                    self.phase += 1
+                    return true
+                }, onUnavailable: onUnavailable)
+            guard let input else { return [] }
             var observations: [PublishingDeliveryObservation] = []
-            let next = Key(scope: input.history.scope, clock: input.clock.transportClock,
-                context: input.delivery.context, deliveryScope: input.delivery.snapshot.scopeID,
-                attempt: applied.attemptID, revision: applied.revision, configuration: applied.receipt.configuration,
-                generation: applied.receipt.publishingGeneration, acceptedAt: applied.receipt.acceptedAt,
-                submittedPTS: applied.receipt.lastSubmittedSourcePTS, acknowledgedAt: applied.acknowledgedAt,
-                authorityID: input.authority.map(ObjectIdentifier.init))
-            if key != next {
-                guard phase < 256 else { overflow = true; onUnavailable?(); return [] }
-                key = next; phase += 1
-            }
-            for window in schedule.poll(at: now, identity: String(phase), onUnavailable: onUnavailable) {
+            for window in windows {
                 guard rows.count < (extendedMode != nil ? Self.extendedMaximumRows : 256) else { overflow = true; onUnavailable?(); return observations }
                 var row: [String: Any] = ["phase": phase, "start": window.start, "end": window.end, "evaluatedAt": now,
                     "appliedRevision": String(applied.revision), "acknowledgedAt": applied.acknowledgedAt,
@@ -170,18 +269,14 @@ enum PublishingDeliveryMonitor {
                 }
                 var retainedObservation: PublishingDeliveryObservation?
                 do {
-                    guard usesRequestTiming == (input.delivery.sampleTimeBounds != nil) else { throw PublishingDeliveryObservation.Failure.freshness }
-                    let observation = try PublishingDeliveryObservation.classify(history: input.history, clock: input.clock,
-                        applied: applied, diagnostics: input.diagnostics, delivery: input.delivery,
-                        windowStart: window.start, windowEnd: window.end, at: now, instant: instant,
-                        maximumSampleAge: schedule.maximumSampleAge, latencyBudget: schedule.latencyBudget, authority: input.authority)
+                    let observation = try classifier.classify(input: input, applied: applied, window: window,
+                        at: now, instant: instant, onUnavailable: onUnavailable)
                     retainedObservation = observation
                     row["classifiedAt"] = observation.classifiedAt
                     row["observedAtLowerBound"] = observation.observedAtLowerBound
                     row["anchorSourcePTS"] = Self.time(observation.source.anchorSourcePTS)
                     row["history"] = Self.history(input.history, start: window.start, anchor: observation.source.anchorSourcePTS)
                     let result = observation.result
-                    if !PublishingCandidateRecoveryCoverage.acceptsDelivery(result) { onUnavailable?() }
                     row["result"] = ["expectedFrames": result.expectedFrames, "onTimeFrames": result.onTimeFrames,
                         "lateFrames": result.lateFrames, "missingFrames": result.missingFrames,
                         "uncertainFrames": result.uncertainFrames, "onTimeFPS": Self.optional(result.onTimeFPS),
@@ -211,8 +306,8 @@ enum PublishingDeliveryMonitor {
         func close() { closed = true }
         func data() throws -> Data {
             var fields: [String: Any] = ["formatVersion": 1, "closed": closed, "overflow": overflow,
-                "invalid": schedule.invalid || serializationInvalid, "latencyBudget": schedule.latencyBudget,
-                "maximumSampleAge": schedule.maximumSampleAge, "rows": rows]
+                "invalid": classifier.schedule.invalid || serializationInvalid, "latencyBudget": classifier.schedule.latencyBudget,
+                "maximumSampleAge": classifier.schedule.maximumSampleAge, "rows": rows]
             fields["timingContract"] = timingProfile.evidence
             if usesRequestTiming { fields["deliveryTiming"] = "request-uptime-v1" }
             if extendedMode != nil {

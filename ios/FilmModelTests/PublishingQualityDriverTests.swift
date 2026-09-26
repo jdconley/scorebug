@@ -152,11 +152,13 @@ import XCTest
 
     func testRepeatedLiveDrainDoesNotDelayAdmissionAndStopJoinsTerminalAfterBlockedWriter() async throws {
         let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true), gate = LiveCheckpointGate()
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        var deliveryExport: Data?
         var writes: [Data] = [], final: Data?, tickFinished = false, stopped = false
         let driver = PublishingQualityDriver(owner: f.owner,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
-            uptime: { f.native.now }, liveExport: { data in
+            uptime: { f.native.now }, deliveryConsumer: .audited(audit), deliveryExport: { deliveryExport = $0 }, liveExport: { data in
                 if writes.isEmpty { await gate.wait() }
                 writes.append(data)
             }, export: { final = $0 })
@@ -166,13 +168,17 @@ import XCTest
         await checkpointWait { gate.started && tickFinished }
         XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"], "Live I/O must not run inside the short admission lease")
         driver.cancel()
+        XCTAssertEqual(try checkpointObject(audit.data())["closed"] as? Bool, false)
         let stop = Task { await driver.stop(); stopped = true }
         await checkpointWait { f.native.stops == 1 }
         XCTAssertFalse(stopped, "stop must join the blocked live writer")
         XCTAssertNil(final)
+        XCTAssertNil(deliveryExport)
+        XCTAssertEqual(try checkpointObject(audit.data())["closed"] as? Bool, false, "Audit closes only after joined teardown")
         gate.release()
         await observe.value; await stop.value
         XCTAssertTrue(stopped)
+        XCTAssertEqual(try checkpointObject(XCTUnwrap(deliveryExport))["closed"] as? Bool, true)
         XCTAssertGreaterThanOrEqual(writes.count, 2)
         XCTAssertLessThanOrEqual(writes.count, 3, "Pending applied/candidate prefixes must coalesce while the first writer waits")
         // If stop has already enqueued its terminal prefix only two writes are

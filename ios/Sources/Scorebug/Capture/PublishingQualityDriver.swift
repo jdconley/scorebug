@@ -17,7 +17,7 @@ import ScorebugStreaming
     var cadenceInputProvider: (() -> CadenceInput?)?
     private let enableDeliveryFailures: Bool
     private let enableMeasuredSourceEvaluation: Bool
-    private let deliveryAudit: PublishingDeliveryMonitor.Audit?
+    private let deliveryConsumer: PublishingDeliveryMonitor.Consumer?
     private let deliveryExport: ((Data) async -> Void)?
     private let timingProfile: StreamingTimingProfile
     private let owner: PublishingQualitySession
@@ -43,12 +43,14 @@ import ScorebugStreaming
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, timingProfile: StreamingTimingProfile = .strict1500, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryConsumer: PublishingDeliveryMonitor.Consumer? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
         self.timingProfile = timingProfile
         self.liveExport = liveExport
         self.enableDeliveryFailures = enableDeliveryFailures
         self.enableMeasuredSourceEvaluation = enableMeasuredSourceEvaluation
-        self.deliveryAudit = deliveryAudit; self.deliveryExport = deliveryExport
+        precondition(deliveryAudit == nil || deliveryConsumer == nil, "Choose one delivery consumer")
+        self.deliveryConsumer = deliveryAudit.map { .audited($0) } ?? deliveryConsumer
+        self.deliveryExport = deliveryExport
         self.owner = owner; self.workerLimits = workerLimits; self.transportLimits = transportLimits; self.uptime = uptime; self.export = export
     }
     #if DEBUG
@@ -112,7 +114,7 @@ import ScorebugStreaming
             if let settings = state.applied, let revision = state.revision, let receipt = state.receipt,
                let acknowledgedAt = state.acknowledgedAt, !state.isBusy, !state.isClosed {
                 let now = uptime(), instant = ContinuousClock.now
-                deliveryObservations = deliveryAudit?.record(input: currentDelivery,
+                deliveryObservations = deliveryConsumer?.record(input: currentDelivery,
                     applied: .init(attemptID: state.attemptID, revision: revision, settings: settings,
                         receipt: receipt, acknowledgedAt: acknowledgedAt), at: now, instant: instant,
                     onUnavailable: {
@@ -230,6 +232,8 @@ import ScorebugStreaming
             }
         } catch {
             guard !isClosed, !Task.isCancelled else { return }
+            deliveryConsumer?.cancel()
+            owner.invalidateCandidateRecovery()
             isClosed = true
             await owner.stop()
             await record("failed", reason: "native-change-failed", allowClosed: true)
@@ -319,7 +323,7 @@ import ScorebugStreaming
     }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { owner.invalidateCandidateRecovery(); isClosed = true; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() { deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -329,8 +333,8 @@ import ScorebugStreaming
             await work?.value
             await record("stopped", allowClosed: true)
             await liveDrain?.value
-            deliveryAudit?.close()
-            if let deliveryExport, let data = try? deliveryAudit?.data() { await deliveryExport(data) }
+            deliveryConsumer?.close()
+            if let deliveryExport, let data = try? deliveryConsumer?.auditData() { await deliveryExport(data) }
             if let export, let data = try? JSONSerialization.data(withJSONObject: qualityObject, options: [.sortedKeys]) {
                 await export(data)
             }

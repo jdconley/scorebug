@@ -448,9 +448,9 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
                           captureInput: ((PublishingDeliveryMonitor.Input) -> Void)? = nil,
                           captureResponse: ((WorkerMediaStatusResponse) -> Void)? = nil,
                           requestTiming: DeliveryRequestTiming? = nil, localDelay: Double = 0,
-                          deliveryInstant: ContinuousClock.Instant? = nil) throws -> PublishingDeliveryObservation {
+                          deliveryInstant: ContinuousClock.Instant? = nil, frameOffset: Int = 0) throws -> PublishingDeliveryObservation {
         let instant = deliveryInstant ?? self.instant
-        let h = try history(missing: missing)
+        let h = try history(captureRange: frameOffset...(frameOffset + 120), missing: missing, encodedThrough: frameOffset + 120)
         let clock = PublishingTransportClock(sourceOrigin: .zero, publishingGeneration: 1)!
         let receipt = PublishingBitRateChange(publishingGeneration: 1, configuration: configuration,
             acceptedAt: 0, lastSubmittedSourcePTS: submittedBoundary)!
@@ -462,7 +462,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
             thermal: PublishingThermalTracker().snapshot)
         // Explicit synthetic clock/publication binding; no physical latency claim.
         var rows: [(pts: Int64, at: Double)] = []
-        for i in 0...decodedThrough where !missing.contains(i) {
+        for i in frameOffset...(frameOffset + decodedThrough) where !missing.contains(i) {
             let pts = Int64(i) * 3000 - 1919
             let delay = late.contains(i) ? 1.2 : latency
             rows.append((pts: pts, at: Double(i) / 30 + delay))
@@ -514,7 +514,7 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         return try PublishingDeliveryObservation.classify(history: h,
             clock: .init(scope: scope, transportClock: clock, isClosed: fault == 6),
             applied: applied, diagnostics: diagnostics, delivery: delivery,
-            windowStart: 1, windowEnd: 3, at: fault == 9 ? 3.9 : evaluationTime + localDelay,
+            windowStart: Double(frameOffset) / 30 + 1, windowEnd: Double(frameOffset) / 30 + 3, at: fault == 9 ? 3.9 : evaluationTime + localDelay,
             instant: fault == 7 ? instant + .seconds(6) : instant + .seconds(localDelay),
             maximumSampleAge: 0.25, latencyBudget: deadline, authority: authority)
     }
@@ -675,6 +675,194 @@ final class PublishingDeliverySourceWindowTests: XCTestCase {
         XCTAssertEqual(rows.first?.result.onTimeFrames, 30)
         XCTAssertGreaterThan(try XCTUnwrap(rows.last?.result.uncertainFrames), 0)
         XCTAssertTrue(unavailable, "Typed negative must be known before the driver submits any positive row")
+    }
+
+    private typealias ContinuousConsumer = PublishingDeliveryMonitor.Continuous
+
+    func testContinuousConsumerKeepsClassifyingFreshWindowsBeyondAuditCapacity() throws {
+        let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25)
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        let (first, applied) = try auditFixture()
+        consumer.record(input: first, applied: applied, at: 0.5, instant: instant)
+        audit.record(input: first, applied: applied, at: 0.5, instant: instant)
+        var classified = 0
+        for step in 0..<600 {
+            let now = Double(step) + 4.5, tick = instant + .seconds(step)
+            var input: PublishingDeliveryMonitor.Input?
+            _ = try classify(missing: [], late: [], evaluationTime: now,
+                captureInput: { input = $0 }, deliveryInstant: tick, frameOffset: step * 30)
+            var unavailable = false
+            let observations = consumer.record(input: input, applied: applied, at: now, instant: tick,
+                onUnavailable: { unavailable = true })
+            XCTAssertFalse(unavailable, "fresh step \(step)")
+            XCTAssertFalse(observations.isEmpty, "fresh step \(step)")
+            XCTAssertLessThanOrEqual(observations.count, 2)
+            XCTAssertTrue(observations.allSatisfy { PublishingCandidateRecoveryCoverage.acceptsDelivery($0.result) })
+            classified += observations.count
+            let retained = audit.record(input: input, applied: applied, at: now, instant: tick)
+            if step < 170 {
+                XCTAssertEqual(observations.map { $0.result.onTimeFrames }, retained.map { $0.result.onTimeFrames })
+                XCTAssertEqual(observations.map { $0.source.windowStart }, retained.map { $0.source.windowStart })
+            }
+        }
+        XCTAssertGreaterThan(classified, 512)
+        XCTAssertEqual(try auditObject(audit)["overflow"] as? Bool, true)
+        XCTAssertEqual((try auditObject(audit)["rows"] as? [Any])?.count, 256)
+    }
+
+    func testContinuousConsumerSurvivesMoreThan256OwnershipChangesWithoutRetainingProofs() throws {
+        let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25)
+        let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25)
+        let (_, applied) = try auditFixture()
+        for phase in 0..<300 {
+            let base = Double(phase * 5), tick = instant + .seconds(phase * 5)
+            var input: PublishingDeliveryMonitor.Input?
+            _ = try classify(missing: [], late: [], evaluationTime: base + 4.5, withAuthority: true,
+                captureInput: { input = $0 }, deliveryInstant: tick, frameOffset: phase * 150)
+            var unavailable = false
+            XCTAssertTrue(consumer.record(input: input, applied: applied, at: base + 0.5, instant: tick,
+                onUnavailable: { unavailable = true }).isEmpty)
+            XCTAssertEqual(unavailable, phase > 0)
+            // Only ownership polls go to this audit, isolating the phase cap.
+            audit.record(input: input, applied: applied, at: base + 0.5, instant: tick)
+            unavailable = false
+            let observations = consumer.record(input: input, applied: applied, at: base + 4.5, instant: tick,
+                onUnavailable: { unavailable = true })
+            XCTAssertEqual(observations.map { $0.result.onTimeFrames }, [30, 60])
+            XCTAssertFalse(unavailable)
+        }
+        XCTAssertEqual(try auditObject(audit)["overflow"] as? Bool, true)
+        XCTAssertEqual((try auditObject(audit)["rows"] as? [Any])?.count, 0)
+        func collections(_ value: Any) -> [Int] {
+            let mirror = Mirror(reflecting: value)
+            if mirror.displayStyle == .collection { return [mirror.children.count] }
+            return mirror.children.flatMap { collections($0.value) }
+        }
+        XCTAssertEqual(collections(consumer), [2], "Only the two schedule cursors may be retained; never rows, histories or results")
+    }
+
+    func testContinuousConsumerRetainsAuthorityIdentityUntilReplacement() throws {
+        let (original, applied) = try auditFixture()
+        let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25)
+        var input = original
+        input.authority = PublishingDeliveryAuthority(delivery: original.delivery)
+        weak var retired = input.authority
+        consumer.record(input: input, applied: applied, at: 0.5, instant: instant)
+        input.authority?.revoke()
+        input.authority = nil
+        XCTAssertNotNil(retired, "Keep the current identity alive so allocator address reuse cannot hide replacement")
+        input.authority = PublishingDeliveryAuthority(delivery: original.delivery)
+        var unavailable = false
+        XCTAssertTrue(consumer.record(input: input, applied: applied, at: 1, instant: instant,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
+        XCTAssertNil(retired, "Replacement must release the previous authority")
+    }
+
+    func testContinuousConsumerInvalidatesMissingSuspendedInvalidAndClosedPolls() throws {
+        let (input, applied) = try auditFixture()
+        for fault in ["missing", "suspended", "reversed", "nan", "closed", "stale", "requestTiming"] {
+            let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25,
+                usesRequestTiming: fault == "requestTiming")
+            consumer.record(input: input, applied: applied, at: 0.5, instant: instant)
+            if fault == "closed" { consumer.close() }
+            let now = fault == "suspended" ? 10 : fault == "reversed" ? 0 : fault == "nan" ? Double.nan : 4.5
+            var unavailable = false
+            XCTAssertTrue(consumer.record(input: fault == "missing" ? nil : input, applied: applied, at: now,
+                instant: instant + .seconds(fault == "stale" ? 1 : 0), onUnavailable: { unavailable = true }).isEmpty, fault)
+            XCTAssertTrue(unavailable, fault)
+            if ["reversed", "nan", "closed"].contains(fault) {
+                unavailable = false
+                XCTAssertTrue(consumer.record(input: input, applied: applied, at: 4.5, instant: instant,
+                    onUnavailable: { unavailable = true }).isEmpty)
+                XCTAssertTrue(unavailable)
+            }
+        }
+    }
+
+    func testContinuousAndAuditedConsumersAgreeOnRequestTimingModes() throws {
+        let (_, applied) = try auditFixture()
+        for anchoredInput in [false, true] {
+            for requiresRequestTiming in [false, true] {
+                var input: PublishingDeliveryMonitor.Input?
+                _ = try classify(missing: [], late: [], captureInput: { input = $0 },
+                    requestTiming: anchoredInput ? DeliveryRequestTiming(startedAt: 4.48, receivedAt: 4.5) : nil)
+                let continuous = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25, usesRequestTiming: requiresRequestTiming)
+                let audit = try PublishingDeliveryMonitor.Audit(latencyBudget: 1, maximumSampleAge: 0.25, usesRequestTiming: requiresRequestTiming)
+                continuous.record(input: input, applied: applied, at: 0.5, instant: instant)
+                audit.record(input: input, applied: applied, at: 0.5, instant: instant)
+                var continuousUnavailable = false, auditUnavailable = false
+                let observations = continuous.record(input: input, applied: applied, at: 4.5, instant: instant,
+                    onUnavailable: { continuousUnavailable = true })
+                let retained = audit.record(input: input, applied: applied, at: 4.5, instant: instant,
+                    onUnavailable: { auditUnavailable = true })
+                XCTAssertEqual(observations.map { $0.result.onTimeFrames }, retained.map { $0.result.onTimeFrames })
+                XCTAssertEqual(continuousUnavailable, auditUnavailable)
+                XCTAssertEqual(observations.count, anchoredInput == requiresRequestTiming ? 2 : 0)
+                XCTAssertEqual(continuousUnavailable, anchoredInput != requiresRequestTiming)
+            }
+        }
+    }
+
+    func testContinuousConsumerAssessesUnclassifiedAndNegativeMixedWindowsBeforeReturning() throws {
+        let (_, applied) = try auditFixture()
+        for fault in ["shortHistory", "uncertain", "missing"] {
+            var captured: PublishingDeliveryMonitor.Input?
+            _ = try classify(missing: fault == "missing" ? Set(60..<90) : [],
+                late: fault == "uncertain" ? Set(60..<90) : [], ageMs: fault == "uncertain" ? 250 : 0,
+                decodedThrough: fault == "shortHistory" ? 60 : 90, captureInput: { captured = $0 })
+            let original = try XCTUnwrap(captured)
+            let input = PublishingDeliveryMonitor.Input(history: fault == "shortHistory" ? try history(captureRange: 29...61) : original.history,
+                clock: original.clock, diagnostics: original.diagnostics, delivery: original.delivery)
+            let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25)
+            consumer.record(input: input, applied: applied, at: 0.5, instant: instant)
+            var unavailable = false
+            let batch = consumer.record(input: input, applied: applied, at: 4.5, instant: instant,
+                onUnavailable: { unavailable = true })
+            XCTAssertEqual(batch.first?.result.onTimeFrames, 30)
+            XCTAssertEqual(batch.count, fault == "shortHistory" ? 1 : 2)
+            XCTAssertTrue(unavailable, "Whole batch must invalidate before any positive result is consumed")
+        }
+    }
+
+    @MainActor func testDriverContinuousDeliveryOperatesBeyondAuditCapsAndClosesOnCancel() async throws {
+        bitRate = 700_000
+        let native = DeadlineNative(configuration: configuration), owner = try deliveryOwner(native)
+        try await owner.bootstrap()
+        let consumer = try ContinuousConsumer(latencyBudget: 1, maximumSampleAge: 0.25)
+        let driver = PublishingQualityDriver(owner: owner, workerLimits: nil, transportLimits: nil,
+            uptime: { native.now }, deliveryConsumer: .continuous(consumer), enableDeliveryFailures: true)
+        var current: PublishingDeliveryMonitor.Input?
+        _ = try classify(missing: [], late: [], revision: 0, profileID: "240p30", submittedBoundary: .zero,
+            withAuthority: true, captureInput: { current = $0 }, deliveryInstant: .now)
+        let authority = try XCTUnwrap(current?.authority)
+        driver.deliveryInputProvider = { current }
+        native.setNow(0.5)
+        await driver.tick(encoderReady: true, source: nil, diagnostics: try XCTUnwrap(current).diagnostics)?.value
+        for step in 0...600 {
+            let now = Double(step) + 4.5
+            _ = try classify(missing: step == 600 ? Set((step * 30 + 30)..<(step * 30 + 90)) : [], late: [],
+                evaluationTime: now, revision: 0, profileID: "240p30", submittedBoundary: .zero,
+                captureInput: { current = $0 }, deliveryInstant: .now, frameOffset: step * 30)
+            current?.authority = authority
+            native.setNow(now)
+            await driver.tick(encoderReady: true, source: nil, diagnostics: try XCTUnwrap(current).diagnostics)?.value
+        }
+        XCTAssertEqual(native.calls, 2, "Fresh negative evidence beyond both audit row caps must still reset")
+        let state = await owner.snapshot
+        XCTAssertEqual(state.applied?.videoBitrate, 350_000)
+        XCTAssertNotNil(state.lastDeliveryFailure)
+        driver.cancel()
+        XCTAssertNil(driver.tick(encoderReady: true, source: nil, diagnostics: try XCTUnwrap(current).diagnostics))
+        var unavailable = false
+        let applied = PublishingQualityTelemetry.Applied(attemptID: session, revision: 0,
+            settings: .init(profileID: "240p30", videoBitrate: 700_000),
+            receipt: try XCTUnwrap(current?.diagnostics.receipt), acknowledgedAt: 0)
+        XCTAssertTrue(consumer.record(input: current, applied: applied, at: 605.5, instant: .now,
+            onUnavailable: { unavailable = true }).isEmpty)
+        XCTAssertTrue(unavailable)
+        await driver.stop()
+        XCTAssertEqual(native.stops, 1)
     }
 
     func testCapacityDeadlineAuditRetains512RowsAndRejectsTheNextScheduledRow() throws {
