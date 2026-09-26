@@ -14,6 +14,7 @@ actor PublishingOwnedMeasurementLease {
         #endif
     }
     private let sourceCoverage: @Sendable (QualityController.CandidateMeasurementAttempt) async -> SourceCoverage?
+    private let sourceWaitPlacement: NativeCandidateStagePlanSelection.SourceWaitPlacement
     private let sourceDeadline = ProcessInfo.processInfo.systemUptime + QualityController.maximumWindowDuration + 2
     nonisolated let id = UUID()
     #if DEBUG
@@ -99,6 +100,7 @@ actor PublishingOwnedMeasurementLease {
         guard let target = PublishingVideoProfile(rawValue: context.readiness.settings.profileID),
               target.bitRate == context.readiness.settings.videoBitrate else { throw PublishingQualitySession.Failure.unsupportedProfile }
         self.stagePlan = try publisher.stagePlanSelection.resolve(context)
+        self.sourceWaitPlacement = publisher.stagePlanSelection.sourceWaitPlacement
         self.token = token; self.context = context; self.publisher = publisher; self.probes = probes; self.predecessor = predecessor; self.retirement = predecessor
         #if DEBUG
         self.audit = publisher.audit
@@ -213,8 +215,9 @@ actor PublishingOwnedMeasurementLease {
             try await renew()
         }
     }
-    // Use observed source progress to schedule collection from the lower-rate
-    // stage. This grants no admission authority and does not extend evidence age.
+    // Observed source progress schedules collection without granting admission
+    // authority or extending evidence age. Production waits after final settling;
+    // fixed laboratory plans retain their lower-stage wait.
     private func awaitNextSourceCoverage() async throws {
         #if DEBUG
         currentDiagnostic.phase = "sourceWaitStarted"
@@ -264,7 +267,7 @@ actor PublishingOwnedMeasurementLease {
         try await allocate(in: selected, after: predecessor, rate: plan.bitRates[0], policy: policy, replacement: false)
         for index in 1..<plan.bitRates.count {
             try await hold(for: plan.holds[index - 1])
-            if index == plan.bitRates.count - 1 { try await awaitNextSourceCoverage() }
+            if index == plan.bitRates.count - 1, sourceWaitPlacement == .beforeFinalStage { try await awaitNextSourceCoverage() }
             let rate = plan.bitRates[index]
             guard let operation else { throw PublishingQualitySession.Failure.notReady }
             #if DEBUG
@@ -278,8 +281,9 @@ actor PublishingOwnedMeasurementLease {
             try check()
             try await allocate(in: selected, after: retired, rate: rate, policy: policy, replacement: true)
         }
-        if plan.bitRates.count == 1 { try await awaitNextSourceCoverage() }
+        if plan.bitRates.count == 1, sourceWaitPlacement == .beforeFinalStage { try await awaitNextSourceCoverage() }
         try await hold(for: plan.holds[plan.holds.count - 1])
+        if sourceWaitPlacement == .afterFinalHold { try await awaitNextSourceCoverage() }
         guard let sample else { throw PublishingQualitySession.Failure.notReady }
         binding = PublishingProbeObservation(sample); boundAt = ProcessInfo.processInfo.systemUptime
         guard let pressure = publisher.pressure, pressure.valid else { throw PublishingQualitySession.Failure.notReady }

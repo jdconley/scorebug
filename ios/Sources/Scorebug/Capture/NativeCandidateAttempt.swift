@@ -79,6 +79,14 @@ enum NativeCandidateStagePlanSelection: Sendable, Equatable {
     case fixed(NativeCandidateStagePlan)
     case productionSRT
 
+    enum SourceWaitPlacement: Sendable { case beforeFinalStage, afterFinalHold }
+    var sourceWaitPlacement: SourceWaitPlacement {
+        switch self {
+        case .fixed: return .beforeFinalStage
+        case .productionSRT: return .afterFinalHold
+        }
+    }
+
     func resolve(_ context: PublishingQualitySession.CandidateMeasurementContext) throws -> NativeCandidateStagePlan {
         switch self {
         case .fixed(let plan): return plan

@@ -258,6 +258,12 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testFourSecondCandidateUsesActualFiveSecondSourceCadenceWithReportLag() async throws {
         try await exerciseOwnedApplication(.sourceCadence)
     }
+    func testProductionCandidateOverlapsFiveSecondSourceWithDelayedReceiverBounds() async throws {
+        try await exerciseOwnedApplication(.productionSourceCadence)
+    }
+    func testFixedProductionRatesRetainOriginalWaitAndRejectStaleSource() async throws {
+        try await exerciseOwnedApplication(.fixedProductionSourceCadence)
+    }
     func testContinuousTwoStagePlanBindsItsFinalStageAndKeepsItImmutable() async throws {
         try await exerciseOwnedApplication(.continuousPlan)
     }
@@ -293,9 +299,13 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testAcknowledgedBaselineChangeClearsLearnedProbeDemand() async throws {
         try await exerciseOwnedApplication(.baselineChangeDemand)
     }
-    private enum ApplicationOutcome { case laboratoryDemand, baselineChangeDemand, overCapDemand, staleDemand, measuredDemand, productionPlan, continuousPlan, sourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    private enum ApplicationOutcome { case laboratoryDemand, baselineChangeDemand, overCapDemand, staleDemand, measuredDemand, productionPlan, continuousPlan, sourceCadence, productionSourceCadence, fixedProductionSourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
     @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
+        let fixedProductionCadence = outcome == .fixedProductionSourceCadence
+        let productionCadence = outcome == .productionSourceCadence || fixedProductionCadence
+        let sourceCadence = outcome == .sourceCadence || productionCadence
+        let reportLag = productionCadence ? 1.3 : 1.8
         let measuredDemand = outcome == .measuredDemand || outcome == .overCapDemand || outcome == .staleDemand || outcome == .laboratoryDemand || outcome == .baselineChangeDemand
         let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
         let baseline: PublishingVideoProfile = heldRejection || outcome == .baselineChangeDemand ? .low360 : .low240
@@ -303,7 +313,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         let start = ProcessInfo.processInfo.systemUptime
         f.native.useActualInstant()
         f.native.setNow(start)
-        let fresh = try await f.freshSource(start: start - (outcome == .sourceCadence ? 6.8 : 5), sequence: 3)
+        let fresh = try await f.freshSource(start: start - (sourceCadence ? 5 + reportLag : 5), sequence: 3)
         _ = try await f.owner.evaluate(source: fresh.0, diagnostics: fresh.1,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
@@ -324,8 +334,8 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             return .init(id: result.id, start: { result.start() }, offer: { _ in true }, observeAudio: { _ in },
                 cancel: { result.cancel($0) }, result: { await result.result() })
         })
-        let wrapper = outcome == .productionPlan || measuredDemand
-            ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign, stagePlanSelection: .productionSRT)
+        let wrapper = outcome == .productionPlan || measuredDemand || productionCadence
+            ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign, stagePlanSelection: fixedProductionCadence ? .fixed(try .productionSRT(videoBitRate: 600_000)) : .productionSRT)
             : outcome == .continuousPlan
             ? NativeOwnedCandidatePublisher(publisher: lower, scope: fresh.1.ingress!.scope, campaignOwner: campaign,
                 stagePlan: try NativeCandidateStagePlan(bitRates: [800_000, 3_000_000], holds: [0.8, 0.5]))
@@ -341,14 +351,15 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 let now = ProcessInfo.processInfo.systemUptime
                 return .init(observedAt: now, sampledAt: now, thermal: 0, dropped: 0, rejected: 0, publishing: true)
             }))
-        if outcome == .sourceCadence {
+        if sourceCadence {
             let driver = PublishingQualityDriver(owner: f.owner,
                 workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
                 transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
                 uptime: { f.native.now })
             driver.candidateInputProvider = { [self] _ in
                 guard let value = await wrapper.candidateSnapshot() else { return nil }
-                return try? ownedAdmission(value, f: f)
+                return try? ownedAdmission(value, f: f, productionAdmission: productionCadence,
+                    receiverReportAgeMilliseconds: productionCadence ? 1300 : 10)
             }
             var nextSourceReport = 5.0, sequence: Int64 = 4
             var diagnostics = fresh.1
@@ -356,7 +367,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 f.native.setNow(ProcessInfo.processInfo.systemUptime)
                 var source: WorkerSourceIntervalObservation?
                 if f.native.now - start >= nextSourceReport {
-                    let next = try await f.freshSource(start: start + nextSourceReport - 6.8, sequence: sequence)
+                    let next = try await f.freshSource(start: start + nextSourceReport - 5 - reportLag, sequence: sequence)
                     source = next.0; diagnostics = next.1
                     nextSourceReport += 5; sequence += 1
                 }
@@ -365,9 +376,17 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(100))
             }
             let state = await f.owner.snapshot
-            XCTAssertEqual(state.revision, 1, "A real four-second candidate must meet the next observed source window without widening freshness")
-            XCTAssertEqual(state.applied?.profileID, "360p30")
+            let diagnostic = await f.owner.currentDiagnostic()
+            XCTAssertEqual(state.revision, fixedProductionCadence ? 0 : 1, "Source gate: \(diagnostic["lastCandidateSourceGate"] ?? "none"). A real four-second candidate must meet the next observed source window without widening freshness")
+            XCTAssertEqual(state.applied?.profileID, fixedProductionCadence ? "240p30" : "360p30")
+            if fixedProductionCadence { XCTAssertEqual(diagnostic["lastCandidateSourceGate"], "source-window-age") }
             await f.owner.joinOwnedMeasurement()
+            if productionCadence {
+                XCTAssertNil(wrapper.audit)
+                XCTAssertFalse(driver.isClosed)
+                await driver.stop(); await wrapper.stop()
+                return
+            }
             let rows = try auditRows(wrapper)
             let measurement = try XCTUnwrap(rows.first { $0["kind"] as? String == "candidateJoined" }?["measurement"] as? [String: Any])
             XCTAssertEqual(measurement["acceptedInputCount"] as? Int, 121)
@@ -603,7 +622,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
-        case .laboratoryDemand, .baselineChangeDemand, .overCapDemand, .staleDemand, .measuredDemand, .productionPlan, .continuousPlan, .sourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
+        case .laboratoryDemand, .baselineChangeDemand, .overCapDemand, .staleDemand, .measuredDemand, .productionPlan, .continuousPlan, .sourceCadence, .productionSourceCadence, .fixedProductionSourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])
@@ -613,15 +632,23 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         await f.owner.stop(); await wrapper.stop()
     }
     private var admissionClockInstant = ContinuousClock.now
-    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture, baseline: PublishingVideoProfile = .low240, measuredDemand: Bool = false, productionAdmission: Bool = false) throws -> PublishingCandidateAdmission? {
+    private func ownedAdmission(_ value: NativeCandidatePublisher.CandidateSnapshot, f: CandidateQualityFixture, baseline: PublishingVideoProfile = .low240, measuredDemand: Bool = false, productionAdmission: Bool = false, receiverReportAgeMilliseconds: Double = 10) throws -> PublishingCandidateAdmission? {
         let templateURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: templateURL))
         let clock = PublishingCandidateAdmission.Clock.sample(), instant = clock.instant, now = clock.after
         f.native.setNow(now)
         admissionClockInstant = instant
+        // Do not fabricate the clock anchor or its delivered bytes before this
+        // immutable probe actually existed. Later calls reuse the same schedule.
+        if receiverReportAgeMilliseconds > 10, now - 5.2 < value.probe.startedAt { return nil }
         var tracker = WorkerReceiverProbeTracker()
-        let samples = measuredDemand ? [(-2.0, 100), (-1.0, 180), (0.0, 260)] : [(-2.0, 100), (-1.0, 500), (0.0, 1000)]
+        // A coherent timing witness, not a claim of a measured run13 receiver age.
+        // A prior fresh observation anchors the remote clock; subsequent reports
+        // arrive 1.3s after their observations. No endpoint may cover the future.
+        let samples = receiverReportAgeMilliseconds > 10
+            ? [(-5.0, 10), (-3.0, 50), (-2.0, 150), (-1.0, 250), (0.0, 350)]
+            : measuredDemand ? [(-2.0, 100), (-1.0, 180), (0.0, 260)] : [(-2.0, 100), (-1.0, 500), (0.0, 1000)]
         for (offset, messages) in samples {
             var response = template, sample = template.status.receiverProbe!.snapshot
             sample.id = value.probe.id.uuidString.lowercased(); sample.publishingGeneration = "7"
@@ -629,9 +656,12 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             sample.campaign = String(value.probe.campaign!); sample.deliveredMessages = String(messages)
             sample.deliveredPayloadBytes = String(messages * 1316); sample.totalDeliveredPayloadBytes = sample.deliveredPayloadBytes
             sample.campaignDeliveredPayloadBytes = sample.deliveredPayloadBytes; sample.nextSequence = sample.deliveredMessages
-            sample.pendingPackets = 0; sample.observedAtNanoseconds = String(Int64((115 + offset) * 1e9))
-            sample.firstDeliveredAtNanoseconds = String(Int64(111 * 1e9)); sample.lastDeliveredAtNanoseconds = String(Int64((115 + offset - 0.01) * 1e9))
-            response.status.receiverProbe = .init(snapshot: sample, ageUpperBoundMs: 10)
+            let delayed = receiverReportAgeMilliseconds > 10 && offset > -5
+            let sampleLag = delayed ? receiverReportAgeMilliseconds / 1000 : 0
+            sample.pendingPackets = 0; sample.observedAtNanoseconds = String(Int64((115 + offset - sampleLag) * 1e9))
+            sample.firstDeliveredAtNanoseconds = String(Int64((receiverReportAgeMilliseconds > 10 ? 109.8 : 111) * 1e9))
+            sample.lastDeliveredAtNanoseconds = String(Int64((115 + offset - sampleLag - 0.01) * 1e9))
+            response.status.receiverProbe = .init(snapshot: sample, ageUpperBoundMs: delayed ? receiverReportAgeMilliseconds : 10)
             let evidence = try XCTUnwrap(WorkerReceiverProbeFreshness(response: response,
                 expected: .init(gameId: "match", generation: 2, workerId: "mac", publishingAttemptId: f.attempt.uuidString.lowercased(),
                     probeId: sample.id, publishingGeneration: 7, bitRate: value.probe.bitRate, stage: value.probe.stage, campaign: value.probe.campaign),
@@ -720,6 +750,45 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
                 transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
         } catch { XCTFail("Fresh source fixture: \(error)") }
     }
+    func testProductionFinalStageSourceWaitStaysBoundedAndJoinsOnCancellationTimeoutOrPressure() async throws {
+        for ending in ["cancel", "timeout", "pressure"] {
+            let f = try await CandidateQualityFixture.make(), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+            let fixture = OwnedAppRouteFixture(selected: f.native.receipt!)
+            let wrapper = NativeOwnedCandidatePublisher(publisher: SRTMediaPublisher(operations: await fixture.operations()),
+                scope: diagnostics.ingress!.scope, campaignOwner: PublishingCandidateCampaignOwner(), stagePlanSelection: .productionSRT)
+            try await wrapper.start(); await fixture.enableSending()
+            try await f.owner.installOwnedMeasurementPublisher(wrapper)
+            let started = ContinuousClock.now
+            _ = try await f.owner.startOwnedMeasurement(diagnostics: diagnostics)
+            let deadline = started + .seconds(3)
+            var final: PublishingProbeObservation?
+            while ContinuousClock.now < deadline {
+                if let probe = await f.owner.ownedProbeObservation(), probe.stage == 2,
+                   ProcessInfo.processInfo.systemUptime - probe.startedAt >= 0.6 { final = probe; break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertNotNil(final, "Full-rate stage must stay renewable while waiting for fresh source: \(ending)")
+            XCTAssertEqual(final?.bitRate, 1_092_000)
+            let candidate = await f.owner.ownedCandidateSnapshot()
+            XCTAssertNil(candidate, "No source coverage means no candidate measurement")
+            if ending == "cancel" { await f.owner.stop() }
+            if ending == "pressure" { await fixture.raiseSenderPressure() }
+            await f.owner.joinOwnedMeasurement()
+            let terminalValue = await fixture.probeSnapshot()
+            let terminal = try XCTUnwrap(terminalValue)
+            XCTAssertNotNil(terminal.reason)
+            XCTAssertLessThanOrEqual(terminal.totalAcceptedPayloadBytes ?? .max, 16 * 1024 * 1024)
+            XCTAssertLessThan(started.duration(to: .now), .seconds(9), "Original source deadline must bound full-rate waiting")
+            let rates = await fixture.requestedRates, counts = await fixture.counts
+            XCTAssertEqual(rates, [546_000, 1_092_000])
+            XCTAssertEqual(counts.retirements, 2)
+            let diagnostic = await f.owner.currentDiagnostic()
+            if ending == "timeout" { XCTAssertEqual(diagnostic["lastMeasurementFailurePhase"], "sourceWaitTimedOut") }
+            if ending == "pressure" { XCTAssertEqual(diagnostic["lastMeasurementFailurePhase"], "renewalRejected") }
+            await f.owner.stop(); await wrapper.stop()
+        }
+    }
+
     func testSourceWaitCancellationAndTimeoutJoinStageTwoWithoutStartingCandidate() async throws {
         for cancel in [true, false] {
             let f = try await CandidateQualityFixture.make(), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
@@ -944,11 +1013,17 @@ private actor OwnedAppRouteFixture {
         configuration: VideoEncodingConfiguration(id: UUID(), encoderSessionID: UUID(), bitRate: 900_000)!,
         acceptedAt: 1, lastSubmittedSourcePTS: .zero)!
     private var sender: Task<Void, Never>?
+    private var senderPressure = false
+    func raiseSenderPressure() { senderPressure = true }
+    func probeSnapshot() -> PublishingBandwidthProbeSnapshot? {
+        probe.map { PublishingBandwidthProbeSnapshot($0.snapshot(now: { ProcessInfo.processInfo.systemUptime })) }
+    }
     func enableSending() {
         sender = Task {
             while !stopped, !Task.isCancelled {
                 let at = ProcessInfo.processInfo.systemUptime
                 var mon = CBytePerfMon(); mon.msRTT = 2; mon.msSndTsbPdDelay = 200
+                mon.msSndBuf = senderPressure ? 2000 : 0
                 _ = try? probe?.offer(statistics: .init(mon: mon, sampledAt: at), now: { at }, send: { _ in true })
                 try? await Task.sleep(for: .milliseconds(1))
             }
