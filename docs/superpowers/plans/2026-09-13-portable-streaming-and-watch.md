@@ -52,6 +52,9 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [ ] Measure startup, collapse/reset and recovery on this Mac, then physical phone/watch and portable remote workers, preserving independent local A/V.
 - [ ] Integrate the qualified controller, candidate measurement and delivery feedback into the real-camera app path without fixture/environment selectors. Verify start-low, increase, congestion fallback and recovery on the actual phone while its clean archive and paired Watch scoring remain active.
 - [ ] Separate long-running adaptation state from finite lab audit storage and attempt caps. Preserve complete bounded lab evidence, but verify that production adaptation continues through a full match without audit exhaustion disabling feedback or further recovery. Construct worker limits and the supported quality ladder explicitly for the selected backend and device.
+- [ ] Extract the continuous delivery classifier; verify control beyond512windows and256identity changes with bounded state. Preserve the laboratory audit’s fail-closed completeness contract.
+- [ ] Promote owned candidate lifecycle types into production and replace the lifetime16attempt gate with one active owner, joined retirement and policy cooldown.
+- [ ] Size bounded probes for the next candidate and validate production transport-overhead costing for Wi-Fi/cellular and IPv4/IPv6. Preserve source/probe authority and cancellation semantics.
 
 ## Remaining integration and vertical work
 
@@ -61,7 +64,8 @@ The [progressive adaptation design](../specs/2026-09-16-progressive-streaming-de
 - [x] Test retransmission margin using the 2-second profile with 1000 ms SRT; preserve its failed audio, deadline and progression results.
 - [x] Diagnose the candidate timing overlap and verify progression with the existing 3-second profile and 1000 ms SRT. Preserve failed experiments under their original contracts.
 - [x] Replace smoothed SRT queue-duration sampling with instantaneous native statistics for pressure decisions, preserving counter, freshness and lifecycle contracts. Bundled simulator build and both reviews pass.
-- [ ] Verify the instantaneous statistics correction in a fresh complete native replay before claiming the live media loss is fixed.
+- [ ] Verify the instantaneous statistics correction in a fresh complete native replay before claiming the live media loss is fixed. The first replay has continuous recorded video, four quality phases and passing score changes, but retains a21ms live audio gap and exhausts the32MiB delivery-evidence budget before the stream ends. Preserve both failures.
+- [ ] Resolve complete delivery-evidence retention within existing laboratory limits; verify terminal coverage without silently dropping history or raising caps.
 - [ ] Diagnose missing live audio and recorder shutdown, and separate timestamp-aware A/V alignment from audio continuity in qualification. Preserve explicit gap counts and original failures; silence padding cannot recover lost content.
 - [ ] Verify control behavior during stale-report gaps and select a production timing policy from complete evidence.
 

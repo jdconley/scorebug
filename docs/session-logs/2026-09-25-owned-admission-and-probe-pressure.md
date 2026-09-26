@@ -40,3 +40,33 @@ Runtime commit `27a502d` switches both socket constructors to one `srt_bistats` 
 The regression first failed with five assertions against averaged readings, then passed:71focused tests,80related recovery/staged/replacement/transport tests, and8final sampling tests. The bundled arm64 iOS simulator app builds successfully. The maintained patch verifies all162upstream hashes and exact round trip. Logs are under `artifacts/qa/srt-instantaneous-statistics-20260925/`. Independent specification review reran8sampling tests and patch verification and approved without findings. Independent quality review also reran8sampling tests and diff checking and approved without findings. Both reviews are closed.
 
 The next launcher is `artifacts/qa/run-owned-reliability3000-peer1000-native-20260925-instantaneous.py 3000`: the same prepared source,3000ms decoder budget,1000ms SRT,750kbps restriction90–150s and270s hold. It uses exclusive new outputs and records its source checkpoint. This replay must establish media behavior independently of the statistics regression; no media-loss fix is claimed yet.
+
+## Fresh native replay after the correction
+
+Launcher ran at reviewed runtime27a502d/documentation116765b. Root11576 joined with the intentional diagnosticexit1, artifact `native-app-9IVqF0`; the UI workflow passed in360.852s and collection errors are empty. This exit is deliberately not an acceptance verdict. Four native phases,556owned events,4owners,2acknowledgements and2failed settlements remain in original history. Recorder code0, no forced termination, eight clean lifecycle events.
+
+Root analysis6549 joined0. Archive9273frames0–9272; both live8827frames229–9055. All three fully decode A/V; no missing or reversed frame identities. Maximum video gaps33.334msarchive/34msdirect/33.334msoverlay. Both live identity arrays match exactly, and the archive continues217frames beyond live. All five timing/native/compressed/profile/capacity-clock leaves pass; the admission/application join passes4owners/2admissions and still denies full-media authority.
+
+The accounted-media leaf rejects `Invalid deadline audit envelope`: delivery-deadlines.json is33,525,136bytes, marks overflow=true at374rows, and reaches its32MiB budget before the512row limit. All374retained windows are healthy with no rejected observations; final encoded media extends20.4096s after the last evaluation. Missing terminal coverage remains a real qualification failure. Do not raise the established lab cap or relabel this run.
+
+`instantaneous-pressure-comparison.json` retains input hashes and original per-owner pressure/retirement observations for iUAsQ6 versus9IVqF0. Failed probes still retire for transportPressure. Current measurements now show larger queue values; the timing of failed attempts differs. This comparison alone is not a causal proof that every media fault is fixed. Recorded audio checks subsequently finished as recorded below.
+
+## Production integration assessment
+
+Independent read-only assessment found a five-slice path using existing capture/scoring architecture:
+
+1. Extract continuous delivery classification from finite Audit retention. Keep current identity, two schedule cursors and current observations bounded; preserve actual missing/stale-evidence invalidation. Ordinary audit256rows and256phases currently stop classification. Driver512event cap only truncates diagnostics.
+2. Promote owned lifecycle runtime types; retain fixture export behind DEBUG. Replace lifetime16attempt gate with existing cooldown, exactly one active measurement and joined predecessor. CandidateCampaignOwner already has constant-size ownership.
+3. Parameterize next-candidate probe stages: OwnedMeasurementLease currently pads500kbps→2Mbps→12Mbps and assumes stage3. Preserve binding/300msleases and pressure limits. Replace laboratoryIPv4’s fixed44byte/message costing with a documented, validated production framing basis before cellular/IPv6 use.
+4. Wire ordinary camera publication through a production factory, compressed AAC observation, guarded mutations, delivery/source freshness and owned measurement. Qualify the existing240p350k→360p600k step first, then extend supported ladder/backend limits.
+5. Verify release phone construction, bounded soak beyond512windows/256identity changes/16attempts, stale-owner stop/replacement, camera/thermal/archive integrity and genuine paired-Watch scoring under live stress. Existing simulator pairing failure and separate direct/injected tests do not establish paired success.
+
+No product clarification is needed for these engineering slices. Runtime integration remains disabled pending implementation/verification.
+
+## Final replay verification
+
+A/V analysis54722 joinedexit1. Archive64waveform probes pass. Both live waveform checks reject a21.33ms lag spread. Independent audio timestamp analysis finds one gap near114.449s in each live output:21.065msdirect and21.337msoverlay; no archive gap above3ms. Saved `audio-timestamp-diagnosis.json`. No phase-audio or presentation-time pass is claimed. The instantaneous queue correction does not resolve all live audio loss.
+
+A separate bounded glyph check (`verify-instantaneous-score-glyphs-20260925.mjs`, exit0) verifies score0→1 in both live outputs: all four template matches pass. Results and cropped samples are retained in `independent-score-glyphs/`. This separates successful overlay behavior from the failed audio gate without changing either result.
+
+All root native/analysis processes are joined; specification, quality and read-only production reviewers finished. No hardware was rerun, and no production adaptation is enabled. Next work should address the remaining live audio/probe behavior and complete audit retention, then implement the identified production slices; another identical native replay without a change is not useful.

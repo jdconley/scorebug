@@ -2,58 +2,51 @@
 
 ## Working state
 
-- Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Do not edit the original `/Users/jd/src/scorebug` checkout.
-- Active goal: native recording, native phone/Watch scoring, progressive SRT, portable overlay proxy, mock RTMP MP4 and optional proxy-overlay MP4.
-- [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) is current goals/status/todos. [Current session log](2026-09-25-owned-admission-and-probe-pressure.md) preserves commands, evidence and failed experiments; [research](../research/2026-09-25-live-platform-adaptation.md) explains the timing choices.
-- Runtime timing contracts `aaa9afc` and expiry fix `c4c30cd` passed specification and quality reviews. New whole-history receiver conservation `d59fdcd` and interval replay `5535489` also passed both reviews. Root122 interval/conservation tests pass; quality reviewer236 related tests pass. Raw candidate-cost joins through `ce91204` also passed specification and quality review. Owned admission/application correspondence `4a86392` also passed both reviews; retry-policy/fault-causality/full-media integration remains unfinished.
-- No root test/lab/analysis process is currently running. All native/analysis processes are joined; recorder socket diagnostics `157c48f` passed both reviews; the3000/1000native repeat is complete; all root processes are joined and all current reviews are closed; instantaneous SRT statistics fix `27a502d` passed both reviews and the bundled simulator build; its fresh native replay is next. Preserve failures, original Downloads footage and device recordings. Use installed runtimes only.
+- Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Do not edit `/Users/jd/src/scorebug`.
+- Active goal: native clean recording, phone/Watch scoring, progressive SRT, portable overlay proxy, mock RTMP MP4 and optional proxy-overlay MP4. Production camera publishing remains minimum-only.
+- [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) contains current goals/status/todos. [Current session log](2026-09-25-owned-admission-and-probe-pressure.md) contains implementation/review evidence and failed experiments. [Research](../research/2026-09-25-live-platform-adaptation.md) distinguishes established sender adaptation from experimental product timing.
+- Runtime HEAD of the latest experiment: `27a502d` (launched at documentation checkpoint `116765b`). No root process or review remains active. Preserve all failures and original Downloads/device recordings. Use installed runtimes only.
 
-## Current evidence and next experiment
+## Latest result
 
-| Experiment | Decoder budget / SRT | Result |
-| --- | --- | --- |
-| `native-app-LvDNAy` | 2000 / 700 ms | Clean four phases, all recorded frame/audio/score checks pass. Complete recovery qualification remains open. |
-| `native-app-pzZozK` | 3000 / 700 ms | Four phases, but one missing live frame and decoded identity damage. Archive clean. |
-| `native-app-D4EhKU` | 2000 / 1000 ms | Clean video identities, but one live audio gap, two problematic delivery windows and no quality applications. Archive clean. |
-| `native-app-uE9hUY` | 3000 / 1000 ms | Four phases and continuous video; short audio gap, late health report and socket error at recorder shutdown remain. Archive clean. |
-| `native-app-iUAsQ6` | 3000 / 1000 ms | Four phases and clean shutdown; one missing live video frame, short audio gap and below24fps window. Archive clean. |
+`native-app-9IVqF0` repeats the3000ms decoder/1000ms SRT case after reviewed instantaneous queue sampling:
 
-- D4EhKU launched at `c62cf61`; root14560 joined intentional diagnosticexit1, UI1/0. Analysis29983 joined0; A/V70595 joined1. Both live files8865sequentialframes227–9091; archive9307frames0–9306. Live waveform/timestamps reveal ~21ms audio gap around133.374s. Four-phase gates correctly reject one phase; no score/phase-audio pass claimed.
-- D4EhKU retains1317nativeevents, six failed attempts, five completed candidates. Diagnosis finds source-health expiry precedes the first usable post-candidate receiver interval in each completed attempt. Do not confuse missing readiness with bad encoding. The source and receiver evidence must overlap; preserve independent freshness limits.
-- The3000/1000experiment completed at `fac0cc3`, artifactuE9hUY, UI1/0, intentional diagnosticexit1. Original process27038 disappeared after interruption; saved exit record confirms completion. Do not rerun it solely because the old handle is missing.
-- uE9hUY: archive9271frames0–9270; both live8827frames229–9055. All decode and frame identities pass. Applications28.016s↑,91.200s↓,193.185s↑. Two completed/acknowledged and two failed candidates remain in552originalevents.
-- Accounted-media still rejects one573.97ms report gap against500ms limit.2825/2826settled samples fresh;353deliveryrows include351on-time and2explicitly rejected stale rows. The original diagnostic assumed non-null results; use artifact-only `diagnose-owned-timing-profile-v2-20260925.mjs` to retain rejected rows honestly.
-- Original A/V helper fails live lag-spread after one~21ms audio gap near145.169s. Presentation-time diagnostic explicitly pads the missing time with silence only in analysis PCM:69grid/phaseprobes per output pass with<1ms lagspread, and score0→1 glyphs pass. Missing audio remains real; this does not restore lost content or grant continuity/full qualification. Results: `audio-presentation-diagnostic/results.json`; both original and diagnostic results retained.
-- Mock recorder session has `client-socket` failure at close/null summarypath although actualMP4 fully decodes. Investigate close/error ordering; do not silently accept failed session metadata.
-- Reviewed receiver intervals pass LvDNAy10covered/3unbracketed,pzZozK10/4,D4EhKU27/9,uE9hUY8/4. Result `owned-native-receiver-intervals-replay.json` denies higher authority.
-- Candidate cost join `e34926f`, retirement index followup `39a3122`: implementer226focused tests, root37new tests, spec37pass+byteexactprovenance. Root replay at e34926f passes LvDNAy and uE9hUY (4owners/2candidates each), saved `owned-native-candidate-measurements-replay.json`. Quality review found and verified the startup upper-bound fix `ce91204`; final38/38tests pass and both reviews are closed. The renamed baseline flag grants frame consistency only. All failed owners retained; original quality receipts bind revisions, not fixed capture-scope revision1.
+- UI workflow passes360.852s; root11576 joins with intentional diagnosticexit1. Collection errors empty. Four phases240p→360p→240p→360p;556owned events,4owners,2acknowledgements/2failed settlements.
+- Archive9273consecutiveframes0–9272; both live8827consecutiveframes229–9055. Full A/V decode passes, no frame identity gaps/reversals, identical live identities. Archive continues217frames beyond live. Analysis6549 joined0.
+- Recorder exits0, no forced stop, eight clean lifecycle events. Separate score0→1 glyph checks pass both live outputs.
+- All five timing/native/compressed/profile/capacity-clock leaves pass. Reviewed admission/application join passes4owners/2admissions; no full-media authority.
+- **Delivery evidence fails completeness:**32MiB exhausted at374rows (33,525,136serialized bytes). All retained windows healthy, but final media extends20.4096s after last evaluation. Do not raise the established cap or discard history to claim a pass.
+- **Live audio still fails:** approximately21ms gap near114.449s in both outputs; archive64waveform probes pass and has no timestamp gaps above3ms. A/V54722 joined1. No phase-audio pass claimed. Queue correction is valid but not a complete media-loss fix.
 
-- Fresh repeat `native-app-iUAsQ6` at `f79460d`: root42912 joined diagnosticexit1,UI1/0,collectionerrors empty. Recorder code0/noforcedstop; eight clean lifecycle events.562owned events, four phases. Analysis91468 joined0:archive9302sequentialframes;live8860each with one missing sourceframe4575,maxgap~66.7ms,archiveextra214frames. Accountedmedia fails a below24fps window; other five leaves pass.374deliverywindows372onTime/2failed (overlapping missing observations).
-- A/V46096 joined1:archive64probespass;bothlive reproduce~21ms audio gap near143.312s. No presentation-time/glyph/phase pass claimed for iUAsQ6. All originals retained; no root process or reviewer remains active. This repeat isolates media loss from clean shutdown; don't run an identical scenario again without new boundary observations.
-- Short real recorder baselines: `reconnecting-rtmp-MgJTzt` clean; `reconnecting-vt-tee-13aGVC` two12second hardwareVideoToolbox sessions,360frames each in all four direct/tee outputs,all decode,clean shutdown. Reviewed instrumentation `157c48f` is not a fix for the prior intermittent error.
+Artifacts: `owned-recording-diagnostic/`, `owned-av-overlay-diagnostic/`, `audio-timestamp-diagnosis.json`, `independent-score-glyphs/`, `owned-admission-application-replay.json`, `instantaneous-pressure-comparison.json`.
 
-- `4a86392` owned admission/application join: spec293tests and byteexactfixture approved; quality407tests approved. Root complete original replay passes LvDNAy,uE9hUY,iUAsQ6 (each4owners/2admissions;mediaQualifiedfalse). Original outputs preserved in owned-admission-application-replay.json.
-- Root queue comparison: no overflow drops; restricted peak residence0.833/0.915/1.413/1.514/1.671s across LvDNAy/pzZozK/D4EhKU/uE9hUY/iUAsQ6. Native/proxy clocks remain separate; this is not packet-loss causality proof. Scalar artifact owned-probe-queue-comparison-20260925.json retains hashes.
-- Controlled real SRT proof: artifacts/qa/srt-instantaneous-statistics-20260925 contains Homebrew1.5.6 and bundled1.5.4 loopback source/binaries/results/provenance. Both pass and join. Bundled currentqueue512ms while smoothed127ms,max985/380ms. The former SRTSocket srt_bstats call returned averaged msSndBuf. Reviewed fix27a502d uses srt_bistats instantaneous1; no recovery buffers changed.
+## Reviewed changes
 
-## Remaining implementation
+- `27a502d`: both SRTSocket constructors use shared srt_bistats; demand(clear0,instantaneous1), periodic(1,1). Timestamp/failure/cancellation/counter contracts unchanged.71focused/80related/8final tests and bundled simulator build pass. Both independent reviews reran8tests;162upstream hashes and patch round trip pass. Controlled realSRT1.5.6 and bundled1.5.4 experiments prove bstats averaging hides current queue pressure.
+- `4a86392`: whole-original-history admission/application joins passed both reviews and replays. Receiver conservation/intervals, candidate cost joins, timing profiles/expiry and recorder instrumentation also reviewed. Full retry/fault/media integration is still open.
+- Previous detailed results and historical artifacts are in session logs. Particularly: clean media/four phases `LvDNAy` at2000/700; failed media `pzZozK`, `D4EhKU`, `uE9hUY`, `iUAsQ6` under their original profiles. Never relabel old evidence.
 
-1. Repeat the native case with reviewed instantaneous statistics fix27a502d under unchanged thresholds, using the exclusive `run-owned-reliability3000-peer1000-native-20260925-instantaneous.py 3000` launcher. Both reviews independently reran8sampling tests;71focused/80related and bundled simulator build passed. Analyze all three recordings and original lifecycle evidence before claiming media loss fixed. No phone/Watch run until a useful readiness change.
-2. Complete [whole-history recovery qualification](../superpowers/plans/2026-09-25-owned-recovery-qualification.md): healthy holds/backoff, capacity causality and all recorded media. Native acceptance, receiver intervals, raw candidate costs and admission/native application now have independent joins. Reuse original complete history and reviewed bounded helpers.
-3. Diagnose the live audio gap and recorder shutdown; add timestamp-aware synchronization and separate audio-gap accounting with tests. Preserve existing failures and contracts. Verify stale-report behavior instead of crediting unusable reports.
-4. Integrate qualified adaptation into the real-camera path. Current physical publisher is minimum-only; `PublishingQualityDriver.fixture` and owned measurement are debug routes. Production must use bounded current state that continues throughout a match, independently of finite laboratory audit/attempt caps. Preserve lab caps and history.
-5. Complete paired phone/Watch three-output acceptance, then wider ladder, sustained capture/outages, other native scorers and remote workers. Fixed-profile physical success does not prove progressive streaming.
+## Next implementation
+
+1. Address residual live audio/probe behavior and complete evidence retention within existing lab budgets. The same fault replay now has continuous video but still drops audio; do not run another identical experiment without a change or new observation.
+2. Finish [whole-history recovery qualification](../superpowers/plans/2026-09-25-owned-recovery-qualification.md): healthy holds/backoff, capacity causality and complete recorded media. Original admission and receipt correspondence now join independently.
+3. Extract continuous delivery classification from Audit storage. Keep production state bounded and live beyond512windows/256identity changes. Preserve finite laboratory completeness gates.
+4. Promote owned candidate runtime types and replace lifetime16attempt cap with one active owner, joined predecessor and policy cooldown. Driver512event cap only truncates diagnostics; don't claim it stops control.
+5. Parameterize next-candidate probes: current lab ladder500kbps→2Mbps→12Mbps and stage3 assumption must not simply be enabled on phones. Replace laboratoryIPv4 fixed44byte/message cost with a validated production Wi-Fi/cellular/IPv4/IPv6 basis.
+6. Wire ordinary camera through a production factory using existing guarded mutation, freshness, compressed AAC and owned lifecycle paths. Qualify240p350k→360p600k first, then wider backend/device ladder. Verify release construction, sustained state, thermal/archive independence and paired scoring.
 
 ## Physical devices
 
-- Signing: Conley Chaos LLC `B222J9J7B8`. iPhone16Pro `00008140-001474110C13001C` iOS26.7; Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6. Xcode26.2 at `/Applications/Xcode-26.2.0.app/Contents/Developer`.
-- Physical products under DerivedData/Physical and PhysicalWatch are built at `eff8465`, not the timing-experiment checkpoint. Rebuild/install current source before claiming it physically tested; preserve recordings.
-- User approved the prompt and confirmed readiness. Watch-first retry `device-lab-3RCYtU` still timed out enabling automation. Coordinated phone-first/concurrent retry `device-lab-uh4flR` passed unlocked preflight but Watch failed destination preparation before test launch. Phone reached recording/publishing then timed out waiting for Watch; cleanup completed. Labs/runners are all stopped.
-- uh4flR live files fully decode but sampled camera content is black. Its new phone recording has89 verified stored segments and diagnostic concatenation decodes, but no native export was reached. Do not claim paired success or native export.
-- Pending question asks whether another automation/passcode prompt appeared. Do not repeat it or blindly rerun without a useful readiness change. Announce hardware tests; keep camera lit/uncovered and Watch nearby/unlocked. User enters passcode on device, never chat. Credentials only in child environment, never argv/shared logs.
-- Prior visible phone three-output pass: `device-lab-yk1iYl/run11`; prior separate Watch command pass: `mmTL6h`. [Device runbook](../device-testing.md). Correct exports: `Library/Application Support/Scorebug/Recordings/Exports`; identify the newly created file.
+- Signing Conley Chaos LLC `B222J9J7B8`. Phone16Pro `00008140-001474110C13001C` iOS26.7; Ultra2 `00008310-0000B2CE3E08A01E` watchOS26.6.
+- Physical products in DerivedData/Physical and PhysicalWatch are at `eff8465`, not latest code; rebuild before new claims.
+- User's prior readiness reply was consumed. Watch-first `device-lab-3RCYtU` timed out enabling automation; coordinated `device-lab-uh4flR` failed Watch destination preparation before its test launched. Phone recording/streaming started but wait-for-Watch timed out; cleanup completed. Its sampled video is black;89stored phone segments verified and diagnostic concatenation decodes, but native export was not reached.
+- A subsequent automation/passcode question remains pending. Do not blindly rerun hardware without useful readiness change. Announce hardware work; camera lit/uncovered and Watch nearby/unlocked. User enters passcode on device, never chat. Credentials stay out of argv/logs.
+- Prior visible phone three-output success `device-lab-yk1iYl/run11`; separate Watch command success `mmTL6h`. Full paired progressive vertical remains open. See [device runbook](../device-testing.md). Phone exports: `Library/Application Support/Scorebug/Recordings/Exports`.
 
-## Environment
+## Environment and next-run tools
 
-- FFmpeg/ffprobe: `/opt/homebrew/opt/ffmpeg-full/bin/`; installed iOS26.2/iPhone14 simulator route. No runtime downloads, unrelated cleanup or global relinking.
-- Prepared390s source: `artifacts/qa/prepared-native-owned-recovery-hHjv1n/input.mov`, SHA256 `c1d0642bb102ca27733f39ece227c77135699e89f9ad29a67ddec34d5d2af814`.
+- Xcode: `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`.
+- FFmpeg/ffprobe: `/opt/homebrew/opt/ffmpeg-full/bin/`. Installed iOS26.2/iPhone14 simulator; no runtime downloads/unrelated cleanup.
+- Source `artifacts/qa/prepared-native-owned-recovery-hHjv1n/input.mov`,390s, SHA256`c1d0642bb102ca27733f39ece227c77135699e89f9ad29a67ddec34d5d2af814`.
+- Latest launcher `artifacts/qa/run-owned-reliability3000-peer1000-native-20260925-instantaneous.py 3000`. For a justified new run, use a unique suffix: outputs are exclusive and original evidence must remain intact. Commit source/docs before launch; launcher requires clean tracked state and records HEAD.
+- Wrapper `repeated-live-checkpoint-run-check.py` writes `-exit.json`. Join processes explicitly. Run `analyze-owned-recordings-20260925.py` to completion before leaf/admission/A/V helpers. Huge errors may contain all audio probes or timelines: print scalar summaries only.
