@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { pipelineReadKeyInput } from '@scorebug/protocol';
 import type { DecoderDeliveryCursor, WorkerMediaStatusResponse } from '@scorebug/protocol';
 import type { WorkerObservations } from './worker-observations.js';
 import type { RelayLifecycle } from './relay-lifecycle.js';
@@ -24,7 +26,21 @@ export async function publicationStatus(
   const latest = observations.status(gameId, deliveryRequest);
   const after = observations.readScope(latest);
   if (found && after && canonical(before) === canonical(after)) {
-    latest.status.publication = found.publication;
+    const hashInput = pipelineReadKeyInput(before.pipelineReadId);
+    const pipelineReadKey =
+      hashInput === undefined
+        ? undefined
+        : createHash('sha256').update(hashInput, 'utf8').digest('hex');
+    // Only the stable, locally validated read scope owns this correlation key.
+    // Select public fields explicitly; relay-supplied keys are not authoritative.
+    const { readerId, publisherId, publishingAttemptId, clock } = found.publication;
+    latest.status.publication = {
+      readerId,
+      publisherId,
+      publishingAttemptId,
+      clock,
+      ...(pipelineReadKey === undefined ? {} : { pipelineReadKey }),
+    };
     // Snapshot is generated during the authenticated relay GET; include all private
     // I/O and final status sampling. Native callers add their full request duration.
     const elapsed = monotonicNow() - started;

@@ -336,3 +336,42 @@ it('gates geometry by both exact flags and emits only scoped bounded numeric run
     ).toBe(true);
   }
 });
+
+it.each([
+  undefined,
+  '',
+  'ABCDEFAB-cdef-abcd-efab-cdefabcdefab',
+  '11111111-1111-4111-8111-111111111111\n',
+  '11111111-1111-4111-8111-111111111111',
+])('emits only a validated pipeline digest on terminal and geometry for %j', (pipelineReadId) => {
+  const f = fixture();
+  const scope = diagnostics
+    .createWorkerTerminalDiagnostics(f.log, '1', undefined, '1')
+    .scope({ gameId: 'game', generation: 2 }, { pipelineReadId });
+  scope.onTerminal!({
+    decodedVideo: {} as any,
+    telemetryEOF: true,
+    encoderExit: null,
+    outputProgress: null,
+    decodedGeometry: {
+      formatVersion: 1,
+      diagnosticOnly: true,
+      timeBase: '1/90000',
+      maximumRuns: 64,
+      ended: true,
+      invalidReason: 'time_base',
+      observedFrames: 0,
+      runs: [],
+    },
+  });
+  expect(f.records).toHaveLength(2);
+  for (const record of f.records as any[]) {
+    expect(record.pipelineReadKey).toBe(
+      pipelineReadId === '11111111-1111-4111-8111-111111111111'
+        ? '5d75f38b3e289ae59af50a3cf51905342960e21554535120e565416c63d0e4f2'
+        : undefined,
+    );
+    expect(record).not.toHaveProperty('pipelineReadId');
+  }
+  expect(JSON.stringify(f.records)).not.toContain('11111111-1111');
+});

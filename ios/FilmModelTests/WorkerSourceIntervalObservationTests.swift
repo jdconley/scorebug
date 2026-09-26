@@ -68,6 +68,31 @@ final class WorkerSourceIntervalObservationTests: XCTestCase {
         XCTAssertNil(tracker.gapReason)
     }
 
+    func testPipelineReadKeyChangeRequiresNewContiguousSourceEvidence() throws {
+        var tracker = WorkerSourceIntervalTracker()
+        let now = ContinuousClock.now
+        XCTAssertNil(try feed(&tracker, response(sequence: 1), at: now))
+        var keyed = response(sequence: 2)
+        keyed.status.publication?.pipelineReadKey = String(repeating: "a", count: 64)
+        XCTAssertNil(try feed(&tracker, keyed, at: now))
+        XCTAssertEqual(tracker.gapReason, .scopeChanged)
+        keyed = response(sequence: 3)
+        keyed.status.publication?.pipelineReadKey = String(repeating: "a", count: 64)
+        let first = try XCTUnwrap(feed(&tracker, keyed, at: now))
+        XCTAssertEqual(first.publication.pipelineReadKey, String(repeating: "a", count: 64))
+        XCTAssertEqual(first.previousSequence, 2)
+        keyed = response(sequence: 4)
+        keyed.status.publication?.pipelineReadKey = String(repeating: "b", count: 64)
+        XCTAssertNil(try feed(&tracker, keyed, at: now))
+        XCTAssertEqual(tracker.gapReason, .scopeChanged)
+        keyed = response(sequence: 5)
+        keyed.status.publication?.pipelineReadKey = String(repeating: "b", count: 64)
+        let second = try XCTUnwrap(feed(&tracker, keyed, at: now))
+        XCTAssertEqual(second.publication.pipelineReadKey, String(repeating: "b", count: 64))
+        XCTAssertEqual(second.previousSequence, 4)
+        XCTAssertEqual(first.publication.pipelineReadKey, String(repeating: "a", count: 64), "Accepted evidence remains detached")
+    }
+
     func testDuplicateAgeRefreshDoesNotRefreshMeasuredIntervalAge() throws {
         var tracker = WorkerSourceIntervalTracker()
         let now = ContinuousClock.now

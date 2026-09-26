@@ -101,7 +101,7 @@ import XCTest
         pressureDiagnostics.transport = transport.snapshot
         await driver.tick(encoderReady: true, source: pressure, diagnostics: pressureDiagnostics)?.value
         f.native.setNow(130.4)
-        let healthy = try await f.freshSource(start: 125.3, sequence: 5)
+        let healthy = try await f.freshSource(start: 125.3, sequence: 5, pipelineReadKey: String(repeating: "a", count: 64))
         await driver.tick(encoderReady: true, source: healthy.0, diagnostics: healthy.1)?.value
         XCTAssertEqual(values.count, 4)
         let fullValue = try XCTUnwrap(values.last)
@@ -112,12 +112,47 @@ import XCTest
         XCTAssertEqual(full["policyOwnerKey"]?.count, 64)
         XCTAssertEqual(full["policySourceScopeKey"]?.count, 64)
         XCTAssertEqual(full["policyTrialActive"], "false")
+        XCTAssertEqual(full["policyPipelineReadKey"], String(repeating: "a", count: 64))
+        XCTAssertEqual(full["policyDecodedPreviousPTS"], String(healthy.0.previousDecodedPTS))
+        XCTAssertEqual(full["policyDecodedFirstPTS"], String(healthy.0.firstDecodedPTS))
+        XCTAssertEqual(full["policyDecodedLastPTS"], String(healthy.0.lastDecodedPTS))
+        XCTAssertEqual(full["policyDecodedFrameCount"], "150")
         XCTAssertEqual(witness["worker"], "elevated")
         XCTAssertEqual(witness["transport"], "elevated")
         XCTAssertEqual(witness["workerFilterMs"], "251.0")
         XCTAssertEqual(witness["rttMs"], "600.0")
         XCTAssertLessThanOrEqual(fullValue.utf8.count, 4096)
         print("Populated worker/transport applied diagnostic bytes: \(fullValue.utf8.count)")
+        // Conservative union of current phase fields: pending/in-flight advice
+        // may coexist with a previous ACK witness. Populate every protected
+        // phase scalar and long bounded clock values to check the hard budget.
+        let phaseFields = ["policyPendingKind": "trial", "policyPendingProfile": "720p30", "policyPendingBitrate": "3000000",
+            "policyApplicationKind": "trial", "policyApplicationProfile": "720p30", "policyApplicationBitrate": "3000000",
+            "policyTrialHealthyCoverageSeconds": "5.123456789012345", "policyTrialRollbackRequired": "false"]
+        additional.merge(phaseFields) { _, new in new }
+        for key in ["policyAcknowledgedAtUptimeSeconds", "policySourceStartPTSSeconds", "policySourceEndPTSSeconds",
+                    "policyCaptureStartUptimeSeconds", "policyCaptureEndUptimeSeconds", "policyAcceptedSourceWindowEnd"] {
+            additional[key] = "1234567890.1234567"
+        }
+        additional["policyDecodedPreviousPTS"] = "-9007199254740991"
+        additional["policyDecodedFirstPTS"] = "-9007199254737991"
+        additional["policyDecodedLastPTS"] = "-9007199254290991"
+        f.native.setNow(135.6)
+        let next = try await f.freshSource(start: 130.5, sequence: 6, pipelineReadKey: String(repeating: "a", count: 64))
+        await driver.tick(encoderReady: true, source: next.0, diagnostics: next.1)?.value
+        XCTAssertEqual(values.count, 5, "Protected-field overflow must not silently preserve an older record")
+        let stressValue = try XCTUnwrap(values.last)
+        let stress = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(stressValue.utf8)) as? [String: String])
+        for (key, value) in phaseFields { XCTAssertEqual(stress[key], value) }
+        XCTAssertEqual(stress["policyDecodedPreviousPTS"], "-9007199254740991")
+        XCTAssertEqual(stress["appliedTransition"], applied)
+        XCTAssertEqual(stress["policyOwnerKey"]?.count, 64)
+        XCTAssertEqual(stress["policySourceScopeKey"]?.count, 64)
+        XCTAssertEqual(stress["policyPipelineReadKey"], String(repeating: "a", count: 64))
+        let protected = stress.filter { $0.key.hasPrefix("policy") || ["appliedTransition", "observedAtUptimeSeconds", "sessionObservedAtUptimeSeconds", "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted"].contains($0.key) }
+        print("Protected-only phase union bytes: \(try JSONSerialization.data(withJSONObject: protected).count)")
+        XCTAssertLessThanOrEqual(stressValue.utf8.count, 4096)
+        print("Protected phase union diagnostic bytes: \(stressValue.utf8.count)")
         await driver.stop()
     }
 

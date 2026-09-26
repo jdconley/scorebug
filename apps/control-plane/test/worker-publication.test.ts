@@ -13,7 +13,8 @@ const readerId = '33333333-3333-4333-8333-333333333333';
 const publisherId = '44444444-4444-4444-8444-444444444444';
 const publishingAttemptId = '55555555-5555-4555-8555-555555555555';
 const clock = { convention: 'mpegts-ingress-origin-90k-v1', originPTS: '9000' } as const;
-const publication = { readerId, publisherId, publishingAttemptId, clock };
+const pipelineReadKey = '5d75f38b3e289ae59af50a3cf51905342960e21554535120e565416c63d0e4f2';
+const publication = { readerId, publisherId, publishingAttemptId, clock, pipelineReadKey };
 const closes: (() => void)[] = [];
 afterEach(() => closes.splice(0).forEach((close) => close()));
 function fixture() {
@@ -378,7 +379,11 @@ it.each(['current', 'starting', 'zeroOrigin', 'maximumOrigin'])(
     const actual = await f.status();
     expect(actual).toEqual({
       ...expected,
-      status: { ...expected.status, workerEpoch: actual.status.workerEpoch },
+      status: {
+        ...expected.status,
+        workerEpoch: actual.status.workerEpoch,
+        publication: { ...expected.status.publication, pipelineReadKey },
+      },
     });
   },
 );
@@ -517,3 +522,40 @@ it.each([1, 2])('keeps native and API v%s receiver status golden bytes identical
   );
   expect(native).toBe(protocol);
 });
+
+it.each([undefined, '', 'ABCDEFAB-cdef-abcd-efab-cdefabcdefab', readId + '\n', readId])(
+  'derives only the validated scope key and discards relay substitution for %j',
+  async (pipelineReadId) => {
+    const scope = { gameId: 'match', generation: 1, pipelineReadId };
+    const observations = { status: () => ({ status: {} }), readScope: () => scope };
+    const relay = {
+      publication: async () => ({ publication: { ...publication, pipelineReadKey: 'malicious' } }),
+    };
+    const result = await publicationStatus('match', observations as any, relay as any);
+    expect(result.status.publication?.pipelineReadKey).toBe(
+      pipelineReadId === readId ? pipelineReadKey : undefined,
+    );
+    expect(result.status.publication).not.toHaveProperty('pipelineReadId');
+  },
+);
+it.each(['workerEpoch', 'attempt', 'gameId', 'generation', 'pipelineReadId'])(
+  'does not expose a key when %s changes during relay lookup',
+  async (field) => {
+    let scope: Record<string, unknown> = {
+      workerEpoch: readId,
+      attempt: 1,
+      gameId: 'match',
+      generation: 1,
+      pipelineReadId: readId,
+    };
+    const observations = { status: () => ({ status: {} }), readScope: () => ({ ...scope }) };
+    const relay = {
+      publication: async () => {
+        scope = { ...scope, [field]: field === 'attempt' || field === 'generation' ? 2 : nextId };
+        return { publication };
+      },
+    };
+    const result = await publicationStatus('match', observations as any, relay as any);
+    expect(result.status.publication).toBeUndefined();
+  },
+);

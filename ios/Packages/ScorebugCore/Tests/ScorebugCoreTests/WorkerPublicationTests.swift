@@ -19,6 +19,26 @@ final class WorkerPublicationTests: XCTestCase {
         }
     }
 
+    func testPipelineReadKeyIsOptionalCanonicalLowerHexAndRoundTrips() throws {
+        let original = try XCTUnwrap(fixture()["current"]?.status)
+        let golden = "5d75f38b3e289ae59af50a3cf51905342960e21554535120e565416c63d0e4f2"
+        for key in [golden, "", String(repeating: "a", count: 63), String(repeating: "a", count: 65),
+                    golden.uppercased(), golden + "\n", " " + golden, String(repeating: "ａ", count: 64),
+                    String(repeating: "g", count: 64)] {
+            var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+            var publication = try XCTUnwrap(wire["publication"] as? [String: Any])
+            publication["pipelineReadKey"] = key; wire["publication"] = publication
+            let decoded = try JSONDecoder().decode(WorkerMediaStatus.self, from: JSONSerialization.data(withJSONObject: wire))
+            XCTAssertEqual(decoded.validatedPublication != nil, key == golden, key)
+            if key == golden {
+                let roundTrip = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded.publication)) as? [String: Any])
+                XCTAssertEqual(roundTrip["pipelineReadKey"] as? String, golden)
+            }
+            XCTAssertEqual(decoded.state, original.state)
+        }
+        XCTAssertNotNil(original.validatedPublication, "Legacy absent key remains valid")
+    }
+
     func testSharedFixtureValidatesOnlyScopedCanonicalPublications() throws {
         let valid = Set(["current", "starting", "zeroOrigin", "maximumOrigin"])
         for (name, response) in try fixture() {

@@ -376,6 +376,9 @@ actor PublishingQualitySession {
     private var candidateHealthSource: SourceScope? {
         didSet {
             if candidateHealthSource == nil { candidateRecovery?.invalidate(); recoveryDelivery = nil }
+            #if DEBUG
+            if candidateHealthSource == nil { acceptedSourceMapping = nil }
+            #endif
             if ownedTransferred == nil, candidateHealthSource != ownedSource { ownedMeasurement?.revoke() }
         }
     }
@@ -410,7 +413,25 @@ actor PublishingQualitySession {
     }
     private var lastSource: (scope: SourceScope, sequence: Int64)?
     #if DEBUG
-    private var acceptedSourceMapping: (sequence: Int64, windowEnd: Double, interval: PublishingSourceInterval)?
+    /// One atomic copy of the exact accepted input, never joined to a newer status.
+    private struct AcceptedSourceMapping {
+        let scope: SourceScope
+        let sequence: Int64
+        let windowEnd: Double
+        let interval: PublishingSourceInterval
+        let pipelineReadKey: String?
+        let previousPTS: Int64
+        let firstPTS: Int64
+        let lastPTS: Int64
+        let frames: Int
+        init(source: WorkerSourceIntervalObservation, scope: SourceScope, windowEnd: Double) {
+            self.scope = scope; sequence = source.sequence; self.windowEnd = windowEnd
+            interval = source.interval; pipelineReadKey = source.publication.pipelineReadKey
+            previousPTS = source.previousDecodedPTS; firstPTS = source.firstDecodedPTS
+            lastPTS = source.lastDecodedPTS; frames = source.interval.decodedFrames
+        }
+    }
+    private var acceptedSourceMapping: AcceptedSourceMapping?
     #endif
     private struct DecoderScope: Equatable {
         let gameID: String
@@ -518,7 +539,7 @@ actor PublishingQualitySession {
             result["policyMinimumResetRequired"] = String(current.minimumResetRequired)
             result["policyOwnerKey"] = currentPolicyOwnerKey(policy: policy, now: now)
             if result["policyOwnerKey"] != nil, let source = candidateHealthSource,
-               let mapping = acceptedSourceMapping, mapping.sequence == lastSource?.sequence,
+               let mapping = acceptedSourceMapping, mapping.scope == source, mapping.sequence == lastSource?.sequence,
                mapping.windowEnd == lastWindow?.end {
                 var scope = currentSourceIdentity(source)
                 var observation = NativeCandidateFixture.scope(source.observationScope)
@@ -531,6 +552,11 @@ actor PublishingQualitySession {
                 result["policySourceEndPTSSeconds"] = String(CMTimeGetSeconds(mapping.interval.sourceEndInclusive))
                 result["policyCaptureStartUptimeSeconds"] = String(mapping.interval.captureBoundaryStartTime)
                 result["policyCaptureEndUptimeSeconds"] = String(mapping.interval.captureBoundaryEndTime)
+                result["policyPipelineReadKey"] = mapping.pipelineReadKey
+                result["policyDecodedPreviousPTS"] = String(mapping.previousPTS)
+                result["policyDecodedFirstPTS"] = String(mapping.firstPTS)
+                result["policyDecodedLastPTS"] = String(mapping.lastPTS)
+                result["policyDecodedFrameCount"] = String(mapping.frames)
             }
             if candidateHealthSource != nil {
                 result["policyAcceptedSourceSequence"] = lastSource.map { String($0.sequence) }
@@ -540,7 +566,7 @@ actor PublishingQualitySession {
         return result
     }
     private func currentSourceIdentity(_ source: SourceScope) -> [String: Any] {
-        ["observationScope": NativeCandidateFixture.scope(source.observationScope),
+        var result: [String: Any] = ["observationScope": NativeCandidateFixture.scope(source.observationScope),
                 "clock": ["sourceOrigin": NativeCandidateFixture.time(source.clock.sourceOrigin),
                     "publishingGeneration": String(source.clock.publishingGeneration)],
                 "gameID": source.gameID, "generation": source.generation,
@@ -549,6 +575,9 @@ actor PublishingQualitySession {
                     "publishingAttemptId": source.publication.publishingAttemptId,
                     "clock": ["convention": source.publication.clock.convention, "originPTS": source.publication.clock.originPTS]],
                 "processingScope": source.processingScope as Any? ?? NSNull()]
+        // Omission preserves the exact legacy digest input.
+        if let key = source.publication.pipelineReadKey { result["pipelineReadKey"] = key }
+        return result
     }
     /// Correlation only: no retained confirmation, authority, or source watermark
     /// participates in this identity. A new accepted window keeps the same key.
@@ -825,7 +854,7 @@ actor PublishingQualitySession {
             candidateRecovery?.recordSource(start: window.start, end: window.end, sequence: window.sequence)
             lastSource = (sourceScope, source.sequence)
             #if DEBUG
-            acceptedSourceMapping = (source.sequence, window.end, source.interval)
+            acceptedSourceMapping = .init(source: source, scope: sourceScope, windowEnd: window.end)
             #endif
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now

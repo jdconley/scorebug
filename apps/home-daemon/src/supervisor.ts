@@ -42,7 +42,11 @@ export type WorkerSupervisorOptions = {
   load: () => Promise<WorkerInput | null>;
   outputId: string;
   scoreFile: string;
-  start: (input: WorkerInput, onProgress: (progress: PipelineProgress) => void) => PipelineHandle;
+  start: (
+    input: WorkerInput,
+    onProgress: (progress: PipelineProgress) => void,
+    metadata?: Readonly<{ pipelineReadId?: string }>,
+  ) => PipelineHandle;
   writeScore?: (path: string, text: string) => Promise<void>;
   onState?: (state: WorkerState) => void;
   now?: () => number;
@@ -397,10 +401,14 @@ export class WorkerSupervisor {
     this.attempt++;
     const identified = identifyPipelineRead(input.readUrl);
     try {
-      handle = this.options.start({ ...input, readUrl: identified.readUrl }, (progress) => {
-        if (running) this.acceptProgress(running, progress);
-        else earlyProgress = progress;
-      });
+      handle = this.options.start(
+        { ...input, readUrl: identified.readUrl },
+        (progress) => {
+          if (running) this.acceptProgress(running, progress);
+          else earlyProgress = progress;
+        },
+        identified.pipelineReadId ? { pipelineReadId: identified.pipelineReadId } : {},
+      );
     } catch {
       this.emit('failed', 'start_failed');
       return;

@@ -85,6 +85,8 @@ export type WorkerObservation = {
 export const WORKER_PIPELINE_READ_IDENTITY = 'srt-read-query-v1';
 export type WorkerPipelineObservation = WorkerObservation & { pipelineReadId?: string };
 export type WorkerPublication = {
+  /** Opaque read-instance correlation only; not freshness, health, or capacity. */
+  pipelineReadKey?: string;
   readerId: string;
   publisherId: string;
   publishingAttemptId: string;

@@ -32,8 +32,8 @@ const supervisor = new WorkerSupervisor({
   scoreFile,
   outputId: config.OUTPUT_ID,
   onState: createWorkerStateLogger(log),
-  start: (input, onProgress) => {
-    const diagnostics = terminalDiagnostics.scope(input);
+  start: (input, onProgress, metadata) => {
+    const diagnostics = terminalDiagnostics.scope(input, metadata);
     return startPipeline(
       {
         gameId: input.gameId,

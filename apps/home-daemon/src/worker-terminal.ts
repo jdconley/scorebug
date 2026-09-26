@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { pipelineReadKeyInput } from '@scorebug/protocol';
 import type { Logger } from './logger.js';
 import type { PipelineTerminal } from './pipeline.js';
 
@@ -16,16 +18,25 @@ export function createWorkerTerminalDiagnostics(
     enabled,
     packetTimingEnabled,
     decodedGeometryEnabled,
-    scope(input: { gameId: string; generation: number }): {
+    scope(
+      input: { gameId: string; generation: number },
+      metadata?: Readonly<{ pipelineReadId?: string }>,
+    ): {
       log: Logger;
       onTerminal?: (terminal: PipelineTerminal) => void;
     } {
       if (!enabled) return { log };
       if (!Number.isSafeInteger(ordinal + 1)) throw new RangeError('pipeline_ordinal_overflow');
+      const hashInput = pipelineReadKeyInput(metadata?.pipelineReadId);
+      const pipelineReadKey =
+        hashInput === undefined
+          ? undefined
+          : createHash('sha256').update(hashInput, 'utf8').digest('hex');
       const scope = {
         gameId: input.gameId,
         generation: input.generation,
         pipelineOrdinal: ++ordinal,
+        ...(pipelineReadKey === undefined ? {} : { pipelineReadKey }),
       };
       const scoped: Logger = {
         debug: (message, meta) => log.debug(message, { ...meta, ...scope }),

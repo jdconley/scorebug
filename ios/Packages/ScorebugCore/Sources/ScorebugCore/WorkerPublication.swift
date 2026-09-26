@@ -6,13 +6,16 @@ public struct WorkerPublication: Codable, Equatable, Sendable {
     public var readerId: String
     public var publisherId: String
     public var publishingAttemptId: String
+    /// Optional opaque read-instance correlation; never a health or capacity signal.
+    public var pipelineReadKey: String?
     public var clock: WorkerPublicationClock
 
-    public init(readerId: String, publisherId: String, publishingAttemptId: String, clock: WorkerPublicationClock) {
+    public init(readerId: String, publisherId: String, publishingAttemptId: String, clock: WorkerPublicationClock, pipelineReadKey: String? = nil) {
         self.readerId = readerId
         self.publisherId = publisherId
         self.publishingAttemptId = publishingAttemptId
         self.clock = clock
+        self.pipelineReadKey = pipelineReadKey
     }
 
     static func isCanonicalUUID(_ value: String) -> Bool {
@@ -26,6 +29,9 @@ public struct WorkerPublication: Codable, Equatable, Sendable {
     var isValid: Bool {
         Self.isCanonicalUUID(readerId) && Self.isCanonicalUUID(publisherId)
             && Self.isCanonicalUUID(publishingAttemptId) && readerId != publisherId && clock.isValid
+            && (pipelineReadKey.map { key in
+                key.utf8.count == 64 && key.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+            } ?? true)
     }
 }
 

@@ -1628,7 +1628,7 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
     }
 
     func testCurrentOwnerDigestChangesForAcceptedWorkerPublicationAndProcessingScopes() async throws {
-        for variant in ["epoch", "worker", "attempt", "reader", "publisher", "processing", "profileRevision"] {
+        for variant in ["epoch", "worker", "attempt", "reader", "publisher", "processing", "profileRevision", "pipelineReadKey"] {
             let f = try await CandidateQualityFixture.make()
             let before = await f.owner.currentDiagnostic()
             let original = try XCTUnwrap(before["policyOwnerKey"])
@@ -1649,6 +1649,55 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             XCTAssertEqual(after["policyAppliedRevision"], before["policyAppliedRevision"])
             await f.owner.stop()
         }
+    }
+
+    func testDecodedPipelineCoordinatesComeOnlyFromExactAcceptedInterval() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let initial = await f.owner.currentDiagnostic()
+        XCTAssertNil(initial["policyPipelineReadKey"])
+        let initialSource = try XCTUnwrap(f.source)
+        XCTAssertEqual(initial["policyDecodedPreviousPTS"], String(initialSource.previousDecodedPTS))
+        XCTAssertEqual(initial["policyDecodedFirstPTS"], String(initialSource.firstDecodedPTS))
+        XCTAssertEqual(initial["policyDecodedLastPTS"], String(initialSource.lastDecodedPTS))
+        XCTAssertEqual(initial["policyDecodedFrameCount"], String(initialSource.interval.decodedFrames))
+        let key = "5d75f38b3e289ae59af50a3cf51905342960e21554535120e565416c63d0e4f2"
+        f.native.setNow(120.1)
+        let first = try await f.freshSource(start: 115, sequence: 3, pipelineReadKey: key)
+        // Merely obtaining a newer status cannot re-label the accepted mapping.
+        let beforeAcceptance = await f.owner.currentDiagnostic()
+        XCTAssertNil(beforeAcceptance["policyPipelineReadKey"])
+        _ = try await f.owner.evaluate(source: first.0, diagnostics: first.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+        let accepted = await f.owner.currentDiagnostic()
+        XCTAssertEqual(accepted["policyPipelineReadKey"], key)
+        XCTAssertNotEqual(initial["policySourceScopeKey"], accepted["policySourceScopeKey"])
+        XCTAssertEqual(accepted["policyDecodedPreviousPTS"], String(first.0.previousDecodedPTS))
+        XCTAssertEqual(accepted["policyDecodedFirstPTS"], String(first.0.firstDecodedPTS))
+        XCTAssertEqual(accepted["policyDecodedLastPTS"], String(first.0.lastDecodedPTS))
+        XCTAssertEqual(accepted["policyDecodedFrameCount"], "150")
+        f.native.setNow(125.2)
+        let missing = try await f.freshSource(start: 120.1, sequence: 4)
+        _ = try await f.owner.evaluate(source: missing.0, diagnostics: missing.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+        let legacy = await f.owner.currentDiagnostic()
+        XCTAssertNil(legacy["policyPipelineReadKey"])
+        XCTAssertEqual(legacy["policySourceScopeKey"], initial["policySourceScopeKey"], "Missing key preserves legacy hash")
+        XCTAssertEqual(legacy["policyDecodedLastPTS"], String(missing.0.lastDecodedPTS))
+        do {
+            _ = try await f.owner.evaluate(source: first.0, diagnostics: first.1,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01), instant: f.native.instant)
+            XCTFail("Stale source must be rejected")
+        } catch {}
+        for state in [await f.owner.currentDiagnostic()] {
+            for key in ["policyPipelineReadKey", "policyDecodedPreviousPTS", "policyDecodedFirstPTS", "policyDecodedLastPTS", "policyDecodedFrameCount"] { XCTAssertNil(state[key]) }
+        }
+        await f.owner.stop()
+        let closed = await f.owner.currentDiagnostic()
+        XCTAssertNil(closed["policyDecodedLastPTS"])
+        XCTAssertNil(closed["policyPipelineReadKey"])
     }
 
     func testCurrentTrialDiagnosticUsesBoundSourceAndStableOwnerThroughConfirmation() async throws {
@@ -1865,7 +1914,7 @@ struct CandidateQualityFixture: Sendable {
     private var admissionMeasurementScope: VideoFrameObservationScope {
         .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1)
     }
-    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording", unhealthy: Bool = false, identityVariant: String? = nil) async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+    func freshSource(start: Double, sequence: Int64, recordingID: String = "recording", unhealthy: Bool = false, identityVariant: String? = nil, pipelineReadKey: String? = nil) async throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
         let template = try JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(contentsOf: url))
@@ -1874,11 +1923,12 @@ struct CandidateQualityFixture: Sendable {
             settings: try XCTUnwrap(state.applied), receipt: try XCTUnwrap(state.receipt), acknowledgedAt: try XCTUnwrap(state.acknowledgedAt))
         let afterReceipt = applied.receipt.lastSubmittedSourcePTS.map { Int64((CMTimeGetSeconds($0) * 30).rounded(.up)) + 1 } ?? 300
         let firstFrame = max(300 + Int64(max(0, start - 110) * 30), afterReceipt)
-        return try Self.source(native: native, template: template, applied: applied, unhealthy: unhealthy, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame, identityVariant: identityVariant)
+        return try Self.source(native: native, template: template, applied: applied, unhealthy: unhealthy, start: start, sequence: sequence, recordingID: recordingID, firstFrame: firstFrame, identityVariant: identityVariant, pipelineReadKey: pipelineReadKey)
     }
     private static func source(native: CandidateQualityNative, template: WorkerMediaStatusResponse,
-                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300, identityVariant: String? = nil) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
+                               applied: PublishingQualityTelemetry.Applied, unhealthy: Bool = false, start: Double = 110, sequence: Int64 = 2, recordingID: String = "recording", firstFrame: Int64 = 300, identityVariant: String? = nil, pipelineReadKey: String? = nil) throws -> (WorkerSourceIntervalObservation, PublishingQualityTelemetry.Diagnostics) {
         var template = template
+        template.status.publication?.pipelineReadKey = identityVariant == "pipelineReadKey" ? String(repeating: "b", count: 64) : pipelineReadKey
         if identityVariant == "epoch" { template.status.workerEpoch = "10000000-0000-4000-8000-000000000098" }
         if identityVariant == "worker" { template.status.workerId = "replacement" }
         if identityVariant == "attempt" { template.status.observation?.attempt = 2 }

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { createWorkerTerminalDiagnostics } from '../src/worker-terminal.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkerSupervisor, type WorkerInput, type WorkerState } from '../src/supervisor.js';
 import type { PipelineHandle, PipelineProgress } from '../src/pipeline.js';
@@ -33,25 +35,31 @@ function rig(options: Record<string, unknown> = {}) {
   const writeScore = vi.fn(async (_path: string, text: string) => {
     events.push(`write:${text}`);
   });
-  const start = vi.fn((next: WorkerInput, progress: (p: PipelineProgress) => void) => {
-    events.push(`start:${next.generation}`);
-    const exit = deferred<{ code: number | null; signal: NodeJS.Signals | null }>();
-    const child = {
-      handle: undefined as unknown as PipelineHandle,
-      progress,
-      exit: () => exit.resolve({ code: 0, signal: null }),
-      stops: 0,
-    };
-    child.handle = {
-      spec: {} as PipelineHandle['spec'],
-      stop: () => {
-        child.stops++;
-      },
-      waitExit: () => exit.promise,
-    };
-    children.push(child);
-    return child.handle;
-  });
+  const start = vi.fn(
+    (
+      next: WorkerInput,
+      progress: (p: PipelineProgress) => void,
+      _metadata?: Readonly<{ pipelineReadId?: string }>,
+    ) => {
+      events.push(`start:${next.generation}`);
+      const exit = deferred<{ code: number | null; signal: NodeJS.Signals | null }>();
+      const child = {
+        handle: undefined as unknown as PipelineHandle,
+        progress,
+        exit: () => exit.resolve({ code: 0, signal: null }),
+        stops: 0,
+      };
+      child.handle = {
+        spec: {} as PipelineHandle['spec'],
+        stop: () => {
+          child.stops++;
+        },
+        waitExit: () => exit.promise,
+      };
+      children.push(child);
+      return child.handle;
+    },
+  );
   const supervisor = new WorkerSupervisor({
     load,
     writeScore,
@@ -461,6 +469,7 @@ it('binds each actual pipeline read to its snapshot, keeps it across scores, and
   await r.supervisor.tick();
   const firstId = r.supervisor.observation()?.pipelineReadId;
   expect(firstId).toMatch(canonicalUUID);
+  expect(r.start.mock.calls[0]![2]).toEqual({ pipelineReadId: firstId });
   const started = new URL(r.start.mock.calls[0]![0].readUrl);
   expect(started.searchParams.get('streamid')).toBe(
     `${new URL(productionReadUrl).searchParams.get('streamid')}:sbw1=${firstId}`,
@@ -485,6 +494,30 @@ it('binds each actual pipeline read to its snapshot, keeps it across scores, and
   const secondId = r.supervisor.observation()?.pipelineReadId;
   expect(secondId).toMatch(canonicalUUID);
   expect(secondId).not.toBe(firstId);
+  const records: any[] = [];
+  const append = (msg: string, meta?: Record<string, unknown>) => records.push({ msg, ...meta });
+  const terminal = createWorkerTerminalDiagnostics(
+    { debug: append, info: append, warn: append, error: append },
+    '1',
+  );
+  for (const [index, id] of [firstId, secondId].entries()) {
+    const metadata = r.start.mock.calls[index]![2];
+    expect(metadata).toEqual({ pipelineReadId: id });
+    terminal.scope(original, metadata).onTerminal!({
+      decodedVideo: {} as any,
+      telemetryEOF: true,
+      encoderExit: null,
+      outputProgress: null,
+    });
+    expect(records[index].pipelineReadKey).toBe(
+      createHash('sha256')
+        .update('scorebug-pipeline-read-v1:' + id, 'utf8')
+        .digest('hex'),
+    );
+  }
+  expect(records[0].pipelineReadKey).not.toBe(records[1].pipelineReadKey);
+  expect(JSON.stringify(records)).not.toContain('secret');
+  expect(JSON.stringify(records)).not.toContain(firstId!);
   expect(new URL(r.start.mock.calls[1]![0].readUrl).searchParams.get('streamid')).toContain(
     `:sbw1=${secondId}`,
   );
