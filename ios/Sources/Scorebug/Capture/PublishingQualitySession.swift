@@ -280,6 +280,9 @@ actor PublishingQualitySession {
         }
     }
     private var lastSource: (scope: SourceScope, sequence: Int64)?
+    #if DEBUG
+    private var acceptedSourceMapping: (sequence: Int64, windowEnd: Double, interval: PublishingSourceInterval)?
+    #endif
     private struct DecoderScope: Equatable {
         let gameID: String
         let generation: Int
@@ -384,12 +387,38 @@ actor PublishingQualitySession {
             result["policyTrialRollbackRequired"] = current.trial.map { String($0.rollbackRequired) }
             result["policyMinimumResetRequired"] = String(current.minimumResetRequired)
             result["policyOwnerKey"] = currentPolicyOwnerKey(policy: policy, now: now)
+            if result["policyOwnerKey"] != nil, let source = candidateHealthSource,
+               let mapping = acceptedSourceMapping, mapping.sequence == lastSource?.sequence,
+               mapping.windowEnd == lastWindow?.end {
+                var scope = currentSourceIdentity(source)
+                var observation = NativeCandidateFixture.scope(source.observationScope)
+                observation.removeValue(forKey: "appliedProfileRevision")
+                scope["observationScope"] = observation
+                if let data = try? JSONSerialization.data(withJSONObject: scope, options: [.sortedKeys]) {
+                    result["policySourceScopeKey"] = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                }
+                result["policySourceStartPTSSeconds"] = String(CMTimeGetSeconds(mapping.interval.sourceStartExclusive))
+                result["policySourceEndPTSSeconds"] = String(CMTimeGetSeconds(mapping.interval.sourceEndInclusive))
+                result["policyCaptureStartUptimeSeconds"] = String(mapping.interval.captureBoundaryStartTime)
+                result["policyCaptureEndUptimeSeconds"] = String(mapping.interval.captureBoundaryEndTime)
+            }
             if candidateHealthSource != nil {
                 result["policyAcceptedSourceSequence"] = lastSource.map { String($0.sequence) }
                 result["policyAcceptedSourceWindowEnd"] = lastWindow.map { String($0.end) }
             }
         }
         return result
+    }
+    private func currentSourceIdentity(_ source: SourceScope) -> [String: Any] {
+        ["observationScope": NativeCandidateFixture.scope(source.observationScope),
+                "clock": ["sourceOrigin": NativeCandidateFixture.time(source.clock.sourceOrigin),
+                    "publishingGeneration": String(source.clock.publishingGeneration)],
+                "gameID": source.gameID, "generation": source.generation,
+                "workerID": source.workerId, "epoch": source.epoch, "attempt": source.attempt,
+                "publication": ["readerId": source.publication.readerId, "publisherId": source.publication.publisherId,
+                    "publishingAttemptId": source.publication.publishingAttemptId,
+                    "clock": ["convention": source.publication.clock.convention, "originPTS": source.publication.clock.originPTS]],
+                "processingScope": source.processingScope as Any? ?? NSNull()]
     }
     /// Correlation only: no retained confirmation, authority, or source watermark
     /// participates in this identity. A new accepted window keeps the same key.
@@ -421,15 +450,7 @@ actor PublishingQualitySession {
         let fields: [String: Any] = ["attempt": attemptID.uuidString, "revision": String(policy.appliedRevision),
             "settings": ["profile": policy.applied.profileID, "bitrate": policy.applied.videoBitrate],
             "receipt": PublishingOwnedMeasurementAudit.receipt(receipt), "profileReceipt": profile,
-            "source": ["observationScope": NativeCandidateFixture.scope(source.observationScope),
-                "clock": ["sourceOrigin": NativeCandidateFixture.time(source.clock.sourceOrigin),
-                    "publishingGeneration": String(source.clock.publishingGeneration)],
-                "gameID": source.gameID, "generation": source.generation,
-                "workerID": source.workerId, "epoch": source.epoch, "attempt": source.attempt,
-                "publication": ["readerId": source.publication.readerId, "publisherId": source.publication.publisherId,
-                    "publishingAttemptId": source.publication.publishingAttemptId,
-                    "clock": ["convention": source.publication.clock.convention, "originPTS": source.publication.clock.originPTS]],
-                "processingScope": source.processingScope as Any? ?? NSNull()] as [String: Any]]
+            "source": currentSourceIdentity(source)]
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return nil }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -660,6 +681,9 @@ actor PublishingQualitySession {
             candidateHealthSource = sourceScope
             candidateRecovery?.recordSource(start: window.start, end: window.end, sequence: window.sequence)
             lastSource = (sourceScope, source.sequence)
+            #if DEBUG
+            acceptedSourceMapping = (source.sequence, window.end, source.interval)
+            #endif
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision

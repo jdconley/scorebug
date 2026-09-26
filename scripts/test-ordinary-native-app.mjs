@@ -19,6 +19,8 @@ const testID =
   'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorPublishScoreAdaptStopAndExport';
 const pairedTestID =
   'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryPairedSimulatorAdaptWatchScoreStopAndExport';
+const recoveryTestID =
+  'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecoverScoreStopAndExport';
 const watchTestID =
   'ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingRealCompanionSetup';
 
@@ -40,11 +42,51 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     interfaces,
   );
   const lane = values.get('--lane');
-  assert(lane === undefined || ['phone', 'paired'].includes(lane), 'Unsupported ordinary lane');
+  assert(
+    lane === undefined || ['phone', 'paired', 'recovery'].includes(lane),
+    'Unsupported ordinary lane',
+  );
   return { host, source, encoder, ...(lane === undefined ? {} : { lane }) };
 }
 
-export function ordinaryTestEnvironment({ paired, watch = false, setup }) {
+export function ordinaryLaneConfiguration(lane) {
+  assert(lane === undefined || ['phone', 'paired', 'recovery'].includes(lane));
+  const paired = lane === 'paired',
+    recovery = lane === 'recovery';
+  return {
+    paired,
+    recovery,
+    phoneTest: recovery ? recoveryTestID : paired ? pairedTestID : testID,
+    allowance: recovery ? 780 : paired ? 600 : 480,
+    timeout: recovery ? 900_000 : paired ? 720_000 : 600_000,
+  };
+}
+
+export function ordinaryTestEnvironment({
+  paired,
+  recovery = false,
+  watch = false,
+  setup,
+  recoveryControl,
+}) {
+  assert(!recovery || (!paired && !watch), 'Recovery requires the standalone phone lane');
+  if (recovery) {
+    assert(recoveryControl, 'Recovery controller required');
+    const url = new URL(recoveryControl.endpoint);
+    assert(
+      url.protocol === 'http:' &&
+        url.hostname === '127.0.0.1' &&
+        url.port &&
+        url.pathname === '/' &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash,
+      'Private loopback recovery controller required',
+    );
+    assert.match(recoveryControl.token, /^[a-f0-9]{64}$/);
+    assert.match(recoveryControl.runID, /^[a-f0-9-]{36}$/);
+  }
   assert(!watch || paired, 'Watch runner requires the paired lane');
   if (watch) return { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' };
   return {
@@ -52,6 +94,14 @@ export function ordinaryTestEnvironment({ paired, watch = false, setup }) {
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
     ...(paired ? { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' } : {}),
+    ...(recovery
+      ? {
+          SCOREBUG_ORDINARY_RECOVERY: '1',
+          SCOREBUG_RECOVERY_CONTROL_URL: recoveryControl.endpoint,
+          SCOREBUG_RECOVERY_CONTROL_TOKEN: recoveryControl.token,
+          SCOREBUG_RECOVERY_RUN_ID: recoveryControl.runID,
+        }
+      : {}),
   };
 }
 
@@ -223,8 +273,9 @@ export async function runOrdinaryCommand(
 
 async function main() {
   const options = ordinaryNativeOptions(process.argv.slice(2));
-  const paired = options.lane === 'paired';
-  const phoneTest = paired ? pairedTestID : testID;
+  const { paired, recovery, phoneTest, allowance, timeout } = ordinaryLaneConfiguration(
+    options.lane,
+  );
   const phoneName = `Scorebug Ordinary ${randomUUID()}`;
   const watchName = `Scorebug Ordinary Watch ${randomUUID()}`;
   assert.equal(process.platform, 'darwin', 'Installed Xcode and iOS simulator required');
@@ -392,7 +443,12 @@ async function main() {
     );
     controller.signal.throwIfAborted();
     lab = await startDeviceLab(
-      { host: options.host, encoder: options.encoder, duration: 600 },
+      {
+        host: options.host,
+        encoder: options.encoder,
+        duration: 600,
+        ...(recovery ? { publisherRecovery: true } : {}),
+      },
       { signal: controller.signal },
     );
     // Private plists carry only each target's explicit environment; no credentials in argv.
@@ -430,7 +486,15 @@ os.chmod(destination, 0o600)
       const environmentPath = join(artifact, `${name}-environment.json`);
       await writeFile(
         environmentPath,
-        JSON.stringify(ordinaryTestEnvironment({ paired, watch: isWatch, setup: lab.setup })),
+        JSON.stringify(
+          ordinaryTestEnvironment({
+            paired,
+            recovery,
+            watch: isWatch,
+            setup: lab.setup,
+            recoveryControl: lab.recoveryControl,
+          }),
+        ),
         { mode: 0o600 },
       );
       const destination = join(artifact, `${name}.xctestrun`);
@@ -486,15 +550,15 @@ os.chmod(destination, 0o600)
             '-test-timeouts-enabled',
             'YES',
             '-default-test-execution-time-allowance',
-            paired ? '600' : '480',
+            String(allowance),
             '-maximum-test-execution-time-allowance',
-            paired ? '600' : '480',
+            String(allowance),
             '-resultBundlePath',
             join(artifact, `${workflow.name}.xcresult`),
             `-only-testing:${workflow.test}`,
           ],
           workflow.name,
-          { timeout: paired ? 720_000 : 600_000 },
+          { timeout },
         );
         const result = [];
         for (const type of ['summary', 'tests'])
@@ -642,7 +706,7 @@ os.chmod(destination, 0o600)
       simulator,
       watch,
       pairId,
-      lane: paired ? 'paired' : 'phone',
+      lane: options.lane ?? 'phone',
       labArtifact: lab?.artifact,
       workflowPassed,
       mediaQualified: false,

@@ -1392,6 +1392,11 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             let after = await f.owner.currentDiagnostic()
             let replacement = try XCTUnwrap(after["policyOwnerKey"], variant)
             XCTAssertNotEqual(original, replacement, variant)
+            if variant == "profileRevision" {
+                XCTAssertEqual(before["policySourceScopeKey"], after["policySourceScopeKey"])
+            } else {
+                XCTAssertNotEqual(before["policySourceScopeKey"], after["policySourceScopeKey"], variant)
+            }
             XCTAssertEqual(after["policyAppliedRevision"], before["policyAppliedRevision"])
             await f.owner.stop()
         }
@@ -1401,6 +1406,9 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         let f = try await CandidateQualityFixture.make()
         let initial = await f.owner.currentDiagnostic()
         XCTAssertNotNil(initial["policyOwnerKey"])
+        XCTAssertEqual(initial["policySourceScopeKey"]?.count, 64)
+        XCTAssertNotNil(initial["policySourceStartPTSSeconds"])
+        XCTAssertNotNil(initial["policyCaptureStartUptimeSeconds"])
         let decision = try await f.owner.evaluateCandidate(f.admission)
         let pending = await f.owner.currentDiagnostic()
         XCTAssertEqual(pending["policyPendingKind"], "trial")
@@ -1424,6 +1432,8 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             let diagnostic = await f.owner.currentDiagnostic()
             let repeated = await f.owner.currentDiagnostic()
             XCTAssertEqual(diagnostic, repeated)
+            XCTAssertEqual(diagnostic["policySourceStartPTSSeconds"].flatMap(Double.init), CMTimeGetSeconds(source.0.interval.sourceStartExclusive))
+            XCTAssertEqual(diagnostic["policySourceEndPTSSeconds"].flatMap(Double.init), CMTimeGetSeconds(source.0.interval.sourceEndInclusive))
             observations.append(diagnostic)
         }
         let probing = observations[0], confirmed = observations[1]
@@ -1432,6 +1442,10 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         XCTAssertEqual(confirmed["policyTrialActive"], "false")
         XCTAssertEqual(probing["policyOwnerKey"]?.count, 64)
         XCTAssertEqual(probing["policyOwnerKey"], confirmed["policyOwnerKey"])
+        XCTAssertEqual(initial["policySourceScopeKey"], confirmed["policySourceScopeKey"])
+        XCTAssertEqual(confirmed["policyCaptureStartUptimeSeconds"], "120.1")
+        XCTAssertEqual(confirmed["policyCaptureEndUptimeSeconds"], confirmed["policyAcceptedSourceWindowEnd"])
+        XCTAssertLessThanOrEqual(try JSONSerialization.data(withJSONObject: confirmed).count, 4096)
         XCTAssertNotEqual(initial["policyOwnerKey"], confirmed["policyOwnerKey"])
         XCTAssertEqual(confirmed["policyAppliedRevision"], "1")
         XCTAssertEqual(confirmed["policyAppliedProfile"], "360p30")
@@ -1451,6 +1465,8 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
         try await f.owner.noteUnavailableCadence(diagnostics: replacement.1)
         let invalidated = await f.owner.currentDiagnostic()
         XCTAssertNil(invalidated["policyOwnerKey"])
+        XCTAssertNil(invalidated["policySourceScopeKey"])
+        XCTAssertNil(invalidated["policySourceStartPTSSeconds"])
         await f.owner.stop()
         let closed = await f.owner.currentDiagnostic()
         XCTAssertNil(closed["policyOwnerKey"])

@@ -3,8 +3,11 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import {
   ordinaryNativeOptions,
+  ordinaryLaneConfiguration,
   ordinaryEnvironment,
   runOrdinaryCommand,
   ordinaryTestEnvironment,
@@ -235,3 +238,214 @@ test('a timed-out command joins its child process group before returning', async
     await rm(artifact, { recursive: true, force: true });
   }
 });
+
+test('recovery is explicit, preserves existing lanes and uses finite outer allowances', () => {
+  assert.equal(
+    ordinaryNativeOptions(
+      ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'recovery'],
+      interfaces,
+    ).lane,
+    'recovery',
+  );
+  assert.deepEqual(ordinaryLaneConfiguration(), {
+    paired: false,
+    recovery: false,
+    phoneTest:
+      'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorPublishScoreAdaptStopAndExport',
+    allowance: 480,
+    timeout: 600000,
+  });
+  assert.equal(ordinaryLaneConfiguration('paired').allowance, 600);
+  const recovery = ordinaryLaneConfiguration('recovery');
+  assert.equal(
+    recovery.phoneTest,
+    'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecoverScoreStopAndExport',
+  );
+  assert.equal(recovery.allowance, 780);
+  assert.equal(recovery.timeout, 900000);
+  assert.equal(recovery.paired, false);
+});
+test('recovery credentials are explicit and restricted to the recovery phone runner', () => {
+  const setup = { endpoint: 'http://192.168.1.130:8080', installationToken: 'private' };
+  const recoveryControl = {
+    endpoint: 'http://127.0.0.1:1234',
+    token: 'a'.repeat(64),
+    runID: '00000000-0000-4000-8000-000000000001',
+  };
+  const env = ordinaryTestEnvironment({ paired: false, recovery: true, setup, recoveryControl });
+  assert.equal(env.SCOREBUG_RECOVERY_CONTROL_URL, recoveryControl.endpoint);
+  assert.equal(env.SCOREBUG_RECOVERY_CONTROL_TOKEN, recoveryControl.token);
+  assert.equal(env.SCOREBUG_RECOVERY_RUN_ID, recoveryControl.runID);
+  assert.equal(env.SCOREBUG_ORDINARY_RECOVERY, '1');
+  assert.equal(
+    Object.keys(env).some((k) => k.includes('FILE_CAPTURE')),
+    false,
+  );
+  assert.throws(() => ordinaryTestEnvironment({ paired: false, recovery: true, setup }));
+  assert.throws(() =>
+    ordinaryTestEnvironment({ paired: true, recovery: true, setup, recoveryControl }),
+  );
+  assert.throws(() =>
+    ordinaryTestEnvironment({
+      paired: false,
+      recovery: true,
+      setup,
+      recoveryControl: { ...recoveryControl, endpoint: 'http://example.com' },
+    }),
+  );
+  assert.equal(
+    Object.keys(ordinaryTestEnvironment({ paired: false, setup, recoveryControl })).some((k) =>
+      k.includes('RECOVERY'),
+    ),
+    false,
+  );
+});
+
+test(
+  'native guards reject stale samples, pre-mutation acknowledgments, changed ownership and false confirmation',
+  { skip: process.platform !== 'darwin' },
+  async () => {
+    const source = await readFile(
+      new URL('../../ios/AppUITests/PhysicalStreamingTests.swift', import.meta.url),
+      'utf8',
+    );
+    const guardSource = source
+      .split('// BEGIN RECOVERY GUARDS\n')[1]
+      ?.split('// END RECOVERY GUARDS')[0];
+    assert(guardSource, 'Native recovery guards must be directly testable');
+    const directory = await mkdtemp(join(tmpdir(), 'scorebug-native-guards-'));
+    try {
+      const path = join(directory, 'main.swift');
+      await writeFile(
+        path,
+        'import Foundation\n' +
+          guardSource +
+          `
+var d: [String:String] = ["sessionObservedAtUptimeSeconds":"100", "observedAtUptimeSeconds":"100", "driverClosed":"false", "sessionClosed":"false", "sessionBusy":"false", "policyAttemptID":"attempt", "policySourceScopeKey":String(repeating:"b",count:64), "policyOwnerKey":String(repeating:"a",count:64), "policyAppliedProfile":"360p30", "policyAppliedBitrate":"600000", "policyAppliedRevision":"1", "policyAcknowledgedAtUptimeSeconds":"95", "policyAcceptedSourceSequence":"4", "policyAcceptedSourceWindowEnd":"99", "policyTrialActive":"true", "policyTrialRollbackRequired":"false", "policyTrialHealthyCoverageSeconds":"5", "policyRecommendationPending":"false", "policyApplicationPending":"false", "policyMinimumResetRequired":"false"]
+func sample(_ value: [String:String]) throws -> OrdinaryRecoverySample { try OrdinaryRecoverySample(value, started:100, ended:100.2, previousReadEnd:99) }
+let probation = try sample(d)
+assert(probation.isProbation)
+assert(probation.acknowledges(profile:"360p30", bitrate:600000, after:94, newerThan:0))
+assert(!probation.acknowledges(profile:"360p30", bitrate:600000, after:95, newerThan:0))
+assert(!probation.acknowledges(profile:"360p30", bitrate:600000, after:94, newerThan:1))
+var settled = d; settled["policyTrialActive"]="false"; settled.removeValue(forKey:"policyTrialRollbackRequired"); settled["policyAcceptedSourceSequence"]="5"; settled["policyAcceptedSourceWindowEnd"]="100"
+let confirmed = try sample(settled); assert(confirmed.confirms(probation))
+for (key,value) in [("policyOwnerKey",String(repeating:"c",count:64)),("policyAppliedRevision","2"),("policyAttemptID","replacement"),("policySourceScopeKey",String(repeating:"c",count:64)),("policyAcceptedSourceSequence","4"),("policyAcceptedSourceWindowEnd","99"),("policyRecommendationPending","true"),("policyApplicationPending","true"),("policyMinimumResetRequired","true"),("policyTrialRollbackRequired","true")] {
+ var bad=settled; bad[key]=value; let rejected = try sample(bad); assert(!rejected.confirms(probation),key)
+}
+let lone = try sample(settled); assert(!lone.confirms(lone))
+for (key,value) in [("sessionObservedAtUptimeSeconds","90"),("sessionObservedAtUptimeSeconds","nan"),("sessionObservedAtUptimeSeconds","101"),("policyAcknowledgedAtUptimeSeconds","101"),("policyAcceptedSourceWindowEnd","101"),("sessionClosed","true"),("driverClosed","true"),("observedAtUptimeSeconds","90")] {
+ var bad=d; bad[key]=value; do { _=try sample(bad); fatalError(key) } catch {}
+}
+do { _=try OrdinaryRecoverySample(d,started:100,ended:99,previousReadEnd:98); fatalError("backward bracket") } catch {}
+do { _=try OrdinaryRecoverySample(d,started:100,ended:106,previousReadEnd:98); fatalError("slow bracket") } catch {}
+do { _=try OrdinaryRecoverySample(d,started:100,ended:100.2,previousReadEnd:101); fatalError("overlapping bracket") } catch {}
+do { _=try OrdinaryRecoverySample(d,started:100,ended:100.2,previousReadEnd:99, previousObserved:101); fatalError("backward diagnostic clock") } catch {}
+print("native guards passed")
+`,
+      );
+      const output = execFileSync('/usr/bin/xcrun', ['swift', path], {
+        encoding: 'utf8',
+        env: { ...process.env, DEVELOPER_DIR: '/Applications/Xcode-26.2.0.app/Contents/Developer' },
+        timeout: 60000,
+      });
+      assert.match(output, /native guards passed/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'native archive failure and expired deadline still stop and export only in recovery mode',
+  { skip: process.platform !== 'darwin' },
+  async () => {
+    const source = await readFile(
+      new URL('../../ios/AppUITests/PhysicalStreamingTests.swift', import.meta.url),
+      'utf8',
+    );
+    const helper = source.slice(
+      source.indexOf('        func preservingRecoveryFailure('),
+      source.indexOf('        func adaptiveGate()'),
+    );
+    const deadlineWait = source
+      .slice(
+        source.indexOf('    @MainActor private func wait('),
+        source.indexOf('    @MainActor private func selectTab('),
+      )
+      .replace('@MainActor private ', '')
+      .replace('until condition:', '_ condition:')
+      .replace(
+        'Date().addingTimeInterval(seconds)',
+        'Date().addingTimeInterval(min(seconds, 0.005))',
+      )
+      .replace('Date().addingTimeInterval(0.2)', 'Date().addingTimeInterval(0.001)')
+      .replace('throw SmokeFailure.failed(message)', 'throw Failure.gate');
+    const terminal = source
+      .split('// BEGIN RECOVERY TERMINATION')[1]
+      .split('// END RECOVERY TERMINATION')[0];
+    const block = source.slice(
+      source.indexOf('        let stoppedAt = elapsed(app)'),
+      source.indexOf('        try wait("Recording did not finish saving.'),
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'scorebug-native-export-'));
+    try {
+      const path = join(directory, 'main.swift');
+      await writeFile(
+        path,
+        `import Foundation
+struct Button { let exists = true }
+struct Buttons { subscript(_ key: String) -> Button { Button() } }
+struct App { let buttons = Buttons() }
+class Harness {
+  enum Failure: Error { case gate }
+  var events: [String] = []
+  var recoveryFailure: String?
+  var recoveryRecordingDeadline: Double = 0
+  var deadline = Date.distantPast
+  func elapsed(_ app: App) -> Double { 0 }
+${deadlineWait}
+  func require(_ condition: Bool, _ message: String) throws { if !condition { throw Failure.gate } }
+  func evidence(_ app: App, phase: String, screenshot: Bool) {}
+  func recoveryMilestone(_ phase: String) { events.append(phase) }
+  func tap(_ button: Button, in app: App) throws {
+    try wait("tap unavailable", seconds: 8) { button.exists }
+    events.append("actual-stop")
+  }
+  func run(recovery: Bool) throws {
+    let app = App()
+    var adaptiveFailure: Error?
+${helper}
+${terminal}
+    let terminalDeadline = deadline
+${block}
+    assert(deadline == terminalDeadline)
+    try wait("export unavailable", seconds: 35) { true }
+    events.append("actual-export")
+    if let adaptiveFailure { throw adaptiveFailure }
+  }
+}
+let recovery = Harness()
+do { try recovery.run(recovery: true); fatalError("retained failure lost") } catch {}
+assert(recovery.events.filter { $0 == "actual-stop" }.count == 2)
+assert(recovery.deadline.timeIntervalSinceNow > 0 && recovery.deadline.timeIntervalSinceNow <= 90)
+assert(recovery.events.contains("actual-export"))
+assert(!recovery.events.contains("archive-continuation-complete"))
+assert(recovery.recoveryFailure != nil)
+let ordinary = Harness()
+do { try ordinary.run(recovery: false); fatalError("ordinary failure lost") } catch {}
+assert(ordinary.events.isEmpty)
+print("native export failure preservation passed")
+`,
+      );
+      const output = execFileSync('/usr/bin/xcrun', ['swift', path], {
+        encoding: 'utf8',
+        env: { ...process.env, DEVELOPER_DIR: '/Applications/Xcode-26.2.0.app/Contents/Developer' },
+        timeout: 60000,
+      });
+      assert.match(output, /native export failure preservation passed/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

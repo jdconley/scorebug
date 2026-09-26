@@ -1,5 +1,79 @@
 import XCTest
 
+// BEGIN RECOVERY GUARDS
+/// Pure predicates shared by the UI workflow and host-compiled regression tests.
+struct OrdinaryRecoverySample {
+    enum Invalid: Error { case diagnostic }
+    let diagnostic: [String: String]
+    let started: Double
+    let ended: Double
+    let attempt: String
+    let scope: String
+    let owner: String?
+    let revision: UInt64
+    let acknowledgedAt: Double
+    let observedAt: Double
+    let sequence: Int64?
+    let windowEnd: Double?
+
+    init(_ diagnostic: [String: String], started: Double, ended: Double, previousReadEnd: Double, previousObserved: Double = 0) throws {
+        func number(_ key: String) throws -> Double {
+            guard let text = diagnostic[key], let value = Double(text), value.isFinite, value >= 0 else { throw Invalid.diagnostic }
+            return value
+        }
+        guard started.isFinite, ended.isFinite, previousReadEnd.isFinite,
+              started >= previousReadEnd, ended >= started, ended - started <= 5,
+              diagnostic["sessionClosed"] == "false", diagnostic["driverClosed"] == "false",
+              let attempt = diagnostic["policyAttemptID"], !attempt.isEmpty,
+              let revisionText = diagnostic["policyAppliedRevision"], let revision = UInt64(revisionText) else { throw Invalid.diagnostic }
+        let observed = try number("sessionObservedAtUptimeSeconds")
+        let driverObserved = try number("observedAtUptimeSeconds")
+        let acknowledgedAt = try number("policyAcknowledgedAtUptimeSeconds")
+        guard previousObserved.isFinite, observed >= previousObserved, driverObserved <= ended, ended - driverObserved <= 5, observed <= driverObserved, ended - observed <= 5, acknowledgedAt <= observed else { throw Invalid.diagnostic }
+        let owner = diagnostic["policyOwnerKey"]
+        let scope = diagnostic["policySourceScopeKey"] ?? ""
+        let sequence = diagnostic["policyAcceptedSourceSequence"].flatMap(Int64.init)
+        let windowEnd = diagnostic["policyAcceptedSourceWindowEnd"].flatMap(Double.init)
+        if let owner {
+            guard owner.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  scope.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  let sequence, sequence >= 0, let windowEnd, windowEnd.isFinite,
+                  windowEnd >= 0, windowEnd <= observed, observed - windowEnd <= 5 else { throw Invalid.diagnostic }
+        }
+        self.diagnostic = diagnostic; self.started = started; self.ended = ended
+        self.attempt = attempt; self.scope = scope; self.owner = owner; self.revision = revision
+        self.observedAt = observed
+        self.acknowledgedAt = acknowledgedAt; self.sequence = sequence; self.windowEnd = windowEnd
+    }
+    var unencumbered: Bool {
+        diagnostic["sessionBusy"] == "false" &&
+        diagnostic["policyRecommendationPending"] == "false" &&
+        diagnostic["policyApplicationPending"] == "false" &&
+        diagnostic["policyMinimumResetRequired"] == "false" &&
+        diagnostic["policyTrialRollbackRequired"] != "true"
+    }
+    var isProbation: Bool {
+        owner != nil && unencumbered && diagnostic["policyTrialActive"] == "true" &&
+        diagnostic["policyTrialRollbackRequired"] == "false" &&
+        diagnostic["policyTrialHealthyCoverageSeconds"].flatMap(Double.init).map { $0.isFinite && $0 >= 0 } == true
+    }
+    func acknowledges(profile: String, bitrate: Int, after: Double, newerThan: UInt64?) -> Bool {
+        diagnostic["policyAppliedProfile"] == profile && diagnostic["policyAppliedBitrate"] == String(bitrate) &&
+        acknowledgedAt > after && (newerThan.map { revision > $0 } ?? true)
+    }
+    func confirms(_ probation: Self) -> Bool {
+        probation.isProbation && owner != nil && owner == probation.owner &&
+        attempt == probation.attempt && scope == probation.scope && revision == probation.revision &&
+        acknowledgedAt == probation.acknowledgedAt &&
+        diagnostic["policyAppliedProfile"] == probation.diagnostic["policyAppliedProfile"] &&
+        diagnostic["policyAppliedBitrate"] == probation.diagnostic["policyAppliedBitrate"] &&
+        diagnostic["policyTrialActive"] == "false" && unencumbered &&
+        (sequence ?? -1) > (probation.sequence ?? .max) &&
+        (windowEnd ?? -1) > (probation.windowEnd ?? .infinity)
+    }
+}
+// END RECOVERY GUARDS
+
 /// Opt-in hardware smoke: the normal app launch selects IOSCameraCaptureSource.
 /// Run only against a seeded, disposable HOME/AWAY match on a private LAN.
 final class PhysicalStreamingTests: XCTestCase {
@@ -51,7 +125,193 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
-    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false) throws {
+    private var recoverySamples: [[String: Any]] = []
+    private var recoveryGates: [[String: Any]] = []
+    private var recoveryMilestones: [[String: Any]] = []
+    private var recoveryExchanges: [[String: Any]] = []
+    private var recoveryRecordingStarted: Double = 0
+    private var recoveryRecordingDeadline: Double = 0
+    private var recoveryLastObserved: Double = 0
+    private var recoveryLastReadEnd: Double = 0
+    private var recoveryLastSampleStart: Double = 0
+    private var recoveryAttempt: String?
+    private var recoveryScope: String?
+    private var recoveryFailure: String?
+
+    private func recoveryMilestone(_ phase: String, sample: Bool = false) {
+        var record: [String: Any] = ["phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime]
+        if sample { record["sampleIndex"] = recoverySamples.count - 1 }
+        recoveryMilestones.append(record)
+    }
+    private func attachRecoveryEvidence() {
+        var report: [String: Any] = ["formatVersion": 1,
+            "recordingStartedUptimeSeconds": recoveryRecordingStarted,
+            "recordingDeadlineUptimeSeconds": recoveryRecordingDeadline,
+            "samples": recoverySamples, "gates": recoveryGates,
+            "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
+        report["failure"] = recoveryFailure
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "OrdinaryRecoveryStreaming-recovery-phases"
+            attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+    @MainActor private func recoverySample(_ app: XCUIApplication, phase: String) throws -> OrdinaryRecoverySample? {
+        let started = ProcessInfo.processInfo.systemUptime
+        if started - recoveryLastSampleStart < 2 { return nil }
+        try require(recoverySamples.count < 270, "Recovery evidence sample limit exceeded.")
+        recoveryLastSampleStart = started
+        let encoded = value(app, "streaming.qualityDiagnostic")
+        let ended = ProcessInfo.processInfo.systemUptime
+        try require(started >= recoveryLastReadEnd && ended >= started && ended - started <= 5,
+                    "Recovery accessibility clock bracket is invalid.")
+        let previousEnd = recoveryLastReadEnd
+        recoveryLastReadEnd = ended
+        try require(encoded.utf8.count <= 4096 && encoded != "missing", "Recovery diagnostic missing or oversized.")
+        guard let data = encoded.data(using: .utf8),
+              let diagnostic = try JSONSerialization.jsonObject(with: data) as? [String: String] else {
+            throw SmokeFailure.failed("Recovery diagnostic is not a string dictionary.")
+        }
+        recoverySamples.append(["phase": phase, "diagnostic": diagnostic,
+            "readStartedUptimeSeconds": started, "readEndedUptimeSeconds": ended])
+        // A constrained path can temporarily leave no current accepted source.
+        // Retain such samples but never let them acknowledge or confirm a phase.
+        guard let sample = try? OrdinaryRecoverySample(diagnostic, started: started, ended: ended, previousReadEnd: previousEnd, previousObserved: recoveryLastObserved) else { return nil }
+        recoveryLastObserved = sample.observedAt
+        if let attempt = recoveryAttempt { try require(sample.attempt == attempt, "Publishing attempt restarted during recovery.") }
+        else { recoveryAttempt = sample.attempt }
+        if !sample.scope.isEmpty {
+            if let scope = recoveryScope { try require(sample.scope == scope, "Publishing source scope changed during recovery.") }
+            else { recoveryScope = sample.scope }
+        }
+        return sample
+    }
+    @MainActor private func recoveryWait(_ app: XCUIApplication, phase: String, seconds: Double,
+                                        accepts: (OrdinaryRecoverySample) throws -> Bool) throws -> OrdinaryRecoverySample {
+        let started = ProcessInfo.processInfo.systemUptime
+        recoveryGates.append(["phase": phase, "startedUptimeSeconds": started, "limitSeconds": seconds])
+        // Reserve the existing live hold, stream stop and archive continuation.
+        let end = min(started + seconds, recoveryRecordingDeadline - 45)
+        while ProcessInfo.processInfo.systemUptime < end {
+            if let sample = try recoverySample(app, phase: phase),
+               sample.ended < end, try accepts(sample) { return sample }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        throw SmokeFailure.failed("Recovery \(phase) exceeded its finite gate.")
+    }
+    @MainActor private func recoveryIncrease(_ app: XCUIApplication, prefix: String, after: Double,
+                                            previous: OrdinaryRecoverySample) throws -> OrdinaryRecoverySample {
+        let acknowledged = try recoveryWait(app, phase: "\(prefix)-increase", seconds: 150) {
+            $0.acknowledges(profile: "360p30", bitrate: 600000, after: after, newerThan: previous.revision)
+        }
+        recoveryMilestone("\(prefix)-increase-acknowledged", sample: true)
+        var probation: OrdinaryRecoverySample?
+        if acknowledged.isProbation {
+            probation = acknowledged; recoveryMilestone("\(prefix)-probation", sample: true)
+        }
+        let confirmed = try recoveryWait(app, phase: "\(prefix)-confirmation", seconds: 30) { sample in
+            try self.require(sample.revision == acknowledged.revision && sample.acknowledgedAt == acknowledged.acknowledgedAt,
+                             "Trial revision changed before confirmation.")
+            if let probation {
+                try self.require(sample.owner == probation.owner, "Trial owner changed before confirmation.")
+                return sample.confirms(probation)
+            }
+            if sample.isProbation {
+                probation = sample; self.recoveryMilestone("\(prefix)-probation", sample: true)
+            }
+            return false
+        }
+        try require(confirmed.owner != previous.owner, "Changed revision reused the prior trial owner.")
+        recoveryMilestone("\(prefix)-confirmed", sample: true)
+        return confirmed
+    }
+    private final class RecoveryResponse: @unchecked Sendable {
+        private let lock = NSLock()
+        private var result: (Data?, URLResponse?, Error?)?
+        func set(_ data: Data?, _ response: URLResponse?, _ error: Error?) {
+            lock.lock(); defer { lock.unlock() }; result = (data, response, error)
+        }
+        func get() -> (Data?, URLResponse?, Error?)? {
+            lock.lock(); defer { lock.unlock() }; return result
+        }
+    }
+    @MainActor private func recoveryRequest(_ operation: String, sequence: Int, sample: OrdinaryRecoverySample) throws -> Double {
+        let env = ProcessInfo.processInfo.environment
+        guard let endpoint = env["SCOREBUG_RECOVERY_CONTROL_URL"], let components = URLComponents(string: endpoint),
+              components.scheme == "http", components.host == "127.0.0.1", components.port != nil,
+              components.user == nil, components.password == nil, components.query == nil, components.fragment == nil,
+              ["", "/"].contains(components.path), let base = components.url,
+              let token = env["SCOREBUG_RECOVERY_CONTROL_TOKEN"], token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              let runID = env["SCOREBUG_RECOVERY_RUN_ID"], UUID(uuidString: runID) != nil else {
+            throw SmokeFailure.failed("Private recovery controller configuration missing or invalid.")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 4; configuration.timeoutIntervalForResource = 4
+        configuration.waitsForConnectivity = false
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: base.appendingPathComponent(operation))
+        request.httpMethod = "POST"; request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["runID": runID, "sequence": sequence, "diagnostic": sample.diagnostic])
+        let response = RecoveryResponse(), done = XCTestExpectation(description: "Owned recovery controller response")
+        let started = ProcessInfo.processInfo.systemUptime
+        try require(started - sample.ended <= 2, "Recovery mutation diagnostic became stale.")
+        session.dataTask(with: request) { data, value, error in
+            response.set(data, value, error); done.fulfill()
+        }.resume()
+        let waitResult = XCTWaiter.wait(for: [done], timeout: 5)
+        let ended = ProcessInfo.processInfo.systemUptime
+        var exchange: [String: Any] = ["sequence": sequence, "operation": operation,
+            "requestStartedUptimeSeconds": started, "responseEndedUptimeSeconds": ended]
+        defer { recoveryExchanges.append(exchange) }
+        guard waitResult == .completed, ended >= started, ended - started <= 5,
+              let result = response.get(), result.2 == nil,
+              let http = result.1 as? HTTPURLResponse, http.statusCode == 200,
+              let data = result.0, data.count <= 4096,
+              let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SmokeFailure.failed("Recovery controller failed; uncertain mutations are never retried.")
+        }
+        exchange["response"] = body
+        try require(body["runID"] as? String == runID && body["sequence"] as? Int == sequence &&
+                    body["phase"] as? String == (operation == "constrain" ? "constrained" : "restored"),
+                    "Recovery controller returned an unexpected phase receipt.")
+        return ended
+    }
+    @MainActor private func runOrdinaryRecovery(_ app: XCUIApplication) throws {
+        let minimum = try recoveryWait(app, phase: "initial-minimum", seconds: 10) {
+            $0.owner != nil && $0.unencumbered && $0.diagnostic["policyTrialActive"] == "false" &&
+            $0.acknowledges(profile: "240p30", bitrate: 350000, after: self.recoveryRecordingStarted, newerThan: nil)
+        }
+        recoveryMilestone("initial-minimum", sample: true)
+        let increased = try recoveryIncrease(app, prefix: "initial", after: minimum.acknowledgedAt, previous: minimum)
+        let constrainedAt = try recoveryRequest("constrain", sequence: 1, sample: increased)
+        let fallback = try recoveryWait(app, phase: "fallback", seconds: 60) {
+            $0.owner != nil && $0.unencumbered && $0.diagnostic["policyTrialActive"] == "false" &&
+            $0.acknowledges(profile: "240p30", bitrate: 350000, after: constrainedAt, newerThan: increased.revision)
+        }
+        try require(fallback.owner != increased.owner, "Fallback revision reused the increase owner.")
+        recoveryMilestone("fallback-acknowledged", sample: true)
+        let restoredAt = try recoveryRequest("restore", sequence: 2, sample: fallback)
+        _ = try recoveryIncrease(app, prefix: "recovery", after: restoredAt, previous: fallback)
+    }
+
+    @MainActor func testOrdinarySimulatorRecoverScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_RECOVERY"] == "1" else {
+            throw XCTSkip("Use the explicit ordinary recovery simulator lane.")
+        }
+        evidencePrefix = "OrdinaryRecoveryStreaming"
+        defer { attachRecoveryEvidence() }
+        do { try runVertical(watchScoring: false, ordinarySimulator: true, recovery: true) }
+        catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
+        #else
+        throw XCTSkip("Ordinary recovery requires a disposable simulator.")
+        #endif
+    }
+
+    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
               let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
@@ -59,10 +319,10 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try require(isPrivateLANEndpoint(endpoint), "Device smoke requires an HTTP(S) URL with a numeric RFC1918 IPv4 host and no credentials, query, or fragment.")
         continueAfterFailure = true // Thrown failures still run the stop cleanup below.
-        executionTimeAllowance = watchScoring ? 600 : (ordinarySimulator ? 480 : 240)
+        executionTimeAllowance = recovery ? 780 : (watchScoring ? 600 : (ordinarySimulator ? 480 : 240))
         // Reserve 35 seconds for independent stream and recording cleanup,
         // plus a little headroom for final evidence within the 240-second test.
-        deadline = Date().addingTimeInterval(watchScoring ? 550 : (ordinarySimulator ? 430 : 200))
+        deadline = Date().addingTimeInterval(recovery ? 735 : (watchScoring ? 550 : (ordinarySimulator ? 430 : 200)))
         if ordinarySimulator { try prepareOrdinarySimulator() }
         let app = XCUIApplication()
         // Physical runs preserve an existing process so the prior-capture guard
@@ -141,6 +401,12 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try tap(app.buttons["streaming.closeSetup"], in: app)
 
+        if recovery {
+            recoveryRecordingStarted = ProcessInfo.processInfo.systemUptime
+            recoveryRecordingDeadline = recoveryRecordingStarted + 540
+            deadline = Date().addingTimeInterval(540)
+            recoveryMilestone("recording-requested")
+        }
         recordingRequested = true
         try tap(app.buttons["film.start"], in: app)
         try wait("Recording did not advance.", seconds: 25) {
@@ -157,23 +423,45 @@ final class PhysicalStreamingTests: XCTestCase {
             self.value(app, "streaming.workerStatus") == "producing_output"
         }
         evidence(app, phase: ordinarySimulator ? "ordinary-publishing" : "hardware-publishing", screenshot: true)
-        if ordinarySimulator {
+        if ordinarySimulator && !recovery {
             try wait("Ordinary startup did not acknowledge 240p30 at 350000 bps.", seconds: 10) {
                 self.value(app, "streaming.appliedQuality") == "240p30:350000"
             }
             evidence(app, phase: "minimum-quality-acknowledged", screenshot: true)
         }
 
+        func preservingRecoveryFailure(_ action: () throws -> Void) throws {
+            do { try action() }
+            catch {
+                guard recovery else { throw error }
+                adaptiveFailure = adaptiveFailure ?? error
+                recoveryFailure = String(describing: adaptiveFailure ?? error)
+            }
+        }
+        func beginRecoveryTermination() throws {
+            guard recovery else { return }
+            try preservingRecoveryFailure {
+                try require(ProcessInfo.processInfo.systemUptime <= recoveryRecordingDeadline, "Recovery recording exceeded its 540-second deadline.")
+            }
+            // Terminal actions need time even when the recording budget failed.
+            // This does not change the monotonic adaptive or recording limits.
+            deadline = Date().addingTimeInterval(90)
+            recoveryMilestone("terminal-started")
+        }
         func adaptiveGate() throws {
             do {
-                try waitForOrdinaryIncrease(app)
+                if recovery { try runOrdinaryRecovery(app) }
+                else { try waitForOrdinaryIncrease(app) }
             } catch {
                 adaptiveFailure = error
+                if recovery { recoveryFailure = String(describing: error) }
                 evidence(app, phase: "adaptive-gate-failed", screenshot: true)
             }
-            try require(value(app, "streaming.localStatus") == "publishing" &&
-                        value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
-                        "Ordinary recording and worker output did not remain live after the adaptive gate.")
+            try preservingRecoveryFailure {
+                try require(value(app, "streaming.localStatus") == "publishing" &&
+                            value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
+                            "Ordinary recording and worker output did not remain live after the adaptive gate.")
+            }
             if adaptiveFailure == nil { evidence(app, phase: "increased-quality-acknowledged", screenshot: true) }
         }
         if watchScoring && ordinarySimulator { try adaptiveGate() }
@@ -257,30 +545,51 @@ final class PhysicalStreamingTests: XCTestCase {
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
             if ordinarySimulator { try adaptiveGate() }
-            let holdStarted = Date()
-            let initialDuration = elapsed(app)
-            try wait("Recording did not advance throughout the 12-second live hold.", seconds: 18) {
-                Date().timeIntervalSince(holdStarted) >= 12 && self.elapsed(app) >= initialDuration + 12
+            try preservingRecoveryFailure {
+                if recovery { recoveryMilestone("live-hold-started") }
+                let holdStarted = Date()
+                let initialDuration = elapsed(app)
+                try wait("Recording did not advance throughout the 12-second live hold.", seconds: 18) {
+                    Date().timeIntervalSince(holdStarted) >= 12 && self.elapsed(app) >= initialDuration + 12
+                }
+                try require(value(app, "streaming.localStatus") == "publishing" &&
+                            value(app, "streaming.workerStatus") == "producing_output",
+                            "Live publishing or worker output stopped during the recording hold.")
+                if recovery { recoveryMilestone("live-hold-complete") }
+                evidence(app, phase: "live-hold-complete", screenshot: true)
             }
-            try require(value(app, "streaming.localStatus") == "publishing" &&
-                        value(app, "streaming.workerStatus") == "producing_output",
-                        "Live publishing or worker output stopped during the recording hold.")
-            evidence(app, phase: "live-hold-complete", screenshot: true)
-            try tap(app.buttons["streaming.stop"], in: app)
+            // BEGIN RECOVERY TERMINATION
+            try beginRecoveryTermination()
+            if !recovery || app.buttons["streaming.stop"].exists {
+                try preservingRecoveryFailure { try tap(app.buttons["streaming.stop"], in: app) }
+            }
+            // END RECOVERY TERMINATION
         } else {
             // A failed adaptive gate never offers Watch setup, but still exports
             // the finite source recording and retains the adaptive failure.
             try tap(app.buttons["streaming.stop"], in: app)
         }
-        try wait("Streaming did not return to idle.", seconds: 15) {
-            self.value(app, "streaming.localStatus") == "idle"
+        try preservingRecoveryFailure {
+            try wait("Streaming did not return to idle.", seconds: 15) {
+                self.value(app, "streaming.localStatus") == "idle"
+            }
+            if recovery { recoveryMilestone("stream-stopped") }
         }
         let stoppedAt = elapsed(app)
-        try wait("Local recording did not continue after streaming stopped.", seconds: 8) {
-            self.elapsed(app) >= stoppedAt + 3 && app.buttons["film.stop"].exists
+        try preservingRecoveryFailure {
+            try wait("Local recording did not continue after streaming stopped.", seconds: 8) {
+                self.elapsed(app) >= stoppedAt + 3 && app.buttons["film.stop"].exists
+            }
+            if recovery { recoveryMilestone("archive-continuation-complete") }
         }
         evidence(app, phase: "recording-continues-after-stream-stop", screenshot: true)
         try tap(app.buttons["film.stop"], in: app)
+        if recovery {
+            recoveryMilestone("recording-stop-requested")
+            try preservingRecoveryFailure {
+                try require(ProcessInfo.processInfo.systemUptime <= recoveryRecordingDeadline, "Recovery recording exceeded its 540-second deadline.")
+            }
+        }
         try wait("Recording did not finish saving.", seconds: 20) {
             app.buttons["film.start"].exists && app.buttons["film.start"].isEnabled
         }
@@ -293,6 +602,7 @@ final class PhysicalStreamingTests: XCTestCase {
             app.staticTexts["recordings.exportReady"].exists
         }
         evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)
+        if recovery { recoveryMilestone("export-ready") }
         // Expired gates stay failed even if score or quality changes while
         // completing the independent stop, archive-continuation and export gates.
         let failures = [scoreFailure, adaptiveFailure].compactMap { $0 }
