@@ -4,31 +4,41 @@
 
 Active unbounded goal: complete the native recording/scoring/Watch/progressive-streaming vertical through a portable overlay proxy to mock RTMP MP4 and optional overlay MP4. Do not mark complete from component tests. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`; never edit original `/Users/jd/src/scorebug`.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-ordinary-recovery.md) owns commands, review history and artifacts. No PR requested/created. Keep source reviews before commits, preserve failed artifacts/Downloads originals/user recordings, and do not download runtimes or delete unrelated simulators. No heavy builds/media analysis during live capture.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-recovery-repeatability.md) owns commands, review history and artifacts. No PR requested/created. Keep source reviews before commits, preserve failed artifacts/Downloads originals/user recordings, and do not download runtimes or delete unrelated simulators. No heavy builds/media analysis during live capture.
 
-## Current execution — physical Watch unlock pending
+## Current execution — recovery repeatability
 
-No active capture, builds or analysis jobs remain. `physical-paired-live-4qx9D9` /
-`device-lab-kBjPdH`, runtime1254e2d, is closed after the Watch stayed locked at
-Xcode preflight. Root interrupted only the owned waiting runner; all children/lab
-joined, workerexit0, shutdownfailures[], no recorder sessions and no phone capture.
-The async Watch-unlock question remains pending. Earlier phone automation approval
-is still valid; this new blocker is the Watch's observed lock state.
+No active capture/media jobs remain. Repeat `ordinary-native-rpRZ6E` /
+`device-lab-bZHKqz`, source1254e2d, passes native/transport/three-output media and
+six accepted phase-window mappings; this is the second consecutive complete local
+recovery pass. Prior unexplained failure remains preserved. Archive5541frames,
+bothlive5282,30fps,zeroaudioPTSgaps,120framearchive tail;39/37/37waveformprobes.
+See run's `offline-verification-manifest.json`.
 
-Fresh inventory and Xcode destination eligibility both passed before this attempt;
-current signed phone/Watch builds also pass. Phone process inventory contained no
-Scorebug process. Current1254e2d phone build is under `PhysicalPhone`, Watch under
-`PhysicalWatch`; neither is proven newly installed by the interrupted attempt.
-Last proven phone installation is the preceding a83d18e build. Use retained helper
-`artifacts/qa/run-physical-paired-instrumented-20260926.mjs` after a fresh unlock
-reply/ready state. It waits for actual Watch join-offer readiness before starting
-phone camera. Do not repeat while still locked. Preserve recordings/private logs.
+Native720 recipe dependency is reviewed and committed as `43f2229`; root verified
+18 manifest hashes and five reviewed blobs.84Streaming,206+66Media,3app tests,
+DebugUI/Release pass. Automatic ladder remains240/360. See
+`native-720-profile-validation/root-verification.json`.
 
-Next independent work: repeat the now-instrumented ordinary recovery lane to
-establish repeatability or capture the earlier rollback cause. Keep source/cap/
-policy/gates unchanged and avoid heavy builds/analysis during capture. Physical
-paired acceptance takes priority when the user unlocks the Watch; finish/join any
-active simulator capture before switching to it.
+Physical retry at43f2229: phone signed build passed; Watch build exited70 at
+destination preparation with “may need to be unlocked to recover from previously
+reported preparation errors.” Fresh devicectl info timed out30seconds. Both owned
+commands joined; no lab/camera started. Evidence labels `phone-720-build-20260926`,
+`watch-720-build-20260926`, `watch-720-readiness-20260926` under
+`physical-paired-current-mtc1mc54`. A new async question asks the user to wake/unlock
+the Watch itself on their wrist near the Mac. Phone automation approval persists.
+Do not repeat unchanged while waiting. Use retained paired helper after readiness.
+
+**ACTIVE implementation:** `/root/applied_transition_implementation` owns the
+[decoded geometry diagnostic](../superpowers/plans/2026-09-26-decoded-geometry-evidence.md),
+worker-only opt-in bounded pre-scale evidence. No native/ladder/lab changes in this
+slice. Root owns documentation, independent checks, reviews and commits. Pause
+builds/media analysis/source edits before any live hardware capture.
+
+After hardware acceptance, implement ordinary three-rung integration and real
+media qualification. Native720 is3Mbps;1080native6Mbps fits current cap,
+4K24Mbps/camera capture remains separate work. Do not substitute the final1080
+canvas for proof of actual720 input. Retain causal diagnostics for rollback.
 
 ## Ordinary recovery result
 

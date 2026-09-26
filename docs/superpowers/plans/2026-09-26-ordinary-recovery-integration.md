@@ -10,7 +10,7 @@
 
 ## Current status
 
-The lab/controller, native lane, diagnostics and independent checkers are implemented and reviewed. One instrumented ordinary recovery run passes confirmed increase, constrained fallback and confirmed recovery at unchanged policy settings. Actual capped transport, all three recorded outputs and media coverage of the six accepted native phase windows pass. Earlier failed recovery remains preserved and unexplained; repeatability and exact network-boundary media attribution remain open. The verified input is `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`: 600 seconds, 18000 consecutive source frames, SHA256 `6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
+The lab/controller, native lane, diagnostics and independent checkers are implemented and reviewed. Two consecutive instrumented ordinary recovery runs pass confirmed increase, constrained fallback and confirmed recovery at unchanged policy settings. Actual capped transport, all three recorded outputs and media coverage of the six accepted native phase windows pass. Earlier failed recovery remains preserved and unexplained; repeatability and exact network-boundary media attribution remain open. The verified input is `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`: 600 seconds, 18000 consecutive source frames, SHA256 `6c4d0f5f6d08948cba78f6ff6342a8e1feb729e7831352e373260781919cb2a6`.
 
 ## 1. Lab and controller
 
