@@ -50,6 +50,7 @@ final class PhysicalStreamingTests: XCTestCase {
         // Reserve 35 seconds for independent stream and recording cleanup,
         // plus a little headroom for final evidence within the 240-second test.
         deadline = Date().addingTimeInterval(watchScoring ? 550 : (ordinarySimulator ? 430 : 200))
+        if ordinarySimulator { try prepareOrdinarySimulator() }
         let app = XCUIApplication()
         // Physical runs preserve an existing process so the prior-capture guard
         // can refuse the run without terminating someone's recording.
@@ -114,7 +115,6 @@ final class PhysicalStreamingTests: XCTestCase {
         }
 
         try selectTab("Film", app)
-        if ordinarySimulator { dismissOrdinaryPasswordOffer() }
         try tap(app.buttons["streaming.setup"], in: app)
         try replace(app.textFields["streaming.endpoint"], with: endpoint, in: app)
         try replace(app.secureTextFields["streaming.token"], with: token, in: app)
@@ -126,7 +126,6 @@ final class PhysicalStreamingTests: XCTestCase {
             return app.staticTexts["streaming.connected"].exists && app.buttons["streaming.connect"].isEnabled
         }
         try tap(app.buttons["streaming.closeSetup"], in: app)
-        if ordinarySimulator { dismissOrdinaryPasswordOffer() }
 
         recordingRequested = true
         try tap(app.buttons["film.start"], in: app)
@@ -478,32 +477,21 @@ final class PhysicalStreamingTests: XCTestCase {
         return value == field.placeholderValue ? "" : value
     }
 
-    @MainActor private func dismissOrdinaryPasswordOffer() {
-        // Password saving is a remote service sheet, not a SpringBoard permission
-        // alert. Query only known providers; require both exact visible controls.
-        let providers = ["com.apple.AuthenticationServicesUI", "com.apple.SharedWebCredentialViewService"]
-        let end = min(deadline, Date().addingTimeInterval(5))
-        var observations: [[String: Any]] = []
-        var dismissed = false
-        repeat {
-            observations = providers.map { identifier in
-                let service = XCUIApplication(bundleIdentifier: identifier)
-                let running = service.state != .notRunning
-                let title = running && service.staticTexts["Save Password?"].exists
-                let button = running && service.buttons["Not Now"].exists
-                if !dismissed && title && button && service.buttons["Not Now"].isHittable {
-                    service.buttons["Not Now"].tap()
-                    dismissed = true
-                }
-                return ["provider": identifier, "running": running, "titleExists": title, "buttonExists": button]
-            }
-            if dismissed { break }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        } while Date() < end
-        if let data = try? JSONSerialization.data(withJSONObject: ["providers": observations, "dismissed": dismissed], options: [.sortedKeys]) {
-            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-            attachment.name = "OrdinarySimulatorStreaming-password-offer"; attachment.lifetime = .keepAlways; add(attachment)
-        }
+    @MainActor private func prepareOrdinarySimulator() throws {
+        // Only the dedicated simulator entry point reaches this preparation.
+        // Use the installed Settings UI, never private preference keys or a
+        // change to Scorebug's token field, to avoid saving disposable tokens.
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        try tap(settings.descendants(matching: .any).matching(identifier: "com.apple.settings.general").firstMatch, in: settings)
+        try tap(settings.descendants(matching: .any).matching(identifier: "AUTOFILL").firstMatch, in: settings)
+        let autofill = settings.switches["AutoFillToggle"]
+        try wait("Disposable simulator AutoFill setting was unavailable.", seconds: 8) { autofill.exists }
+        if autofill.value as? String == "1" { try tap(autofill, in: settings) }
+        try wait("Disposable simulator AutoFill was not disabled.", seconds: 5) { autofill.value as? String == "0" }
+        let attachment = XCTAttachment(screenshot: settings.screenshot())
+        attachment.name = "OrdinarySimulatorStreaming-autofill-disabled"; attachment.lifetime = .keepAlways; add(attachment)
+        settings.terminate()
     }
 
     @MainActor private func allowExpectedPermissions() {
