@@ -111,7 +111,7 @@ actor PublishingQualitySession {
     private var application: QualityController.Application?
     private struct ApplicationOwner {
         let application: QualityController.Application
-        var changedProfile = false
+        var hasNativeEffect = false
     }
     private var applicationOwner: ApplicationOwner?
     private var acknowledgedAt: Double?
@@ -1097,6 +1097,18 @@ actor PublishingQualitySession {
                 throw Failure.staleAdvice
             }
         }
+        // The preliminary write is confined to a guarded downward geometry
+        // replacement whose target rate is lower than the applied rate. It is
+        // part of this application, never an intermediate policy revision.
+        let preliminaryRate: Bool
+        if operations.guarded != nil, let profile,
+           let from = profiles.firstIndex(where: { $0.id == policy.applied.profileID }),
+           let to = profiles.firstIndex(where: { $0.id == profile.rawValue }) {
+            let current = profiles[from]
+            preliminaryRate = to < from && profile.width <= current.width && profile.height <= current.height
+                && (profile.width < current.width || profile.height < current.height)
+                && advice.settings.videoBitrate < policy.applied.videoBitrate
+        } else { preliminaryRate = false }
         let admitted: QualityController.Application
         if let measurement {
             admitted = try policy.beginApplication(advice, for: measurement.token, at: start)
@@ -1129,19 +1141,42 @@ actor PublishingQualitySession {
         do {
             var format: PublishingVideoProfileChange?
             var rateStart = start
+            var profileStart = start
+            var intermediate: PublishingBitRateChange?
+            if preliminaryRate {
+                guard let guarded = operations.guarded, let baseline = receipt else { throw Failure.notReady }
+                let result = try await guarded.setBitRate(advice.settings.videoBitrate, .verified(baseline), deadline)
+                guard applicationOwner?.application == admitted else { throw Failure.closed }
+                applicationOwner?.hasNativeEffect = true
+                try afterWrite()
+                profileStart = try time()
+                try validate(result, rate: advice.settings.videoBitrate, start: start, deadline: deadline, now: profileStart)
+                guard result.configuration.encoderSessionID == baseline.configuration.encoderSessionID,
+                      profileStart < deadline else { throw Failure.invalidReceipt }
+                // Keep the acknowledged receipt unchanged while carrying the
+                // exact successful native write to the replacement admission.
+                intermediate = result
+            }
             if let profile {
                 let result: PublishingVideoProfileChange
                 if let guarded = operations.guarded {
                     guard let receipt else { throw Failure.notReady }
-                    result = try await guarded.setProfile(profile, receipt, deadline)
+                    result = try await guarded.setProfile(profile, intermediate ?? receipt, deadline)
                 } else if let setProfile = operations.setProfile {
                     result = try await setProfile(profile, deadline)
                 } else { throw Failure.unsupportedProfile }
                 guard applicationOwner?.application == admitted else { throw Failure.closed }
-                applicationOwner?.changedProfile = true
+                applicationOwner?.hasNativeEffect = true
                 try afterWrite()
                 rateStart = try time()
-                try validate(result, profile: profile, start: start, deadline: deadline, now: rateStart)
+                try validate(result, profile: profile, start: profileStart, deadline: deadline, now: rateStart)
+                if let intermediate {
+                    guard result.previousEncoderSessionID == intermediate.configuration.encoderSessionID,
+                          result.publishingGeneration == intermediate.publishingGeneration else { throw Failure.invalidReceipt }
+                    if let previous = intermediate.lastSubmittedSourcePTS {
+                        guard CMTimeCompare(result.lastOldSourcePTS, previous) >= 0 else { throw Failure.invalidReceipt }
+                    }
+                }
                 guard rateStart < deadline else { throw Failure.invalidReceipt }
                 format = result
             }
@@ -1154,9 +1189,13 @@ actor PublishingQualitySession {
                 result = try await operations.setBitRate(advice.settings.videoBitrate, deadline)
             }
             guard applicationOwner?.application == admitted else { throw Failure.closed }
+            applicationOwner?.hasNativeEffect = true
             try afterWrite()
             let now = try time()
             try validate(result, rate: advice.settings.videoBitrate, start: rateStart, deadline: deadline, now: now)
+            if let intermediate {
+                guard result.configuration.id != intermediate.configuration.id else { throw Failure.invalidReceipt }
+            }
             if let format {
                 guard result.configuration.encoderSessionID == format.encoderSessionID,
                       result.publishingGeneration == format.publishingGeneration,
@@ -1227,7 +1266,7 @@ actor PublishingQualitySession {
                 throw error
             }
             if operations.guarded != nil, error is PublishingVideoMutationAdmissionError,
-               !owner.changedProfile, !Task.isCancelled, operations.isPublishing() {
+               !owner.hasNativeEffect, !Task.isCancelled, operations.isPublishing() {
                 // The guarded call has joined its cleanup. Settle the exact
                 // application against the current authoritative policy after
                 // its measurement cleanup also joins.
@@ -1253,8 +1292,8 @@ actor PublishingQualitySession {
                 }
                 if pending == advice { pending = nil }
             } else {
-                // A successful profile replacement is an application effect,
-                // even when its following guarded bitrate call had no effect.
+                // Any successful native write is an application effect,
+                // even when a later guarded operation rejects without effect.
                 await stop()
             }
             throw error

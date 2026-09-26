@@ -16,8 +16,8 @@ Track any successful native effect before further validation or suspension. A ty
 
 - [x] Complete and independently review native host/simulator comparisons at mutation frames180/181, retaining all failures and hashes.
 - [x] Review the bounded three-stage application design and identify existing guarded fixture assumptions.
-- [ ] Add causal tests for eligibility, exact receipt chaining, a single deadline/ACK, initial refusal, partial effects, invalid receipts, cancellation/stop and expiry.
-- [ ] Implement candidate only in application/session code; retain policy, ladders, queues, archive, freshness,24fps and audio checks.
+- [x] Add causal tests for eligibility, exact receipt chaining, a single deadline/ACK, initial refusal, partial effects, invalid receipts, cancellation/stop and expiry.
+- [x] Implement candidate only in application/session code; retain policy, ladders, queues, archive, freshness,24fps and audio checks.
 - [ ] Run focused session/profile/Driver/owned-candidate tests and required Debug/Release builds. Independently review exact source before capture.
 - [ ] Run one fresh full720p collapse/recovery with the same verified600s source,700ms requested SRT budget and750kbps constraint. Join all builds first.
 - [ ] Export the actual native archive and verify all three outputs, source continuity, audio, score glyphs, negotiated delay and native/transport/geometry receipts. Preserve failed media and do not map accepted windows on failed outputs.
