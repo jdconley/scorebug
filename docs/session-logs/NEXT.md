@@ -47,7 +47,12 @@ builds pass. Diagnostic pressure/phase union is 4053/4056 bytes, protected-only 
 See `pipeline-geometry-correlation-validation/root-verification.json`. No jobs
 remained before starting the next source slice.
 
-**ACTIVE implementation:** `/root/applied_transition_implementation` owns [ordinary recovery720 integration](../superpowers/plans/2026-09-26-ordinary-720-recovery.md): append production7203Mbps, explicit new
+**NEXT actual run:** ordinary720 integration is reviewed and committed as `8495c79`.
+Root verified75 hashes/13 reviewed blobs,310app tests,139 distinct host cases and
+DebugUI/Release builds. Evidence: `ordinary-720-integration-validation/root-verification.json`.
+All source jobs have joined. Start the authorized owned iPhone14 simulator with
+`node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source /Users/jd/.codex/worktrees/scorebug-local-validation/artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov --lane recovery720`.
+No heavy jobs or source changes during capture. The slice appends production7203Mbps, explicit new
 XCTest/Node lane, four confirmed climbs360/720 before and after750kbps cap. Keep
 old recovery lane meaningful as360prefix on same production app; no policyfixture
 selector. Actual ACK-bound appliedTransition must expose nativeformat/encoder/PTS
@@ -57,7 +62,14 @@ descent may pass through360 before minimum), unchanged150sACK/30sconfirm/
 newlane. Join by derived key and accepteddecoded endpoints; do not reconstruct
 interiorPTS from condensed geometry runs or infer inputresolution from1080output.
 Reuse qualified600sinput and complete three-output media checks after allcapture
-joins. Native1080 fits currentcaps;4K24Mbps/camera/archivework remains separate.
+joins. Root has prepared separate `map-ordinary-720-recovery-media-20260926.mjs`
+for ten ordered windows; ten synthetic provenance/timestamp guard cases pass,
+actual execution pending. Use `verify-ordinary-720-media-20260926.py RUN` to run the
+existing decode and audio/overlay checks with a required producing manifest; old
+standalone commands do not create that manifest. Run native/transport/geometry
+replay with `replay-ordinary-720-recovery-20260926.mjs RUN ATTACHMENT`. It expects
+`independent-recovery-evidence.json` to contain successful native/transport/geometry
+outcomes. Existing six-window helper is unchanged. Native1080 fits currentcaps;4K24Mbps/camera/archivework remains separate.
 
 Physical acceptance takes priority if user makes Watch ready: finish/join any
 build/capture first, verify device readiness, rebuild affected current source and

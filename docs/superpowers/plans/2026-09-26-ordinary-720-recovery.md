@@ -10,7 +10,7 @@
 
 ## Current prerequisites and limits
 
-Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is reviewed and committed as `026189c`. This integration is now in progress; actual capture follows its source reviews and commit. Existing production ladder is240/360. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
+Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is reviewed and committed as `026189c`. Source integration is reviewed and committed as `8495c79`; the production ladder is now240/360/720. Actual native recovery and media qualification remain pending. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
 
 This is a higher-rung checkpoint, not full-match/hardware/network-route/remote-host completion.540p,1080p and original-quality4K support/qualification remain tracked by the main delivery plan. Physical paired acceptance takes priority when the Watch is ready; no heavy jobs during capture.
 
@@ -18,7 +18,7 @@ This is a higher-rung checkpoint, not full-match/hardware/network-route/remote-h
 
 Files: `ios/Sources/Scorebug/Capture/PublishingQualitySession.swift`, `PublishingQualityDriver.swift`, their `ios/FilmModelTests/` tests.
 
-- [ ] Test then append the existing720recipe to productionProfiles:
+- [x] Test then append the existing720recipe to productionProfiles:
 
 ```swift
 .init(id: "720p30", width: 1280, height: 720,
@@ -27,18 +27,18 @@ Files: `ios/Sources/Scorebug/Capture/PublishingQualitySession.swift`, `Publishin
 
 Keep240startup,360entry, measured-candidate ownership, strict1500timing, guarded writes, recovery budgets, current8Mbpsmedia/12Mbpsprobe caps and archive configuration unchanged. No app environment selector to choose an easier ladder. Tests prove the exact ordered ladder and next-profile selection on the normal production path.
 
-- [ ] Extend DEBUG `appliedTransition` only after the existing validated profile+bitrate receipt and Core ACK. Preserve causal diagnostics. For profile changes, record actual format width/height, generation, old/new encoder UUIDs, exact old/new sourcePTS and actual bitrate-receipt encoder/generation/last-submittedPTS. Source these from receipts, never requested profile dimensions.
+- [x] Extend DEBUG `appliedTransition` only after the existing validated profile+bitrate receipt and Core ACK. Preserve causal diagnostics. For profile changes, record actual format width/height, generation, old/new encoder UUIDs, exact old/new sourcePTS and actual bitrate-receipt encoder/generation/last-submittedPTS. Source these from receipts, never requested profile dimensions.
 
 Use decimal integers and `value/timescale` for CMTime strings; retain epoch0/numeric validation and compare rationals exactly in independent checks. Existing profileNativeAt/nativeAt/ackAt associate the receipt order. Test absent witness before ACK, failed/stale/cancelled applications, distinct old/new encoder, actual format preservation, and agreement between profile and bitrate receipts.
 
-- [ ] Recheck4096byte diagnostics with new witness plus accepted decoded identity/endpoints, pending/application/trial and populated pressure cause. Preserve ownership and causal fields. Fix demonstrated budget problems explicitly; no silent old diagnostic or threshold relaxation.
+- [x] Recheck4096byte diagnostics with new witness plus accepted decoded identity/endpoints, pending/application/trial and populated pressure cause. Preserve ownership and causal fields. Fix demonstrated budget problems explicitly; no silent old diagnostic or threshold relaxation.
 
 ## 2. Explicit native/Node recovery720 lane
 
 Files: `ios/AppUITests/PhysicalStreamingTests.swift`, `scripts/test-ordinary-native-app.mjs`, `scripts/test/ordinary-native-app.test.mjs`, existing host-compiled recovery guard tests, `scripts/device-lab.mjs` and option tests.
 
-- [ ] Add `--lane recovery720`, choosing a dedicated `testOrdinarySimulatorRecover720ScoreStopAndExport`. It uses the same private recovery controller and ordinary file-source app launch. The test selection belongs only to XCTest; app receives no profile/timing/candidate fixture selector. Old phone/paired/recovery lanes remain unchanged.
-- [ ] Parameterize recoveryIncrease with the exact expected profile/bitrate, preserving150second ACK and30second probation→confirmation gates. The new sequence is:
+- [x] Add `--lane recovery720`, choosing a dedicated `testOrdinarySimulatorRecover720ScoreStopAndExport`. It uses the same private recovery controller and ordinary file-source app launch. The test selection belongs only to XCTest; app receives no profile/timing/candidate fixture selector. Old phone/paired/recovery lanes remain unchanged.
+- [x] Parameterize recoveryIncrease with the exact expected profile/bitrate, preserving150second ACK and30second probation→confirmation gates. The new sequence is:
 
 ```text
 initial-minimum
@@ -51,25 +51,25 @@ recovery-360-increase-acknowledged / recovery-360-probation / recovery-360-confi
 recovery-720-increase-acknowledged / recovery-720-probation / recovery-720-confirmed
 ```
 
-- [ ] Require each of the four climbs to advance exactly one applied revision from its preceding confirmed/baseline state. Require observed probation, stable trial owner/revision through confirmation, advancing accepted source, same publishing attempt and same source scope. No hidden applied rollback may be counted as a successful climb. Candidate retries that never apply are allowed. The constrained descent may legitimately pass through360 before240; final minimum must have a newer revision than confirmed720, without assuming a direct reset. Retain observed intermediate ACKs/causes, but do not claim an exhaustive descending chain from2second samples.
-- [ ] Constrain only after confirmed720; require minimum ACK strictly after constrain response. Restore only after that minimum; require recovered360ACK after restoration, recovered720after confirmed recovered360. Keep60second fallback,2second sampling,270sample bound and540second recording deadline with existing cleanup reservation. Four maximum climb gates exceed the global deadline: the run must finish sooner or fail truthfully.
-- [ ] New native attachment uses `formatVersion:2, contract:"recovery720"`; old recovery keeps its v1schema/names. Preserve failures through stop/archive-continuation/export. Keep native HOME scoring and existing live/clean-archive/output checks.
-- [ ] Add an explicit API-only lab geometry option for this lane, validated before starting resources. Set both `SCOREBUG_TEST_WORKER_TERMINAL=1` and `SCOREBUG_TEST_WORKER_DECODED_GEOMETRY=1` only for that option; clear inherited flags for all other lanes. No general labCLI/profile/timing change. Keep owned process/UDP/controller cleanup and private environments.
+- [x] Require each of the four climbs to advance exactly one applied revision from its preceding confirmed/baseline state. Require observed probation, stable trial owner/revision through confirmation, advancing accepted source, same publishing attempt and same source scope. No hidden applied rollback may be counted as a successful climb. Candidate retries that never apply are allowed. The constrained descent may legitimately pass through360 before240; final minimum must have a newer revision than confirmed720, without assuming a direct reset. Retain observed intermediate ACKs/causes, but do not claim an exhaustive descending chain from2second samples.
+- [x] Constrain only after confirmed720; require minimum ACK strictly after constrain response. Restore only after that minimum; require recovered360ACK after restoration, recovered720after confirmed recovered360. Keep60second fallback,2second sampling,270sample bound and540second recording deadline with existing cleanup reservation. Four maximum climb gates exceed the global deadline: the run must finish sooner or fail truthfully.
+- [x] New native attachment uses `formatVersion:2, contract:"recovery720"`; old recovery keeps its v1schema/names. Preserve failures through stop/archive-continuation/export. Keep native HOME scoring and existing live/clean-archive/output checks.
+- [x] Add an explicit API-only lab geometry option for this lane, validated before starting resources. Set both `SCOREBUG_TEST_WORKER_TERMINAL=1` and `SCOREBUG_TEST_WORKER_DECODED_GEOMETRY=1` only for that option; clear inherited flags for all other lanes. No general labCLI/profile/timing change. Keep owned process/UDP/controller cleanup and private environments.
 
 ## 3. Independent closed-contract qualification
 
 Files: `scripts/ordinary-recovery-evidence.mjs`, its tests; new `scripts/ordinary-geometry-evidence.mjs` and tests.
 
-- [ ] Preserve the existing360entrypoint and semantics. Add an explicit `qualifyOrdinary720RecoveryNativeEvidence` entrypoint using a closed720contract; shared internals may avoid duplication, but never infer the contract from submitted milestones or accept a downgraded format. Require ten selected native phase observations, four increase ACKs and ten finite gates in the order above.
-- [ ] Independently replay native/host clock brackets, current owner and consecutive climb revisions (newer fallback revision), probation→confirmation, exact profile/bitrate, freshness and source advancement. Require v2/recovery720. Compare ACK-bound native format/bitrate receipt encoder/generation, exact rational PTS boundaries,1280×720 for720 and receipt→ACK ordering. Reject profile labels without actual format evidence. Initial startup has no appliedTransition profile-change receipt; require its actual240decoded geometry instead.
-- [ ] Retain unchanged transport qualification: three actual baseline/constrained/restored phases, exact750kbps controller receipts, real offered traffic/token denial, complete ledgers and joined conserved queues. Native success is separate from transport and media success.
-- [ ] Geometry checker assembles only bounded numeric `worker_decoded_geometry` rows and matching terminal metadata under one authenticated derived pipelineReadKey, expected game/generation and one terminal scope. Require all run indexes exactly once, consistent headers, clean geometry EOF/validity, contiguous ordinals, strictly increasing safe integer PTS, conserved counts and agreement with decoder lifetime metadata. Retain actual encoder exit; absent exit/drain completion cannot qualify. Pipelineordinal is not supervisor attempt.
-- [ ] For each accepted native window, require the same key and signed exact decoder endpoints/frame count. The first and last included decoded endpoints must lie in the same contiguous constant-dimension run at the expected profile resolution, respecting the previous-exclusive anchor; reject a720→240→720sandwich even when both endpoint dimensions match. Native metadata supplies accepted window counts; run summaries do not reconstruct every interiorPTS or prove fresh-fps/latency. Qualify those separately from recorded media. Return geometryQualified only, not media/health/capacity qualified.
-- [ ] Negative fixtures cover missing720,360substitution, swapped trials, reused owner/revision, hidden applied rollback during a climb, observed increase during the constrained descent, missing probation, early fallback/recovery, contract downgrade, expired gates, invalid rational receipt, mismatched encoders, missing/duplicate/wrongkey terminal, partial geometry, wrong dimensions/counts/boundaries,720→240→720sandwich, stale source and oversized diagnostics. Keep all existing360mutation tests.
+- [x] Preserve the existing360entrypoint and semantics. Add an explicit `qualifyOrdinary720RecoveryNativeEvidence` entrypoint using a closed720contract; shared internals may avoid duplication, but never infer the contract from submitted milestones or accept a downgraded format. Require ten selected native phase observations, four increase ACKs and ten finite gates in the order above.
+- [x] Independently replay native/host clock brackets, current owner and consecutive climb revisions (newer fallback revision), probation→confirmation, exact profile/bitrate, freshness and source advancement. Require v2/recovery720. Compare ACK-bound native format/bitrate receipt encoder/generation, exact rational PTS boundaries,1280×720 for720 and receipt→ACK ordering. Reject profile labels without actual format evidence. Initial startup has no appliedTransition profile-change receipt; require its actual240decoded geometry instead.
+- [x] Retain unchanged transport qualification: three actual baseline/constrained/restored phases, exact750kbps controller receipts, real offered traffic/token denial, complete ledgers and joined conserved queues. Native success is separate from transport and media success.
+- [x] Geometry checker assembles only bounded numeric `worker_decoded_geometry` rows and matching terminal metadata under one authenticated derived pipelineReadKey, expected game/generation and one terminal scope. Require all run indexes exactly once, consistent headers, clean geometry EOF/validity, contiguous ordinals, strictly increasing safe integer PTS, conserved counts and agreement with decoder lifetime metadata. Retain actual encoder exit; absent exit/drain completion cannot qualify. Pipelineordinal is not supervisor attempt.
+- [x] For each accepted native window, require the same key and signed exact decoder endpoints/frame count. The first and last included decoded endpoints must lie in the same contiguous constant-dimension run at the expected profile resolution, respecting the previous-exclusive anchor; reject a720→240→720sandwich even when both endpoint dimensions match. Native metadata supplies accepted window counts; run summaries do not reconstruct every interiorPTS or prove fresh-fps/latency. Qualify those separately from recorded media. Return geometryQualified only, not media/health/capacity qualified.
+- [x] Negative fixtures cover missing720,360substitution, swapped trials, reused owner/revision, hidden applied rollback during a climb, observed increase during the constrained descent, missing probation, early fallback/recovery, contract downgrade, expired gates, invalid rational receipt, mismatched encoders, missing/duplicate/wrongkey terminal, partial geometry, wrong dimensions/counts/boundaries,720→240→720sandwich, stale source and oversized diagnostics. Keep all existing360mutation tests.
 
 ## 4. Source verification, reviews and actual run
 
-- [ ] Run focused Swift/app, host guard, Node runner/lab/evidence tests; build DebugUI/Release with installed Xcode. Preserve commands/logs/counts/hashes and independent spec→quality approvals before commit.
+- [x] Run focused Swift/app, host guard, Node runner/lab/evidence tests; build DebugUI/Release with installed Xcode. Preserve commands/logs/counts/hashes and independent spec→quality approvals before commit.
 - [ ] Execute on an owned iPhone14simulator with the verified600second natural-match fixture:
 
 ```sh
