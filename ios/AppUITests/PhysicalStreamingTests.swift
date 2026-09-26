@@ -452,6 +452,24 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
                     "Existing recording or streaming state prevents an isolated smoke; existing state was preserved.")
+        if !ordinarySimulator {
+            // A physical rotation during setup invalidates XCTest activation
+            // points. Establish portrait only after preserving prior capture.
+            XCUIDevice.shared.orientation = .portrait
+            var lastFrame = CGRect.zero
+            var stableSince = ProcessInfo.processInfo.systemUptime
+            try wait("Physical setup did not settle in portrait.", seconds: 10) {
+                let frame = app.frame
+                let now = ProcessInfo.processInfo.systemUptime
+                guard XCUIDevice.shared.orientation == .portrait,
+                      !frame.isEmpty, !frame.isNull, !frame.isInfinite,
+                      frame.height > frame.width, frame == lastFrame else {
+                    lastFrame = frame; stableSince = now
+                    return false
+                }
+                return now - stableSince >= 1
+            }
+        }
         try wait("Saved recording scan did not complete.", seconds: 10) {
             app.buttons["film.start"].isEnabled
         }
