@@ -12,11 +12,13 @@ Use a 513-tap Hann-windowed sinc interpolator with 256 real support samples on e
 
 Require actual neighboring samples; do not zero-pad, extrapolate, filter away problematic content or exclude the failing anchor. Preserve integer-phase identity. State the finite-kernel limitation rather than claiming ideal interpolation or all-audio fidelity. Update method metadata so new reports distinguish the corrected estimator from earlier results.
 
+Implementation now passes independent lossless signed-delay regressions, all 89 relevant tests, and specification/quality reviews. Complete frozen run12 waveform/glyph requalification now passes in a new report: 40 archive and 38 probes per live output, including the original failing live anchor at correlation 0.992534. Original failed reports remain unchanged. Run14 also passes all waveform/glyph checks.
+
 ## Tasks
 
-- [ ] Reproduce a lossless near-band-edge fractional-delay failure in an independently generated deterministic test (both delay signs and non-integer phases), while preserving ambiguity/boundary/nonfinite/unrelated-signal tests.
-- [ ] Implement the shared real-support constant and 513-tap kernel, updating all callers and bounds coherently. No media encoder, sample-rate or runtime pipeline changes.
-- [ ] Run relevant alignment/natural-audio suites and review specification then quality. Retain original red logs, commands and artifact hashes.
-- [ ] Re-run the complete frozen run 12 waveform/glyph qualification into a new output directory, under the unchanged thresholds and full anchor set. Identify estimator version/source commit and media hashes; do not overwrite or relabel the original failed report.
+- [x] Reproduce a lossless near-band-edge fractional-delay failure in an independently generated deterministic test (both delay signs and non-integer phases), while preserving ambiguity/boundary/nonfinite/unrelated-signal tests.
+- [x] Implement the shared real-support constant and 513-tap kernel, updating all callers and bounds coherently. No media encoder, sample-rate or runtime pipeline changes.
+- [x] Run relevant alignment/natural-audio suites and review specification then quality. Retain original red logs, commands and artifact hashes.
+- [x] Re-run the complete frozen run 12 waveform/glyph qualification into a new output directory, under the unchanged thresholds and full anchor set. Identify estimator version/source commit and media hashes; do not overwrite or relabel the original failed report.
 
 This corrects sampled alignment measurement only. It does not prove all-audio fidelity, fix the older 21 ms live gap, or qualify automatic ramp, Watch, hardware or network recovery.
