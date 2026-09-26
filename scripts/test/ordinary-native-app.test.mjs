@@ -8,11 +8,29 @@ import {
   ordinaryEnvironment,
   runOrdinaryCommand,
   ordinaryTestEnvironment,
+  ordinaryTestConfiguration,
   joinOrdinaryWorkflows,
   requireOrdinaryTestResult,
   recoverOrdinaryOwnership,
 } from '../test-ordinary-native-app.mjs';
 const interfaces = { en0: [{ address: '192.168.1.130', internal: false }] };
+test('selects the concrete destination config when generic Watch build left a phone-named sibling', () => {
+  const files = [
+    'Scorebug_iphonesimulator26.2-arm64.xctestrun',
+    'ScorebugWatch_watchsimulator26.2-arm64.xctestrun',
+    'ScorebugWatch_iphonesimulator26.2-arm64.xctestrun',
+  ];
+  assert.equal(ordinaryTestConfiguration(files, 'ScorebugWatch', true), files[1]);
+  assert.equal(ordinaryTestConfiguration(files, 'Scorebug', false), files[0]);
+  assert.throws(() => ordinaryTestConfiguration([files[2]], 'ScorebugWatch', true));
+  assert.throws(() =>
+    ordinaryTestConfiguration(
+      ['ScorebugWatch_watchsimulator26.2-x86_64.xctestrun'],
+      'ScorebugWatch',
+      true,
+    ),
+  );
+});
 for (const interrupted of ['create-phone', 'create-watch', 'pair']) {
   test(`recovers only owned identities after interrupted ${interrupted} returned no UUID`, async () => {
     const calls = [];

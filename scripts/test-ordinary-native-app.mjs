@@ -55,6 +55,19 @@ export function ordinaryTestEnvironment({ paired, watch = false, setup }) {
   };
 }
 
+export function ordinaryTestConfiguration(files, scheme, isWatch) {
+  // This launcher fixes Xcode/SDK 26.2 and arm64. Generic Watch builds may
+  // leave an iPhone-named sibling; only the concrete destination is eligible.
+  const expected = `${scheme}_${isWatch ? 'watchsimulator' : 'iphonesimulator'}26.2-arm64.xctestrun`;
+  const configs = files.filter((file) => file === expected);
+  assert.equal(
+    configs.length,
+    1,
+    'Expected destination/SDK/architecture test configuration required',
+  );
+  return configs[0];
+}
+
 // Let the other bounded test finish its stop/export path after a peer fails.
 // External cancellation still aborts both process groups through their signal.
 export async function joinOrdinaryWorkflows(actions) {
@@ -413,10 +426,7 @@ os.chmod(destination, 0o600)
       { mode: 0o600 },
     );
     async function privateTestRun(scheme, target, name, isWatch) {
-      const configs = (await readdir(products)).filter(
-        (file) => file.startsWith(`${scheme}_`) && file.endsWith('.xctestrun'),
-      );
-      assert.equal(configs.length, 1, 'One built test configuration required');
+      const config = ordinaryTestConfiguration(await readdir(products), scheme, isWatch);
       const environmentPath = join(artifact, `${name}-environment.json`);
       await writeFile(
         environmentPath,
@@ -426,7 +436,7 @@ os.chmod(destination, 0o600)
       const destination = join(artifact, `${name}.xctestrun`);
       await run(
         'python3',
-        [configure, join(products, configs[0]), destination, target, environmentPath, products],
+        [configure, join(products, config), destination, target, environmentPath, products],
         `configure-${name}`,
       );
       return destination;
