@@ -30,6 +30,8 @@ export async function startScoringTestServer(databasePath, environment = {}) {
         RELAY_API_PASSWORD: undefined,
         SRT_PUBLISH_PEER_LATENCY_MS: undefined,
         SRT_PUBLISH_PACING: undefined,
+        INGEST_PUBLISH_HOST: undefined,
+        INGEST_PUBLISH_PORT: undefined,
         ...environment,
       },
       stdio: ['ignore', 'pipe', 'pipe'],

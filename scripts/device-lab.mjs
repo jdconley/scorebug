@@ -12,6 +12,9 @@ import { promisify } from 'node:util';
 import { mediaTools } from './media-tools.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
 import { startReconnectingRTMPRecorder } from './reconnecting-rtmp-recorder.mjs';
+import { createUDPImpairmentProxy } from './udp-impairment.mjs';
+import { createUplinkEvidenceStopper } from './uplink-proxy-evidence.mjs';
+import { startOrdinaryRecoveryControl } from './ordinary-recovery-control.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const execute = promisify(execFile);
@@ -162,6 +165,10 @@ function startWorker(environment, artifact) {
 /** Owned development stack; media and credentials remain under one private artifact directory. */
 export async function startDeviceLab(options, { signal } = {}) {
   signal?.throwIfAborted();
+  assert(
+    options.publisherRecovery === undefined || typeof options.publisherRecovery === 'boolean',
+    'Invalid publisher recovery selection',
+  );
   // Validate exported API callers too, before creating any processes or files.
   deviceLabOptions([
     '--host',
@@ -185,6 +192,8 @@ export async function startDeviceLab(options, { signal } = {}) {
   let api,
     recorder,
     worker,
+    recoveryControl,
+    stopUplink,
     relayStarted = false,
     stopping;
   async function stop() {
@@ -193,6 +202,12 @@ export async function startDeviceLab(options, { signal } = {}) {
       let workerExit = null,
         receiver = null;
       for (const [name, action] of [
+        [
+          'recovery-control',
+          async () => {
+            await recoveryControl?.stop();
+          },
+        ],
         [
           'worker',
           async () => {
@@ -214,6 +229,12 @@ export async function startDeviceLab(options, { signal } = {}) {
           'api',
           async () => {
             await api?.stop();
+          },
+        ],
+        [
+          'publisher-uplink',
+          async () => {
+            await stopUplink?.();
           },
         ],
         [
@@ -275,6 +296,26 @@ export async function startDeviceLab(options, { signal } = {}) {
     }
     assert(relayReady, 'Lab relay did not become ready');
     signal?.throwIfAborted();
+    let publisherEnvironment = {};
+    if (options.publisherRecovery) {
+      const uplink = await createUDPImpairmentProxy({
+        receiverHost: options.host,
+        receiverPort: ingestPort,
+        forward: { recordTimeline: true, recordRateLedger: true },
+        reverse: { recordTimeline: true },
+        forwardRateControl: { rateBitsPerSecond: 750000 },
+      });
+      stopUplink = createUplinkEvidenceStopper({
+        uplink,
+        artifact,
+        capacityEvidencePolicy: 'rate-ledger-v1',
+      });
+      recoveryControl = await startOrdinaryRecoveryControl({ uplink, artifact });
+      publisherEnvironment = {
+        INGEST_PUBLISH_HOST: '127.0.0.1',
+        INGEST_PUBLISH_PORT: String(uplink.port),
+      };
+    }
     recorder = await startReconnectingRTMPRecorder({ artifact, ffmpeg, port: 0 });
     api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), {
       HOST: options.host,
@@ -283,6 +324,7 @@ export async function startDeviceLab(options, { signal } = {}) {
       INTERNAL_TOKEN: internalToken,
       INGEST_HOST: options.host,
       INGEST_PORT: String(ingestPort),
+      ...publisherEnvironment,
       RELAY_API_URL: `http://127.0.0.1:${relayPort}`,
       RELAY_API_USERNAME: 'lab-admin',
       RELAY_API_PASSWORD: relayPassword,
@@ -347,7 +389,21 @@ export async function startDeviceLab(options, { signal } = {}) {
       flag: 'wx',
       mode: 0o600,
     });
-    return { artifact, setup, stop, workerClosed: worker.closed };
+    return {
+      artifact,
+      setup,
+      stop,
+      workerClosed: worker.closed,
+      ...(recoveryControl
+        ? {
+            recoveryControl: {
+              endpoint: recoveryControl.endpoint,
+              token: recoveryControl.token,
+              runID: recoveryControl.runID,
+            },
+          }
+        : {}),
+    };
   } catch (error) {
     try {
       await stop();
