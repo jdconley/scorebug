@@ -6,7 +6,7 @@
 - Active goal: native recording, native phone/Watch scoring, progressive SRT, portable overlay proxy, mock RTMP MP4 and optional proxy-overlay MP4.
 - [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) is current goals/status/todos. [Current session log](2026-09-25-native-recovery-and-audio-timeline.md) preserves commands, evidence and failed experiments; [research](../research/2026-09-25-live-platform-adaptation.md) explains the timing choices.
 - Runtime timing contracts `aaa9afc` and expiry fix `c4c30cd` passed specification and quality reviews. New whole-history receiver conservation `d59fdcd` and interval replay `5535489` also passed both reviews. Root122 interval/conservation tests pass; quality reviewer236 related tests pass. Raw candidate-cost joins through `ce91204` also passed specification and quality review. Witness/application/retry-policy joins remain unfinished.
-- No root test/lab/analysis process is currently running. All native/analysis processes are joined; recorder socket diagnostics are the current implementation task. Preserve failures, original Downloads footage and device recordings. Use installed runtimes only.
+- No root test/lab/analysis process is currently running. All native/analysis processes are joined; recorder socket diagnostics `157c48f` passed both reviews; the next run repeats the3000/1000native scenario once to collect those observations. Preserve failures, original Downloads footage and device recordings. Use installed runtimes only.
 
 ## Current evidence and next experiment
 
@@ -29,7 +29,7 @@
 
 ## Remaining implementation
 
-1. Finish and review bounded recorder socket diagnostics, then reproduce shutdown with fresh media; short two-session baseline `reconnecting-rtmp-MgJTzt` passes. Preserve failed session metadata; do not treat decodable media as clean process completion.
+1. Run the existing3000/1000native scenario once with reviewed recorder lifecycle diagnostics `157c48f`. Short baselines `reconnecting-rtmp-MgJTzt` and hardwareVideoToolbox/RTMP+MP4tee `reconnecting-vt-tee-13aGVC` pass (two360frame sessions in the latter), but do not reproduce the long-run shutdown error. Preserve failed session metadata; do not treat decodable media as clean process completion.
 2. Complete [whole-history recovery qualification](../superpowers/plans/2026-09-25-owned-recovery-qualification.md): admission witnesses, native application receipts, healthy holds/backoff, capacity causality and all recorded media. Native acceptance, receiver intervals and raw candidate costs now have independent joins. Reuse original complete history and reviewed bounded helpers.
 3. Diagnose the live audio gap and recorder shutdown; add timestamp-aware synchronization and separate audio-gap accounting with tests. Preserve existing failures and contracts. Verify stale-report behavior instead of crediting unusable reports.
 4. Integrate qualified adaptation into the real-camera path. Current physical publisher is minimum-only; `PublishingQualityDriver.fixture` and owned measurement are debug routes. Production must use bounded current state that continues throughout a match, independently of finite laboratory audit/attempt caps. Preserve lab caps and history.
