@@ -4,7 +4,7 @@
 
 **Goal:** Supply ordinary camera integration with an explicit production admission estimate and a bounded probe plan for the next candidate, without importing laboratory IPv4 accounting or a fixed12Mbps probe.
 
-**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Measured-cost feedback for subsequent production probes is implemented, tested and independently reviewed. Fresh native qualification is next; physical and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
+**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Measured-cost feedback for subsequent production probes is implemented, tested and independently reviewed. The ordinary simulator vertical now passes startup, measured360p increase, native score, stop/export and independent media checks. Physical, congestion recovery and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
 
 ## Design
 
@@ -40,4 +40,4 @@ Keep the native 12 Mbps/16 MiB/60-second limits. An unsupported measured hint mu
 - [x] Add targeted coverage for valid no-headroom decision → scoped hint → next production plan, unchanged nominal/fixed plans, ignored stale/wrong-profile inputs, clearing on baseline change/stop, arithmetic boundaries and unsupported hint without native allocation or baseline failure.
 - [x] Implement the bounded hint and immutable production-plan resolution without changing admission, probe authority, timing, cooldown, archive behavior or laboratory evidence.
 - [x] Run affected app/Core/streaming checks plus Debug and Release builds; review the implementation and preserve failures.
-- [ ] Run a fresh ordinary native vertical. Require minimum startup, measured increase, native score, stop/export and independent complete media verification of all three outputs before claiming this feedback fix works.
+- [x] Run a fresh ordinary native vertical. Require minimum startup, measured increase, native score, stop/export and independent complete media verification of all three outputs before claiming this feedback fix works.
