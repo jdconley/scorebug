@@ -6,7 +6,7 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEAD15a0036; ordinary pacing slice under test/review. No PR requested.
+HEADbc7930e plus reviewed exact ordinary-pacing rollback; no capture active at this checkpoint. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns goals/status/todos. [Current session](2026-09-26-ordinary-source-cadence-pacing.md)
@@ -16,22 +16,9 @@ during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-Ordinary pacing slice:221app tests and74native SDK pacing/finish/replacement/startup
-tests pass. Both exact-blob source reviews approve. DebugUI build88971 and Release
-build56235 are active; join before capture. Two source/test files only, selecting
-existing immutable pacing in both ordinary factory branches. Commit once builds
-pass, then run matched ordinary720/700ms/3000ms/750kbps with packet diagnostics.
-No app environment selector, new pacer, queue-limit or threshold change.
+Pacing run qxuAwl and all analysis joined. Native/transport/geometry pass; live media fails. Ordinary factory/test files restored to15a0036 exactly; focused regression passes. Fresh signed phone/Watch builds pass. User now reports both devices ready; run the paired helper before further simulator changes.
 
-1. Finish physical paired vertical when the Watch is unlocked. User approved phone
-   automation, but fresh Xcode preflight still explicitly reports Watch locked.
-   Async request asks to unlock the Watch and keep it on wrist; do not repeat an
-   unchanged attempt. Latest `physical-paired-live-BIKKzC` / `device-lab-MObUL1`
-   never starts phone capture, times out its240s Watch readiness gate, then joins
-   after root interrupts owned runner77189. Clean lab shutdown: worker0/notforced,
-   receiver finished/no sessions, failures:[]. Fresh e147ac4 signed phone/Watch
-   builds pass; Watch paired/connected with developer services. Reuse helper
-   `artifacts/qa/run-physical-paired-instrumented-20260926.mjs` after fresh readiness.
+1. Complete paired physical vertical with fresh readiness. Prior BIKKzC/MObUL1 attempt stopped before phone capture on Watch lock; do not erase it. Helper: `artifacts/qa/run-physical-paired-instrumented-20260926.mjs`.
 2. Collapse diagnosis is complete enough for the next intervention. Run
    `ordinary-native-uDznjI` / `device-lab-9fjCGU` (source3128283) has complete25s
    packet evidence exactly bound to constraint receipt. All261drops captured:

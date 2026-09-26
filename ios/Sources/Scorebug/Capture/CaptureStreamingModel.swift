@@ -313,18 +313,16 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
     nonisolated static func productionPublisher(url: URL, observations: VideoFrameObservationOwner?,
         makePublisher: (URL, VideoFrameObservationOwner?, PublishingVideoProfile,
-            (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?, Bool, Bool) -> any MediaPublisher = {
+            (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?, Bool) -> any MediaPublisher = {
                 SRTMediaPublisher(url: $0, observations: $1, videoProfile: $2,
-                    compressedAudioObserver: $3, pacesEncodedVideo: $5, allowsBandwidthProbes: $4)
+                    compressedAudioObserver: $3, allowsBandwidthProbes: $4)
             }) -> any MediaPublisher {
-        // Preserve source cadence through encoder replacement; audio and the
-        // independent archive do not wait on this encoded-video consumer.
         guard let observations else {
-            return makePublisher(url, nil, .minimumStartup, nil, false, true)
+            return makePublisher(url, nil, .minimumStartup, nil, false)
         }
         let campaign = PublishingCandidateCampaignOwner()
         let publisher = makePublisher(url, observations, .minimumStartup,
-            { campaign.observeAudio($0) }, true, true)
+            { campaign.observeAudio($0) }, true)
         return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
             campaignOwner: campaign, stagePlanSelection: .productionSRT)
     }
