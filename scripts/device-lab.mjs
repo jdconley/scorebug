@@ -346,6 +346,14 @@ export async function startDeviceLab(options, { signal } = {}) {
         forward: { recordTimeline: true, recordRateLedger: true },
         reverse: { recordTimeline: true },
         forwardRateControl: { rateBitsPerSecond: 750000 },
+        // Explicit bounded diagnostics around the native-requested fault, not a
+        // wall-clock guess about when adaptive admission will finish.
+        recordPacketDiagnostics: true,
+        packetDiagnosticsWindow: {
+          origin: 'constrain',
+          startAfterMilliseconds: 0,
+          endAfterMilliseconds: 25000,
+        },
       });
       stopUplink = createUplinkEvidenceStopper({
         uplink,

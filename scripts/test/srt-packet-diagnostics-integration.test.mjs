@@ -197,3 +197,119 @@ test('diagnostic export preserves existing files and joins other evidence on fai
   assert.equal(await readFile(path, 'utf8'), 'original');
   assert.equal(JSON.parse(await readFile(join(artifact, 'uplink-proxy.json'))).closed, true);
 });
+
+for (const extra of [
+  { origin: 'unknown' },
+  { origin: null },
+  { origin: 'constrain' },
+  { origin: 'firstPeerPacket', extra: true },
+]) {
+  test('reject invalid diagnostic origin ' + JSON.stringify(extra), async () => {
+    await assert.rejects(
+      createUDPImpairmentProxy({
+        receiverPort: 9,
+        recordPacketDiagnostics: true,
+        packetDiagnosticsWindow: { startAfterMilliseconds: 0, endAfterMilliseconds: 25, ...extra },
+      }),
+    );
+  });
+}
+
+test('constrain-anchored capture excludes baseline, binds the receipt and survives restore', async (t) => {
+  const receiver = createSocket('udp4'),
+    sender = createSocket('udp4');
+  receiver.bind(0, '127.0.0.1');
+  await once(receiver, 'listening');
+  t.after(() => {
+    receiver.close();
+    sender.close();
+  });
+  const received = [];
+  receiver.on('message', (d) => received.push(d));
+  const proxy = await createUDPImpairmentProxy({
+    receiverPort: receiver.address().port,
+    forwardRateControl: { rateBitsPerSecond: 750000 },
+    recordPacketDiagnostics: true,
+    packetDiagnosticsWindow: {
+      origin: 'constrain',
+      startAfterMilliseconds: 0,
+      endAfterMilliseconds: 150,
+    },
+  });
+  t.after(() => proxy.close());
+  async function send(data) {
+    const count = received.length;
+    sender.send(data, proxy.port, '127.0.0.1');
+    await until(() => received.length === count + 1);
+  }
+  await send(packet(1));
+  assert.equal(proxy.packetDiagnosticsSnapshot().captureWindow.originAt, null);
+  assert.equal(proxy.packetDiagnosticsSnapshot().events.length, 0);
+  const receipt = proxy.constrainForward();
+  const retransmission = packet(2);
+  retransmission.writeUInt32BE(0xc4000001, 4);
+  await send(retransmission);
+  proxy.restoreForward();
+  await send(packet(3));
+  const first = proxy.packetDiagnosticsSnapshot();
+  assert.equal(first.captureWindow.originAt, receipt.appliedAt);
+  assert.equal(first.captureWindow.excludedBefore, 2);
+  assert.deepEqual(
+    first.events.map((e) => [e.packet.sequence, e.packet.retransmitted, e.disposition]),
+    [
+      [2, true, 'queued'],
+      [2, true, 'forwarded'],
+      [3, false, 'queued'],
+      [3, false, 'forwarded'],
+    ],
+  );
+  await delay(Math.max(0, receipt.appliedAt + 170 - performance.now()));
+  await send(packet(4));
+  const artifact = await directory(t);
+  await createUplinkEvidenceStopper({ uplink: proxy, artifact })();
+  const saved = JSON.parse(
+    await readFile(join(artifact, 'uplink-packet-diagnostics.json'), 'utf8'),
+  );
+  assert.equal(saved.closed, true);
+  assert.equal(saved.captureWindow.originAt, receipt.appliedAt);
+  assert.equal(saved.captureWindow.excludedAfter, 2);
+  assert.deepEqual(saved.events, first.events);
+  assert.deepEqual(saved.observerErrors, { forward: 0, reverse: 0 });
+  assert.equal(saved.overflow, false);
+  assert.deepEqual(received, [packet(1), retransmission, packet(3), packet(4)]);
+  assert.equal(proxy.snapshot().forward.queue.forwarded.packets, 4);
+});
+
+test('constrain-anchored capture remains empty when publication ends before constrain', async (t) => {
+  const receiver = createSocket('udp4'),
+    sender = createSocket('udp4');
+  receiver.bind(0, '127.0.0.1');
+  await once(receiver, 'listening');
+  t.after(() => {
+    receiver.close();
+    sender.close();
+  });
+  let received = false;
+  receiver.on('message', () => {
+    received = true;
+  });
+  const proxy = await createUDPImpairmentProxy({
+    receiverPort: receiver.address().port,
+    forwardRateControl: { rateBitsPerSecond: 750000 },
+    recordPacketDiagnostics: true,
+    packetDiagnosticsWindow: {
+      origin: 'constrain',
+      startAfterMilliseconds: 0,
+      endAfterMilliseconds: 25000,
+    },
+  });
+  t.after(() => proxy.close());
+  sender.send(packet(1), proxy.port, '127.0.0.1');
+  await until(() => received);
+  await proxy.close();
+  const result = proxy.packetDiagnosticsSnapshot();
+  assert.equal(result.closed, true);
+  assert.equal(result.captureWindow.originAt, null);
+  assert.equal(result.captureWindow.excludedBefore, 2);
+  assert.equal(result.events.length, 0);
+});

@@ -468,7 +468,11 @@ export async function createUDPImpairmentProxy(configuration) {
       w &&
         typeof w === 'object' &&
         !Array.isArray(w) &&
-        Object.keys(w).length === 2 &&
+        Object.keys(w).every((key) =>
+          ['origin', 'startAfterMilliseconds', 'endAfterMilliseconds'].includes(key),
+        ) &&
+        (!Object.hasOwn(w, 'origin') || ['firstPeerPacket', 'constrain'].includes(w.origin)) &&
+        (w.origin !== 'constrain' || control !== null) &&
         Number.isSafeInteger(w.startAfterMilliseconds) &&
         Number.isSafeInteger(w.endAfterMilliseconds) &&
         w.startAfterMilliseconds >= 0 &&
@@ -484,7 +488,10 @@ export async function createUDPImpairmentProxy(configuration) {
   const observePacket = (direction) =>
     packetDiagnostics
       ? (event) => {
-          if (captureWindow.originAt === null) return;
+          if (captureWindow.originAt === null) {
+            captureWindow.excludedBefore++;
+            return;
+          }
           const elapsed = event.at - captureWindow.originAt;
           if (elapsed < captureWindow.startAfterMilliseconds) {
             captureWindow.excludedBefore++;
@@ -533,6 +540,9 @@ export async function createUDPImpairmentProxy(configuration) {
     const now = performance.now();
     outgoing.queue.setRate(rateBitsPerSecond, now);
     if (phase === 'baseline') controlStartedAt = now;
+    // Diagnostics share the exact fault boundary; they never select or change it.
+    if (phase === 'constrained' && captureWindow?.origin === 'constrain')
+      captureWindow.originAt = now;
     const receipt = {
       phase,
       rateBitsPerSecond,
@@ -674,7 +684,8 @@ export async function createUDPImpairmentProxy(configuration) {
     }
     if (!peer) {
       peer = { address: rinfo.address, port: rinfo.port };
-      if (captureWindow) captureWindow.originAt = performance.now();
+      if (captureWindow && captureWindow.origin !== 'constrain')
+        captureWindow.originAt = performance.now();
       if (schedule) {
         scheduleStartedAt = performance.now();
         applyDuePhases();

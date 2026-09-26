@@ -6,15 +6,21 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEAD e147ac4. No PR requested. All current capture/build/media jobs are joined.
+HEAD5634bea, with a small diagnostic slice under review. No PR requested. All current capture/build/media jobs are joined.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-production-broadcast-timing.md)
+owns goals/status/todos. [Current session](2026-09-26-collapse-packet-diagnostics.md)
 owns chronology and artifacts. Preserve Downloads originals and failed evidence.
 No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
 during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
+
+Current source slice: constrain-anchored packet diagnostics, bounded to25s in the
+recovery lab, with app/queue/rate behavior unchanged.132focused tests and formatting
+pass; spec review approved, quality review pending. See the collapse diagnostic
+plan. Commit reviewed source before repeating ordinary720/700ms to attribute the
+burst. No native capture active.
 
 1. Finish physical paired vertical when the Watch is unlocked. User approved phone
    automation, but fresh Xcode preflight still explicitly reports Watch locked.
