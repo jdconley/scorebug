@@ -13,3 +13,11 @@ Root launcher: `artifacts/qa/run-runner-network-setting-20260926.mjs`. It uses e
 ## Validation
 
 Swift parse and `git diff --check` passed. Current signed phone Debug build-for-testing joined0 (`artifacts/qa/runner-network-setting-build-20260926.log`). Spec review approved Swift `b5ea65f3a98f4e2407b49db182923a0fc3a71648` and launcher `9b62b96447c4d7e1ce6fa6f826b88889cd486f43` after correcting the launcher's unconditional joined claim. Hardware result remains pending.
+
+## Hardware diagnosis
+
+Both independent reviews approved the initial source. Run `runner-network-setting-wdpOOk` on `c70208a` executed the physical phone test, then failed at19.27s: querying Scorebug alerts after Settings activation triggered XCTest `kAXErrorServerNotFound`. The framework exception bypassed Swift deferred evidence/restoration. Root activated Scorebug with documented `devicectl device process launch` without `--terminate-existing`; result confirmed the original PID38707 and no termination. No camera or permission mutation occurred.
+
+Correction `5bd57ea` queries app alerts only where the app reports runningForeground, retaining the separate SpringBoard/deadline guard. Both reviewers approved blob `0f8ad946bfbc4f488529437da193032baff7031b`. Run `runner-network-setting-RYno6J` built and ran, failed safely at2.29s because Settings exposed no hittable table/collection at the initial snapshot. Its JSON explicitly records `settingsVisited:true`, `scorebugRestored:true`, `entryFound:false`, `value:unknown`; this is not evidence that the permission entry is missing. Both process handles joined exit1, and no lab ran.
+
+The final bounded correction waits at most8s for a hittable Settings table, collection, or scroll view, preserving prompt/deadline checks and forbidding app-wide gestures. Spec review approved blob `624eb05f6236189a978cf9a1eb5d9a8983d9ccd9`. One further measured attempt follows quality review; do not repeatedly tune navigation if it remains inconclusive.

@@ -713,8 +713,18 @@ final class PhysicalStreamingTests: XCTestCase {
     @MainActor private func scrollRunnerNetworkSettings(_ settings: XCUIApplication, up: Bool) throws {
         try enforceScorerPermissionPolicy()
         try require(Date() < deadline, "Settings search exceeded its bound; inspection is inconclusive.")
-        let container = settings.tables.firstMatch.exists ? settings.tables.firstMatch : settings.collectionViews.firstMatch
-        try require(container.exists && container.isHittable, "Settings list is not recognized; inspection is inconclusive.")
+        var recognizedContainer: XCUIElement?
+        try wait("Settings list did not become accessible; inspection is inconclusive.", seconds: 8) {
+            for candidate in [settings.tables.firstMatch, settings.collectionViews.firstMatch, settings.scrollViews.firstMatch]
+                where candidate.exists && candidate.isHittable {
+                recognizedContainer = candidate
+                return true
+            }
+            return false
+        }
+        guard let container = recognizedContainer else {
+            throw SmokeFailure.failed("Settings list is not recognized; inspection is inconclusive.")
+        }
         if up { container.swipeUp() } else { container.swipeDown() }
     }
 
