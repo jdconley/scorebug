@@ -10,7 +10,7 @@
 
 ## Current prerequisites and limits
 
-Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is reviewed and committed as `026189c`. Source integration is reviewed and committed as `8495c79`; the production ladder is now240/360/720. Actual native recovery and media qualification remain pending. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
+Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is reviewed and committed as `026189c`. Source integration is reviewed and committed as `8495c79`; the production ladder is now240/360/720. Actual native recovery, transport and geometry pass; live media continuity fails during the constrained transition, while the clean archive passes. Full media qualification remains open. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
 
 This is a higher-rung checkpoint, not full-match/hardware/network-route/remote-host completion.540p,1080p and original-quality4K support/qualification remain tracked by the main delivery plan. Physical paired acceptance takes priority when the Watch is ready; no heavy jobs during capture.
 
@@ -70,12 +70,12 @@ Files: `scripts/ordinary-recovery-evidence.mjs`, its tests; new `scripts/ordinar
 ## 4. Source verification, reviews and actual run
 
 - [x] Run focused Swift/app, host guard, Node runner/lab/evidence tests; build DebugUI/Release with installed Xcode. Preserve commands/logs/counts/hashes and independent spec→quality approvals before commit.
-- [ ] Execute on an owned iPhone14simulator with the verified600second natural-match fixture:
+- [x] Execute on an owned iPhone14simulator with the verified600second natural-match fixture:
 
 ```sh
 node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source /Users/jd/.codex/worktrees/scorebug-local-validation/artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov --lane recovery720
 ```
 
-- [ ] Join every capture/lab process, collect actual native export and attachments, then independently replay native/transport/geometry evidence. No source changes or heavy analysis during capture. Retain any failure and use its causal witness before another run.
+- [x] Join every capture/lab process, collect actual native export and attachments, then independently replay native/transport/geometry evidence. No source changes or heavy analysis during capture. Retain any failure and use its causal witness before another run.
 - [ ] Fully decode clean archive, mock RTMP MP4 and proxy overlay MP4. Verify actual frame IDs/fresh-fps>=24(target30), audio continuity/alignment, native score overlay change, clean archive and independent archive continuation. Extend the existing source-window media mapper to allten accepted windows; don't claim exact network-boundary latency from that mapping.
-- [ ] Update delivery status and a separate session log with actual results/limits. A component pass,720label,1080outputcanvas or configured750kbps alone cannot satisfy this vertical gate.
+- [x] Update delivery status and a separate session log with actual results/limits. A component pass,720label,1080outputcanvas or configured750kbps alone cannot satisfy this vertical gate.

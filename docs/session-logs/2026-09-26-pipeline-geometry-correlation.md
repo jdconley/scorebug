@@ -164,3 +164,100 @@ before committing `8495c79` (production720 ladder, ACK-bound native receipts,
 explicit ordinary recovery720 lane, native/geometry qualification and tests).
 All implementation jobs are joined. Actual recovery and media qualification are
 still pending; root is starting the authorized owned-simulator run next.
+
+Actual run started: `ordinary-native-TJzyrf` / `device-lab-XyI9PU`, runtime HEAD
+`1941623`, source `8495c79`, owned iPhone14 simulator
+`067FE046-09C5-48F6-967E-4312B0E73E3B`. Root exec session97301 owns the runner.
+Its Debug build passed and ordinary workflow launched with the verified600-second
+fixture hash. Source/build/media work is frozen until capture and lab shutdown
+join. No adaptive or media outcome is claimed while the run is active.
+
+## Actual720 workflow and first independent replay
+
+Runner97301 joined exit0: workflow passed, cleanupFailures empty, worker exited0
+without force, mock recorder finished. Native actual export spans173 saved segments;
+25 XCTest attachments were exported. Recovery attachment is
+`9800FC5D-A6FC-4D1B-B98F-C3C9E2A4D554.json` in the run's attachments directory.
+
+Independent replay passes native, actual750kbps transport and geometry. Four climbs
+are revisions1/2/5/6; final fallback is revision4. Proxy decoded geometry contains
+six runs240/360/720/240/360/720 totaling9942frames. All ten accepted windows contain
+150 frames within their expected contiguous geometry run.20474 token operations
+prove the actual finite upload constraint. No exhaustive fallback transition chain
+is inferred from sampled native observations.
+
+Root offline wrapper session89823 is now running complete decode/audio/overlay
+checks. A read-only phase/geometry sanity review runs independently. No capture or
+build is active. Media qualification and ten-window mapping remain pending.
+
+
+## Actual720 media failure and physical readiness
+
+Offline wrapper89823 and separate A/V diagnostic84225 both joined exit1. Native,
+actual750kbps transport and geometry checks pass; complete media qualification fails.
+Archive10313 sequential IDs0–10312,30freshfps, no audio timestamp gaps. Both live
+outputs9942 frames,45 repeated/corrupted/nonconsecutive ID transitions,24 audio
+gaps and maximum videoPTS gap2.033s. Worker reports138 decoder errors and51
+concealments. All ID breaks occur in output indexes4366–4410, resuming at source
+ID4665; all audio gaps occur within146.82–150.37s. This localizes a shared live-path
+loss episode but does not alone identify queue expiry or decoder recovery cause.
+Archive waveform71 probes and sampled clean glyph checks pass. Separate live A/V
+coverage fails at about−1351ms. Keep media-production-manifest.json failed;
+no full media mapping/qualification claim. All jobs joined before hardware builds.
+
+User confirmed automation prompt approval and both devices ready. Fresh devicectl
+inventory now shows both physical devices available (prior disconnected evidence
+is retained). Started bounded current-source phone then Watch builds, session36830,
+labels phone/watch-720-paired-ready-20260926, Conley Chaos LLC B222J9J7B8. On success,
+physical paired vertical takes priority over further simulator experiments.
+
+
+Preserved70 failed-media/provenance/diagnostic files in
+`ordinary-native-TJzyrf/failed-media-evidence-manifest.json`; original producing
+manifest remains unchanged and failed. Read-only source review found223 upstream
+queue overflow drops (176508wire bytes), zero injected drops,262116byte queue peak,
+and2795ms maximum residence. First overflow occurs162–262ms after cap response.
+The ACK witness reports actual120ms publishing-hop SRT delay,238ms RTT and909ms
+sender buffer. Native applications take457–465ms;250ms local sampling and one-rung
+descent can amplify loss. A274KB/100ms offered burst needs original/retransmit and
+encoder-stage attribution before choosing a fix. The active worker read URL has
+no explicit latency override; do not attribute the legacy route's1s setting to it.
+The strict1500ms capture-to-decoder deadline is separate from these hop settings.
+The next diagnostic comparison should isolate publishing-hop recovery delay,
+retain strict benchmark results, and judge actual media instead of ACK success.
+No production timing, queue bound or qualification threshold changed.
+
+Phone rebuild passed. Watch rebuild timed out connecting (exit70), but subsequent
+bounded devicectl details succeeded and now reports connected/developer services.
+Started a fresh Watch build only after this state change (session86956). Earlier
+inventory's 'available (paired)' label did not itself establish a connected tunnel.
+
+
+Watch connected build86956 joined exit0. Started current-source physical paired
+runner18049, `physical-paired-live-iuYDle` / `device-lab-pcgG8w`. No heavy work
+runs concurrently. The Watch must reach its real companion-offer wait before the
+phone starts camera capture. No fixture identity or credential is passed to Watch.
+
+
+At03:44:16 Xcode's preflight explicitly requested Watch unlock; no phone capture
+started. Asked user to unlock the Watch itself on wrist. Both builds and developer
+connection are now proven; do not confuse device inventory availability with
+an unlocked test destination. Compacted NEXT to current evidence/actions and kept
+historical commands/results in session logs.
+
+
+Physical runner18049 joined exit1 after its240s companion readiness gate expired.
+Xcode continued waiting for Watch unlock; root sent SIGINT to the verified owned
+Node PID50388, which aborted/joined the Watch process and stopped the lab. Result
+records joined:true, Watch interrupted, no phone workflow/camera started. Both
+builds remain successful. Unlock question is pending; do not rerun unchanged.
+
+Additional historical review found already implemented source-cadence pacing and
+native property experiments (September16/17 plans). Low-latency rate-control
+creation returned−12908; MaxFrameDelayCount returned−12900 in tested simulators.
+The opt-in pacer removed drain batching in its measured run but live media still
+failed during a demonstrably over-capacity upward trial. Keep it experimental;
+reuse these findings rather than rebuilding diagnostics or assuming a fix.
+Rechecked primary Meta COPA, Apple MaxFrameDelayCount and Haivision RTT-multiplier
+references; they support separate encoder/queue/recovery budgets, not a universal
+production timing number. No source behavior was changed this session continuation.
