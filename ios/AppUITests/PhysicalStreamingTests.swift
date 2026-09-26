@@ -1541,10 +1541,16 @@ final class PhysicalStreamingTests: XCTestCase {
 
     @MainActor private func enforceScorerPermissionPolicy() throws {
         if runnerNetworkSettingReadOnly {
-            try require(Date() < deadline && !XCUIApplication().alerts.firstMatch.exists &&
-                        !XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists &&
-                        !XCUIApplication(bundleIdentifier: "com.apple.Preferences").alerts.firstMatch.exists,
+            try require(Date() < deadline &&
+                        !XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists,
                         "Read-only Settings inspection encountered a prompt or its deadline; no prompt was approved.")
+            // Background apps can lose their AX server after foreground changes.
+            // State queries are safe during activation; inspect only foreground UI.
+            for app in [XCUIApplication(), XCUIApplication(bundleIdentifier: "com.apple.Preferences")]
+                where app.state == .runningForeground {
+                try require(!app.alerts.firstMatch.exists,
+                            "Read-only Settings inspection encountered a prompt; no prompt was approved.")
+            }
         }
         guard scorerNetworkPermissionOnly else { return }
         let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
