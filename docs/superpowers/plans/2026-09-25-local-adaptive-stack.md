@@ -19,8 +19,8 @@
 
 ## Native verification next
 
-- [ ] Add an ordinary-construction simulator UI route with source injection only, omitting VIDEO_OBSERVATIONS and all controller-enabling flags. Reuse real setup/scoring/record/stream/stop/export workflow without weakening physical-only tests.
-- [ ] Expose bounded current acknowledged streaming quality to the UI, so source transitions are visible independently of proxy output scaling.
+- [x] Add an ordinary-construction simulator UI route with source injection only, omitting VIDEO_OBSERVATIONS and all controller-enabling flags. Reuse real setup/scoring/record/stream/stop/export workflow without weakening physical-only tests.
+- [x] Expose bounded current acknowledged streaming quality to the UI, so source transitions are visible independently of proxy output scaling.
 - [ ] Run real-match derivative through clean archive, overlay MP4 and mock RTMP MP4; verify all three decode, native score change, start-low, measured increase and archive continuation. Then qualify faults/reset/recovery, paired Watch and physical camera separately.
 
 ## Ordinary native route details
