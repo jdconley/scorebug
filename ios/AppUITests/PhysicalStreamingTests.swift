@@ -251,9 +251,24 @@ final class PhysicalStreamingTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }; return result
         }
     }
-    @MainActor private func preflightPhysicalRecoveryControl() throws {
-        guard let control = recoveryControlConfiguration else {
+    @MainActor private func preflightPhysicalRecoveryControl(_ app: XCUIApplication) throws {
+        guard let control = recoveryControlConfiguration,
+              let runnerID = Bundle.main.bundleIdentifier,
+              runnerID == "live.scorebug.app.uitests.xctrunner",
+              runnerID.hasSuffix(".xctrunner") else {
             throw SmokeFailure.failed("Physical recovery controller configuration missing.")
+        }
+        let runner = XCUIApplication(bundleIdentifier: runnerID)
+        try require(app.state == .runningForeground &&
+                    (runner.state == .runningBackground || runner.state == .runningForeground),
+                    "Physical preflight requires the existing app and test runner processes.")
+        // TN3179: an undetermined LAN privilege is denied without a prompt
+        // while the requesting process is in the background. Foreground the
+        // actual runner for its nonmutating request, then restore this app.
+        defer { app.activate() }
+        runner.activate()
+        try wait("Physical test runner did not enter the foreground.", seconds: 10) {
+            runner.state == .runningForeground
         }
         // Resolve the runner's first local-network permission before recording
         // and before any timed mutation. This endpoint cannot change lab state.
@@ -518,7 +533,12 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try tap(app.buttons["streaming.closeSetup"], in: app)
 
-        if physicalRecovery { try preflightPhysicalRecoveryControl() }
+        if physicalRecovery {
+            try preflightPhysicalRecoveryControl(app)
+            try wait("Scorebug did not return to the foreground after controller preflight.", seconds: 10) {
+                app.state == .runningForeground
+            }
+        }
         if recovery {
             recoveryRecordingStarted = ProcessInfo.processInfo.systemUptime
             recoveryRecordingDeadline = recoveryRecordingStarted + 540
