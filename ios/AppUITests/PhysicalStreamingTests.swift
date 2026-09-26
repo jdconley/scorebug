@@ -51,10 +51,18 @@ final class PhysicalStreamingTests: XCTestCase {
         // plus a little headroom for final evidence within the 240-second test.
         deadline = Date().addingTimeInterval(watchScoring ? 550 : (ordinarySimulator ? 430 : 200))
         let app = XCUIApplication()
-        // Never inject SCOREBUG_TEST_* environments or bypass the actual setup UI.
-        // activate() preserves an existing process so the prior-capture guard
-        // below can refuse the run without terminating someone's recording.
+        // Physical runs preserve an existing process so the prior-capture guard
+        // can refuse the run without terminating someone's recording.
+        var passwordPromptMonitor: NSObjectProtocol?
         if ordinarySimulator {
+            // Fresh simulators can offer to save a token after the real Score setup.
+            // Dismiss only this exact system prompt; never save lab credentials.
+            passwordPromptMonitor = addUIInterruptionMonitor(withDescription: "Disposable simulator password prompt") { alert in
+                guard alert.staticTexts["Save Password?"].exists,
+                      alert.buttons["Not Now"].exists else { return false }
+                alert.buttons["Not Now"].tap()
+                return true
+            }
             // Source injection alone: the normal publishing/quality factories remain in charge.
             app.launchEnvironment = ["SCOREBUG_TEST_FILE_CAPTURE": "1"]
             app.launch()
@@ -66,6 +74,7 @@ final class PhysicalStreamingTests: XCTestCase {
         defer {
             cleanup(app, recordingRequested: recordingRequested, streamingRequested: streamingRequested)
             evidence(app, phase: "final-observation", screenshot: false)
+            if let passwordPromptMonitor { removeUIInterruptionMonitor(passwordPromptMonitor) }
         }
 
         // A prior failed setup may leave this app-owned sheet open. Dismissing
