@@ -122,3 +122,26 @@ accepted observations already carry exact decoded PTS endpoints; retain those
 atomically with the derived key rather than infer from MP4 timestamps. Design
 review found no blocking conflicts; callback compatibility, nil legacy hashes,
 malicious key substitution and signed PTS rules are explicit. Not implemented yet.
+
+## Decoded geometry validation
+
+Worker diagnostic source is frozen at nine files; specification review approves
+all nine exact blobs. Quality review is in progress.29parser tests and470worker
+tests pass with zero skipped tests after supplying existing FFmpeg/probe/font for
+the explicit recording qualification. Typecheck/build pass; all jobs joined.
+
+The actual built pipeline/guardian processes18frames, six at each of240/360/720
+input resolutions, produces18actual1920×1080frames and agrees with existing
+metadata telemetry. Independent ffprobe reports finalinputPTS50999; an earlier
+hardcoded51000 expectation and a failed setts fixture experiment are preserved.
+No production/parser threshold changed to accommodate them. Root independently
+verified66manifest file hashes and recomputed geometry ranges directly from input
+frames, checking metadata/output counts and clean terminal join. Evidence:
+`decoded-geometry-validation/root-verification.json`. This establishes diagnostic
+mechanism only, not native720/recovery or representative media quality.
+
+Quality review also approves all nine exact blobs with no findings. Root rechecked
+those blobs and whitespace immediately before committing038a4ec. No policy, native
+or lab code changed. All jobs joined. Next dependency is explicit hashed read
+correlation, followed by actual ordinary720lane/nativeformat witness/integration.
+Watch-specific readiness question remains pending; no additional hardware retry.
