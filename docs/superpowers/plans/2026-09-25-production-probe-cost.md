@@ -4,7 +4,7 @@
 
 **Goal:** Supply ordinary camera integration with an explicit production admission estimate and a bounded probe plan for the next candidate, without importing laboratory IPv4 accounting or a fixed12Mbps probe.
 
-**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Current work adds measured-cost feedback to subsequent production probes; physical and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
+**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Measured-cost feedback for subsequent production probes is implemented, tested and independently reviewed. Fresh native qualification is next; physical and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
 
 ## Design
 
@@ -37,7 +37,7 @@ Resolve the next production plan once as `max(existing nominal final rate, ceil(
 
 Keep the native 12 Mbps/16 MiB/60-second limits. An unsupported measured hint must prevent allocation without closing baseline publication or registering a stuck owner. Preserve the prior nominal unsupported-plan behavior. This initial slice does not claim that an over-cap target can recover within the same unchanged baseline; renewed capability/quality qualification remains separate.
 
-- [ ] Add targeted coverage for valid no-headroom decision → scoped hint → next production plan, unchanged nominal/fixed plans, ignored stale/wrong-profile inputs, clearing on baseline change/stop, arithmetic boundaries and unsupported hint without native allocation or baseline failure.
-- [ ] Implement the bounded hint and immutable production-plan resolution without changing admission, probe authority, timing, cooldown, archive behavior or laboratory evidence.
-- [ ] Run affected app/Core/streaming checks plus Debug and Release builds; review the implementation and preserve failures.
+- [x] Add targeted coverage for valid no-headroom decision → scoped hint → next production plan, unchanged nominal/fixed plans, ignored stale/wrong-profile inputs, clearing on baseline change/stop, arithmetic boundaries and unsupported hint without native allocation or baseline failure.
+- [x] Implement the bounded hint and immutable production-plan resolution without changing admission, probe authority, timing, cooldown, archive behavior or laboratory evidence.
+- [x] Run affected app/Core/streaming checks plus Debug and Release builds; review the implementation and preserve failures.
 - [ ] Run a fresh ordinary native vertical. Require minimum startup, measured increase, native score, stop/export and independent complete media verification of all three outputs before claiming this feedback fix works.
