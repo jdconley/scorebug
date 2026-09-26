@@ -147,3 +147,76 @@ transition cause, without policy changes or additional admission awaits, under
 [the diagnostic plan](../superpowers/plans/2026-09-26-applied-transition-diagnostic.md).
 Implementer `/root/applied_transition_implementation` owns source/tests; root owns
 docs and independent media verification. No unchanged live rerun is justified.
+
+## Applied-transition diagnostic reviewed and instrumented run started
+
+Committed `1254e2d` after independent specification and quality reviews. The
+DEBUG-only witness joins original decision or invalidation cause to the admitted
+recommendation and validated native/Core acknowledgment. Acknowledged witnesses
+survive unrelated events and clear on stop. It retains selected pressure inputs
+and actual limits. Optional historical diagnostic fields yield to current policy,
+source/owner/time and applied-cause fields under the unchanged4096byte cap.
+
+Specification review caught reset-cause replacement across expired advice and a
+missing worker-pressure detail. Both were reproduced and corrected. The reset
+origin retains its own causeSequence while replacement advice keeps its own
+identity. Identical Core queue0.75/legacy loss0.01 literals became authoritative
+constants; behavior and numeric thresholds are unchanged. No new admission
+awaits, transport changes, or policy timing changes.
+
+Final259app+502Core tests pass; DebugUI and Release device builds pass. Fully
+populated worker+transport diagnostic with current owner/source mapping4082bytes;
+historical-overflow compaction3565bytes. Root verifies30source/artifact hashes
+and all success markers. See `applied-transition-diagnostic-validation/manifest.json`
+and `root-review-verification.json`; initial failed tests and pre-review snapshots
+are preserved. Both reviewers approved identical final5blobs.
+
+Instrumented recovery invocation is unchanged except runtime1254e2d. Root exec
+session93609 owns `ordinary-native-93koj3`; first artifact announcement received.
+All implementation builds joined before launch. No heavy analysis runs during
+capture; actual native, transport and media outcomes are pending.
+
+## Instrumented recovery passes; physical destination becomes eligible
+
+`ordinary-native-93koj3` / `device-lab-ezsyqi`, runtime1254e2d, joins exit0.
+Native test304.462seconds, cleanupFailures[]. Independent phase replay confirms
+initial240rev0→360rev1probation/confirmation→constrained240rev2→restored360rev3
+probation/confirmation. Actual750kbps cap passes19891-operation token replay
+with real denial. No policy settings changed. The prior second-trial rollback
+did not recur, so its cause remains unresolved and repeatability remains open.
+The new witness ties the constrained fallback to local transport pressure:
+268ms sender buffer versus60ms delay-relative limit (120ms sender delay),
+with zero drops/retransmitted bytes in the selected interval.
+
+Native export118segments verifies. Decoder session65698 passes archive7009frames
+0–7008 and both live6763identical consecutive137–6899,30freshfps,zeroaudioPTS
+errors over3ms,109frame archive tail. Waveform/glyph session85666 passes49archive
+and47probes per live output, live0–0→1–0, clean archive. `mapped-phase-media.json`
+joins six accepted source intervals to actual decoded IDs and waveform anchors
+in each output; it explicitly does not interpolate exact network boundaries or
+claim whole-phase latency.18checker/report hashes in `offline-verification-manifest.json`.
+
+Fresh read-only Watch inventory reports connected/DDI available. Unlike the
+previous failed destination, Xcode `-showdestinations` now lists Ultra2 as
+available. Both current signed builds pass, phone process inventory has no
+Scorebug process. This changed state justifies one fresh physical paired attempt.
+Phone build uses `PhysicalPhone`; a retained copy of the earlier QA runner changes
+only that derived-data directory. Syntax check passes, prior helper preserved.
+Root exec17684 owns `physical-paired-live-4qx9D9`. Watch must reach its actual
+join-offer wait before phone camera starts. No heavy analysis/builds during capture.
+
+Physical runner now resolves the destination and reaches preflight, which
+explicitly reports “Unlock JD’s Apple Watch to Continue” (deviceprep-3).
+The phone has not started. Root asks for the newly observed Watch unlock via async
+input; the previously approved phone automation prompt is not re-requested.
+This attempt remains owned/joined through the bounded runner; no camera pass.
+
+After the unlock request remained unanswered and Xcode still reported the same
+Watch lock, root interrupts only the owned waiting runner with SIGINT. Exec17684
+joins exit1; Watch interrupted before test, phone never starts. Lab shutdown
+reports workerexit0,receiverfinished with no sessions,failures[]. No capture,
+analysis or build jobs remain. Async Watch-unlock request stays pending; do not
+infer approval/readiness from elapsed time. Independent next work is ordinary
+recovery repeatability with the reviewed causal diagnostic. Current signed
+phone1254e2d build is underPhysicalPhone, but its installation is not proven by
+this interrupted attempt; last proven installed phone build remainsa83d18e.

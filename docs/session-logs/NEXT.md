@@ -6,39 +6,53 @@ Active unbounded goal: complete the native recording/scoring/Watch/progressive-s
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos. [Current session](2026-09-26-ordinary-recovery.md) owns commands, review history and artifacts. No PR requested/created. Keep source reviews before commits, preserve failed artifacts/Downloads originals/user recordings, and do not download runtimes or delete unrelated simulators. No heavy builds/media analysis during live capture.
 
-## Current execution — rollback diagnosis
+## Current execution — physical Watch unlock pending
 
-First ordinary recovery run `ordinary-native-te5IoU` / `device-lab-zCd4QF`, runtime
-`a83d18e`, has joined failed. Initial increase is confirmed, constrained fallback
-is acknowledged, restored capacity produces a second increase, then native ACK
-rolls back to minimum after 9.001 seconds. UI failure: “Trial revision changed
-before confirmation.” All runners/lab processes joined, cleanup failures empty,
-owned simulator removed. Do not rerun unchanged or relax thresholds.
+No active capture, builds or analysis jobs remain. `physical-paired-live-4qx9D9` /
+`device-lab-kBjPdH`, runtime1254e2d, is closed after the Watch stayed locked at
+Xcode preflight. Root interrupted only the owned waiting runner; all children/lab
+joined, workerexit0, shutdownfailures[], no recorder sessions and no phone capture.
+The async Watch-unlock question remains pending. Earlier phone automation approval
+is still valid; this new blocker is the Watch's observed lock state.
 
-Separate offline checks pass: archive 5532 frames (0–5531); both live outputs
-5276 identical consecutive frames (137–5412), 30 fresh fps, no audio timestamp
-gaps over 3 ms; 119-frame clean archive continuation. Waveform probes pass
-(39 archive, 37 per live output); both live overlays show 0–0 → 1–0 and archive
-matches neither score template. Actual capped transport passes FIFO/token-ledger
-replay, including real token denial. These do not qualify native recovery.
-Reports and provenance: `ordinary-native-te5IoU/offline-verification-manifest.json`.
+Fresh inventory and Xcode destination eligibility both passed before this attempt;
+current signed phone/Watch builds also pass. Phone process inventory contained no
+Scorebug process. Current1254e2d phone build is under `PhysicalPhone`, Watch under
+`PhysicalWatch`; neither is proven newly installed by the interrupted attempt.
+Last proven phone installation is the preceding a83d18e build. Use retained helper
+`artifacts/qa/run-physical-paired-instrumented-20260926.mjs` after a fresh unlock
+reply/ready state. It waits for actual Watch join-offer readiness before starting
+phone camera. Do not repeat while still locked. Preserve recordings/private logs.
 
-Read-only diagnosis: `ordinary-native-te5IoU/second-trial-read-only-diagnosis.json`.
-The latest mutable `localPressure` event cannot identify the cause of revision 4.
-Implementer `/root/applied_transition_implementation` owns the bounded DEBUG
-cause-to-native-ACK diagnostic and tests; root owns docs. See
-[diagnostic plan](../superpowers/plans/2026-09-26-applied-transition-diagnostic.md).
-No capture or media analysis currently runs. Source requires specification and
-quality review before commit, then one instrumented run with unchanged gates.
+Next independent work: repeat the now-instrumented ordinary recovery lane to
+establish repeatability or capture the earlier rollback cause. Keep source/cap/
+policy/gates unchanged and avoid heavy builds/analysis during capture. Physical
+paired acceptance takes priority when the user unlocks the Watch; finish/join any
+active simulator capture before switching to it.
 
-Physical paired attempt is closed: both signed builds and current phone install
-pass. Watch inventory briefly reports connected/DDI available, then direct
-install fails CoreDevice4000 disconnection. Xcode's install/test path in
-`physical-paired-live-6wsz9p` / `device-lab-ENrHbT` exits70 before test because Watch
-is busy connecting. No phone camera started; all runners/lab joined,
-shutdown failures empty. Do not repeat unchanged. Mac remains locked on last CUA
-inspection. Original automation prompt approved; ask again only for an observed
-new prompt. No recordings deleted.
+## Ordinary recovery result
+
+Instrumented `ordinary-native-93koj3` / `device-lab-ezsyqi`, runtime1254e2d, joins
+exit0; native304.462seconds, cleanupFailures[]. Independent native replay and
+actual750kbps transport replay pass:240→confirmed360→240fallback→confirmed360.
+Archive7009consecutive IDs0–7008; both live6763identical137–6899,30freshfps,
+noaudioPTSgaps>3ms,109frame archive tail. Waveform/glyph checks pass49archive and
+47perlive probes, live0–0→1–0, clean archive. Six accepted native source windows
+map to actual decoded IDs/waveform anchors in every output. Exact network-boundary
+interpolation, whole-phase latency and repeatability are not inferred.
+Provenance: `ordinary-native-93koj3/offline-verification-manifest.json`.
+
+Prior `ordinary-native-te5IoU` / `device-lab-zCd4QF` remains failed: second360
+trial rolls back9.001seconds afterACK. Its transport and allthree media outputs
+pass, but no original causal witness exists. The new run did not reproduce it;
+do not claim a behavioral fix. The diagnostic now makes another observed failure
+actionable. Preserve prior evidence and750kbps/policy/gate settings.
+
+Diagnostic source `1254e2d` is committed after both reviews;259app+502Core tests,
+DebugUI and Release device builds pass. Final30hash root verification:
+`applied-transition-diagnostic-validation/root-review-verification.json`.
+The earlier physical attempt `physical-paired-live-6wsz9p` was connection-blocked
+before capture. No user recordings or unrelated simulators have been deleted.
 
 ## Ready ordinary recovery lane
 
@@ -50,7 +64,7 @@ Committed and reviewed components:
 - `266c8a5`: independent native phase/transport checkers,29tests, both reviews. Leaves explicitly do not qualify media/full recovery.
 - `a83d18e`: explicit ordinary recovery runner/native UI lane, current source PTS-to-uptime mapping, stable source-scope digest;17runner+193app tests, DebugUI and Release arm64 simulator builds, both reviews.2976/4096byte populated diagnostic. Failed timing checks retain failure through a separate90second stop/export budget; recording limit remains540seconds.
 
-See [integration plan](../superpowers/plans/2026-09-26-ordinary-recovery-integration.md). The first actual ordinary congestion/recovery run failed (above). Its invocation was:
+See [integration plan](../superpowers/plans/2026-09-26-ordinary-recovery-integration.md). One instrumented ordinary recovery run passes; the earlier run failed (above). The invocation is:
 
 ```sh
 node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source /Users/jd/.codex/worktrees/scorebug-local-validation/artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov --lane recovery
