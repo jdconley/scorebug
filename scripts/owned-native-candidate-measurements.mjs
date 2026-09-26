@@ -331,6 +331,10 @@ export function qualifyOwnedNativeCandidateMeasurements(rawOwned, options = {}) 
           m.encoding?.frames?.length === 121,
         'unsupported partial or failed joined candidate',
       );
+      check(
+        m.startedAt <= rawOwned.events[startedIndex].at,
+        'measurement starts after candidate startup completed',
+      );
       const candidateID = id(m.id),
         encoderID = id(m.encoding.encoderSessionID);
       check(
@@ -415,7 +419,7 @@ export function qualifyOwnedNativeCandidateMeasurements(rawOwned, options = {}) 
     publishingGeneration,
     attempts,
     candidateCostQualified: true,
-    baselineMediaQualified: true,
+    baselineFrameConsistencyQualified: true,
     receiverCapacityQualified: false,
     admissionQualified: false,
     recoveryQualified: false,

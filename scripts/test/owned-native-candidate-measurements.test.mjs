@@ -76,6 +76,7 @@ test('original complete owned history retains both failed owners and joins both 
     assert.ok(a.measurement.transport.transportBytes > 0);
   }
   for (const key of [
+    'mediaQualified',
     'receiverCapacityQualified',
     'admissionQualified',
     'recoveryQualified',
@@ -84,6 +85,8 @@ test('original complete owned history retains both failed owners and joins both 
     'trialConfirmed',
   ])
     assert.equal(r[key], false);
+  assert.equal(r.baselineFrameConsistencyQualified, true);
+  assert.equal(Object.hasOwn(r, 'baselineMediaQualified'), false);
   assert.deepEqual(x, before);
 });
 
@@ -287,3 +290,12 @@ for (const [label, mutate] of [
     mutate(x);
     assert.throws(() => qualify(x));
   });
+
+test('measurement start cannot follow the original completed startup call', () => {
+  for (let n = 0; n < 2; n++) {
+    const x = fixture();
+    event(x, 'candidateJoined', n).measurement.startedAt =
+      event(x, 'candidateStarted', n).at + 0.00001;
+    assert.throws(() => qualify(x), /measurement starts after candidate startup completed/);
+  }
+});
