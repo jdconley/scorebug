@@ -108,6 +108,7 @@ The following **original checkboxes and statuses are preserved**. An unchecked i
 - [x] Build full native SwiftUI Score mode: create/join match, teams/rules, point buttons, undo, set/match completion, and status. Scoring requires no camera permission.
 - [x] Restore native app sessions from server state; serialize commands and persist the outbox. Display pending actions and stale/conflict reconciliation. Keep failed end requests visible. Enforce single scorer with explicit takeover.
 - [ ] Test duplicate delivery, acknowledgment loss, restart between apply/reply, simultaneous takeover, and delayed commands from a previous scorer or set.
+- [ ] Reproduce and resolve missed native point input during recording/streaming. Verify against the durable command log and preserve one-tap semantics; do not hide failures with automatic test retaps.
 
 **Acceptance:** Two native iPhone clients create/join, score, restart/reconnect, undo/take over and end a match without camera/browser dependence. No lost/double points, active-game lockout or restart state loss; exercise duplicate/lost replies and adversarial commands.
 
