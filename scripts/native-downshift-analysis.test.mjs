@@ -4,7 +4,7 @@ import { analyzeDownshift, compareDownshifts } from './native-downshift-analysis
 function fixture(mode = 'resize') {
   const events = [];
   const add = (kind, at, fields = {}) => events.push({ kind, at, fields });
-  add('started', 0, { generation: '1' });
+  add('started', 0, { generation: '1', selectedStart: '0/30:0:1' });
   add('baseline', 1.001, {
     generation: '1',
     encoder: 'old',
@@ -181,4 +181,10 @@ test('requires exact30fps source PTS and request at frame180', () => {
   const early = fixture();
   early.events.find((e) => e.kind === 'mutation-requested').at = 5.9;
   assert.throws(() => analyzeDownshift(early));
+});
+
+test('rejects first input outside recorded selected interval', () => {
+  const r = fixture();
+  r.events.find((e) => e.kind === 'started').fields.selectedStart = '1/30:0:1';
+  assert.throws(() => analyzeDownshift(r), /Input starts outside/);
 });

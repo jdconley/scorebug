@@ -56,12 +56,17 @@ import Testing
         do {
             let asset = AVURLAsset(url: URL(fileURLWithPath: source))
             let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
-            let range = try await track.load(.timeRange)
+            let segments = try await track.load(.segments)
+            let media = segments.filter { !$0.isEmpty }
+            try #require(media.count == 1)
+            let range = try #require(media.first).timeMapping.target
+            try #require(range.start.isNumeric && range.duration.seconds >= 132)
+            let selectedStart = range.start + CMTime(value: 120, timescale: 1)
             let nativeReader = try AVAssetReader(asset: asset)
             reader = nativeReader
             // Same twelve seconds of the verified volleyball derivative in every
             // case. Preserve original PTS; publishing selects its own TS anchor.
-            nativeReader.timeRange = CMTimeRange(start: range.start + CMTime(value: 120, timescale: 1),
+            nativeReader.timeRange = CMTimeRange(start: selectedStart,
                                                  duration: CMTime(value: 12, timescale: 1))
             let video = AVAssetReaderTrackOutput(track: track,
                 outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
@@ -74,7 +79,8 @@ import Testing
             await stream.setVideoInputBufferCounts(4)
             await stream.setExpectedMedias([.video]); await stream.publish()
             let generation = try #require(await stream.publishingGeneration)
-            trace.record("started", fields: ["generation": String(generation), "source": source, "mode": mode])
+            trace.record("started", fields: ["generation": String(generation), "source": source, "mode": mode,
+                "sourceMediaStart": exactPTS(range.start), "selectedStart": exactPTS(selectedStart)])
             let clock = ContinuousClock(), start = ContinuousClock.now
             var baseline: SRTStream.VideoBitRateReceipt?
             for index in 0..<360 {

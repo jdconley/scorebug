@@ -69,6 +69,11 @@ export function analyzeDownshift(report) {
     compressed = indexFrames(events, 'compressed'),
     muxed = indexFrames(events, 'muxed');
   const inputs = [...input.values()];
+  assert.equal(
+    timeKey(inputs[0].fields.pts),
+    timeKey(start.fields.selectedStart),
+    'Input starts outside selected interval',
+  );
   for (let i = 0; i < inputs.length; i++) {
     assert.equal(inputs[i].fields.index, String(i));
     if (i) {
