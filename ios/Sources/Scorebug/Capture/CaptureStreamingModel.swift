@@ -3,6 +3,7 @@ import Foundation
 import ScorebugCore
 import ScorebugMedia
 import ScorebugStreaming
+import SRTHaishinKit
 
 /// Immutable historical mapping owned by exactly one observation attempt.
 struct PublishingClockObservation: Equatable, Sendable {
@@ -63,30 +64,33 @@ struct PublishingClockObservation: Equatable, Sendable {
         let permitsCurrentCandidate: @Sendable (UUID) -> Bool
     }
     typealias MeasuredCandidateReader = @MainActor () async -> MeasuredCandidate?
-    /// Injection uses the same provider ownership boundary as the explicit lab route.
-    /// Ordinary publishing never installs a candidate provider.
+    /// The publisher fixes admission semantics for its entire lifetime. Injected
+    /// legacy readers retain laboratory admission unless explicitly overridden.
+    enum CandidateAdmissionMode { case laboratoryIPv4, productionSRT }
     var measuredCandidateFactory: ((any MediaPublisher) -> MeasuredCandidateReader?) = { publisher in
-        #if DEBUG && targetEnvironment(simulator)
-        guard (try? NativeMeasuredTrialFixture.requested(environment: ProcessInfo.processInfo.environment)) == true else { return nil }
-        let read: @Sendable () async -> NativeCandidatePublisher.CandidateSnapshot?
-        if let candidate = publisher as? NativeOwnedCandidatePublisher { read = { await candidate.candidateSnapshot() } }
-        else if let candidate = publisher as? NativeCandidatePublisher { read = { await candidate.candidateSnapshot() } }
-        else { return nil }
+        var read: (@Sendable () async -> NativeCandidateSnapshot?)?
+        if let candidate = publisher as? NativeOwnedCandidatePublisher {
+            read = { await candidate.candidateSnapshot() }
+        }
+        #if DEBUG
+        if let candidate = publisher as? NativeCandidatePublisher {
+            read = { await candidate.candidateSnapshot() }
+        }
+        #endif
+        guard let read else { return nil }
         return {
             guard let snapshot = await read() else { return nil }
             return MeasuredCandidate(measurement: .init(snapshot.cost), binding: snapshot.binding, probe: snapshot.probe,
                 boundAt: snapshot.boundAt, completedAt: snapshot.completedAt,
                 permitsCurrentCandidate: snapshot.permitsCurrentCandidate)
         }
-        #else
-        return nil
-        #endif
     }
     @Published private(set) var workerReceiverProbeInterval: WorkerReceiverProbeInterval?
     private var receiverProbeTracker = WorkerReceiverProbeTracker()
     private var receiverProbeLeaseDeadline: ContinuousClock.Instant?
     private var receiverProbeOwner: PublishingProbeObservation?
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
+    @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     @Published private(set) var sentSamples = 0
     /// One bounded current or latest closed attempt. Counts are local callback
     /// evidence; a starting snapshot establishes neither applied settings nor readiness.
@@ -224,6 +228,9 @@ struct PublishingClockObservation: Equatable, Sendable {
              }
              let profile = try VideoObservationFixture.liveProfile(environment: environment)
              let target = try VideoObservationFixture.publishingURL(url, environment: environment)
+             if !VideoObservationFixture.requested(environment: environment) {
+                 return CaptureStreamingModel.productionPublisher(url: url, observations: observations)
+             }
              let proof = VideoObservationFixture.requested(environment: environment) && profile != .hd1080 ? observations.map { NativePublishingFormatFixture(scope: $0.snapshot.scope, profile: profile) } : nil
              let transitions = measuredTrial ? observations.map {
                  NativeProfileTransitionEvidence(scope: $0.snapshot.scope, sequence: ownedMeasurement ? .ownedMeasured : probeMode == .repeated ? .repeatedMeasured : .measured)
@@ -283,7 +290,7 @@ struct PublishingClockObservation: Equatable, Sendable {
              }
              return primary
              #else
-             return SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup)
+             return CaptureStreamingModel.productionPublisher(url: url, observations: observations)
              #endif
          },
          observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { scope in
@@ -294,12 +301,28 @@ struct PublishingClockObservation: Equatable, Sendable {
              return try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 2048)
              #endif
          }, qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = {
-             try PublishingQualityDriver.fixture(session: $0, attemptID: $1)
+             try PublishingQualityDriver.standard(session: $0, attemptID: $1)
          }) {
         self.storage = storage; self.pendingStore = pendingStore
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
         self.observationFactory = observationFactory; self.qualityFactory = qualityFactory
     }
+    nonisolated static func productionPublisher(url: URL, observations: VideoFrameObservationOwner?,
+        makePublisher: (URL, VideoFrameObservationOwner?, PublishingVideoProfile,
+            (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?, Bool) -> any MediaPublisher = {
+                SRTMediaPublisher(url: $0, observations: $1, videoProfile: $2,
+                    compressedAudioObserver: $3, allowsBandwidthProbes: $4)
+            }) -> any MediaPublisher {
+        guard let observations else {
+            return makePublisher(url, nil, .minimumStartup, nil, false)
+        }
+        let campaign = PublishingCandidateCampaignOwner()
+        let publisher = makePublisher(url, observations, .minimumStartup,
+            { campaign.observeAudio($0) }, true)
+        return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+            campaignOwner: campaign, stagePlanSelection: .productionSRT)
+    }
+
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
         guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
@@ -505,12 +528,26 @@ struct PublishingClockObservation: Equatable, Sendable {
                 try await session.start()
                 try check(context, attempt)
                 qualityDriver = try qualityFactory(session, attempt)
-                #if DEBUG
+                qualityDriver?.appliedSettingsDidChange = { [weak self, weak session] settings in
+                    guard let self, let session, let live = self.publishing,
+                          live.session === session, live.attempt == attempt,
+                          self.localState == .publishing, self.diagnosticAttemptID == attempt,
+                          self.activeRecordingID == live.context.id, self.current?.tap === live.context.tap,
+                          session.snapshot.state == .publishing, session.snapshot.failure == nil else { return }
+                    self.appliedPublishingSettings = settings
+                }
                 if let candidate = publisher as? NativeOwnedCandidatePublisher, let driver = qualityDriver {
-                    try await driver.installOwnedMeasurementPublisher(candidate, session: session,
-                        policy: try NativeMeasuredTrialFixture.probePolicy(environment: ProcessInfo.processInfo.environment))
+                    let policy: PublishingBandwidthProbeSnapshot.Policy
+                    #if DEBUG
+                    policy = candidate.maximumAttempts == nil ? .recoveryBudget :
+                        try NativeMeasuredTrialFixture.probePolicy(environment: ProcessInfo.processInfo.environment)
+                    #else
+                    policy = .recoveryBudget
+                    #endif
+                    try await driver.installOwnedMeasurementPublisher(candidate, session: session, policy: policy)
                     try check(context, attempt)
                 }
+                #if DEBUG
                 if let candidate = publisher as? NativeCandidatePublisher, let driver = qualityDriver {
                     let installed = await candidate.setMeasurementContextProvider { [weak self, weak session, weak driver] in
                         guard let self, let session, let driver else { return nil }
@@ -525,8 +562,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 #endif
                 if let readCandidate = measuredCandidateFactory(publisher) {
+                    let mode: CandidateAdmissionMode = (publisher as? NativeOwnedCandidatePublisher)?.stagePlanSelection == .productionSRT ? .productionSRT : .laboratoryIPv4
                     qualityDriver?.candidateInputProvider = { [weak self] state in
-                        await self?.measuredCandidateInput(state, readCandidate: readCandidate)
+                        await self?.measuredCandidateInput(state, admissionMode: mode, readCandidate: readCandidate)
                     }
                 }
                 qualityDriver?.cadenceInputProvider = { [weak self, weak session] in
@@ -933,6 +971,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     #endif
 
     func measuredCandidateInput(_ state: PublishingQualitySession.Snapshot,
+                                admissionMode: CandidateAdmissionMode = .laboratoryIPv4,
                                 readCandidate: MeasuredCandidateReader) async -> PublishingCandidateAdmission? {
         guard let original = publishing else { return nil }
         let session = original.session, attempt = original.attempt, tap = original.context.tap
@@ -966,11 +1005,12 @@ struct PublishingClockObservation: Equatable, Sendable {
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: revision,
             settings: settings, receipt: receipt, acknowledgedAt: acknowledgedAt)
         let id = candidate.measurement.id, permitsCandidate = candidate.permitsCurrentCandidate
-        return .laboratoryIPv4(measurement: candidate.measurement, applied: applied,
-            binding: candidate.binding, boundAt: candidate.boundAt, completedAt: candidate.completedAt,
-            probe: probe, pair: pair, authority: authority, clock: .sample(),
-            currentReceipt: { [weak session] in session?.snapshot.lastBitRateChange },
-            candidateIsCurrent: { permitsCandidate(id) })
+        let admit = admissionMode == .productionSRT ? PublishingCandidateAdmission.productionSRT : PublishingCandidateAdmission.laboratoryIPv4
+        return admit(candidate.measurement, applied,
+            candidate.binding, candidate.boundAt, candidate.completedAt,
+            probe, pair, authority, .sample(),
+            { [weak session] in session?.snapshot.lastBitRateChange },
+            { permitsCandidate(id) })
     }
 
     private func updateReceiverProbe(response: WorkerMediaStatusResponse, probe: PublishingProbeObservation?,
@@ -1064,6 +1104,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     private func detachPublisher() {
+        appliedPublishingSettings = nil
         let statusRequest = workerStatusRequest?.task
         statusRequest?.cancel()
         candidateAuthority?.revoke()

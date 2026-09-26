@@ -6,6 +6,8 @@ import ScorebugStreaming
 
 /// Coalesces the existing health loop; never runs on capture callbacks.
 @MainActor final class PublishingQualityDriver {
+    /// Current acknowledged settings only; presentation grants no admission.
+    var appliedSettingsDidChange: ((QualityController.Settings) -> Void)?
     /// Wake measurement scheduling after a source decision; this grants no admission.
     var sourceEvaluationDidComplete: (() -> Void)?
     var candidateInputProvider: ((PublishingQualitySession.Snapshot) async -> PublishingCandidateAdmission?)?
@@ -21,6 +23,8 @@ import ScorebugStreaming
     private let deliveryExport: ((Data) async -> Void)?
     private let timingProfile: StreamingTimingProfile
     private let owner: PublishingQualitySession
+    private let retainsDiagnosticHistory: Bool
+    private let workerLimitsProvider: ((WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits?)?
     private let workerLimits: PublishingQualityTelemetry.WorkerLimits?
     private let transportLimits: PublishingQualityTelemetry.TransportLimits?
     private let uptime: () -> Double
@@ -31,7 +35,7 @@ import ScorebugStreaming
     private var pendingLiveCheckpoint: [String: Any]?
     private var liveDrain: Task<Void, Never>?
     private var events: [[String: Any]] = []
-    private let evidenceDictionary = QualityEvidenceDictionary()
+    private let evidenceDictionary: QualityEvidenceDictionary?
     private var overflow = false
     private var consumed: String?
     private var consumedCandidateID: UUID?
@@ -42,8 +46,12 @@ import ScorebugStreaming
     private(set) var isClosed = false
     private(set) var bootstrapCount = 0
     init(owner: PublishingQualitySession, timingProfile: StreamingTimingProfile = .strict1500, workerLimits: PublishingQualityTelemetry.WorkerLimits?,
+         workerLimitsProvider: ((WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits?)? = nil,
          transportLimits: PublishingQualityTelemetry.TransportLimits?, uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryConsumer: PublishingDeliveryMonitor.Consumer? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+         retainsDiagnosticHistory: Bool = true, deliveryAudit: PublishingDeliveryMonitor.Audit? = nil, deliveryConsumer: PublishingDeliveryMonitor.Consumer? = nil, deliveryExport: ((Data) async -> Void)? = nil, enableDeliveryFailures: Bool = false, enableMeasuredSourceEvaluation: Bool = false, liveExport: ((Data) async -> Void)? = nil, export: ((Data) async -> Void)? = nil) {
+        self.retainsDiagnosticHistory = retainsDiagnosticHistory
+        self.evidenceDictionary = retainsDiagnosticHistory ? QualityEvidenceDictionary() : nil
+        self.workerLimitsProvider = workerLimitsProvider
         self.timingProfile = timingProfile
         self.liveExport = liveExport
         self.enableDeliveryFailures = enableDeliveryFailures
@@ -101,6 +109,7 @@ import ScorebugStreaming
                 try Task.checkCancellation()
                 guard !isClosed else { return }
                 bootstrapCount += 1
+                await publishAppliedSettings()
                 await record("bootstrap")
                 return
             }
@@ -283,7 +292,7 @@ import ScorebugStreaming
         let evaluation = evaluationCapture(selectedAt: selectedAt)
         do {
             decision = try await owner.evaluate(source: source, diagnostics: diagnostics,
-                workerLimits: workerLimits, transportLimits: transportLimits, observeEvaluation: evaluation?.observer)
+                workerLimits: workerLimitsProvider.map { $0(source) } ?? workerLimits, transportLimits: transportLimits, observeEvaluation: evaluation?.observer)
         } catch {
             let evaluationDiagnostic = evaluation?.rejected(at: diagnosticUptime())
             if !isClosed && !Task.isCancelled {
@@ -308,6 +317,7 @@ import ScorebugStreaming
     func apply(_ advice: QualityController.Recommendation, source: WorkerSourceIntervalObservation? = nil) async throws {
         do {
             try await owner.apply(advice)
+            await publishAppliedSettings()
             await record("applied", source: source, advice: advice)
         } catch let error as PublishingVideoMutationAdmissionError {
             guard !(await owner.snapshot).isClosed else { throw error }
@@ -317,9 +327,14 @@ import ScorebugStreaming
             await record("skipped", source: source, advice: advice, reason: "staleAdvice")
         }
     }
+    private func publishAppliedSettings() async {
+        let state = await owner.snapshot
+        guard !isClosed, !Task.isCancelled, !state.isClosed, let settings = state.applied else { return }
+        appliedSettingsDidChange?(settings)
+    }
     /// Scheduling closes synchronously before joined actor/session teardown. All
     /// stop callers share the shielded task; an in-flight write cannot revive it.
-    func cancel() { deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
+    func cancel() { deliveryConsumer?.cancel(); owner.invalidateCandidateRecovery(); isClosed = true; appliedSettingsDidChange = nil; sourceEvaluationDidComplete = nil; deliveryInputProvider = nil; cadenceInputProvider = nil; candidateInputProvider = nil; task?.cancel() }
     func stop() async {
         if let shutdown { await shutdown.value; return }
         cancel()
@@ -348,7 +363,7 @@ import ScorebugStreaming
         object["timingContract"] = timingProfile.evidence
         if recovery {
             object["transportPolicy"] = "recovery-budget-v1"
-            object["evidenceDictionary"] = evidenceDictionary.dictionary
+            object["evidenceDictionary"] = evidenceDictionary?.dictionary
         }
         return object
     }
@@ -378,6 +393,7 @@ import ScorebugStreaming
     /// Scalar tracing is debug-only and adds no actor or I/O await. Source
     /// selectedAt is threaded from tick; cadence uses the current-provider read.
     private func diagnosticUptime() -> Double? {
+        guard retainsDiagnosticHistory else { return nil }
         #if DEBUG
         return uptime()
         #else
@@ -385,6 +401,7 @@ import ScorebugStreaming
         #endif
     }
     private func evaluationCapture(selectedAt: Double?) -> EvaluationCapture? {
+        guard retainsDiagnosticHistory else { return nil }
         #if DEBUG
         return .init(selectedAt: selectedAt, dispatchedAt: diagnosticUptime())
         #else
@@ -440,6 +457,7 @@ import ScorebugStreaming
                         candidate: PublishingCandidateAdmission? = nil,
                         advice: QualityController.Recommendation? = nil, reason: String? = nil, allowClosed: Bool = false,
                         evaluationDiagnostic: [String: Any]? = nil) async {
+        guard retainsDiagnosticHistory else { return }
         let state = await owner.snapshot
         guard allowClosed || (!isClosed && !Task.isCancelled) else { return }
         guard events.count < 512 else {
@@ -532,7 +550,7 @@ import ScorebugStreaming
             "fromRevision": String(advice.appliedRevision), "validUntil": advice.validUntil,
             "candidateID": Self.optional(advice.candidateID?.uuidString)] }
         if transportLimits?.policy == .recoveryBudget {
-            guard let encoded = evidenceDictionary.encode(row) else {
+            guard let encoded = evidenceDictionary?.encode(row) else {
                 overflow = true
                 enqueueLiveCheckpoint(attemptID: state.attemptID, closed: kind == "stopped")
                 return
@@ -615,6 +633,42 @@ import ScorebugStreaming
         }.value
     }
     #endif
+    /// Initial qualification ladder; larger profiles use the same measured path
+    /// once separately qualified. No 4K support is inferred from this definition.
+    nonisolated static let productionProfiles: [QualityController.Profile] = [
+        .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
+        .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000)
+    ]
+    static func productionWorkerLimits(_ source: WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits? {
+        guard let encoder = source.processing?.encoder else { return nil }
+        // The telemetry evaluator still validates the authenticated publication,
+        // processing scope, sequences and completed frame interval.
+        return .init(encoder: encoder, maximumFilterMs: 250, maximumProcessingMs: 1000)
+    }
+    static func production(session: PublishingSession, attemptID: UUID,
+        profiles: [QualityController.Profile] = productionProfiles) throws -> PublishingQualityDriver? {
+        guard session.snapshot.ingressObservation != nil else { return nil }
+        let timing: StreamingTimingProfile = .strict1500
+        let owner = try PublishingQualitySession(session: session, profiles: profiles, attemptID: attemptID,
+            initial: .init(profileID: "240p30", videoBitrate: 350_000), strategy: .measuredCandidateTrials,
+            behavior: .progressive, requiresSharedCandidateRecovery: true, usesGuardedMutations: true, timingProfile: timing)
+        return .init(owner: owner, timingProfile: timing, workerLimits: nil,
+            workerLimitsProvider: productionWorkerLimits,
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,
+                maximumRetransmittedFraction: 0.01, policy: .recoveryBudget),
+            retainsDiagnosticHistory: false,
+            deliveryConsumer: .continuous(try .init(latencyBudget: timing.decoderBudget,
+                maximumSampleAge: 0.25, usesRequestTiming: true)),
+            enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true)
+    }
+    static func standard(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
+        #if DEBUG && targetEnvironment(simulator)
+        let fixture = try fixture(session: session, attemptID: attemptID)
+        if VideoObservationFixture.requested(environment: ProcessInfo.processInfo.environment) { return fixture }
+        #endif
+        return try production(session: session, attemptID: attemptID)
+    }
+
     static func fixture(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment

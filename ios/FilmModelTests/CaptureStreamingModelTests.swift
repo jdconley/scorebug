@@ -2,10 +2,105 @@ import AVFoundation
 import Foundation
 import ScorebugCore
 import ScorebugMedia
+@testable import ScorebugStreaming
 import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testDefaultModelInstallsContinuousOwnerAndWithdrawsReadersOnStop() async throws {
+        let server = CaptureTestServer()
+        var owned: NativeOwnedCandidatePublisher?
+        let lower = SRTMediaPublisher(operations: .init(configure: {}, start: {}, append: { _ in },
+            isPublishing: { true }, stop: {}, setBitRate: { _ in throw PublishingSessionError.invalidState }, metrics: { nil }))
+        let model = CaptureStreamingModel(storage: CaptureMemoryStorage(captureSetup()), pendingStore: CaptureMemoryPending(),
+            clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
+            publisherFactory: { url, observations in
+                let value = CaptureStreamingModel.productionPublisher(url: url, observations: observations) { _, _, _, _, _ in lower }
+                owned = value as? NativeOwnedCandidatePublisher
+                return value
+            })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.controlPollInterval, .milliseconds(100))
+        let wrapper = try XCTUnwrap(owned)
+        XCTAssertFalse(wrapper.installReaders(candidate: { nil }, probe: { nil }, pressure: { nil }),
+            "Default quality construction must have installed the sole owned reader set")
+        XCTAssertNotNil(wrapper.pressure)
+        XCTAssertNotNil(model.measuredCandidateFactory(wrapper))
+        XCTAssertNil(model.appliedPublishingSettings)
+        await model.stopStreaming()
+        XCTAssertNil(wrapper.pressure)
+        let stale = await wrapper.candidateSnapshot()
+        XCTAssertNil(stale)
+    }
+
+    func testStandardQualityFactoryKeepsMissingObservationsOptional() async throws {
+        for available in [true, false] {
+            var driver: PublishingQualityDriver?
+            let model = makeModel(server: CaptureTestServer(), observationFactory: { scope in
+                guard available else { throw VideoFrameObservationError.invalidConfiguration }
+                return try VideoFrameObservationOwner(scope: scope)
+            }, qualityFactory: { session, attempt in
+                driver = try PublishingQualityDriver.standard(session: session, attemptID: attempt)
+                return driver
+            })
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            XCTAssertEqual(model.localState, .publishing)
+            XCTAssertEqual(driver != nil, available)
+            XCTAssertEqual(model.controlPollInterval, available ? .milliseconds(100) : .seconds(2))
+            XCTAssertNil(model.appliedPublishingSettings, "No first-frame acknowledgment exists yet")
+            await model.stopStreaming()
+            XCTAssertTrue(driver?.isClosed ?? true)
+            XCTAssertNil(model.appliedPublishingSettings)
+        }
+    }
+
+    func testProductionPublisherUsesMinimumBeforeSamplesAndBoundedOwnedMeasurement() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        for available in [true, false] {
+            let observations = available ? try VideoFrameObservationOwner(scope: scope) : nil
+            let native = CaptureTestPublisher()
+            var selected: PublishingVideoProfile?, probes: Bool?, audio: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)?
+            let publisher = CaptureStreamingModel.productionPublisher(url: URL(string: "srt://127.0.0.1:8890")!, observations: observations) { _, _, profile, audioObserver, allowsProbes in
+                selected = profile; audio = audioObserver; probes = allowsProbes; return native
+            }
+            XCTAssertEqual(selected, .minimumStartup)
+            XCTAssertEqual(probes, available)
+            XCTAssertEqual(audio != nil, available)
+            if available {
+                let owned = try XCTUnwrap(publisher as? NativeOwnedCandidatePublisher)
+                XCTAssertEqual(owned.stagePlanSelection, .productionSRT)
+                XCTAssertNil(owned.maximumAttempts)
+                XCTAssertNil(owned.audit)
+                let handle = try await owned.campaignOwner.begin(scope: scope, profile: .low360, publishingGeneration: 7)
+                XCTAssertFalse(owned.campaignOwner.offer(try streamingVideo(300), id: handle.id))
+                var asbd = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatMPEG4AAC,
+                    mFormatFlags: 2, mBytesPerPacket: 0, mFramesPerPacket: 1024, mBytesPerFrame: 0,
+                    mChannelsPerFrame: 1, mBitsPerChannel: 0, mReserved: 0)
+                let format = try XCTUnwrap(AVAudioFormat(streamDescription: &asbd))
+                let buffer = AVAudioCompressedBuffer(format: format, packetCapacity: 1, maximumPacketSize: 4)
+                buffer.byteLength = 4; buffer.packetCount = 1
+                buffer.packetDescriptions?.pointee = .init(mStartOffset: 0, mVariableFramesInPacket: 1024, mDataByteSize: 4)
+                memset(buffer.data, 0, 4)
+                audio?(.init(buffer: buffer, when: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: 10.025)), generation: 7, wasEncoded: true))
+                XCTAssertTrue(owned.campaignOwner.offer(try streamingVideo(301), id: handle.id), "The factory's AAC callback must open this exact campaign's raw admission")
+            } else { XCTAssertTrue(publisher as AnyObject === native) }
+            await publisher.stop()
+        }
+    }
+
+    func testOrdinaryOwnedPublisherInstallsNeutralCandidateReader() async throws {
+        let scope = VideoFrameObservationScope(recordingID: "recording", matchID: "match",
+            broadcastGeneration: 1, publishingAttemptID: UUID(), appliedProfileRevision: 1)
+        let publisher = NativeOwnedCandidatePublisher(publisher: CaptureTestPublisher(), scope: scope,
+            campaignOwner: PublishingCandidateCampaignOwner(), stagePlanSelection: .productionSRT)
+        let model = makeModel(server: CaptureTestServer())
+        XCTAssertNotNil(model.measuredCandidateFactory(publisher))
+        XCTAssertNil(model.measuredCandidateFactory(CaptureTestPublisher()))
+        await publisher.stop()
+    }
+
     func testSetupEditingPausesBackgroundControlAndDismissalResumesIt() async throws {
         let server = CaptureTestServer(), model = makeModel(server: server)
         await server.setOffline(true)
@@ -347,7 +442,10 @@ import XCTest
     func testMeasuredProviderRetainsTwoActualIntervalsAfterDelayedFirstStatus() async throws {
         try await checkMeasuredProvider(revision: 2, additionalFirstStatusDelay: .milliseconds(250))
     }
-    private func checkMeasuredProvider(revision: UInt64, additionalFirstStatusDelay: Duration = .zero) async throws {
+    func testProductionMeasuredProviderUsesConservativeWireCostAndRevokesOnStop() async throws {
+        try await checkMeasuredProvider(revision: 2, admissionMode: .productionSRT)
+    }
+    private func checkMeasuredProvider(revision: UInt64, admissionMode: CaptureStreamingModel.CandidateAdmissionMode = .laboratoryIPv4, additionalFirstStatusDelay: Duration = .zero) async throws {
         var session: PublishingSession?
         let (model, server, publisher, initial) = try await receiverProbeModel { value, _ in session = value; return nil }
         let live = try XCTUnwrap(session)
@@ -430,7 +528,7 @@ import XCTest
             transportBytes: 376_000, transportMessageCount: 400)
         let staleProbe = probe, gate = FilmTestGate()
         let pending = Task {
-            await model.measuredCandidateInput(state) {
+            await model.measuredCandidateInput(state, admissionMode: admissionMode) {
                 await gate.enter()
                 return .init(measurement: measurement, binding: binding, probe: staleProbe,
                     boundAt: start - 0.01, completedAt: start + 4.03, permitsCurrentCandidate: { $0 == measurement.id })
@@ -445,6 +543,8 @@ import XCTest
         await gate.release()
         let result = await pending.value
         let admission = try XCTUnwrap(result)
+        XCTAssertEqual(admission.value.candidateTransportBitsPerSecond,
+            Double(376_000 + (admissionMode == .productionSRT ? 64 : 44) * 400) * 8 / 4)
         XCTAssertEqual(admission.value.appliedRevision, revision)
         XCTAssertEqual(admission.applied.revision, revision)
         XCTAssertEqual(admission.probe.campaign, revision == 0 ? nil : 2)

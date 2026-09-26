@@ -5,6 +5,54 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class PublishingQualityDriverTests: XCTestCase {
+    func testDisabledDiagnosticHistoryStillEvaluatesAndAppliesCandidate() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        var exported: Data?
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: nil, workerLimitsProvider: PublishingQualityDriver.productionWorkerLimits,
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, retainsDiagnosticHistory: false,
+            enableMeasuredSourceEvaluation: true, export: { exported = $0 })
+        var applied: QualityController.Settings?
+        driver.appliedSettingsDidChange = { applied = $0 }
+        driver.candidateInputProvider = { _ in f.admission }
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30", "rate:600000"])
+        XCTAssertEqual(applied, .init(profileID: "360p30", videoBitrate: 600_000))
+        await driver.stop()
+        let quality = try checkpointObject(XCTUnwrap(exported))
+        XCTAssertEqual((quality["events"] as? [[String: Any]])?.count, 0)
+        XCTAssertNil(quality["evidenceDictionary"])
+    }
+
+    func testProductionWorkerLimitsRecognizeOnlyReportedSupportedBackend() async throws {
+        for encoder in ["software", "videotoolbox", "nvenc", "unknown", "", "VideoToolbox", nil] {
+            let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+            let source = try XCTUnwrap(f.source)
+            let report = try XCTUnwrap(source.processing)
+            let copy = WorkerSourceIntervalObservation(interval: source.interval, nativeClock: source.nativeClock,
+                workerId: source.workerId, workerEpoch: source.workerEpoch, workerAttempt: source.workerAttempt,
+                publication: source.publication, previousSequence: source.previousSequence, sequence: source.sequence,
+                previousDecodedPTS: source.previousDecodedPTS, firstDecodedPTS: source.firstDecodedPTS,
+                lastDecodedPTS: source.lastDecodedPTS, freshness: source.freshness,
+                processing: encoder.map { .init(scopeID: report.scopeID, encoder: $0, previousSequence: report.previousSequence,
+                    sequence: report.sequence, firstPTS: report.firstPTS, interval: report.interval) })
+            let limits = PublishingQualityDriver.productionWorkerLimits(copy)
+            XCTAssertEqual(limits?.encoder, ["software", "videotoolbox", "nvenc"].contains(encoder ?? "") ? encoder : nil)
+            if let limits { XCTAssertEqual(limits.maximumFilterMs, 250); XCTAssertEqual(limits.maximumProcessingMs, 1000) }
+            let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil,
+                workerLimitsProvider: PublishingQualityDriver.productionWorkerLimits,
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now }, retainsDiagnosticHistory: false, enableMeasuredSourceEvaluation: true)
+            await driver.tick(encoderReady: true, source: copy, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+            let state = await f.owner.snapshot
+            XCTAssertEqual(state.lastWindow?.workerPressure, limits == nil ? .unknown : .nominal)
+            let context = await driver.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
+            XCTAssertEqual(context != nil, limits != nil, "Unrecognized backend must never earn recovery credit")
+            await driver.stop()
+        }
+    }
+
     func testFreshSourceEvaluationNotifiesOnceAndStopRevokesNotification() async throws {
         for stale in [false, true] {
             let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
