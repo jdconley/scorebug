@@ -4,7 +4,7 @@
 
 **Goal:** Supply ordinary camera integration with an explicit production admission estimate and a bounded probe plan for the next candidate, without importing laboratory IPv4 accounting or a fixed12Mbps probe.
 
-**Boundary:** This slice prepares runtime construction. Ordinary camera enablement, backend selection, physical tests and wider-profile qualification follow. Keep existing lab evidence and defaults unchanged.
+**Current status:** Nominal production sizing, admission accounting and ordinary camera integration are implemented. Native testing shows valid measured candidates can exceed the nominal scheduling estimate and receive no headroom advice. Current work adds measured-cost feedback to subsequent production probes; physical and wider-profile qualification remain separate. Keep existing laboratory behavior unchanged.
 
 ## Design
 
@@ -26,3 +26,18 @@ Resolve the next-profile plan exactly once from the candidate context when const
 - [x] Commit code/tests; complete independent specification and quality review. Update the current plan/session log, then proceed to ordinary camera integration with the continuous delivery consumer and selected worker limits.
 
 No policy timing, SRT buffers, archive behavior, device provisioning or lab audit budgets change in this slice. Probe defaults require native/phone validation as part of the subsequent integration; passing unit tests does not establish mobile-network capacity or media quality.
+
+## Current follow-up: measured-cost scheduling feedback
+
+The 25% admission headroom rule remains authoritative. A valid admitted candidate can receive `capacityHeadroom` with no advice because the initial nominal padding estimate is too small, even when delivered media is healthy. Correct scheduling from actual measured transport cost rather than weakening admission or timing.
+
+Retain one scheduling-only hint in the current quality session after an authoritative owned production-candidate evaluation returns `capacityHeadroom` with no recommendation. Bind it to the target settings and current acknowledged baseline settings/revision. Never learn from rejected, stale, cancelled, laboratory or unowned candidates. Copy only a matching finite positive cost into the next candidate context; mismatch is ignored, and actual baseline change/stop clears it. The hint is not current capacity, admission evidence or authority.
+
+Resolve the next production plan once as `max(existing nominal final rate, ceil(measured transport cost × 1.5))`, using the same half/full stages and holds. Here 1.5 combines the unchanged 1.25 admission margin with a 1.2 scheduling reserve; it is an engineering estimate, not an industry constant or a guarantee. A fresh candidate and receiver observations must still pass all checks. Keep normal backoff and exact joined retirement. Fixed laboratory plans ignore the hint.
+
+Keep the native 12 Mbps/16 MiB/60-second limits. An unsupported measured hint must prevent allocation without closing baseline publication or registering a stuck owner. Preserve the prior nominal unsupported-plan behavior. This initial slice does not claim that an over-cap target can recover within the same unchanged baseline; renewed capability/quality qualification remains separate.
+
+- [ ] Add targeted coverage for valid no-headroom decision → scoped hint → next production plan, unchanged nominal/fixed plans, ignored stale/wrong-profile inputs, clearing on baseline change/stop, arithmetic boundaries and unsupported hint without native allocation or baseline failure.
+- [ ] Implement the bounded hint and immutable production-plan resolution without changing admission, probe authority, timing, cooldown, archive behavior or laboratory evidence.
+- [ ] Run affected app/Core/streaming checks plus Debug and Release builds; review the implementation and preserve failures.
+- [ ] Run a fresh ordinary native vertical. Require minimum startup, measured increase, native score, stop/export and independent complete media verification of all three outputs before claiming this feedback fix works.
