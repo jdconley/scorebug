@@ -112,3 +112,13 @@ Commands/logs retained; no native/recovery/media qualification inferred.
 [Geometry plan](../superpowers/plans/2026-09-26-decoded-geometry-evidence.md) scopes
 test-only guardian parsing to bounded numeric dimension runs. Implementer owns
 worker code/tests, root owns docs and independent validation.
+
+Read-only correlation review found pipelineOrdinal is not supervisor attempt and
+relay readerId is not private pipelineReadId. The next
+[correlation dependency](../superpowers/plans/2026-09-26-pipeline-geometry-correlation.md)
+uses a domain-separated SHA256 public key derived on both sides of the existing
+authenticated before/after read-scope check. Raw private ID stays private. Native
+accepted observations already carry exact decoded PTS endpoints; retain those
+atomically with the derived key rather than infer from MP4 timestamps. Design
+review found no blocking conflicts; callback compatibility, nil legacy hashes,
+malicious key substitution and signed PTS rules are explicit. Not implemented yet.

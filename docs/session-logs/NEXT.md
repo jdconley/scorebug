@@ -32,7 +32,9 @@ Do not repeat unchanged while waiting. Use retained paired helper after readines
 **ACTIVE implementation:** `/root/applied_transition_implementation` owns the
 [decoded geometry diagnostic](../superpowers/plans/2026-09-26-decoded-geometry-evidence.md),
 worker-only opt-in bounded pre-scale evidence. No native/ladder/lab changes in this
-slice. Root owns documentation, independent checks, reviews and commits. Pause
+slice. Root owns documentation, independent checks, reviews and commits. The next
+[correlation dependency](../superpowers/plans/2026-09-26-pipeline-geometry-correlation.md)
+has read-only design approval; raw private read IDs remain private. Pause
 builds/media analysis/source edits before any live hardware capture.
 
 After hardware acceptance, implement ordinary three-rung integration and real
