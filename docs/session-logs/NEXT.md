@@ -6,7 +6,7 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout.
-HEADaedd639; reviewed app source8495c79. No PR requested.
+HEADf9c5b26; reviewed app source8495c79. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns goals/status/todos. [Current session](2026-09-26-ordinary-transport-budget.md)
@@ -16,9 +16,22 @@ build/media jobs during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Physical readiness
 
-All capture/build/media jobs joined. New explicit lab upload-budget option passes25
-focused tests and spec review; quality review pending. Commit source before the
-700ms comparison. App policy/queues/decoder deadline unchanged.
+All jobs have joined. Sourcef9c5b26 option reviews/25tests pass. Requested700ms
+comparison `ordinary-native-3ux2FX` / `device-lab-Jc3NLf` fails initial240p10s
+policy-ready gate: sourceRejection:time,0on-time/24–26late frames per sampled
+window under strict1500ms. No ramp/cap took place. All three media outputs PASS:
+archive1505/live1237sequential frames,30fps,no audio gaps,12/10/10waveformprobes,
+scoreglyphs/cleanarchive/123framecontinuation pass.44producing hashes root verified.
+No negotiated-delay ACK witness exists;700ms is a recorded requested parameter.
+See current session for exact artifacts. Do not call this recovery qualification.
+
+Next available streaming action: choose a coherent reliability-first production
+budget using existing3000ms profile as starting point, retain strict1500benchmark,
+and expose timing identity/budget in ordinary diagnostics. Keep report freshness,
+stall detection, quality/loss gates and resource bounds. Review/test source then
+run full ordinary720 with explicit700ms again. Deadline change alone is not a loss
+fix; all three media outputs and full ramp/cap/recovery must qualify.
+
 Physical paired attempt `physical-paired-live-iuYDle` / `device-lab-pcgG8w`,
 source1941623, stopped before camera capture: Xcode waited for Watch unlock and
 never reached the companion-offer wait within240s. Root interrupted only its owned
@@ -61,11 +74,9 @@ Low-latency creation and MaxFrameDelayCount were unsupported on the tested simul
 An existing opt-in cadence pacer removed drain batches but did not qualify live
 media under an over-capacity trial. Do not reinvent it or claim it solves this run.
 
-After hardware priority, isolate publishing-hop recovery time in a short matched
-120/700ms diagnostic with identical source/cap/queues. Measure actual media,
-reaction and packet bursts. Existing2000/3000ms timing profiles are explicit
-experiments, not accepted production defaults. Use the published platform research
-and actual stage budgets; a longer decoder deadline alone cannot restore loss.
+The700ms/strict1500comparison above could not reach a ramp/cap. Do not repeat it
+unchanged. Existing2000/3000profiles provide a coherent timing starting point;
+the failed120ms720 run remains failed and is the media-loss baseline.
 
 ## Verified baseline and open limits
 
