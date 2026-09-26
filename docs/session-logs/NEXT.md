@@ -4,7 +4,11 @@
 
 Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Goal active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-separate-native-scorer.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-measured-relative-pacing.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
+
+## Latest experiment
+
+Source `dcdc8ca`: explicit `--publish-pacing relative` added only to lab/recovery720 tooling; defaults unchanged. Reviews pass,41 focused regressions and99 API tests pass. Run `ordinary-native-ezaWU8` / lab `device-lab-tmXAPL` failed the unconstrained720 climb:360→240→360, local sender buffer411ms versus350ms threshold; no720 ACK, no bandwidth constraint applied. Full captured-span media passes (archive8887 consecutive frames; both live8612; waveform/overlay checks pass), but no ramp/recovery qualification. All jobs and owned resources joined/cleaned.29-file failed-ramp manifest retained. Keep pacing experimental; do not repeat unchanged or claim a measured native pacing ceiling. See [session](2026-09-26-measured-relative-pacing.md).
 
 ## Latest verified checkpoint
 

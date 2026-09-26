@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 26 measured relative pacing](2026-09-26-measured-relative-pacing.md) — configured pacing comparison with clean captured media but failed unconstrained climb.
+
 - [September 26 separate native scorer](2026-09-26-separate-native-scorer.md) — native role separation during real phone capture and streaming.
 
 - [September26 ordinary source-cadence pacing](2026-09-26-ordinary-source-cadence-pacing.md) — controlled integration of the existing pacer after packet-loss attribution.
