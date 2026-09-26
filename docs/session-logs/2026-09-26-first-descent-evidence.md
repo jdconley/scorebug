@@ -1,0 +1,5 @@
+# First-descent diagnostic session — September26
+
+Started on62f08ea in the clean authoritative local-validation worktree. Previous goal turn made concrete progress: reviewed host/simulator phase comparisons, guarded pre-rate implementation/tests, full media failure, preserved59files, and exact restoration with17passing tests. No active build/capture/analysis jobs remain. Goal active; Watch/phone passcode state has not changed, so no unchanged physical retry.
+
+Current inspection confirms ordinary factory disables full Driver diagnostic history and no quality audit exists in EZqNUN app QA data. The only successful-transition witness is the latest sampled UI field; revision3 is overwritten by revision4 before UI sampling. Existing full history has a512-event cap, unsuitable for100ms capture without filtering. Selected bounded successful-application audit, maximum16records/8192bytes each, post-shutdown export, UI and policy unchanged. Design/requirements are in the first-descent plan. User's standing autonomous implementation authorization applies; no new approval gate.
