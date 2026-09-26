@@ -3,6 +3,20 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
 import { startDirectRTMPRecorder } from './direct-rtmp-recorder.mjs';
 
+// Keep diagnostics finite and exclude arbitrary messages, addresses, and payloads.
+const maximumLifecycleEvents = 32;
+const networkingErrorCodes = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENOTCONN',
+]);
+const errorCode = (error) => (networkingErrorCodes.has(error?.code) ? error.code : 'unknown');
+
 const failure = (reason) => new Error(`Reconnecting RTMP recorder ${reason}`);
 const deferred = () => {
   let resolve;
@@ -86,6 +100,7 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
       return;
     }
     const sequence = sessions.length + 1;
+    let stage = 'recorder-start';
     const entry = {
       sequence,
       acceptedAt: now(),
@@ -97,7 +112,23 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
       failure: null,
       directoryRelativePath: `reconnecting-recorder/session-${sequence}`,
       recordingRelativePath: null,
+      lifecycle: { maximumEvents: maximumLifecycleEvents, overflowed: false, events: [] },
     };
+    function record(target, event, details = {}) {
+      if (entry.lifecycle.events.length >= maximumLifecycleEvents) {
+        entry.lifecycle.overflowed = true;
+        return;
+      }
+      entry.lifecycle.events.push({ at: now(), stage, target, event, ...details });
+    }
+    function observeSocket(socket, target) {
+      socket.on('end', () => record(target, 'end'));
+      socket.on('finish', () => record(target, 'finish'));
+      socket.on('error', (error) => record(target, 'error', { code: errorCode(error) }));
+      socket.on('close', (hadError) => record(target, 'close', { hadError: Boolean(hadError) }));
+    }
+    // Observe admission-time events too, without changing startup failure policy.
+    observeSocket(client, 'client');
     sessions.push(entry);
     const session = { entry, client };
     active.add(session);
@@ -106,7 +137,6 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
     const task = (async () => {
       let recorder,
         upstreamClosed,
-        stage = 'recorder-start',
         finished = false;
       const fail = (reason) => {
         entry.failure ??= reason;
@@ -128,7 +158,19 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
         let stopped;
         session.stopRecorder = () => {
           if (!stopped) {
-            stopped = Promise.resolve().then(() => recorder.stop());
+            record('recorder', 'stop-request');
+            stopped = Promise.resolve()
+              .then(() => recorder.stop())
+              .then(
+                (result) => {
+                  record('recorder', 'stop-resolved');
+                  return result;
+                },
+                (error) => {
+                  record('recorder', 'stop-rejected', { code: errorCode(error) });
+                  throw error;
+                },
+              );
             stopped.catch(() => {});
           }
           return stopped;
@@ -143,6 +185,7 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
           port: privateListenerPort,
           allowHalfOpen: true,
         });
+        observeSocket(upstream, 'upstream');
         session.upstream = upstream;
         upstreamClosed = deferred();
         upstream.once('close', () => upstreamClosed.resolve());
@@ -180,7 +223,15 @@ export async function startReconnectingRTMPRecorder({ artifact, ffmpeg, port }, 
           return;
         }
         stage = 'recorder-finish';
-        const path = await recorder.finish();
+        record('recorder', 'finish-request');
+        let path;
+        try {
+          path = await recorder.finish();
+          record('recorder', 'finish-resolved');
+        } catch (error) {
+          record('recorder', 'finish-rejected', { code: errorCode(error) });
+          throw error;
+        }
         const local = relative(directory, path);
         if (!local || isAbsolute(local) || local === '..' || local.startsWith('../'))
           throw failure('foreign recording');

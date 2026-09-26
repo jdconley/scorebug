@@ -272,6 +272,18 @@ test('failed recorder finalization is retained and cleanup is joined', async (t)
   assert.equal(report.sessions[0].failure, 'recorder-finish');
   assert.equal(f.started[0].stops, 1);
   assert.doesNotMatch(JSON.stringify(report), /private secret/);
+  assert.ok(report.sessions[0].lifecycle, 'recorder rejection is retained');
+  assert.deepEqual(
+    report.sessions[0].lifecycle.events
+      .filter((event) => event.target === 'recorder')
+      .map((event) => [event.event, event.code]),
+    [
+      ['finish-request', undefined],
+      ['finish-rejected', 'unknown'],
+      ['stop-request', undefined],
+      ['stop-resolved', undefined],
+    ],
+  );
 });
 test('foreign returned path cannot claim a saved session', async (t) => {
   const f = await fixture(t, { resultPath: '/outside/recording.mp4' });
@@ -286,6 +298,12 @@ test('upstream reset is retained and both sockets are closed', async (t) => {
   const report = await f.recorder.finish();
   assert.equal(report.sessions.length, 1);
   assert.equal(report.sessions[0].failure, 'upstream-socket');
+  assert.ok(report.sessions[0].lifecycle, 'upstream error is retained');
+  const error = report.sessions[0].lifecycle.events.find(
+    (event) => event.target === 'upstream' && event.event === 'error',
+  );
+  assert.equal(error.code, 'ECONNRESET');
+  assert.equal(error.stage, 'forwarding');
   assert.equal(report.finishTimedOut, false);
   assert.equal(f.started[0].stops, 1);
 });
@@ -294,4 +312,159 @@ test('invalid port is rejected before a child or output is created', async (t) =
   t.after(() => rm(artifact, { recursive: true, force: true }));
   for (const port of [-1, 65536, 1.5, null])
     await assert.rejects(() => startReconnectingRTMPRecorder({ artifact, ffmpeg: 'ffmpeg', port }));
+});
+
+// Capture the real proxy-side socket for deterministic startup event injection.
+// Actual half-close/reset tests below use TCP events, not synthetic emissions.
+function observeClient(t, observe) {
+  const createServer = net.createServer;
+  t.mock.method(net, 'createServer', function (options, accept) {
+    if (options?.pauseOnConnect)
+      return createServer.call(this, options, (client) => {
+        accept(client);
+        observe(client);
+      });
+    return createServer.apply(this, arguments);
+  });
+}
+
+test('clean half-close retains ordered socket and recorder lifecycle evidence', async (t) => {
+  const f = await fixture(t);
+  await publish(f.port, Buffer.from('half-close'));
+  const report = await f.recorder.finish();
+  const session = report.sessions[0];
+  assert.equal(session.failure, null);
+  assert.ok(session.lifecycle, 'session retains lifecycle diagnostics');
+  const { events, maximumEvents, overflowed } = session.lifecycle;
+  assert.equal(maximumEvents, 32);
+  assert.equal(overflowed, false);
+  assert(
+    events.every(
+      (event, index) =>
+        Number.isFinite(event.at) &&
+        event.at >= session.acceptedAt &&
+        event.at <= session.closedAt &&
+        (index === 0 || event.at >= events[index - 1].at),
+    ),
+  );
+  for (const target of ['client', 'upstream']) {
+    const socketEvents = events.filter((event) => event.target === target);
+    assert.deepEqual(socketEvents.map((event) => event.event).sort(), ['close', 'end', 'finish']);
+    assert.equal(socketEvents.at(-1).event, 'close');
+    assert.equal(socketEvents.at(-1).hadError, false);
+    assert(socketEvents.every((event) => event.stage === 'forwarding'));
+  }
+  assert.deepEqual(
+    events
+      .filter((event) => event.target === 'recorder')
+      .map(({ stage, event }) => ({ stage, event })),
+    [
+      { stage: 'recorder-finish', event: 'finish-request' },
+      { stage: 'recorder-finish', event: 'finish-resolved' },
+    ],
+  );
+});
+
+test('client reset retains networking errno before stop outcome without changing failure', async (t) => {
+  const received = deferred();
+  const f = await fixture(t, { received: () => received.resolve() });
+  const socket = await connect(f.port);
+  socket.write('reset');
+  await received.promise;
+  const closed = closedSocket(socket);
+  socket.resetAndDestroy();
+  await closed;
+  const report = await f.recorder.finish();
+  const session = report.sessions[0];
+  assert.equal(session.failure, 'client-socket');
+  assert.equal(report.finishTimedOut, false);
+  assert.ok(session.lifecycle, 'client reset has lifecycle diagnostics');
+  const events = session.lifecycle.events;
+  const error = events.find((event) => event.target === 'client' && event.event === 'error');
+  assert.equal(error.code, 'ECONNRESET');
+  assert.equal(error.stage, 'forwarding');
+  assert.equal(
+    events.find((event) => event.target === 'client' && event.event === 'close').hadError,
+    true,
+  );
+  assert.deepEqual(
+    events.filter((event) => event.target === 'recorder').map((event) => event.event),
+    ['stop-request', 'stop-resolved'],
+  );
+  assert.equal(f.started[0].finishes, 0);
+});
+
+test('startup reset is observed before a late recorder exists', async (t) => {
+  const accepted = deferred(),
+    entered = deferred(),
+    gate = deferred();
+  observeClient(t, (client) => accepted.resolve(client));
+  const f = await fixture(t, {
+    beforeStart: async () => {
+      entered.resolve();
+      await gate.promise;
+    },
+  });
+  const socket = await connect(f.port);
+  const client = await accepted.promise;
+  await entered.promise;
+  const clientClosed = closedSocket(client),
+    publisherClosed = closedSocket(socket);
+  // Startup keeps the proxy paused; resume only in the test to deliver the TCP reset.
+  client.resume();
+  socket.resetAndDestroy();
+  await Promise.all([clientClosed, publisherClosed]);
+  gate.resolve();
+  const report = await f.recorder.finish();
+  const session = report.sessions[0];
+  assert.equal(session.failure, 'interrupted');
+  assert.equal(session.connectedAt, null);
+  assert.equal(f.started[0].stops, 1);
+  assert.ok(session.lifecycle, 'startup socket events are retained');
+  assert.deepEqual(
+    session.lifecycle.events
+      .filter((event) => event.target === 'client')
+      .map(({ stage, event, code, hadError }) => ({ stage, event, code, hadError })),
+    [
+      { stage: 'recorder-start', event: 'error', code: 'ECONNRESET', hadError: undefined },
+      { stage: 'recorder-start', event: 'close', code: undefined, hadError: true },
+    ],
+  );
+});
+
+test('lifecycle error diagnostics redact values and cap event storage explicitly', async (t) => {
+  const accepted = deferred(),
+    entered = deferred(),
+    gate = deferred();
+  observeClient(t, (client) => accepted.resolve(client));
+  const f = await fixture(t, {
+    beforeStart: async () => {
+      entered.resolve();
+      await gate.promise;
+    },
+  });
+  const socket = await connect(f.port);
+  const client = await accepted.promise;
+  await entered.promise;
+  for (const code of ['EPIPE', 'ECONNRESET', 'rtmp://private/key', null, { secret: 'payload' }])
+    client.emit('error', Object.assign(new Error('secret endpoint payload'), { code }));
+  for (let i = 0; i < 100; i++) client.emit('error', new Error('private flood'));
+  const clientClosed = closedSocket(client),
+    publisherClosed = closedSocket(socket);
+  socket.resume();
+  client.destroy();
+  await Promise.all([clientClosed, publisherClosed]);
+  gate.resolve();
+  const report = await f.recorder.finish();
+  const session = report.sessions[0];
+  assert.equal(session.failure, 'interrupted');
+  assert.ok(session.lifecycle, 'bounded redacted diagnostics are retained');
+  assert.equal(session.lifecycle.events.length, 32);
+  assert.equal(session.lifecycle.maximumEvents, 32);
+  assert.equal(session.lifecycle.overflowed, true);
+  assert.deepEqual(
+    session.lifecycle.events.slice(0, 5).map((event) => event.code),
+    ['EPIPE', 'ECONNRESET', 'unknown', 'unknown', 'unknown'],
+  );
+  assert.doesNotMatch(JSON.stringify(report), /secret|private|payload|rtmp:\/\//);
 });
