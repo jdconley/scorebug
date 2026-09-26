@@ -26,7 +26,7 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
       and decoded baseline frames across all original owners; retain failed owners,
       original receipt revisions and lifecycle event indices. This slice grants no
       admission, application, recovery or full-media authority.
-- [ ] Join original owned admission witnesses and application receipts across all
+- [x] Join original owned admission witnesses and application receipts across all
       owners. Reuse reviewed candidate/interval checks and shared clock/load
       arithmetic without fabricated legacy envelopes or final snapshots. Match
       candidate, interval, application, profile/bitrate request and acknowledgement
