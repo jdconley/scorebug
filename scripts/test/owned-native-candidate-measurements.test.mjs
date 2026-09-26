@@ -58,6 +58,12 @@ test('original complete owned history retains both failed owners and joins both 
     r.attempts.map((a) => a.baselinePhaseIndex),
     [0, 2, 2, 2],
   );
+  for (const a of r.attempts) {
+    assert.ok(Number.isInteger(a.candidateRetiredEventIndex));
+    assert.equal(x.rawOwned.events[a.candidateRetiredEventIndex].kind, 'candidateRetired');
+    assert.equal(x.rawOwned.events[a.candidateRetiredEventIndex].ownerID, a.ownerID);
+    assert.ok(a.candidateRetiredEventIndex < a.cleanupEventIndex);
+  }
   for (const a of [r.attempts[0], r.attempts[3]]) {
     assert.equal(x.rawOwned.events[a.candidateBoundEventIndex].kind, 'candidateBound');
     assert.equal(

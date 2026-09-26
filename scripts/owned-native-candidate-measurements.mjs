@@ -405,6 +405,7 @@ export function qualifyOwnedNativeCandidateMeasurements(rawOwned, options = {}) 
       candidateStartRequestedEventIndex: startIndex,
       candidateStartedEventIndex: startedIndex,
       candidateJoinedEventIndex: joinIndex,
+      candidateRetiredEventIndex: retiredIndex,
       measurement,
     };
   });
