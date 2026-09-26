@@ -378,6 +378,35 @@ function replayCandidateWitness(
       probe.lastAcceptedAt >= w.binding.lastAcceptedAt,
   );
 
+  return qualifyCandidateWitnessLoad({
+    witness: w,
+    intervals,
+    intervalQualification,
+    campaign: repeated?.campaign,
+    policy,
+  });
+}
+
+/** Shared captured receiver-pair clock and load arithmetic. Callers must first
+ * independently qualify the complete raw candidate, baseline and native probe.
+ * This helper does not confer application, media or policy authority. */
+export function qualifyCandidateWitnessLoad({
+  witness: w,
+  intervals,
+  intervalQualification,
+  campaign,
+  policy = 'local-zero-loss-v1',
+  completionAt = w.measurement.endedAt,
+}) {
+  const m = w.measurement,
+    a = w.applied,
+    probe = w.probe;
+  const now = w.clock.after,
+    before = w.clock.before;
+  assert.ok(time(before) && time(now) && before <= now && now - before <= 0.1);
+  assert.equal(w.evaluatedAt, now);
+  assert.ok(time(completionAt) && completionAt >= m.endedAt && completionAt <= now);
+  const projectionWidth = now - before;
   const rows = intervals.intervals,
     covered = intervalQualification.coveredIntervalIndexes;
   assert.ok(Array.isArray(rows) && rows.length <= 128 && Array.isArray(covered));
@@ -413,11 +442,11 @@ function replayCandidateWitness(
       publishingGeneration: m.publishingGeneration,
       probeId: uuid(probe.id),
       stage: 3,
-      ...(repeated ? { campaign: repeated.campaign } : {}),
+      ...(campaign !== undefined ? { campaign } : {}),
       bitRate: 12000000,
     });
     assert.equal(r.nativeProbeStage, 3);
-    assert.equal(r.nativeProbeCampaign, repeated?.campaign);
+    assert.equal(r.nativeProbeCampaign, campaign);
     sameUUID(r.nativeProbeId, probe.id);
     assert.equal(r.nativePublishingGeneration, m.publishingGeneration);
     assert.equal(r.nativeStartedAt, probe.startedAt);
@@ -452,8 +481,11 @@ function replayCandidateWitness(
       close(projected[1], offset[1] + seconds(p.observedAtNanoseconds));
       sameUUID(p.id, probe.id);
       assert.equal(p.stage, 3);
-      assert.equal(p.campaign, repeated?.campaign);
-      assert.equal(p.convention, repeated ? 'mpegts-null-probe-v3' : 'mpegts-null-probe-v2');
+      assert.equal(p.campaign, campaign);
+      assert.equal(
+        p.convention,
+        campaign !== undefined ? 'mpegts-null-probe-v3' : 'mpegts-null-probe-v2',
+      );
       assert.equal(p.bitRate, 12000000);
       assert.equal(p.publishingGeneration, m.publishingGeneration);
     }
@@ -536,7 +568,7 @@ function replayCandidateWitness(
     'No strict candidate overlap',
   );
   assert.ok(
-    endSeconds + offset[0] > m.endedAt && endSeconds + offset[1] <= now,
+    endSeconds + offset[0] > completionAt && endSeconds + offset[1] <= now,
     'Receiver completion chronology',
   );
   // Interval exports omit polls which produced no interval. They can therefore
@@ -563,7 +595,7 @@ function replayCandidateWitness(
     'Independent clock cannot prove candidate overlap',
   );
   assert.ok(
-    endSeconds + independentLower > m.endedAt && endSeconds + independentUpper <= now,
+    endSeconds + independentLower > completionAt && endSeconds + independentUpper <= now,
     'Independent clock cannot prove candidate completion',
   );
   const age = newer.end.snapshotAgeUpperBoundSeconds,
