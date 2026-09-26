@@ -18,11 +18,11 @@ Resolve the next-profile plan exactly once from the candidate context when const
 
 ## Tasks
 
-- [ ] Add failing admission tests for production64byte accounting across short/full/mixed TS messages, actual audio-inclusive measured cost, shared validation failures, and unchanged laboratory values/schema. No fixed44 SRT counter may substitute for measured candidate packetization.
-- [ ] Add failing plan tests for next-profile selection, shared AAC configuration, bounded rates, unsupported4K rejection, immutable per-attempt selection and final binding. Verify failed plan construction leaves no allocated native owner or stuck policy registration.
-- [ ] Extract shared admission validation without weakening freshness, receipt, scope, interval conservation or revocation. Keep production and laboratory entry points explicit; continuous production creates no laboratory witness/history.
-- [ ] Implement bounded per-candidate plan selection and use it in the owned lease. Preserve existing fixed-plan API, laboratory ladder and cancellation/retirement behavior.
-- [ ] Run affected admission/owned suites and relevant streaming configuration tests, then fullFilmModel and arm64 Release simulator build. Preserve failed logs and join processes.
-- [ ] Commit code/tests; complete independent specification and quality review. Update the current plan/session log, then proceed to ordinary camera integration with the continuous delivery consumer and selected worker limits.
+- [x] Add failing admission tests for production64byte accounting across short/full/mixed TS messages, actual audio-inclusive measured cost, shared validation failures, and unchanged laboratory values/schema. No fixed44 SRT counter may substitute for measured candidate packetization.
+- [x] Add failing plan tests for next-profile selection, shared AAC configuration, bounded rates, unsupported4K rejection, immutable per-attempt selection and final binding. Verify failed plan construction leaves no allocated native owner or stuck policy registration.
+- [x] Extract shared admission validation without weakening freshness, receipt, scope, interval conservation or revocation. Keep production and laboratory entry points explicit; continuous production creates no laboratory witness/history.
+- [x] Implement bounded per-candidate plan selection and use it in the owned lease. Preserve existing fixed-plan API, laboratory ladder and cancellation/retirement behavior.
+- [x] Run affected admission/owned suites and relevant streaming configuration tests, then fullFilmModel and arm64 Release simulator build. Preserve failed logs and join processes.
+- [x] Commit code/tests; complete independent specification and quality review. Update the current plan/session log, then proceed to ordinary camera integration with the continuous delivery consumer and selected worker limits.
 
 No policy timing, SRT buffers, archive behavior, device provisioning or lab audit budgets change in this slice. Probe defaults require native/phone validation as part of the subsequent integration; passing unit tests does not establish mobile-network capacity or media quality.

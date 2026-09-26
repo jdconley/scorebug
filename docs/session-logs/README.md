@@ -8,6 +8,7 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 25 production probe sizing and cost](2026-09-25-production-probe-cost.md) — next-profile plans, explicit transport estimate, Release verification and ordinary camera integration handoff.
 - [September 25 production owned measurement](2026-09-25-production-owned-measurement.md) — Release lifecycle, bounded retries beyond laboratory limits, independent reviews and IPv4/IPv6 accounting research.
 - [September 25 continuous delivery control](2026-09-25-continuous-delivery-control.md) — bounded full-match control extraction and lossless audit-storage diagnosis.
 
