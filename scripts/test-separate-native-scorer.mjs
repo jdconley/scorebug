@@ -137,7 +137,12 @@ async function main() {
         'generic/platform=iOS',
         [`DEVELOPMENT_TEAM=${options.team}`, '-allowProvisioningUpdates'],
       ],
-      ['simulator', simDerived, 'generic/platform=iOS Simulator', ['CODE_SIGNING_ALLOWED=NO']],
+      [
+        'simulator',
+        simDerived,
+        'generic/platform=iOS Simulator',
+        ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES'],
+      ],
     ])
       await run(
         'xcodebuild',
