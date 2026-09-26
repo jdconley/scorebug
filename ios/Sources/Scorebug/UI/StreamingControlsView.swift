@@ -19,7 +19,7 @@ struct StreamingControlsView: View {
                 Text("Sending: \(applied.profileID) · \(applied.videoBitrate / 1_000) kbps")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("streaming.appliedQuality")
-                    .accessibilityValue("\(applied.profileID):\(applied.videoBitrate)")
+                    .accessibilityValue(Text(verbatim: "\(applied.profileID):\(applied.videoBitrate)"))
             }
             if let game = model.connectedGameID {
                 Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)

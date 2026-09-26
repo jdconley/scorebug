@@ -535,9 +535,9 @@ final class PhysicalStreamingTests: XCTestCase {
         let local = value(app, "streaming.localStatus")
         let worker = value(app, "streaming.workerStatus")
         let quality = value(app, "streaming.appliedQuality")
-        let allowedQuality = ["240p30:350000", "360p30:600000"]
+        let safeQuality = quality.range(of: #"^(240p30|360p30):[0-9,. ]{1,16}$"#, options: .regularExpression) != nil
         let report: [String: Any] = ["phase": phase, "durationSeconds": elapsed(app),
-                                   "appliedQuality": allowedQuality.contains(quality) ? quality : "unavailable-or-other",
+                                   "appliedQuality": safeQuality ? quality : "unavailable-or-other",
                                    "localStatus": statuses.contains(local) ? local : "other",
                                    "workerStatus": statuses.contains(worker) ? worker : "other",
                                    "exportReady": app.staticTexts["recordings.exportReady"].exists]
