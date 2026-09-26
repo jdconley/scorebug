@@ -6,13 +6,16 @@ export function createWorkerTerminalDiagnostics(
   log: Logger,
   flag: string | undefined,
   packetTimingFlag?: string,
+  decodedGeometryFlag?: string,
 ) {
   const enabled = flag === '1';
   const packetTimingEnabled = enabled && packetTimingFlag === '1';
+  const decodedGeometryEnabled = enabled && decodedGeometryFlag === '1';
   let ordinal = 0;
   return {
     enabled,
     packetTimingEnabled,
+    decodedGeometryEnabled,
     scope(input: { gameId: string; generation: number }): {
       log: Logger;
       onTerminal?: (terminal: PipelineTerminal) => void;
@@ -40,6 +43,7 @@ export function createWorkerTerminalDiagnostics(
           outputProgress,
           diagnostics,
           packetTiming,
+          decodedGeometry,
         }) => {
           scoped.info('worker_pipeline_terminal', {
             decodedVideo,
@@ -48,6 +52,46 @@ export function createWorkerTerminalDiagnostics(
             outputProgress,
             ...(diagnostics ? { diagnostics } : {}),
           });
+          if (decodedGeometryEnabled && decodedGeometry) {
+            const {
+              formatVersion,
+              diagnosticOnly,
+              timeBase,
+              maximumRuns,
+              ended,
+              invalidReason,
+              observedFrames,
+              runs,
+            } = decodedGeometry;
+            // One bounded scalar record per contiguous run; never raw stderr or
+            // unchecked metadata. Empty evidence still emits an invalid summary.
+            for (let index = 0; index < Math.max(1, runs.length); index++) {
+              const run = runs[index];
+              scoped.info('worker_decoded_geometry', {
+                formatVersion,
+                diagnosticOnly,
+                timeBase,
+                maximumRuns,
+                ended,
+                invalidReason,
+                observedFrames,
+                runCount: runs.length,
+                runIndex: run ? index : null,
+                ...(run
+                  ? {
+                      width: run.width,
+                      height: run.height,
+                      firstOrdinal: run.firstOrdinal,
+                      lastOrdinal: run.lastOrdinal,
+                      firstPTS: run.firstPTS,
+                      lastPTS: run.lastPTS,
+                      frames: run.frames,
+                      maximumPTSDelta: run.maximumPTSDelta,
+                    }
+                  : {}),
+              });
+            }
+          }
           if (packetTimingEnabled && packetTiming) {
             const {
               formatVersion,

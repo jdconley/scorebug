@@ -1,5 +1,8 @@
 // @ts-check
 import { spawn } from 'node:child_process';
+import { DecodedGeometry } from './decoded-geometry.mjs';
+/** @type {DecodedGeometry | undefined} */
+let decodedGeometry;
 import { WorkerPacketTiming } from './worker-packet-timing.mjs';
 /** @type {WorkerPacketTiming | undefined} */
 let packetTiming;
@@ -45,6 +48,7 @@ function finish(code, signal) {
   // A guardian exit is never substituted for the encoder's actual exit status.
   diagnostics?.end();
   packetTiming?.end();
+  decodedGeometry?.end();
   report(
     {
       event: 'exit',
@@ -52,6 +56,7 @@ function finish(code, signal) {
       signal,
       ...(diagnostics ? { diagnostics: diagnostics.snapshot() } : {}),
       ...(packetTiming ? { packetTiming: packetTiming.snapshot() } : {}),
+      ...(decodedGeometry ? { decodedGeometry: decodedGeometry.snapshot() } : {}),
     },
     true,
   );
@@ -80,7 +85,7 @@ process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 process.on('message', (message) => {
   const request =
-    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number, diagnostics?: boolean, packetTiming?: boolean }} */ (
+    /** @type {{ type: string, binary: string, args: string[], stopTimeoutMs: number, diagnostics?: boolean, packetTiming?: boolean, decodedGeometry?: boolean }} */ (
       message
     );
   if (request.type === 'stop') {
@@ -97,6 +102,8 @@ process.on('message', (message) => {
     diagnostics = request.diagnostics === true ? new EncoderDiagnostics() : undefined;
     packetTiming =
       diagnostics && request.packetTiming === true ? new WorkerPacketTiming() : undefined;
+    decodedGeometry =
+      diagnostics && request.decodedGeometry === true ? new DecodedGeometry() : undefined;
     encoder = spawn(request.binary, request.args, {
       stdio: ['ignore', 'inherit', diagnostics ? 'pipe' : 'ignore', 4, 5],
     });
@@ -104,6 +111,10 @@ process.on('message', (message) => {
     if (encoder.stderr && packetTiming) {
       encoder.stderr.on('data', (chunk) => packetTiming?.push(chunk));
       encoder.stderr.on('error', () => packetTiming?.failPipe());
+    }
+    if (encoder.stderr && decodedGeometry) {
+      encoder.stderr.on('data', (chunk) => decodedGeometry?.push(chunk));
+      encoder.stderr.on('error', () => decodedGeometry?.failPipe());
     }
     encoder.on('error', () => {
       report({ event: 'process_error' });
@@ -119,6 +130,7 @@ process.on('message', (message) => {
       drainTimer = setTimeout(() => {
         diagnostics?.timeOutDrain();
         packetTiming?.timeOutDrain();
+        decodedGeometry?.timeOutDrain();
         encoder?.stderr?.destroy();
         finish(code, signal);
       }, 250);

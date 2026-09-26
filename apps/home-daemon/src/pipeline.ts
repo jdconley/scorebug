@@ -1,3 +1,4 @@
+import type { DecodedGeometrySnapshot } from './decoded-geometry.mjs';
 import type { DecoderDeliveryPacket } from '@scorebug/protocol';
 import { DecoderDeliveryTelemetry, type DecoderDeliverySnapshot } from './decoder-delivery.js';
 import { DecoderCadenceTelemetry, type DecoderCadenceSnapshot } from './decoder-cadence.js';
@@ -76,7 +77,12 @@ function filterPath(value: string): string {
  */
 export function buildFfmpegArgs(
   spec: PipelineSpec,
-  options: { encoderTiming?: boolean; decoderDiagnostics?: boolean; packetTiming?: boolean } = {},
+  options: {
+    encoderTiming?: boolean;
+    decoderDiagnostics?: boolean;
+    packetTiming?: boolean;
+    decodedGeometry?: boolean;
+  } = {},
 ): string[] {
   if (!spec.publishUrl && !spec.recordingPath) throw new Error('missing_pipeline_output');
   // delay_moov preserves unequal first A/V timestamps via edit lists. An empty
@@ -164,8 +170,14 @@ export function buildFfmpegArgs(
   // A sink-only side branch observes every decoder frame without changing the
   // live branch's timebase (the cap uses its rounding tolerance). The simple
   // graph still has exactly one external input and one output.
+  const geometry =
+    options.decoderDiagnostics && options.decodedGeometry
+      ? 'showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,'
+      : '';
   const telemetry =
-    "metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]";
+    'metadata=mode=delete:key=scorebug.source,split[decoded][live];[decoded]settb=1/90000,' +
+    geometry +
+    "metadata=mode=add:key=scorebug.source:value=1,metadata=mode=print:key=scorebug.source:file='pipe\\:3':direct=1,metadata=mode=delete:key=scorebug.source,nullsink;[live]";
 
   // copyts preserves the decoder's transport clock; avoid_negative_ts only
   // normalizes outgoing mux timestamps onto a nonnegative timeline.
@@ -227,6 +239,7 @@ export type PipelineTerminal = Readonly<{
   telemetryEOF: boolean;
   diagnostics?: EncoderDiagnosticSnapshot;
   packetTiming?: WorkerPacketTimingSnapshot;
+  decodedGeometry?: DecodedGeometrySnapshot;
   /** Null means the guardian never reported the encoder status. */
   encoderExit: { code: number | null; signal: NodeJS.Signals | null } | null;
   outputProgress: PipelineProgress | null;
@@ -238,6 +251,8 @@ export type PipelineTerminal = Readonly<{
 export type PipelineOptions = {
   /** Test-only numeric packet prefixes; requires onTerminal, never health evidence. */
   packetTiming?: boolean;
+  /** Test-only pre-scale decoded dimensions; requires onTerminal. */
+  decodedGeometry?: boolean;
   /** Enable the bounded arrival collector and negotiated reporting packets. */
   deliveryTimeline?: boolean;
   /** Opt-in diagnostics requiring FFmpeg stats_enc_pre/post support. Never capacity evidence. */
@@ -335,6 +350,7 @@ export function startPipeline(
     ...options,
     decoderDiagnostics: Boolean(options.onTerminal),
     packetTiming: Boolean(options.onTerminal && options.packetTiming),
+    decodedGeometry: Boolean(options.onTerminal && options.decodedGeometry),
   });
   const encoderTiming = options.encoderTiming
     ? new EncoderTimingTelemetry(options.monotonicNow)
@@ -352,6 +368,7 @@ export function startPipeline(
   let telemetryEOF = false;
   let diagnostics: EncoderDiagnosticSnapshot | undefined;
   let packetTiming: WorkerPacketTimingSnapshot | undefined;
+  let decodedGeometry: DecodedGeometrySnapshot | undefined;
   let outputProgress: PipelineProgress | null = null;
   let terminalEmitted = false;
   let child: ChildProcess | undefined;
@@ -370,6 +387,7 @@ export function startPipeline(
         telemetryEOF,
         ...(diagnostics ? { diagnostics } : {}),
         ...(packetTiming ? { packetTiming } : {}),
+        ...(decodedGeometry ? { decodedGeometry } : {}),
         encoderExit: encoderExit ? { ...encoderExit } : null,
         outputProgress: outputProgress ? { ...outputProgress } : null,
         ...(encoderTiming ? { encoderTiming: encoderTiming.snapshot() } : {}),
@@ -460,11 +478,14 @@ export function startPipeline(
         signal: NodeJS.Signals | null;
         diagnostics?: EncoderDiagnosticSnapshot;
         packetTiming?: WorkerPacketTimingSnapshot;
+        decodedGeometry?: DecodedGeometrySnapshot;
       };
       if (event.event === 'exit') {
         encoderExit = { code: event.code, signal: event.signal };
         diagnostics = event.diagnostics;
         packetTiming = event.packetTiming;
+        decodedGeometry =
+          options.onTerminal && options.decodedGeometry ? event.decodedGeometry : undefined;
       } else if (event.event === 'sigterm' || event.event === 'sigkill') {
         log.info(`ffmpeg_${event.event}`, { gameId: spec.gameId });
       } else if (event.event === 'process_error' || event.event === 'spawn_failed') {
@@ -496,6 +517,7 @@ export function startPipeline(
       stopTimeoutMs,
       diagnostics: Boolean(options.onTerminal),
       packetTiming: Boolean(options.onTerminal && options.packetTiming),
+      decodedGeometry: Boolean(options.onTerminal && options.decodedGeometry),
     });
   } catch {
     log.error('ffmpeg_spawn_failed', { gameId: spec.gameId });

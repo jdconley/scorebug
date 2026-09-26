@@ -262,3 +262,77 @@ it('emits bounded scoped packet prefixes separately from terminal media history'
     'packetTiming',
   );
 });
+
+it('gates geometry by both exact flags and emits only scoped bounded numeric runs', async () => {
+  const { DecodedGeometry } = await import('../src/decoded-geometry.mjs');
+  for (const [flag, geometryFlag, enabled] of [
+    [undefined, '1', false],
+    ['1', undefined, false],
+    ['1', 'true', false],
+    ['1', '1', true],
+  ] as const) {
+    const f = fixture();
+    const factory = (diagnostics.createWorkerTerminalDiagnostics as any)(
+      f.log,
+      flag,
+      undefined,
+      geometryFlag,
+    );
+    expect(factory.decodedGeometryEnabled).toBe(enabled);
+    const parser = new DecodedGeometry();
+    parser.end();
+    const geometry: any = parser.snapshot();
+    geometry.secret = 'SECRET';
+    const terminal: any = {
+      decodedGeometry: geometry,
+      decodedVideo: {},
+      telemetryEOF: true,
+      encoderExit: { code: 0, signal: null },
+      outputProgress: null,
+    };
+    factory.scope({ gameId: 'game', generation: 3 }).onTerminal?.(terminal);
+    if (enabled) {
+      const row = (f.records as any[]).find((r) => r.msg === 'worker_decoded_geometry');
+      expect(row).toMatchObject({
+        gameId: 'game',
+        generation: 3,
+        pipelineOrdinal: 1,
+        runIndex: null,
+        runCount: 0,
+        observedFrames: 0,
+        invalidReason: 'time_base',
+        ended: true,
+      });
+      geometry.runs = Array.from({ length: 64 }, (_, i) => ({
+        width: 1280,
+        height: 720,
+        firstOrdinal: i,
+        lastOrdinal: i,
+        firstPTS: i * 3000,
+        lastPTS: i * 3000,
+        frames: 1,
+        maximumPTSDelta: 0,
+        secret: 'SECRET',
+      }));
+      geometry.observedFrames = 64;
+      factory.scope({ gameId: 'game', generation: 4 }).onTerminal(terminal);
+      const rows = (f.records as any[]).filter(
+        (r) => r.msg === 'worker_decoded_geometry' && r.generation === 4,
+      );
+      expect(rows).toHaveLength(64);
+      expect(rows.map((r) => r.runIndex)).toEqual(Array.from({ length: 64 }, (_, i) => i));
+      expect(
+        rows.every(
+          (r) => r.pipelineOrdinal === 2 && r.runCount === 64 && JSON.stringify(r).length < 4096,
+        ),
+      ).toBe(true);
+    } else
+      expect((f.records as any[]).some((r) => r.msg === 'worker_decoded_geometry')).toBe(false);
+    expect(JSON.stringify(f.records)).not.toContain('SECRET');
+    expect(
+      (f.records as any[])
+        .filter((r) => r.msg === 'worker_pipeline_terminal')
+        .every((r) => !('decodedGeometry' in r)),
+    ).toBe(true);
+  }
+});

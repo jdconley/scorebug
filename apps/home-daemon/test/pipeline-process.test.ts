@@ -687,6 +687,7 @@ it.each([false, true])(
     const terminals: unknown[] = [];
     const pipeline = startPipeline(fixture.spec, fixture.log, {
       packetTiming,
+      decodedGeometry: true,
       onTerminal: (value) => terminals.push(value),
     });
     try {
@@ -698,6 +699,7 @@ it.each([false, true])(
       expect(terminals).toHaveLength(1);
       expect(terminals[0]).toMatchObject({
         diagnostics: { ended: true, drainTimedOut: true, pipeError: false },
+        decodedGeometry: { ended: true, invalidReason: 'drain_timeout' },
       });
       if (packetTiming)
         expect(terminals[0]).toMatchObject({
@@ -763,3 +765,33 @@ it('joins bounded packet timing through real guardian stderr without leaking raw
     await fixture.cleanup();
   }
 });
+
+it.each([false, true])(
+  'joins geometry through owned guardian stderr only when terminal enabled=%s',
+  async (enabled) => {
+    const text =
+      '[showinfo@scorebug_geometry @ 0xabc] [info] config in time_base: 1/90000, frame_rate: 30/1\n[showinfo@scorebug_geometry @ 0xabc] [info] n:0 pts:0 pts_time:0 duration:3000 duration_time:0.0333333 fmt:yuv420p cl:left sar:1/1 s:1280x720 i:P iskey:1 type:I\nSECRET_URL\n';
+    const fixture = await childFixture(
+      `require('node:fs').writeSync(2, ${JSON.stringify(text)}); process.exitCode=23;`,
+    );
+    try {
+      const terminals: any[] = [];
+      const pipeline = startPipeline(fixture.spec, fixture.log, {
+        decodedGeometry: true,
+        ...(enabled ? { onTerminal: (value: any) => terminals.push(value) } : {}),
+      } as any);
+      expect(await boundedExit(pipeline)).toEqual({ code: 23, signal: null });
+      if (enabled)
+        expect(terminals[0].decodedGeometry).toMatchObject({
+          ended: true,
+          invalidReason: null,
+          observedFrames: 1,
+          runs: [{ width: 1280, height: 720, frames: 1 }],
+        });
+      else expect(terminals).toEqual([]);
+      expect(JSON.stringify(terminals)).not.toContain('SECRET');
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

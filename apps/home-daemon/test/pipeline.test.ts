@@ -229,3 +229,23 @@ it('rejects pipelines with no output', () => {
     'missing_pipeline_output',
   );
 });
+
+it('gates decoded geometry and inserts it only on the existing pre-scale side branch', () => {
+  const spec = {
+    ...baseSpec,
+    nvenc: false,
+    profile: { width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },
+  };
+  const ordinary = buildFfmpegArgs(spec);
+  expect(buildFfmpegArgs(spec, { decodedGeometry: true } as any)).toEqual(ordinary);
+  const args = buildFfmpegArgs(spec, { decoderDiagnostics: true, decodedGeometry: true } as any);
+  const graph = args[args.indexOf('-vf') + 1]!;
+  expect(graph).toContain(
+    '[decoded]settb=1/90000,showinfo@scorebug_geometry=checksum=0:udu_sei_as_ascii=0,metadata=mode=add',
+  );
+  expect(graph.split('showinfo')).toHaveLength(2);
+  expect(graph.split(';[live]')[1]).not.toContain('showinfo');
+  expect(graph).toContain('scale=1920:1080');
+  expect(args[args.indexOf('-reinit_filter:v:0') + 1]).toBe('0');
+  expect(args[args.indexOf('-loglevel') + 1]).toBe('repeat+level+info');
+});
