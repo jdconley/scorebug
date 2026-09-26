@@ -27,6 +27,9 @@ commands joined; no lab/camera started. Evidence labels `phone-720-build-2026092
 `watch-720-build-20260926`, `watch-720-readiness-20260926` under
 `physical-paired-current-mtc1mc54`. A new async question asks the user to wake/unlock
 the Watch itself on their wrist near the Mac. Phone automation approval persists.
+Fresh read-only device inventory during the correlation session now reports both
+physical devices disconnected and DDI services unavailable; see
+`devices-correlation-readiness-20260926.json` in the same artifact directory.
 Do not repeat unchanged while waiting. Use retained paired helper after readiness.
 
 Decoded geometry dependency is reviewed and committed as `038a4ec`; its jobs
@@ -37,16 +40,14 @@ Root verified66manifest hashes and independently recomputed ranges from ffprobe.
 See `decoded-geometry-validation/root-verification.json`. Source recipe/native
 720 remains coded-geometry evidence only; production ladder is still240/360.
 
-**ACTIVE implementation:** `/root/applied_transition_implementation` owns [pipeline geometry correlation](../superpowers/plans/2026-09-26-pipeline-geometry-correlation.md) has read-only design
-approval. Supervisor passes existing private readUUID through optional typed third
-callback metadata; worker and authenticated publicationStatus derive the same
-domain-separated SHA256 key. Raw private ID remains private. Swift publication
-field is optional/backward-compatible. Native accepted mapping retains key plus
-signed exact decodedPTS endpoints/count atomically; include key in source hash
-only when present. Validate complete4096budget with protected appliedTransition.
-One source slice, tests and spec→quality reviews before commit.
+Correlation is reviewed and committed as `026189c`. Root verified all 78 manifest
+entries and 17 reviewed source blobs. Protocol 9, control plane 609, worker 475,
+Core 503 and affected app 276 tests pass; Node typechecks/builds and Debug UI/Release
+builds pass. Diagnostic pressure/phase union is 4053/4056 bytes, protected-only 2734.
+See `pipeline-geometry-correlation-validation/root-verification.json`. No jobs
+remained before starting the next source slice.
 
-Then [ordinary recovery720 integration](../superpowers/plans/2026-09-26-ordinary-720-recovery.md): append production7203Mbps, explicit new
+**ACTIVE implementation:** `/root/applied_transition_implementation` owns [ordinary recovery720 integration](../superpowers/plans/2026-09-26-ordinary-720-recovery.md): append production7203Mbps, explicit new
 XCTest/Node lane, four confirmed climbs360/720 before and after750kbps cap. Keep
 old recovery lane meaningful as360prefix on same production app; no policyfixture
 selector. Actual ACK-bound appliedTransition must expose nativeformat/encoder/PTS
@@ -97,7 +98,7 @@ Committed and reviewed components:
 - `266c8a5`: independent native phase/transport checkers,29tests, both reviews. Leaves explicitly do not qualify media/full recovery.
 - `a83d18e`: explicit ordinary recovery runner/native UI lane, current source PTS-to-uptime mapping, stable source-scope digest;17runner+193app tests, DebugUI and Release arm64 simulator builds, both reviews.2976/4096byte populated diagnostic. Failed timing checks retain failure through a separate90second stop/export budget; recording limit remains540seconds.
 
-See [integration plan](../superpowers/plans/2026-09-26-ordinary-recovery-integration.md). One instrumented ordinary recovery run passes; the earlier run failed (above). The invocation is:
+See [integration plan](../superpowers/plans/2026-09-26-ordinary-recovery-integration.md). Two consecutive instrumented ordinary recovery runs pass; the earlier run failed (above). The invocation is:
 
 ```sh
 node scripts/test-ordinary-native-app.mjs --host 192.168.1.130 --source /Users/jd/.codex/worktrees/scorebug-local-validation/artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov --lane recovery

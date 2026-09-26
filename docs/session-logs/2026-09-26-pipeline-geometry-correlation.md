@@ -39,3 +39,36 @@ claiming an exhaustive2second-sampled chain. Geometry interval endpoints must
 belong to the same contiguous expected-resolution run, rejecting a720→240→720
 sandwich. Startup has no profile-change appliedTransition receipt and instead
 requires actual minimum decoder geometry. Existing timing/policy stays unchanged.
+
+## Hardware revalidation
+
+One bounded read-only `devicectl list devices` joined0 during implementation.
+`physical-paired-current-mtc1mc54/devices-correlation-readiness-20260926.json`
+reports both phone00008140-001474110C13001C and Watch00008310-0000B2CE3E08A01E
+paired but disconnected, with DDI services unavailable. This is stronger current
+connection evidence than the earlier generic unlock/preparation message. No
+capture/rebuild/repeated device-info timeout was started. Existing readiness
+question remains pending; phone automation approval persists.
+
+## Correlation verification and commit
+
+The source slice is committed as `026189c` after independent specification and
+quality approvals. Both reviewers matched the same 17 source/test blobs to
+manifest SHA-256 `ca0844c98554165c6ad5d8772430897a5722b96fa649c6163175bfd4b335eb99`.
+Root independently verified all 78 manifest entries, source Git blobs, command
+exit codes, test/build success markers and the diagnostic budget. Evidence:
+`artifacts/qa/pipeline-geometry-correlation-validation/root-verification.json`.
+
+Final checks: protocol 9, control plane 609, worker 475 distinct tests (474 in the
+default run plus its explicitly enabled recording test), Swift Core 503 and
+276 affected app tests. Node typechecks/builds, Debug UI build-for-testing and
+Release device build passed. Pressure diagnostics measured 4053 bytes; the
+conservative phase union measured 4056/4096 bytes, with 2734 protected bytes.
+Production driver, ladder, thresholds and timing were unchanged. Failed red tests,
+fixture-policy experiment and initial TypeScript optional-property build failure
+remain in the manifest; their corrected final runs are separately identified.
+
+No jobs remained at commit. The actual 720p integration is now delegated as the
+next cohesive source slice. Root owns its documentation and subsequent live run.
+Fresh local preflight: Docker has no running containers, LAN is 192.168.1.130,
+installed iOS/watchOS 26.2 runtimes remain available, and disk has 222 GiB free.

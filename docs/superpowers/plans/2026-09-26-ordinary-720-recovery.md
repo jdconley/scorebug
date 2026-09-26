@@ -10,7 +10,7 @@
 
 ## Current prerequisites and limits
 
-Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is being implemented separately. Do not start this slice until its tests/reviews/commit are complete. Existing production ladder is240/360. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
+Native720recipe43f2229 and decodedgeometry038a4ec are reviewed and committed. The [identity correlation dependency](2026-09-26-pipeline-geometry-correlation.md) is reviewed and committed as `026189c`. This integration is now in progress; actual capture follows its source reviews and commit. Existing production ladder is240/360. Two consecutive ordinary360recovery runs pass native/actualtransport/three-output media gates; earlier rollback remains unexplained.
 
 This is a higher-rung checkpoint, not full-match/hardware/network-route/remote-host completion.540p,1080p and original-quality4K support/qualification remain tracked by the main delivery plan. Physical paired acceptance takes priority when the Watch is ready; no heavy jobs during capture.
 
