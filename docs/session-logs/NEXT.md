@@ -4,7 +4,7 @@
 
 Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Goal active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-measured-relative-pacing.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-runner-network-setting.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
 
 ## Latest experiment
 
@@ -20,6 +20,7 @@ Run `separate-native-scorer-kfuQEO`, lab `device-lab-uZky2H`: durable six-score/
 
 1. User asked to point the rear camera at a lit scene with movement; no response yet. Do not repeat unchanged dark capture. After repositioning, the same reviewed lane can verify visible motion; use only the new export UUID for collection.
 2. Physical recovery runner LAN access remains denied. Short diagnostic `physical-recovery-2UDoQf` reports NSURLError-1009/CFStream50 and explicit `localNetworkDenied`; the Scorebug app itself connects. User was asked to enable ScorebugAppUITests-Runner under Settings → Privacy & Security → Local Network, or report missing/already enabled. After a state change run `scripts/test-physical-recovery.mjs --device … --host … --lane network-probe`; only if both HTTP checks pass run full recovery720. See [physical diagnosis](2026-09-26-physical-recovery.md). Do not reset privacy, delete Scorebug or disable firewall.
+   Read-only native Settings inspection `runner-network-setting-InECny` could not access the Settings list within its bound; state remains unknown, not missing/disabled. Scorebug was restored; no setting/capture changes. Final opt-in source and signed build pass review/compilation; physical diagnostic itself fails. No further unchanged Settings navigation retries. Eight execution inputs remain unchanged and all jobs joined. See [inspection evidence](2026-09-26-runner-network-setting.md).
 3. Combined physical Watch scoring now reaches the unlocked Watch runner. Fresh current signed phone/Watch builds pass. Run `physical-paired-live-KdfdC1` failed before its test body with UI automation initialization timeout; no phone capture started, all jobs joined and14 input hashes unchanged. User was asked whether a new prompt is visible (approve if shown, otherwise report none). Do not repeat unchanged or infer a Watch lock. See [latest Watch session](2026-09-26-watch-approved-retry.md). Separate Ultra2 scoring baseline passes; combined acceptance does not.
 
 ## Remaining delivery gaps

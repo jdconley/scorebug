@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 26 runner network setting](2026-09-26-runner-network-setting.md) — reviewed read-only phone diagnostic; Settings remains inaccessible to the bounded test and permission state is unknown.
+
 - [September 26 paired Watch approval retry](2026-09-26-watch-approved-retry.md) — signed builds pass; unlocked Watch runner launches but UI automation initialization times out before capture.
 
 - [September 26 measured relative pacing](2026-09-26-measured-relative-pacing.md) — configured pacing comparison with clean captured media but failed unconstrained climb.
