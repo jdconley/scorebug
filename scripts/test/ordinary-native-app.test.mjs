@@ -17,6 +17,38 @@ import {
   recoverOrdinaryOwnership,
 } from '../test-ordinary-native-app.mjs';
 const interfaces = { en0: [{ address: '192.168.1.130', internal: false }] };
+test('ordinary upload budget comparison is explicit and restricted to recovery720', () => {
+  const base = ['--host', '192.168.1.130', '--source', '/p.mov'];
+  assert.deepEqual(
+    ordinaryNativeOptions(
+      [...base, '--lane', 'recovery720', '--publish-peer-latency-ms', '700'],
+      interfaces,
+    ),
+    {
+      host: '192.168.1.130',
+      source: '/p.mov',
+      encoder: 'software',
+      lane: 'recovery720',
+      publishPeerLatencyMs: 700,
+    },
+  );
+  for (const lane of [undefined, 'phone', 'paired', 'recovery']) {
+    assert.throws(() =>
+      ordinaryNativeOptions(
+        [...base, ...(lane ? ['--lane', lane] : []), '--publish-peer-latency-ms', '700'],
+        interfaces,
+      ),
+    );
+  }
+  for (const value of ['119', '2001', '7e2', '0700', '700.1']) {
+    assert.throws(() =>
+      ordinaryNativeOptions(
+        [...base, '--lane', 'recovery720', '--publish-peer-latency-ms', value],
+        interfaces,
+      ),
+    );
+  }
+});
 test('selects the concrete destination config when generic Watch build left a phone-named sibling', () => {
   const files = [
     'Scorebug_iphonesimulator26.2-arm64.xctestrun',

@@ -3,6 +3,32 @@ import assert from 'node:assert/strict';
 import { deviceLabOptions, deviceLabRelayArgs } from '../device-lab.mjs';
 
 const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
+test('explicit publishing recovery budget is bounded and default remains unset', async () => {
+  const module = await import('../device-lab.mjs');
+  const base = ['--host', '192.168.1.130'];
+  for (const milliseconds of [120, 700, 2000]) {
+    assert.equal(
+      deviceLabOptions([...base, '--publish-peer-latency-ms', String(milliseconds)], interfaces)
+        .publishPeerLatencyMs,
+      milliseconds,
+    );
+  }
+  assert.equal(deviceLabOptions(base, interfaces).publishPeerLatencyMs, undefined);
+  for (const value of ['119', '2001', '700.1', '0700', '7e2', 'NaN', '']) {
+    assert.throws(() =>
+      deviceLabOptions([...base, '--publish-peer-latency-ms', value], interfaces),
+    );
+  }
+  assert.equal(typeof module.deviceLabPublishEnvironment, 'function');
+  assert.deepEqual(module.deviceLabPublishEnvironment(undefined), {
+    SRT_PUBLISH_PEER_LATENCY_MS: undefined,
+  });
+  assert.deepEqual(module.deviceLabPublishEnvironment(700), { SRT_PUBLISH_PEER_LATENCY_MS: '700' });
+  for (const value of [null, '700', 119, 2001, NaN, {}, []]) {
+    assert.throws(() => module.deviceLabPublishEnvironment(value));
+    await assert.rejects(module.startDeviceLab({ publishPeerLatencyMs: value }), /recovery budget/);
+  }
+});
 test('device lab requires an explicit assigned private LAN address', () => {
   for (const host of ['0.0.0.0', '127.0.0.1', '8.8.8.8', '192.168.1.131', 'localhost', '::1']) {
     assert.throws(() => deviceLabOptions(['--host', host], interfaces));

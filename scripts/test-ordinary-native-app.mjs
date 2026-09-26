@@ -30,15 +30,25 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     const key = args[index],
       value = args[index + 1];
     assert(
-      ['--host', '--source', '--encoder', '--lane'].includes(key) && value && !values.has(key),
+      ['--host', '--source', '--encoder', '--lane', '--publish-peer-latency-ms'].includes(key) &&
+        value &&
+        !values.has(key),
       'Invalid or duplicate ordinary simulator option',
     );
     values.set(key, value);
   }
   const source = values.get('--source');
   assert(source && isAbsolute(source), 'Supply --source with the absolute prepared input path');
-  const { host, encoder } = deviceLabOptions(
-    ['--host', values.get('--host'), '--encoder', values.get('--encoder') ?? 'software'],
+  const { host, encoder, publishPeerLatencyMs } = deviceLabOptions(
+    [
+      '--host',
+      values.get('--host'),
+      '--encoder',
+      values.get('--encoder') ?? 'software',
+      ...(values.has('--publish-peer-latency-ms')
+        ? ['--publish-peer-latency-ms', values.get('--publish-peer-latency-ms')]
+        : []),
+    ],
     interfaces,
   );
   const lane = values.get('--lane');
@@ -46,7 +56,17 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
     lane === undefined || ['phone', 'paired', 'recovery', 'recovery720'].includes(lane),
     'Unsupported ordinary lane',
   );
-  return { host, source, encoder, ...(lane === undefined ? {} : { lane }) };
+  assert(
+    publishPeerLatencyMs === undefined || lane === 'recovery720',
+    'Upload recovery budget comparison requires recovery720',
+  );
+  return {
+    host,
+    source,
+    encoder,
+    ...(lane === undefined ? {} : { lane }),
+    ...(publishPeerLatencyMs === undefined ? {} : { publishPeerLatencyMs }),
+  };
 }
 
 export function ordinaryLaneConfiguration(lane) {
@@ -457,6 +477,9 @@ async function main() {
         host: options.host,
         encoder: options.encoder,
         duration: 600,
+        ...(options.publishPeerLatencyMs === undefined
+          ? {}
+          : { publishPeerLatencyMs: options.publishPeerLatencyMs }),
         ...(recovery ? { publisherRecovery: true } : {}),
         ...(recovery720 ? { decodedGeometry: true } : {}),
       },
@@ -719,6 +742,9 @@ os.chmod(destination, 0o600)
       watch,
       pairId,
       lane: options.lane ?? 'phone',
+      ...(options.publishPeerLatencyMs === undefined
+        ? {}
+        : { requestedPublishPeerLatencyMs: options.publishPeerLatencyMs }),
       labArtifact: lab?.artifact,
       workflowPassed,
       mediaQualified: false,

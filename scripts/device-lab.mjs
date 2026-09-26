@@ -24,7 +24,9 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
     const key = args[index],
       value = args[index + 1];
     assert(
-      ['--host', '--duration', '--encoder'].includes(key) && value && !values.has(key),
+      ['--host', '--duration', '--encoder', '--publish-peer-latency-ms'].includes(key) &&
+        value &&
+        !values.has(key),
       'Invalid or duplicate lab option',
     );
     values.set(key, value);
@@ -49,7 +51,32 @@ export function deviceLabOptions(args, interfaces = networkInterfaces()) {
   assert(/^[1-9][0-9]*$/.test(durationText) && duration <= 7200, 'Duration must be 1–7200 seconds');
   const encoder = values.get('--encoder') ?? 'software';
   assert(['software', 'videotoolbox'].includes(encoder), 'Unsupported lab encoder');
-  return { host, duration, encoder };
+  const latencyText = values.get('--publish-peer-latency-ms');
+  if (latencyText !== undefined)
+    assert(/^[1-9][0-9]*$/.test(latencyText), 'Invalid publishing recovery budget');
+  const publishPeerLatencyMs = latencyText === undefined ? undefined : Number(latencyText);
+  deviceLabPublishEnvironment(publishPeerLatencyMs);
+  return {
+    host,
+    duration,
+    encoder,
+    ...(publishPeerLatencyMs === undefined ? {} : { publishPeerLatencyMs }),
+  };
+}
+
+/** Explicit server-side upload setting; never inherited from the calling shell. */
+export function deviceLabPublishEnvironment(publishPeerLatencyMs) {
+  assert(
+    publishPeerLatencyMs === undefined ||
+      (Number.isInteger(publishPeerLatencyMs) &&
+        publishPeerLatencyMs >= 120 &&
+        publishPeerLatencyMs <= 2000),
+    'Invalid publishing recovery budget',
+  );
+  return {
+    SRT_PUBLISH_PEER_LATENCY_MS:
+      publishPeerLatencyMs === undefined ? undefined : String(publishPeerLatencyMs),
+  };
 }
 
 /** Docker arguments for the ordinary local relay, with a loopback-only management API. */
@@ -179,6 +206,7 @@ export function deviceLabDiagnosticEnvironment(decodedGeometry) {
 export async function startDeviceLab(options, { signal } = {}) {
   signal?.throwIfAborted();
   const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
+  const publishEnvironment = deviceLabPublishEnvironment(options.publishPeerLatencyMs);
   assert(
     options.publisherRecovery === undefined || typeof options.publisherRecovery === 'boolean',
     'Invalid publisher recovery selection',
@@ -339,6 +367,7 @@ export async function startDeviceLab(options, { signal } = {}) {
       INGEST_HOST: options.host,
       INGEST_PORT: String(ingestPort),
       ...publisherEnvironment,
+      ...publishEnvironment,
       RELAY_API_URL: `http://127.0.0.1:${relayPort}`,
       RELAY_API_USERNAME: 'lab-admin',
       RELAY_API_PASSWORD: relayPassword,
@@ -396,6 +425,9 @@ export async function startDeviceLab(options, { signal } = {}) {
       artifact,
       encoder: options.encoder,
       durationSeconds: options.duration,
+      ...(options.publishPeerLatencyMs === undefined
+        ? {}
+        : { requestedPublishPeerLatencyMs: options.publishPeerLatencyMs }),
       mediaQualified: false,
     };
     await writeFile(join(artifact, 'setup.json'), JSON.stringify(setup, null, 2) + '\n', {

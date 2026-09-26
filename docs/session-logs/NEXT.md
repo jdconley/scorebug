@@ -6,17 +6,19 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout.
-HEAD1941623; reviewed source8495c79. No PR requested.
+HEADaedd639; reviewed app source8495c79. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-pipeline-geometry-correlation.md)
+owns goals/status/todos. [Current session](2026-09-26-ordinary-transport-budget.md)
 owns chronology and artifacts. Preserve Downloads originals, user recordings and
 failed evidence. No runtime downloads, unrelated simulator deletion, or heavy
 build/media jobs during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Physical readiness
 
-All jobs joined; no capture, build or media analysis is active.
+All capture/build/media jobs joined. New explicit lab upload-budget option passes25
+focused tests and spec review; quality review pending. Commit source before the
+700ms comparison. App policy/queues/decoder deadline unchanged.
 Physical paired attempt `physical-paired-live-iuYDle` / `device-lab-pcgG8w`,
 source1941623, stopped before camera capture: Xcode waited for Watch unlock and
 never reached the companion-offer wait within240s. Root interrupted only its owned
