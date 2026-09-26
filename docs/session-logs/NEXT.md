@@ -6,17 +6,17 @@ Complete native phone recording/scoring and paired Watch scoring, progressive
 SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlay MP4.
 The goal remains active. Use `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`; never edit the original checkout. Runtime source
-HEADf100f36 plus reviewed earlier-pressure-sampling changes; no capture active at this checkpoint. No PR requested.
+Runtime source5ee827a; all capture/build/analysis jobs joined. No PR requested.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
-owns goals/status/todos. [Current session](2026-09-26-ordinary-source-cadence-pacing.md)
+owns goals/status/todos. [Current session](2026-09-26-earlier-pressure-sampling.md)
 owns chronology and artifacts. Preserve Downloads originals and failed evidence.
 No runtime downloads, unrelated simulator deletion, or heavy builds/media analysis
 during capture. Sign Conley Chaos LLC B222J9J7B8.
 
 ## Immediate priorities
 
-Earlier pressure sampling implementation is reviewed: shared app100ms health sleep, both scalar histories160points; no policy/threshold/evidence-window changes. Media79/Core22tests and DebugUI/Release builds pass. App2928 joined0; all validation jobs joined. Ready for the same recovery720 capture. Source f100f36 plus seven reviewed Swift files. Plan: `../superpowers/plans/2026-09-26-earlier-pressure-sampling.md`. Current log: `2026-09-26-earlier-pressure-sampling.md`.
+Earlier pressure sampling5ee827a is reviewed and tested (259app/79Media/22Core, DebugUI/Release). Runxjv6RI/labJeoRqF passes native/transport/geometry but fails live media:91missingIDs3799→3891,21audio gaps,3.067s maxgap. Clean archive10250sequential30fps/no audio gaps,70waveform+clean-glyph probes pass;128frame tail. Full failure hashes preserved.209packetoverflow,first713ms,peak92612bytes/100ms,maxqueue2793ms. Only revision4 sampled: evaluation1533–1558ms,ACK1993–2018ms,application459.5ms. No inferred revision3. Earlier checking is insufficient; next execute the bounded native resize/rate-only/rate-then-resize comparison in `../superpowers/plans/2026-09-26-native-downshift-output-comparison.md`. Do not prepend a production bitrate write or repeat full capture without new evidence. Plan: `../superpowers/plans/2026-09-26-earlier-pressure-sampling.md`; log: `2026-09-26-earlier-pressure-sampling.md`.
 
 1. User confirmed automation approval/devices ready, but fresh paired attempt8qxiOg again reports Watch locked. Root stopped exact owned PID19966 and joined13680exit1; no phone capture started. LabQAAoGp clean shutdown, failures[]. Await actual Watch unlock before another physical attempt.
 2. Collapse diagnosis is complete enough for the next intervention. Run
