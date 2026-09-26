@@ -89,6 +89,15 @@ final class ScoringModel: ObservableObject {
     private var workerStatusEpoch = UUID()
     @Published private var workerStatus: WorkerStatusValue?
     private var describedOutcomeId: String?
+    // A point can join this one bounded refresh, but never cancels or replaces it.
+    private var refreshTask: Task<Bool, Never>?
+    private var pointReserved = false
+    private struct PointContext: Equatable {
+        let connection: WorkerStatusIdentity
+        let matchId: String
+        let revision: Int
+        let scorer: MatchScorer
+    }
     private var didRestore = false
     private let keychain: any ScoringSetupStorage
     private let pendingStore: any PendingCommandStore
@@ -115,6 +124,16 @@ final class ScoringModel: ObservableObject {
     var pending: Bool { state?.pending != nil }
     var ownsScoring: Bool { snapshot?.scorer.deviceId == setup?.deviceId }
     var canScore: Bool { !busy && !pending && ownsScoring && snapshot?.status == .active }
+    private var pointContext: PointContext? {
+        guard coordinator != nil, !pending, !unresolvedStorage, ownsScoring,
+              let snapshot, snapshot.status == .active,
+              let connection = workerStatusIdentity else { return nil }
+        return PointContext(connection: connection, matchId: snapshot.id,
+                            revision: snapshot.revision, scorer: snapshot.scorer)
+    }
+    var canAwardPoint: Bool {
+        !pointReserved && (!busy || refreshTask != nil) && pointContext != nil
+    }
     var canChangeSetup: Bool {
         guard didRestore, !busy, !pending, !hasPendingCreation else { return false }
         do { return try pendingStore.load() == nil } catch { return false }
@@ -140,6 +159,7 @@ final class ScoringModel: ObservableObject {
         coordinator = MatchCommandCoordinator(client: try client(value), credential: credential, endpointScope: scope, store: pendingStore)
         connected = true
         state = try await coordinator?.recover()
+        describeOutcome()
     }
     func wake() async {
         if didRestore { await refresh(); return }
@@ -265,12 +285,42 @@ final class ScoringModel: ObservableObject {
         do { state = try await coordinator.submit(operation); describeOutcome() }
         catch { await report(error) }
     }
+    func sendPoint(side: MatchSide) async {
+        guard canAwardPoint, let coordinator, let context = pointContext, !Task.isCancelled else {
+            showMessage("The point could not be sent. Check the score and try again. Nothing was sent.")
+            return
+        }
+        // Reserve before suspension. Refresh completion must retain busy ownership
+        // until this point either submits through the durable outbox or declines.
+        pointReserved = true
+        busy = true
+        showMessage(nil)
+        defer { pointReserved = false; busy = refreshTask != nil }
+        let refreshed = await refreshTask?.value ?? true
+        guard refreshed, !Task.isCancelled, self.coordinator === coordinator,
+              pointContext == context else {
+            showMessage("The score or connection changed, or the update did not finish. Check the score and try again. Nothing was sent.")
+            return
+        }
+        do { state = try await coordinator.submit(.awardPoint(side: side)); describeOutcome() }
+        catch { await report(error) }
+    }
     func refresh() async {
         guard !busy, let coordinator else { return }
         busy = true
-        defer { busy = false }
-        do { state = try await coordinator.recover(); describeOutcome() }
-        catch { await report(error) }
+        let task = Task { @MainActor in
+            defer { refreshTask = nil; busy = pointReserved }
+            do {
+                state = try await coordinator.recover()
+                describeOutcome()
+                return true
+            } catch {
+                await report(error)
+                return false
+            }
+        }
+        refreshTask = task
+        _ = await task.value
     }
     private func invalidateWorkerStatus() {
         workerStatusEpoch = UUID()

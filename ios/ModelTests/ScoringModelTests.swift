@@ -132,6 +132,163 @@ final class ScoringModelTests: XCTestCase {
         XCTAssertEqual(model.message, "Connect to a match, then try the action again. Nothing was sent.")
     }
 
+    func testPointDuringHeldRefreshRemainsEligibleAndSubmitsOnceAfterJoin() async throws {
+        let server = ModelServer()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = JSONFilePendingCommandStore(url: directory.appendingPathComponent("pending.json"))
+        let model = makeModel(SetupStore(saved(credential: credential)), server: server, pendingStore: outbox)
+        await model.wake()
+        await server.holdNextSnapshot()
+        let refresh = Task { await model.refresh() }
+        await server.waitUntilHeld()
+        XCTAssertTrue(model.canAwardPoint, "A background snapshot must not disable an otherwise valid point")
+        let point = Task { await model.sendPoint(side: .home) }
+        await waitForPointReservation(model)
+        XCTAssertFalse(model.canScore)
+        XCTAssertFalse(model.canChangeSetup)
+        await model.sendPoint(side: .away)
+        XCTAssertTrue(model.message?.contains("Nothing was sent") == true)
+        await model.send(.endMatch(reason: "Finished"))
+        await model.connect()
+        model.showSetup()
+        await model.refresh()
+        let before = await server.commandApplications
+        XCTAssertEqual(before, 0)
+        XCTAssertNil(try outbox.load())
+        await server.release()
+        await refresh.value
+        await point.value
+        let applications = await server.commandApplications
+        XCTAssertEqual(applications, 1)
+        let pending = try XCTUnwrap(outbox.load())
+        XCTAssertEqual(pending.command.operation, .awardPoint(side: .home))
+        await model.refresh()
+        XCTAssertNil(try outbox.load())
+        XCTAssertEqual(model.snapshot?.score.home, 1)
+        let requests = await server.requests
+        XCTAssertEqual(requests.filter { $0.httpMethod == "POST" }.count, 1)
+        XCTAssertEqual(requests.last?.url?.lastPathComponent, pending.command.commandId)
+    }
+
+    func testRestoredRejectedReceiptCannotOverwriteNewerSecondPointFeedback() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = JSONFilePendingCommandStore(url: directory.appendingPathComponent("pending.json"))
+        let server = ModelServer(), setup = SetupStore(saved(credential: credential))
+        let original = makeModel(setup, server: server, pendingStore: outbox)
+        await original.wake()
+        await original.send(.endSet(winner: nil, overrideReason: nil))
+        await server.makeSavedReceiptRejected()
+        let model = makeModel(setup, server: server, pendingStore: outbox)
+        await model.wake()
+        XCTAssertNil(try outbox.load())
+        await server.holdNextSnapshot()
+        await server.acceptNextCommand()
+        let refresh = Task { await model.refresh() }
+        await server.waitUntilHeld()
+        let point = Task { await model.sendPoint(side: .home) }
+        await waitForPointReservation(model)
+        await model.sendPoint(side: .away)
+        let secondPointFeedback = model.message
+        XCTAssertTrue(secondPointFeedback?.contains("Nothing was sent") == true)
+        await server.release()
+        await refresh.value
+        await point.value
+        XCTAssertEqual(model.message, secondPointFeedback)
+        let applications = await server.commandApplications
+        XCTAssertEqual(applications, 2)
+    }
+
+    func testReservedPointRejectsChangedContextOrFailedRefreshWithoutRebasing() async {
+        for change in ["revision", "epoch", "owner", "ended", "match", "endpoint", "token", "restoredEndpoint", "failure", "cancel"] {
+            let server = ModelServer()
+            let model = makeModel(SetupStore(saved(credential: credential)), server: server)
+            await model.wake()
+            await server.holdNextSnapshot()
+            let refresh = Task { await model.refresh() }
+            await server.waitUntilHeld()
+            let point = Task { await model.sendPoint(side: .home) }
+            await waitForPointReservation(model)
+            switch change {
+            case "endpoint": model.endpoint = "https://different.example.com"
+            case "token": model.installationToken = "different-account"
+            case "restoredEndpoint":
+                let original = model.endpoint
+                model.endpoint = "https://different.example.com"
+                model.endpoint = original
+            case "failure": await server.failNextSnapshot()
+            case "cancel": point.cancel()
+            default: await server.changeSnapshot(change)
+            }
+            await server.release()
+            await refresh.value
+            await point.value
+            let requests = await server.requests
+            XCTAssertFalse(requests.contains { $0.httpMethod == "POST" }, change)
+            XCTAssertTrue(model.message?.contains("Nothing was sent") == true, change)
+            XCTAssertFalse(model.busy, change)
+            if change == "cancel" { XCTAssertTrue(model.canAwardPoint) }
+            XCTAssertEqual(requests.count, 2, "Point must join the existing GET: \(change)")
+        }
+    }
+
+    func testReservedPointRejectsNewDurablePendingAndUnreadableStorage() async throws {
+        for corrupt in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let outbox = JSONFilePendingCommandStore(url: directory.appendingPathComponent("pending.json"))
+            let server = ModelServer()
+            let model = makeModel(SetupStore(saved(credential: credential)), server: server, pendingStore: outbox)
+            await model.wake()
+            await server.holdNextSnapshot()
+            let refresh = Task { await model.refresh() }
+            await server.waitUntilHeld()
+            let point = Task { await model.sendPoint(side: .home) }
+            await waitForPointReservation(model)
+            let command = MatchCommand(commandId: "existing", gameId: "old-game", deviceId: "phone",
+                expectedRevision: 0, scorerEpoch: 1, issuedAt: "2026-09-25T00:00:00Z", operation: .awardPoint(side: .away))
+            let existing = PendingMatchCommand(endpointScope: "other-scope", command: command, originalScorerDeviceId: "phone")
+            try outbox.save(existing)
+            if corrupt { try Data("unreadable".utf8).write(to: outbox.url) }
+            await server.release()
+            await refresh.value
+            await point.value
+            XCTAssertFalse(model.canAwardPoint)
+            await model.sendPoint(side: .away)
+            let requests = await server.requests
+            XCTAssertFalse(requests.contains { $0.httpMethod == "POST" })
+            XCTAssertTrue(model.message?.contains("Nothing was sent") == true)
+            if !corrupt { XCTAssertEqual(try outbox.load(), existing) }
+        }
+    }
+
+    func testPointWithoutRefreshUsesDurableOutboxAndBlocksAnotherPendingPoint() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = JSONFilePendingCommandStore(url: directory.appendingPathComponent("pending.json"))
+        let server = ModelServer()
+        let model = makeModel(SetupStore(saved(credential: credential)), server: server, pendingStore: outbox)
+        await model.wake()
+        await model.sendPoint(side: .away)
+        let original = try XCTUnwrap(outbox.load())
+        XCTAssertEqual(original.command.operation, .awardPoint(side: .away))
+        XCTAssertFalse(model.canAwardPoint)
+        await model.sendPoint(side: .home)
+        XCTAssertEqual(try outbox.load(), original)
+        let applications = await server.commandApplications
+        XCTAssertEqual(applications, 1)
+    }
+
+    private func waitForPointReservation(_ model: ScoringModel) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while model.canAwardPoint && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertFalse(model.canAwardPoint, "Point must reserve before the held refresh is released")
+        XCTAssertTrue(model.busy)
+    }
+
     func testConfirmedActionDuringRefreshGetsRetryFeedbackWithoutSending() async {
         let server = ModelServer()
         let model = makeModel(SetupStore(saved(credential: credential)), server: server)
@@ -410,8 +567,17 @@ private actor ModelServer {
     func failNextStatus() { statusFails = true }
     private var holdSnapshot = false
     private var snapshotFails = false
+    private var snapshotChange: String?
+    func changeSnapshot(_ value: String) { snapshotChange = value }
     private var commandReceipt: CommandOutcome?
     private var rejectsNextCommand = false
+    private var acceptsNextCommand = false
+    func acceptNextCommand() { acceptsNextCommand = true }
+    func makeSavedReceiptRejected() {
+        commandReceipt?.accepted = false
+        commandReceipt?.error = "tied_set"
+        commandReceipt?.snapshot = snapshot("old-game")
+    }
     private var held: CheckedContinuation<Void, Never>?
     private var waiter: CheckedContinuation<Void, Never>?
     private var createdIDs: Set<String> = []
@@ -453,6 +619,10 @@ private actor ModelServer {
             applied.revision += 1; applied.score.home += 1
             commandApplications += 1
             commandReceipt = CommandOutcome(commandId: command.commandId, accepted: true, error: nil, snapshot: applied)
+            if acceptsNextCommand {
+                acceptsNextCommand = false
+                return (try JSONEncoder().encode(commandReceipt!), response(request))
+            }
             throw URLError(.networkConnectionLost)
         }
         if request.url!.path.contains("/commands/"), let commandReceipt {
@@ -480,11 +650,20 @@ private actor ModelServer {
     private var now: String { ISO8601DateFormatter().string(from: Date()) }
     private func snapshot(_ id: String) -> MatchSnapshot {
         let team = MatchTeam(name: "Team", shortName: "TEAM", color: "#2563eb")
-        return MatchSnapshot(id: id, createdAt: now, revision: 0, teams: MatchTeams(home: team, away: team),
+        var value = MatchSnapshot(id: id, createdAt: now, revision: 0, teams: MatchTeams(home: team, away: team),
             rules: MatchRules(bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: nil),
             score: MatchScore(home: 0, away: 0, set: 1, homeSets: 0, awaySets: 0), completedSets: [], status: .active,
             endReason: nil, canUndo: false, scorer: MatchScorer(deviceId: "phone", epoch: 1),
             broadcast: broadcast)
+        switch snapshotChange {
+        case "revision": value.revision += 1
+        case "epoch": value.scorer.epoch += 1
+        case "owner": value.scorer.deviceId = "other-phone"
+        case "ended": value.status = .ended
+        case "match": value.id = "other-game"
+        default: break
+        }
+        return value
     }
     private func response(_ request: URLRequest, status: Int = 200) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!

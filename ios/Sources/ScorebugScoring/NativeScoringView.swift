@@ -164,11 +164,11 @@ struct NativeScoringView: View {
         } header: { Text("Match") }
     }
     private func pointButton(side: MatchSide, name: String, score: Int, color: Color) -> some View {
-        Button { Task { await model.send(.awardPoint(side: side)) } } label: {
+        Button { Task { await model.sendPoint(side: side) } } label: {
             VStack { Text(name).lineLimit(1).minimumScaleFactor(0.6); Text("\(score)").font(.system(size: 48, weight: .bold, design: .rounded)).monospacedDigit() }
                 .frame(maxWidth: .infinity).padding(.vertical, 6)
         }
-        .buttonStyle(.borderedProminent).tint(color).disabled(!model.canScore)
+        .buttonStyle(.borderedProminent).tint(color).disabled(!model.canAwardPoint)
         .accessibilityIdentifier(side == .home ? "scoring.homePoint" : "scoring.awayPoint")
         .accessibilityLabel("Award point to \(name)").accessibilityValue("\(score)")
     }
