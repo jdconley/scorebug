@@ -61,7 +61,7 @@ final class PhysicalStreamingTests: XCTestCase {
         } else {
             app.activate()
         }
-        var adaptiveFailure: Error?
+        var scoreFailure: Error?, adaptiveFailure: Error?
         var recordingRequested = false
         var streamingRequested = false
         defer {
@@ -200,10 +200,16 @@ final class PhysicalStreamingTests: XCTestCase {
         } else {
             try selectTab("Score", app)
             try tap(app.buttons["scoring.homePoint"], in: app)
-            try wait("Native HOME point was not acknowledged as 1.", seconds: 12) {
-                app.buttons["scoring.homePoint"].value as? String == "1"
+            do {
+                try wait("Native HOME point was not acknowledged as 1.", seconds: 12) {
+                    app.buttons["scoring.homePoint"].value as? String == "1"
+                }
+            } catch {
+                guard ordinarySimulator else { throw error }
+                scoreFailure = error
+                evidence(app, phase: "native-score-gate-failed", screenshot: true)
             }
-            evidence(app, phase: "native-home-point-acknowledged", screenshot: true)
+            if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
             if ordinarySimulator {
                 do {
@@ -251,9 +257,12 @@ final class PhysicalStreamingTests: XCTestCase {
             app.staticTexts["recordings.exportReady"].exists
         }
         evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)
-        // An expired adaptive gate stays failed even if quality changes while
+        // Expired gates stay failed even if score or quality changes while
         // completing the independent stop, archive-continuation and export gates.
-        if let adaptiveFailure { throw adaptiveFailure }
+        let failures = [scoreFailure, adaptiveFailure].compactMap { $0 }
+        if !failures.isEmpty {
+            throw SmokeFailure.failed(failures.map { String(describing: $0) }.joined(separator: "; "))
+        }
         // No recording/keychain deletion, external share, or Photos-library write.
     }
 
