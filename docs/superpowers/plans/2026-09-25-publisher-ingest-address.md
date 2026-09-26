@@ -19,12 +19,12 @@
 
 ## Steps
 
-- [ ] Add failing tests: absent config; valid pair; partial/invalid pair; default grant unchanged; override changes only publisher authority; reader URL/path/passphrases unchanged; IPv6 URL brackets; same options and attempt attestation; normal API dependency wiring; constructor snapshot survives caller mutation.
-- [ ] Run focused Vitest tests, retain a behavioral failure from the unwired override (not only compile failure).
-- [ ] Implement the optional configuration path without changing client controllers, capture, relay provisioning or credential generation.
-- [ ] Run focused tests and complete control-plane tests/typecheck; retain command/count/exit evidence. Suggested commands: `pnpm --filter @scorebug/control-plane test` and `pnpm --filter @scorebug/control-plane typecheck`.
-- [ ] Run independent specification review, then quality review. Resolve concrete findings, rerun affected checks and retain final exact source blob IDs.
-- [ ] Commit reviewed source/tests/documentation and update the session log/current plan. This component pass does not claim real congestion or media qualification.
+- [x] Add failing tests: absent config; valid pair; partial/invalid pair; default grant unchanged; override changes only publisher authority; reader URL/path/passphrases unchanged; IPv6 URL brackets; same options and attempt attestation; normal API dependency wiring; constructor snapshot survives caller mutation.
+- [x] Run focused Vitest tests, retain a behavioral failure from the unwired override (not only compile failure).
+- [x] Implement the optional configuration path without changing client controllers, capture, relay provisioning or credential generation.
+- [x] Run focused tests and complete control-plane tests/typecheck; retain command/count/exit evidence. Suggested commands: `pnpm --filter @scorebug/control-plane test` and `pnpm --filter @scorebug/control-plane typecheck`.
+- [x] Run independent specification review, then quality review. Resolve concrete findings, rerun affected checks and retain final exact source blob IDs.
+- [x] Commit reviewed source/tests/documentation and update the session log/current plan. This component pass does not claim real congestion or media qualification.
 
 ## Representative assertions
 
