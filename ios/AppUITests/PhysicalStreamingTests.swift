@@ -53,16 +53,7 @@ final class PhysicalStreamingTests: XCTestCase {
         let app = XCUIApplication()
         // Physical runs preserve an existing process so the prior-capture guard
         // can refuse the run without terminating someone's recording.
-        var passwordPromptMonitor: NSObjectProtocol?
         if ordinarySimulator {
-            // Fresh simulators can offer to save a token after the real Score setup.
-            // Dismiss only this exact system prompt; never save lab credentials.
-            passwordPromptMonitor = addUIInterruptionMonitor(withDescription: "Disposable simulator password prompt") { alert in
-                guard alert.staticTexts["Save Password?"].exists,
-                      alert.buttons["Not Now"].exists else { return false }
-                alert.buttons["Not Now"].tap()
-                return true
-            }
             // Source injection alone: the normal publishing/quality factories remain in charge.
             app.launchEnvironment = ["SCOREBUG_TEST_FILE_CAPTURE": "1"]
             app.launch()
@@ -74,7 +65,6 @@ final class PhysicalStreamingTests: XCTestCase {
         defer {
             cleanup(app, recordingRequested: recordingRequested, streamingRequested: streamingRequested)
             evidence(app, phase: "final-observation", screenshot: false)
-            if let passwordPromptMonitor { removeUIInterruptionMonitor(passwordPromptMonitor) }
         }
 
         // A prior failed setup may leave this app-owned sheet open. Dismissing
@@ -124,6 +114,7 @@ final class PhysicalStreamingTests: XCTestCase {
         }
 
         try selectTab("Film", app)
+        if ordinarySimulator { dismissOrdinaryPasswordOffer() }
         try tap(app.buttons["streaming.setup"], in: app)
         try replace(app.textFields["streaming.endpoint"], with: endpoint, in: app)
         try replace(app.secureTextFields["streaming.token"], with: token, in: app)
@@ -135,6 +126,7 @@ final class PhysicalStreamingTests: XCTestCase {
             return app.staticTexts["streaming.connected"].exists && app.buttons["streaming.connect"].isEnabled
         }
         try tap(app.buttons["streaming.closeSetup"], in: app)
+        if ordinarySimulator { dismissOrdinaryPasswordOffer() }
 
         recordingRequested = true
         try tap(app.buttons["film.start"], in: app)
@@ -484,6 +476,34 @@ final class PhysicalStreamingTests: XCTestCase {
     @MainActor private func fieldContents(_ field: XCUIElement) -> String {
         let value = field.value as? String ?? ""
         return value == field.placeholderValue ? "" : value
+    }
+
+    @MainActor private func dismissOrdinaryPasswordOffer() {
+        // Password saving is a remote service sheet, not a SpringBoard permission
+        // alert. Query only known providers; require both exact visible controls.
+        let providers = ["com.apple.AuthenticationServicesUI", "com.apple.SharedWebCredentialViewService"]
+        let end = min(deadline, Date().addingTimeInterval(5))
+        var observations: [[String: Any]] = []
+        var dismissed = false
+        repeat {
+            observations = providers.map { identifier in
+                let service = XCUIApplication(bundleIdentifier: identifier)
+                let running = service.state != .notRunning
+                let title = running && service.staticTexts["Save Password?"].exists
+                let button = running && service.buttons["Not Now"].exists
+                if !dismissed && title && button && service.buttons["Not Now"].isHittable {
+                    service.buttons["Not Now"].tap()
+                    dismissed = true
+                }
+                return ["provider": identifier, "running": running, "titleExists": title, "buttonExists": button]
+            }
+            if dismissed { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < end
+        if let data = try? JSONSerialization.data(withJSONObject: ["providers": observations, "dismissed": dismissed], options: [.sortedKeys]) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "OrdinarySimulatorStreaming-password-offer"; attachment.lifetime = .keepAlways; add(attachment)
+        }
     }
 
     @MainActor private func allowExpectedPermissions() {
