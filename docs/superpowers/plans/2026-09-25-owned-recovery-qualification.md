@@ -22,6 +22,10 @@ decoder-fault runs. Preserve their selectors and acceptance rules.
 - [x] Replay complete owned native stages, receiver conservation and receiver
       intervals, including failed attempts and independently bracketed coverage.
       This does not grant candidate, application or recovery authority.
+- [x] Join raw completed candidate encoding/resource/A/V costs to actual native
+      and decoded baseline frames across all original owners; retain failed owners,
+      original receipt revisions and lifecycle event indices. This slice grants no
+      admission, application, recovery or full-media authority.
 - [ ] Add whole-history owned lifecycle, witness and policy replay. Reuse complete
       media, capacity clock/rate-ledger, delivery ownership and coverage checks.
       Never call the old one-candidate qualifier with a fabricated three-phase
