@@ -70,8 +70,22 @@ The adapter is now connected to native capture credential retrieval and automati
 match/broadcast reconciliation. Configure `RELAY_API_URL`, `RELAY_API_USERNAME`, and
 `RELAY_API_PASSWORD` together; the local environment example points to the local
 Compose ingest API. `INGEST_HOST` and `INGEST_PORT` are the address capture devices
-and workers use for SRT, independently of the private management address. Omit all
-three management settings to run scoring without a relay. Connection routes then
+and workers use for SRT by default, independently of the private management address.
+For native capture publishing through a separate endpoint (such as a local SRT proxy),
+set both `INGEST_PUBLISH_HOST` and `INGEST_PUBLISH_PORT`. The host accepts a DNS name,
+IPv4 address, or raw IPv6 address (for example `::1`, without brackets or a zone ID);
+it rejects URLs, user information, paths, queries, fragments, and whitespace. The
+port must be an integer from 1 through 65535. Partial pairs are rejected at startup.
+With both omitted, the existing SRT addresses remain unchanged.
+
+The override changes only the native publisher URL authority. Native worker readers
+continue to use `INGEST_HOST` and `INGEST_PORT`; stream paths, passphrases, publishing
+attempt attestations, packet size, and explicit pacing/recovery options are preserved.
+IPv6 literals are bracketed when constructing the SRT URL. This setting applies to
+the native `/v1/matches/:id/media/publish` flow; legacy `/games` ingest behavior is
+outside its scope and continues using the existing ingest settings.
+
+Omit all three management settings to run scoring without a relay. Connection routes then
 return HTTP 503 `relay_not_configured`.
 
 The API inventories only paths belonging to its installation secret and reconciles

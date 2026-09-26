@@ -356,3 +356,69 @@ it('relative pacing changes only the native publish URL', () => {
       ),
     ).toThrow('invalid_ingest_identity');
 });
+
+it.each([
+  { host: 'proxy.test', authority: 'proxy.test:19990' },
+  { host: '127.0.0.1', authority: '127.0.0.1:19990' },
+  { host: '2001:db8::1', authority: '[2001:db8::1]:19990' },
+])('publisher endpoint $host changes only publish authority', ({ host, authority }) => {
+  const args = [
+    'installation-secret-not-production',
+    'match',
+    selection,
+    1,
+    '127.0.0.1',
+    18890,
+    400,
+    'relative',
+  ] as const;
+  const baseline = deriveIngestGrant(...args);
+  const changed = deriveIngestGrant(...args, { host, port: 19990 });
+  const publisher = new URL(changed.publishUrl);
+  expect(publisher.host).toBe(authority);
+  expect(publisher.search === new URL(baseline.publishUrl).search).toBe(true);
+  expect(changed.readUrl === baseline.readUrl).toBe(true);
+  expect(changed.path === baseline.path).toBe(true);
+  expect(changed.publishPassphrase === baseline.publishPassphrase).toBe(true);
+  expect(changed.readPassphrase === baseline.readPassphrase).toBe(true);
+});
+
+it.each([
+  null,
+  {},
+  { host: 'proxy.test' },
+  { port: 19990 },
+  ...[
+    '',
+    'srt://proxy.test',
+    'user@proxy.test',
+    'proxy.test/path',
+    'proxy.test?x',
+    'proxy.test#x',
+    'proxy.test:19990',
+    '[::1]',
+    'fe80::1%eth0',
+    ' proxy.test',
+    'proxy.test\n',
+    'proxy..test',
+    '-proxy.test',
+  ].map((host) => ({ host, port: 19990 })),
+  ...[0, -1, 65536, 1.5, NaN, Infinity, '19990', null].map((port) => ({
+    host: 'proxy.test',
+    port,
+  })),
+])('rejects malformed direct publisher endpoint %#', (endpoint) => {
+  expect(() =>
+    deriveIngestGrant(
+      'installation-secret-not-production',
+      'match',
+      selection,
+      1,
+      'localhost',
+      8890,
+      undefined,
+      undefined,
+      endpoint as { host: string; port: number },
+    ),
+  ).toThrow('invalid_ingest_identity');
+});

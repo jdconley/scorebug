@@ -432,3 +432,33 @@ it('rechecks assignment after the final asynchronous operation resolves', async 
   await expect(f.lifecycle.worker('mac')).rejects.toMatchObject({ code: 'broadcast_changed' });
   expect([...f.paths]).toEqual([]);
 });
+
+it('snapshots the publisher endpoint while preserving attestation and worker capability', async () => {
+  const f = fixture();
+  const endpoint = { host: '::1', port: 19990 };
+  const mutable = {
+    ...config,
+    publishEndpoint: endpoint,
+    publishPeerLatencyMs: 400,
+    publishPacing: 'relative' as const,
+  };
+  const lifecycle = new RelayLifecycle(f.relay, mutable, () => running());
+  endpoint.host = 'changed.test';
+  endpoint.port = 29990;
+  mutable.publishEndpoint = { host: 'replaced.test', port: 39990 };
+  const publishingAttemptId = '11111111-2222-4333-8444-555555555555';
+  const result = await lifecycle.publish({ ...request, publishingAttemptId });
+  const url = new URL(result.publishUrl);
+  expect(url.host).toBe('[::1]:19990');
+  const baseline = grantFor(running());
+  const streamid = url.searchParams.get('streamid')!;
+  expect(streamid.startsWith(`publish:${baseline.path}:`)).toBe(true);
+  expect(
+    verifyPublishAttemptQuery(config.installationSecret, baseline.path, streamid.split(':')[2]),
+  ).toBe(publishingAttemptId);
+  expect(url.searchParams.get('passphrase') === baseline.publishPassphrase).toBe(true);
+  expect(url.searchParams.get('pkt_size')).toBe('1316');
+  expect(url.searchParams.get('peerlatency')).toBe('400');
+  expect(url.searchParams.get('maxbw')).toBe('0');
+  expect((await lifecycle.worker('mac'))?.readUrl === baseline.readUrl).toBe(true);
+});

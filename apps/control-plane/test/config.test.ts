@@ -25,3 +25,69 @@ it('publishing pacing is explicitly relative or absent', () => {
   for (const value of ['', '0', 'default', 'Relative', ' relative'])
     expect(() => loadConfig({ ...env, SRT_PUBLISH_PACING: value })).toThrow();
 });
+
+it('preserves the existing ingest defaults when no publisher endpoint is configured', () => {
+  const config = loadConfig(env);
+  expect(config.INGEST_HOST).toBe('ingest.scorebug.live');
+  expect(config.INGEST_PORT).toBe(8890);
+  expect(config.INGEST_PUBLISH_HOST).toBeUndefined();
+  expect(config.INGEST_PUBLISH_PORT).toBeUndefined();
+});
+
+it.each(['proxy.test', 'localhost', '127.0.0.1', '::1', '2001:db8::1'])(
+  'accepts paired publisher endpoint host %s without changing reader configuration',
+  (host) => {
+    const config = loadConfig({ ...env, INGEST_PUBLISH_HOST: host, INGEST_PUBLISH_PORT: '19990' });
+    expect(config.INGEST_PUBLISH_HOST).toBe(host);
+    expect(config.INGEST_PUBLISH_PORT).toBe(19990);
+    expect(config.INGEST_HOST).toBe('ingest.scorebug.live');
+    expect(config.INGEST_PORT).toBe(8890);
+  },
+);
+
+it('requires both publisher endpoint settings together', () => {
+  for (const partial of [{ INGEST_PUBLISH_HOST: 'proxy.test' }, { INGEST_PUBLISH_PORT: '19990' }])
+    expect(() => loadConfig({ ...env, ...partial })).toThrow();
+});
+
+it.each([
+  '',
+  'srt://proxy.test',
+  'user@proxy.test',
+  'proxy.test/path',
+  'proxy.test?x',
+  'proxy.test#x',
+  'proxy.test:19990',
+  '[::1]',
+  'fe80::1%eth0',
+  ' proxy.test',
+  'proxy.test ',
+  'proxy.test\n',
+  'proxy test',
+  '-proxy.test',
+  'proxy-.test',
+  'proxy..test',
+  'proxy_test',
+  'a'.repeat(64) + '.test',
+  'a.'.repeat(127) + 'a',
+])('rejects malformed publisher host %j', (host) => {
+  expect(() =>
+    loadConfig({ ...env, INGEST_PUBLISH_HOST: host, INGEST_PUBLISH_PORT: '19990' }),
+  ).toThrow();
+});
+
+it.each(['', '0', '-1', '65536', '19990.5', 'NaN', 'Infinity'])(
+  'rejects malformed publisher port %j',
+  (port) => {
+    expect(() =>
+      loadConfig({ ...env, INGEST_PUBLISH_HOST: 'proxy.test', INGEST_PUBLISH_PORT: port }),
+    ).toThrow();
+  },
+);
+
+it.each(['1', '65535'])('accepts publisher port boundary %s', (port) => {
+  expect(
+    loadConfig({ ...env, INGEST_PUBLISH_HOST: 'proxy.test', INGEST_PUBLISH_PORT: port })
+      .INGEST_PUBLISH_PORT,
+  ).toBe(Number(port));
+});

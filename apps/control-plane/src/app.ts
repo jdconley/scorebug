@@ -51,6 +51,14 @@ export function createApp(
             installationSecret: config.PHONE_TOKEN,
             host: config.INGEST_HOST,
             port: config.INGEST_PORT,
+            ...(config.INGEST_PUBLISH_HOST === undefined
+              ? {}
+              : {
+                  publishEndpoint: {
+                    host: config.INGEST_PUBLISH_HOST,
+                    port: config.INGEST_PUBLISH_PORT!,
+                  },
+                }),
             ...(config.SRT_PUBLISH_PACING === undefined
               ? {}
               : { publishPacing: config.SRT_PUBLISH_PACING }),

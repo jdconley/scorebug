@@ -1,16 +1,37 @@
 import { afterEach, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
+import { loadConfig } from '../src/config.js';
+import { verifyPublishAttemptQuery } from '../src/publishing-attempt.js';
 import { testConfig, phoneAuth } from './helpers.js';
 import type { MatchStore } from '../src/matches-store.js';
 import type { IngestGrant } from '../src/ingest.js';
 
 const stores: MatchStore[] = [];
 afterEach(() => stores.splice(0).forEach((store) => store.close()));
-async function fixture(enabled = true, publishPeerLatencyMs?: number, publishPacing?: 'relative') {
-  const config = testConfig({
-    SRT_PUBLISH_PEER_LATENCY_MS: publishPeerLatencyMs,
-    SRT_PUBLISH_PACING: publishPacing,
-  });
+async function fixture(
+  enabled = true,
+  publishPeerLatencyMs?: number,
+  publishPacing?: 'relative',
+  publishEndpoint?: { host: string; port: number },
+) {
+  const config = loadConfig(
+    Object.fromEntries(
+      Object.entries(
+        testConfig({
+          SRT_PUBLISH_PEER_LATENCY_MS: publishPeerLatencyMs,
+          SRT_PUBLISH_PACING: publishPacing,
+          ...(publishEndpoint
+            ? {
+                INGEST_PUBLISH_HOST: publishEndpoint.host,
+                INGEST_PUBLISH_PORT: publishEndpoint.port,
+              }
+            : {}),
+        }),
+      )
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => [key, String(value)]),
+    ),
+  );
   const paths = new Map<string, IngestGrant>();
   let failure = false;
   const relay = {
@@ -309,3 +330,41 @@ it('authenticated native grant combines explicit pacing and recovery without mod
   expect(url.searchParams.get('peerlatency')).toBe('400');
   expect(new URL([...f.paths.values()][0].readUrl).searchParams.has('maxbw')).toBe(false);
 });
+
+it.each([undefined, { host: '::1', port: 19990 }])(
+  'native API wires configured publisher authority and preserves the worker assignment (%j)',
+  async (endpoint) => {
+    const f = await fixture(true, 400, 'relative', endpoint);
+    const publishingAttemptId = '11111111-2222-4333-8444-555555555555';
+    const response = await f.request('/v1/matches/match/media/publish', f.capture.token, {
+      recordingId: 'archive',
+      generation: 1,
+      publishingAttemptId,
+    });
+    expect(response.status).toBe(200);
+    const value = await response.json();
+    const publish = new URL(value.publishUrl);
+    expect(publish.host).toBe(endpoint ? '[::1]:19990' : 'ingest.test:8890');
+    const grant = [...f.paths.values()][0];
+    const streamid = publish.searchParams.get('streamid')!;
+    expect(
+      verifyPublishAttemptQuery(f.config.PHONE_TOKEN, grant.path, streamid.split(':')[2]),
+    ).toBe(publishingAttemptId);
+    expect(publish.searchParams.get('passphrase') === grant.publishPassphrase).toBe(true);
+    expect(publish.searchParams.get('peerlatency')).toBe('400');
+    expect(publish.searchParams.get('maxbw')).toBe('0');
+    expect(publish.searchParams.get('pkt_size')).toBe('1316');
+    const workerResponse = await f.request(
+      '/v1/worker/connection?workerId=mac',
+      f.config.HOME_TOKEN,
+    );
+    expect(workerResponse.status).toBe(200);
+    const worker = await workerResponse.json();
+    const read = new URL(worker.connection.readUrl);
+    expect(read.host).toBe('ingest.test:8890');
+    expect(worker.connection.readUrl === grant.readUrl).toBe(true);
+    expect(read.searchParams.get('streamid')).toBe(`read:${grant.path}`);
+    expect(read.searchParams.get('passphrase') === grant.readPassphrase).toBe(true);
+    expect([...read.searchParams.keys()].sort()).toEqual(['passphrase', 'pkt_size', 'streamid']);
+  },
+);

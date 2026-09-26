@@ -3,6 +3,7 @@ import type {
   WorkerPublication,
   ReceiverProbeSnapshot,
 } from '@scorebug/protocol';
+import type { IngestEndpoint } from './ingest-endpoint.js';
 import { publishAttemptQuery, verifyPublishAttemptQuery } from './publishing-attempt.js';
 import {
   deriveIngestGrant,
@@ -46,6 +47,7 @@ type RelayConfig = {
   port: number;
   publishPeerLatencyMs?: number;
   publishPacing?: 'relative';
+  publishEndpoint?: IngestEndpoint;
 };
 
 export class RelayLifecycleError extends Error {
@@ -66,7 +68,12 @@ export class RelayLifecycle {
     config: RelayConfig,
     private readonly desired: () => RelayDesired | null,
   ) {
-    this.config = { ...config };
+    this.config = {
+      ...config,
+      ...(config.publishEndpoint === undefined
+        ? {}
+        : { publishEndpoint: { ...config.publishEndpoint } }),
+    };
     this.prefix = ingestPathPrefix(config.installationSecret);
   }
 
@@ -106,6 +113,7 @@ export class RelayLifecycle {
         this.config.port,
         this.config.publishPeerLatencyMs,
         this.config.publishPacing,
+        this.config.publishEndpoint,
       ),
     };
   }

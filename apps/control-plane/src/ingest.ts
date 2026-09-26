@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { isIngestEndpoint, type IngestEndpoint } from './ingest-endpoint.js';
 import { parseReceiverProbe } from './receiver-probe.js';
 import type { BroadcastSelection, ReceiverProbeSnapshot } from '@scorebug/protocol';
 
@@ -52,6 +53,7 @@ export function deriveIngestGrant(
   port: number,
   publishPeerLatencyMs?: number,
   publishPacing?: 'relative',
+  publishEndpoint?: IngestEndpoint,
 ): IngestGrant {
   if (
     installationSecret.length < 16 ||
@@ -72,7 +74,8 @@ export function deriveIngestGrant(
       (!Number.isInteger(publishPeerLatencyMs) ||
         publishPeerLatencyMs < 120 ||
         publishPeerLatencyMs > 2000)) ||
-    (publishPacing !== undefined && publishPacing !== 'relative')
+    (publishPacing !== undefined && publishPacing !== 'relative') ||
+    (publishEndpoint !== undefined && !isIngestEndpoint(publishEndpoint))
   )
     throw new Error('invalid_ingest_identity');
   const hmac = (domain: string, identity = '') =>
@@ -91,7 +94,9 @@ export function deriveIngestGrant(
   const publishPassphrase = hmac('publish', identity),
     readPassphrase = hmac('read', identity);
   const url = (action: string, passphrase: string) => {
-    const result = new URL(`srt://${isIP(host) === 6 ? `[${host}]` : host}:${port}`);
+    const endpoint = action === 'publish' && publishEndpoint ? publishEndpoint : { host, port };
+    const authorityHost = isIP(endpoint.host) === 6 ? `[${endpoint.host}]` : endpoint.host;
+    const result = new URL(`srt://${authorityHost}:${endpoint.port}`);
     result.searchParams.set('streamid', `${action}:${path}`);
     result.searchParams.set('passphrase', passphrase);
     result.searchParams.set('pkt_size', '1316');
