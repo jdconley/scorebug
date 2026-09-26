@@ -4,7 +4,7 @@
 
 **Architecture:** Reuse the physical phone vertical and its guarded archive/export teardown. Add an explicitly selected separate-scorer mode and a native scorer UI method on one owned iOS26.2 simulator. The scorer uses the full Scorebug app, normal setup and buttons; no camera source injection, browser, direct scoring requests or changes to production policy. The lab remains unimpeded for this smoke; adaptive collapse and paired Watch qualification stay separate.
 
-**Status:** Implementation and focused regression checks complete; device execution and media verification pending. Physical phone runner LAN privacy does not gate this route: only the Scorebug app connects to the API. The simulator scorer does not use a recovery controller.
+**Status:** Reviewed implementation,55focused checks, both builds, physical-camera/native-simulator scoring workflow and encoded-media smoke pass. The scene is dark: fresh motion, perceptualA/Vsync and adaptive recovery remain unqualified. See [session evidence](../../session-logs/2026-09-26-separate-native-scorer.md). Physical phone runner LAN privacy does not gate this route: only the Scorebug app connects to the API. The simulator scorer does not use a recovery controller.
 
 ## Interaction and evidence contract
 
@@ -21,8 +21,14 @@
 - [x] Add two explicitly gated UI methods in `ios/AppUITests/PhysicalStreamingTests.swift`: hardware camera with separate scorer and simulator-only native scorer. Reuse setup/tap/deadline helpers. Add a `separateScorer` argument defaultfalse to the camera workflow; keep existing paths unchanged. Complete failures through stop/export.
 - [x] Add `scripts/test-separate-native-scorer.mjs`: required physicalUDID/privatehost; existing installedruntime26.2; fresh lab; private environment/xctestruns; finite ordered workflow starts; joined cleanup; actual executable hashes; owned-simulator-only teardown. Reuse `runOrdinaryCommand`, `requireOrdinaryTestResult`, `startDeviceLab` and physical input verifier. Test argument selection and exact role/env segregation without starting devices.
 - [x] Add an independent durable-command/evidence verifier and meaningful rejection cases for wrong actor, extra point/retap, wrong ordering, camera-free scorer recording association, skipped/missing test, and missing media. Keep workflow and media qualification flags separate.
-- [ ] Review source, run relevant Node checks and signed/simulator builds sequentially, then execute the physical-plus-simulator workflow with no heavy builds/analysis during capture. Collect and verify output media only after both native commands and lab shutdown join.
+- [x] Review source, run relevant Node checks and signed/simulator builds sequentially, then execute the physical-plus-simulator workflow with no heavy builds/analysis during capture. Collect and verify output media only after both native commands and lab shutdown join.
 
 ## Alternatives considered
 
 A server-only second scorer cannot prove native UI behavior. A second full filming simulator would consume more resources and fail to exercise real camera behavior. The mixed physical-camera/native-simulator-scorer route directly tests the requested role separation with the available devices, without claiming absent Watch/hardware coverage.
+
+## Remaining acceptance
+
+- [ ] Qualify visible moving camera content and perceptualA/Vsync with a lit scene.
+- [ ] Qualify another physical phone/Watch scorer and combined paired filming/scoring; simulator role separation is narrower evidence.
+- [ ] Qualify physical adaptive collapse/recovery through the separate recovery lane.
