@@ -391,8 +391,32 @@ import ScorebugStreaming
         fields["cycleInputSourceSampleAgeUpperBoundSeconds"] = seconds(source?.freshness.ageUpperBound(at: instant))
         fields["cadenceSampleAgeUpperBoundSeconds"] = seconds(cadenceInputProvider?()?.cadence?.sampleAgeUpperBound(at: instant))
         fields["deliverySampleAgeUpperBoundSeconds"] = seconds(deliveryInputProvider?()?.delivery.sampleAgeUpperBound(at: instant))
-        if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), data.count <= 4096,
-           let value = String(data: data, encoding: .utf8) { currentDiagnosticDidChange?(value) }
+        // Keep current policy ownership, phase, source mapping and the latest
+        // applied cause. Historical candidate detail yields first; a fuller
+        // payload must not silently leave the UI displaying an older revision.
+        func encode() -> Data? { try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) }
+        var data = encode()
+        if let size = data?.count, size > 4096 {
+            fields["diagnosticCompacted"] = "true"
+            let protected = Set(["appliedTransition", "observedAtUptimeSeconds", "sessionObservedAtUptimeSeconds",
+                "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted"])
+            let removable = fields.keys.filter { !$0.hasPrefix("policy") && !protected.contains($0) }.sorted {
+                let lhsHistory = $0.hasPrefix("lastCandidate") || $0.hasPrefix("lastMeasurement")
+                let rhsHistory = $1.hasPrefix("lastCandidate") || $1.hasPrefix("lastMeasurement")
+                if lhsHistory != rhsHistory { return lhsHistory }
+                let lhsSize = $0.utf8.count + (fields[$0]?.utf8.count ?? 0)
+                let rhsSize = $1.utf8.count + (fields[$1]?.utf8.count ?? 0)
+                return lhsSize == rhsSize ? $0 < $1 : lhsSize > rhsSize
+            }
+            for key in removable {
+                fields.removeValue(forKey: key)
+                data = encode()
+                if let size = data?.count, size <= 4096 { break }
+            }
+        }
+        if let data, data.count <= 4096, let value = String(data: data, encoding: .utf8) {
+            currentDiagnosticDidChange?(value)
+        }
     }
     #endif
     /// Scheduling closes synchronously before joined actor/session teardown. All

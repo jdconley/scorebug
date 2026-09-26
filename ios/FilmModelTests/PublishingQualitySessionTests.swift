@@ -33,6 +33,8 @@ final class PublishingQualitySessionTests: XCTestCase {
                     if pastBoundary {
                         await fails(.staleAdvice) { try await owner.apply(advice) }
                         XCTAssertEqual(native.calls, 1, "Expired source advice must not dispatch a native mutation")
+                        let diagnostic = await owner.currentDiagnostic()
+                        XCTAssertNil(diagnostic["appliedTransition"])
                         let snapshot = await owner.snapshot
                         XCTAssertEqual(snapshot.revision, 0)
                     } else {
@@ -94,6 +96,42 @@ final class PublishingQualitySessionTests: XCTestCase {
         let early = try XCTUnwrap(capture.values.last)
         XCTAssertEqual(early.input, .source(.init(source)))
         XCTAssertNil(early.evaluatedAt); XCTAssertNil(early.sampleAgeSeconds); XCTAssertNil(early.sourceAgeSeconds)
+    }
+
+    func testAppliedTransitionJoinsDecisionToNativeACKAndSurvivesLaterEvaluation() async throws {
+        let native = QualityNative(), owner = try owner(native)
+        try await owner.bootstrap()
+        let next = try await advice(owner, native)
+        let pending = await owner.currentDiagnostic()
+        XCTAssertNil(pending["appliedTransition"])
+        try await owner.apply(next)
+        let diagnostic = await owner.currentDiagnostic()
+        let encoded = try XCTUnwrap(diagnostic["appliedTransition"])
+        let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+        let state = await owner.snapshot
+        XCTAssertEqual(witness["applicationID"], state.application?.id.uuidString.lowercased())
+        XCTAssertEqual(witness["fromRevision"], "0")
+        XCTAssertEqual(witness["revision"], "1")
+        XCTAssertEqual(witness["kind"], "decrease")
+        XCTAssertEqual(witness["sequence"], String(next.windowSequence))
+        XCTAssertEqual(witness["input"], "window")
+        XCTAssertTrue(witness["reasons"]?.contains("sourceLoss") == true)
+        XCTAssertEqual(witness["start"], "100.0")
+        XCTAssertEqual(witness["end"], "105.0")
+        XCTAssertEqual(witness["queue"], "0.1")
+        XCTAssertEqual(witness["lossLimit"], "0.01")
+        XCTAssertEqual(witness["freshFrameFloor"], "24.0")
+        XCTAssertEqual(witness["thermal"], "nominal")
+        XCTAssertEqual(witness["transport"], "nominal")
+        XCTAssertEqual(witness["ackAt"], String(try XCTUnwrap(state.acknowledgedAt)))
+        XCTAssertEqual(witness["nativeAt"], String(try XCTUnwrap(state.receipt).acceptedAt))
+        native.setNow(110)
+        _ = try await owner.evaluate(window(105, revision: 1, good: true))
+        let later = await owner.currentDiagnostic()
+        XCTAssertEqual(later["appliedTransition"], encoded)
+        await owner.stop()
+        let closed = await owner.currentDiagnostic()
+        XCTAssertNil(closed["appliedTransition"])
     }
 
     private let attempt = UUID()
@@ -164,6 +202,8 @@ final class PublishingQualitySessionTests: XCTestCase {
         let state = await owner.snapshot
         XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy)
         XCTAssertEqual(state.revision, 0); XCTAssertEqual(native.stops, 0)
+        let rejectedDiagnostic = await owner.currentDiagnostic()
+        XCTAssertNil(rejectedDiagnostic["appliedTransition"])
         let second = try await advice(owner, native, start: 105)
         XCTAssertEqual(second.kind, .decrease)
         do { try await owner.apply(second); XCTFail("Fresh recommendation should reach guarded writer") }
@@ -266,6 +306,8 @@ final class PublishingQualitySessionTests: XCTestCase {
             await fails(.invalidReceipt) { try await owner.apply(next) }
             let state = await owner.snapshot
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
+            let diagnostic = await owner.currentDiagnostic()
+            XCTAssertNil(diagnostic["appliedTransition"])
             XCTAssertEqual(native.stops, 1)
         }
     }
@@ -318,6 +360,8 @@ final class PublishingQualitySessionTests: XCTestCase {
         do { try await task.value; XCTFail("Expected cancellation") } catch {}
         let state = await owner.snapshot
         XCTAssertEqual(state.revision, 0); XCTAssertTrue(state.isClosed); XCTAssertEqual(native.stops, 1)
+        let diagnostic = await owner.currentDiagnostic()
+        XCTAssertNil(diagnostic["appliedTransition"])
     }
     func testTrialDeadlineRollbackReceiptsTrackRevisions() async throws {
         let native = QualityNative(), owner = try owner(native)
@@ -1353,6 +1397,211 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
             }
             let reset = try await f.owner.checkTrialDeadline()
             XCTAssertEqual(reset?.kind, .reset, fault)
+            await f.owner.stop()
+        }
+    }
+
+    func testAppliedTransportRollbackRetainsSelectedIntervalAndActualDelayLimit() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let trial = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(trial.recommendation))
+        f.native.setNow(120.2)
+        var diagnostics = try await f.freshSource(start: 115.1, sequence: 3).1
+        var transport = PublishingTransportStatisticsTracker()
+        for (index, time) in [119.8, 120.2].enumerated() {
+            transport.observe(.init(publishingGeneration: 7, sampledAt: time,
+                elapsedMilliseconds: Int64(time * 1000), sentBytes: UInt64(10000 + index * 1000),
+                retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 300,
+                estimatedBandwidthMbps: 10, senderBufferedBytes: 0, senderBufferMilliseconds: 0,
+                availableSenderBytes: 10000, senderDeliveryDelayMilliseconds: 1000))
+        }
+        diagnostics.transport = transport.snapshot
+        let decision = try await f.owner.evaluateLocalPressure(diagnostics: diagnostics,
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,
+                maximumRetransmittedFraction: 0.01, policy: .recoveryBudget))
+        let advice = try XCTUnwrap(decision?.recommendation)
+        XCTAssertEqual(advice.kind, .reset)
+        try await f.owner.apply(advice)
+        let diagnostic = await f.owner.currentDiagnostic()
+        let encoded = try XCTUnwrap(diagnostic["appliedTransition"])
+        let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+        XCTAssertEqual(witness["input"], "localPressure")
+        XCTAssertEqual(witness["transport"], "elevated")
+        XCTAssertEqual(witness["start"].flatMap(Double.init), 119.95)
+        XCTAssertEqual(witness["end"], "120.2")
+        XCTAssertEqual(witness["transportStart"], "119.8")
+        XCTAssertEqual(witness["transportEnd"], "120.2")
+        XCTAssertEqual(witness["maxRTTMs"], "500.0")
+        XCTAssertEqual(witness["rttMs"], "300.0")
+        XCTAssertEqual(witness["delayRTTMs"], "300.0")
+        XCTAssertEqual(witness["delayRTTLimitMs"], "250.0")
+        XCTAssertEqual(witness["rttDelayMs"], "1000")
+        XCTAssertEqual(witness["drops"], "0")
+        XCTAssertEqual(witness["revision"], "2")
+        await f.owner.stop()
+    }
+
+    func testResetEpisodeRetainsPressureCauseAfterStaleAdmissionAndHealthyReissue() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let trial = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(trial.recommendation))
+        f.native.setNow(120.2)
+        var diagnostics = try await f.freshSource(start: 115.1, sequence: 3).1
+        var transport = PublishingTransportStatisticsTracker()
+        for (index, time) in [119.8, 120.2].enumerated() {
+            transport.observe(.init(publishingGeneration: 7, sampledAt: time,
+                elapsedMilliseconds: Int64(time * 1000), sentBytes: UInt64(10000 + index * 1000),
+                retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 300,
+                estimatedBandwidthMbps: 10, senderBufferedBytes: 0, senderBufferMilliseconds: 0,
+                availableSenderBytes: 10000, senderDeliveryDelayMilliseconds: 1000))
+        }
+        diagnostics.transport = transport.snapshot
+        let decision = try await f.owner.evaluateLocalPressure(diagnostics: diagnostics,
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500,
+                maximumRetransmittedFraction: 0.01, policy: .recoveryBudget))
+        let advice = try XCTUnwrap(decision?.recommendation)
+        XCTAssertEqual(advice.kind, .reset)
+        let prior = await f.owner.currentDiagnostic()
+        f.native.setNow(advice.validUntil + 0.01)
+        do { try await f.owner.apply(advice); XCTFail("Expired reset cannot reach native mutation") }
+        catch { XCTAssertEqual(error as? PublishingQualitySession.Failure, .staleAdvice) }
+        let rejected = await f.owner.currentDiagnostic()
+        XCTAssertEqual(prior["appliedTransition"], rejected["appliedTransition"])
+        f.native.setNow(125.3)
+        let healthy = try await f.freshSource(start: 120.2, sequence: 4)
+        let renewed = try await f.owner.evaluate(source: healthy.0, diagnostics: healthy.1,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant)
+        let replacement = try XCTUnwrap(renewed.recommendation)
+        XCTAssertEqual(replacement.kind, .reset)
+        XCTAssertFalse(renewed.reasons.contains(.transportPressure))
+        XCTAssertNotEqual(replacement, advice)
+        try await f.owner.apply(replacement)
+        let diagnostic = await f.owner.currentDiagnostic()
+        let encoded = try XCTUnwrap(diagnostic["appliedTransition"])
+        let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+        XCTAssertEqual(witness["sequence"], String(replacement.windowSequence))
+        XCTAssertEqual(witness["causeSequence"], String(advice.windowSequence))
+        XCTAssertEqual(witness["validUntil"], String(replacement.validUntil))
+        XCTAssertEqual(witness["input"], "localPressure")
+        XCTAssertEqual(witness["transport"], "elevated")
+        XCTAssertEqual(witness["start"].flatMap(Double.init), 119.95)
+        XCTAssertEqual(witness["end"], "120.2")
+        XCTAssertEqual(witness["transportStart"], "119.8")
+        XCTAssertEqual(witness["transportEnd"], "120.2")
+        XCTAssertEqual(witness["maxRTTMs"], "500.0")
+        XCTAssertEqual(witness["rttMs"], "300.0")
+        XCTAssertEqual(witness["delayRTTMs"], "300.0")
+        XCTAssertEqual(witness["delayRTTLimitMs"], "250.0")
+        XCTAssertEqual(witness["rttDelayMs"], "1000")
+        XCTAssertEqual(witness["drops"], "0")
+        XCTAssertEqual(witness["revision"], "2")
+        await f.owner.stop()
+    }
+
+    func testAppliedWorkerPressureContainsClassifiedProcessingValuesAndLimits() async throws {
+        for cause in ["omitted", "filter", "processing"] {
+            let f = try await CandidateQualityFixture.make()
+            let trial = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(trial.recommendation))
+            f.native.setNow(120.2)
+            let (source, diagnostics) = try await f.freshSource(start: 115.1, sequence: 3)
+            let report = try XCTUnwrap(source.processing), interval = report.interval
+            let replacement = WorkerProcessingReport(scopeID: report.scopeID, encoder: report.encoder,
+                previousSequence: report.previousSequence, sequence: report.sequence, firstPTS: report.firstPTS,
+                interval: .init(sourceStartExclusive: interval.sourceStartExclusive, sourceEndInclusive: interval.sourceEndInclusive,
+                    decodedFrames: 150, submittedFrames: cause == "omitted" ? 149 : 150,
+                    completedFrames: cause == "omitted" ? 149 : 150, pendingFrames: 0,
+                    omittedBeforeEncoderFrames: cause == "omitted" ? 1 : 0,
+                    filterDuration: .init(meanMs: 1, maximumMs: cause == "filter" ? 251 : 4),
+                    processingDuration: .init(meanMs: 20, maximumMs: cause == "processing" ? 1001 : 30)))
+            let input = WorkerSourceIntervalObservation(interval: source.interval, nativeClock: source.nativeClock,
+                workerId: source.workerId, workerEpoch: source.workerEpoch, workerAttempt: source.workerAttempt,
+                publication: source.publication, previousSequence: source.previousSequence, sequence: source.sequence,
+                previousDecodedPTS: source.previousDecodedPTS, firstDecodedPTS: source.firstDecodedPTS,
+                lastDecodedPTS: source.lastDecodedPTS, freshness: source.freshness, processing: replacement)
+            let decision = try await f.owner.evaluate(source: input, diagnostics: diagnostics,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                instant: f.native.instant)
+            XCTAssertTrue(decision.reasons.contains(.workerPressure))
+            try await f.owner.apply(XCTUnwrap(decision.recommendation))
+            let diagnostic = await f.owner.currentDiagnostic()
+            let encoded = try XCTUnwrap(diagnostic["appliedTransition"])
+            let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+            XCTAssertEqual(witness["worker"], "elevated")
+            XCTAssertEqual(witness["workerOmitted"], cause == "omitted" ? "1" : "0")
+            XCTAssertEqual(witness["workerFilterMs"], cause == "filter" ? "251.0" : "4.0")
+            XCTAssertEqual(witness["workerProcessingMs"], cause == "processing" ? "1001.0" : "30.0")
+            XCTAssertEqual(witness["maxFilterMs"], "250.0")
+            XCTAssertEqual(witness["maxProcessingMs"], "1000.0")
+            await f.owner.stop()
+        }
+    }
+
+    func testAppliedQueuePressureContainsUsedThreshold() async throws {
+        let f = try await CandidateQualityFixture.make()
+        let trial = try await f.owner.evaluateCandidate(f.admission)
+        try await f.owner.apply(XCTUnwrap(trial.recommendation))
+        f.native.setNow(120.2)
+        let (source, diagnostics) = try await f.freshSource(start: 115.1, sequence: 3, unhealthy: true)
+        let decision = try await f.owner.evaluate(source: source, diagnostics: diagnostics,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            instant: f.native.instant)
+        XCTAssertTrue(decision.reasons.contains(.queuePressure))
+        try await f.owner.apply(XCTUnwrap(decision.recommendation))
+        let diagnostic = await f.owner.currentDiagnostic()
+        let encoded = try XCTUnwrap(diagnostic["appliedTransition"])
+        let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+        XCTAssertEqual(witness["queue"], "1.0")
+        XCTAssertEqual(witness["queueLimit"], "0.75")
+        await f.owner.stop()
+    }
+
+    func testAppliedTransitionKeepsFirstInvalidationCauseThroughResetACK() async throws {
+        for input in ["cadenceUnavailable", "sourceRejected", "deliveryRejected", "windowRejected"] {
+            let f = try await CandidateQualityFixture.make()
+            let decision = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(decision.recommendation))
+            let before = await f.owner.currentDiagnostic()
+            if input == "cadenceUnavailable" {
+                try? await f.owner.noteUnavailableCadence(diagnostics: XCTUnwrap(f.sourceDiagnostics))
+            } else if input == "sourceRejected" {
+                _ = try? await f.owner.evaluate(source: XCTUnwrap(f.source), diagnostics: XCTUnwrap(f.sourceDiagnostics),
+                    workerLimits: nil, transportLimits: nil, instant: f.native.instant)
+            } else if input == "windowRejected" {
+                let snapshot = await f.owner.snapshot
+                _ = try? await f.owner.evaluate(.init(attemptID: snapshot.attemptID, sequence: 999,
+                    appliedRevision: 0, start: 110, end: 115, capturedFreshFrames: 150,
+                    encodedFreshFrames: 150, receiver: .init(freshFrames: 150, observedAt: 115),
+                    sourceLoss: .init(expectedFrames: 150, lostFrames: 0), meanQueueOccupancy: 0.1,
+                    usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal,
+                    workerPressure: .nominal, transportPressure: .nominal))
+            } else {
+                f.native.setNow(117.6)
+                let delivery = try await f.delivery(start: 116)
+                let stale = PublishingDeliveryObservation(source: delivery.source, delivery: delivery.delivery,
+                    appliedRevision: 0, result: delivery.result, classifiedAt: delivery.classifiedAt,
+                    observedAtLowerBound: delivery.observedAtLowerBound, authority: delivery.authority)
+                _ = try? await f.owner.evaluateDeliveryFailure(stale, authority: XCTUnwrap(delivery.authority), instant: f.native.instant)
+            }
+            // Later invalidations and deadline polling cannot relabel the first cause.
+            try? await f.owner.noteUnavailableCadence(diagnostics: XCTUnwrap(f.sourceDiagnostics))
+            let pending = try await f.owner.checkTrialDeadline()
+            let during = await f.owner.currentDiagnostic()
+            XCTAssertEqual(during["appliedTransition"], before["appliedTransition"])
+            try await f.owner.apply(XCTUnwrap(pending))
+            let after = await f.owner.currentDiagnostic()
+            let encoded = try XCTUnwrap(after["appliedTransition"])
+            let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String])
+            XCTAssertEqual(witness["input"], input)
+            XCTAssertEqual(witness["reasons"], "telemetryInvalidated")
+            XCTAssertEqual(witness["fromRevision"], "1")
+            XCTAssertEqual(witness["revision"], "2")
+            XCTAssertEqual(witness["kind"], "reset")
+            XCTAssertNotNil(witness["error"])
             await f.owner.stop()
         }
     }

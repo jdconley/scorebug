@@ -126,6 +126,135 @@ actor PublishingQualitySession {
     private var ownedPublisher: NativeOwnedCandidatePublisher?
     private var ownedMeasurement: PublishingOwnedMeasurementLease?
     #if DEBUG
+    /// At most one pending cause, one latched rollback cause, and one applied
+    /// witness. None is policy authority. The applied witness changes only at ACK.
+    private var transitionCause: (advice: QualityController.Recommendation, fields: [String: String])?
+    private var invalidationCause: (revision: UInt64, fields: [String: String])?
+    private var appliedTransition: String?
+
+    private func recordDecision(_ decision: QualityController.Decision, input: String, at now: Double,
+                                window: QualityController.Window? = nil,
+                                transportLimits: PublishingQualityTelemetry.TransportLimits? = nil,
+                                diagnostics: PublishingQualityTelemetry.Diagnostics? = nil,
+                                processing: WorkerProcessingReport? = nil,
+                                workerLimits: PublishingQualityTelemetry.WorkerLimits? = nil,
+                                extra: [String: String] = [:]) {
+        guard let advice = decision.recommendation else { return }
+        if transitionCause?.advice == advice { return }
+        // Core refreshes minimum-reset advice even on a later healthy window.
+        // Keep the episode's origin only while that same revision still owns
+        // the reset/rollback latch; the new recommendation identity is retained.
+        if let prior = transitionCause, prior.advice.appliedRevision == advice.appliedRevision,
+           prior.advice.kind == advice.kind, let state = policy?.currentDiagnostic,
+           state.appliedRevision == advice.appliedRevision,
+           (advice.kind == .reset && state.minimumResetRequired)
+            || (advice.kind == .rollback && state.trial?.rollbackRequired == true) {
+            transitionCause = (advice, prior.fields)
+            return
+        }
+        var fields = ["input": input, "at": String(now), "causeSequence": String(advice.windowSequence),
+            "reasons": decision.reasons.map { String(describing: $0) }.joined(separator: ",")]
+        fields.merge(extra) { _, new in new }
+        if decision.reasons.contains(.queuePressure) {
+            fields["queueLimit"] = String(QualityController.queuePressureThreshold)
+        }
+        if decision.reasons.contains(.sourceLoss) {
+            fields["lossLimit"] = String(behavior == .progressive
+                ? ProgressiveStreamingPolicy.maximumLossFraction : QualityController.legacyMaximumLossFraction)
+        }
+        if decision.reasons.contains(.freshFrameFloor) {
+            fields["freshFrameFloor"] = String(ProgressiveStreamingPolicy.freshFrameFloor)
+        }
+        if let window {
+            fields["start"] = String(window.start); fields["end"] = String(window.end)
+            fields["queue"] = window.meanQueueOccupancy.map { String($0) }
+            fields["thermal"] = String(describing: window.thermalPressure)
+            fields["transport"] = String(describing: window.transportPressure)
+            fields["worker"] = String(describing: window.workerPressure)
+            if window.workerPressure == .elevated, let processing, let limits = workerLimits {
+                fields["workerOmitted"] = String(processing.interval.omittedBeforeEncoderFrames)
+                fields["workerFilterMs"] = processing.interval.filterDuration.map { String($0.maximumMs) }
+                fields["workerProcessingMs"] = processing.interval.processingDuration.map { String($0.maximumMs) }
+                fields["maxFilterMs"] = String(limits.maximumFilterMs)
+                fields["maxProcessingMs"] = String(limits.maximumProcessingMs)
+            }
+            fields["captured"] = window.capturedFreshFrames.map { String($0) }
+            fields["encoded"] = window.encodedFreshFrames.map { String($0) }
+            fields["received"] = window.receiver.map { String($0.freshFrames) }
+            fields["expected"] = window.sourceLoss.map { String($0.expectedFrames) }
+            fields["lost"] = window.sourceLoss.map { String($0.lostFrames) }
+            fields["capacity"] = window.usableVideoCapacity.map { String($0) }
+            if window.thermalPressure == .elevated, let sample = diagnostics?.thermal.interval(from: window.start, to: window.end) {
+                fields["thermalState"] = String(describing: sample.enclosingMaximumState)
+            }
+            if window.transportPressure == .elevated, let history = diagnostics?.transport, let limits = transportLimits,
+               let interval = history.interval(from: window.start, to: window.end) {
+                fields["transportStart"] = String(interval.enclosingStart)
+                fields["transportEnd"] = String(interval.enclosingEnd)
+                fields["drops"] = String(interval.enclosingDroppedPackets)
+                fields["bufferMs"] = String(interval.enclosingMaximumBufferMilliseconds)
+                fields["rttMs"] = String(interval.enclosingMaximumRTTMilliseconds)
+                fields["sentBytes"] = String(interval.enclosingSentBytes)
+                fields["retransBytes"] = String(interval.enclosingRetransmittedBytes)
+                // Preserve paired gauges from the same enclosing points the
+                // classifier uses. Max RTT alone cannot identify a delay limit.
+                if limits.policy != .legacyThreshold {
+                    let points = history.samples.filter {
+                        $0.sampledAt >= interval.enclosingStart && $0.sampledAt <= interval.enclosingEnd
+                            && ($0.senderDeliveryDelayMilliseconds ?? 0) > 0
+                    }
+                    func rttLimit(_ point: PublishingTransportStatistics) -> Double {
+                        min(limits.maximumRTTMs, Double(point.senderDeliveryDelayMilliseconds!) / 4)
+                    }
+                    if let point = points.max(by: { $0.rttMilliseconds / rttLimit($0) < $1.rttMilliseconds / rttLimit($1) }) {
+                        fields["delayRTTMs"] = String(point.rttMilliseconds)
+                        fields["delayRTTLimitMs"] = String(rttLimit(point))
+                        fields["rttDelayMs"] = String(point.senderDeliveryDelayMilliseconds!)
+                    }
+                    if limits.policy == .recoveryBudget {
+                        func bufferLimit(_ point: PublishingTransportStatistics) -> Double {
+                            min(limits.maximumBufferMs, Double(point.senderDeliveryDelayMilliseconds!) / 2)
+                        }
+                        if let point = points.max(by: { Double($0.senderBufferMilliseconds) / bufferLimit($0) < Double($1.senderBufferMilliseconds) / bufferLimit($1) }) {
+                            fields["delayBufferMs"] = String(point.senderBufferMilliseconds)
+                            fields["delayBufferLimitMs"] = String(bufferLimit(point))
+                            fields["bufferDelayMs"] = String(point.senderDeliveryDelayMilliseconds!)
+                        }
+                    }
+                }
+            }
+        }
+        if let limits = transportLimits {
+            fields["transportPolicy"] = limits.policy.rawValue
+            fields["maxBufferMs"] = String(limits.maximumBufferMs)
+            fields["maxRTTMs"] = String(limits.maximumRTTMs)
+            if limits.policy != .recoveryBudget { fields["maxRetransmitFraction"] = String(limits.maximumRetransmittedFraction) }
+        }
+        if (advice.kind == .reset || advice.kind == .rollback),
+           let cause = invalidationCause, cause.revision == advice.appliedRevision { fields = cause.fields }
+        transitionCause = (advice, fields)
+    }
+    #endif
+    /// Preserve the exact first invalidation that latched this trial's rollback.
+    /// The same policy invalidation executes in Release, with no retained witness.
+    private func invalidateTelemetry(_ current: inout QualityController, input: String,
+                                     error: Error? = nil, start: Double? = nil, end: Double? = nil) {
+        #if DEBUG
+        // Core may already have invalidated its local copy before throwing.
+        // The session still owns the pre-evaluation policy until its defer runs.
+        let state = self.policy?.currentDiagnostic ?? current.currentDiagnostic
+        if invalidationCause?.revision != current.appliedRevision,
+           state.trial != nil || state.application?.recommendation.kind == .trial || state.application?.recommendation.kind == .increase,
+           !state.minimumResetRequired, state.trial?.rollbackRequired != true {
+            var fields = ["input": input, "at": String(lastNow), "reasons": "telemetryInvalidated"]
+            fields["error"] = error.map { String(String(describing: $0).prefix(80)) }
+            fields["start"] = start.map { String($0) }; fields["end"] = end.map { String($0) }
+            invalidationCause = (current.appliedRevision, fields)
+        }
+        #endif
+        current.invalidateTelemetry()
+    }
+    #if DEBUG
     private var lastMeasurementDiagnostic: [String: String] = [:]
     private var candidateSourceDiagnostic: [String: String] = [:]
     #endif
@@ -359,6 +488,7 @@ actor PublishingQualitySession {
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
         }
         result["candidateProbeDemandBitsPerSecond"] = candidateProbeDemand.map { String($0.measuredCost) }
+        result["appliedTransition"] = appliedTransition
         result.merge(lastMeasurementDiagnostic) { _, latest in latest }
         result.merge(candidateSourceDiagnostic) { _, latest in latest }
         result["lastAcceptedSourceAgeSeconds"] = lastWindow.map { String(now - $0.end) }
@@ -614,6 +744,12 @@ actor PublishingQualitySession {
                 candidateProbeDemand = .init(baseline: policy.applied, revision: policy.appliedRevision,
                     target: admission.value.settings, measuredCost: admission.value.candidateTransportBitsPerSecond)
             }
+            #if DEBUG
+            recordDecision(decision, input: "candidate", at: now,
+                extra: ["start": String(admission.value.measuredStart), "end": String(admission.value.measuredEnd),
+                    "cost": String(admission.value.candidateTransportBitsPerSecond),
+                    "padding": String(admission.value.deliveredPaddingBitsPerSecond)])
+            #endif
             pendingCandidate = decision.recommendation?.candidateID == admission.value.id ? admission : nil
             // A candidate no-op revokes earlier candidate advice, but Core keeps
             // a known downward/reset recommendation until applied or superseded.
@@ -628,7 +764,7 @@ actor PublishingQualitySession {
             let preserveDownward = (error as? Failure) == .staleAdvice && pending.map {
                 $0.kind == .decrease || $0.kind == .reset || $0.kind == .rollback
             } == true
-            if !preserveDownward { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
+            if !preserveDownward { invalidateTelemetry(&policy, input: "candidateRejected"); candidateHealthSource = nil; pending = nil }
             throw error
         }
     }
@@ -640,10 +776,13 @@ actor PublishingQualitySession {
         do {
             let now = try time()
             let decision = try policy.evaluate(window, at: now)
+            #if DEBUG
+            recordDecision(decision, input: "window", at: now, window: window)
+            #endif
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "windowRejected", error: error); candidateHealthSource = nil; pending = nil; throw error }
     }
     func evaluate(source: WorkerSourceIntervalObservation, diagnostics: PublishingQualityTelemetry.Diagnostics,
                   workerLimits: PublishingQualityTelemetry.WorkerLimits?, transportLimits: PublishingQualityTelemetry.TransportLimits?,
@@ -676,8 +815,12 @@ actor PublishingQualitySession {
                     settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
                 diagnostics: diagnostics, workerLimits: workerLimits, transportLimits: transportLimits,
                 sequence: lastPolicySequence + 1, at: now, instant: sampledInstant, timingProfile: timingProfile)
-            if let lastSource, lastSource.scope != sourceScope { policy.invalidateTelemetry(); candidateHealthSource = nil }
+            if let lastSource, lastSource.scope != sourceScope { invalidateTelemetry(&policy, input: "sourceScopeChanged", start: window.start, end: window.end); candidateHealthSource = nil }
             let decision = try policy.evaluate(window, at: now)
+            #if DEBUG
+            recordDecision(decision, input: "source", at: now, window: window, transportLimits: transportLimits,
+                diagnostics: diagnostics, processing: source.processing, workerLimits: workerLimits)
+            #endif
             candidateHealthSource = sourceScope
             candidateRecovery?.recordSource(start: window.start, end: window.end, sequence: window.sequence)
             lastSource = (sourceScope, source.sequence)
@@ -687,7 +830,7 @@ actor PublishingQualitySession {
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "sourceRejected", error: error, start: source.interval.captureBoundaryStartTime, end: source.interval.captureBoundaryEndTime); candidateHealthSource = nil; pending = nil; throw error }
     }
     /// Uses the same ordinal/watermark as matched receiver windows. A valid nil
     /// probe consumes no evidence and preserves the current pending decision.
@@ -705,11 +848,14 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, transportLimits: transportLimits, sequence: lastPolicySequence + 1,
                 after: lastWindow?.end, at: now) else { return nil }
             let decision = try policy.evaluateLocalPressure(window, at: now)
+            #if DEBUG
+            recordDecision(decision, input: "localPressure", at: now, window: window, transportLimits: transportLimits, diagnostics: diagnostics)
+            #endif
             candidateHealthSource = nil
             pending = decision.recommendation
             lastPolicySequence = window.sequence; lastWindow = window; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "localRejected", error: error); candidateHealthSource = nil; pending = nil; throw error }
     }
     /// A current publisher with absent cadence supplies unknown evidence, never
     /// a healthy sample. Only an already justified downward action is preserved.
@@ -731,10 +877,10 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, transportLimits: nil, sequence: lastPolicySequence + 1,
                 after: lastWindow?.end, at: now)
         } catch {
-            if !preserveDownward { policy.invalidateTelemetry(); pending = nil }
+            if !preserveDownward { invalidateTelemetry(&policy, input: "cadenceUnavailable", error: error); pending = nil }
             throw error
         }
-        if !preserveDownward { policy.invalidateTelemetry(); pending = nil }
+        if !preserveDownward { invalidateTelemetry(&policy, input: "cadenceUnavailable"); pending = nil }
     }
 
     func evaluateDecoderStall(cadence: WorkerDecoderCadenceFreshness, diagnostics: PublishingQualityTelemetry.Diagnostics,
@@ -767,7 +913,7 @@ actor PublishingQualitySession {
                 diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
             let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
             if let decoderScope, decoderScope != scope {
-                policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil
+                invalidateTelemetry(&policy, input: "cadenceScopeChanged"); candidateHealthSource = nil; pending = nil
                 decoderProgress = nil; consumedStallPTS = nil
             }
             if let decoderProgress, progress < decoderProgress { throw QualityController.ValidationError.outOfOrder }
@@ -776,11 +922,14 @@ actor PublishingQualitySession {
             if cadence.snapshot.progress?.stalled == false { candidateRecovery?.resume(at: now) }
             guard let signal, consumedStallPTS != progress else { return nil }
             let decision = try policy.evaluateDecoderStall(signal, at: now)
+            #if DEBUG
+            recordDecision(decision, input: "decoderStall", at: now, extra: ["observedAtLowerBound": String(signal.observedAtLowerBound)])
+            #endif
             candidateHealthSource = nil
             consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "cadenceRejected", error: error); candidateHealthSource = nil; pending = nil; throw error }
     }
     /// Classification occurred synchronously at the current-input boundary.
     /// Retirement is checked again here after actor scheduling, before the
@@ -818,7 +967,7 @@ actor PublishingQualitySession {
                   now - observation.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
                   now - source.windowEnd <= timingProfile.maximumCaptureWindowEvaluationAge else { throw PublishingQualityTelemetry.Failure.freshness }
             if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
-                if deliveryAuthority != nil { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
+                if deliveryAuthority != nil { invalidateTelemetry(&policy, input: "deliveryAuthorityChanged"); candidateHealthSource = nil; pending = nil }
                 deliveryAuthority = authority; deliveryRevision = policy.appliedRevision; deliveryEnds = [:]
             }
             deliveryEnds[lane] = source.windowEnd
@@ -828,26 +977,47 @@ actor PublishingQualitySession {
             }
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             guard let signal = observation.failureSignal(sequence: lastPolicySequence + 1) else {
-                if observation.result.uncertainFrames > 0 { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil }
+                if observation.result.uncertainFrames > 0 { invalidateTelemetry(&policy, input: "deliveryUncertain", start: source.windowStart, end: source.windowEnd); candidateHealthSource = nil; pending = nil }
                 return nil
             }
             let decision = try policy.evaluateDeliveryFailure(signal, at: now)
+            #if DEBUG
+            recordDecision(decision, input: "deliveryFailure", at: now, extra: ["start": String(signal.start), "end": String(signal.end), "expected": String(signal.expectedFrames), "onTime": String(signal.onTimeFrames), "late": String(signal.lateFrames), "missing": String(signal.missingFrames)])
+            #endif
             candidateHealthSource = nil
             lastPolicySequence = signal.sequence; lastDeliveryFailure = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "deliveryRejected", error: error, start: observation.source.windowStart, end: observation.source.windowEnd); candidateHealthSource = nil; pending = nil; throw error }
     }
     func checkTrialDeadline() throws -> QualityController.Recommendation? {
         try admit()
         guard var policy else { throw Failure.notReady }
         defer { self.policy = policy }
         do {
+            #if DEBUG
+            let priorTrial = policy.currentDiagnostic.trial
+            #endif
             let advice = try policy.checkTrialDeadline(at: time())
+            #if DEBUG
+            if let advice, transitionCause?.advice != advice {
+                // Deadline may refresh an expired reset recommendation. Preserve
+                // its original cause rather than attributing it to the timer.
+                if let prior = transitionCause, prior.advice.appliedRevision == advice.appliedRevision,
+                   prior.advice.kind == advice.kind {
+                    transitionCause = (advice, prior.fields)
+                } else {
+                    var fields = ["input": "trialDeadline", "at": String(lastNow), "reasons": "trialTimedOut"]
+                    fields["deadline"] = priorTrial.map { String($0.deadline) }
+                    if let cause = invalidationCause, cause.revision == advice.appliedRevision { fields = cause.fields }
+                    transitionCause = (advice, fields)
+                }
+            }
+            #endif
             // No due rollback does not revoke an existing trial/increase/decrease.
             if let advice { candidateHealthSource = nil; pending = advice }
             return advice
-        } catch { policy.invalidateTelemetry(); candidateHealthSource = nil; pending = nil; throw error }
+        } catch { invalidateTelemetry(&policy, input: "deadlineRejected", error: error); candidateHealthSource = nil; pending = nil; throw error }
     }
     func apply(_ advice: QualityController.Recommendation) async throws {
         let measurement = advice.candidateID == nil ? nil : ownedMeasurement
@@ -874,7 +1044,7 @@ actor PublishingQualitySession {
         guard var policy else { throw Failure.notReady }
         let start: Double
         do { start = try time() }
-        catch { policy.invalidateTelemetry(); self.policy = policy; candidateHealthSource = nil; pending = nil; throw error }
+        catch { invalidateTelemetry(&policy, input: "applicationRejected", error: error); self.policy = policy; candidateHealthSource = nil; pending = nil; throw error }
         guard pending == advice, advice.attemptID == attemptID,
               advice.appliedRevision == policy.appliedRevision, start <= advice.validUntil else { throw Failure.staleAdvice }
         let profile: PublishingVideoProfile?
@@ -894,7 +1064,7 @@ actor PublishingQualitySession {
                   witness.permits(applied: .init(attemptID: attemptID, revision: policy.appliedRevision,
                       settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt),
                       at: start, instant: sampleInstant()) else {
-                policy.invalidateTelemetry(); self.policy = policy; candidateHealthSource = nil; pending = nil
+                invalidateTelemetry(&policy, input: "applicationRejected"); self.policy = policy; candidateHealthSource = nil; pending = nil
                 throw Failure.staleAdvice
             }
         }
@@ -910,6 +1080,9 @@ actor PublishingQualitySession {
         } else { admitted = try policy.beginApplication(advice, at: start) }
         // Publish authoritative policy and private ownership before native work
         // suspends. A selector is never proof that this application changed it.
+        #if DEBUG
+        let admittedCause = transitionCause.flatMap { $0.advice == advice ? $0.fields : nil }
+        #endif
         self.policy = policy
         applicationOwner = .init(application: admitted)
         if advice.candidateID == nil { ownedMeasurement?.revoke() }
@@ -967,6 +1140,23 @@ actor PublishingQualitySession {
             defer { self.policy = current }
             try current.acknowledge(admitted, applied: advice.settings, at: now)
             receipt = result; acknowledgedAt = now; pending = nil; application = admitted
+            #if DEBUG
+            var fields = admittedCause ?? ["input": "unavailable", "reasons": "causeUnavailable"]
+            fields["applicationID"] = admitted.id.uuidString.lowercased()
+            fields["attemptID"] = advice.attemptID.uuidString.lowercased()
+            fields["fromRevision"] = String(advice.appliedRevision)
+            fields["sequence"] = String(advice.windowSequence)
+            fields["kind"] = String(describing: advice.kind)
+            fields["profile"] = advice.settings.profileID; fields["bitrate"] = String(advice.settings.videoBitrate)
+            fields["validUntil"] = String(advice.validUntil)
+            fields["candidateID"] = advice.candidateID?.uuidString.lowercased()
+            fields["revision"] = String(current.appliedRevision)
+            fields["ackAt"] = String(now); fields["nativeAt"] = String(result.acceptedAt)
+            fields["profileNativeAt"] = format.map { String($0.acknowledgedAt) }
+            appliedTransition = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+                .flatMap { String(data: $0, encoding: .utf8) }
+            transitionCause = nil; invalidationCause = nil
+            #endif
             // This revision change is our acknowledged write, not replacement
             // of the receiver context. Keep its revocable identity while new
             // source/configuration windows start their own delivery watermarks.
@@ -1030,6 +1220,7 @@ actor PublishingQualitySession {
         closed = true; pending = nil; pendingCandidate = nil; candidateHealthSource = nil; candidateProbeDemand = nil
         #if DEBUG
         lastMeasurementDiagnostic = [:]; candidateSourceDiagnostic = [:]
+        transitionCause = nil; invalidationCause = nil; appliedTransition = nil
         #endif
         applicationOwner = nil; busy = false
         let task: Task<Void, Never>

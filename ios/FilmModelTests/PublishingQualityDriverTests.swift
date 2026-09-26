@@ -69,6 +69,100 @@ import XCTest
         let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: String])
         XCTAssertEqual(fields["policyTrialActive"], "true")
         XCTAssertEqual(fields["policyOwnerKey"]?.count, 64)
+        XCTAssertNotNil(fields["appliedTransition"])
+        XCTAssertNotNil(fields["lastMeasurementOutcome"])
+        XCTAssertNotNil(fields["lastCandidateCostBitsPerSecond"])
+        XCTAssertNotNil(fields["deliveryUncertainFrames"])
+        XCTAssertLessThanOrEqual(value.utf8.count, 4096)
+        print("Populated current trial diagnostic bytes: \(value.utf8.count)")
+        // Exercise a larger real witness: concurrent worker and transport
+        // pressure, followed by fresh source ownership on the acknowledged reset.
+        f.native.setNow(125.3)
+        let (pressureSource, originalDiagnostics) = try await f.freshSource(start: 120.2, sequence: 4)
+        let processing = try XCTUnwrap(pressureSource.processing), interval = processing.interval
+        let pressuredProcessing = WorkerProcessingReport(scopeID: processing.scopeID, encoder: processing.encoder,
+            previousSequence: processing.previousSequence, sequence: processing.sequence, firstPTS: processing.firstPTS,
+            interval: .init(sourceStartExclusive: interval.sourceStartExclusive, sourceEndInclusive: interval.sourceEndInclusive,
+                decodedFrames: 150, submittedFrames: 150, completedFrames: 150, pendingFrames: 0, omittedBeforeEncoderFrames: 0,
+                filterDuration: .init(meanMs: 20, maximumMs: 251), processingDuration: .init(meanMs: 20, maximumMs: 1001)))
+        let pressure = WorkerSourceIntervalObservation(interval: pressureSource.interval, nativeClock: pressureSource.nativeClock,
+            workerId: pressureSource.workerId, workerEpoch: pressureSource.workerEpoch, workerAttempt: pressureSource.workerAttempt,
+            publication: pressureSource.publication, previousSequence: pressureSource.previousSequence, sequence: pressureSource.sequence,
+            previousDecodedPTS: pressureSource.previousDecodedPTS, firstDecodedPTS: pressureSource.firstDecodedPTS,
+            lastDecodedPTS: pressureSource.lastDecodedPTS, freshness: pressureSource.freshness, processing: pressuredProcessing)
+        var transport = PublishingTransportStatisticsTracker(), pressureDiagnostics = originalDiagnostics
+        for sample in originalDiagnostics.transport.samples {
+            transport.observe(.init(publishingGeneration: sample.publishingGeneration, sampledAt: sample.sampledAt,
+                elapsedMilliseconds: sample.elapsedMilliseconds, sentBytes: sample.sentBytes, retransmittedBytes: sample.retransmittedBytes,
+                droppedPackets: sample.droppedPackets, rttMilliseconds: 600, estimatedBandwidthMbps: sample.estimatedBandwidthMbps,
+                senderBufferedBytes: sample.senderBufferedBytes, senderBufferMilliseconds: sample.senderBufferMilliseconds,
+                availableSenderBytes: sample.availableSenderBytes))
+        }
+        pressureDiagnostics.transport = transport.snapshot
+        await driver.tick(encoderReady: true, source: pressure, diagnostics: pressureDiagnostics)?.value
+        f.native.setNow(130.4)
+        let healthy = try await f.freshSource(start: 125.3, sequence: 5)
+        await driver.tick(encoderReady: true, source: healthy.0, diagnostics: healthy.1)?.value
+        XCTAssertEqual(values.count, 4)
+        let fullValue = try XCTUnwrap(values.last)
+        let full = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(fullValue.utf8)) as? [String: String])
+        let applied = try XCTUnwrap(full["appliedTransition"])
+        let witness = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(applied.utf8)) as? [String: String])
+        XCTAssertEqual(full["policyAppliedRevision"], "2")
+        XCTAssertEqual(full["policyOwnerKey"]?.count, 64)
+        XCTAssertEqual(full["policySourceScopeKey"]?.count, 64)
+        XCTAssertEqual(full["policyTrialActive"], "false")
+        XCTAssertEqual(witness["worker"], "elevated")
+        XCTAssertEqual(witness["transport"], "elevated")
+        XCTAssertEqual(witness["workerFilterMs"], "251.0")
+        XCTAssertEqual(witness["rttMs"], "600.0")
+        XCTAssertLessThanOrEqual(fullValue.utf8.count, 4096)
+        print("Populated worker/transport applied diagnostic bytes: \(fullValue.utf8.count)")
+        await driver.stop()
+    }
+
+    func testCurrentDiagnosticCompactsHistoricalOverflowWithoutLosingAppliedTransition() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        f.native.useActualInstant()
+        let driver = PublishingQualityDriver(owner: f.owner,
+            workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, export: { _ in })
+        var measurement = PublishingOwnedMeasurementLease.CurrentDiagnostic()
+        measurement.phase = "applicationAcknowledged"; measurement.failure = "unavailable"
+        measurement.failurePhase = "applicationDispatched"; measurement.candidateReason = "completed"
+        measurement.costReady = true; measurement.boundAt = 109; measurement.completedAt = 114.07
+        // Populate the other existing producers' optional fields, including
+        // rejected-input fields that may coexist with retained candidate output.
+        var additional = measurement.fields(settlement: "acknowledged", at: 115.1)
+        for key in ["candidateProviderGate", "lastCandidateAdmissionGate", "sourceRejection", "cadenceRejection", "localRejection"] {
+            additional[key] = "source-configuration"
+        }
+        for key in ["candidateProviderObservedAtUptimeSeconds", "lastCandidateAdmissionObservedAtUptimeSeconds",
+                    "deliveryObservedAtUptimeSeconds", "deliveryWindowSeconds", "deliveryExpectedFrames", "deliveryOnTimeFrames",
+                    "deliveryLateFrames", "deliveryMissingFrames", "deliveryUncertainFrames", "lastRecoveryDeliveryWindowAgeSeconds"] {
+            additional[key] = "1234567.123456789"
+        }
+        additional["lastMeasurementFailure"] = String(repeating: "long historical failure detail ", count: 150)
+        driver.candidateInputDiagnosticProvider = { additional }
+        driver.candidateInputProvider = { _ in f.admission }
+        var values: [String] = []
+        driver.currentDiagnosticDidChange = { values.append($0) }
+        await driver.tick(encoderReady: true, source: f.source, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
+        f.native.setNow(120.2)
+        let source = try await f.freshSource(start: 115.1, sequence: 3)
+        await driver.tick(encoderReady: true, source: source.0, diagnostics: source.1)?.value
+        XCTAssertEqual(values.count, 2, "Overflow must not silently suppress the new callback")
+        let value = try XCTUnwrap(values.last)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: String])
+        XCTAssertEqual(fields["policyTrialActive"], "true")
+        XCTAssertEqual(fields["policyOwnerKey"]?.count, 64)
+        XCTAssertNotNil(fields["appliedTransition"])
+        XCTAssertEqual(fields["diagnosticCompacted"], "true")
+        XCTAssertNotNil(fields["sessionObservedAtUptimeSeconds"])
+        XCTAssertNotNil(fields["sessionBusy"])
+        XCTAssertNotNil(fields["observedAtUptimeSeconds"])
+        XCTAssertNotNil(fields["policySourceScopeKey"])
         XCTAssertNotNil(fields["lastMeasurementOutcome"])
         XCTAssertNotNil(fields["lastCandidateCostBitsPerSecond"])
         XCTAssertNotNil(fields["deliveryUncertainFrames"])

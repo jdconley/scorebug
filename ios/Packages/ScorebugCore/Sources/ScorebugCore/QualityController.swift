@@ -5,6 +5,9 @@ import Foundation
 /// Thresholds are initial qualification values, not a reliability guarantee.
 public struct QualityController: Sendable {
     private let timingProfile: StreamingTimingProfile
+    /// Shared with observational diagnostics so reported decision limits cannot drift.
+    public static let queuePressureThreshold = 0.75
+    public static let legacyMaximumLossFraction = 0.01
     /// Measured source spans may exceed nominal five-second decoder windows.
     /// This ingestion allowance never changes actual elapsed-time rate calculations.
     public static let maximumWindowDuration: Double = 5.25
@@ -674,7 +677,7 @@ public struct QualityController: Sendable {
                       window.receiver == nil, window.sourceLoss == nil, window.usableVideoCapacity == nil,
                       window.connectivity == .unknown, window.workerPressure == .unknown,
                       window.thermalPressure == .elevated || window.transportPressure == .elevated
-                        || (window.meanQueueOccupancy.map { $0 >= 0.75 } ?? false)
+                        || (window.meanQueueOccupancy.map { $0 >= Self.queuePressureThreshold } ?? false)
                 else { throw ValidationError.invalidWindow }
             }
             try validate(window, at: now, minimumDuration: localPressure ? 0.25 : 1, maximumAge: maximumWindowAge)
@@ -732,10 +735,10 @@ public struct QualityController: Sendable {
         if observedFPS.contains(where: { $0 < ProgressiveStreamingPolicy.freshFrameFloor }) { decrease(.freshFrameFloor) }
         if let loss = window.sourceLoss {
             let eligible = behavior == .legacy || duration >= ProgressiveStreamingPolicy.minimumLossWindowDuration
-            let limit = behavior == .progressive ? ProgressiveStreamingPolicy.maximumLossFraction : 0.01
+            let limit = behavior == .progressive ? ProgressiveStreamingPolicy.maximumLossFraction : Self.legacyMaximumLossFraction
             if eligible && Double(loss.lostFrames) / Double(loss.expectedFrames) > limit { decrease(.sourceLoss) }
         }
-        if let queue = window.meanQueueOccupancy, queue >= 0.75 { decrease(.queuePressure) }
+        if let queue = window.meanQueueOccupancy, queue >= Self.queuePressureThreshold { decrease(.queuePressure) }
         if let capacity = window.usableVideoCapacity, capacity < Double(applied.videoBitrate) * 1.25 { decrease(.capacityHeadroom) }
         if window.thermalPressure == .elevated { decrease(.thermalPressure) }
         if window.workerPressure == .elevated { decrease(.workerPressure) }
