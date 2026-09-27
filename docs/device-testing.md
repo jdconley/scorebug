@@ -96,3 +96,34 @@ For paired hardware testing, start a fresh lab, set `SCOREBUG_DEVICE_WATCH_SCORI
 - ScorebugWatch: `ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingRealCompanionSetup`.
 
 The Watch receives its setup through real WatchConnectivity. It holds its first point for 30 seconds so the phone can observe that point with publishing, worker output and local recording active, then undoes, awards AWAY and ends the match. The phone must observe 0–1 ended, continue recording after streaming stops, and export a new recording. The flag is test-only and does not provide fixture credentials to the Watch. Both test processes and the lab must be joined, and every output decoded, before treating the run as a pass.
+
+## Current simulator-first checkpoints
+
+Use the installed iOS/watchOS26.2 runtimes and the current private LAN address.
+Keep hardware work deferred until these simulator workflows are ready. Both runners
+reuse `ios/DerivedData/OrdinaryNativeApp`; they create and remove only their own
+simulators, retain app containers and outputs, and require the intended tests to
+execute. Set `DEVELOPER_DIR` as above and use an absolute prepared video path.
+
+```sh
+node scripts/test-ordinary-native-app.mjs \
+  --host YOUR_PRIVATE_LAN_IP --source /absolute/prepared/input.mov --lane watch-direct
+node scripts/test-native-created-simulators.mjs \
+  --host YOUR_PRIVATE_LAN_IP --source /absolute/prepared/input.mov
+```
+
+`watch-direct` records/publishes from the native phone, then lets the native Watch
+score, undo, relaunch and end the match. It fixtures only delivery of a real,
+server-issued scoped Watch setup offer because companion registration fails on
+this simulator runtime. Scoring uses the real API; it does not qualify
+WatchConnectivity or physical radios.
+
+The second runner starts with an empty server. Native phone B creates the match;
+phone A discovers it, records/publishes and scores; B takes over, scores and undoes
+while A continues. B must remain camera-free. A then stops streaming, continues
+its clean recording and exports it. This run does not include a Watch.
+
+A workflow pass is distinct from decoded-media acceptance. Verify the actual clean
+export, proxy MP4 and mock-destination MP4, including audio, source-frame continuity
+and visible score changes. Keep strict failures recorded separately rather than
+rerunning unrelated suites or treating a UI pass as full media qualification.

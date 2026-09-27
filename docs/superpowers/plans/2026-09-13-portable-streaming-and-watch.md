@@ -24,7 +24,7 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 
 | Area | Implemented | Remaining acceptance |
 |---|---|---|
-| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native creator → separate filming/scoring devices in one simulator workflow; integrated adversarial/reconnect cases |
+| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone simulator workflow passes; integrated adversarial/reconnect cases remain |
 | Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
 | SRT → overlay proxy → RTMP and MP4 | Yes; initial/changing score, configurable font, software/VideoToolbox selection, mock destination and proxy recording | Native workflow with worker/control-plane restart; backend capability reporting and installation packaging |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p congestion recovery still loses live A/V; higher profiles and sustained operation unqualified |
@@ -39,7 +39,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
 - [x] While capture and stream continue, relaunch Watch without reinjecting setup; recover the same pairing/score, then score/undo/end with exactly one server outcome per command.
 - [ ] Verify clean archive, changed overlay in proxy and mock MP4s, audio, native export, and archive continuation after the stream/match ends.
-- [ ] Exercise native phone B creating a match, phone A discovering/joining to record/publish, phone B scoring, then Watch B taking over. Include camera-free native scoring and layout checks on supported small screens.
+- [x] Exercise native phone B creating a match, phone A discovering/joining to record/publish, and phone B scoring/undoing without capture permissions. Both native workflows and durable role checks pass on iPhone14 simulators.
+- [ ] Extend the separate-scorer workflow through Watch B takeover; finish layout checks on supported small Watch screens.
 - [ ] Run scoring reconnect/lost-reply/takeover/stale-command cases against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.
 - [ ] Complete one consolidated simulator regression checkpoint covering native phone, Watch, archive recovery/export and the real local media pipeline. Separate any unsupported simulator OS transport from application feature results.
 
@@ -63,7 +64,8 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [ ] Add explicit backend capability reporting/negotiation beyond static encoder selection; distinguish configured, available and runtime-qualified profiles.
 - [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Generation/configuration checks pass; actual launchd service operation remains to verify.
-- [ ] Complete Linux Compose CPU/GPU deployment instructions and runtime checks, and verify the Mac service against the local mock output.
+- [x] Document Linux worker Compose CPU/GPU configuration, output modes, upgrade/rollback and current qualification limits. The legacy VPS stack remains explicitly unqualified.
+- [ ] Verify Linux deployment networking/runtime and the Mac service against the local mock output; repair the legacy VPS template before using it.
 - [ ] Update README, architecture, runbook and tested platform matrix. Add/verify CI for protocol/scoring, real server-container startup, native builds and simulator/media checkpoints appropriate to CI resources.
 
 ## 4. Deferred hardware and external acceptance

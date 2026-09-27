@@ -140,29 +140,153 @@ The native app attaches validated reports to matching source intervals. Current-
 classification and automatic quality control remain the next steps; completion is
 not a capacity estimate. See [worker status](../../docs/worker-status.md).
 
-## Linux container
+## Linux CPU/GPU deployment
+
+Use Docker Engine with Compose v2 on Linux and a pinned repository revision.
+The worker image is Node 22/Debian with FFmpeg, DejaVu fonts and `tini`; software
+encoding needs no CUDA runtime. From the repository root:
 
 ```sh
-docker build -f apps/home-daemon/Dockerfile -t scorebug/home-daemon .
-docker run --rm --env-file apps/home-daemon/.env scorebug/home-daemon
-pnpm test:worker-container scorebug/home-daemon
+WORKER_RELEASE=$(git rev-parse --short=12 HEAD)
+docker build -f apps/home-daemon/Dockerfile -t "scorebug/home-daemon:$WORKER_RELEASE" .
 ```
 
-The default image uses Node 22/Debian and software encoding with a small init
-process, without a CUDA runtime requirement. Its native arm64 build on this Mac
-passes worker startup, actual compiled-pipeline H.264/AAC encoding with overlay,
-full decoding, and graceful stop while Docker networking is disabled. That check
-does not qualify network transport, GPU encoding, or other host architectures.
+Build for the target host architecture. A successful build or an encoder listing
+is not runtime/media qualification. Keep the previous image tag/digest for rollback.
+The worker connects to an existing native control plane and managed SRT relay;
+it does not provision those services. The checked-in [VPS stack](../../infra/vps/README.md)
+is a legacy template with outstanding persistence/relay repairs, not a complete
+current native deployment. For native macOS use the [service runbook](../../docs/macos-worker-service.md).
 
-Use reachable container-network addresses instead of `127.0.0.1` for services
-outside the container. NVENC requires a compatible NVIDIA host/driver and container
-toolkit, `ENCODER=nvenc`, and `--gpus all`. An encoder listing alone does not prove
-that encoding works; qualify the actual media pipeline on that host before use.
+Create a private deployment directory outside the checkout, with `worker.env`
+mode 0600 and its parent mode 0700. Do not commit it or print `docker compose config`
+in shared logs: environment values include credentials. Configure these existing
+worker keys (example destinations are deliberately non-routable):
 
-See [sustained media qualification](../../docs/media-soak.md) for measurement rules and limits.
+```dotenv
+CONTROL_PLANE_URL=https://control.example.invalid
+HOME_TOKEN=replace-with-private-worker-token
+WORKER_ID=linux-worker
+OUTPUT_ID=main
+ENCODER=software
+VIDEO_PROFILE=720p30
+FFMPEG_PATH=/usr/bin/ffmpeg
+FFPROBE_PATH=/usr/bin/ffprobe
+FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+SCORE_DIR=/state
+OUTPUT_MODE=rtmp+record
+OUTPUT_URL=rtmps://destination.example.invalid/live/replace-with-stream-key
+OUTPUT_RECORDING_DIR=/recordings
+WORKER_REPORT_INTERVAL_MS=100
+LOG_LEVEL=info
+```
+
+`WORKER_ID` and `OUTPUT_ID` must match the selected broadcast. Use reachable
+container-network/DNS addresses: container `127.0.0.1` means that container.
+The API must advertise an SRT ingest host/port reachable by this worker; the
+worker obtains its generation-bound read URL from that API. Keep relay management
+private. No worker inbound port needs publishing. `rtmp` requires `OUTPUT_URL`,
+`record` requires `OUTPUT_RECORDING_DIR`, and `rtmp+record` requires both. Recordings
+are overlaid fragmented MP4s, separate from the phone's clean archive.
+
+Create `compose.yml` next to the protected env file. This is a worker-only example
+using the existing image/settings; no new application configuration is required:
+
+```yaml
+services:
+    worker:
+        image: scorebug/home-daemon:REPLACE_WITH_BUILT_REVISION
+        restart: unless-stopped
+        env_file: ./worker.env
+        volumes:
+            - ./state:/state
+            - ./recordings:/recordings
+        stop_grace_period: 30s
+        logging:
+            driver: json-file
+            options:
+                max-size: '10m'
+                max-file: '3'
+```
+
+Create `state` and `recordings` directories inside the private deployment directory
+before starting. The current image runs as root inside the container, so generated
+files may be root-owned on the host; plan backup access accordingly. Only one
+worker may run per worker ID. From that deployment directory:
+
+```sh
+docker compose up -d worker
+docker compose ps worker
+docker compose logs --tail=100 worker
+# Explicit stop/restart (does not delete recordings):
+docker compose stop worker
+docker compose start worker
+```
+
+A running container alone is not a healthy broadcast. The worker has no HTTP
+health endpoint. Check control-plane `/healthz`, current assignment/status through
+the native app, advancing `producing_output`, and decoded mock output with a changed
+score. Idle workers legitimately wait for an assignment/source. `control_unavailable`
+or stopped/expired observations require investigation; keep logs private.
+
+### NVIDIA option — requires host qualification
+
+Use an NVIDIA-capable Linux host, compatible installed driver and NVIDIA Container
+Toolkit configured for Docker. Set `ENCODER=nvenc` in `worker.env`; add `gpus: all`
+to the worker service on a Compose version supporting it. The runtime also needs
+NVIDIA video capability, for example `environment: { NVIDIA_DRIVER_CAPABILITIES:
+"compute,video,utility" }` on that service. The current CPU Dockerfile is not a
+qualified CUDA/NVENC image: verify its FFmpeg NVENC support, driver-library access
+and actual H.264/AAC pipeline on that host before selecting it. Installing a toolkit
+or passing `nvidia-smi` is insufficient. Do not use `videotoolbox` on Linux.
+
+### Verification and operational lifecycle
+
+Use the existing owned mock tests from the repository checkout, after installing
+the repository-pinned Node/pnpm dependencies. They do not require production keys:
+
+```sh
+pnpm test:worker-container "scorebug/home-daemon:$WORKER_RELEASE"
+pnpm test:relay
+pnpm test:worker software --soak-seconds=12
+```
+
+The container test uses the supplied image with networking disabled and verifies
+compiled-worker startup, real software encoding/overlay, decode and graceful exit.
+The relay/worker tests use their own local API, containers and mock sink; the worker
+test runs natively on the test host, not inside the deployment container. Together
+they do not prove this deployed container's networking. Verify its assigned native
+broadcast against a reachable local mock sink before external output. The local file-processing harness accepts `pnpm test:worker-processing nvenc`
+on the actual NVIDIA host; the networked `test:worker` harness currently accepts
+only software/VideoToolbox. Retain actual GPU media results and follow
+[sustained media qualification](../../docs/media-soak.md); CPU evidence does not
+transfer to GPU. Run only after active capture has ended.
+
+For upgrade: finish/stop the broadcast, stop the worker, retain its old image
+and private configuration, build/load a newly pinned image, change only the image
+tag, then `docker compose up -d worker`. Check status and mock output. Roll back by
+stopping the new instance and restoring the previous image tag/configuration before
+starting it. Never run old and new instances with the same worker ID concurrently.
+Use `docker compose down` to remove this worker deployment without deleting bind
+mount data; do not add `-v` or delete unrelated resources.
+
+Back up the private env/Compose files and completed `recordings/` after stopping;
+protect secret-bearing backups. Overlay `state/` is regenerated, not the match
+source of truth. Back up the separate control-plane SQLite database consistently
+with SQLite, including any schema/version compatibility needed for API rollback.
+The worker does not rotate/delete recordings: monitor storage and prune only owned,
+completed exports under an explicit retention policy.
+
+| Backend/runtime                               | Evidence currently recorded                                                                 | Still required                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Native macOS software/VideoToolbox            | Local real worker/media tests and documented soaks                                          | New host/profile and sustained device acceptance                  |
+| Linux arm64 CPU image on this Mac's Docker VM | Compiled worker, short overlay/AAC/H.264 encode/decode and graceful stop without networking | Deployment-network and sustained Linux-host qualification         |
+| Linux amd64 CPU                               | CI has container/relay/software-worker jobs                                                 | Inspect a passing target-runtime result; no new pass claimed here |
+| NVIDIA Linux container/native                 | Config and file-processing harness accept NVENC                                             | Actual driver/toolkit/image/media qualification; unqualified here |
+| Windows/WSL2, remote/cloud hosts              | No transferable qualification from the Mac                                                  | Actual host/runtime/network qualification                         |
 
 `WORKER_REPORT_INTERVAL_MS` controls the delay between completed status reports
-(default 1000, integer range 100–5000). The native quality-control simulator fixture
+(default 100, integer range 100–5000). The native quality-control simulator fixture
 uses 100 ms so reporting plus phone polling can fit within the existing two-second
 source freshness budget. This increases control-plane request load; it does not
 change decoder window duration or make old measurements fresh.

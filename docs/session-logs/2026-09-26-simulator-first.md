@@ -41,3 +41,17 @@ Added native macOS worker service helper and runbook (explicit plist/check/run/i
 The native export contains4978 consecutive frames at30fps with no audio timestamp gaps. Both live outputs contain the same4544 consecutive source frames at30fps with no audio timestamp gaps. The archive continues280frames after live output. Independent A/V waveform and visible score checks are pending; frame/decode checks passed. The launcher preserved84 archive segments and verified all hashes.
 
 Applied the prepared native-created two-phone simulator lane. It starts with an empty API, creates the match through scorer B's native UI, reads back the exact created identity, then launches filming phone A for discovery/takeover/archive/publishing while B scores and undoes. It retains both containers, verifies scorer B remained camera-free and joins both jobs before cleanup. Reuses the existing incremental simulator build directory. Focused affected Node checks:40passed. Full role/media execution is the next checkpoint.
+
+## Native-created phone workflow and deployment docs
+
+`native-created-simulators-opRrou` atf3428a0 passes both native workflows, exact native creation/ownership readback, all six scoring receipts, stream start/stop, independent archive continuation/export, camera-free scorer inventory and cleanup. The initialqJLOHD attempt failed before capture because the keyboard obscured Create; the retry dismisses that keyboard and failure diagnostics now tolerate absent score controls. No media stack changes or unrelated suite reruns accompanied this test-interaction fix. The source archive has3382 consecutive30fps frames and no audio timestamp gaps; remaining offline checks are running.
+
+Strict Watch-run coverage needs correction: audio ENDS454ms AFTER video in both live outputs; it is not missing terminal audio. Archive end alignment passes. Native match end immediately retires the relay path and worker assignment before the phone separately polls and drains; interrupted video tail is a leading hypothesis, not yet proven. Full live waveform/score checks are being completed independently of this retained failure. No trimming, silence padding or tolerance change.
+
+Extended the existing Linux worker runbook with CPU/GPU Compose, protected settings, both overlaid output modes, logs, upgrades/rollback and backup. Flagged actual legacy VPS template gaps (database persistence, relay management, hook routing and old paths) rather than claiming deployment readiness. No service installed or remote host used.
+
+## Full two-phone media acceptance
+
+`native-created-simulators-opRrou/vertical-acceptance.json` binds passing workflows, receipts, export/hash inventory and independent media results. Archive:3382frames; each live output:3112frames, IDs140–3251. All three decode fully at30fps with consecutive source frames, no audio timestamp gaps, passing end coverage and sampled natural-audio synchronization (25archive/23eachlive probes). Both live outputs visibly show0–0→1–0→1–1→1–0→1–1; the archive has no scorebug. It continues130frames beyond live output. This completes the native-created two-phone vertical, not fault/hardware qualification.
+
+Watch runUFjmr8 also passes live waveform synchronization and visible0–0→1–0→0–1 independently; its strict+454ms audio-overhang failure at remote match end remains. Normal Stop streaming in the two-phone run passes the same end-alignment check.

@@ -1,4 +1,19 @@
-# VPS deploy
+# VPS deploy — legacy template
+
+This stack is **not ready for the current durable native workflow as checked in**.
+It has no persistent control-plane database volume or explicit `DATABASE_PATH`,
+passes no `RELAY_API_*` management settings, and its MediaMTX file disables the API
+and uses old `game_*` paths. Its host-network hook calls `127.0.0.1:8787` while the
+control-plane port is only exposed inside the Compose bridge. Do not infer working
+native credentials, restart recovery or private management from `compose up`.
+
+Use the maintained local relay configuration and native tests as repair references;
+do not expose their public fixture credentials. Native deployment needs a durable
+SQLite mount, authenticated private relay management, reachable API/relay endpoints,
+current generation-bound native paths, pinned images and verified TLS/firewall rules.
+The commands below describe the old layout only. See the
+[Linux worker runbook](../../apps/home-daemon/README.md#linux-cpugpu-deployment)
+for current worker-only CPU/GPU packaging and its explicit qualification limits.
 
 Drop this directory onto the VPS, fill in `.env`, and run.
 
