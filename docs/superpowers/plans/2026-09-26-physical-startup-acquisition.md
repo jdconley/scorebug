@@ -19,7 +19,8 @@ Evidence: MJj7dD sampled too late; bUx6EQ observes startup from +11.786s but the
 - [x] Add meaningful fixture/regression tests for valid physical evidence, missing/late ACK, missing/late acquisition, wrong initial revision/attempt/ACK, reset substitution, ordinary/physical contract confusion, and unchanged later guards.
 - [x] Independent spec and quality reviews approve the six-file startup slice; all 182 focused tests pass, including 49 physical fixture tests.
 - [x] Signed Debug phone/Watch and Release builds pass with the cadence diagnostic; positive Debug and negative Release binary checks pass for both diagnostic and bridge.
-- [ ] Run one physical recovery comparison with the now-confirmed lit moving scene, collect only its actual new archive UUID and both live MP4s, verify unchanged execution inputs and joined shutdown, then independently assess workflow/transport/geometry/media.
-- [ ] Investigate any later cadence-freshness reset using its actual admission/capture/decoder timing before changing production behavior.
+- [x] Run the lit-scene physical comparison and collect only its actual new archive plus both live MP4s. Initial encoder/source observations pass; inputs stay unchanged and shutdown joins. All three files fully decode with continuous encoded A/V and visible changing content/overlay.
+- [ ] Qualify the complete ramp/collapse/recovery sequence: the current attempt stays240p and fails initial360 increase before impairment. Full native/transport/geometry recovery remains unqualified.
+- [ ] Investigate the actual candidate admission and readiness blockers before another unchanged run. The first probe lacks demonstrated headroom; a retry rejects receiver-time bounds. Earlier cadence-freshness resets remain a separate unqualified path.
 
 Root owns physical runs and media work. Freeze source and join builds/media analysis before capture. No privacy resets or permission requests are needed.

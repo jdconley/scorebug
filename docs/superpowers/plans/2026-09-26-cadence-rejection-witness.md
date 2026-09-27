@@ -18,6 +18,7 @@ Evidence: closed per-attempt audits from physical MJj7dD and bUx6EQ show cadence
 - [x] Meaningful red→green tests: exact stale receipt during active trial and successful reset ACK; first-cause immutability; delayed admission/ACK; unavailable-age reasons; not-stalled freshness rejection; unsuccessful application/revision isolation; accessor component bounds; unchanged UI and bounded audit sizes.
 - [x] Preserve independent audit verification: validate the explicit new audit-only fields and exclude only those fields from the unchanged UI witness comparison. Add a separate physical v3 entry point; the ordinary v2 verifier retains its contract.
 - [x] Independent spec/quality reviews and focused tests pass (78 app, 7 Core, 210 Node). Signed Debug phone/Watch and Release builds pass; binary checks confirm Debug presence and Release exclusion. All jobs joined before capture.
-- [ ] Include this witness in the next lit moving-scene physical recovery run and inspect the actual failure/success path before considering production changes.
+- [x] Include the diagnostic in the lit moving-scene physical run and inspect its actual path: no transition applies, so the successful-ACK audit correctly closes with zero records.
+- [ ] Exercise and inspect a physical cadence-triggered successful reset before considering freshness-policy changes. The latest no-ramp failure instead needs exact candidate-admission/readiness evidence.
 
 Root owns docs, reviews, builds, physical runs and media collection. This is diagnostic instrumentation, not a recovery fix or permission bypass.

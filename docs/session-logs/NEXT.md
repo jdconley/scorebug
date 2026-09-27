@@ -10,11 +10,13 @@ Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-
 
 ## Current blocker and readiness
 
-The user confirms the phone points at a lit moving scene. Fresh phone and Watch queries both report unlocked. The latest physical recovery runner nevertheless times out **enabling UI automation before the test body**, matching the first-session passcode prompt the user described. The pending question asks the user to approve a visible prompt or report none. Do not repeat the test without new readiness evidence, and do not assume unlocked means automation initialized.
+The user confirms the phone points at a lit moving scene and approved its new automation prompt. Physical run `physical-recovery-ydaKA3` now enters its test, observes initial ACK/source readiness, records/streams/scores/stops/exports, but fails the150s initial360 increase before impairment. It remains240p. All25 inputs unchanged and all jobs joined.
 
-Attempt `physical-recovery-EUdSsp`, lab `device-lab-oqKUm2`, source `fe35041`: no capture started, zero controller mutations/receiver sessions, worker exit0, cleanup empty, all25 execution inputs unchanged, root56518 joined1. No jobs remain active.
+The subsequent paired Watch run `physical-paired-live-qBRzUf` times out enabling **Watch UI automation before its test body**. The phone camera is correctly not started. Fresh device checks were unlocked, but that does not establish automation initialization. The pending question asks whether a new phone/Watch prompt is visible and to approve it if shown. Do not retry without new readiness evidence.
 
-Runner direct LAN requests still report access denied despite the enabled switch. The reviewed DEBUG-only app loopback bridge passes its real-phone API/controller and joined-shutdown probe (`physical-recovery-ymge6q`). Use that supported path; do not reset privacy, delete Scorebug, disable firewall or repeat Settings navigation. See [Apple-source research](../research/2026-09-26-xctest-local-network.md).
+Paired failure lab `device-lab-qkOT5A`: all14 inputs unchanged, worker exit0, receiver zero sessions, cleanup empty; root1127 joined1. No capture/build/media-analysis jobs remain active. Read-only adaptation design is complete; no implementation began. The next diagnostic is a separate bounded per-attempt DEBUG candidate summary, capturing exact receiver-time predicate operands and actual accumulated readiness blockers. Keep successful-ACK audit/UI payloads unchanged. Details are in the latest session log.
+
+Runner direct LAN requests still report access denied despite the enabled switch. The reviewed DEBUG-only app loopback bridge passes actual phone API/controller and joined-shutdown checks. Use that path; do not reset privacy, delete Scorebug, disable firewall or repeat Settings navigation. See [Apple-source research](../research/2026-09-26-xctest-local-network.md).
 
 ## Reviewed and built checkpoint
 
@@ -24,17 +26,18 @@ Runner direct LAN requests still report access denied despite the enabled switch
 
 ## Next actions
 
-1. After the phone automation prerequisite is resolved, recheck en0 and run:
+1. Prioritize the unchanged paired Watch retry after a new prompt approval. Recheck en0 and the prepared runtime hashes; use `artifacts/qa/run-physical-paired-lit-20260926.mjs`. It now binds newer phone capture products and unchanged Watch/source products via `artifacts/qa/paired-lit-provenance-20260926/result.json`. Do not reuse the older generic phone-binary hash after the physical launcher rebuild.
+2. For a future evidence-backed adaptive comparison, the command is:
    `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-physical-recovery.mjs --device 00008140-001474110C13001C --host 10.0.0.122 --lane recovery720 --runner-transport app-loopback --bridge-port 49173`.
-2. Freeze source/binaries during capture; join all work before media analysis. Collect only the actual new recording UUID export and exact publishing-attempt QA audit. Rehash inputs on failure too. Do not substitute old exports or observations.
-3. Use new artifact wrappers `replay-physical-v3-recovery-20260926.mjs`, `verify-physical-applied-transitions-20260926.mjs`, and `verify-physical-output-media-20260926.py` under `artifacts/qa/`. The first two retain complete-collapse qualification; partial failed runs are diagnostic-only. Inspect visible motion/overlay and A/V separately from encoded continuity.
-4. Inspect exact cadence rejection age before changing policy/reporting behavior. Prior phone360 trials reset on cadence freshness without injected impairment; later mutable UI values cannot explain the original rejection. Do not relax250ms or other guards merely to pass.
-5. Run combined physical Watch scoring while its paired phone records/streams after the phone run and collection join. `artifacts/qa/run-physical-paired-lit-20260926.mjs` uses current host and the fresh build manifest; recheck host/products before use. It waits for Watch readiness before starting phone capture. Earlier Watch automation also timed out before its body; separate Ultra2 scoring has passed, combined acceptance has not.
+3. Freeze source/binaries during capture; join all work before media analysis. Collect only the actual new recording UUID export and exact publishing-attempt QA audit. Rehash inputs on failure too. Do not substitute old exports or observations.
+4. Use new artifact wrappers `replay-physical-v3-recovery-20260926.mjs`, `verify-physical-applied-transitions-20260926.mjs`, and `verify-physical-output-media-20260926.py` under `artifacts/qa/`. The first two retain complete-collapse qualification; partial failed runs are diagnostic-only. Inspect visible motion/overlay and A/V separately from encoded continuity.
+5. Diagnose the current ramp blocker before repeating it: first candidate cost913143bps versus demonstrated padding1040292bps did not meet1.25 headroom. Existing logic can raise the next probe demand to~1369715bps, so there is no proven hard ceiling. Retry reached cost-ready but recorded receiver-time-bounds; exact inequality and accumulated readiness blocker are missing. Preserve these values next, without relaxing headroom/timing. The earlier cadence-reset diagnosis remains separate; the latest audit has zero successful applications.
 6. Update the current plan and this handoff; put chronology in the session log.
 
 ## Remaining qualification gaps
 
 - The real phone plus a separate native iPhone14 simulator scorer passes scoring/undo, recording/streaming/export and allthree encoded-file checks. That scene was dark, so fresh motion and perceptual sync remain unqualified. See [separate scorer session](2026-09-26-separate-native-scorer.md).
+- The latest lit phone run produces a221.6s clean1080p30 archive (6649frames) and both live files (6322frames each), all fully decoded with continuous encoded A/V. Samples show motion and overlay0–0→1–0; full fresh24fps/perceptual-sync qualification is still open. See `physical-recovery-ydaKA3/assessment.json`.
 - Two ordinary360 recovery runs pass all media checks. Simulator720 forced-collapse runs lose live video/audio while the clean archive passes. No720 recovery qualification yet; do not repeat unchanged simulator experiments. See [latency breakdown](2026-09-26-replacement-latency-breakdown.md).
 - Relative sender pacing remains experimental and unqualified; do not promote it from a failed ramp. See [comparison](2026-09-26-measured-relative-pacing.md).
 - Sustained hardware operation, wider profiles, route changes/outages, second physical scorer/Watch, remote proxy hosts and real YouTube remain open. Local mock output precedes external broadcasts; no cloud purchases or real stream keys are authorized here.
