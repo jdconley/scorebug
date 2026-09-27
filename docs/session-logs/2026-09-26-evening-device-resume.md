@@ -51,3 +51,15 @@ Hypothesis/fix to verify: for physicalRecovery only, start the existing contiguo
 Collected only the actual new export UUID using devicectl. Allthree outputs pass precise full audio/video decode with no stderr. Clean archive1876frames/62.50s lastPTS, proxy/sink1588frames each; all have increasing video timestamps, no gaps over50ms, and no audio packet gaps over5ms. Preview confirms clean archive and HOME1–0 overlay in the live sample. Scene is dark: no fresh-motion/perceptual-sync or recovery qualification. `media-validation.json` and hashed outputs retain that distinction; media verification9827 joined0.
 
 Observation-order correction changes only two test callsites plus a comment. Final UI blobdece429dfcde36839ce8e6fc1f7c232e0b1ac0ee passes independent spec and quality review,70 focused evidence/control regressions, syntax, and signed Debug build25993 joined0. Existing failed hardware run is the regression; only the next physical run can verify the new observation timing. Evidence hashes: `order-fix-validation/root-verification.json`.
+
+## Early-observation retry and explicit startup acquisition
+
+Source8696389; physical-recovery-bUx6EQ / device-lab-WXSbzs; root52566 joined1. The order fix does observe startup at+11.786s. Five samples through+19.949s are240p/revision0 with no owned source interval; last is rejected for cadence-freshness. The initial10second gate ends+21.786s. Subsequent evidence has an acquired source, but is already stale and cannot retroactively pass the gate. Source tracking requires two consecutive completed5second decoder windows; producing_output does not promise this acquisition. The ten-second cold-start acquisition assumption lacks a derived budget.
+
+No impairment commands ran. Archive recording4A58B227-F36A-4763-BFAF-1E436479DFE6 exports; all25 inputs unchanged, bridge stop/refusal passes, lab/receiver join cleanly. Collected only that UUID and actual per-attempt QA audits for both phone runs. Allthree new outputs decode with no errors; archive2016frames/67.168s lastPTS and live1713frames each, no video gaps over50ms or audio packet gaps over5ms. Media analysis47155 joined0. Dark/static content still prevents fresh-motion/perceptual-sync qualification.
+
+User now confirms the phone is pointed at a lit scene with movement. The next run can use that improved scene.
+
+A separate later event is retained: bUx6EQ's360trial ACK around+30.985s resets to240/revision2 at+42.454s for cadenceRejected/freshness. This disproves a claim that it merely stayed at startup or could not measure a candidate. Production thresholds remain unchanged pending exact admission-timing diagnosis.
+
+[Explicit physical startup acquisition plan](../superpowers/plans/2026-09-26-physical-startup-acquisition.md): version physical evidence separately, prove initial encoder ACK within10s of local publishing, then permit bounded30s source acquisition after worker output using identical freshness/owner requirements and exact initial revision/ACK. All later recovery gates and540s recording budget remain unchanged. Implementation/tests are in progress; no further hardware job is active.
