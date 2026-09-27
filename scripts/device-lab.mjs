@@ -218,7 +218,16 @@ export function deviceLabRecoveryBind(options, interfaces = networkInterfaces())
 }
 
 /** Owned development stack; media and credentials remain under one private artifact directory. */
+export function deviceLabAPIBind(options) {
+  assert(
+    options.apiLoopback === undefined || options.apiLoopback === true,
+    'Only explicit simulator API loopback is supported',
+  );
+  return options.apiLoopback === true ? '127.0.0.1' : options.host;
+}
+
 export async function startDeviceLab(options, { signal } = {}) {
+  const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
   const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
   const publishEnvironment = deviceLabPublishEnvironment(
@@ -388,7 +397,7 @@ export async function startDeviceLab(options, { signal } = {}) {
     }
     recorder = await startReconnectingRTMPRecorder({ artifact, ffmpeg, port: 0 });
     api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), {
-      HOST: options.host,
+      HOST: apiBind,
       PHONE_TOKEN: phoneToken,
       HOME_TOKEN: homeToken,
       INTERNAL_TOKEN: internalToken,
@@ -402,7 +411,7 @@ export async function startDeviceLab(options, { signal } = {}) {
     });
     signal?.throwIfAborted();
     const endpoint = new URL(api.baseURL);
-    endpoint.hostname = options.host;
+    endpoint.hostname = apiBind;
     const baseURL = endpoint.origin;
     const matchId = randomUUID(),
       team = (name) => ({ name, shortName: name, color: '#123456' });

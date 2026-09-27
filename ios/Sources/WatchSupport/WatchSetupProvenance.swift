@@ -44,6 +44,18 @@ struct WatchSetupProvenance: Codable, Equatable {
               id.uuidString.lowercased() == text.lowercased() else { throw Invalid.expectedMatch }
         return id.uuidString.lowercased()
     }
+    static func simulatorFixture(_ text: String?, expectedMatch: String) throws -> String {
+        guard let text, text.utf8.count <= 8192, let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(root.keys) == ["version", "endpoint", "offer"], root["version"] as? Int == 1,
+              let endpoint = root["endpoint"] as? String, let url = URLComponents(string: endpoint),
+              url.scheme == "http", url.host == "127.0.0.1", let port = url.port, (1...65535).contains(port),
+              url.path.isEmpty || url.path == "/", url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              let offer = root["offer"] as? [String: String], offer["gameId"] == expectedMatch,
+              offer["role"] == "score", (try? Self.expectedMatch(offer["pairingId"])) != nil,
+              (try? Self.expectedMatch(offer["watchDeviceId"])) != nil else { throw Invalid.metadata }
+        return text // The app's existing simulator codec validates the complete issued capability.
+    }
     var encoded: String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "unavailable"

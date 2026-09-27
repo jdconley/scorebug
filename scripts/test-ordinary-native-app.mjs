@@ -21,6 +21,8 @@ const pairedTestID =
   'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryPairedSimulatorAdaptWatchScoreStopAndExport';
 const recoveryTestID =
   'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecoverScoreStopAndExport';
+const directWatchTestID =
+  'ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingSimulatorFixtureSetup';
 const watchTestID =
   'ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingRealCompanionSetup';
 
@@ -63,7 +65,8 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   );
   const lane = values.get('--lane');
   assert(
-    lane === undefined || ['phone', 'paired', 'recovery', 'recovery720'].includes(lane),
+    lane === undefined ||
+      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720'].includes(lane),
     'Unsupported ordinary lane',
   );
   assert(
@@ -85,34 +88,43 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
 }
 
 export function ordinaryLaneConfiguration(lane) {
-  assert(lane === undefined || ['phone', 'paired', 'recovery', 'recovery720'].includes(lane));
+  assert(
+    lane === undefined ||
+      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720'].includes(lane),
+  );
+  const directWatch = lane === 'watch-direct';
   const paired = lane === 'paired',
     recovery = lane === 'recovery' || lane === 'recovery720';
   return {
     paired,
+    ...(directWatch ? { directWatch: true } : {}),
     recovery,
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
-    phoneTest:
-      lane === 'recovery720'
+    phoneTest: directWatch
+      ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
+      : lane === 'recovery720'
         ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
         : recovery
           ? recoveryTestID
           : paired
             ? pairedTestID
             : testID,
-    allowance: recovery ? 780 : paired ? 600 : 480,
-    timeout: recovery ? 900_000 : paired ? 720_000 : 600_000,
+    allowance: recovery ? 780 : paired || directWatch ? 600 : 480,
+    timeout: recovery ? 900_000 : paired || directWatch ? 720_000 : 600_000,
   };
 }
 
 export function ordinaryTestEnvironment({
   paired,
+  directWatch = false,
+  watchFixture,
   recovery = false,
   recovery720 = false,
   watch = false,
   setup,
   recoveryControl,
 }) {
+  assert(!directWatch || (!paired && !recovery), 'Direct Watch is a separate simulator lane');
   assert(!recovery720 || recovery, '720 recovery requires recovery controller');
   assert(!recovery || (!paired && !watch), 'Recovery requires the standalone phone lane');
   if (recovery) {
@@ -132,13 +144,21 @@ export function ordinaryTestEnvironment({
     assert.match(recoveryControl.token, /^[a-f0-9]{64}$/);
     assert.match(recoveryControl.runID, /^[a-f0-9-]{36}$/);
   }
-  assert(!watch || paired, 'Watch runner requires the paired lane');
+  assert(!watch || paired || directWatch, 'Watch runner requires an explicit Watch lane');
   if (watch) {
     assert.match(
       setup.matchId ?? '',
       /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i,
       'Expected Watch match UUID required',
     );
+    if (directWatch) {
+      validateDirectWatchFixture(watchFixture, setup.matchId);
+      return {
+        SCOREBUG_DIRECT_WATCH_SIMULATOR: '1',
+        SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId.toLowerCase(),
+        SCOREBUG_TEST_WATCH_SETUP: JSON.stringify(watchFixture),
+      };
+    }
     return {
       SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1',
       SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId.toLowerCase(),
@@ -148,6 +168,7 @@ export function ordinaryTestEnvironment({
     SCOREBUG_DEVICE_API_URL: setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
+    ...(directWatch ? { SCOREBUG_DIRECT_WATCH_SIMULATOR: '1' } : {}),
     ...(paired ? { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' } : {}),
     ...(recovery
       ? {
@@ -159,6 +180,96 @@ export function ordinaryTestEnvironment({
         }
       : {}),
   };
+}
+
+function validateDirectWatchFixture(fixture, matchId) {
+  assert(
+    fixture && fixture.version === 1 && Buffer.byteLength(JSON.stringify(fixture)) <= 8192,
+    'Bounded simulator fixture required',
+  );
+  const endpoint = new URL(fixture.endpoint);
+  assert(
+    endpoint.protocol === 'http:' &&
+      endpoint.hostname === '127.0.0.1' &&
+      endpoint.port &&
+      endpoint.pathname === '/' &&
+      !endpoint.username &&
+      !endpoint.password &&
+      !endpoint.search &&
+      !endpoint.hash,
+    'Direct Watch requires exact loopback API',
+  );
+  assert.deepEqual(Object.keys(fixture).sort(), ['endpoint', 'offer', 'version']);
+  const offer = fixture.offer;
+  assert.deepEqual(Object.keys(offer).sort(), [
+    'expiresAt',
+    'gameId',
+    'pairingId',
+    'pairingToken',
+    'role',
+    'serverTime',
+    'watchDeviceId',
+  ]);
+  assert.equal(offer.gameId, matchId);
+  assert.equal(offer.role, 'score');
+  for (const value of [offer.pairingId, offer.watchDeviceId])
+    assert.match(value, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i);
+  assert.match(offer.pairingToken, /^[A-Za-z0-9_-]{43}$/);
+}
+
+export async function issueOrdinaryDirectWatchFixture(setup, request = fetch) {
+  const endpoint = new URL(setup.endpoint);
+  assert(
+    endpoint.protocol === 'http:' && endpoint.hostname === '127.0.0.1',
+    'Simulator API must be loopback-bound',
+  );
+  const pairingId = randomUUID(),
+    watchDeviceId = randomUUID();
+  const response = await request(`${endpoint.origin}/v1/matches/${setup.matchId}/watch-pairings`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${setup.installationToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ pairingId, watchDeviceId }),
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(response.status, 201, 'Direct Watch pairing issuance failed');
+  const text = await response.text();
+  assert(Buffer.byteLength(text) <= 8192, 'Oversized pairing response');
+  const fixture = { version: 1, endpoint: endpoint.origin, offer: JSON.parse(text) };
+  validateDirectWatchFixture(fixture, setup.matchId);
+  assert.equal(fixture.offer.pairingId, pairingId);
+  assert.equal(fixture.offer.watchDeviceId, watchDeviceId);
+  return fixture;
+}
+
+export async function runOrdinaryWatchDirect({ phone, watch }) {
+  let ready,
+    failed,
+    signaled = false;
+  const readiness = new Promise((resolve, reject) => {
+    ready = resolve;
+    failed = reject;
+  });
+  await joinOrdinaryWorkflows([
+    async () => {
+      try {
+        await phone(() => {
+          signaled = true;
+          ready();
+        });
+        assert(signaled, 'Phone ended before direct Watch readiness');
+      } catch (error) {
+        failed(error);
+        throw error;
+      }
+    },
+    async () => {
+      await readiness;
+      await watch();
+    },
+  ]);
 }
 
 export function ordinaryTestConfiguration(files, scheme, isWatch) {
@@ -187,15 +298,15 @@ export async function joinOrdinaryWorkflows(actions) {
 
 export async function recoverOrdinaryOwnership(owner, run) {
   const recovered = { ...owner, failures: [] };
-  if (!recovered.simulator || (owner.paired && !recovered.watch)) {
+  const hasWatch = owner.paired || owner.directWatch;
+  if (!recovered.simulator || (hasWatch && !recovered.watch)) {
     try {
       const devices = JSON.parse(
         await run('xcrun', ['simctl', 'list', 'devices', '--json'], 'recover-owned-devices'),
       );
       const all = Object.values(devices.devices).flat();
       recovered.simulator ??= all.find((device) => device.name === owner.phoneName)?.udid;
-      if (owner.paired)
-        recovered.watch ??= all.find((device) => device.name === owner.watchName)?.udid;
+      if (hasWatch) recovered.watch ??= all.find((device) => device.name === owner.watchName)?.udid;
     } catch {
       recovered.failures.push('owned simulator discovery');
     }
@@ -250,7 +361,7 @@ export function ordinaryEnvironment(environment = process.env) {
 export async function runOrdinaryCommand(
   command,
   args,
-  { artifact, label, timeout = 60_000, grace = 3_000, signal, commands } = {},
+  { artifact, label, timeout = 60_000, grace = 3_000, signal, commands, onOutput } = {},
 ) {
   signal?.throwIfAborted();
   commands?.push({ command, args, label }); // Callers never put credentials in argv.
@@ -282,6 +393,7 @@ export async function runOrdinaryCommand(
   };
   child.stdout.on('data', (chunk) => {
     output = (output + chunk.toString()).slice(-2 * 1024 * 1024);
+    onOutput?.(output);
   });
   child.stdout.pipe(log, { end: false });
   child.stderr.pipe(log, { end: false });
@@ -329,8 +441,17 @@ export async function runOrdinaryCommand(
 
 async function main() {
   const options = ordinaryNativeOptions(process.argv.slice(2));
-  const { paired, recovery, recovery720, phoneTest, allowance, timeout } =
-    ordinaryLaneConfiguration(options.lane);
+  const {
+    paired,
+    directWatch = false,
+    recovery,
+    recovery720,
+    phoneTest,
+    allowance,
+    timeout,
+  } = ordinaryLaneConfiguration(options.lane);
+  const hasWatch = paired || directWatch;
+  const watchCase = directWatch ? directWatchTestID : watchTestID;
   const phoneName = `Scorebug Ordinary ${randomUUID()}`;
   const watchName = `Scorebug Ordinary Watch ${randomUUID()}`;
   assert.equal(process.platform, 'darwin', 'Installed Xcode and iOS simulator required');
@@ -368,7 +489,7 @@ async function main() {
     const runtimes = JSON.parse(
       await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], 'runtimes'),
     );
-    for (const required of paired ? [runtime, watchRuntime] : [runtime]) {
+    for (const required of hasWatch ? [runtime, watchRuntime] : [runtime]) {
       assert(
         runtimes.runtimes.some((entry) => entry.identifier === required && entry.isAvailable),
         `Installed ${required} runtime required; no downloads are performed`,
@@ -377,7 +498,7 @@ async function main() {
     const types = JSON.parse(
       await run('xcrun', ['simctl', 'list', 'devicetypes', '--json'], 'device-types'),
     );
-    for (const required of paired ? [phoneType, watchType] : [phoneType]) {
+    for (const required of hasWatch ? [phoneType, watchType] : [phoneType]) {
       assert(
         types.devicetypes.some((entry) => entry.identifier === required),
         'Required simulator device type missing',
@@ -385,15 +506,17 @@ async function main() {
     }
     simulator = await run('xcrun', ['simctl', 'create', phoneName, phoneType, runtime], 'create');
     assert.match(simulator, /^[0-9a-f-]{36}$/i);
-    if (paired) {
+    if (hasWatch) {
       watch = await run(
         'xcrun',
         ['simctl', 'create', watchName, watchType, watchRuntime],
         'create-watch',
       );
       assert.match(watch, /^[0-9a-f-]{36}$/i);
-      pairId = await run('xcrun', ['simctl', 'pair', watch, simulator], 'pair');
-      assert.match(pairId, /^[0-9a-f-]{36}$/i);
+      if (paired) {
+        pairId = await run('xcrun', ['simctl', 'pair', watch, simulator], 'pair');
+        assert.match(pairId, /^[0-9a-f-]{36}$/i);
+      }
     }
     await run('xcrun', ['simctl', 'boot', simulator], 'boot');
     if (watch) {
@@ -448,7 +571,7 @@ async function main() {
           '-destination-timeout',
           '60',
           'build-for-testing',
-          `-only-testing:${watchTestID}`,
+          `-only-testing:${watchCase}`,
           'ARCHS=arm64',
           'ONLY_ACTIVE_ARCH=YES',
           'CODE_SIGNING_ALLOWED=YES',
@@ -502,6 +625,7 @@ async function main() {
         host: options.host,
         encoder: options.encoder,
         duration: 600,
+        ...(directWatch ? { apiLoopback: true } : {}),
         ...(options.publishPeerLatencyMs === undefined
           ? {}
           : { publishPeerLatencyMs: options.publishPeerLatencyMs }),
@@ -541,7 +665,7 @@ os.chmod(destination, 0o600)
 `,
       { mode: 0o600 },
     );
-    async function privateTestRun(scheme, target, name, isWatch) {
+    async function privateTestRun(scheme, target, name, isWatch, watchFixture) {
       const config = ordinaryTestConfiguration(await readdir(products), scheme, isWatch);
       const environmentPath = join(artifact, `${name}-environment.json`);
       await writeFile(
@@ -549,6 +673,8 @@ os.chmod(destination, 0o600)
         JSON.stringify(
           ordinaryTestEnvironment({
             paired,
+            directWatch,
+            watchFixture,
             recovery,
             recovery720,
             watch: isWatch,
@@ -567,9 +693,10 @@ os.chmod(destination, 0o600)
       return destination;
     }
     const privateRun = await privateTestRun('Scorebug', 'ScorebugAppUITests', 'ordinary', false);
-    const privateWatchRun = watch
-      ? await privateTestRun('ScorebugWatch', 'ScorebugWatchUITests', 'watch', true)
-      : null;
+    const privateWatchRun =
+      watch && !directWatch
+        ? await privateTestRun('ScorebugWatch', 'ScorebugWatchUITests', 'watch', true)
+        : null;
     console.log(
       JSON.stringify({
         simulator,
@@ -582,71 +709,96 @@ os.chmod(destination, 0o600)
     const workflows = [
       { device: simulator, platform: 'iOS', config: privateRun, test: phoneTest, name: 'workflow' },
     ];
-    if (watch)
+    if (watch && !directWatch)
       workflows.push({
         device: watch,
         platform: 'watchOS',
         config: privateWatchRun,
-        test: watchTestID,
+        test: watchCase,
         name: 'watch-workflow',
       });
-    await joinOrdinaryWorkflows(
-      workflows.map((workflow) => async () => {
-        await run(
-          'xcodebuild',
-          [
-            'test-without-building',
-            '-xctestrun',
-            workflow.config,
-            '-destination',
-            `platform=${workflow.platform} Simulator,id=${workflow.device}`,
-            '-destination-timeout',
-            '60',
-            '-parallel-testing-enabled',
-            'NO',
-            '-maximum-concurrent-test-simulator-destinations',
-            '1',
-            '-collect-test-diagnostics',
-            'never',
-            '-test-timeouts-enabled',
-            'YES',
-            '-default-test-execution-time-allowance',
-            String(allowance),
-            '-maximum-test-execution-time-allowance',
-            String(allowance),
-            '-resultBundlePath',
-            join(artifact, `${workflow.name}.xcresult`),
-            `-only-testing:${workflow.test}`,
-          ],
-          workflow.name,
-          { timeout },
-        );
-        const result = [];
-        for (const type of ['summary', 'tests'])
-          result.push(
-            JSON.parse(
-              await run(
-                'xcrun',
-                [
-                  'xcresulttool',
-                  'get',
-                  'test-results',
-                  type,
-                  '--path',
-                  join(artifact, `${workflow.name}.xcresult`),
-                ],
-                `${workflow.name}-${type}`,
-              ),
+    async function executeWorkflow(workflow, onOutput) {
+      await run(
+        'xcodebuild',
+        [
+          'test-without-building',
+          '-xctestrun',
+          workflow.config,
+          '-destination',
+          `platform=${workflow.platform} Simulator,id=${workflow.device}`,
+          '-destination-timeout',
+          '60',
+          '-parallel-testing-enabled',
+          'NO',
+          '-maximum-concurrent-test-simulator-destinations',
+          '1',
+          '-collect-test-diagnostics',
+          'never',
+          '-test-timeouts-enabled',
+          'YES',
+          '-default-test-execution-time-allowance',
+          String(allowance),
+          '-maximum-test-execution-time-allowance',
+          String(allowance),
+          '-resultBundlePath',
+          join(artifact, `${workflow.name}.xcresult`),
+          `-only-testing:${workflow.test}`,
+        ],
+        workflow.name,
+        { timeout, onOutput },
+      );
+      const result = [];
+      for (const type of ['summary', 'tests'])
+        result.push(
+          JSON.parse(
+            await run(
+              'xcrun',
+              [
+                'xcresulttool',
+                'get',
+                'test-results',
+                type,
+                '--path',
+                join(artifact, `${workflow.name}.xcresult`),
+              ],
+              `${workflow.name}-${type}`,
             ),
+          ),
+        );
+      requireOrdinaryTestResult(result[0], result[1], workflow.test);
+    }
+    if (directWatch) {
+      await runOrdinaryWatchDirect({
+        phone: (ready) =>
+          executeWorkflow(workflows[0], (text) => {
+            if (text.includes('SCOREBUG_PHONE_READY_FOR_DIRECT_WATCH')) ready();
+          }),
+        watch: async () => {
+          const watchFixture = await issueOrdinaryDirectWatchFixture(lab.setup);
+          const config = await privateTestRun(
+            'ScorebugWatch',
+            'ScorebugWatchUITests',
+            'watch',
+            true,
+            watchFixture,
           );
-        requireOrdinaryTestResult(result[0], result[1], workflow.test);
-      }),
-    );
-    if (paired) {
+          await executeWorkflow({
+            device: watch,
+            platform: 'watchOS',
+            config,
+            test: watchCase,
+            name: 'watch-workflow',
+          });
+        },
+      });
+    } else
+      await joinOrdinaryWorkflows(workflows.map((workflow) => () => executeWorkflow(workflow)));
+    if (hasWatch) {
       const { readOrdinaryPairedEvidence } = await import('./ordinary-paired-evidence.mjs');
       const evidence = await readOrdinaryPairedEvidence(
         join(lab.artifact, 'scorebug.sqlite'),
         lab.setup.matchId,
+        directWatch ? 'simulator-fixture' : 'watch-connectivity',
       );
       await writeFile(
         join(artifact, 'paired-evidence.json'),
@@ -661,7 +813,7 @@ os.chmod(destination, 0o600)
     // A create/pair command may finish just as its process is interrupted.
     // Recover exact per-run names and both matching IDs, never unrelated devices.
     const ownership = await recoverOrdinaryOwnership(
-      { paired, phoneName, watchName, simulator, watch, pairId },
+      { paired, directWatch, phoneName, watchName, simulator, watch, pairId },
       cleanup,
     );
     ({ simulator, watch, pairId } = ownership);
@@ -768,6 +920,13 @@ os.chmod(destination, 0o600)
       watch,
       pairId,
       lane: options.lane ?? 'phone',
+      ...(directWatch
+        ? {
+            setupTransport: 'simulator-fixture',
+            scoringTransport: 'direct-http',
+            watchConnectivityQualified: false,
+          }
+        : {}),
       ...(options.publishPeerLatencyMs === undefined
         ? {}
         : { requestedPublishPeerLatencyMs: options.publishPeerLatencyMs }),

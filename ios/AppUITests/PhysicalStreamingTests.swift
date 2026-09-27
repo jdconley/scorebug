@@ -268,6 +268,19 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_DIRECT_WATCH_SIMULATOR"] == "1" else {
+            throw XCTSkip("Use the explicit disposable watch-direct simulator lane.")
+        }
+        evidencePrefix = "OrdinaryDirectWatchSimulatorStreaming"
+        try runVertical(watchScoring: true, ordinarySimulator: true, directWatch: true)
+        #else
+        throw XCTSkip("Direct Watch fixture setup is simulator-only.")
+        #endif
+    }
+
     @MainActor func testOrdinaryPairedSimulatorAdaptWatchScoreStopAndExport() throws {
         #if targetEnvironment(simulator)
         guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
@@ -1039,13 +1052,24 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
-    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false, separateScorer: Bool = false) throws {
+    @MainActor private func runVertical(watchScoring: Bool, ordinarySimulator: Bool = false, recovery: Bool = false, separateScorer: Bool = false, directWatch: Bool = false) throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = explicitValue(environment["SCOREBUG_DEVICE_API_URL"]),
               let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
             throw XCTSkip("Set both SCOREBUG_DEVICE_API_URL and SCOREBUG_DEVICE_TOKEN to opt into the physical device smoke.")
         }
-        try require(isPrivateLANEndpoint(endpoint), "Device smoke requires an HTTP(S) URL with a numeric RFC1918 IPv4 host and no credentials, query, or fragment.")
+        var allowedEndpoint = isPrivateLANEndpoint(endpoint)
+        #if targetEnvironment(simulator)
+        if directWatch {
+            let url = URLComponents(string: endpoint)
+            allowedEndpoint = ordinarySimulator && watchScoring && !recovery && !separateScorer &&
+                url?.scheme == "http" && url?.host == "127.0.0.1" && url?.port != nil &&
+                (url?.path == "" || url?.path == "/") && url?.user == nil && url?.password == nil && url?.query == nil && url?.fragment == nil
+        }
+        #else
+        try require(!directWatch, "Direct Watch is simulator-only.")
+        #endif
+        try require(allowedEndpoint, "Device smoke requires its explicit private LAN or direct-simulator loopback endpoint.")
         continueAfterFailure = true // Thrown failures still run the stop cleanup below.
         executionTimeAllowance = recovery ? 780 : (watchScoring ? 600 : ((ordinarySimulator || separateScorer) ? 480 : 240))
         // Reserve 35 seconds for independent stream and recording cleanup,
@@ -1244,28 +1268,37 @@ final class PhysicalStreamingTests: XCTestCase {
 
         if watchScoring && adaptiveFailure == nil {
             do {
-                try selectTab("Watch", app)
-                let connect = app.buttons["phoneWatch.connect.0"]
-                try wait("Paired Watch did not advertise its identity to the phone.", seconds: 150) {
-                    connect.exists && connect.isEnabled
+                if directWatch {
+                    try require(value(app, "streaming.localStatus") == "publishing" &&
+                                value(app, "streaming.workerStatus") == "producing_output" && app.buttons["film.stop"].exists,
+                                "Direct Watch readiness requires adaptive success and live recording/output.")
+                    let transport = XCTAttachment(string: "setupTransport=simulator-fixture; scoringTransport=direct-http; watchConnectivityQualified=false")
+                    transport.name = "watch-direct-transport"; transport.lifetime = .keepAlways; add(transport)
+                    print("SCOREBUG_PHONE_READY_FOR_DIRECT_WATCH")
+                } else {
+                    try selectTab("Watch", app)
+                    let connect = app.buttons["phoneWatch.connect.0"]
+                    try wait("Paired Watch did not advertise its identity to the phone.", seconds: 150) {
+                        connect.exists && connect.isEnabled
+                    }
+                    try selectTab("Film", app)
+                    try require(value(app, "streaming.localStatus") == "publishing" &&
+                                value(app, "streaming.workerStatus") == "producing_output",
+                                "Live output stopped before offering paired Watch setup.")
+                    try selectTab("Watch", app)
+                    try tap(connect, in: app)
+                    // SwiftUI propagates the Label identifier to its image and text.
+                    // Select the status text; firstMatch across all types picks the icon.
+                    let status = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
+                    try wait("Paired Watch did not confirm native setup.", seconds: 100) {
+                        status.exists && status.label.contains("Watch reports connected")
+                    }
+                    evidence(app, phase: ordinarySimulator ? "ordinary-watch-setup-confirmed" : "physical-watch-setup-confirmed", screenshot: true)
                 }
-                try selectTab("Film", app)
-                try require(value(app, "streaming.localStatus") == "publishing" &&
-                            value(app, "streaming.workerStatus") == "producing_output",
-                            "Live output stopped before offering paired Watch setup.")
-                try selectTab("Watch", app)
-                try tap(connect, in: app)
-                // SwiftUI propagates the Label identifier to its image and text.
-                // Select the status text; firstMatch across all types picks the icon.
-                let status = app.staticTexts.matching(identifier: "phoneWatch.status").firstMatch
-                try wait("Paired Watch did not confirm native setup.", seconds: 100) {
-                    status.exists && status.label.contains("Watch reports connected")
-                }
-                evidence(app, phase: ordinarySimulator ? "ordinary-watch-setup-confirmed" : "physical-watch-setup-confirmed", screenshot: true)
                 try selectTab("Score", app)
                 // The opt-in physical/paired ordinary Watch runner holds its first point for 30s
                 // so the phone can observe both that point and concurrent output.
-                try wait("Phone did not observe the Watch's first point before match end.", seconds: 60) {
+                try wait("Phone did not observe the Watch's first point before match end.", seconds: directWatch ? 120 : 60) {
                     app.buttons["scoring.homePoint"].value as? String == "1" &&
                         app.buttons["scoring.awayPoint"].value as? String == "0"
                 }

@@ -69,6 +69,11 @@ for malformed in ["missing", "{}", String(repeating:"x",count:1025),"{\\"ready\\
 }
 let invalidIdentity=current.encoded.replacingOccurrences(of:game,with:"invalid game with spaces")
 rejects { _ = try WatchSetupProvenance(encoded:invalidIdentity) }
+let direct = #"{"version":1,"endpoint":"http://127.0.0.1:8080","offer":{"gameId":"10000000-0000-4000-8000-000000000001","pairingId":"40000000-0000-4000-8000-000000000001","watchDeviceId":"30000000-0000-4000-8000-000000000001","role":"score","pairingToken":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expiresAt":"2026-09-27T04:05:00Z","serverTime":"2026-09-27T04:00:00Z"}}"#
+check(try WatchSetupProvenance.simulatorFixture(direct, expectedMatch:game) == direct)
+for invalid in [nil, "", direct.replacingOccurrences(of:"127.0.0.1",with:"192.168.1.1"), direct.replacingOccurrences(of:game,with:foreign), direct.replacingOccurrences(of:"http:",with:"https:")] {
+ rejects { _ = try WatchSetupProvenance.simulatorFixture(invalid,expectedMatch:game) }
+}
 print("Watch provenance guards passed")
 `,
       );

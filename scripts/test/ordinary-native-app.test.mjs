@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
+import { deviceLabAPIBind } from '../device-lab.mjs';
 import {
   ordinaryNativeOptions,
   ordinaryLaneConfiguration,
@@ -13,6 +14,8 @@ import {
   ordinaryTestEnvironment,
   ordinaryTestConfiguration,
   joinOrdinaryWorkflows,
+  runOrdinaryWatchDirect,
+  issueOrdinaryDirectWatchFixture,
   requireOrdinaryTestResult,
   recoverOrdinaryOwnership,
 } from '../test-ordinary-native-app.mjs';
@@ -616,4 +619,152 @@ test('ordinary publishing pacing rejects malformed values and duplicate options'
       interfaces,
     ),
   );
+});
+
+test('watch-direct is explicit, unpaired, fixture-only setup with no phone credential in Watch environment', () => {
+  assert.equal(
+    ordinaryNativeOptions(
+      ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'watch-direct'],
+      interfaces,
+    ).lane,
+    'watch-direct',
+  );
+  const config = ordinaryLaneConfiguration('watch-direct');
+  assert.equal(config.directWatch, true);
+  assert.equal(config.paired, false);
+  assert.equal(config.recovery, false);
+  assert.match(config.phoneTest, /DirectWatch/);
+  const setup = {
+    endpoint: 'http://192.168.1.130:8080',
+    installationToken: 'phone-secret',
+    matchId: '10000000-0000-4000-8000-000000000001',
+  };
+  assert.equal(
+    ordinaryTestEnvironment({ paired: false, directWatch: true, setup })
+      .SCOREBUG_DIRECT_WATCH_SIMULATOR,
+    '1',
+  );
+  assert.throws(() =>
+    ordinaryTestEnvironment({ paired: false, directWatch: true, watch: true, setup }),
+  );
+  const watchFixture = {
+    version: 1,
+    endpoint: 'http://127.0.0.1:8080',
+    offer: {
+      gameId: setup.matchId,
+      pairingId: '20000000-0000-4000-8000-000000000001',
+      watchDeviceId: '30000000-0000-4000-8000-000000000001',
+      role: 'score',
+      pairingToken: 'A'.repeat(43),
+      expiresAt: '2026-09-27T04:05:00Z',
+      serverTime: '2026-09-27T04:00:00Z',
+    },
+  };
+  const env = ordinaryTestEnvironment({
+    paired: false,
+    directWatch: true,
+    watch: true,
+    setup,
+    watchFixture,
+  });
+  assert.equal(env.SCOREBUG_DIRECT_WATCH_SIMULATOR, '1');
+  assert.equal(env.SCOREBUG_EXPECTED_WATCH_MATCH_ID, setup.matchId);
+  assert.deepEqual(JSON.parse(env.SCOREBUG_TEST_WATCH_SETUP), watchFixture);
+  assert(!JSON.stringify(env).includes('phone-secret'));
+  assert.equal(env.SCOREBUG_PAIRED_ORDINARY_SIMULATOR, undefined);
+  assert.throws(() => ordinaryTestEnvironment({ paired: true, directWatch: true, setup }));
+  assert.throws(() =>
+    ordinaryTestEnvironment({ paired: false, recovery: true, directWatch: true, setup }),
+  );
+  for (const change of [
+    { endpoint: 'http://192.168.1.130:8080' },
+    { offer: { ...watchFixture.offer, gameId: 'other' } },
+    { offer: { ...watchFixture.offer, role: 'installation' } },
+  ])
+    assert.throws(() =>
+      ordinaryTestEnvironment({
+        paired: false,
+        directWatch: true,
+        watch: true,
+        setup,
+        watchFixture: { ...watchFixture, ...change },
+      }),
+    );
+});
+
+test('direct Watch starts only after phone readiness and both finite workflows are joined', async () => {
+  const events = [];
+  await runOrdinaryWatchDirect({
+    phone: async (ready) => {
+      events.push('phone');
+      await Promise.resolve();
+      assert.deepEqual(events, ['phone']);
+      ready();
+      await new Promise((r) => setTimeout(r, 5));
+      events.push('phone-stop');
+    },
+    watch: async () => {
+      events.push('watch');
+    },
+  });
+  assert.deepEqual(events, ['phone', 'watch', 'phone-stop']);
+  let watchStarted = false;
+  await assert.rejects(
+    runOrdinaryWatchDirect({
+      phone: async () => {
+        throw new Error('gate failed');
+      },
+      watch: async () => {
+        watchStarted = true;
+      },
+    }),
+  );
+  assert.equal(watchStarted, false);
+  await assert.rejects(
+    runOrdinaryWatchDirect({
+      phone: async () => {},
+      watch: async () => {
+        watchStarted = true;
+      },
+    }),
+  );
+  assert.equal(watchStarted, false);
+});
+
+test('direct Watch fixture is real API-issued and bound to fresh identities/current match', async () => {
+  const setup = {
+    endpoint: 'http://127.0.0.1:8080',
+    installationToken: 'phone-secret',
+    matchId: '10000000-0000-4000-8000-000000000001',
+  };
+  const requests = [];
+  const fixture = await issueOrdinaryDirectWatchFixture(setup, async (url, options) => {
+    requests.push({ url, options });
+    const body = JSON.parse(options.body);
+    return new Response(
+      JSON.stringify({
+        ...body,
+        gameId: setup.matchId,
+        role: 'score',
+        pairingToken: 'A'.repeat(43),
+        expiresAt: '2026-09-27T04:05:00Z',
+        serverTime: '2026-09-27T04:00:00Z',
+      }),
+      { status: 201 },
+    );
+  });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /watch-pairings$/);
+  assert.equal(requests[0].options.headers.authorization, 'Bearer phone-secret');
+  assert.equal(fixture.endpoint, 'http://127.0.0.1:8080');
+  assert.equal(fixture.offer.gameId, setup.matchId);
+  assert(!JSON.stringify(fixture).includes('phone-secret'));
+  assert.notEqual(fixture.offer.watchDeviceId, fixture.offer.pairingId);
+});
+
+test('direct simulator API binding is exact loopback and never widens existing LAN default', () => {
+  assert.equal(deviceLabAPIBind({ host: '192.168.1.130' }), '192.168.1.130');
+  assert.equal(deviceLabAPIBind({ host: '192.168.1.130', apiLoopback: true }), '127.0.0.1');
+  for (const apiLoopback of [false, '127.0.0.1', '0.0.0.0'])
+    assert.throws(() => deviceLabAPIBind({ host: '192.168.1.130', apiLoopback }));
 });

@@ -38,6 +38,70 @@ final class ProgressiveQualityTests: XCTestCase {
         if adviceAtEnd { XCTAssertNotNil(advice) }
         return advice
     }
+    private func localPressure(_ start: Double = 0, revision: UInt64 = 0,
+                               transport: QualityController.Pressure = .elevated,
+                               thermal: QualityController.Pressure = .nominal) -> QualityController.Window {
+        .init(attemptID: attempt, sequence: UInt64(start * 1000) + 1, appliedRevision: revision,
+              start: start, end: start + 0.25, capturedFreshFrames: nil, encodedFreshFrames: nil,
+              receiver: nil, sourceLoss: nil, meanQueueOccupancy: nil, usableVideoCapacity: nil,
+              connectivity: .unknown, thermalPressure: thermal, workerPressure: .unknown,
+              transportPressure: transport)
+    }
+
+    func testTransportPressureDescendsDirectlyToMinimumThroughOneAcknowledgment() throws {
+        for local in [false, true] {
+            var p = try controller()
+            let now = local ? 0.25 : 1.0
+            let decision = try local ? p.evaluateLocalPressure(localPressure(), at: now)
+                : p.evaluate(window(0, transport: .elevated), at: now)
+            let advice = try XCTUnwrap(decision.recommendation)
+            XCTAssertEqual(advice.kind, .decrease)
+            XCTAssertEqual(advice.settings, minimum)
+            XCTAssertTrue(decision.reasons.contains(.transportPressure))
+            XCTAssertEqual(p.applied, high)
+            let application = try p.beginApplication(advice, at: now + 0.1)
+            XCTAssertEqual(application.completionDeadline, now + 2.1, accuracy: 0.000001)
+            try p.acknowledge(application, applied: advice.settings, at: now + 0.2)
+            XCTAssertEqual(p.applied, minimum)
+            XCTAssertEqual(p.appliedRevision, 1)
+            XCTAssertThrowsError(try p.acknowledge(application, applied: advice.settings, at: now + 0.3))
+        }
+    }
+
+    func testTransportPressureAtMinimumDoesNotRecommendAnotherWrite() throws {
+        for local in [false, true] {
+            var p = try controller(high: false)
+            let decision = try local ? p.evaluateLocalPressure(localPressure(), at: 0.25)
+                : p.evaluate(window(0, transport: .elevated), at: 1)
+            XCTAssertNil(decision.recommendation)
+            XCTAssertTrue(decision.reasons.contains(.minimumProfileInsufficient))
+            XCTAssertEqual(p.appliedRevision, 0)
+        }
+    }
+
+    func testThermalOnlyAndLegacyTransportKeepAdjacentDescent() throws {
+        var progressive = try controller()
+        let thermal = try progressive.evaluateLocalPressure(
+            localPressure(transport: .nominal, thermal: .elevated), at: 0.25)
+        XCTAssertEqual(thermal.recommendation?.settings.profileID, "middle")
+        var legacy = try QualityController(profiles: profiles, attemptID: attempt, applied: high, at: 0)
+        let transport = try legacy.evaluateLocalPressure(localPressure(), at: 0.25)
+        XCTAssertEqual(transport.recommendation?.settings.profileID, "middle")
+    }
+
+    func testDirectTransportDescentRetainsExpiryAndRevisionOwnership() throws {
+        for expired in [false, true] {
+            var p = try controller()
+            let advice = try XCTUnwrap(p.evaluateLocalPressure(localPressure(), at: 0.25).recommendation)
+            XCTAssertEqual(advice.settings, minimum)
+            XCTAssertEqual(advice.validUntil, 2.25)
+            if !expired { _ = try p.evaluateLocalPressure(localPressure(0.25), at: 0.5) }
+            XCTAssertThrowsError(try p.beginApplication(advice, at: expired ? 2.250001 : 0.5))
+            XCTAssertEqual(p.applied, high)
+            XCTAssertEqual(p.appliedRevision, 0)
+        }
+    }
+
     func testProgressiveStartupNeedsFourContinuousHealthySeconds() throws {
         var p = try controller(high: false)
         let advice = try XCTUnwrap(healthy(&p, from: 0, seconds: 4))

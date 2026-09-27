@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 
 /** Durable accepted operations prove identity and transitions, not transport routing. */
-export function qualifyOrdinaryPairedEvidence({ pairings, commands, mediaCommands, final }) {
+export function qualifyOrdinaryPairedEvidence(input) {
+  return qualify(input, false);
+}
+export function qualifyOrdinaryDirectWatchEvidence(input) {
+  return qualify(input, true);
+}
+function qualify({ pairings, commands, mediaCommands, final }, direct) {
   assert.equal(pairings.length, 1, 'Exactly one real companion pairing required');
   const pairing = pairings[0];
   assert(pairing.redemption_request, 'Companion offer must be redeemed');
@@ -100,13 +106,20 @@ export function qualifyOrdinaryPairedEvidence({ pairings, commands, mediaCommand
     startGeneration: started,
     endGeneration: ended.generation,
     finalGeneration: final.broadcast.generation,
-    routeQualification:
-      'Real companion setup and accepted identity-bound commands; individual command routes are not inferred',
+    ...(direct ? { setupTransport: 'simulator-fixture', watchConnectivityQualified: false } : {}),
+    routeQualification: direct
+      ? 'Simulator fixture setup and native direct HTTP scoring with durable accepted identity-bound commands; no WatchConnectivity qualification'
+      : 'Real companion setup and accepted identity-bound commands; individual command routes are not inferred',
     mediaQualified: false,
   };
 }
 
-export async function readOrdinaryPairedEvidence(databasePath, matchId) {
+export async function readOrdinaryPairedEvidence(
+  databasePath,
+  matchId,
+  setupTransport = 'watch-connectivity',
+) {
+  assert(['watch-connectivity', 'simulator-fixture'].includes(setupTransport));
   const { DatabaseSync } = await import('node:sqlite');
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
@@ -118,7 +131,11 @@ export async function readOrdinaryPairedEvidence(databasePath, matchId) {
     const stored = JSON.parse(
       database.prepare('SELECT data FROM matches WHERE id=?').get(matchId).data,
     );
-    return qualifyOrdinaryPairedEvidence({
+    const qualifyEvidence =
+      setupTransport === 'simulator-fixture'
+        ? qualifyOrdinaryDirectWatchEvidence
+        : qualifyOrdinaryPairedEvidence;
+    return qualifyEvidence({
       pairings: database
         .prepare(
           'SELECT pairing_id,watch_device_id,redemption_request FROM watch_pairings WHERE game_id=?',

@@ -797,7 +797,12 @@ public struct QualityController: Sendable {
         }
         if unhealthy {
             recoveryStart = nil
-            let reduced = lowerSettings(profileIndex: profileIndex, capacity: window.usableVideoCapacity)
+            // Progressive transport pressure returns to the lowest supported rate
+            // without another intermediate profile replacement. Other pressure
+            // keeps its existing gradual descent and minimum remains a no-op.
+            let reduced = behavior == .progressive && window.transportPressure == .elevated
+                ? (applied == minimumSettings ? nil : minimumSettings)
+                : lowerSettings(profileIndex: profileIndex, capacity: window.usableVideoCapacity)
             if let reduced { pending = recommendation(reduced, for: window, validUntil: recommendationDeadline) }
             else { reasons.append(.minimumProfileInsufficient) }
             let state: State = stalled ? .stalled : unknown ? .unknown : reduced == nil ? .insufficient : .degraded

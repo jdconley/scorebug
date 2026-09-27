@@ -7,6 +7,22 @@ final class CompanionWatchScoringTests: XCTestCase {
     private var initialEvidenceAttached = false
     private var pendingEvidenceAttached = false
     @MainActor func testScoreUsingRealCompanionSetup() throws {
+        try runScoring(directFixture: nil)
+    }
+    @MainActor func testScoreUsingSimulatorFixtureSetup() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_DIRECT_WATCH_SIMULATOR"] == "1" else {
+            throw XCTSkip("Use the explicit watch-direct simulator lane.")
+        }
+        let expected = try WatchSetupProvenance.expectedMatch(ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
+        let fixture = try WatchSetupProvenance.simulatorFixture(ProcessInfo.processInfo.environment["SCOREBUG_TEST_WATCH_SETUP"], expectedMatch: expected)
+        try runScoring(directFixture: fixture)
+        #else
+        throw XCTSkip("Direct fixture setup is simulator-only.")
+        #endif
+    }
+    @MainActor private func runScoring(directFixture: String?) throws {
+        let direct = directFixture != nil
         continueAfterFailure = false
         let expectedMatch = try WatchSetupProvenance.expectedMatch(
             ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
@@ -17,22 +33,26 @@ final class CompanionWatchScoringTests: XCTestCase {
         #endif
         // Only the opted-in paired simulator waits for phone preparation and
         // its unchanged 150-second adaptive gate before receiving the offer.
-        executionTimeAllowance = pairedOrdinary ? 600 : 420
+        executionTimeAllowance = pairedOrdinary || direct ? 600 : 420
         let app = XCUIApplication()
         // Explicitly defeat any inherited debug fixture from another test lane.
-        app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
-        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = "1"
-        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = "1"
+        app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = directFixture ?? ""
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = direct ? "" : "1"
+        app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = direct ? "" : "1"
         app.launch()
         let selected = try waitForOffer(app, expectedMatch: expectedMatch, timeout: pairedOrdinary ? 360 : 180)
         try tap(app, "watch.joinOffered") { try self.provenance(app).requireOffer(selected) }
         try waitForPairing(app, selected: selected)
         @MainActor func scoringIdentity() throws { try provenance(app).requirePaired(selected) }
-        attach(app, "Watch accepted setup delivered by paired iPhone")
+        attach(app, direct ? "Watch accepted simulator fixture setup via real API" : "Watch accepted setup delivered by paired iPhone")
+        if direct {
+            let transport = XCTAttachment(string: "setupTransport=simulator-fixture; scoringTransport=direct-http; watchConnectivityQualified=false")
+            transport.name = "watch-direct-transport"; transport.lifetime = .keepAlways; add(transport)
+        }
         try tap(app, "watch.takeover", beforeTap: scoringIdentity)
         try tap(app, "watch.homePoint", beforeTap: scoringIdentity)
         value(app.staticTexts["watch.score"], "1-0")
-        if pairedOrdinary || ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
+        if direct || pairedOrdinary || ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
             // Physical phone UI must observe the point and concurrent live
             // output before this runner proceeds to undo and match shutdown.
             RunLoop.current.run(until: Date().addingTimeInterval(30))
@@ -42,8 +62,17 @@ final class CompanionWatchScoringTests: XCTestCase {
         try tap(app, "watch.awayPoint", beforeTap: scoringIdentity)
         value(app.staticTexts["watch.score"], "0-1")
         attach(app, "Watch scoring while companion records")
-        if pairedOrdinary {
+        if pairedOrdinary || direct {
             RunLoop.current.run(until: Date().addingTimeInterval(15))
+        }
+        if direct {
+            app.terminate()
+            // Explicit empty value defeats inherited runner fixture on relaunch.
+            app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
+            app.launch()
+            try waitForPairing(app, selected: selected)
+            value(app.staticTexts["watch.score"], "0-1")
+            attach(app, "Direct Watch restored exact persisted pairing and score without setup injection")
         }
         try tap(app, "watch.endMatch", beforeTap: scoringIdentity)
         // watchOS confirmation dialogs do not retain the SwiftUI identifiers.
@@ -94,6 +123,9 @@ final class CompanionWatchScoringTests: XCTestCase {
         throw ProvenanceFailure.noCurrentOffer
     }
     @MainActor private func waitForPairing(_ app: XCUIApplication, selected: WatchSetupProvenance.Identity) throws {
+        guard app.buttons["watch.refresh"].waitForExistence(timeout: 30) else {
+            throw WatchSetupProvenance.Invalid.metadata
+        }
         let end = Date().addingTimeInterval(30)
         while Date() < end {
             let current = try provenance(app)
@@ -144,6 +176,9 @@ final class CompanionWatchScoringTests: XCTestCase {
 final class CompanionWatchScoringTests: XCTestCase {
     func testScoreUsingRealCompanionSetup() throws {
         throw XCTSkip("Companion scoring requires DEBUG-only setup provenance metadata; Release never runs unguarded scoring.")
+    }
+    func testScoreUsingSimulatorFixtureSetup() throws {
+        throw XCTSkip("Direct Watch fixture scoring requires a DEBUG simulator.")
     }
 }
 #endif

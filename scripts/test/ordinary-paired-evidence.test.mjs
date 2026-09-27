@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { qualifyOrdinaryPairedEvidence } from '../ordinary-paired-evidence.mjs';
+import {
+  qualifyOrdinaryPairedEvidence,
+  qualifyOrdinaryDirectWatchEvidence,
+} from '../ordinary-paired-evidence.mjs';
 
 function fixture(explicitStop = false) {
   const commands = [
@@ -119,3 +122,14 @@ for (const [name, mutate] of Object.entries({
     mutate(f);
     assert.throws(() => qualifyOrdinaryPairedEvidence(f));
   });
+
+test('direct fixture setup reuses durable checks without claiming WatchConnectivity', () => {
+  const result = qualifyOrdinaryDirectWatchEvidence(fixture());
+  assert.equal(result.setupTransport, 'simulator-fixture');
+  assert.equal(result.mediaQualified, false);
+  assert.match(result.routeQualification, /direct HTTP/);
+  assert(!result.routeQualification.includes('Real companion'));
+  const broken = fixture();
+  broken.commands[2].outcome.accepted = false;
+  assert.throws(() => qualifyOrdinaryDirectWatchEvidence(broken));
+});
