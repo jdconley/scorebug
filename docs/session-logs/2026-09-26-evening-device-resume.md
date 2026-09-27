@@ -31,3 +31,11 @@ Initial signed Debug build41113 and actual arm64 iPhone Release build89190 both 
 Independent specification review found one missing post-relaunch idle condition; corrected by repeating enabled start and both absent stop buttons. Final UI blobd09d84f098f5a712959f6c9f7a72414f4ebbbc4f is spec-approved. Final signed Debug rebuild and independent quality review follow before hardware.
 
 Final signed Debug rebuild26131 joined0. Independent quality review approves all11 implementation/test/project blobs with no actionable blocker. Root verifies success markers and stores final source hashes plus log/binary checks in `root-verification.json` and `final-review-inputs.json`. Hardware probe is next; no capture acceptance is implied by these checks.
+
+## Physical loopback probe passes
+
+Sourceb639c81; command `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-physical-recovery.mjs --device 00008140-001474110C13001C --host 10.0.0.122 --lane network-probe --runner-transport app-loopback --bridge-port 49173`. Root87776 joined0. Artifact `physical-recovery-ymge6q`, lab `device-lab-urQgMy`. Exact probe leaf passes13.428s, zero skips.
+
+Both APIroot and controllerroot return actual forwarded404 responses; the controller matches its expected unknown-operation body. Bridge shutdown is acknowledged and subsequent connection refusal verifies the listener closed. AttachmentB1D1DC36-6BC2-4EFF-9DDA-0B4E9536EFC3.json and separate shutdown attachment preserve the evidence. Root independently rehashes all25 listed runtime/config/source inputs unchanged. Controller audit is closed with zero records; receiver has zero sessions; worker exits0 and shutdown has no failures. This establishes app-mediated test connectivity, not restored direct runner privilege or media qualification.
+
+Next is the physical720 ramp/collapse/recovery comparison. The user has been asked to provide a lit moving scene; no response yet. A new controlled hardware timing run can still diagnose application/transport behavior, but cannot establish fresh-motion or perceptual sync if the scene remains dark/static. No media gate will be relaxed.
