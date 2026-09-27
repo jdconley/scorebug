@@ -357,6 +357,7 @@ final class PhysicalStreamingTests: XCTestCase {
         var record: [String: Any] = ["phase": phase, "uptimeSeconds": uptime ?? ProcessInfo.processInfo.systemUptime]
         if sample { record["sampleIndex"] = recoverySamples.count - 1 }
         recoveryMilestones.append(record)
+        print("SCOREBUG_RECOVERY_PHASE \(phase)")
     }
     private func attachRecoveryEvidence() {
         var report: [String: Any] = ["formatVersion": physicalRecovery ? 3 : recovery720 ? 2 : 1,

@@ -10,15 +10,22 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 - `native-created-simulators-opRrou` atf3428a0: **complete vertical passes**, including native creation/discovery/takeover/undo, independent archive/export, both live recordings, full decode/frame continuity/audio sync and visible score sequence. `vertical-acceptance.json` binds evidence.
 - `ordinary-native-UFjmr8` atb341b94: Watch/phone native workflows, restored pairing, frames/audio sync/score overlay pass. Strict media end coverage fails because audio outlasts video by454ms on remote match end. Relay retirement before publisher drain is a hypothesis. Do not misreport missing audio or relax coverage.
-- Direct-to-minimum transport fallback implemented; next targeted run is `recovery720 --publish-peer-latency-ms 700` with normal pacing and the prepared source below. No new result yet.
+- Direct-to-minimum fallback measured in `ordinary-native-PvbKtK` ateade9ac. Native/transport/geometry pass; one720→240 application, ACK about1.03s. Archive is continuous11290frames. Each live output still has93 missing IDs,11 repeated/corrupted observations,26audio gaps and2.4s maximum video gap. Strict media fails. Do not repeat unchanged or claim fixed.
 - Mac service helper and Linux worker deployment runbook are implemented. Persistent service operation, external runtime and legacy VPS template repair remain open. No service installed.
 
 Use focused checks, incremental builds and completed-workflow media verification. Current two-phone UI retry fixed only keyboard dismissal. Do not repeat hardware readiness work or broad suites for that change.
 
+## Next priorities
+
+1. Preserve the fully green native-created two-phone vertical as the working baseline. Finish simulator feature/recovery checkpoint using existing recording and scoring tests, not new harnesses.
+2. Diagnose the remaining congestion interval fromPvbKtK before another capture. Prior bitrate-first, relative-pacing and source-cadence experiments are already retained failures.
+3. Coordinate remote match-end retirement with publisher drain without weakening immediate authorization revocation; current relay-ordering explanation remains a hypothesis.
+4. Native recording across worker/API/source restart, backend capabilities and actual service operation remain open. Hardware stays deferred.
+
 ## Existing evidence and open limits
 
 - Basic native phone recording/scoring, SRT, overlay and both output MP4s work. Long1080p/4K file replays pass. Two ordinary240→360→minimum→360 simulator recoveries pass their media checks.
--720p collapse still loses live A/V while clean archive survives. One measured run first overflows at516ms, first pressure decision542–570ms, first downward ACK1001–1029ms. The direct-minimum change avoids an intermediate replacement but cannot erase initial loss; measure before claiming recovery fixed.
+-720p direct-minimum comparison now has133overflow packets versus309previously; successful controller transitions do not erase the remaining live-media failure. Use saved packet/transition/decoded evidence before choosing another experiment.
 - Physical filming phone plus separate native iPhone14 simulator scoring passes the command/record/stream/export route. The native-created two-phone simulator vertical now passes fully.
 - Watch standalone scoring/relaunch is implemented and tested; direct/companion routing has model/protocol coverage. Real companion delivery and radio-route acceptance remain hardware gates.
 - Physical Watch has preserved uncertain pending setup. Historical candidate `device-lab-SM9KM1` is not live identity proof. Last guarded inspections never entered test bodies because Xcode lost the destination. All jobs joined; do not clear Keychain or retry this now.

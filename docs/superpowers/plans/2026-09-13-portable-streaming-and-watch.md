@@ -27,7 +27,7 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 | Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone simulator workflow passes; integrated adversarial/reconnect cases remain |
 | Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
 | SRT → overlay proxy → RTMP and MP4 | Yes; initial/changing score, configurable font, software/VideoToolbox selection, mock destination and proxy recording | Native workflow with worker/control-plane restart; backend capability reporting and installation packaging |
-| Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p congestion recovery still loses live A/V; higher profiles and sustained operation unqualified |
+| Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p→minimum→720p controller/geometry passes; forced collapse still loses live A/V. Higher profiles and sustained operation unqualified |
 | Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Direct-network simulator scoring/relaunch while phone publishes passes; separate scorer's Watch remains. Real WatchConnectivity simulator registration currently fails7018 |
 | Physical system | Phone local archive/native scoring/proxy/mock outputs work; standalone Ultra2 scoring works | Combined paired run and sustained/radio-route testing deferred; uncertain test pairing preserved |
 | Portability | Local Mac and container workflows exist; long1080p/4K file replays pass | Install/service/upgrade instructions, backend capability matrix and other-host runtime qualification |
@@ -38,7 +38,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 
 - [x] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
 - [x] While capture and stream continue, relaunch Watch without reinjecting setup; recover the same pairing/score, then score/undo/end with exactly one server outcome per command.
-- [ ] Verify clean archive, changed overlay in proxy and mock MP4s, audio, native export, and archive continuation after the stream/match ends.
+- [x] Verify the complete two-phone vertical: clean archive/export, changing overlay in both proxy/mock MP4s, continuous30fps video, audio synchronization and archive continuation after streaming stops.
+- [ ] Fix/verify remote Watch match-end finalization: Watch commands/restoration, frame continuity, audio sync and visible score changes pass, but live audio outlasts video by454ms. Normal phone Stop streaming aligns within24ms.
 - [x] Exercise native phone B creating a match, phone A discovering/joining to record/publish, and phone B scoring/undoing without capture permissions. Both native workflows and durable role checks pass on iPhone14 simulators.
 - [ ] Extend the separate-scorer workflow through Watch B takeover; finish layout checks on supported small Watch screens.
 - [ ] Run scoring reconnect/lost-reply/takeover/stale-command cases against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.
@@ -47,7 +48,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 ## 2. Make adaptive streaming reliable
 
 - [x] On progressive transport congestion, descend directly to minimum without an unnecessary intermediate encoder replacement; preserve other pressure behavior and measured upward admission.
-- [ ] Verify720p increase → constrained fallback → recovery on the simulator with clean local A/V throughout. Report actual fresh frames, compressed-content damage, audio gaps and bounded recovery, retaining failed historical outputs.
+- [x] Measure720p increase → direct minimum fallback →720p recovery on the simulator. Controller/transport/geometry and clean local archive pass; failed live-media evidence is retained.
+- [ ] Reduce the remaining severe-congestion damage: latest run has93 missing source IDs,11 repeated/corrupted observations,26 audio gaps and a2.4-second maximum video gap. Preserve actual metrics and failed outputs; do not equate a controller pass with a media pass.
 - [ ] Finish delivery-evidence retention/terminal coverage and missing-live-audio/shutdown diagnosis where still relevant to current runs; do not raise audit limits or pad silence to conceal loss.
 - [ ] Verify stale reports/no-progress handling, native readback and revision/keyframe boundaries, thermal/queue pressure, partial loss, total outage and restoration.
 - [ ] Qualify sustainable profiles and transport overhead for each supported backend/device. Unsupported4K remains disabled. Maintain bounded continuous adaptation for full-match durations.
