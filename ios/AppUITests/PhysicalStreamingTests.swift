@@ -166,6 +166,7 @@ final class PhysicalStreamingTests: XCTestCase {
             try require(!app.buttons["scoring.homePoint"].exists, "Unexpected existing match; no creation was attempted.")
             try replace(app.textFields["scoring.homeName"], with: "HOME", in: app)
             try replace(app.textFields["scoring.awayName"], with: "AWAY", in: app)
+            try dismissSetupKeyboard(app)
             try tap(app.buttons["scoring.create"], in: app)
         }
         try wait("Separate scorer did not acknowledge its native match connection.", seconds: 20) {
@@ -262,7 +263,9 @@ final class PhysicalStreamingTests: XCTestCase {
                         "Worker retrying", "Worker failed", "Worker closed", "missing"]
         let worker = separateWorkerLabel(app)
         func safeScore(_ id: String) -> String {
-            let score = app.buttons[id].value as? String ?? "missing"
+            let button = app.buttons[id]
+            guard button.exists else { return "missing" }
+            let score = button.value as? String ?? "missing"
             return ["0", "1", "missing"].contains(score) ? score : "other"
         }
         let report: [String: Any] = ["role": role, "phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime,
@@ -1588,8 +1591,10 @@ final class PhysicalStreamingTests: XCTestCase {
         try require(!runnerNetworkSettingReadOnly, "A keyboard covers read-only inspection; dismiss it manually.")
         let scoreField = app.textFields["scoring.endpoint"]
         let filmField = app.textFields["streaming.endpoint"]
+        let creationField = app.textFields["scoring.awayName"]
         let setupVisible = (scoreField.exists && scoreField.isHittable) ||
-            (filmField.exists && filmField.isHittable)
+            (filmField.exists && filmField.isHittable) ||
+            (creationField.exists && creationField.isHittable)
         try require(setupVisible && !app.alerts.firstMatch.exists && keyboard.isHittable,
                     "Keyboard is not on an accessible Scorebug connection form; dismiss the covering UI manually.")
         // These single-line setup fields have no onSubmit action. Use only a
