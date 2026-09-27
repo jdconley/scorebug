@@ -142,10 +142,20 @@ test('paired lane is explicit and cannot alter runtime or timing policy', () => 
   }
 });
 test('Watch private test environment never receives phone credentials or source selectors', () => {
-  const setup = { endpoint: 'http://192.168.1.130:8080', installationToken: 'private-sentinel' };
+  const setup = {
+    endpoint: 'http://192.168.1.130:8080',
+    installationToken: 'private-sentinel',
+    matchId: '10000000-0000-4000-8000-000000000001',
+  };
   assert.deepEqual(ordinaryTestEnvironment({ paired: true, watch: true, setup }), {
     SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1',
+    SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId,
   });
+  for (const matchId of [undefined, '', 'invalid', setup.matchId + ' ']) {
+    assert.throws(() =>
+      ordinaryTestEnvironment({ paired: true, watch: true, setup: { ...setup, matchId } }),
+    );
+  }
   const phone = ordinaryTestEnvironment({ paired: true, setup });
   assert.equal(phone.SCOREBUG_DEVICE_TOKEN, setup.installationToken);
   assert.equal(phone.SCOREBUG_ORDINARY_SIMULATOR, '1');

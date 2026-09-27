@@ -148,6 +148,27 @@ final class WatchScoringModelTests: XCTestCase {
             onNotice: notice, acknowledgmentHaptic: haptic)
     }
 
+    #if DEBUG
+    func testProvenanceRetainsNonUUIDPendingMatchAndBlocksReadinessWithoutChangingStorage() async throws {
+        let server = Server(), store = SetupStore()
+        let model = model(store, server)
+        await model.wake()
+        await server.setLosePair()
+        await model.receive(envelope("legacy_match"))
+        await model.acceptOfferedSetup()
+        let retained = try XCTUnwrap(store.load()?.pending)
+        XCTAssertEqual(retained.offer.gameId, "legacy_match")
+        let metadata = try WatchSetupProvenance(encoded: model.setupProvenanceAccessibilityValue)
+        XCTAssertTrue(metadata.setupPending)
+        XCTAssertEqual(metadata.pending?.gameID, "legacy_match")
+        XCTAssertEqual(metadata.pending?.pairingID, pair)
+        XCTAssertThrowsError(try metadata.requireNoPending())
+        XCTAssertThrowsError(try metadata.readyForOfferWait())
+        XCTAssertEqual(try store.load()?.pending, retained)
+        await model.suspend()
+    }
+    #endif
+
     func testFailedInitialNoticeRetriesOnForegroundPollAndStopsAfterAcceptance() async throws {
         let server = Server(), store = SetupStore()
         var attempts: [WatchCompanionNotice] = []

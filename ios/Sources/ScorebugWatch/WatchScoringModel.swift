@@ -46,6 +46,20 @@ final class WatchScoringModel: ObservableObject {
         self.acknowledgmentHaptic = acknowledgmentHaptic
     }
 
+    #if DEBUG
+    var setupProvenanceAccessibilityValue: String {
+        func identity(_ gameID: String?, _ pairingID: String?) -> WatchSetupProvenance.Identity? {
+            guard let gameID, let pairingID else { return nil }
+            return try? .init(gameID: gameID, pairingID: pairingID)
+        }
+        return WatchSetupProvenance(
+            offered: identity(offeredSetup?.offer.gameId, offeredSetup?.offer.pairingId),
+            pending: identity(setupRecord?.pending?.offer.gameId, setupRecord?.pending?.offer.pairingId),
+            paired: identity(setupRecord?.paired?.credential.gameId, setupRecord?.paired?.pairingId),
+            setupPending: setupRecord?.pending != nil, scoringPending: pending, ready: setupRecord != nil, busy: busy).encoded
+    }
+    #endif
+
     var snapshot: MatchSnapshot? { state?.snapshot }
     var phase: WatchCompanionPhase {
         if setupRecord?.paired != nil { return .paired }

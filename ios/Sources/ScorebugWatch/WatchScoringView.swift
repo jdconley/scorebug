@@ -76,6 +76,9 @@ struct WatchScoringView: View {
                 }
                 .disabled(model.busy || !model.isActive)
                 .accessibilityIdentifier("watch.refresh")
+                #if DEBUG
+                .accessibilityValue(model.setupProvenanceAccessibilityValue)
+                #endif
                 if model.busy { ProgressView().accessibilityLabel("Confirming update") }
             }
             .padding(.horizontal, 4)

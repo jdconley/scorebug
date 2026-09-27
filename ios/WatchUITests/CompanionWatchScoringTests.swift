@@ -2,9 +2,14 @@ import XCTest
 
 /// Requires the paired-phone test to send an offer through real WatchConnectivity.
 /// This test never receives a fixture envelope, endpoint, device ID or credential.
+#if DEBUG
 final class CompanionWatchScoringTests: XCTestCase {
-    @MainActor func testScoreUsingRealCompanionSetup() {
+    private var initialEvidenceAttached = false
+    private var pendingEvidenceAttached = false
+    @MainActor func testScoreUsingRealCompanionSetup() throws {
         continueAfterFailure = false
+        let expectedMatch = try WatchSetupProvenance.expectedMatch(
+            ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
         #if targetEnvironment(simulator)
         let pairedOrdinary = ProcessInfo.processInfo.environment["SCOREBUG_PAIRED_ORDINARY_SIMULATOR"] == "1"
         #else
@@ -19,34 +24,95 @@ final class CompanionWatchScoringTests: XCTestCase {
         app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_DIAGNOSTICS"] = "1"
         app.launchEnvironment["SCOREBUG_WATCH_CONNECTIVITY_PROBE"] = "1"
         app.launch()
-        tap(app, "watch.joinOffered", timeout: pairedOrdinary ? 360 : 180)
-        value(app.staticTexts["watch.phase"], "paired")
+        let selected = try waitForOffer(app, expectedMatch: expectedMatch, timeout: pairedOrdinary ? 360 : 180)
+        try tap(app, "watch.joinOffered") { try self.provenance(app).requireOffer(selected) }
+        try waitForPairing(app, selected: selected)
+        @MainActor func scoringIdentity() throws { try provenance(app).requirePaired(selected) }
         attach(app, "Watch accepted setup delivered by paired iPhone")
-        tap(app, "watch.takeover")
-        tap(app, "watch.homePoint")
+        try tap(app, "watch.takeover", beforeTap: scoringIdentity)
+        try tap(app, "watch.homePoint", beforeTap: scoringIdentity)
         value(app.staticTexts["watch.score"], "1-0")
         if pairedOrdinary || ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
             // Physical phone UI must observe the point and concurrent live
             // output before this runner proceeds to undo and match shutdown.
             RunLoop.current.run(until: Date().addingTimeInterval(30))
         }
-        tap(app, "watch.undo")
+        try tap(app, "watch.undo", beforeTap: scoringIdentity)
         value(app.staticTexts["watch.score"], "0-0")
-        tap(app, "watch.awayPoint")
+        try tap(app, "watch.awayPoint", beforeTap: scoringIdentity)
         value(app.staticTexts["watch.score"], "0-1")
         attach(app, "Watch scoring while companion records")
         if pairedOrdinary {
             RunLoop.current.run(until: Date().addingTimeInterval(15))
         }
-        tap(app, "watch.endMatch")
+        try tap(app, "watch.endMatch", beforeTap: scoringIdentity)
         // watchOS confirmation dialogs do not retain the SwiftUI identifiers.
-        tap(app, "End match", confirmation: true)
+        try tap(app, "End match", confirmation: true, beforeTap: scoringIdentity)
         XCTAssertTrue(app.staticTexts["Match ended"].waitForExistence(timeout: 30), app.debugDescription)
         attach(app, "Watch ended companion match")
     }
 
+    private enum ProvenanceFailure: Error { case restorationNotReady, noCurrentOffer, pairingNotConfirmed }
+
+    @MainActor private func provenance(_ app: XCUIApplication) throws -> WatchSetupProvenance {
+        let metadata = app.buttons["watch.refresh"]
+        guard metadata.exists, let encoded = metadata.value as? String else {
+            throw WatchSetupProvenance.Invalid.metadata
+        }
+        let current = try WatchSetupProvenance(encoded: encoded)
+        if !initialEvidenceAttached {
+            let attachment = XCTAttachment(string: current.encoded)
+            attachment.name = "Watch-initial-setup-provenance"
+            attachment.lifetime = .keepAlways; add(attachment)
+            initialEvidenceAttached = true
+        }
+        if (current.setupPending || current.pending != nil || current.scoringPending) && !pendingEvidenceAttached {
+            let attachment = XCTAttachment(string: current.encoded)
+            attachment.name = "Watch-pending-setup-provenance"
+            attachment.lifetime = .keepAlways; add(attachment)
+            pendingEvidenceAttached = true
+        }
+        return current
+    }
+    @MainActor private func waitForOffer(_ app: XCUIApplication, expectedMatch: String,
+                                        timeout: Double) throws -> WatchSetupProvenance.Identity {
+        guard app.buttons["watch.refresh"].waitForExistence(timeout: 30) else {
+            throw WatchSetupProvenance.Invalid.metadata
+        }
+        let restorationEnd = Date().addingTimeInterval(30)
+        while try !provenance(app).readyForOfferWait() {
+            guard Date() < restorationEnd else { throw ProvenanceFailure.restorationNotReady }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        // Runner barrier means only that we are waiting, never that an offer exists.
+        print("SCOREBUG_WATCH_WAITING_FOR_EXPECTED_MATCH_OFFER")
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end {
+            if let selected = try provenance(app).matchingOffer(expected: expectedMatch) { return selected }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        throw ProvenanceFailure.noCurrentOffer
+    }
+    @MainActor private func waitForPairing(_ app: XCUIApplication, selected: WatchSetupProvenance.Identity) throws {
+        let end = Date().addingTimeInterval(30)
+        while Date() < end {
+            let current = try provenance(app)
+            // Only the just-accepted redemption may be pending here. The harness
+            // never refreshes, reconciles or clears it; normal app recovery owns it.
+            if current.scoringPending || (current.setupPending && current.pending != selected) {
+                throw WatchSetupProvenance.Invalid.pendingState
+            }
+            if current.ready && !current.busy && !current.setupPending && current.pending == nil && current.paired == selected {
+                try current.requirePaired(selected)
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        throw ProvenanceFailure.pairingNotConfirmed
+    }
     @MainActor private func tap(_ app: XCUIApplication, _ id: String,
-                                confirmation: Bool = false, timeout: Double = 30) {
+                                confirmation: Bool = false, timeout: Double = 30,
+                                beforeTap: (@MainActor () throws -> Void)? = nil) throws {
         let button = confirmation ? app.tables.buttons[id] : app.buttons[id]
         XCTAssertTrue(button.waitForExistence(timeout: timeout), app.debugDescription)
         func fullyVisible() -> Bool {
@@ -61,6 +127,7 @@ final class CompanionWatchScoringTests: XCTestCase {
         }
         let ready = NSPredicate { _, _ in button.isEnabled && fullyVisible() }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 30), .completed, app.debugDescription)
+        try beforeTap?()
         button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
     @MainActor private func value(_ element: XCUIElement, _ expected: String) {
@@ -73,3 +140,10 @@ final class CompanionWatchScoringTests: XCTestCase {
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 }
+#else
+final class CompanionWatchScoringTests: XCTestCase {
+    func testScoreUsingRealCompanionSetup() throws {
+        throw XCTSkip("Companion scoring requires DEBUG-only setup provenance metadata; Release never runs unguarded scoring.")
+    }
+}
+#endif

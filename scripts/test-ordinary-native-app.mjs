@@ -133,7 +133,17 @@ export function ordinaryTestEnvironment({
     assert.match(recoveryControl.runID, /^[a-f0-9-]{36}$/);
   }
   assert(!watch || paired, 'Watch runner requires the paired lane');
-  if (watch) return { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' };
+  if (watch) {
+    assert.match(
+      setup.matchId ?? '',
+      /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i,
+      'Expected Watch match UUID required',
+    );
+    return {
+      SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1',
+      SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId.toLowerCase(),
+    };
+  }
   return {
     SCOREBUG_DEVICE_API_URL: setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,

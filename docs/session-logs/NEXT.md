@@ -12,9 +12,9 @@ Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-
 
 The user confirms the phone points at a lit moving scene and approved its new automation prompt. Physical run `physical-recovery-ydaKA3` now enters its test, observes initial ACK/source readiness, records/streams/scores/stops/exports, but fails the150s initial360 increase before impairment. It remains240p. All25 inputs unchanged and all jobs joined.
 
-The subsequent paired Watch run `physical-paired-live-qBRzUf` times out enabling **Watch UI automation before its test body**. The phone camera is correctly not started. Fresh device checks were unlocked, but that does not establish automation initialization. The pending question asks whether a new phone/Watch prompt is visible and to approve it if shown. Do not retry without new readiness evidence.
+After Watch passcode approval, a destination preparation failure was followed by fresh successful readiness checks. The next paired run `physical-paired-live-ilu6I7` **entered the Watch test**, but accepted a retained offer from an older run and entered durable pending setup. Its phone runner timed out enabling UI automation before the body. The current lab issued zero Watch pairings, confirming the offer was foreign. The pending phone prompt question remains unanswered. Do not retry unchanged or clear uncertain setup.
 
-Paired failure lab `device-lab-qkOT5A`: all14 inputs unchanged, worker exit0, receiver zero sessions, cleanup empty; root1127 joined1. No capture/build/media-analysis jobs remain active. Read-only adaptation design is complete; no implementation began. The next diagnostic is a separate bounded per-attempt DEBUG candidate summary, capturing exact receiver-time predicate operands and actual accumulated readiness blockers. Keep successful-ACK audit/UI payloads unchanged. Details are in the latest session log.
+All14 inputs unchanged; root39311 joined1, worker exit0, receiver zero sessions, cleanup empty. No capture/build/media jobs active. [Current narrow plan](../superpowers/plans/2026-09-26-watch-test-provenance.md): bind the paired test to its expected match and paired identity, then recover the old pairing through its original server after identifying ownership. Adaptation diagnostics remain queued, not implemented.
 
 Runner direct LAN requests still report access denied despite the enabled switch. The reviewed DEBUG-only app loopback bridge passes actual phone API/controller and joined-shutdown checks. Use that path; do not reset privacy, delete Scorebug, disable firewall or repeat Settings navigation. See [Apple-source research](../research/2026-09-26-xctest-local-network.md).
 
@@ -26,7 +26,7 @@ Runner direct LAN requests still report access denied despite the enabled switch
 
 ## Next actions
 
-1. Prioritize the unchanged paired Watch retry after a new prompt approval. Recheck en0 and the prepared runtime hashes; use `artifacts/qa/run-physical-paired-lit-20260926.mjs`. It now binds newer phone capture products and unchanged Watch/source products via `artifacts/qa/paired-lit-provenance-20260926/result.json`. Do not reuse the older generic phone-binary hash after the physical launcher rebuild.
+1. Complete and review the Watch test provenance gate, identify/recover the exact pending test-owned pairing through its original server, and resolve phone automation readiness. Rebuild and regenerate runtime provenance before using `artifacts/qa/run-physical-paired-lit-20260926.mjs`; it must pass the expected new match identity. Never reuse old hashes after a build.
 2. For a future evidence-backed adaptive comparison, the command is:
    `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-physical-recovery.mjs --device 00008140-001474110C13001C --host 10.0.0.122 --lane recovery720 --runner-transport app-loopback --bridge-port 49173`.
 3. Freeze source/binaries during capture; join all work before media analysis. Collect only the actual new recording UUID export and exact publishing-attempt QA audit. Rehash inputs on failure too. Do not substitute old exports or observations.

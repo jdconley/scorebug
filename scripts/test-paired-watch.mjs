@@ -437,6 +437,7 @@ try {
         'CODE_SIGN_IDENTITY=-',
         `SCOREBUG_TEST_API_URL=${api.baseURL}`,
         'SCOREBUG_TEST_WATCH_SETUP=',
+        ...(name === 'watch' ? [`SCOREBUG_EXPECTED_WATCH_MATCH_ID=${gameId}`] : []),
       ],
       `build-${name}`,
       { timeout: 600_000 },
