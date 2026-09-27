@@ -355,3 +355,240 @@ test('rejects inflated application deadline even with unchanged UI witness', () 
   f.audit.records[1].completionDeadline = '23';
   assert.throws(() => verify(f));
 });
+
+function cadenceFixture() {
+  const f = fixture(),
+    r = f.audit.records[1];
+  Object.assign(r, {
+    input: 'cadenceRejected',
+    error: 'freshness',
+    reasons: 'telemetryInvalidated',
+    kind: 'reset',
+  });
+  // The UI retains the ordinary cause; cadence fields are audit-only.
+  f.phase.samples[1].diagnostic.appliedTransition = JSON.stringify(
+    Object.fromEntries(Object.entries(r).filter(([k]) => !auditOnly.includes(k))),
+  );
+  Object.assign(r, {
+    cadenceReceiptID: id(99),
+    cadenceEvaluatedAt: r.at,
+    cadenceAgeState: 'available',
+    cadenceSampleAgeSeconds: '0.35',
+    cadenceMaximumSampleAgeSeconds: '0.25',
+    cadenceServerAgeSeconds: '0.05',
+    cadenceRequestSeconds: '0.1',
+    cadenceResidenceSeconds: '0.2',
+    cadenceReceiptPreviouslyConsumed: 'false',
+    cadenceRequiresRevalidation: 'false',
+    cadenceStalled: 'false',
+    cadenceProgressAgeMs: '50.0',
+    cadenceLastFreshPTS: '180000',
+  });
+  return f;
+}
+test('validates exact cadence rejection audit witness without adding it to UI fields', () => {
+  assert.equal(verify(cadenceFixture()).traceValid, true);
+});
+for (const [name, mutate] of [
+  [
+    'missing error',
+    (r) => {
+      delete r.error;
+    },
+  ],
+  [
+    'missing component',
+    (r) => {
+      delete r.cadenceRequestSeconds;
+    },
+  ],
+  [
+    'wrong receipt',
+    (r) => {
+      r.cadenceReceiptID = 'bad';
+    },
+  ],
+  [
+    'changed limit',
+    (r) => {
+      r.cadenceMaximumSampleAgeSeconds = '0.5';
+    },
+  ],
+  [
+    'age sum mismatch',
+    (r) => {
+      r.cadenceSampleAgeSeconds = '0.4';
+    },
+  ],
+  [
+    'nonstale freshness rejection',
+    (r) => {
+      r.cadenceSampleAgeSeconds = '0.25';
+      r.cadenceResidenceSeconds = '0.1';
+    },
+  ],
+  [
+    'detached evaluation',
+    (r) => {
+      r.cadenceEvaluatedAt = '19';
+    },
+  ],
+  [
+    'unknown unavailable reason',
+    (r) => {
+      r.cadenceAgeState = 'other';
+    },
+  ],
+  [
+    'unavailable but numeric total',
+    (r) => {
+      r.cadenceAgeState = 'statusExpired';
+    },
+  ],
+  [
+    'bad progress',
+    (r) => {
+      r.cadenceStalled = 'true';
+    },
+  ],
+  [
+    'unknown field',
+    (r) => {
+      r.cadenceInjected = '1';
+    },
+  ],
+  [
+    'wrong cause',
+    (r) => {
+      r.input = 'localPressure';
+    },
+  ],
+  [
+    'consumed without revalidation',
+    (r) => {
+      r.cadenceReceiptPreviouslyConsumed = 'true';
+    },
+  ],
+])
+  test(`rejects cadence ${name}`, () => {
+    const f = cadenceFixture();
+    mutate(f.audit.records[1]);
+    assert.throws(() => verify(f));
+  });
+test('explicit unavailable cadence age does not fabricate a total', () => {
+  const f = cadenceFixture();
+  f.audit.records[1].cadenceAgeState = 'statusExpired';
+  delete f.audit.records[1].cadenceSampleAgeSeconds;
+  assert.equal(verify(f).traceValid, true);
+});
+test('physical audit entrypoint is separate and retains complete collapse requirements', async () => {
+  const module = await import('./applied-transition-audit.mjs');
+  assert.equal(typeof module.verifyPhysicalAppliedTransitionAudit, 'function');
+  const f = cadenceFixture();
+  assert.throws(() => module.verifyPhysicalAppliedTransitionAudit(f.audit, f.phase));
+  Object.assign(f.phase, {
+    formatVersion: 3,
+    contract: 'physical-recovery720-v1',
+    captureSource: 'physical-camera',
+  });
+  assert.equal(module.verifyPhysicalAppliedTransitionAudit(f.audit, f.phase).traceValid, true);
+  assert.throws(() => verify(f));
+  f.phase.exchanges = [];
+  assert.throws(() => module.verifyPhysicalAppliedTransitionAudit(f.audit, f.phase));
+});
+test('context rejection may precede the consumed receipt fast path', () => {
+  const f = cadenceFixture(),
+    r = f.audit.records[1];
+  r.error = 'ownership';
+  r.cadenceReceiptPreviouslyConsumed = 'true';
+  const ui = JSON.parse(f.phase.samples[1].diagnostic.appliedTransition);
+  ui.error = 'ownership';
+  f.phase.samples[1].diagnostic.appliedTransition = JSON.stringify(ui);
+  assert.equal(verify(f).traceValid, true);
+});
+
+for (const [name, change] of [
+  [
+    'small components cannot overflow',
+    (r) => {
+      r.cadenceAgeState = 'ageOverflow';
+      delete r.cadenceSampleAgeSeconds;
+    },
+  ],
+  [
+    'server exceeds producer ceiling',
+    (r) => {
+      r.cadenceAgeState = 'statusExpired';
+      delete r.cadenceSampleAgeSeconds;
+      r.cadenceServerAgeSeconds = '9007199254742';
+    },
+  ],
+  [
+    'request exceeds producer ceiling',
+    (r) => {
+      r.cadenceAgeState = 'statusExpired';
+      delete r.cadenceSampleAgeSeconds;
+      r.cadenceRequestSeconds = '9007199254742';
+    },
+  ],
+  [
+    'base components exceed producer ceiling',
+    (r) => {
+      r.cadenceAgeState = 'statusExpired';
+      delete r.cadenceSampleAgeSeconds;
+      r.cadenceServerAgeSeconds = String(Number.MAX_SAFE_INTEGER / 1000);
+      r.cadenceRequestSeconds = '1';
+    },
+  ],
+  [
+    'available components exceed producer ceiling',
+    (r) => {
+      r.cadenceServerAgeSeconds = String(Number.MAX_SAFE_INTEGER / 1000);
+      r.cadenceRequestSeconds = '0';
+      r.cadenceResidenceSeconds = '1';
+      r.cadenceSampleAgeSeconds = String(Number(r.cadenceServerAgeSeconds) + 1);
+    },
+  ],
+])
+  test(`rejects impossible age state: ${name} in both contracts`, async () => {
+    const { verifyPhysicalAppliedTransitionAudit } = await import('./applied-transition-audit.mjs');
+    const f = cadenceFixture();
+    change(f.audit.records[1]);
+    assert.throws(() => verify(f));
+    Object.assign(f.phase, {
+      formatVersion: 3,
+      contract: 'physical-recovery720-v1',
+      captureSource: 'physical-camera',
+    });
+    assert.throws(() => verifyPhysicalAppliedTransitionAudit(f.audit, f.phase));
+  });
+test('large age overflow and progress milliseconds respect their distinct units', () => {
+  const f = cadenceFixture(),
+    r = f.audit.records[1];
+  Object.assign(r, {
+    cadenceServerAgeSeconds: String(Number.MAX_SAFE_INTEGER / 1000),
+    cadenceRequestSeconds: '0',
+    cadenceResidenceSeconds: '1',
+    cadenceAgeState: 'ageOverflow',
+    cadenceProgressAgeMs: String(Number.MAX_SAFE_INTEGER),
+    cadenceStalled: 'true',
+  });
+  delete r.cadenceSampleAgeSeconds;
+  assert.equal(verify(f).traceValid, true);
+});
+test('serialization ambiguity at the exact age ceiling does not invent precision', () => {
+  for (const state of ['available', 'ageOverflow']) {
+    const f = cadenceFixture(),
+      r = f.audit.records[1];
+    // Double(seconds) + fractional seconds rounds these sub-ms boundaries.
+    Object.assign(r, {
+      cadenceServerAgeSeconds: String(Number.MAX_SAFE_INTEGER / 1000),
+      cadenceRequestSeconds: '0',
+      cadenceResidenceSeconds: '0.000001',
+      cadenceAgeState: state,
+    });
+    if (state === 'available') r.cadenceSampleAgeSeconds = r.cadenceServerAgeSeconds;
+    else delete r.cadenceSampleAgeSeconds;
+    assert.equal(verify(f).traceValid, true);
+  }
+});

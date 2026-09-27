@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { qualifyOrdinary720RecoveryNativeEvidence } from './ordinary-recovery-evidence.mjs';
+import {
+  qualifyOrdinary720RecoveryNativeEvidence,
+  qualifyPhysical720RecoveryNativeEvidence,
+} from './ordinary-recovery-evidence.mjs';
 
 function integer(value, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
   assert(
@@ -25,14 +28,14 @@ function bounded(row) {
 }
 /** Pre-scale decoded geometry only. Condensed runs bound endpoints; they do not
  * reconstruct interior PTS, measure frame freshness/latency, or prove capacity. */
-export function qualifyOrdinary720GeometryEvidence({
-  native,
-  audit,
-  workerRows,
-  expectedGameId,
-  expectedGeneration,
-}) {
-  const qualified = qualifyOrdinary720RecoveryNativeEvidence({ native, audit });
+export function qualifyOrdinary720GeometryEvidence(input) {
+  return qualifyGeometry(input, qualifyOrdinary720RecoveryNativeEvidence(input));
+}
+/** Same geometry checks, with the separately versioned physical startup proof. */
+export function qualifyPhysical720GeometryEvidence(input) {
+  return qualifyGeometry(input, qualifyPhysical720RecoveryNativeEvidence(input));
+}
+function qualifyGeometry({ native, workerRows, expectedGameId, expectedGeneration }, qualified) {
   assert(
     typeof expectedGameId === 'string' && expectedGameId.length > 0 && expectedGameId.length <= 128,
   );

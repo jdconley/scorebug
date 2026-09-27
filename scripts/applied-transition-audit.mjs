@@ -6,6 +6,104 @@ const auditOnly = new Set([
   'profileRequestedAt',
   'rateRequestedAt',
 ]);
+const cadenceFields = new Set([
+  'cadenceReceiptID',
+  'cadenceEvaluatedAt',
+  'cadenceAgeState',
+  'cadenceSampleAgeSeconds',
+  'cadenceMaximumSampleAgeSeconds',
+  'cadenceServerAgeSeconds',
+  'cadenceRequestSeconds',
+  'cadenceResidenceSeconds',
+  'cadenceReceiptPreviouslyConsumed',
+  'cadenceRequiresRevalidation',
+  'cadenceStalled',
+  'cadenceProgressAgeMs',
+  'cadenceLastFreshPTS',
+]);
+for (const field of cadenceFields) auditOnly.add(field);
+function cadenceWitness(r) {
+  const fields = Object.keys(r).filter((k) => k.startsWith('cadence'));
+  if (!fields.length) return; // Older closed audits remain readable.
+  assert(
+    fields.every((k) => cadenceFields.has(k)),
+    'Unknown cadence witness field',
+  );
+  assert.equal(r.input, 'cadenceRejected');
+  assert.equal(r.reasons, 'telemetryInvalidated');
+  assert(
+    typeof r.error === 'string' && r.error.length > 0 && r.error.length <= 80,
+    'Missing cadence error',
+  );
+  assert(['reset', 'rollback'].includes(r.kind));
+  uuid(r.cadenceReceiptID);
+  assert.equal(time(r.cadenceEvaluatedAt), time(r.at), 'Detached cadence evaluation');
+  assert.equal(time(r.cadenceMaximumSampleAgeSeconds), 0.25);
+  for (const field of [
+    'cadenceReceiptPreviouslyConsumed',
+    'cadenceRequiresRevalidation',
+    'cadenceStalled',
+  ])
+    assert(['true', 'false'].includes(r[field]), 'Invalid cadence boolean');
+  if (r.error === 'freshness')
+    assert(
+      r.cadenceReceiptPreviouslyConsumed === 'false' || r.cadenceRequiresRevalidation === 'true',
+    );
+  function duration(value, maximum = 1e13) {
+    assert(typeof value === 'string' && /^(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(value));
+    const n = Number(value);
+    assert(Number.isFinite(n) && n >= 0 && n <= maximum);
+    return n;
+  }
+  // Core bounds the report age in integer milliseconds before constructing a
+  // Duration. Swift serializes each Duration as Double(seconds) + its fraction;
+  // allow only binary64 rounding at that large boundary, not a wider age budget.
+  const maximumAgeSeconds = Number.MAX_SAFE_INTEGER / 1000;
+  const tolerance = (...values) => Number.EPSILON * Math.max(1, ...values) * 8;
+  const withinAgeCeiling = (value) =>
+    value <= maximumAgeSeconds + tolerance(value, maximumAgeSeconds);
+  const server = duration(r.cadenceServerAgeSeconds),
+    request = duration(r.cadenceRequestSeconds);
+  assert(
+    withinAgeCeiling(server) && withinAgeCeiling(request),
+    'Cadence component exceeds producer ceiling',
+  );
+  assert(withinAgeCeiling(server + request), 'Cadence age at receipt exceeds producer ceiling');
+  assert(
+    ['available', 'beforeReceipt', 'statusExpired', 'ageOverflow'].includes(r.cadenceAgeState),
+  );
+  if (r.cadenceAgeState === 'beforeReceipt') assert.equal(r.cadenceResidenceSeconds, undefined);
+  else duration(r.cadenceResidenceSeconds);
+  const sum =
+    r.cadenceResidenceSeconds === undefined
+      ? undefined
+      : server + request + duration(r.cadenceResidenceSeconds);
+  if (r.cadenceAgeState === 'ageOverflow') {
+    // Below this rounding band overflow is impossible. Inside the band the
+    // serialized scalars cannot distinguish either side of the exact limit.
+    assert(
+      sum >= maximumAgeSeconds - tolerance(sum, maximumAgeSeconds),
+      'Cadence overflow contradicts component sum',
+    );
+  }
+  if (r.cadenceAgeState === 'available') {
+    const total = duration(r.cadenceSampleAgeSeconds);
+    assert(
+      withinAgeCeiling(total) && withinAgeCeiling(sum),
+      'Available cadence exceeds producer ceiling',
+    );
+    assert(Math.abs(total - sum) <= tolerance(total, sum), 'Cadence age decomposition disagrees');
+    if (r.error === 'freshness')
+      assert(total > 0.25, 'Fresh cadence cannot explain freshness rejection');
+  } else assert.equal(r.cadenceSampleAgeSeconds, undefined, 'Unavailable cadence has a total');
+  const progressAge = duration(r.cadenceProgressAgeMs, Number.MAX_SAFE_INTEGER);
+  assert.equal(r.cadenceStalled === 'true', progressAge >= 1000);
+  assert(
+    typeof r.cadenceLastFreshPTS === 'string' && /^-?(0|[1-9]\d*)$/.test(r.cadenceLastFreshPTS),
+  );
+  const pts = BigInt(r.cadenceLastFreshPTS);
+  assert(pts >= -9007199254740991n && pts <= 9007199254740991n);
+}
 const uuid = (value) =>
   assert(
     typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value),
@@ -63,6 +161,13 @@ function hostTime(value) {
 /** Successful-ACK diagnostic evidence only. Does not qualify media, prove native
  * effects that did not ACK, or replace transport/packet and media validators. */
 export function verifyAppliedTransitionAudit(audit, phase) {
+  return verify(audit, phase, false);
+}
+/** Explicit physical-v3 contract; still requires a sampled ACK and collapse. */
+export function verifyPhysicalAppliedTransitionAudit(audit, phase) {
+  return verify(audit, phase, true);
+}
+function verify(audit, phase, physical) {
   assert.equal(audit?.formatVersion, 1);
   assert.equal(audit.scope, 'successful applications only');
   assert.equal(audit.closed, true, 'Audit not closed');
@@ -105,6 +210,7 @@ export function verifyAppliedTransitionAudit(audit, phase) {
     const encoded = JSON.stringify(r);
     assert(!/[^\x20-\x7e]/.test(encoded), 'Unsupported record encoding');
     assert(Buffer.byteLength(encoded) <= 8192, 'Oversized record');
+    cadenceWitness(r);
     uuid(r.applicationID);
     uuid(r.attemptID);
     uuid(r.rateEncoder);
@@ -195,8 +301,9 @@ export function verifyAppliedTransitionAudit(audit, phase) {
     byID.set(r.applicationID, r);
     previous = r;
   }
-  assert.equal(phase?.formatVersion, 2);
-  assert.equal(phase.contract, 'recovery720');
+  assert.equal(phase?.formatVersion, physical ? 3 : 2);
+  assert.equal(phase.contract, physical ? 'physical-recovery720-v1' : 'recovery720');
+  if (physical) assert.equal(phase.captureSource, 'physical-camera');
   assert(Array.isArray(phase.samples) && phase.samples.length > 0, 'Missing UI witnesses');
   const observed = new Set();
   for (const sample of phase.samples) {

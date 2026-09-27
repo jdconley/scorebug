@@ -129,7 +129,7 @@ actor PublishingQualitySession {
     /// At most one pending cause, one latched rollback cause, and one applied
     /// witness. None is policy authority. The applied witness changes only at ACK.
     private var transitionCause: (advice: QualityController.Recommendation, fields: [String: String])?
-    private var invalidationCause: (revision: UInt64, fields: [String: String])?
+    private var invalidationCause: (revision: UInt64, fields: [String: String], auditFields: [String: String])?
     private var appliedTransition: String?
     private var appliedTransitionAudit: PublishingAppliedTransitionAudit?
     private let appliedTransitionExport: (@Sendable (Data) async -> Void)?
@@ -242,6 +242,13 @@ actor PublishingQualitySession {
     private func invalidateTelemetry(_ current: inout QualityController, input: String,
                                      error: Error? = nil, start: Double? = nil, end: Double? = nil) {
         #if DEBUG
+        latchInvalidationCause(current, input: input, error: error, start: start, end: end)
+        #endif
+        current.invalidateTelemetry()
+    }
+    #if DEBUG
+    private func latchInvalidationCause(_ current: QualityController, input: String, error: Error? = nil,
+                                       start: Double? = nil, end: Double? = nil, auditFields: [String: String] = [:]) {
         // Core may already have invalidated its local copy before throwing.
         // The session still owns the pre-evaluation policy until its defer runs.
         let state = self.policy?.currentDiagnostic ?? current.currentDiagnostic
@@ -251,11 +258,10 @@ actor PublishingQualitySession {
             var fields = ["input": input, "at": String(lastNow), "reasons": "telemetryInvalidated"]
             fields["error"] = error.map { String(String(describing: $0).prefix(80)) }
             fields["start"] = start.map { String($0) }; fields["end"] = end.map { String($0) }
-            invalidationCause = (current.appliedRevision, fields)
+            invalidationCause = (current.appliedRevision, fields, auditFields)
         }
-        #endif
-        current.invalidateTelemetry()
     }
+    #endif
     #if DEBUG
     private var lastMeasurementDiagnostic: [String: String] = [:]
     private var candidateSourceDiagnostic: [String: String] = [:]
@@ -925,6 +931,9 @@ actor PublishingQualitySession {
                               instant: ContinuousClock.Instant? = nil,
                               observeEvaluation: (@Sendable (EvaluationDiagnostic) -> Void)? = nil) throws -> QualityController.Decision? {
         var evaluationAt: Double?, evaluationInstant: ContinuousClock.Instant?
+        #if DEBUG
+        var evaluationConsumed = false, evaluationRequiresRevalidation = false
+        #endif
         defer {
             if let observeEvaluation {
                 observeEvaluation(.init(input: .cadence(receiptID: cadence.receiptID), evaluatedAt: evaluationAt,
@@ -939,6 +948,10 @@ actor PublishingQualitySession {
         do {
             let now = try time(), sampledInstant = instant ?? .now
             evaluationAt = now; evaluationInstant = sampledInstant
+            #if DEBUG
+            evaluationConsumed = consumedCadenceReceipt == cadence.receiptID
+            evaluationRequiresRevalidation = requiresCadenceFreshnessValidation
+            #endif
             guard lastPolicySequence < .max else { throw QualityController.ValidationError.invalidWindow }
             let applied = PublishingQualityTelemetry.Applied(attemptID: attemptID, revision: policy.appliedRevision,
                 settings: policy.applied, receipt: receipt, acknowledgedAt: acknowledgedAt)
@@ -967,7 +980,30 @@ actor PublishingQualitySession {
             consumedStallPTS = progress; lastPolicySequence = signal.sequence; lastDecoderStall = signal
             pending = decision.recommendation; evaluatedAt = now
             return decision
-        } catch { invalidateTelemetry(&policy, input: "cadenceRejected", error: error); candidateHealthSource = nil; pending = nil; throw error }
+        } catch {
+            #if DEBUG
+            if let evaluationAt, let evaluationInstant {
+                let age = cadence.ageDiagnostic(at: evaluationInstant)
+                var witness = ["cadenceReceiptID": cadence.receiptID.uuidString.lowercased(),
+                    "cadenceEvaluatedAt": String(evaluationAt), "cadenceAgeState": age.state.rawValue,
+                    "cadenceMaximumSampleAgeSeconds": String(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                    "cadenceServerAgeSeconds": String(EvaluationDiagnostic.seconds(age.serverAge)!),
+                    "cadenceRequestSeconds": String(EvaluationDiagnostic.seconds(age.requestDuration)!),
+                    "cadenceReceiptPreviouslyConsumed": String(evaluationConsumed),
+                    "cadenceRequiresRevalidation": String(evaluationRequiresRevalidation)]
+                witness["cadenceSampleAgeSeconds"] = EvaluationDiagnostic.seconds(age.total).map { String($0) }
+                witness["cadenceResidenceSeconds"] = EvaluationDiagnostic.seconds(age.residence).map { String($0) }
+                witness["cadenceStalled"] = cadence.snapshot.progress.map { String($0.stalled) }
+                witness["cadenceProgressAgeMs"] = cadence.snapshot.progress.map { String($0.ageMs) }
+                witness["cadenceLastFreshPTS"] = cadence.snapshot.progress.map { String($0.lastFreshPTS) }
+                // Freeze the receipt before the deferred observer runs. The same
+                // first-cause guard owns both ordinary and audit-only fields.
+                latchInvalidationCause(policy, input: "cadenceRejected", error: error, auditFields: witness)
+            }
+            #endif
+            invalidateTelemetry(&policy, input: "cadenceRejected", error: error)
+            candidateHealthSource = nil; pending = nil; throw error
+        }
     }
     /// Classification occurred synchronously at the current-input boundary.
     /// Retirement is checked again here after actor scheduling, before the
@@ -1120,6 +1156,10 @@ actor PublishingQualitySession {
         // suspends. A selector is never proof that this application changed it.
         #if DEBUG
         let admittedCause = transitionCause.flatMap { $0.advice == advice ? $0.fields : nil }
+        let admittedAuditCause = invalidationCause.flatMap { cause in
+            cause.revision == advice.appliedRevision && admittedCause == cause.fields &&
+                (advice.kind == .reset || advice.kind == .rollback) ? cause.auditFields : nil
+        }
         #endif
         self.policy = policy
         applicationOwner = .init(application: admitted)
@@ -1222,6 +1262,7 @@ actor PublishingQualitySession {
                 .flatMap { String(data: $0, encoding: .utf8) }
             if appliedTransitionAudit != nil {
                 var auditFields = fields
+                auditFields.merge(admittedAuditCause ?? [:]) { original, _ in original }
                 auditFields["admittedAt"] = String(admitted.admittedAt)
                 auditFields["completionDeadline"] = String(admitted.completionDeadline)
                 auditFields["profileRequestedAt"] = profileRequestedAt.map { String($0) }

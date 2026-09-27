@@ -62,6 +62,31 @@ public struct WorkerDecoderCadenceFreshness: Sendable {
     private let ageAtReceipt: Duration
     private let statusFreshness: WorkerStatusFreshness
 
+    #if DEBUG
+    private let diagnosticServerAge: Duration
+    private let diagnosticRequestDuration: Duration
+    /// A detached decomposition at the same instant as policy evaluation. No
+    /// worker timestamp is inferred from the receiver's monotonic clock.
+    public struct AgeDiagnostic: Sendable {
+        public enum State: String, Sendable { case available, beforeReceipt, statusExpired, ageOverflow }
+        public let state: State
+        public let serverAge: Duration
+        public let requestDuration: Duration
+        public let residence: Duration?
+        public let total: Duration?
+    }
+    public func ageDiagnostic(at instant: ContinuousClock.Instant) -> AgeDiagnostic {
+        let residence = instant >= receivedAt ? receivedAt.duration(to: instant) : nil
+        let state: AgeDiagnostic.State
+        if residence == nil { state = .beforeReceipt }
+        else if !statusFreshness.isFresh(at: instant) { state = .statusExpired }
+        else if residence! > Self.maximumAge - ageAtReceipt { state = .ageOverflow }
+        else { state = .available }
+        return .init(state: state, serverAge: diagnosticServerAge, requestDuration: diagnosticRequestDuration,
+            residence: residence, total: sampleAgeUpperBound(at: instant))
+    }
+    #endif
+
     public init?(response: WorkerMediaStatusResponse, expectedPublishingAttemptID: UUID,
                  receivedAt: ContinuousClock.Instant, requestDuration: Duration) {
         let status = response.status
@@ -81,6 +106,9 @@ public struct WorkerDecoderCadenceFreshness: Sendable {
         self.gameId = status.gameId; self.generation = status.generation; self.workerId = workerId; self.workerEpoch = workerEpoch
         self.attempt = observation.attempt; self.publication = publication; self.snapshot = snapshot
         self.receivedAt = receivedAt; self.ageAtReceipt = base + requestDuration; self.statusFreshness = freshness
+        #if DEBUG
+        diagnosticServerAge = base; diagnosticRequestDuration = requestDuration
+        #endif
     }
     public func sampleAgeUpperBound(at instant: ContinuousClock.Instant = .now) -> Duration? {
         guard instant >= receivedAt, statusFreshness.isFresh(at: instant) else { return nil }

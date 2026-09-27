@@ -389,6 +389,23 @@ do { _=try OrdinaryRecoverySample(d,started:100,ended:99,previousReadEnd:98); fa
 do { _=try OrdinaryRecoverySample(d,started:100,ended:106,previousReadEnd:98); fatalError("slow bracket") } catch {}
 do { _=try OrdinaryRecoverySample(d,started:100,ended:100.2,previousReadEnd:101); fatalError("overlapping bracket") } catch {}
 do { _=try OrdinaryRecoverySample(d,started:100,ended:100.2,previousReadEnd:99, previousObserved:101); fatalError("backward diagnostic clock") } catch {}
+var bootstrap = settled
+bootstrap["policyAppliedProfile"]="240p30"; bootstrap["policyAppliedBitrate"]="350000"; bootstrap["policyAppliedRevision"]="0"
+for key in ["policyOwnerKey","policySourceScopeKey","policyAcceptedSourceSequence","policyAcceptedSourceWindowEnd"] { bootstrap.removeValue(forKey:key) }
+let encoderACK = try sample(bootstrap)
+assert(encoderACK.isInitialEncoderACK(after:94))
+assert(!encoderACK.isInitialEncoderACK(after:95))
+assert(!encoderACK.isInitialSourceReady(matching:encoderACK))
+var owned = bootstrap
+owned["policyOwnerKey"]=String(repeating:"a",count:64); owned["policySourceScopeKey"]=String(repeating:"b",count:64)
+owned["policyAcceptedSourceSequence"]="2"; owned["policyAcceptedSourceWindowEnd"]="99"
+let ownedSample = try sample(owned); assert(ownedSample.isInitialSourceReady(matching:encoderACK))
+for (key,value) in [("policyAppliedRevision","1"),("policyAppliedProfile","360p30"),("policyAppliedBitrate","600000"),("policyTrialActive","true"),("sessionBusy","true"),("policyTrialRollbackRequired","true")] {
+ var bad=bootstrap; bad[key]=value; let rejected=try sample(bad); assert(!rejected.isInitialEncoderACK(after:94),key)
+}
+for (key,value) in [("policyAppliedRevision","2"),("policyAcknowledgedAtUptimeSeconds","96"),("policyAttemptID","replacement"),("policyTrialActive","true"),("sessionBusy","true"),("policyTrialRollbackRequired","true")] {
+ var bad=owned; bad[key]=value; let rejected=try sample(bad); assert(!rejected.isInitialSourceReady(matching:encoderACK),key)
+}
 print("native guards passed")
 `,
       );
@@ -430,12 +447,13 @@ test(
       .replace('Date().addingTimeInterval(0.2)', 'Date().addingTimeInterval(0.001)')
       .replace('throw SmokeFailure.failed(message)', 'throw Failure.gate');
     // This harness exercises the existing ordinary/recovery routes. Match the
-    // production scorer policy's default-false early return without requiring
-    // XCTest's application/alert types in the host Swift interpreter.
+    // permission policy's two default-false modes without requiring XCTest's
+    // application/alert types in the host Swift interpreter.
     assert.match(source, /private var scorerNetworkPermissionOnly = false/);
+    assert.match(source, /private var runnerNetworkSettingReadOnly = false/);
     assert.match(
       source,
-      /private func enforceScorerPermissionPolicy\(\) throws \{\s*guard scorerNetworkPermissionOnly else \{ return \}/,
+      /private func enforceScorerPermissionPolicy\(\) throws \{[\s\S]*?guard scorerNetworkPermissionOnly else \{ return \}/,
     );
     const terminal = source
       .split('// BEGIN RECOVERY TERMINATION')[1]

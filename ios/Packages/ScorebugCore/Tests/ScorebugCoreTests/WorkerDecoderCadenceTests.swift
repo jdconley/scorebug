@@ -25,6 +25,32 @@ final class WorkerDecoderCadenceTests: XCTestCase {
         XCTAssertNil(value.sampleAgeUpperBound(at: now - .nanoseconds(1)))
         XCTAssertNil(value.sampleAgeUpperBound(at: now + .seconds(4)))
     }
+    #if DEBUG
+    func testAgeDiagnosticMatchesExactPredicateAndRetainsDetachedComponents() throws {
+        let now = ContinuousClock.now
+        let value = try XCTUnwrap(WorkerDecoderCadenceFreshness(response: fixture(), expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .milliseconds(100)))
+        for (instant, state) in [(now - .nanoseconds(1), WorkerDecoderCadenceFreshness.AgeDiagnostic.State.beforeReceipt),
+                                  (now, .available), (now + .milliseconds(200), .available),
+                                  (now + .seconds(4), .statusExpired)] {
+            let d = value.ageDiagnostic(at: instant)
+            XCTAssertEqual(d.state, state)
+            XCTAssertEqual(d.serverAge, .milliseconds(50)); XCTAssertEqual(d.requestDuration, .milliseconds(100))
+            XCTAssertEqual(d.total, value.sampleAgeUpperBound(at: instant))
+            XCTAssertEqual(d.residence, instant >= now ? now.duration(to: instant) : nil)
+            if let total = d.total { XCTAssertEqual(total, d.serverAge + d.requestDuration + (d.residence ?? .zero)) }
+        }
+        let frozen = value.ageDiagnostic(at: now + .milliseconds(200))
+        _ = value.ageDiagnostic(at: now + .seconds(4))
+        XCTAssertEqual(frozen.total, .milliseconds(350))
+        var response = try fixture(); response.status.decoderCadenceAgeUpperBoundMs = 9_007_199_254_740_991
+        let extreme = try XCTUnwrap(WorkerDecoderCadenceFreshness(response: response, expectedPublishingAttemptID: expected,
+            receivedAt: now, requestDuration: .zero))
+        let overflow = extreme.ageDiagnostic(at: now + .milliseconds(1))
+        XCTAssertEqual(overflow.state, .ageOverflow); XCTAssertNil(overflow.total)
+        XCTAssertNil(extreme.sampleAgeUpperBound(at: now + .milliseconds(1)))
+    }
+    #endif
     func testObservedStallRequiresWorkerEvidenceAndExpectedPublication() throws {
         var response = try fixture(); let now = ContinuousClock.now
         response.status.observation?.decoderCadence?.progress?.ageMs = 1000

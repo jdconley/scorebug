@@ -185,9 +185,15 @@ export function qualifyOrdinaryRecoveryNativeEvidence(input) {
 export function qualifyOrdinary720RecoveryNativeEvidence(input) {
   return qualifyNative(input, true);
 }
-function qualifyNative({ native, audit }, recovery720) {
-  assert.equal(native.formatVersion, recovery720 ? 2 : 1);
-  if (recovery720) assert.equal(native.contract, 'recovery720');
+/** Physical acquisition is a separate fixed contract, never a caller-selected budget. */
+export function qualifyPhysical720RecoveryNativeEvidence(input) {
+  return qualifyNative(input, true, true);
+}
+function qualifyNative({ native, audit }, recovery720, physical = false) {
+  assert.equal(native.formatVersion, physical ? 3 : recovery720 ? 2 : 1);
+  if (recovery720)
+    assert.equal(native.contract, physical ? 'physical-recovery720-v1' : 'recovery720');
+  if (physical) assert.equal(native.captureSource, 'physical-camera');
   assert.equal(native.failure, undefined, 'Native recovery retained a failure');
   assert.equal(audit.formatVersion, 1);
   assert.equal(audit.closed, true);
@@ -207,7 +213,7 @@ function qualifyNative({ native, audit }, recovery720) {
   );
   const phases = recovery720
     ? [
-        'initial-minimum',
+        physical ? 'initial-source-ready' : 'initial-minimum',
         'initial-360-probation',
         'initial-360-confirmed',
         'initial-720-probation',
@@ -376,6 +382,88 @@ function qualifyNative({ native, audit }, recovery720) {
         ['initial', probation, confirmed, minimum, '360p30', 600000],
         ['recovery', recovery, recovered, fallback, '360p30', 600000],
       ];
+  let encoderACK;
+  if (physical) {
+    const local = time(native.localPublishingObservedUptimeSeconds),
+      output = time(native.workerOutputObservedUptimeSeconds);
+    for (const [phase, anchor] of [
+      ['local-publishing-observed', local],
+      ['worker-output-observed', output],
+    ]) {
+      const observations = native.milestones.filter((m) => m.phase === phase);
+      assert.equal(observations.length, 1, `Missing/duplicate ${phase} anchor`);
+      assert.equal(observations[0].uptimeSeconds, anchor, 'Startup anchor changed');
+      assert.equal(observations[0].sampleIndex, undefined, 'Status anchor is not source evidence');
+    }
+    const milestones = native.milestones.filter((m) => m.phase === 'initial-encoder-ack');
+    assert.equal(milestones.length, 1, 'Exactly one initial encoder ACK required');
+    const index = milestones[0].sampleIndex;
+    assert(Number.isSafeInteger(index) && index >= 0 && index < minimum.index);
+    encoderACK = native.samples[index];
+    assert.equal(encoderACK.phase, 'initial-encoder-ack');
+    assert.equal(minimum.phase, 'initial-source-ready');
+    const before = time(encoderACK.readStartedUptimeSeconds),
+      after = time(encoderACK.readEndedUptimeSeconds);
+    assert(
+      local >= start &&
+        local <= before &&
+        after <= output &&
+        output <= minimum.readStartedUptimeSeconds,
+      'Startup observations are out of order',
+    );
+    assert(time(milestones[0].uptimeSeconds) >= after && milestones[0].uptimeSeconds - after <= 2);
+    const sourceMilestone = native.milestones.find((m) => m.phase === 'initial-source-ready');
+    assert(
+      time(sourceMilestone.uptimeSeconds) >= minimum.readEndedUptimeSeconds &&
+        sourceMilestone.uptimeSeconds - minimum.readEndedUptimeSeconds <= 2,
+    );
+    const d = encoderACK.diagnostic;
+    assert(scalar(d.observedAtUptimeSeconds) >= before - 5);
+    const observed = freshSession(d, after),
+      acknowledged = scalar(d.policyAcknowledgedAtUptimeSeconds);
+    assert(acknowledged > start && acknowledged <= observed, 'Invalid initial encoder ACK time');
+    assert.equal(d.sessionClosed, 'false');
+    assert.equal(d.driverClosed, 'false');
+    applied(encoderACK, '240p30', 350000);
+    assert.equal(d.policyAppliedRevision, '0', 'Initial encoder must be revision zero');
+    assert.equal(d.policyTrialActive, 'false');
+    assert(
+      d.policyTrialRollbackRequired === undefined || d.policyTrialRollbackRequired === 'false',
+    );
+    // Configuration acknowledgment grants no source-health credit. The selected
+    // source sample still passes every shared owner/freshness check above.
+    for (const sample of native.samples.slice(index, minimum.index + 1)) {
+      for (const field of [
+        'policyAppliedRevision',
+        'policyAcknowledgedAtUptimeSeconds',
+        'policyAttemptID',
+      ])
+        if (sample.diagnostic[field] !== undefined)
+          assert.equal(
+            sample.diagnostic[field],
+            d[field],
+            'Initial encoder identity changed during acquisition',
+          );
+    }
+    for (const field of [
+      'policyAppliedRevision',
+      'policyAcknowledgedAtUptimeSeconds',
+      'policyAttemptID',
+    ])
+      assert.equal(minimum.diagnostic[field], d[field], 'Source does not own initial encoder ACK');
+    for (const [phase, anchor] of [
+      ['initial-encoder-ack', local],
+      ['initial-source-ready', output],
+    ]) {
+      const gates = native.gates.filter((g) => g.phase === phase);
+      assert.equal(gates.length, 1, `Missing/duplicate ${phase} gate`);
+      assert.equal(
+        gates[0].startedUptimeSeconds,
+        anchor,
+        'Startup gate detached from observed status',
+      );
+    }
+  }
   applied(minimum, '240p30', 350000);
   applied(fallback, '240p30', 350000);
   assert.equal(minimum.diagnostic.policyTrialActive, 'false');
@@ -531,14 +619,20 @@ function qualifyNative({ native, audit }, recovery720) {
     return sample;
   });
   const gateContracts = [
-    ['initial-minimum', 10, minimum],
+    ...(physical
+      ? [
+          ['initial-encoder-ack', 10, encoderACK],
+          ['initial-source-ready', 30, minimum],
+        ]
+      : [['initial-minimum', 10, minimum]]),
     ['fallback', 60, fallback],
     ...trials.flatMap(([prefix, , c], i) => [
       [`${prefix}-increase`, 150, acknowledgments[i]],
       [`${prefix}-confirmation`, 30, c],
     ]),
   ];
-  if (recovery720) assert.equal(native.gates.length, 10, 'Closed ten-gate contract');
+  if (recovery720)
+    assert.equal(native.gates.length, physical ? 11 : 10, 'Closed recovery gate contract');
   for (const [phase, limit, observation] of gateContracts) {
     const gates = native.gates.filter((g) => g.phase === phase);
     assert.equal(gates.length, 1, `Missing/duplicate ${phase} gate`);
@@ -630,6 +724,7 @@ function qualifyNative({ native, audit }, recovery720) {
     nativePhaseOrderingQualified: true,
     transportQualified: false,
     mediaQualified: false,
+    ...(physical ? { physicalStartupQualified: true, startupContract: native.contract } : {}),
     publishingAttemptID: minimum.diagnostic.policyAttemptID,
     phases: selected.map((s, i) => ({
       phase: phases[i],

@@ -62,6 +62,14 @@ struct OrdinaryRecoverySample {
         diagnostic["policyAppliedProfile"] == profile && diagnostic["policyAppliedBitrate"] == String(bitrate) &&
         acknowledgedAt > after && (newerThan.map { revision > $0 } ?? true)
     }
+    func isInitialEncoderACK(after recordingStarted: Double) -> Bool {
+        revision == 0 && unencumbered && diagnostic["policyTrialActive"] == "false" &&
+        acknowledges(profile: "240p30", bitrate: 350000, after: recordingStarted, newerThan: nil)
+    }
+    func isInitialSourceReady(matching initial: Self) -> Bool {
+        owner != nil && isInitialEncoderACK(after: 0) && initial.isInitialEncoderACK(after: 0) &&
+        revision == initial.revision && attempt == initial.attempt && acknowledgedAt == initial.acknowledgedAt
+    }
     func acknowledgesNext(profile: String, bitrate: Int, after: Double, revision previous: UInt64) -> Bool {
         previous < .max && revision == previous + 1 &&
         acknowledges(profile: profile, bitrate: bitrate, after: after, newerThan: previous)
@@ -287,6 +295,10 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recoveryFailure: String?
     private var recovery720 = false
     private var physicalRecovery = false
+    private var physicalInitialEncoderACK: OrdinaryRecoverySample?
+    private var physicalLocalPublishingObserved: Double?
+    private var physicalWorkerOutputObserved: Double?
+    private var physicalEncoderDiagnosticReceived = false
     private var recoveryControlConfiguration: RecoveryControlConfiguration?
     private var loopbackStarted = false
     private var loopbackStopAttempted = false
@@ -295,19 +307,23 @@ final class PhysicalStreamingTests: XCTestCase {
         ProcessInfo.processInfo.environment["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] ?? "direct"
     }
 
-    private func recoveryMilestone(_ phase: String, sample: Bool = false) {
-        var record: [String: Any] = ["phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime]
+    private func recoveryMilestone(_ phase: String, sample: Bool = false, at uptime: Double? = nil) {
+        var record: [String: Any] = ["phase": phase, "uptimeSeconds": uptime ?? ProcessInfo.processInfo.systemUptime]
         if sample { record["sampleIndex"] = recoverySamples.count - 1 }
         recoveryMilestones.append(record)
     }
     private func attachRecoveryEvidence() {
-        var report: [String: Any] = ["formatVersion": recovery720 ? 2 : 1,
+        var report: [String: Any] = ["formatVersion": physicalRecovery ? 3 : recovery720 ? 2 : 1,
             "recordingStartedUptimeSeconds": recoveryRecordingStarted,
             "recordingDeadlineUptimeSeconds": recoveryRecordingDeadline,
             "samples": recoverySamples, "gates": recoveryGates,
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
-        if recovery720 { report["contract"] = "recovery720" }
-        if physicalRecovery { report["captureSource"] = "physical-camera" }
+        if recovery720 { report["contract"] = physicalRecovery ? "physical-recovery720-v1" : "recovery720" }
+        if physicalRecovery {
+            report["captureSource"] = "physical-camera"
+            report["localPublishingObservedUptimeSeconds"] = physicalLocalPublishingObserved
+            report["workerOutputObservedUptimeSeconds"] = physicalWorkerOutputObserved
+        }
         report["runnerTransport"] = runnerTransport
         report["loopbackShutdown"] = loopbackShutdown
         report["failure"] = recoveryFailure
@@ -328,11 +344,15 @@ final class PhysicalStreamingTests: XCTestCase {
                     "Recovery accessibility clock bracket is invalid.")
         let previousEnd = recoveryLastReadEnd
         recoveryLastReadEnd = ended
+        // Publishing can precede the first asynchronous diagnostic callback. Only
+        // this explicit bootstrap absence may wait; received evidence keeps all guards.
+        if physicalRecovery && phase == "initial-encoder-ack" && !physicalEncoderDiagnosticReceived && encoded == "missing" { return nil }
         try require(encoded.utf8.count <= 4096 && encoded != "missing", "Recovery diagnostic missing or oversized.")
         guard let data = encoded.data(using: .utf8),
               let diagnostic = try JSONSerialization.jsonObject(with: data) as? [String: String] else {
             throw SmokeFailure.failed("Recovery diagnostic is not a string dictionary.")
         }
+        if physicalRecovery && phase == "initial-encoder-ack" { physicalEncoderDiagnosticReceived = true }
         recoverySamples.append(["phase": phase, "diagnostic": diagnostic,
             "readStartedUptimeSeconds": started, "readEndedUptimeSeconds": ended])
         // A constrained path can temporarily leave no current accepted source.
@@ -347,9 +367,12 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         return sample
     }
-    @MainActor private func recoveryWait(_ app: XCUIApplication, phase: String, seconds: Double,
+    @MainActor private func recoveryWait(_ app: XCUIApplication, phase: String, seconds: Double, startedAt anchor: Double? = nil,
                                         accepts: (OrdinaryRecoverySample) throws -> Bool) throws -> OrdinaryRecoverySample {
-        let started = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
+        let started = anchor ?? now
+        try require(started.isFinite && started >= recoveryRecordingStarted && started <= now,
+                    "Recovery gate has an invalid clock anchor.")
         recoveryGates.append(["phase": phase, "startedUptimeSeconds": started, "limitSeconds": seconds])
         // Reserve the existing live hold, stream stop and archive continuation.
         let end = min(started + seconds, recoveryRecordingDeadline - 45)
@@ -919,11 +942,24 @@ final class PhysicalStreamingTests: XCTestCase {
         return ended
     }
     @MainActor private func runOrdinaryRecovery(_ app: XCUIApplication) throws {
-        let minimum = try recoveryWait(app, phase: "initial-minimum", seconds: 10) {
-            $0.owner != nil && $0.unencumbered && $0.diagnostic["policyTrialActive"] == "false" &&
-            $0.acknowledges(profile: "240p30", bitrate: 350000, after: self.recoveryRecordingStarted, newerThan: nil)
+        let minimum: OrdinaryRecoverySample
+        if physicalRecovery {
+            guard let initial = physicalInitialEncoderACK, let output = physicalWorkerOutputObserved else {
+                throw SmokeFailure.failed("Physical startup lacks its encoder ACK or worker-output anchor.")
+            }
+            // Source ownership needs two completed 5s decoder windows. The explicit
+            // 30s acquisition phase leaves production cadence and freshness unchanged.
+            minimum = try recoveryWait(app, phase: "initial-source-ready", seconds: 30, startedAt: output) {
+                $0.isInitialSourceReady(matching: initial)
+            }
+            recoveryMilestone("initial-source-ready", sample: true)
+        } else {
+            minimum = try recoveryWait(app, phase: "initial-minimum", seconds: 10) {
+                $0.owner != nil && $0.unencumbered && $0.diagnostic["policyTrialActive"] == "false" &&
+                $0.acknowledges(profile: "240p30", bitrate: 350000, after: self.recoveryRecordingStarted, newerThan: nil)
+            }
+            recoveryMilestone("initial-minimum", sample: true)
         }
-        recoveryMilestone("initial-minimum", sample: true)
         let first = try recoveryIncrease(app, prefix: recovery720 ? "initial-360" : "initial",
             after: recovery720 ? minimum.ended : minimum.acknowledgedAt, previous: minimum, consecutive: recovery720)
         let increased = recovery720 ? try recoveryIncrease(app, prefix: "initial-720", after: first.ended,
@@ -1137,11 +1173,31 @@ final class PhysicalStreamingTests: XCTestCase {
             self.allowExpectedPermissions()
             return self.value(app, "streaming.localStatus") == "publishing"
         }
-        try wait("Worker did not report producing_output.", seconds: 35) {
-            self.value(app, "streaming.workerStatus") == "producing_output"
+        if physicalRecovery {
+            let local = ProcessInfo.processInfo.systemUptime
+            physicalLocalPublishingObserved = local
+            recoveryMilestone("local-publishing-observed", at: local)
+            try preservingRecoveryFailure {
+                physicalInitialEncoderACK = try recoveryWait(app, phase: "initial-encoder-ack", seconds: 10, startedAt: local) {
+                    $0.isInitialEncoderACK(after: self.recoveryRecordingStarted)
+                }
+                recoveryMilestone("initial-encoder-ack", sample: true)
+            }
+            try preservingRecoveryFailure {
+                try wait("Worker did not report producing_output.", seconds: 35) {
+                    self.value(app, "streaming.workerStatus") == "producing_output"
+                }
+                let output = ProcessInfo.processInfo.systemUptime
+                physicalWorkerOutputObserved = output
+                recoveryMilestone("worker-output-observed", at: output)
+            }
+        } else {
+            try wait("Worker did not report producing_output.", seconds: 35) {
+                self.value(app, "streaming.workerStatus") == "producing_output"
+            }
         }
         // Observe physical startup before screenshots or scoring can miss the fresh 240p window.
-        if physicalRecovery { try adaptiveGate() }
+        if physicalRecovery && adaptiveFailure == nil { try adaptiveGate() }
         evidence(app, phase: ordinarySimulator ? "ordinary-publishing" : "hardware-publishing", screenshot: true)
         if ordinarySimulator && !recovery {
             try wait("Ordinary startup did not acknowledge 240p30 at 350000 bps.", seconds: 10) {

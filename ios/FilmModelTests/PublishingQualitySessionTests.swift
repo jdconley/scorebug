@@ -469,6 +469,92 @@ final class PublishingQualitySessionTests: XCTestCase {
         let state = await owner.snapshot
         XCTAssertTrue(state.isClosed); XCTAssertNil(state.applied); XCTAssertNil(state.receipt)
     }
+    func testCadenceRejectionAuditFreezesFirstReceiptThroughDelayedResetACK() async throws {
+        for expired in [false, true] {
+            let exported = AppliedTransitionExportCapture()
+            let f = try await CandidateQualityFixture.make(appliedTransitionExport: { exported.append($0) })
+            let decision = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(decision.recommendation))
+            let cadence = try f.freshCadence(serverAgeMs: 50, requestDuration: .milliseconds(100))
+            f.native.setNow(expired ? 120.1 : 115.3)
+            let evaluatedAt = f.native.now, instant = f.native.instant
+            do {
+                _ = try await f.owner.evaluateDecoderStall(cadence: cadence, diagnostics: f.diagnostics(), instant: instant)
+                XCTFail("Stale cadence must still reject")
+            } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+            let later = try f.freshCadence(serverAgeMs: 400)
+            _ = try? await f.owner.evaluateDecoderStall(cadence: later, diagnostics: f.diagnostics(), instant: f.native.instant)
+            let advice = try await f.owner.checkTrialDeadline()
+            XCTAssertEqual(exported.values.count, 0)
+            f.native.setNow(evaluatedAt + 0.1)
+            f.native.setProfileAction { f.native.setNow(evaluatedAt + 0.2) }
+            try await f.owner.apply(XCTUnwrap(advice))
+            let diagnostic = await f.owner.currentDiagnostic()
+            let ui = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(diagnostic["appliedTransition"]).utf8)) as? [String: String])
+            XCTAssertFalse(ui.keys.contains { $0.hasPrefix("cadence") })
+            XCTAssertLessThanOrEqual(try JSONSerialization.data(withJSONObject: diagnostic).count, 4096)
+            await f.owner.stop()
+            let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+            let records = try XCTUnwrap(audit["records"] as? [[String: String]])
+            XCTAssertEqual(records.count, 2)
+            let row = try XCTUnwrap(records.last)
+            XCTAssertEqual(row["input"], "cadenceRejected")
+            XCTAssertEqual(row["error"], "freshness")
+            XCTAssertEqual(row["attemptID"], f.attempt.uuidString.lowercased())
+            XCTAssertEqual(row["fromRevision"], "1")
+            XCTAssertEqual(row["revision"], "2")
+            XCTAssertEqual(row["cadenceReceiptID"], cadence.receiptID.uuidString.lowercased())
+            XCTAssertEqual(row["cadenceEvaluatedAt"], String(evaluatedAt))
+            XCTAssertEqual(row["cadenceAgeState"], expired ? "statusExpired" : "available")
+            if expired { XCTAssertNil(row["cadenceSampleAgeSeconds"]) }
+            else { XCTAssertEqual(try XCTUnwrap(row["cadenceSampleAgeSeconds"].flatMap(Double.init)), 0.35, accuracy: 0.000001) }
+            XCTAssertEqual(row["cadenceMaximumSampleAgeSeconds"], "0.25")
+            XCTAssertEqual(row["cadenceServerAgeSeconds"], "0.05")
+            XCTAssertEqual(row["cadenceRequestSeconds"], "0.1")
+            XCTAssertEqual(try XCTUnwrap(row["cadenceResidenceSeconds"].flatMap(Double.init)), expired ? 5 : 0.2, accuracy: 0.000001)
+            XCTAssertEqual(row["cadenceReceiptPreviouslyConsumed"], "false")
+            XCTAssertEqual(row["cadenceRequiresRevalidation"], "false")
+            XCTAssertEqual(row["cadenceStalled"], "false")
+            XCTAssertEqual(row["cadenceProgressAgeMs"], "50.0")
+            XCTAssertEqual(row["cadenceLastFreshPTS"], "180000")
+            XCTAssertLessThanOrEqual(try JSONSerialization.data(withJSONObject: row).count, 8192)
+            XCTAssertFalse(records[0].keys.contains { $0.hasPrefix("cadence") })
+            XCTAssertEqual(audit["overflow"] as? Bool, false)
+        }
+    }
+
+    func testCadenceWitnessCannotReplaceEarlierCauseOrAppearForCancelledReset() async throws {
+        for cancelled in [false, true] {
+            let exported = AppliedTransitionExportCapture()
+            let f = try await CandidateQualityFixture.make(appliedTransitionExport: { exported.append($0) })
+            let trial = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(trial.recommendation))
+            if !cancelled { try await f.owner.noteUnavailableCadence(diagnostics: f.diagnostics()) }
+            let stale = try f.freshCadence(serverAgeMs: 500)
+            do {
+                _ = try await f.owner.evaluateDecoderStall(cadence: stale, diagnostics: f.diagnostics(), instant: f.native.instant)
+                XCTFail("Stale receipt still rejects")
+            } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+            let advice = try await f.owner.checkTrialDeadline()
+            let reset = try XCTUnwrap(advice)
+            if cancelled {
+                let gate = QualityWriteGate(); f.native.installProfileGate(gate)
+                let task = Task { try await f.owner.apply(reset) }
+                try await entered(gate)
+                XCTAssertTrue(exported.values.isEmpty)
+                task.cancel(); gate.release()
+                do { try await task.value; XCTFail("Cancelled reset must not ACK") } catch {}
+            } else { try await f.owner.apply(reset) }
+            await f.owner.stop()
+            let audit = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(exported.values.first)) as? [String: Any])
+            let records = try XCTUnwrap(audit["records"] as? [[String: String]])
+            XCTAssertEqual(records.count, cancelled ? 1 : 2)
+            XCTAssertFalse(records.contains { $0.keys.contains { $0.hasPrefix("cadence") } })
+            if !cancelled { XCTAssertEqual(records.last?["input"], "cadenceUnavailable") }
+            await f.owner.stop(); XCTAssertEqual(exported.values.count, 1)
+        }
+    }
+
     func testAppliedTransitionAuditRetainsEarlierACKAndExportsOnlyAfterJoinedShutdown() async throws {
         let native = QualityNative(), exported = AppliedTransitionExportCapture()
         let owner = try owner(native, appliedTransitionExport: { exported.append($0) })
@@ -2031,7 +2117,7 @@ struct CandidateQualityFixture: Sendable {
             at: native.now, instant: native.instant, maximumSampleAge: 0.25, latencyBudget: 0.5, authority: authority)
     }
 
-    func freshCadence() throws -> WorkerDecoderCadenceFreshness {
+    func freshCadence(serverAgeMs: Int = 0, requestDuration: Duration = .zero) throws -> WorkerDecoderCadenceFreshness {
         let publication = String(data: try JSONEncoder().encode(admission.receiver.publication), encoding: .utf8)!
         let json = """
         {"status":{"gameId":"match","generation":2,"workerId":"mac","workerEpoch":"\(admission.receiver.workerEpoch)","state":"producing_output",
@@ -2039,10 +2125,10 @@ struct CandidateQualityFixture: Sendable {
         "decodedVideo":{"clock":"mpegts-pts-90k-v1","completed":null,"invalidReason":null,"ended":false},
         "decoderCadence":{"formatVersion":1,"scopeID":"11111111-1111-4111-8111-111111111111","oneSecond":null,"twoSeconds":null,"progress":{"lastFreshPTS":180000,"ageMs":50,"stalled":false},"invalidReason":null,"ended":false}},
         "observedAt":"2040-01-01T00:00:00Z","expiresAt":"2040-01-01T00:00:05Z",
-        "publication":\(publication),"decoderCadenceAgeUpperBoundMs":0},"serverTime":"2040-01-01T00:00:01Z"}
+        "publication":\(publication),"decoderCadenceAgeUpperBoundMs":\(serverAgeMs)},"serverTime":"2040-01-01T00:00:01Z"}
         """
         return try XCTUnwrap(WorkerDecoderCadenceFreshness(response: JSONDecoder().decode(WorkerMediaStatusResponse.self, from: Data(json.utf8)),
-            expectedPublishingAttemptID: attempt, receivedAt: native.instant, requestDuration: .zero))
+            expectedPublishingAttemptID: attempt, receivedAt: native.instant, requestDuration: requestDuration))
     }
 
     private var admissionMeasurementScope: VideoFrameObservationScope {
@@ -2126,7 +2212,8 @@ struct CandidateQualityFixture: Sendable {
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
                      unhealthySource: Bool = false, priorHealthEnd: Double? = nil, includeHighProfiles: Bool = false, useProductionProfiles: Bool = false,
                      requiresSharedCandidateRecovery: Bool = false,
-                     guarded: PublishingQualitySession.GuardedMutations? = nil) async throws -> Self {
+                     guarded: PublishingQualitySession.GuardedMutations? = nil,
+                     appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Packages/ScorebugCore/Tests/ScorebugCoreTests/Fixtures/receiver-probe-status-v1.json")
@@ -2143,7 +2230,7 @@ struct CandidateQualityFixture: Sendable {
             .init(id: "2160p30", width: 3840, height: 2160, minimumBitrate: 24_000_000, maximumBitrate: 24_000_000)] : []),
             attemptID: attempt, initial: .init(profileID: initialProfile.rawValue, videoBitrate: initialProfile.bitRate),
             strategy: .measuredCandidateTrials, behavior: .progressive, requiresSharedCandidateRecovery: requiresSharedCandidateRecovery,
-            uptime: { native.now }, instant: { native.instant })
+            uptime: { native.now }, instant: { native.instant }, appliedTransitionExport: appliedTransitionExport)
         try await owner.bootstrap()
         let state = await owner.snapshot
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0, settings: try XCTUnwrap(state.applied),
