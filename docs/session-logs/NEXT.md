@@ -4,7 +4,7 @@
 
 Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. The goal remains incomplete.
 
-Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Reviewed implementation checkpoint: `fe35041`. Sign with Conley Chaos LLC `B222J9J7B8`. No PR/push requested. Preserve Downloads originals and unrelated recordings/simulators. No runtime downloads or heavy builds/media analysis during capture.
+Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Reviewed implementation checkpoint: `9c22e0c`. Sign with Conley Chaos LLC `B222J9J7B8`. No PR/push requested. Preserve Downloads originals and unrelated recordings/simulators. No runtime downloads or heavy builds/media analysis during capture.
 
 [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-evening-device-resume.md) owns commands, failures and evidence.
 
@@ -14,7 +14,9 @@ The user confirms the phone points at a lit moving scene and approved its new au
 
 After Watch passcode approval, a destination preparation failure was followed by fresh successful readiness checks. The next paired run `physical-paired-live-ilu6I7` **entered the Watch test**, but accepted a retained offer from an older run and entered durable pending setup. Its phone runner timed out enabling UI automation before the body. The current lab issued zero Watch pairings, confirming the offer was foreign. The pending phone prompt question remains unanswered. Do not retry unchanged or clear uncertain setup.
 
-All14 inputs unchanged; root39311 joined1, worker exit0, receiver zero sessions, cleanup empty. No capture/build/media jobs active. [Current narrow plan](../superpowers/plans/2026-09-26-watch-test-provenance.md): bind the paired test to its expected match and paired identity, then recover the old pairing through its original server after identifying ownership. Adaptation diagnostics remain queued, not implemented.
+The [Watch provenance fix](../superpowers/plans/2026-09-26-watch-test-provenance.md) is reviewed and committed (`9c22e0c`):46 model tests and37 focused tests pass; signed Debug phone/Watch and Release builds pass, with Watch diagnostics absent in Release. Guarded Watch-only inspection `watch-provenance-state-XasZiW` failed destination preparation. Fresh details/destination discovery then showed availability, but the one justified retry `watch-provenance-state-wUSjPk` immediately lost the Watch destination. Both attempts ended before test bodies; all14 inputs unchanged for each, all jobs joined. No capture or lab was started. Stop unchanged retries until device connection readiness changes.
+
+The old pending pairing remains unconfirmed. Strong historical candidate is `device-lab-SM9KM1` at the previous subnet endpoint; do not treat that inference as live identity proof. Next use the reviewed metadata to inspect exact saved identity, then recover through its original server. A scoped DEBUG transport-only recovery option was researched but is not implemented. Adaptation diagnostics remain queued.
 
 Runner direct LAN requests still report access denied despite the enabled switch. The reviewed DEBUG-only app loopback bridge passes actual phone API/controller and joined-shutdown checks. Use that path; do not reset privacy, delete Scorebug, disable firewall or repeat Settings navigation. See [Apple-source research](../research/2026-09-26-xctest-local-network.md).
 
@@ -26,7 +28,7 @@ Runner direct LAN requests still report access denied despite the enabled switch
 
 ## Next actions
 
-1. Complete and review the Watch test provenance gate, identify/recover the exact pending test-owned pairing through its original server, and resolve phone automation readiness. Rebuild and regenerate runtime provenance before using `artifacts/qa/run-physical-paired-lit-20260926.mjs`; it must pass the expected new match identity. Never reuse old hashes after a build.
+1. Re-establish Watch destination readiness; don't repeat unchanged connection failures or reset state. Use `artifacts/qa/inspect-watch-provenance-20260926.mjs` with the reviewed products to obtain pending game/pairing metadata without issuing an offer or starting the phone. It binds `watch-provenance-builds-20260926/inputs.json` and uses an unissued expected match UUID. After exact test-owned pairing recovery and phone automation readiness, `run-physical-paired-provenance-20260926.mjs` supplies the current lab match and waits for restored Watch readiness before phone capture. Recheck its LAN host first.
 2. For a future evidence-backed adaptive comparison, the command is:
    `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-physical-recovery.mjs --device 00008140-001474110C13001C --host 10.0.0.122 --lane recovery720 --runner-transport app-loopback --bridge-port 49173`.
 3. Freeze source/binaries during capture; join all work before media analysis. Collect only the actual new recording UUID export and exact publishing-attempt QA audit. Rehash inputs on failure too. Do not substitute old exports or observations.

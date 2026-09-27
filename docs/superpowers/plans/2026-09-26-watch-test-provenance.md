@@ -23,9 +23,10 @@ Make the native paired test accept only the current run's real WatchConnectivity
 - [x] Verify foreign/missing offers, later matching offer, invalid expected ID, pending preservation and paired mismatch. Include actual model coverage for non-UUID pending match IDs and restored readiness.
 - [x] Independent specification and code-quality reviews.
 - [ ] Identify the existing pending test pairing and safely recover its server outcome.
-- [ ] Rebuild signed products, record immutable input hashes, then retry on ready hardware.
+- [x] Rebuild signed products and record immutable input hashes.
+- [ ] Restore Watch destination readiness, inspect exact pending identity, then retry the paired workflow.
 - [ ] Inspect native scoring, clean archive, proxy overlay and mock MP4 evidence; retain any failure without overstating qualification.
 
 ## Current status
 
-Implementation and local verification pass:46 Watch model tests and37 focused tests. Both independent reviews approved the exact11-file scope. End-match modal accessibility remains a hardware qualification check; missing metadata fails closed. Recovery investigation identified a historical candidate but needs live Watch identity confirmation. No capture is active. The pending phone automation question remains unanswered. Device passcode readiness and application pairing state are separate prerequisites.
+Implementation and local verification pass:46 Watch model tests and37 focused tests. Both independent reviews approved the exact11-file scope. End-match modal accessibility remains a hardware qualification check; missing metadata fails closed. Recovery investigation identified a historical candidate but needs live Watch identity confirmation. Signed Debug phone/Watch and Release builds pass; diagnostics are absent in Release. Two guarded inspections failed Xcode destination discovery before test bodies despite an intervening successful readiness probe; live pending identity is still unconfirmed. All jobs joined, no capture active. Stop unchanged retries until connection readiness changes. The pending phone automation question remains unanswered. Device passcode readiness and application pairing state are separate prerequisites.
