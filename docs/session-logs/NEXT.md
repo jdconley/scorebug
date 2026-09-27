@@ -4,7 +4,7 @@
 
 Complete native phone recording/scoring, paired Watch scoring, progressive SRT upload, portable score-overlay proxy, mock RTMP MP4 and optional overlaid MP4. Execution blocked pending device access; goal remains incomplete. See [blocker audit](2026-09-26-device-acceptance-blocked.md). Use `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. No PR/push requested. Sign Conley Chaos LLC B222J9J7B8.
 
-[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-runner-network-setting.md) owns commands/results. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
+[Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/status/todos; [latest session](2026-09-26-evening-device-resume.md) owns commands/results. User resumed work; the new probe still finds runner LAN denial. Preserve Downloads originals. No runtime downloads, unrelated simulator/recording deletion, or heavy builds/media analysis during capture.
 
 ## Latest experiment
 
@@ -17,6 +17,8 @@ Implementation `90036c4`, simulator build correction `78c4fdd`: separate native 
 Run `separate-native-scorer-kfuQEO`, lab `device-lab-uZky2H`: durable six-score/two-media command checks pass, no scorer recordings, all source/binary inputs unchanged. Archive 4546 frames/151.54s; both outputs4243 frames with the expected overlay sequence. Precise full A/V decodes and encoded timestamp continuity pass. Scene is almost black: no fresh-motion or perceptual A/V sync qualification. UI observed startup240p then360p; no adaptive collapse in this run. `assessment.json` preserves these limits. Both native jobs, lab, and owned simulator have joined/cleaned up. No capture/build/media-analysis job remains active.
 
 ## Pending device prerequisites and next actions
+
+Latest resume: current en0 is10.0.0.122, not192.168.1.130. Probe `physical-recovery-AeMjLt` built and executed on the unlocked phone, but again reports explicit localNetworkDenied; no capture, all17 inputs unchanged, lab shutdown clean. The user was asked to distinguish runner switch off/now-enabled, already enabled, or absent. Watch query reports connection reset by peer, without any lock-state result. Refresh host configuration before reusing artifact-only paired launchers.
 
 1. User asked to point the rear camera at a lit scene with movement; no response yet. Do not repeat unchanged dark capture. After repositioning, the same reviewed lane can verify visible motion; use only the new export UUID for collection.
 2. Physical recovery runner LAN access remains denied. Short diagnostic `physical-recovery-2UDoQf` reports NSURLError-1009/CFStream50 and explicit `localNetworkDenied`; the Scorebug app itself connects. User was asked to enable ScorebugAppUITests-Runner under Settings → Privacy & Security → Local Network, or report missing/already enabled. After a state change run `scripts/test-physical-recovery.mjs --device … --host … --lane network-probe`; only if both HTTP checks pass run full recovery720. See [physical diagnosis](2026-09-26-physical-recovery.md). Do not reset privacy, delete Scorebug or disable firewall.
@@ -32,8 +34,8 @@ Run `separate-native-scorer-kfuQEO`, lab `device-lab-uZky2H`: durable six-score/
 
 ## Environment
 
-Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installed iOS26.2 runtime; FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130; Docker `scorebug/ingest:campaign-probe-v3`.
+Xcode `/Applications/Xcode-26.2.0.app/Contents/Developer`; installed iOS26.2 runtime; FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; current LAN10.0.0.122 (recheck interface before launch); Docker `scorebug/ingest:campaign-probe-v3`.
 
 Phone16Pro `00008140-001474110C13001C`, iOS26.7; Ultra2 `00008310-0000B2CE3E08A01E`, watchOS26.6.
 
-Separate native scorer launcher: `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-separate-native-scorer.mjs --device 00008140-001474110C13001C --host 192.168.1.130`. It requires clean committed code, builds both targets before capture, creates only an owned simulator, and separately reports workflow versus media qualification.
+Separate native scorer launcher: `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node scripts/test-separate-native-scorer.mjs --device 00008140-001474110C13001C --host 10.0.0.122`. It requires clean committed code, builds both targets before capture, creates only an owned simulator, and separately reports workflow versus media qualification.

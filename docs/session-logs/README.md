@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 26 evening device resume](2026-09-26-evening-device-resume.md) — current LAN corrected, phone automation works, fresh network probe still denied, Watch connection reset.
+
 - [September 26 device acceptance blocker audit](2026-09-26-device-acceptance-blocked.md) — no live jobs; device prerequisites still prevent the next acceptance tests.
 
 - [September 26 runner network setting](2026-09-26-runner-network-setting.md) — reviewed read-only phone diagnostic; Settings remains inaccessible to the bounded test and permission state is unknown.
