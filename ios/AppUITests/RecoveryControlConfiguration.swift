@@ -1,6 +1,6 @@
 import Foundation
 
-/// XCTest-only controller credentials. Never forwarded into the application.
+/// Private controller credentials; only the explicit Debug bridge launch receives them.
 struct RecoveryControlConfiguration {
     enum Failure: Error { case invalid }
     let endpoint: URL
@@ -8,6 +8,16 @@ struct RecoveryControlConfiguration {
     let runID: String
 
     init(environment: [String: String], allowLAN: Bool = false) throws {
+        #if DEBUG
+        if environment["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] == "app-loopback" {
+            guard allowLAN else { throw Failure.invalid }
+            let bridge = try RecoveryLoopbackConfiguration(environment: environment)
+            endpoint = bridge.endpoint; token = bridge.token; runID = bridge.runID
+            return
+        }
+        #endif
+        guard environment["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] == nil ||
+                environment["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] == "direct" else { throw Failure.invalid }
         guard let endpoint = environment["SCOREBUG_RECOVERY_CONTROL_URL"],
               let components = URLComponents(string: endpoint),
               components.scheme == "http", let host = components.host, components.percentEncodedHost == host,

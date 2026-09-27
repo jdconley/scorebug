@@ -288,6 +288,12 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recovery720 = false
     private var physicalRecovery = false
     private var recoveryControlConfiguration: RecoveryControlConfiguration?
+    private var loopbackStarted = false
+    private var loopbackStopAttempted = false
+    private var loopbackShutdown: [String: Any]?
+    private var runnerTransport: String {
+        ProcessInfo.processInfo.environment["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] ?? "direct"
+    }
 
     private func recoveryMilestone(_ phase: String, sample: Bool = false) {
         var record: [String: Any] = ["phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime]
@@ -302,6 +308,8 @@ final class PhysicalStreamingTests: XCTestCase {
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
         if recovery720 { report["contract"] = "recovery720" }
         if physicalRecovery { report["captureSource"] = "physical-camera" }
+        report["runnerTransport"] = runnerTransport
+        report["loopbackShutdown"] = loopbackShutdown
         report["failure"] = recoveryFailure
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
@@ -503,6 +511,11 @@ final class PhysicalStreamingTests: XCTestCase {
             }
         }
         var accepted = result != nil && result?.2 == nil && http != nil && ended - started <= 10
+        if runnerTransport == "app-loopback" {
+            let forwarded = http?.value(forHTTPHeaderField: "X-Scorebug-Loopback-Upstream") == "1"
+            report["appUpstreamResponse"] = forwarded
+            accepted = accepted && forwarded
+        }
         if controller {
             let body = result?.0.flatMap { data -> [String: String]? in
                 guard data.count <= 4096 else { return nil }
@@ -513,6 +526,85 @@ final class PhysicalStreamingTests: XCTestCase {
         report["accepted"] = accepted
         return (accepted, report)
     }
+    @MainActor private func startPhysicalLoopbackIfRequested(_ app: XCUIApplication) throws {
+        guard runnerTransport == "app-loopback" else { return }
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        _ = try RecoveryLoopbackConfiguration(environment: environment)
+        // Relaunch is only safe after observing the normal app's actual idle UI.
+        try wait("Capture must be idle before bridge activation.", seconds: 10) {
+            app.buttons["film.start"].exists && app.buttons["film.start"].isEnabled
+        }
+        try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists &&
+                    app.buttons["film.start"].isEnabled,
+                    "Existing capture prevents bridge activation; existing state was preserved.")
+        app.launchArguments = []
+        app.launchEnvironment = environment.filter { RecoveryLoopbackConfiguration.environmentKeys.contains($0.key) }
+        loopbackStarted = true
+        app.launch()
+        try selectTab("Film", app)
+        try wait("Debug bridge app did not become ready.", seconds: 12) {
+            app.state == .runningForeground && app.buttons["film.start"].exists &&
+                app.buttons["film.start"].isEnabled && !app.buttons["film.stop"].exists &&
+                !app.buttons["streaming.stop"].exists
+        }
+        #else
+        throw SmokeFailure.failed("App loopback requires a Debug app and runner.")
+        #endif
+    }
+
+    /// Independent from capture cleanup; does not terminate or relaunch the app.
+    @MainActor private func stopPhysicalLoopback() {
+        guard loopbackStarted, !loopbackStopAttempted else { return }
+        loopbackStopAttempted = true
+        let started = ProcessInfo.processInfo.systemUptime
+        var report: [String: Any] = ["attempted": true, "startedUptimeSeconds": started]
+        defer {
+            report["endedUptimeSeconds"] = ProcessInfo.processInfo.systemUptime
+            loopbackShutdown = report
+            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = "PhysicalRecoveryLoopbackShutdown"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
+        do {
+            let control = try RecoveryControlConfiguration(environment: ProcessInfo.processInfo.environment, allowLAN: true)
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 4; configuration.timeoutIntervalForResource = 4
+            configuration.waitsForConnectivity = false
+            let session = URLSession(configuration: configuration, delegate: NetworkProbeMetrics(started: Date()), delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
+            var request = URLRequest(url: control.endpoint.appendingPathComponent("stop"))
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(control.token)", forHTTPHeaderField: "Authorization")
+            let response = RecoveryResponse()
+            session.dataTask(with: request) { data, value, error in response.set(data, value, error) }.resume()
+            while response.get() == nil && ProcessInfo.processInfo.systemUptime - started < 5 {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+            let result = response.get()
+            let acknowledged = result?.2 == nil && (result?.1 as? HTTPURLResponse)?.statusCode == 200 &&
+                result?.0 == Data("{\"stopped\":true}".utf8)
+            report["acknowledged"] = acknowledged
+            try require(acknowledged, "Debug loopback shutdown was not acknowledged.")
+            let refused = RecoveryResponse()
+            var check = URLRequest(url: control.endpoint)
+            check.setValue("Bearer \(control.token)", forHTTPHeaderField: "Authorization")
+            session.dataTask(with: check) { data, value, error in refused.set(data, value, error) }.resume()
+            let end = ProcessInfo.processInfo.systemUptime + 5
+            while refused.get() == nil && ProcessInfo.processInfo.systemUptime < end {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+            let error = refused.get()?.2 as NSError?
+            let closed = error?.domain == NSURLErrorDomain && error?.code == NSURLErrorCannotConnectToHost
+            report["listenerClosed"] = closed
+            try require(closed, "Debug loopback listener closure could not be verified.")
+        } catch {
+            report["failed"] = true
+            XCTFail("Debug loopback shutdown failed; inspect shutdown evidence.")
+        }
+    }
+
     @MainActor func testPhysicalRecoveryNetworkProbe() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Physical network probe requires an actual iPhone.")
@@ -532,21 +624,26 @@ final class PhysicalStreamingTests: XCTestCase {
         deadline = Date().addingTimeInterval(75)
         executionTimeAllowance = 90
         let app = XCUIApplication(); app.activate()
+        defer { stopPhysicalLoopback() }
         try selectTab("Film", app)
         try wait("Film did not become ready for network probe.", seconds: 12) {
             app.buttons["film.start"].exists || app.buttons["film.stop"].exists
         }
         try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
                     "Existing capture prevents network probe; existing state was preserved.")
+        try startPhysicalLoopbackIfRequested(app)
         let runner = XCUIApplication(bundleIdentifier: runnerID)
         try require(runner.state == .runningBackground || runner.state == .runningForeground,
                     "Network probe requires the existing test runner process.")
         defer { app.activate() }
-        runner.activate()
-        try wait("Network probe runner did not enter foreground.", seconds: 10) { runner.state == .runningForeground }
-        let apiResult = probeHTTP(apiRoot, token: nil, controller: false)
+        if runnerTransport == "direct" {
+            runner.activate()
+            try wait("Network probe runner did not enter foreground.", seconds: 10) { runner.state == .runningForeground }
+        }
+        let apiProbeURL = runnerTransport == "app-loopback" ? control.endpoint.appendingPathComponent("api-health") : apiRoot
+        let apiResult = probeHTTP(apiProbeURL, token: runnerTransport == "app-loopback" ? control.token : nil, controller: false)
         let controllerResult = probeHTTP(control.endpoint, token: control.token, controller: true)
-        var report: [String: Any] = ["formatVersion": 1, "requests": [apiResult.1, controllerResult.1]]
+        var report: [String: Any] = ["formatVersion": 1, "runnerTransport": runnerTransport, "requests": [apiResult.1, controllerResult.1]]
         if !controllerResult.0, let host = control.endpoint.host, let port = control.endpoint.port,
            let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) {
             let started = ProcessInfo.processInfo.systemUptime
@@ -567,6 +664,8 @@ final class PhysicalStreamingTests: XCTestCase {
             report["tcp"] = ["startedUptimeSeconds": started, "endedUptimeSeconds": ProcessInfo.processInfo.systemUptime,
                              "events": state.snapshot(), "cancelJoined": joined]
         }
+        stopPhysicalLoopback()
+        report["loopbackShutdown"] = loopbackShutdown
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         try require(data.count <= 16384, "Network probe attachment exceeded its bound.")
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
@@ -743,9 +842,11 @@ final class PhysicalStreamingTests: XCTestCase {
         // while the requesting process is in the background. Foreground the
         // actual runner for its nonmutating request, then restore this app.
         defer { app.activate() }
-        runner.activate()
-        try wait("Physical test runner did not enter the foreground.", seconds: 10) {
-            runner.state == .runningForeground
+        if runnerTransport == "direct" {
+            runner.activate()
+            try wait("Physical test runner did not enter the foreground.", seconds: 10) {
+                runner.state == .runningForeground
+            }
         }
         // Resolve the runner's first local-network permission before recording
         // and before any timed mutation. This endpoint cannot change lab state.
@@ -801,7 +902,7 @@ final class PhysicalStreamingTests: XCTestCase {
         }.resume()
         let waitResult = XCTWaiter.wait(for: [done], timeout: 5)
         let ended = ProcessInfo.processInfo.systemUptime
-        var exchange: [String: Any] = ["sequence": sequence, "operation": operation,
+        var exchange: [String: Any] = ["sequence": sequence, "operation": operation, "runnerTransport": runnerTransport,
             "requestStartedUptimeSeconds": started, "responseEndedUptimeSeconds": ended]
         defer { recoveryExchanges.append(exchange) }
         guard waitResult == .completed, ended >= started, ended - started <= 5,
@@ -930,6 +1031,7 @@ final class PhysicalStreamingTests: XCTestCase {
         var streamingRequested = false
         defer {
             cleanup(app, recordingRequested: recordingRequested, streamingRequested: streamingRequested)
+            stopPhysicalLoopback()
             evidence(app, phase: "final-observation", screenshot: false)
         }
 
@@ -944,6 +1046,7 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         try require(!app.buttons["film.stop"].exists && !app.buttons["streaming.stop"].exists,
                     "Existing recording or streaming state prevents an isolated smoke; existing state was preserved.")
+        if physicalRecovery { try startPhysicalLoopbackIfRequested(app) }
         if !ordinarySimulator {
             // A physical rotation during setup invalidates XCTest activation
             // points. Establish portrait only after preserving prior capture.

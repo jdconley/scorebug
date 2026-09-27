@@ -1,6 +1,6 @@
 # Evening physical-device resume — September 26
 
-User explicitly requested continuing. Started from clean `095ed51`. This begins a fresh resumed blocker audit; do not reuse the prior blocked-turn count. Goal is still incomplete. No application code changed.
+User explicitly requested continuing. Started from clean `095ed51`. This begins a fresh resumed blocker audit; do not reuse the prior blocked-turn count. Goal is still incomplete. The initial probe used unchanged application code; bridge implementation follows below.
 
 The Mac's current en0 address is10.0.0.122. The previous192.168.1.130 bind is no longer assigned; the launcher's validation correctly refused it before allocating a lab. Current physical iPhone lockState succeeds and reports unlocked.
 
@@ -13,3 +13,21 @@ Ran `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer node script
 - Fresh Watch lockState query45300 joins exit1 with Network.NWError54, connection reset by peer. No lock-state result was obtained; do not call the Watch locked or restart the paired test on this evidence.
 
 Next: after a reported permission change, rerun this short probe using the currently assigned LAN address. Only after both HTTP checks pass should the physical720 recovery lane start. A missing/already-enabled runner entry needs targeted diagnosis; do not repeat the failed Settings automation unchanged. Paired Watch acceptance still needs a stable developer connection and successful automation initialization. Existing artifact-only paired launchers hardcode the previous LAN address and need current configuration before reuse.
+
+## Enabled switch and supported alternative
+
+User confirms ScorebugAppUITests-Runner already has Local Network enabled. A fresh installed-app query matches `live.scorebug.app.uitests.xctrunner` exactly (`installed-runner.json` in the probe artifacts). Do not keep treating this as a missing user permission.
+
+Apple DTS [thread817792](https://developer.apple.com/forums/thread/817792) describes similar failures beginning with iOS26.3 and recommends a loopback listener in the app under test, using the app's granted network access. This is a supported architecture to test, not proof of an identical OS cause. Research and bounded DEBUG-only implementation plan were committed as82482fd. Implementation is in progress with focused tests and independent review before any hardware attempt. The original recovery mutation clocks, receipts and acceptance gates remain authoritative.
+
+## Bridge implementation and local verification
+
+Implemented fixed-route Debug-only app loopback control with strict canonical configuration/authenticated bounded HTTP, finite upstream requests, joined stop receipt and listener-refusal verification. Launcher opts in with `--runner-transport app-loopback --bridge-port 49173`; direct mode remains the default. The phone test proves no existing recording/publication before relaunching with bridge-only environment. Generated bridge errors are distinguished from actual upstream responses. Existing mutation timing/freshness/sequence checks remain unchanged.
+
+Focused run passes51 Node tests, including the Swift harness's14 XCTest cases. Tests cover malformed configuration/framing/auth/routes, body/response limits, actual forwarding, timeout, expiry, port collision and active-request cancellation. Logs and joined process records are under `artifacts/qa/physical-loopback-validation-20260926/`. Syntax and whitespace checks pass.
+
+Initial signed Debug build41113 and actual arm64 iPhone Release build89190 both joined0. `release-exclusion.json` records matching positive Debug / negative Release checks for bridge symbols, activation key and fixed route, plus actual binary hashes. The existing UI network diagnostic has an exhaustive-switch warning for the SDK's newer vpnInactive case; app-intents metadata warnings also remain. No bridge compile error occurred.
+
+Independent specification review found one missing post-relaunch idle condition; corrected by repeating enabled start and both absent stop buttons. Final UI blobd09d84f098f5a712959f6c9f7a72414f4ebbbc4f is spec-approved. Final signed Debug rebuild and independent quality review follow before hardware.
+
+Final signed Debug rebuild26131 joined0. Independent quality review approves all11 implementation/test/project blobs with no actionable blocker. Root verifies success markers and stores final source hashes plus log/binary checks in `root-verification.json` and `final-review-inputs.json`. Hardware probe is next; no capture acceptance is implied by these checks.

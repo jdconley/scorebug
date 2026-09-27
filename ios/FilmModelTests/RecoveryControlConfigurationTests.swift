@@ -68,4 +68,21 @@ final class RecoveryControlConfigurationTests: XCTestCase {
             }
         }
     }
+    func testAppLoopbackRequiresLANOptInAndPreservesFixedPrivateDestination() throws {
+        var env = environment(host: "192.168.1.130")
+        env["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] = "app-loopback"
+        env["SCOREBUG_RECOVERY_BRIDGE_PORT"] = "49173"
+        XCTAssertThrowsError(try RecoveryControlConfiguration(environment: env))
+        let configuration = try RecoveryControlConfiguration(environment: env, allowLAN: true)
+        XCTAssertEqual(configuration.endpoint.absoluteString, "http://127.0.0.1:49173/")
+        XCTAssertEqual(configuration.token, env["SCOREBUG_RECOVERY_CONTROL_TOKEN"])
+        XCTAssertEqual(configuration.runID, env["SCOREBUG_RECOVERY_RUN_ID"])
+        env.removeValue(forKey: "SCOREBUG_RECOVERY_BRIDGE_PORT")
+        XCTAssertThrowsError(try RecoveryControlConfiguration(environment: env, allowLAN: true))
+        env["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] = "unknown"
+        XCTAssertThrowsError(try RecoveryControlConfiguration(environment: env, allowLAN: true))
+        env["SCOREBUG_RECOVERY_RUNNER_TRANSPORT"] = "direct"
+        XCTAssertEqual(try RecoveryControlConfiguration(environment: env, allowLAN: true).endpoint.host, "192.168.1.130")
+    }
+
 }

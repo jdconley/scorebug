@@ -101,6 +101,7 @@ targets:
     platform: iOS
     sources:
       - path: AppUITests
+      - path: Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
@@ -148,6 +149,7 @@ targets:
       - path: Sources/ScorebugWatch/WatchScoringModel.swift
       - path: Sources/WatchSupport/WatchRelaySessionGate.swift
       - path: AppUITests/RecoveryControlConfiguration.swift
+      - path: Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift
       - path: FilmModelTests
     settings:
       base:

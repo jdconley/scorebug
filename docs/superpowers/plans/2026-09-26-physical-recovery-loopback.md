@@ -19,10 +19,10 @@
 
 ## Work and verification
 
-- [ ] Implement isolated bridge/config/parser with meaningful malformed/auth/size/route and lifecycle tests. Use existing Swift mini-harness conventions or a focused package test; avoid source-text-only proof.
-- [ ] Integrate Debug-only app ownership and explicit physical-test startup/teardown. No fixture media or quality factory selection. Route both short probe HTTP requests through the bridge and preserve the direct probe option for diagnosis.
-- [ ] Add opt-in physical launcher configuration and regression tests covering default unchanged, private destination validation, explicit port/token, source/binary/config hashes, and exact leaf selection. Preserve ordinary simulator behavior.
-- [ ] Run focused tests, signed Debug phone build and Release exclusion/build checks; review exact final code for spec and quality.
+- [x] Implement isolated bridge/config/parser with meaningful malformed/auth/size/route and lifecycle tests. Use existing Swift mini-harness conventions or a focused package test; avoid source-text-only proof.
+- [x] Integrate Debug-only app ownership and explicit physical-test startup/teardown. No fixture media or quality factory selection. Route both short probe HTTP requests through the bridge and preserve the direct probe option for diagnosis.
+- [x] Add opt-in physical launcher configuration and regression tests covering default unchanged, private destination validation, explicit port/token, source/binary/config hashes, and exact leaf selection. Preserve ordinary simulator behavior.
+- [x] Run focused tests, signed Debug phone build and Release exclusion/build checks; review exact final code for spec and quality.
 - [ ] Run the bridge network probe on the unlocked phone/current LAN; inspect actual upstream results and zero mutation audit. Verify listener shutdown and unchanged runtime inputs.
 - [ ] Only after probe success run physical720 recovery, then collect the actual new archive and both live MP4s. Preserve independent workflow, transport and media results; no automatic acceptance from a green bridge test.
 

@@ -17,7 +17,7 @@ export function physicalRecoveryOptions(args, interfaces) {
     const key = args[i],
       value = args[i + 1];
     assert(
-      ['--host', '--device', '--team', '--encoder', '--publish-peer-latency-ms', '--lane'].includes(key) &&
+      ['--host', '--device', '--team', '--encoder', '--publish-peer-latency-ms', '--lane', '--runner-transport', '--bridge-port'].includes(key) &&
         value &&
         !values.has(key),
       'Invalid or duplicate physical option',
@@ -26,6 +26,12 @@ export function physicalRecoveryOptions(args, interfaces) {
   }
   const lane = values.get('--lane') ?? 'recovery720';
   assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
+  const runnerTransport = values.get('--runner-transport') ?? 'direct';
+  assert(['direct', 'app-loopback'].includes(runnerTransport), 'Invalid runner transport');
+  const bridgePort = values.has('--bridge-port') ? Number(values.get('--bridge-port')) : undefined;
+  if (runnerTransport === 'app-loopback') {
+    assert(Number.isInteger(bridgePort) && bridgePort >= 49152 && bridgePort <= 65535 && String(bridgePort) === values.get('--bridge-port'), 'Explicit canonical high bridge port required');
+  } else assert(bridgePort === undefined, 'Bridge port requires app-loopback transport');
   const device = values.get('--device'),
     team = values.get('--team') ?? 'B222J9J7B8';
   assert(
@@ -46,10 +52,13 @@ export function physicalRecoveryOptions(args, interfaces) {
     ],
     interfaces,
   );
-  return { ...options, device, team, lane };
+  return { ...options, device, team, lane, runnerTransport, bridgePort };
 }
-export function physicalRecoveryEnvironment(lab, lane = 'recovery720') {
+export function physicalRecoveryEnvironment(lab, lane = 'recovery720', {runnerTransport = 'direct', bridgePort} = {}) {
   assert(['recovery720', 'network-probe'].includes(lane), 'Invalid physical lane');
+  assert(['direct', 'app-loopback'].includes(runnerTransport), 'Invalid runner transport');
+  if (runnerTransport === 'app-loopback') assert(Number.isInteger(bridgePort) && bridgePort >= 49152 && bridgePort <= 65535, 'Invalid bridge port');
+  else assert(bridgePort === undefined, 'Bridge port requires app-loopback');
   const api = new URL(lab.setup.endpoint),
     control = new URL(lab.recoveryControl.endpoint);
   // WHATWG URL parsing normalizes decimal/hex and percent-encoded hostnames.
@@ -60,6 +69,7 @@ export function physicalRecoveryEnvironment(lab, lane = 'recovery720') {
       match && match[1] === new URL(value).hostname,
       'Canonical literal private host required',
     );
+    if (runnerTransport === 'app-loopback') assert(match[2], 'Explicit API and controller ports required for bridge');
   }
   const octets = api.hostname.split('.').map(Number);
   assert(
@@ -94,6 +104,7 @@ export function physicalRecoveryEnvironment(lab, lane = 'recovery720') {
   assert.match(lab.recoveryControl.runID, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i);
   assert(typeof lab.setup.installationToken === 'string' && lab.setup.installationToken.length > 0);
   return {
+    ...(runnerTransport === 'app-loopback' ? {SCOREBUG_RECOVERY_RUNNER_TRANSPORT: runnerTransport, SCOREBUG_RECOVERY_BRIDGE_PORT: String(bridgePort)} : {}),
     ...(lane === 'network-probe' ? {SCOREBUG_PHYSICAL_NETWORK_PROBE: '1'} : {SCOREBUG_PHYSICAL_RECOVERY_720: '1'}),
     SCOREBUG_DEVICE_API_URL: lab.setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: lab.setup.installationToken,
@@ -164,6 +175,7 @@ async function main() {
   );
   try {
     sourceHead = await run('git', ['rev-parse', 'HEAD'], 'source-head');
+    await run('xcodegen', ['generate', '--spec', join(root, 'ios/Project.yml')], 'generate');
     const derived = join(root, 'ios/DerivedData/PhysicalPhone'),
       products = join(derived, 'Build/Products');
     await run(
@@ -212,6 +224,9 @@ async function main() {
     );
     const inputs = await readPhysicalRecoveryInputs(products, [
       fileURLToPath(import.meta.url),
+      ...['ios/Project.yml', 'ios/Scorebug.xcodeproj/project.pbxproj', 'ios/Sources/Scorebug/App.swift',
+        'ios/Sources/Scorebug/Debug/RecoveryLoopbackConfiguration.swift', 'ios/Sources/Scorebug/Debug/RecoveryLoopbackBridge.swift',
+        'ios/AppUITests/PhysicalStreamingTests.swift', 'ios/AppUITests/RecoveryControlConfiguration.swift'].map(name => join(root, name)),
       ...['device-lab.mjs', 'ordinary-recovery-control.mjs', 'udp-impairment.mjs',
         'private-lab-network.mjs', 'test-ordinary-native-app.mjs'].map(name => join(root, 'scripts', name)),
     ]);
@@ -243,7 +258,7 @@ async function main() {
         const environmentPath = join(artifact, 'phone-environment.json'),
           configure = join(artifact, 'configure.py'),
           testRun = join(artifact, 'phone.xctestrun');
-        await writeFile(environmentPath, JSON.stringify(physicalRecoveryEnvironment(lab, options.lane)), {
+        await writeFile(environmentPath, JSON.stringify(physicalRecoveryEnvironment(lab, options.lane, options)), {
           flag: 'wx',
           mode: 0o600,
         });
@@ -260,7 +275,7 @@ async function main() {
           ],
           'configure',
         );
-        const configuredInputs = await readPhysicalRecoveryInputs(products, [testRun]);
+        const configuredInputs = await readPhysicalRecoveryInputs(products, [testRun, environmentPath]);
         await writeFile(join(artifact, 'configured-inputs.json'), JSON.stringify(configuredInputs, null, 2), {flag: 'wx', mode: 0o600});
         await run(
           'xcodebuild',
@@ -327,6 +342,7 @@ async function main() {
           formatVersion: 1,
           lane: probe ? 'physical-network-probe' : 'physical-recovery720',
           sourceHead,
+          runnerTransport: options.runnerTransport,
           device: options.device,
           host: options.host,
           workflowPassed,

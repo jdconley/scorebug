@@ -173,3 +173,21 @@ test('network probe is explicit, selects no camera recovery flag and has a short
   assert.equal(environment.SCOREBUG_PHYSICAL_RECOVERY_720, undefined);
   assert.throws(() => physicalRecoveryEnvironment(lab(), 'unknown'));
 });
+
+test('app loopback is explicit with a validated high port and no default transport changes', () => {
+  assert.equal(physicalRecoveryOptions(args, interfaces).runnerTransport, 'direct');
+  const options = physicalRecoveryOptions([...args, '--runner-transport', 'app-loopback', '--bridge-port', '49173'], interfaces);
+  assert.equal(options.runnerTransport, 'app-loopback');
+  assert.equal(options.bridgePort, 49173);
+  for (const suffix of [ ['--runner-transport', 'other'], ['--runner-transport', 'app-loopback'], ['--bridge-port', '49173'], ['--runner-transport', 'app-loopback', '--bridge-port', '80'], ['--runner-transport', 'app-loopback', '--bridge-port', '049173'] ])
+    assert.throws(() => physicalRecoveryOptions([...args, ...suffix], interfaces));
+  const environment = physicalRecoveryEnvironment(lab(), 'network-probe', options);
+  assert.equal(environment.SCOREBUG_RECOVERY_RUNNER_TRANSPORT, 'app-loopback');
+  assert.equal(environment.SCOREBUG_RECOVERY_BRIDGE_PORT, '49173');
+  assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_URL, lab().recoveryControl.endpoint);
+  assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_TOKEN, lab().recoveryControl.token);
+  assert(!Object.keys(environment).some(key => key.includes('FIXTURE') || key.includes('FILE_CAPTURE')));
+  assert.throws(() => physicalRecoveryEnvironment(lab(), 'network-probe', {...options, bridgePort: 0}));
+  const missingPort = lab(); missingPort.setup.endpoint = 'http://192.168.1.130';
+  assert.throws(() => physicalRecoveryEnvironment(missingPort, 'network-probe', options));
+});

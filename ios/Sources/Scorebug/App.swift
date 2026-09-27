@@ -9,6 +9,9 @@ struct ScorebugApp: App {
     @StateObject private var scoring = ScoringModel()
     @StateObject private var phoneWatch: PhoneWatchModel
     @StateObject private var connectivity: WatchSetupConnectivity
+    #if DEBUG
+    private let recoveryLoopbackBridge: RecoveryLoopbackBridge?
+    #endif
     init() {
         let connectivity = WatchSetupConnectivity()
         let forwarder = WatchRelayPhoneForwarder(timeout: 1.5, clientFactory: { MatchHTTPClient(endpoint: $0) })
@@ -47,6 +50,13 @@ struct ScorebugApp: App {
         film.onCaptureFinished = { [weak streaming] context, interrupted in streaming?.captureFinished(context, interrupted: interrupted) }
         _film = StateObject(wrappedValue: film)
         _streaming = StateObject(wrappedValue: streaming)
+        #if DEBUG
+        if let configuration = try? RecoveryLoopbackConfiguration(environment: ProcessInfo.processInfo.environment),
+           let bridge = try? RecoveryLoopbackBridge(configuration: configuration) {
+            recoveryLoopbackBridge = bridge
+            bridge.start()
+        } else { recoveryLoopbackBridge = nil }
+        #endif
     }
     var body: some Scene {
         WindowGroup { ContentView(film: film, streaming: streaming, scoring: scoring, phoneWatch: phoneWatch, connectivity: connectivity) }
