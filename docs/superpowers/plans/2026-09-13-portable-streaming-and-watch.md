@@ -28,7 +28,7 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 | Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
 | SRT → overlay proxy → RTMP and MP4 | Yes; initial/changing score, configurable font, software/VideoToolbox selection, mock destination and proxy recording | Native workflow with worker/control-plane restart; backend capability reporting and installation packaging |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p congestion recovery still loses live A/V; higher profiles and sustained operation unqualified |
-| Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Combined scoring/relaunch while phone publishes; separate scorer's Watch. Real WatchConnectivity simulator registration currently fails7018 |
+| Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Direct-network simulator scoring/relaunch while phone publishes passes; separate scorer's Watch remains. Real WatchConnectivity simulator registration currently fails7018 |
 | Physical system | Phone local archive/native scoring/proxy/mock outputs work; standalone Ultra2 scoring works | Combined paired run and sustained/radio-route testing deferred; uncertain test pairing preserved |
 | Portability | Local Mac and container workflows exist; long1080p/4K file replays pass | Install/service/upgrade instructions, backend capability matrix and other-host runtime qualification |
 
@@ -36,8 +36,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 
 ## 1. Finish the complete simulator vertical
 
-- [ ] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
-- [ ] While capture and stream continue, relaunch Watch without reinjecting setup; recover the same pairing/score, then score/undo/end with exactly one server outcome per command.
+- [x] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
+- [x] While capture and stream continue, relaunch Watch without reinjecting setup; recover the same pairing/score, then score/undo/end with exactly one server outcome per command.
 - [ ] Verify clean archive, changed overlay in proxy and mock MP4s, audio, native export, and archive continuation after the stream/match ends.
 - [ ] Exercise native phone B creating a match, phone A discovering/joining to record/publish, phone B scoring, then Watch B taking over. Include camera-free native scoring and layout checks on supported small screens.
 - [ ] Run scoring reconnect/lost-reply/takeover/stale-command cases against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.

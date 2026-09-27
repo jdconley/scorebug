@@ -33,3 +33,11 @@ The existing simulator real-companion failure is `ordinary-native-LhOSEV`; its t
 Implemented progressive transport-pressure direct descent to minimum (thermal-only/legacy unchanged); affected Core checks pass. Added `watch-direct` with a loopback-only API, post-phone-readiness issuance of a real server pairing, private simulator fixture delivery, native Watch scoring and a relaunch without setup injection. Existing real-companion/physical lanes remain separate. Focused lane checks and syntax pass. One batched integration review found no concrete blockers.
 
 Added native macOS worker service helper and runbook (explicit plist/check/run/install/uninstall, protected configuration, RTMP/MP4/both, upgrade/rollback/backups). Focused generation tests and plist lint pass. No persistent service was installed or loaded. All build/test jobs joined before simulator capture. Evidence: `direct-minimum-transport-validation-20260926`, `watch-direct-validation-20260926`.
+
+## Direct Watch simulator checkpoint
+
+`ordinary-native-UFjmr8` atb341b94 passed both selected native workflows and durable command checks; cleanup completed. The Watch took control, scored HOME, undid, scored AWAY, relaunched without a setup fixture, recovered its pairing/score and ended the match while the phone recorded/published. Setup transport was explicitly `simulator-fixture`; scoring used real direct HTTP. This is not WatchConnectivity/radio qualification.
+
+The native export contains4978 consecutive frames at30fps with no audio timestamp gaps. Both live outputs contain the same4544 consecutive source frames at30fps with no audio timestamp gaps. The archive continues280frames after live output. Independent A/V waveform and visible score checks are pending; frame/decode checks passed. The launcher preserved84 archive segments and verified all hashes.
+
+Applied the prepared native-created two-phone simulator lane. It starts with an empty API, creates the match through scorer B's native UI, reads back the exact created identity, then launches filming phone A for discovery/takeover/archive/publishing while B scores and undoes. It retains both containers, verifies scorer B remained camera-free and joins both jobs before cleanup. Reuses the existing incremental simulator build directory. Focused affected Node checks:40passed. Full role/media execution is the next checkpoint.

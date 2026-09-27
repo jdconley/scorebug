@@ -226,7 +226,13 @@ export function deviceLabAPIBind(options) {
   return options.apiLoopback === true ? '127.0.0.1' : options.host;
 }
 
+export function deviceLabSeedsMatch(value) {
+  assert(value === undefined || typeof value === 'boolean', 'seedMatch must be boolean');
+  return value !== false;
+}
+
 export async function startDeviceLab(options, { signal } = {}) {
+  const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
   const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
@@ -413,21 +419,23 @@ export async function startDeviceLab(options, { signal } = {}) {
     const endpoint = new URL(api.baseURL);
     endpoint.hostname = apiBind;
     const baseURL = endpoint.origin;
-    const matchId = randomUUID(),
-      team = (name) => ({ name, shortName: name, color: '#123456' });
-    const response = await fetch(`${baseURL}/v1/matches`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${phoneToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        id: matchId,
-        deviceId: 'device-lab-bootstrap',
-        teams: { home: team('HOME'), away: team('AWAY') },
-        rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-    assert.equal(response.status, 201, 'Lab match creation failed');
-    await response.arrayBuffer();
+    const matchId = seedMatch ? randomUUID() : undefined;
+    if (seedMatch) {
+      const team = (name) => ({ name, shortName: name, color: '#123456' });
+      const response = await fetch(`${baseURL}/v1/matches`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${phoneToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: matchId,
+          deviceId: 'device-lab-bootstrap',
+          teams: { home: team('HOME'), away: team('AWAY') },
+          rules: { bestOf: 3, pointsToWin: 25, decidingPointsToWin: 15, winBy: 2, pointCap: null },
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 201, 'Lab match creation failed');
+      await response.arrayBuffer();
+    }
     worker = startWorker(
       {
         CONTROL_PLANE_URL: baseURL,
@@ -458,7 +466,7 @@ export async function startDeviceLab(options, { signal } = {}) {
       installationToken: phoneToken,
       workerId: 'mac',
       outputId: 'local-sink',
-      matchId,
+      ...(matchId === undefined ? { seedMatch: false } : { matchId }),
       artifact,
       encoder: options.encoder,
       durationSeconds: options.duration,

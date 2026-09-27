@@ -117,6 +117,20 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testNativeCreatedSimulatorCameraWhileOtherPhoneScores() throws {
+        #if targetEnvironment(simulator)
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["SCOREBUG_NATIVE_CREATED_SIMULATOR"] == "1",
+              environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1" else {
+            throw XCTSkip("Use the explicit native-created two-phone simulator launcher.")
+        }
+        evidencePrefix = "NativeCreatedSimulatorCamera"
+        try runVertical(watchScoring: false, ordinarySimulator: true, separateScorer: true)
+        #else
+        throw XCTSkip("Native-created file capture lane is simulator-only.")
+        #endif
+    }
+
     @MainActor func testSeparateNativeScorerWhileOtherPhonePublishes() throws {
         #if targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
@@ -143,13 +157,29 @@ final class PhysicalStreamingTests: XCTestCase {
         try replace(app.textFields["scoring.endpoint"], with: endpoint, in: app)
         try replace(app.secureTextFields["scoring.token"], with: token, in: app)
         try tap(app.buttons["scoring.connect"], in: app)
-        try wait("Separate scorer did not join the seeded active match.", seconds: 20) {
+        let nativeCreation = environment["SCOREBUG_NATIVE_CREATED_SIMULATOR"] == "1"
+        if nativeCreation {
+            try wait("Empty server did not expose native match creation.", seconds: 20) {
+                self.allowExpectedPermissions()
+                return app.buttons["scoring.create"].exists && app.buttons["scoring.create"].isEnabled
+            }
+            try require(!app.buttons["scoring.homePoint"].exists, "Unexpected existing match; no creation was attempted.")
+            try replace(app.textFields["scoring.homeName"], with: "HOME", in: app)
+            try replace(app.textFields["scoring.awayName"], with: "AWAY", in: app)
+            try tap(app.buttons["scoring.create"], in: app)
+        }
+        try wait("Separate scorer did not acknowledge its native match connection.", seconds: 20) {
             self.allowExpectedPermissions()
             return app.buttons["scoring.homePoint"].exists
         }
         try validateSeparateScore(app, allowed: ["0:0"])
-        try require(app.buttons["scoring.takeover"].exists && !app.buttons["scoring.homePoint"].isEnabled,
-                    "Separate scorer must join without owning scoring.")
+        if nativeCreation {
+            try require(app.buttons["scoring.homePoint"].isEnabled && app.buttons["scoring.awayPoint"].isEnabled,
+                        "Native creator did not receive initial scoring ownership.")
+        } else {
+            try require(app.buttons["scoring.takeover"].exists && !app.buttons["scoring.homePoint"].isEnabled,
+                        "Separate scorer must join without owning scoring.")
+        }
         separateScorerCheckpoint(app, role: "scorer", phase: "ready", ready: true)
         // The coordinator launches the camera only after the ready attachment.
         try waitForSeparateScore(app, home: 1, away: 0, previous: "0:0", seconds: 240,

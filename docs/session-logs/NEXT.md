@@ -4,7 +4,11 @@
 
 **Simulator-first; move faster.** The owner explicitly deferred hardware testing until simulator-testable features work together. Batch changes/reviews, run focused tests for changed behavior, and reserve broad checks/media analysis for completed workflows. Do not resume physical Watch connection/pairing recovery or rebuild signed apps for small changes.
 
-Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Starting checkpoint9af24df. [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns current goals/status/todos; [current session](2026-09-26-simulator-first.md) owns history/evidence.
+Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Implementation checkpointb341b94. [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns current goals/status/todos; [current session](2026-09-26-simulator-first.md) owns history/evidence.
+
+## Current checkpoint
+
+`ordinary-native-UFjmr8`: direct Watch/phone native workflows and frame/audio-timestamp/decode checks pass. Waveform/score-image checks pending. Current next implementation is native-created two-phone simulator integration; focused40checks passed, execution pending. Hardware remains deferred.
 
 ## Active batch
 
