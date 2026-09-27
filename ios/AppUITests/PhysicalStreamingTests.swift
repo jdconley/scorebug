@@ -1140,6 +1140,8 @@ final class PhysicalStreamingTests: XCTestCase {
         try wait("Worker did not report producing_output.", seconds: 35) {
             self.value(app, "streaming.workerStatus") == "producing_output"
         }
+        // Observe physical startup before screenshots or scoring can miss the fresh 240p window.
+        if physicalRecovery { try adaptiveGate() }
         evidence(app, phase: ordinarySimulator ? "ordinary-publishing" : "hardware-publishing", screenshot: true)
         if ordinarySimulator && !recovery {
             try wait("Ordinary startup did not acknowledge 240p30 at 350000 bps.", seconds: 10) {
@@ -1314,7 +1316,7 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
-            if ordinarySimulator || recovery { try adaptiveGate() }
+            if (ordinarySimulator || recovery) && !physicalRecovery { try adaptiveGate() }
             try preservingRecoveryFailure {
                 if recovery { recoveryMilestone("live-hold-started") }
                 let holdStarted = Date()
