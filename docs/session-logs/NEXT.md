@@ -10,10 +10,18 @@ No proactive subagents. Preserve originals, recordings and unrelated simulators.
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 `codex/local-validation`. Use current Git HEAD. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [consolidated acceptance matrix](../simulator-acceptance.md) owns
-current cross-feature evidence. [Latest session](2026-09-28-1080-upload.md)
+current cross-feature evidence. [Latest session](2026-09-28-recording-quality.md)
 contains exact new results and limitations.
 
 ## Current checkpoint
+
+- Film now offers1080p/4K recording. Source/archive geometry matches and quality
+  locks through startup/recording/shutdown. Ten focused model checks and simulator
+  phone/Watch builds pass. Native4K record/export/playback/relaunch and saved media
+  pass:247consecutive30fps frames, no audio gaps,21.333ms A/V ends, no archive queue
+  losses. Evidence `recording-quality-20260928-media`. Menu-idle and artifact-copy
+  failures from earlier attempts are retained in the log. No live jobs/simulators.
+  Streaming remains capped1080; actual sustained4K input/output is still next.
 
 - Production ladder now240→360→720→1080(6Mbps), verified in`ordinary-native-PpPozK`.
   Native climb/confirmation, actual pre-scale1080receiver geometry, archive/live

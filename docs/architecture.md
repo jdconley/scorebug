@@ -87,8 +87,8 @@ and serialize append/finalize operations. Raw capture frames must be encoded; re
 the existing incorrect assumption that camera buffers already contain H.264.
 
 Archive and live encoders have independent profiles. Start with H.264/AAC live and
-SDR/Rec.709. Evaluate HEVC archive after a working H.264 baseline. Target 4K/30 archive
-on capable devices; qualify 1080p/30 first. Pick the highest archive profile that
+SDR/Rec.709. Film offers1080p/30 and4K/30 archive profiles, locked during recording.
+Evaluate HEVC archive after the H.264 baseline. Pick the highest archive profile that
 passes simultaneous recording/streaming tests on the actual phone. 60 fps is a later
 selectable mode, not a reason to sacrifice the 24 fps floor.
 

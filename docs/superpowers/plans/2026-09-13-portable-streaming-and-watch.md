@@ -25,7 +25,7 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 | Area | Implemented | Remaining acceptance |
 |---|---|---|
 | Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone, lost-reply/relaunch and pending-command takeover/stale rejection pass |
-| Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Native source/storage/queue failures and active-stream interruption recover/export; physical and sustained qualification remain |
+| Clean archive and export | Yes;1080p/4K capture selection, segmented recovery, storage guards, playback/export | Short native4K archive passes; source/storage/queue failures and active-stream interruption recover/export. Physical and sustained qualification remain |
 | SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption/restart and local Mac service pass; sustained/external qualification remains |
 | Progressive upload | Production240→360→720→1080ladder; confirmed1080at6Mbps and complete archive/live A/V pass locally |720p congestion recovery and healthy-period30fps pass; forced restriction still loses A/V.4K, sustained loads and physical profiles remain unqualified |
 | Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Two-phone plus separate Watch takeover/scoring/relaunch/end passes with real HTTP;41mm controls exercised. Real WatchConnectivity simulator registration remains unqualified |
@@ -57,6 +57,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [ ] Finish delivery-evidence retention/terminal coverage and missing-live-audio/shutdown diagnosis where still relevant to current runs; do not raise audit limits or pad silence to conceal loss.
 - [ ] Verify stale reports/no-progress handling, native readback and revision/keyframe boundaries, thermal/queue pressure, partial loss, total outage and restoration.
 - [x] Enable1080p upload through the existing measured ladder. One real-source simulator run confirms6Mbps admission, actual1920×1080receiver input, continuous30fps archive/live media, audio alignment and changing score overlays.
+- [x] Offer1080p/4K recording quality with matching source/archive dimensions and locked selection during capture. Native4K record/export/playback/relaunch passes a short real-match check:247consecutive30fps frames and gap-free audio. Sustained and physical capture remain separate gates.
 - [ ] Extend bounded measurement and capability handling for4K, then qualify sustainable profiles/overhead for each backend/device. Unsupported4K remains disabled. Maintain bounded adaptation for full-match durations.
 - [ ] Choose and document production latency/SRT policy from measured results; current diagnostic timing profiles are experiments, not industry standards.
 

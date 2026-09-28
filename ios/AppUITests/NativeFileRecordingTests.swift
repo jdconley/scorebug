@@ -3,6 +3,14 @@ import XCTest
 /// Opt-in case: the runner stages input.mov in this app's data container first.
 final class NativeFileRecordingTests: XCTestCase {
     @MainActor func testStagedMatchRecordingExportPlaybackAndRelaunch() throws {
+        try recordExportAndRelaunch(quality: nil)
+    }
+
+    @MainActor func testStaged4KMatchRecordingExportPlaybackAndRelaunch() throws {
+        try recordExportAndRelaunch(quality: "4K")
+    }
+
+    @MainActor private func recordExportAndRelaunch(quality: String?) throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["SCOREBUG_TEST_FILE_CAPTURE"] == "1", "Requires a staged local match fixture")
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -12,6 +20,10 @@ final class NativeFileRecordingTests: XCTestCase {
         app.tabBars.buttons["Recordings"].tap()
         XCTAssertTrue(app.staticTexts["No saved recordings"].waitForExistence(timeout: 10), "This test requires a fresh app container")
         app.tabBars.buttons["Film"].tap()
+        if let quality {
+            tap(app.buttons[quality])
+            XCTAssertTrue(app.staticTexts["\(quality) · 30 fps · Audio included"].exists)
+        }
         tap(app.buttons["film.start"])
         let duration = app.staticTexts["film.duration"]
         let recorded = NSPredicate { _, _ in (Double(duration.value as? String ?? "") ?? 0) >= 6 }

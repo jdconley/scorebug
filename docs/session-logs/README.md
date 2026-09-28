@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 recording quality](2026-09-28-recording-quality.md) — configurable camera/archive geometry and focused native 4K recording qualification.
+
 - [September 28 1080p upload](2026-09-28-1080-upload.md) — production ladder extension, one native climb, true decoded geometry and complete A/V/overlay verification.
 
 - [September 28 relay generation and healthy media](2026-09-28-relay-generation-and-healthy-media.md) — stale session/generation rejection, late reader, and retained phase acceptance.

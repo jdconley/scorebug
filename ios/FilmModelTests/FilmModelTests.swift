@@ -4,6 +4,30 @@ import ScorebugMedia
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
+    func testRecordingQualityConfiguresSourceAndArchiveAndLocksDuringCapture() async throws {
+        let root = testRecordingRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var sourceProfiles: [ArchiveProfile] = []
+        let model = FilmModel(library: RecordingLibrary(rootDirectory: root), configuredSourceFactory: { profile in
+            sourceProfiles.append(profile)
+            return FilmTestSource()
+        }, sinkFactory: testArchiveSink)
+        XCTAssertEqual(model.profile, RecordingQuality.hd1080.profile)
+        XCTAssertTrue(model.selectQuality(.uhd2160))
+        await model.start()
+        XCTAssertEqual(model.state, .recording)
+        XCTAssertFalse(model.selectQuality(.hd1080))
+        let id = try XCTUnwrap(model.currentCapture?.id)
+        XCTAssertEqual(sourceProfiles, [RecordingQuality.uhd2160.profile])
+        let archive = try ArchiveSegmentStore.recover(directory: root.appendingPathComponent(id))
+        XCTAssertEqual(archive.profile, RecordingQuality.uhd2160.profile)
+        await model.stop()
+        XCTAssertTrue(model.selectQuality(.hd1080))
+        await model.start()
+        XCTAssertEqual(sourceProfiles, [RecordingQuality.uhd2160.profile, RecordingQuality.hd1080.profile])
+        await model.stop()
+    }
+
     func testSourceFactoryFailureCancelsUnusedSinkAndAllowsRetry() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -204,8 +228,10 @@ import XCTest
         let model = FilmModel(library: RecordingLibrary(rootDirectory: root), sourceFactory: { source }, sinkFactory: testArchiveSink)
         let starting = Task { await model.start() }
         await gate.waitUntilEntered()
+        XCTAssertFalse(model.selectQuality(.uhd2160), "Quality locks during source preparation")
         let stopping = Task { await model.stop() }
         while model.state != .stopping { await Task.yield() }
+        XCTAssertFalse(model.selectQuality(.uhd2160), "Quality locks until shutdown joins")
         await gate.release()
         await starting.value
         await stopping.value

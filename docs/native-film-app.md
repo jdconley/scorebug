@@ -10,11 +10,13 @@ There is no browser scorer or unimplemented LIVE indicator in this app.
 
 Film creates no source or permission request until Record. Recording needs no match,
 network connection, server setup, or streaming key. It owns its capture source across
-tab changes, so native scoring on the same phone does not end recording. The current
-archive profile is 1080p/30 SDR H.264 with 48 kHz mono AAC. Device capture uses the
+tab changes, so native scoring on the same phone does not end recording. Film offers 1080p/30 (default,12Mbps) and4K/30 (30Mbps) SDR H.264 recording
+with48kHz mono AAC. Quality locks from startup through finalization; source and
+archive use the same dimensions. Unsupported camera formats fail explicitly. Device capture uses the
 rear camera in landscape; Debug Simulator builds clearly label their generated
 video/audio source. The independent live publisher is now connected through native
-[streaming controls](native-streaming-controls.md); adaptive quality remains pending.
+[streaming controls](native-streaming-controls.md), with a measured240→360→720→1080
+upload ladder. Recording quality stays independent of adaptive streaming.
 
 The recording model joins source quiescence and archive finalization before marking
 a recording complete. Failures remain visible and retain committed media for recovery.

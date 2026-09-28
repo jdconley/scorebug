@@ -3,6 +3,15 @@ import Combine
 import Foundation
 import ScorebugMedia
 
+enum RecordingQuality: String, CaseIterable, Identifiable {
+    case hd1080, uhd2160
+    var id: String { rawValue }
+    var label: String { self == .hd1080 ? "1080p" : "4K" }
+    var profile: ArchiveProfile {
+        self == .hd1080 ? ArchiveProfile() : ArchiveProfile(width: 3840, height: 2160, videoBitRate: 30_000_000)
+    }
+}
+
 struct CurrentCapture: Sendable {
     let id: String
     let startedAt: String
@@ -33,8 +42,14 @@ struct CurrentCapture: Sendable {
     var canStart: Bool { (state == .idle || state == .failed) && exportingID == nil && !isScanning }
     var canStop: Bool { state == .starting || state == .recording }
     private let library: RecordingLibrary
-    private let profile: ArchiveProfile
-    private let sourceFactory: () throws -> any CaptureSource
+    @Published private(set) var profile: ArchiveProfile
+    var recordingQuality: RecordingQuality { profile.width == 3840 && profile.height == 2160 ? .uhd2160 : .hd1080 }
+    @discardableResult func selectQuality(_ quality: RecordingQuality) -> Bool {
+        guard canStart else { return false }
+        profile = quality.profile
+        return true
+    }
+    private let sourceFactory: (ArchiveProfile) throws -> any CaptureSource
     private let sinkFactory: RecordingLibrary.SinkFactory
     private let durationReader: @Sendable (any RecordingArchiveSink) -> Double?
     private var draft: RecordingDraft?
@@ -71,15 +86,25 @@ struct CurrentCapture: Sendable {
     private var fileFixtureSource: FileFixtureCameraSource?
     #endif
 
-    init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
+    convenience init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
          sourceFactory: @escaping () throws -> any CaptureSource,
+         sinkFactory: @escaping RecordingLibrary.SinkFactory = RecordingLibrary.defaultSinkFactory,
+         durationReader: @escaping @Sendable (any RecordingArchiveSink) -> Double? = {
+             ($0 as? SegmentedArchiveSink)?.writer.acceptedDuration
+         }) {
+        self.init(library: library, profile: profile, configuredSourceFactory: { _ in try sourceFactory() },
+                  sinkFactory: sinkFactory, durationReader: durationReader)
+    }
+
+    init(library: RecordingLibrary = RecordingLibrary(), profile: ArchiveProfile = ArchiveProfile(),
+         configuredSourceFactory: @escaping (ArchiveProfile) throws -> any CaptureSource,
          sinkFactory: @escaping RecordingLibrary.SinkFactory = RecordingLibrary.defaultSinkFactory,
          durationReader: @escaping @Sendable (any RecordingArchiveSink) -> Double? = {
              ($0 as? SegmentedArchiveSink)?.writer.acceptedDuration
          }) {
         self.library = library
         self.profile = profile
-        self.sourceFactory = sourceFactory
+        self.sourceFactory = configuredSourceFactory
         self.sinkFactory = sinkFactory
         self.durationReader = durationReader
     }
@@ -101,7 +126,7 @@ struct CurrentCapture: Sendable {
             do {
                 // Do not construct a source after cancellation during archive setup.
                 guard state == .starting else { throw RecordingSessionError.cancelled }
-                source = try sourceFactory()
+                source = try sourceFactory(profile)
             } catch {
                 // No RecordingSession has taken ownership of this sink yet.
                 created.sink.cancel()

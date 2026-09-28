@@ -11,8 +11,8 @@ public enum CameraCaptureError: Error, Sendable {
 /// activates hardware. The owner must call stop() even after partial preparation.
 /// Only preview-layer attachment may use previewSession; configuration is private.
 public final class IOSCameraCaptureSource: CaptureSource, Sendable {
-    private let core = CameraCaptureCore()
-    public init() {}
+    private let core: CameraCaptureCore
+    public init(profile: ArchiveProfile = ArchiveProfile()) { core = CameraCaptureCore(profile: profile) }
     deinit { core.requestStop() }
     public var previewSession: AVCaptureSession { core.session }
 
@@ -32,6 +32,8 @@ public final class IOSCameraCaptureSource: CaptureSource, Sendable {
 /// it never waits for encoding, networking, or MainActor work.
 private final class CameraCaptureCore: NSObject, @unchecked Sendable,
     AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let profile: ArchiveProfile
+    init(profile: ArchiveProfile) { self.profile = profile; super.init() }
     let session = AVCaptureSession()
     private let controlQueue = DispatchQueue(label: "live.scorebug.camera.control", qos: .userInitiated)
     private let sampleQueue = DispatchQueue(label: "live.scorebug.camera.samples", qos: .userInitiated)
@@ -91,6 +93,7 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
     func requestStop() { controlQueue.async { self.stopOnControlQueue() } }
 
     private func configure() throws {
+        try profile.validate()
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.record, mode: .videoRecording)
         try audioSession.setPreferredSampleRate(48_000)
@@ -106,8 +109,8 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
               let microphone = AVCaptureDevice.default(for: .audio) else { throw CameraCaptureError.unavailableDevice }
         guard let format = camera.formats.first(where: {
             let size = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
-            return size.width == 1920 && size.height == 1080 &&
-                $0.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }
+            return size.width == profile.width && size.height == profile.height &&
+                $0.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= Double(profile.framesPerSecond) && $0.maxFrameRate >= Double(profile.framesPerSecond) }
         }) else { throw CameraCaptureError.unsupportedFormat }
         let cameraInput = try AVCaptureDeviceInput(device: camera)
         let microphoneInput = try AVCaptureDeviceInput(device: microphone)
@@ -118,8 +121,8 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
         session.addInput(microphoneInput)
         try camera.lockForConfiguration()
         camera.activeFormat = format
-        camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
-        camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
+        camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(profile.framesPerSecond))
+        camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(profile.framesPerSecond))
         camera.automaticallyAdjustsVideoHDREnabled = false
         if format.isVideoHDRSupported { camera.isVideoHDREnabled = false }
         camera.unlockForConfiguration()
@@ -136,7 +139,7 @@ private final class CameraCaptureCore: NSObject, @unchecked Sendable,
         guard let connection = video.connection(with: .video), connection.isVideoRotationAngleSupported(0) else {
             throw CameraCaptureError.unsupportedOutput
         }
-        connection.videoRotationAngle = 0 // Sensor landscape, 1920 × 1080.
+        connection.videoRotationAngle = 0 // Sensor landscape at the selected capture dimensions.
         if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .off }
     }
 

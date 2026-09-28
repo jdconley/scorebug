@@ -107,7 +107,14 @@ private struct FilmView: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Saved on this device", systemImage: "internaldrive")
-                        Text("1080p · 30 fps · Audio included").foregroundStyle(.secondary)
+                        Picker("Recording quality", selection: Binding(get: { model.recordingQuality }, set: { model.selectQuality($0) })) {
+                            ForEach(RecordingQuality.allCases) { quality in Text(quality.label).tag(quality) }
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(!model.canStart)
+                        .accessibilityIdentifier("film.recordingQuality")
+                        Text("\(model.recordingQuality.label) · 30 fps · Audio included").foregroundStyle(.secondary)
+                        Text("Streaming quality adapts independently.").font(.caption).foregroundStyle(.secondary)
                         if let bytes = model.freeBytes {
                             Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) available")
                                 .font(.caption).foregroundStyle(.secondary)
