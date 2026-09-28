@@ -265,6 +265,7 @@ actor PublishingQualitySession {
     #if DEBUG
     private var lastMeasurementDiagnostic: [String: String] = [:]
     private var candidateSourceDiagnostic: [String: String] = [:]
+    private var cadenceRejectionTiming: String?
     #endif
     private var ownedPredecessor: PublishingBandwidthProbeRetirement?
     private var ownedSource: SourceScope?
@@ -519,11 +520,13 @@ actor PublishingQualitySession {
             result["candidateConsecutiveFailures"] = String(health.consecutiveFailures)
             result["requiredHealthyDurationSeconds"] = String(health.requiredHealthyDuration)
             result["strongHealthDurationSeconds"] = health.strongHealthStart.flatMap { start in health.strongHealthEnd.map { String($0 - start) } }
+            result["recoveryCoverageSeconds"] = health.recoveryStart.flatMap { start in health.strongHealthEnd.map { String($0 - start) } }
         }
         if let readiness {
             result["sharedRecoveryReady"] = String(candidateRecovery?.permits(healthySince: readiness.healthySince,
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) ?? true)
         }
+        result["cadenceRejectionTiming"] = cadenceRejectionTiming
         result["candidateProbeDemandBitsPerSecond"] = candidateProbeDemand.map { String($0.measuredCost) }
         result["appliedTransition"] = appliedTransition
         result.merge(lastMeasurementDiagnostic) { _, latest in latest }
@@ -1000,6 +1003,17 @@ actor PublishingQualitySession {
             #if DEBUG
             if let evaluationAt, let evaluationInstant {
                 let age = cadence.ageDiagnostic(at: evaluationInstant)
+                // One bounded latest rejection, including failures outside a trial.
+                // The ordinary UI used to retain only the later current sample age,
+                // which cannot identify the stage that caused this rejection.
+                let timing = ["at": evaluationAt,
+                    "server": EvaluationDiagnostic.seconds(age.serverAge),
+                    "request": EvaluationDiagnostic.seconds(age.requestDuration),
+                    "residence": EvaluationDiagnostic.seconds(age.residence),
+                    "total": EvaluationDiagnostic.seconds(age.total)].compactMapValues { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: timing, options: [.sortedKeys]) {
+                    cadenceRejectionTiming = String(data: data, encoding: .utf8)
+                }
                 var witness = ["cadenceReceiptID": cadence.receiptID.uuidString.lowercased(),
                     "cadenceEvaluatedAt": String(evaluationAt), "cadenceAgeState": age.state.rawValue,
                     "cadenceMaximumSampleAgeSeconds": String(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),

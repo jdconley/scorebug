@@ -9,7 +9,7 @@ pushes, real broadcasts or purchases. Preserve originals and unrelated simulator
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [acceptance matrix](../simulator-acceptance.md) owns retained evidence.
-[Current session](2026-09-28-uhd-app-integration.md) records this batch.
+[Current session](2026-09-28-faster-media-iteration.md) records the faster diagnostic path.
 
 ## Active checkpoint
 
@@ -43,15 +43,22 @@ attachments retained. Session log records earlier failures and their fixes.
 
 ## Next work
 
-1. Diagnose report freshness/scheduling from Xg2t0t and focused model checks BEFORE
-   another full capture. Do not repeat parameter-only runs or blanket timing relaxations.
-   If a live reproducer is needed, add an opt-in headless Mac harness using existing
-   FileFixtureCameraSource + FilmModel/CaptureStreamingModel + real local lab; skip UI
-   setup/export during diagnosis, but retain native archive and joined stop. This
-   diagnoses media/control only and cannot replace native UI acceptance.
-   After the regression passes, qualify full4K climb and saved media using
-   `artifacts/qa/verify-2160-climb-20260928.py`, `verify-uhd-media-20260928.py` and
-   `collect-ordinary-export-20260925.py`. Native24fps/media limits remain unchanged.
+1. Use `scripts/test-headless-streaming.mjs` for focused real-native media diagnosis
+   before another full simulator/UI/export run. It uses the real archive, production
+   quality models, local proxy and mock recorder, retaining raw segments and timing
+   audit. First120s run `headless-native-hmNggn` passes joined lifecycle, reaches360;
+   acquisition cadence age stays below115ms, so simulator freshness is not reproduced.
+   Extended180s `headless-native-qfiBCM` reaches720 then resets240 on cadence freshness:
+   HTTP168ms + server119ms + residence2.6ms =289.7ms; native probe only0.034ms.
+   Second delayed response457.6ms.1798audit rows/two over250ms. Both native paths
+   remain active; exit0/cleanup[]. All jobs joined. This is not UI/media acceptance.
+   Current diagnostics now separate cumulative recovery coverage from latest-window
+   duration and preserve the exact rejected cadence's age breakdown outside trials.
+   Next fix the production report timing using this exact HTTP-delay regression.
+   Preserve strict250ms benchmark and immutable historical contracts; any production
+   age-budget change needs coherent versioning across Core/telemetry/delivery.
+   Do not treat delayed evidence as fresh or weaken ownership/media criteria.
+   After a focused fix passes, qualify full4K climb/media using the retained helpers.
 2. Audit remaining delivery/pressure TODOs against existing focused coverage.
    Investigate severe-outage losses from saved evidence; no repeated unchanged captures.
 3. Sustained profile qualification, then physical companion/radio and external hosts.

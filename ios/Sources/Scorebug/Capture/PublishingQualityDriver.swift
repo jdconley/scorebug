@@ -403,7 +403,8 @@ import ScorebugStreaming
             fields["diagnosticCompacted"] = "true"
             let protected = Set(["appliedTransition", "observedAtUptimeSeconds", "sessionObservedAtUptimeSeconds",
                 "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted",
-                "timingProfileID", "decoderBudgetMilliseconds", "captureWindowMaximumAgeMilliseconds"])
+                "timingProfileID", "decoderBudgetMilliseconds", "captureWindowMaximumAgeMilliseconds",
+                "cadenceRejectionTiming", "recoveryCoverageSeconds"])
             let removable = fields.keys.filter { !$0.hasPrefix("policy") && !protected.contains($0) }.sorted {
                 let lhsHistory = $0.hasPrefix("lastCandidate") || $0.hasPrefix("lastMeasurement")
                 let rhsHistory = $1.hasPrefix("lastCandidate") || $1.hasPrefix("lastMeasurement")

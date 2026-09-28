@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 faster media iteration](2026-09-28-faster-media-iteration.md) — opt-in native media diagnostics without simulator UI/export overhead.
+
 - [September 28 UHD app integration](2026-09-28-uhd-app-integration.md) — capability-gated4K pipeline, bounded probe propagation and native integration diagnosis.
 
 - [September 28 UHD probe protocol](2026-09-28-uhd-probe-protocol.md) — explicit bounded v4 sender/receiver support; legacy limits preserved.

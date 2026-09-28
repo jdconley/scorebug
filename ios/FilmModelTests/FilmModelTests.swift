@@ -362,3 +362,78 @@ private struct SourceFactoryTestSink: RecordingArchiveSink {
     func finish() async throws -> RecoveredArchive { try await wrapped.finish() }
     func cancel() { cancellations.cancelled(); wrapped.cancel() }
 }
+
+// Opt-in real media diagnostic. Ordinary unit-test runs skip this test. It uses
+// production models and transport; UI, Watch routing and media acceptance remain
+// the responsibility of the simulator lanes.
+extension FilmModelTests {
+    func testHeadlessLocalStreamingDiagnostic() async throws {
+        guard let path = ProcessInfo.processInfo.environment["SCOREBUG_HEADLESS_CONFIG"] else {
+            throw XCTSkip("Run scripts/test-headless-streaming.mjs to enable real local media")
+        }
+        struct Configuration: Decodable {
+            struct Setup: Decodable {
+                let endpoint: String, installationToken: String, workerId: String, outputId: String
+            }
+            let setup: Setup
+            let source: String, artifact: String
+            let duration: Double
+            let uhd: Bool
+        }
+        let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
+        let artifact = URL(fileURLWithPath: config.artifact)
+        let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
+        streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken
+        streaming.workerId = config.setup.workerId; streaming.outputId = config.setup.outputId
+        streaming.cadenceReportFixtureWriter = { data in
+            try? data.write(to: artifact.appendingPathComponent("cadence.json"), options: .atomic)
+        }
+        let film = FilmModel(library: RecordingLibrary(rootDirectory: artifact.appendingPathComponent("archive")),
+            profile: config.uhd ? RecordingQuality.uhd2160.profile : RecordingQuality.hd1080.profile,
+            configuredSourceFactory: { FileFixtureCameraSource(url: URL(fileURLWithPath: config.source), profile: $0) })
+        film.onCaptureChanged = { streaming.captureChanged($0) }
+        film.onCaptureFinished = { streaming.captureFinished($0, interrupted: $1) }
+        await streaming.connect()
+        await film.start()
+        await streaming.startStreaming()
+        let started = ContinuousClock.now
+        let worker = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollWorkerStatus() }) }
+        let control = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollBackgroundControl() }) }
+        let health = Task {
+            while !Task.isCancelled {
+                streaming.pollLocalHealth()
+                do { try await Task.sleep(for: CaptureStreamingModel.publishingHealthInterval) } catch { return }
+            }
+        }
+        var samples: [[String: String]] = []
+        var diagnosticError: Error?
+        do {
+            while ContinuousClock.now < started + .seconds(config.duration), film.state == .recording,
+                  streaming.localState == .publishing {
+                await film.pollHealth()
+                if let text = streaming.qualityDiagnostic,
+                   let fields = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] {
+                    samples.append(fields)
+                }
+                try await Task.sleep(for: .milliseconds(500))
+            }
+        } catch { diagnosticError = error }
+        let wasRecording = film.state == .recording, wasPublishing = streaming.localState == .publishing
+        worker.cancel(); control.cancel(); health.cancel()
+        await worker.value; await control.value; await health.value
+        await streaming.stopStreaming()
+        await film.stop()
+        let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples,
+            "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
+            "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
+        try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
+            to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
+        if let diagnosticError { throw diagnosticError }
+        XCTAssertTrue(wasRecording, "Native archive stopped early")
+        XCTAssertTrue(wasPublishing, "Native publisher stopped early")
+        XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics")
+        XCTAssertEqual(film.state, .idle, "Archive finalization must complete")
+        XCTAssertEqual(streaming.localState, .idle, "Native publisher must join")
+    }
+}

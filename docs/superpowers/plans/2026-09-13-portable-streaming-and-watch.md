@@ -34,6 +34,8 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 
 Implementation evidence and failures live in [session logs](../../session-logs/README.md). [NEXT](../../session-logs/NEXT.md) identifies the current checkout, commands and handoff. Checkmarks below mean the stated item is complete, not blanket release qualification.
 
+Iteration policy: batch related changes, reuse retained passing evidence, and use the headless native media diagnostic for adaptation fixes. Run affected focused checks first; run full simulator/media acceptance at feature checkpoints. Hardware stays deferred.
+
 ## 1. Finish the complete simulator vertical
 
 - [x] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
@@ -59,7 +61,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Enable1080p upload through the existing measured ladder. One real-source simulator run confirms6Mbps admission, actual1920×1080receiver input, continuous30fps archive/live media, audio alignment and changing score overlays.
 - [x] Offer1080p/4K recording quality with matching source/archive dimensions and locked selection during capture. Native4K record/export/playback/relaunch passes a short real-match check:247consecutive30fps frames and gap-free audio. Sustained and physical capture remain separate gates.
 - [x] Implement explicit bounded UHD probe protocolv4 across native transport, relay, API and Swift receiver validation, preserving legacy limits. Focused ownership/wire/accounting checks pass; actual4K traffic remains unqualified.
-- [ ] Complete4K integration: immutable UHD measurement budget and fresh source/output capability gating are wired. 4K archive/export and360p increase pass; fix report freshness/scheduling that blocks720and higher, then verify full climb/media and sustained profiles. Unsupported source/output combinations retain the1080 ceiling.
+- [ ] Complete4K integration: immutable UHD measurement budget and fresh source/output capability gating are wired. 4K archive/export and360p increase pass; focused native diagnosis reaches720p but a delayed status request exceeds the250ms report budget and resets probation. Fix production report timing, then verify full simulator climb/media and sustained profiles. Unsupported source/output combinations retain the1080 ceiling.
 - [x] Select the measured broadcast-reliability3000 policy:3000ms decoder budget,3500ms capture-evaluation age, default negotiated SRT latency. Preserve independent freshness/loss/stall checks. The larger peer-buffer trial worsened media and was rejected; these are product settings, not industry standards.
 
 Healthy-period acceptance: ≥24 freshfps in99% of rolling five-second windows; stable30fps profiles have<1% fresh-frame loss. Report transients/outages explicitly. Network failure must not stop or corrupt the clean archive. Existing stricter experimental contracts retain their original results.
