@@ -1,0 +1,56 @@
+# Simulator acceptance checkpoint
+
+Updated September 28, 2026. The normal local vertical works: native phone recording
+and scoring, separate native Watch scoring, SRT upload, score overlay, RTMP to a
+mock YouTube recorder, and optional proxy MP4. **The full release gate is still
+open**, chiefly for severe congestion, sustained profiles and external deployment.
+
+This checkpoint consolidates retained incremental results. It is not a claim that
+every test was rerun at one Git revision. Artifact directories below are relative
+to the authoritative checkout's `artifacts/qa/`; session logs retain revisions,
+commands, failures and detailed limits. Re-run an affected workflow when its
+production behavior changes, not when unrelated documentation or fixtures change.
+
+| Capability | Evidence | Result and scope |
+| --- | --- | --- |
+| Two native phones, independent clean archive, changing overlay, both outputs | `native-created-simulators-opRrou/vertical-acceptance.json` | Passed. Native create/discovery/takeover/undo; continuous 30 fps archive and live media; waveform A/V and changing visible score verified. |
+| Separate Watch scoring while phone films | `native-created-simulators-yjIyo3/native-media-verification/separate-watch-acceptance.json` | Native takeover/undo/relaunch/end passed on 41 mm Watch UI. Real HTTP; simulator setup fixture. Not WatchConnectivity qualification. Original cleanup false alarm and independent cleanup evidence retained. |
+| Pending point, takeover and offline native recovery | `native-scoring-recovery-Ff9bG1` | Passed. Exactly seven durable outcomes, one applied point, two takeovers, two stale rejections, undo/end; app data preserved. Peer takeover uses a real API actor. |
+| Source, storage and writer-pressure archive recovery | `recording-faults-20260928-fixed/media-verification/results.json` | Three native cases passed; each exports six seconds of consecutive 30 fps video. Source fault loses two seconds of uncommitted tail. |
+| Live source interruption and fresh recording/broadcast | `ordinary-native-C7yloY/native-media-verification/` | Passed. Interrupted archive: 1,320 consecutive frames/44 seconds; fresh archive: 882 frames/29.4 seconds. Four accepted start/stop operations at generations 1–4. Both output sessions decode; final score 1–0. All measured A/V ends within 45 ms. Finite 45-second file source, not a physical camera interruption. |
+| API and worker restart | `ordinary-native-QOuplL/native-media-verification/` and `ordinary-native-SvL3gk/native-media-verification/` | Automatic recovery passed, including worker SIGKILL; native archive continuous. Hard-crash interrupted outputs retain 508–548 ms extra audio. |
+| Remote Watch end and stream drain | `ordinary-native-q9n288` | Passed; archive and live A/V ends within 40 ms. |
+| Adaptive upload | `ordinary-native-IZI72F` | Start-low, increase, minimum fallback and recovery work. Clean archive continuous. Severe-collapse live media **fails**: 87 missing frame IDs, 16 audio gaps, maximum video gap 2.4 seconds. |
+| Local portable server stack | `vps-stack-wozlWz`, `backend-capabilities-20260928`, `device-lab-P7D4bv/macos-service-result.json` | Container persistence/managed relay and encoder initialization passed. Actual Mac launchd worker produces both decoded MP4s with score 1–0 and A/V ends within71ms; clean worker exit and owned descendant cleanup verified. Sustained capacity and external hosts remain open. |
+
+## Tested platform boundaries
+
+| Configuration | What the evidence establishes |
+| --- | --- |
+| Apple Silicon Mac, Xcode 26.2, iPhone 14/iOS 26.2 simulator | Current full native file-source workflows and real local media pipeline. Build arm64 explicitly; local SRT binaries do not support the attempted x86_64 simulator link. |
+| Series 7 41 mm/watchOS 26.2 simulator | Native layout, scoring, restoration and real HTTP while the phone publishes. Companion registration/radio routes remain separate. |
+| iOS 17.5/18.5 simulator | Preserved earlier archive/relaunch/export results in [native recording](native-film-app.md); not a fresh full-feature matrix. Use installed runtimes, never assume deleted runtimes remain. |
+| Mac software/VideoToolbox worker | Encoder initialization and local pipeline evidence; no blanket 1080p/4K or full-match throughput guarantee. |
+| Local Linux container stack | API persistence, managed relay and software worker checks. Not external TLS/firewall/NVIDIA qualification. |
+| Physical iPhone/Watch and external hosts | Deferred until the remaining simulator-testable integration gates are resolved. |
+
+## Iteration and CI
+
+Batch one behavior change, run its focused checks, then run the affected integration
+workflow once. Keep existing incremental Xcode build directories. Use
+`node scripts/test-apple.mjs --pending-takeover --ui-only` for that scoring workflow;
+it skips unrelated model suites and physical builds. Use
+`node scripts/test-ordinary-native-app.mjs --host <LAN-IP> --source <prepared.mov> --lane source-interruption`
+with a 45-second prepared clip for the live interruption case. The runner's workflow
+result does not by itself qualify the saved media; retain the output analysis too.
+
+Linux CI already covers protocol/scoring, real API recovery, relay credentials and
+revocation, software worker media, and container startup/persistence. The new
+path-filtered [native workflow](../.github/workflows/native.yml) adds shared Swift
+and native scoring-model tests plus a full phone/embedded-Watch simulator build.
+It has not yet run on GitHub. It uses the published
+[macOS 15 arm64 image and Xcode 26.2](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).
+Hosted compilation is not Watch UI or Docker media acceptance; those remain bounded
+local workflow checkpoints. No physical signing or full media soak runs for each edit.
+
+All outstanding work remains in the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md).

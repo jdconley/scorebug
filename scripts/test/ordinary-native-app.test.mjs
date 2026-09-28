@@ -807,3 +807,20 @@ test('server crash reuses native recovery workflow but explicitly kills the work
   assert.equal(lane.phoneTest, ordinaryLaneConfiguration('server-recovery').phoneTest);
   assert.equal(ordinaryLaneConfiguration('server-recovery').workerCrash, undefined);
 });
+
+test('source interruption uses the ordinary native source lifecycle without process restart', () => {
+  const options = ordinaryNativeOptions(
+    ['--host', '192.168.1.130', '--source', '/short.mov', '--lane', 'source-interruption'],
+    interfaces,
+  );
+  const lane = ordinaryLaneConfiguration(options.lane);
+  assert.equal(lane.sourceInterruption, true);
+  assert.equal(lane.serverRecovery, undefined);
+  assert.equal(lane.recovery, false);
+  const env = ordinaryTestEnvironment({
+    ...lane,
+    setup: { endpoint: 'http://192.168.1.130:1234', installationToken: 'test' },
+  });
+  assert.equal(env.SCOREBUG_SOURCE_INTERRUPTION, '1');
+  assert.equal(env.SCOREBUG_SERVER_RECOVERY, undefined);
+});

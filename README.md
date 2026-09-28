@@ -15,6 +15,7 @@ to YouTube.
 - [Architecture and requirements](docs/architecture.md)
 - [Encoding formats and streaming protocols](docs/streaming-formats-and-protocols.md)
 - [Delivery milestones and acceptance gates](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+- [Simulator acceptance and tested platform matrix](docs/simulator-acceptance.md)
 - [Local, simulator, phone, and watch validation](docs/local-testing.md)
 - [Native scoring API progress](docs/native-scoring-api.md)
 - [Media control API and recovery evidence](docs/media-control-api.md)
@@ -41,12 +42,12 @@ apps/control-plane/     Hono API and game state
 apps/home-daemon/       Broadcast worker (name retained from initial implementation)
 packages/protocol/      Shared TypeScript contracts
 docs/                   Design and validation plans
-infra/vps/              Initial deployment configuration; repairs planned
+infra/vps/              Persistent API and managed relay deployment configuration
 ```
 
 The initial overlay is FFmpeg text. Animated graphics and player callouts are later
-work; there is no separate overlay app yet. Local recording and portable/watch
-features require the implementation and validation described in the plan.
+work; there is no separate overlay app yet. Local recording, native scoring and both proxy outputs are implemented; remaining
+qualification is tracked in the plan.
 
 ## Development
 

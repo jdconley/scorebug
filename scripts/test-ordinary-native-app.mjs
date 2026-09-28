@@ -74,6 +74,7 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
         'recovery720',
         'server-recovery',
         'server-crash',
+        'source-interruption',
       ].includes(lane),
     'Unsupported ordinary lane',
   );
@@ -106,6 +107,7 @@ export function ordinaryLaneConfiguration(lane) {
         'recovery720',
         'server-recovery',
         'server-crash',
+        'source-interruption',
       ].includes(lane),
   );
   const directWatch = lane === 'watch-direct';
@@ -118,6 +120,7 @@ export function ordinaryLaneConfiguration(lane) {
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
     ...(lane === 'server-recovery' || lane === 'server-crash' ? { serverRecovery: true } : {}),
     ...(lane === 'server-crash' ? { workerCrash: true } : {}),
+    ...(lane === 'source-interruption' ? { sourceInterruption: true } : {}),
     phoneTest: directWatch
       ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
       : lane === 'recovery720'
@@ -139,6 +142,7 @@ export function ordinaryTestEnvironment({
   recovery = false,
   recovery720 = false,
   serverRecovery = false,
+  sourceInterruption = false,
   watch = false,
   setup,
   recoveryControl,
@@ -188,6 +192,7 @@ export function ordinaryTestEnvironment({
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
     ...(serverRecovery ? { SCOREBUG_SERVER_RECOVERY: '1' } : {}),
+    ...(sourceInterruption ? { SCOREBUG_SOURCE_INTERRUPTION: '1' } : {}),
     ...(directWatch ? { SCOREBUG_DIRECT_WATCH_SIMULATOR: '1' } : {}),
     ...(paired ? { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' } : {}),
     ...(recovery
@@ -468,6 +473,7 @@ async function main() {
     recovery720,
     serverRecovery = false,
     workerCrash = false,
+    sourceInterruption = false,
     phoneTest,
     allowance,
     timeout,
@@ -702,6 +708,7 @@ os.chmod(destination, 0o600)
             recovery,
             recovery720,
             serverRecovery,
+            sourceInterruption,
             watch: isWatch,
             setup: lab.setup,
             recoveryControl: lab.recoveryControl,

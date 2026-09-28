@@ -24,13 +24,13 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 
 | Area | Implemented | Remaining acceptance |
 |---|---|---|
-| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone, lost-reply/relaunch and pending-command takeover/stale rejection pass; consolidated checkpoint remains |
-| Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Native source/storage/queue failures recover/export; active-stream interruption and consolidated checkpoint remain |
-| SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption; actual service operation |
+| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone, lost-reply/relaunch and pending-command takeover/stale rejection pass |
+| Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Native source/storage/queue failures and active-stream interruption recover/export; physical and sustained qualification remain |
+| SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption/restart and local Mac service pass; sustained/external qualification remains |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p→minimum→720p controller/geometry passes; forced collapse still loses live A/V. Higher profiles and sustained operation unqualified |
 | Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Two-phone plus separate Watch takeover/scoring/relaunch/end passes with real HTTP;41mm controls exercised. Real WatchConnectivity simulator registration remains unqualified |
 | Physical system | Phone local archive/native scoring/proxy/mock outputs work; standalone Ultra2 scoring works | Combined paired run and sustained/radio-route testing deferred; uncertain test pairing preserved |
-| Portability | Mac service helper and Linux CPU/GPU runbooks implemented; local container persistence and encoder startup checks pass | Actual service operation, sustained backend profile matrix and other-host runtime qualification |
+| Portability | Mac service helper and Linux CPU/GPU runbooks implemented; local container persistence and encoder startup checks pass | Local Mac service outputs/cleanup pass; sustained backend profile matrix and other-host runtime qualification remain |
 
 Implementation evidence and failures live in [session logs](../../session-logs/README.md). [NEXT](../../session-logs/NEXT.md) identifies the current checkout, commands and handoff. Checkmarks below mean the stated item is complete, not blanket release qualification.
 
@@ -44,7 +44,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Extend separate native phone scoring through Watch B takeover, undo, relaunch and end while phone A records/streams; both phones observe the changes and lose scoring authority. All controls are exercised on41mm Series7. Real companion transport and broader device qualification remain deferred.
 - [x] Verify native lost-reply recovery against the real API: persist the uncertain applied point, relaunch offline, reconcile its original receipt, undo and end with exactly one durable outcome per command. Native UI/API assertions pass; post-test data-copy limitation is recorded in the session log.
 - [x] Verify takeover during an unresolved command and stale-command recovery against the real API with native restoration. One applied point, two authority transfers and two rejected stale attempts retain exactly the intended durable outcomes; native controls reflect current ownership.
-- [ ] Complete one consolidated simulator regression checkpoint covering native phone, Watch, archive recovery/export and the real local media pipeline. Separate any unsupported simulator OS transport from application feature results.
+- [x] Consolidate retained incremental simulator results for phone, Watch, archive/export and the real media pipeline in the [acceptance matrix](../../simulator-acceptance.md). This is not a same-revision full rerun; severe-congestion and transport limits remain explicit.
 
 ## 2. Make adaptive streaming reliable
 
@@ -66,16 +66,19 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 - [x] Keep native recording/publishing through API restart and graceful worker restart; recover the current score and both output recordings automatically. Simulator archive preserves every source frame through both outages.
 - [x] Verify native recovery after hard worker SIGKILL with real API/relay/output recordings. Clean archive preserves every source frame, output recovers automatically, and both final MP4s show the correct score with A/V ends within26ms.
 - [x] Qualify local recording through native source interruption, low-capacity storage and blocked-writer queue pressure. All three recover/export continuous30fps H264/AAC with no audio gaps and A/V ends within28ms; source-interruption tail loss is2seconds.
-- [ ] Verify publishing cleanup/restart through source interruption. Interrupted output tails retain508–548ms of audio beyond final video in the measured hard-crash run; improve or establish a tested bound for that behavior.
+- [x] Verify publishing cleanup and fresh recording/broadcast after live source interruption. Both archives preserve consecutive source frames; API generations advance correctly and both output sessions decode with A/V ends within45ms. Physical interruptions remain deferred.
+- [ ] Bound interrupted output tails across abrupt failure timing/load. Hard-crash output retains508–548ms extra audio; graceful source interruption now ends within45ms.
 - [x] Exercise full-app offline recording, forced termination/relaunch, native export/playback and decoded continuity on iOS17.5/18.5/26.2; reuse the preserved results in [native recording](../../native-film-app.md).
 - [x] Exercise full-app low-space/queue-pressure and source-interruption recovery/export without filling the disk; preserve original segments and outputs. Broader timing/load and physical interruptions remain in hardware acceptance.
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [x] Report configured backend/output and measured encoder initialization; scope availability to fresh worker heartbeats. Native start checks worker readiness/output identity without stopping recording. Sustained performance remains explicitly unqualified; input profile/throughput qualification stays open.
-- [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Generation/configuration checks pass; actual launchd service operation remains to verify.
+- [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Actual launchd operation against the local mock passes: both MP4s decode with visible score and A/V ends within71ms; clean worker exit and owned descendant cleanup verified.
 - [x] Document Linux worker Compose CPU/GPU configuration, output modes, upgrade/rollback and current qualification limits. The VPS Compose template now uses persistent storage and the managed native relay; its local wiring/persistence check passes.
 - [x] Repair and locally verify VPS Compose: persistent native database, private authenticated relay management, generation-scoped paths, durable API-container recreation and stop cleanup. CI reuses its built images for this check.
-- [ ] Verify actual external Linux deployment networking/TLS/media and the Mac service against the local mock output.
-- [ ] Update README, architecture, runbook and tested platform matrix. Add/verify CI for protocol/scoring, real server-container startup, native builds and simulator/media checkpoints appropriate to CI resources.
+- [x] Verify the Mac service against the real local API/relay and mock RTMP/MP4 output. Keep login/reboot and sustained behavior outside this short-run result.
+- [ ] Verify actual external Linux deployment networking/TLS/media after local simulator acceptance.
+- [x] Reconcile README, architecture, local runbook and tested platform matrix. Existing Linux CI covers scoring/server/relay/worker/container checks; add path-filtered native Swift/model checks and phone/Watch simulator builds.
+- [ ] Confirm the new native workflow on GitHub. Full local simulator/media checkpoints remain separate from hosted compilation.
 
 ## 4. Deferred hardware and external acceptance
 

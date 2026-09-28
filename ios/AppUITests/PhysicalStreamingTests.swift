@@ -1464,7 +1464,9 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
-            if ordinarySimulator && environment["SCOREBUG_SERVER_RECOVERY"] == "1" {
+            if ordinarySimulator && environment["SCOREBUG_SOURCE_INTERRUPTION"] == "1" {
+                try recoverInterruptedSource(app)
+            } else if ordinarySimulator && environment["SCOREBUG_SERVER_RECOVERY"] == "1" {
                 for component in ["api", "worker"] {
                     let before = elapsed(app)
                     print("SCOREBUG_RESTART_\(component.uppercased())")
@@ -1558,6 +1560,36 @@ final class PhysicalStreamingTests: XCTestCase {
             throw SmokeFailure.failed(failures.map { String(describing: $0) }.joined(separator: "; "))
         }
         // No recording/keychain deletion, external share, or Photos-library write.
+    }
+
+    @MainActor private func recoverInterruptedSource(_ app: XCUIApplication) throws {
+        try wait("Finite source did not interrupt recording and retire publishing.", seconds: 70) {
+            app.buttons["film.start"].exists && app.buttons["film.start"].isEnabled &&
+                self.value(app, "streaming.localStatus") == "idle"
+        }
+        try require(app.staticTexts["film.message"].label.contains("Capture interrupted"),
+                    "Recording ended for a different reason than source interruption.")
+        evidence(app, phase: "source-interrupted-publisher-idle", screenshot: true)
+        try selectTab("Recordings", app)
+        let recover = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recordings.recover.")).firstMatch
+        try wait("Interrupted source archive was not recoverable.", seconds: 10) { recover.exists }
+        let identity = XCTAttachment(string: recover.identifier)
+        identity.name = "source-interrupted-recording"; identity.lifetime = .keepAlways; add(identity)
+        try tap(recover, in: app)
+        try wait("Interrupted archive export failed.", seconds: 35) { app.staticTexts["recordings.exportReady"].exists }
+        evidence(app, phase: "source-interrupted-archive-exported", screenshot: true)
+        try tap(app.buttons["recordings.closePlayer"], in: app)
+        try selectTab("Film", app)
+        try tap(app.buttons["film.start"], in: app)
+        try wait("New recording did not advance after interruption.", seconds: 20) {
+            self.elapsed(app) >= 2 && app.buttons["film.stop"].exists
+        }
+        try tap(app.buttons["streaming.start"], in: app)
+        try wait("New recording did not establish a fresh publishing/output session.", seconds: 30) {
+            self.value(app, "streaming.localStatus") == "publishing" &&
+                self.value(app, "streaming.workerStatus") == "producing_output"
+        }
+        evidence(app, phase: "source-restarted-publishing", screenshot: true)
     }
 
     private func explicitValue(_ value: String?) -> String? {

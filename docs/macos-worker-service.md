@@ -148,3 +148,27 @@ configuration and install/bootstrap from the previous built checkout. Do not poi
 two running workers at the same identity or overwrite a running checkout. Changing
 worker host/identity is a separate explicit broadcast move, not an installation
 side effect. See [media qualification](media-soak.md) for output validation.
+
+## Local service acceptance
+
+A short actual launchd run now passes on the development Mac: compiled worker,
+real API and authenticated SRT relay, score update, RTMP mock recorder and optional
+proxy MP4. Both H264/AAC outputs decode and show HOME 1–0 AWAY; measured A/V ends
+differ by 71 ms and 51 ms. The worker exits with code 0 and its service and descendants
+are gone after `bootout`. This is not sustained performance or login/reboot testing.
+
+Reproduce only when service behavior changes:
+
+```sh
+pnpm --filter @scorebug/protocol build
+pnpm --filter @scorebug/home-daemon build
+node scripts/test-macos-worker-service.mjs --host <this-Mac-LAN-IP> --duration 120 --encoder videotoolbox
+```
+
+The runner writes a private environment/plist under its own `artifacts/qa/device-lab-*`
+directory, loads a unique temporary label, and boots out only that service. It does
+not install a persistent LaunchAgent or change an existing service. The recording
+association is a synthetic source fixture; phone archive behavior is covered by the
+[native simulator checkpoint](simulator-acceptance.md). `macos-service-result.json`
+records service cleanup and output checks. Service logs include the actual child
+exit code/signal without configuration secrets.

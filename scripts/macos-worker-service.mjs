@@ -176,6 +176,7 @@ async function run(options, config) {
   await new Promise((resolve, reject) => {
     child.once('error', () => reject(new Error('Cannot start worker executable')));
     child.once('exit', (code, signal) => {
+      console.log(JSON.stringify({ event: 'macos_worker_exit', code, signal }));
       process.exitCode = code ?? (signal ? 1 : 0);
       resolve();
     });

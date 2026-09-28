@@ -1,7 +1,10 @@
 # Scorebug architecture and requirements
 
-Revised September 13, 2026 from the owner's requirements. This is the target design,
-not a claim that it is implemented. It supersedes the May design retained in Git history.
+Requirements established September 13, 2026; status reconciled September 28.
+The native apps and local recording/streaming/scoring vertical are implemented.
+The [simulator checkpoint](simulator-acceptance.md) distinguishes verified behavior
+from congestion, sustained-operation and deployment gaps. This design supersedes
+the May design retained in Git history.
 
 See the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 and [local validation runbook](local-testing.md).

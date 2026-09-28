@@ -232,7 +232,7 @@ export function deviceLabSeedsMatch(value) {
   return value !== false;
 }
 
-export async function startDeviceLab(options, { signal } = {}) {
+export async function startDeviceLab(options, { signal, workerFactory = startWorker } = {}) {
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
@@ -465,7 +465,7 @@ export async function startDeviceLab(options, { signal } = {}) {
       WORKER_REPORT_INTERVAL_MS: '100',
       ...diagnosticEnvironment,
     };
-    worker = startWorker(workerEnvironment, artifact);
+    worker = await workerFactory(workerEnvironment, artifact);
     await bounded(worker.ready, 20000);
     signal?.throwIfAborted();
     const setup = {
@@ -522,7 +522,7 @@ export async function startDeviceLab(options, { signal } = {}) {
                     apiEnvironment,
                   );
                 else {
-                  worker = startWorker(workerEnvironment, artifact, 'worker-restarted.log');
+                  worker = await workerFactory(workerEnvironment, artifact, 'worker-restarted.log');
                   await bounded(worker.ready, 20000);
                 }
                 const result = {

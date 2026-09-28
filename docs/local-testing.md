@@ -1,10 +1,10 @@
 # Local validation and device qualification
 
-Plan prepared September 13, 2026; milestone 0 validated September 14 UTC.
-Environment checks and the native scoring lifecycle now run. Durable match API and
-client recovery details are in [native scoring progress](native-scoring-api.md).
-The full media pipeline, watch app, and device qualification remain to be implemented.
-Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
+The native phone/Watch apps and real local media pipeline are implemented. See the
+[consolidated simulator checkpoint](simulator-acceptance.md) for current passes,
+known failures and the tested platform matrix; the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+owns remaining work. Batch changes and test the affected workflow once. Hardware
+qualification follows simulator-testable integration.
 
 ## What is available on this Mac
 
@@ -18,8 +18,8 @@ Follow the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-w
 | Default FFmpeg   | 8.1.2; has VideoToolbox, but lacks SRT and drawtext                                    |
 | Full FFmpeg      | `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`, 8.1.2; SRT, drawtext, VideoToolbox present |
 | XcodeGen         | 2.46.0 installed during milestone 0                                                    |
-| iOS runtimes     | Includes 17.5, 18.5, 26.2                                                              |
-| watchOS runtimes | Includes 10.0, 10.5, 11.5, and 26.2                                                    |
+| iOS runtimes     | 26.2 currently used; 17.5/18.5 results retained, runtimes may have been removed                                                              |
+| watchOS runtimes | 26.2 currently used; query installed runtimes before selecting others                                                    |
 | Device types     | iPhone 14, Ultra 2, Series 7 41 mm, and newer devices available                        |
 
 A three-second synthetic 1080p/30 VideoToolbox job completed 90 frames at about 8.9x
@@ -208,7 +208,7 @@ expand the current foundation into media, scoring, and watch qualification.
 | `pnpm test:media -- --profile=2160p30 --encoder=videotoolbox` | 4K capability/quality qualification on this host                             |
 | `pnpm test:network`                                           | UDP impairment matrix, report quality transitions and archive continuity     |
 | `pnpm test:archive`                                           | Native shared media harness, forced termination, recovery, full decode       |
-| `pnpm test:apple`                                             | Current: Swift tests + iOS setup UI; watch and scoring suites planned        |
+| `pnpm test:apple`                                             | Swift/model tests, native scoring UI and builds; use `--ui-only` for focused UI runs        |
 | `pnpm test:soak -- --minutes=120`                             | Sustained run with metrics and output artifacts                              |
 
 Each runner allocates its own state/ports or fails clearly on conflict; writes evidence
