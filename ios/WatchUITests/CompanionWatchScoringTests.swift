@@ -23,6 +23,10 @@ final class CompanionWatchScoringTests: XCTestCase {
     }
     @MainActor private func runScoring(directFixture: String?) throws {
         let direct = directFixture != nil
+        let separate = direct && ProcessInfo.processInfo.environment["SCOREBUG_SEPARATE_WATCH_SCORER"] == "1"
+        let initial = separate ? "1-1" : "0-0"
+        let homePoint = separate ? "2-1" : "1-0"
+        let awayPoint = separate ? "1-2" : "0-1"
         continueAfterFailure = false
         let expectedMatch = try WatchSetupProvenance.expectedMatch(
             ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
@@ -49,18 +53,19 @@ final class CompanionWatchScoringTests: XCTestCase {
             let transport = XCTAttachment(string: "setupTransport=simulator-fixture; scoringTransport=direct-http; watchConnectivityQualified=false")
             transport.name = "watch-direct-transport"; transport.lifetime = .keepAlways; add(transport)
         }
+        value(app.staticTexts["watch.score"], initial)
         try tap(app, "watch.takeover", beforeTap: scoringIdentity)
         try tap(app, "watch.homePoint", beforeTap: scoringIdentity)
-        value(app.staticTexts["watch.score"], "1-0")
+        value(app.staticTexts["watch.score"], homePoint)
         if direct || pairedOrdinary || ProcessInfo.processInfo.environment["SCOREBUG_DEVICE_WATCH_SCORING"] == "1" {
             // Physical phone UI must observe the point and concurrent live
             // output before this runner proceeds to undo and match shutdown.
             RunLoop.current.run(until: Date().addingTimeInterval(30))
         }
         try tap(app, "watch.undo", beforeTap: scoringIdentity)
-        value(app.staticTexts["watch.score"], "0-0")
+        value(app.staticTexts["watch.score"], initial)
         try tap(app, "watch.awayPoint", beforeTap: scoringIdentity)
-        value(app.staticTexts["watch.score"], "0-1")
+        value(app.staticTexts["watch.score"], awayPoint)
         attach(app, "Watch scoring while companion records")
         if pairedOrdinary || direct {
             RunLoop.current.run(until: Date().addingTimeInterval(15))
@@ -71,7 +76,7 @@ final class CompanionWatchScoringTests: XCTestCase {
             app.launchEnvironment["SCOREBUG_TEST_WATCH_SETUP"] = ""
             app.launch()
             try waitForPairing(app, selected: selected)
-            value(app.staticTexts["watch.score"], "0-1")
+            value(app.staticTexts["watch.score"], awayPoint)
             attach(app, "Direct Watch restored exact persisted pairing and score without setup injection")
         }
         try tap(app, "watch.endMatch", beforeTap: scoringIdentity)

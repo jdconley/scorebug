@@ -77,3 +77,31 @@ test('creation readback rejects seeds, extra matches, prior mutations and wrong 
   ])
     assert.throws(() => validateNativeCreation(rows));
 });
+
+test('separate Watch lane is explicit, local-only, and preserves scorer/camera role separation', () => {
+  assert.equal(
+    nativeCreatedOptions([...args, '--watch', 'separate'], interfaces).separateWatch,
+    true,
+  );
+  assert.throws(() => nativeCreatedOptions([...args, '--watch', 'paired'], interfaces));
+  assert.throws(() =>
+    nativeCreatedOptions([...args, '--watch', 'separate', '--watch', 'separate'], interfaces),
+  );
+  const lab = {
+    setup: { endpoint: 'http://127.0.0.1:1234', installationToken: 'private-test-token' },
+  };
+  const camera = nativeCreatedEnvironment(lab, 'camera', true);
+  const scorer = nativeCreatedEnvironment(lab, 'scorer', true);
+  assert.equal(camera.SCOREBUG_SEPARATE_WATCH_SCORER, '1');
+  assert.equal(camera.SCOREBUG_ORDINARY_SIMULATOR, '1');
+  assert.equal(scorer.SCOREBUG_SEPARATE_NATIVE_SCORER, '1');
+  assert.equal(scorer.SCOREBUG_ORDINARY_SIMULATOR, undefined);
+  assert.throws(() => nativeCreatedEnvironment(lab, 'camera', false));
+  assert.throws(() =>
+    nativeCreatedEnvironment(
+      { setup: { ...lab.setup, endpoint: 'https://example.com' } },
+      'camera',
+      true,
+    ),
+  );
+});

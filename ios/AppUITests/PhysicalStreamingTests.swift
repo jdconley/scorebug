@@ -141,7 +141,7 @@ final class PhysicalStreamingTests: XCTestCase {
               let token = explicitValue(environment["SCOREBUG_DEVICE_TOKEN"]) else {
             throw SmokeFailure.failed("Separate scorer requires explicit app connection configuration.")
         }
-        try require(isPrivateLANEndpoint(endpoint), "Separate scorer requires a private LAN endpoint.")
+        try require(isPrivateLANEndpoint(endpoint) || (environment["SCOREBUG_SEPARATE_WATCH_SCORER"] == "1" && isSimulatorLoopbackEndpoint(endpoint)), "Separate scorer requires an explicit local endpoint.")
         continueAfterFailure = true
         executionTimeAllowance = 480
         deadline = Date().addingTimeInterval(430)
@@ -206,9 +206,27 @@ final class PhysicalStreamingTests: XCTestCase {
             try holdSeparateScore(app, home: 1, away: away, seconds: hold)
             separateScorerCheckpoint(app, role: "scorer", phase: phase + "-hold-complete", ready: true)
         }
+        if environment["SCOREBUG_SEPARATE_WATCH_SCORER"] == "1" {
+            separateScorerCheckpoint(app, role: "scorer", phase: "watch-ready", ready: true)
+            try waitForSeparateWatchEnd(app, role: "scorer")
+        }
         #else
         throw XCTSkip("Separate native scorer requires a disposable simulator.")
         #endif
+    }
+
+    @MainActor private func waitForSeparateWatchEnd(_ app: XCUIApplication, role: String) throws {
+        try waitForSeparateScore(app, home: 2, away: 1, previous: "1:1", seconds: 90, requireWorker: true)
+        try require(!app.buttons["scoring.homePoint"].isEnabled, "Watch takeover did not revoke phone scoring control.")
+        separateScorerCheckpoint(app, role: role, phase: "watch-home-observed", ready: true)
+        try wait("Watch AWAY point was not observed.", seconds: 90) {
+            app.buttons["scoring.homePoint"].value as? String == "1" &&
+            app.buttons["scoring.awayPoint"].value as? String == "2"
+        }
+        try require(separateWorkerLabel(app) == "Worker encoding video", "Worker stopped before Watch finished scoring.")
+        separateScorerCheckpoint(app, role: role, phase: "watch-away-observed", ready: true)
+        try wait("Watch did not end the match.", seconds: 60) { app.staticTexts["scoring.ended"].exists }
+        separateScorerCheckpoint(app, role: role, phase: "watch-end-observed", ready: true)
     }
 
     @MainActor private func separateWorkerLabel(_ app: XCUIApplication) -> String {
@@ -266,7 +284,7 @@ final class PhysicalStreamingTests: XCTestCase {
             let button = app.buttons[id]
             guard button.exists else { return "missing" }
             let score = button.value as? String ?? "missing"
-            return ["0", "1", "missing"].contains(score) ? score : "other"
+            return ["0", "1", "2", "missing"].contains(score) ? score : "other"
         }
         let report: [String: Any] = ["role": role, "phase": phase, "uptimeSeconds": ProcessInfo.processInfo.systemUptime,
                                    "home": safeScore("scoring.homePoint"), "away": safeScore("scoring.awayPoint"),
@@ -1094,6 +1112,9 @@ final class PhysicalStreamingTests: XCTestCase {
         }
         var allowedEndpoint = isPrivateLANEndpoint(endpoint)
         #if targetEnvironment(simulator)
+        if environment["SCOREBUG_SEPARATE_WATCH_SCORER"] == "1" {
+            allowedEndpoint = ordinarySimulator && separateScorer && isSimulatorLoopbackEndpoint(endpoint)
+        }
         if directWatch {
             let url = URLComponents(string: endpoint)
             allowedEndpoint = ordinarySimulator && watchScoring && !recovery && !separateScorer &&
@@ -1417,6 +1438,10 @@ final class PhysicalStreamingTests: XCTestCase {
                 try selectTab("Score", app)
                 try validateSeparateScore(app, allowed: ["1:1"])
                 separateScorerCheckpoint(app, role: "camera", phase: "final-score-hold-complete", ready: true)
+                if environment["SCOREBUG_SEPARATE_WATCH_SCORER"] == "1" {
+                    separateScorerCheckpoint(app, role: "camera", phase: "watch-ready", ready: true)
+                    try waitForSeparateWatchEnd(app, role: "camera")
+                }
             } catch {
                 scoreFailure = error
                 separateScorerCheckpoint(app, role: "camera", phase: "score-gate-failed")
@@ -1424,7 +1449,7 @@ final class PhysicalStreamingTests: XCTestCase {
             // Keep the score failure through the existing independent stop,
             // continued archive, actual recording identity, and export checks.
             try selectTab("Film", app)
-            try tap(app.buttons["streaming.stop"], in: app)
+            if app.buttons["streaming.stop"].exists { try tap(app.buttons["streaming.stop"], in: app) }
         } else if !watchScoring {
             do {
                 try selectTab("Score", app)
@@ -1522,6 +1547,16 @@ final class PhysicalStreamingTests: XCTestCase {
         guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !value.hasPrefix("$(") else { return nil }
         return value
+    }
+
+    private func isSimulatorLoopbackEndpoint(_ value: String) -> Bool {
+        #if targetEnvironment(simulator)
+        guard let url = URLComponents(string: value) else { return false }
+        return url.scheme == "http" && url.host == "127.0.0.1" && url.port != nil &&
+            (url.path.isEmpty || url.path == "/") && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil
+        #else
+        return false
+        #endif
     }
 
     private func isPrivateLANEndpoint(_ value: String) -> Bool {

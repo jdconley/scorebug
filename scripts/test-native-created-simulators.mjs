@@ -9,6 +9,8 @@ import {
   ordinaryTestConfiguration,
   runOrdinaryCommand,
   requireOrdinaryTestResult,
+  ordinaryTestEnvironment,
+  issueOrdinaryDirectWatchFixture,
 } from './test-ordinary-native-app.mjs';
 import {
   configurePhysicalTestRunPython,
@@ -28,17 +30,44 @@ export const nativeCreatedTests = {
   camera:
     'ScorebugAppUITests/PhysicalStreamingTests/testNativeCreatedSimulatorCameraWhileOtherPhoneScores',
   scorer: separateScorerTests.scorer,
+  watch: 'ScorebugWatchUITests/CompanionWatchScoringTests/testScoreUsingSimulatorFixtureSetup',
 };
 export function nativeCreatedOptions(args, interfaces) {
-  for (let i = 0; i < args.length; i += 2)
-    assert(
-      ['--host', '--source', '--encoder'].includes(args[i]),
-      'Unsupported native-created simulator option',
-    );
-  return ordinaryNativeOptions(args, interfaces);
+  const filtered = [];
+  let separateWatch = false;
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] === '--watch') {
+      assert(
+        !separateWatch && args[i + 1] === 'separate',
+        'Only one separate Watch option is supported',
+      );
+      separateWatch = true;
+    } else {
+      assert(
+        ['--host', '--source', '--encoder'].includes(args[i]),
+        'Unsupported native-created simulator option',
+      );
+      filtered.push(args[i], args[i + 1]);
+    }
+  }
+  return {
+    ...ordinaryNativeOptions(filtered, interfaces),
+    ...(separateWatch ? { separateWatch } : {}),
+  };
 }
-export function nativeCreatedEnvironment(lab, role) {
-  const environment = separateScorerEnvironment(lab, role);
+export function nativeCreatedEnvironment(lab, role, separateWatch = false) {
+  assert(['camera', 'scorer'].includes(role), 'Invalid phone role');
+  let environment;
+  if (separateWatch) {
+    assert.match(lab.setup.endpoint, /^http:\/\/127\.0\.0\.1:[1-9][0-9]*$/);
+    assert(lab.setup.installationToken);
+    environment = {
+      SCOREBUG_DEVICE_API_URL: lab.setup.endpoint,
+      SCOREBUG_DEVICE_TOKEN: lab.setup.installationToken,
+      ...(role === 'scorer' ? { SCOREBUG_SEPARATE_NATIVE_SCORER: '1' } : {}),
+      SCOREBUG_SEPARATE_WATCH_SCORER: '1',
+    };
+  } else environment = separateScorerEnvironment(lab, role);
   if (role === 'camera') {
     delete environment.SCOREBUG_PHYSICAL_SEPARATE_SCORER;
     environment.SCOREBUG_ORDINARY_SIMULATOR = '1';
@@ -103,18 +132,22 @@ async function main() {
       ...(cleanup ? {} : { signal: controller.signal }),
     });
   const roles = Object.fromEntries(
-    ['camera', 'scorer'].map((name) => [
+    ['camera', 'scorer', ...(options.separateWatch ? ['watch'] : [])].map((name) => [
       name,
       {
         name: `Scorebug Native Created ${name} ${randomUUID()}`,
         device: undefined,
         container: undefined,
+        bundleId: name === 'watch' ? 'live.scorebug.app.watchkitapp' : 'live.scorebug.app',
       },
     ]),
   );
   let lab,
     cameraJob,
     scorerJob,
+    watchJob,
+    watchPairId,
+    watchFixture,
     failure,
     sourceHead,
     creation,
@@ -123,7 +156,9 @@ async function main() {
   console.log(
     JSON.stringify({
       artifact,
-      scope: 'Two native simulator phones; native creation, separate scoring and file capture',
+      scope: options.separateWatch
+        ? 'Two phones and separate scorer Watch; fixture setup, direct scoring'
+        : 'Two native simulator phones; native creation, separate scoring and file capture',
     }),
   );
   try {
@@ -158,13 +193,27 @@ async function main() {
     for (const [name, role] of Object.entries(roles)) {
       role.device = await run(
         'xcrun',
-        ['simctl', 'create', role.name, 'com.apple.CoreSimulator.SimDeviceType.iPhone-14', runtime],
+        [
+          'simctl',
+          'create',
+          role.name,
+          name === 'watch'
+            ? 'com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-7-41mm'
+            : 'com.apple.CoreSimulator.SimDeviceType.iPhone-14',
+          name === 'watch' ? 'com.apple.CoreSimulator.SimRuntime.watchOS-26-2' : runtime,
+        ],
         `create-${name}`,
       );
       assert.match(role.device, /^[0-9a-f-]{36}$/i);
       await run('xcrun', ['simctl', 'boot', role.device], `boot-${name}`);
       await run('xcrun', ['simctl', 'bootstatus', role.device, '-b'], `ready-${name}`, 120000);
     }
+    if (roles.watch)
+      watchPairId = await run(
+        'xcrun',
+        ['simctl', 'pair', roles.watch.device, roles.scorer.device],
+        'pair-watch-to-scorer',
+      );
     const derived = join(root, 'ios/DerivedData/OrdinaryNativeApp');
     await run(
       'xcodebuild',
@@ -184,11 +233,37 @@ async function main() {
         'CODE_SIGNING_ALLOWED=YES',
         'CODE_SIGN_IDENTITY=-',
         'build-for-testing',
-        ...Object.values(nativeCreatedTests).map((test) => `-only-testing:${test}`),
+        ...[nativeCreatedTests.camera, nativeCreatedTests.scorer].map(
+          (test) => `-only-testing:${test}`,
+        ),
       ],
       'build',
       900000,
     );
+    if (roles.watch)
+      await run(
+        'xcodebuild',
+        [
+          '-project',
+          'ios/Scorebug.xcodeproj',
+          '-scheme',
+          'ScorebugWatch',
+          '-configuration',
+          'Debug',
+          '-destination',
+          `platform=watchOS Simulator,id=${roles.watch.device}`,
+          '-derivedDataPath',
+          derived,
+          'ARCHS=arm64',
+          'ONLY_ACTIVE_ARCH=YES',
+          'CODE_SIGNING_ALLOWED=YES',
+          'CODE_SIGN_IDENTITY=-',
+          'build-for-testing',
+          `-only-testing:${nativeCreatedTests.watch}`,
+        ],
+        'build-watch',
+        900000,
+      );
     const products = join(derived, 'Build/Products');
     const sourceRun = join(
       products,
@@ -197,12 +272,22 @@ async function main() {
     for (const [name, role] of Object.entries(roles)) {
       await run(
         'xcrun',
-        ['simctl', 'install', role.device, join(products, 'Debug-iphonesimulator/Scorebug.app')],
+        [
+          'simctl',
+          'install',
+          role.device,
+          join(
+            products,
+            name === 'watch'
+              ? 'Debug-watchsimulator/ScorebugWatch.app'
+              : 'Debug-iphonesimulator/Scorebug.app',
+          ),
+        ],
         `install-${name}`,
       );
       role.container = await run(
         'xcrun',
-        ['simctl', 'get_app_container', role.device, 'live.scorebug.app', 'data'],
+        ['simctl', 'get_app_container', role.device, role.bundleId, 'data'],
         `container-${name}`,
       );
     }
@@ -236,7 +321,13 @@ async function main() {
       ].map(hash),
     );
     lab = await startDeviceLab(
-      { host: options.host, encoder: options.encoder, duration: 600, seedMatch: false },
+      {
+        host: options.host,
+        encoder: options.encoder,
+        duration: 600,
+        seedMatch: false,
+        ...(options.separateWatch ? { apiLoopback: true } : {}),
+      },
       { signal: controller.signal },
     );
     assert.equal(lab.setup.matchId, undefined);
@@ -245,12 +336,17 @@ async function main() {
     const configure = join(artifact, 'configure.py');
     await writeFile(configure, configurePhysicalTestRunPython, { flag: 'wx', mode: 0o600 });
     for (const [name, role] of Object.entries(roles)) {
+      if (name === 'watch') continue;
       const envPath = join(artifact, `${name}-environment.json`);
       role.privateRun = join(artifact, `${name}.xctestrun`);
-      await writeFile(envPath, JSON.stringify(nativeCreatedEnvironment(lab, name)), {
-        flag: 'wx',
-        mode: 0o600,
-      });
+      await writeFile(
+        envPath,
+        JSON.stringify(nativeCreatedEnvironment(lab, name, options.separateWatch)),
+        {
+          flag: 'wx',
+          mode: 0o600,
+        },
+      );
       await run(
         'python3',
         [configure, sourceRun, role.privateRun, 'ScorebugAppUITests', envPath, products],
@@ -274,7 +370,7 @@ async function main() {
             '-xctestrun',
             role.privateRun,
             '-destination',
-            `platform=iOS Simulator,id=${role.device}`,
+            `platform=${name === 'watch' ? 'watchOS' : 'iOS'} Simulator,id=${role.device}`,
             '-destination-timeout',
             '60',
             '-parallel-testing-enabled',
@@ -332,10 +428,60 @@ async function main() {
       mode: 0o600,
     });
     cameraJob = workflow('camera');
-    await Promise.all([cameraJob, scorerJob]);
+    if (roles.watch) {
+      const end = performance.now() + 360000;
+      let ready = false;
+      while (performance.now() < end && !controller.signal.aborted) {
+        const logs = await Promise.all(
+          ['camera', 'scorer'].map((name) =>
+            readFile(join(artifact, `${name}-workflow.log`), 'utf8').catch(() => ''),
+          ),
+        );
+        if (logs.every((log) => log.includes("-watch-ready'"))) {
+          ready = true;
+          break;
+        }
+        if (outcomes.camera || outcomes.scorer) break;
+        await delay(250);
+      }
+      assert(ready, 'Both native phones must reach Watch readiness before issuing setup');
+      watchFixture = await issueOrdinaryDirectWatchFixture({
+        ...lab.setup,
+        matchId: creation.matchId,
+      });
+      const envPath = join(artifact, 'watch-environment.json');
+      roles.watch.privateRun = join(artifact, 'watch.xctestrun');
+      await writeFile(
+        envPath,
+        JSON.stringify({
+          ...ordinaryTestEnvironment({
+            paired: false,
+            directWatch: true,
+            watch: true,
+            setup: { ...lab.setup, matchId: creation.matchId },
+            watchFixture,
+          }),
+          SCOREBUG_SEPARATE_WATCH_SCORER: '1',
+        }),
+        { flag: 'wx', mode: 0o600 },
+      );
+      const watchRun = join(
+        products,
+        ordinaryTestConfiguration(await readdir(products), 'ScorebugWatch', true),
+      );
+      await run(
+        'python3',
+        [configure, watchRun, roles.watch.privateRun, 'ScorebugWatchUITests', envPath, products],
+        'configure-watch',
+      );
+      watchJob = workflow('watch');
+    }
+    await Promise.all([cameraJob, scorerJob, watchJob].filter(Boolean));
     await verifyPhysicalRecoveryInputs(inputs);
     assert(
-      outcomes.camera?.passed && outcomes.scorer?.passed,
+      outcomes.camera?.passed &&
+        outcomes.scorer?.passed &&
+        (!roles.watch || outcomes.watch?.passed),
       'Native role failure; both terminal outcomes retained',
     );
     const { DatabaseSync } = await import('node:sqlite');
@@ -350,7 +496,12 @@ async function main() {
     } finally {
       db.close();
     }
-    const evidence = await readSeparateScorerEvidence(database, creation.matchId, recordingId);
+    const evidence = await readSeparateScorerEvidence(
+      database,
+      creation.matchId,
+      recordingId,
+      watchFixture?.offer.watchDeviceId,
+    );
     assert.equal(
       evidence.otherScorerDeviceId,
       creation.creatorDeviceId,
@@ -364,7 +515,7 @@ async function main() {
   } catch (error) {
     failure = String(error.message);
   } finally {
-    await Promise.allSettled([cameraJob, scorerJob].filter(Boolean));
+    await Promise.allSettled([cameraJob, scorerJob, watchJob].filter(Boolean));
     try {
       await lab?.stop();
     } catch (error) {
@@ -388,6 +539,13 @@ async function main() {
     } catch {
       cleanupFailures.push('owned simulator discovery');
     }
+    if (watchPairId) {
+      try {
+        await run('xcrun', ['simctl', 'unpair', watchPairId], 'unpair-watch', 60000, true);
+      } catch {
+        cleanupFailures.push('Watch unpair');
+      }
+    }
     for (const [name, role] of Object.entries(roles)) {
       if (!role.device) continue;
       let preserved = !role.container;
@@ -395,14 +553,14 @@ async function main() {
         try {
           const container = await run(
             'xcrun',
-            ['simctl', 'get_app_container', role.device, 'live.scorebug.app', 'data'],
+            ['simctl', 'get_app_container', role.device, role.bundleId, 'data'],
             `final-${name}-container`,
             60000,
             true,
           );
           await run(
             'xcrun',
-            ['simctl', 'terminate', role.device, 'live.scorebug.app'],
+            ['simctl', 'terminate', role.device, role.bundleId],
             `terminate-${name}`,
             60000,
             true,
@@ -443,7 +601,17 @@ async function main() {
       JSON.stringify(
         {
           formatVersion: 1,
-          lane: 'native-created-two-phone',
+          lane: options.separateWatch
+            ? 'native-created-separate-watch'
+            : 'native-created-two-phone',
+          ...(options.separateWatch
+            ? {
+                watchPairId,
+                setupTransport: 'simulator-fixture',
+                scoringTransport: 'direct-http',
+                watchConnectivityQualified: false,
+              }
+            : {}),
           sourceHead,
           sourceSHA256,
           roles,

@@ -286,3 +286,54 @@ test('actual API receipts include media revision increments and deduplicate a re
   assert.equal(result.acceptedScoreCommands, 6);
   assert.equal(result.captureDeviceId, capture);
 });
+
+test('separate Watch takeover/end requires exact third actor, ordering, epochs and final state', () => {
+  const f = fixture();
+  f.watchDeviceId = 'watch';
+  f.mediaCommands = f.mediaCommands.filter((r) => r.request.operation.type === 'start');
+  const ops = [
+    { type: 'take_over' },
+    { type: 'award_point', side: 'home' },
+    { type: 'undo' },
+    { type: 'award_point', side: 'away' },
+    { type: 'end_match', reason: 'Watch end' },
+  ];
+  const points = [
+    [1, 1],
+    [2, 1],
+    [1, 1],
+    [1, 2],
+    [1, 2],
+  ];
+  for (let i = 0; i < ops.length; i++) {
+    const row = structuredClone(f.commands.at(-1));
+    Object.assign(row.request, {
+      commandId: `watch-${i}`,
+      deviceId: 'watch',
+      operation: ops[i],
+      expectedRevision: 7 + i,
+      scorerEpoch: i ? 4 : 3,
+    });
+    Object.assign(row.outcome, { commandId: row.request.commandId });
+    Object.assign(row.outcome.snapshot, {
+      revision: 8 + i,
+      status: i === 4 ? 'ended' : 'active',
+      scorer: { deviceId: 'watch', epoch: 4 },
+      score: { home: points[i][0], away: points[i][1], set: 1, homeSets: 0, awaySets: 0 },
+      broadcast: { desired: i === 4 ? 'stopped' : 'running', generation: i === 4 ? 2 : 1 },
+    });
+    f.commands.push(row);
+  }
+  f.final = structuredClone(f.commands.at(-1).outcome.snapshot);
+  assert.equal(qualifySeparateScorerEvidence(f).acceptedScoreCommands, 11);
+  for (const mutate of [
+    (x) => (x.commands[6].request.deviceId = 'other-score'),
+    (x) => (x.commands[7].request.scorerEpoch = 3),
+    (x) => (x.final.broadcast.generation = 1),
+    (x) => x.commands.pop(),
+  ]) {
+    const bad = structuredClone(f);
+    mutate(bad);
+    assert.throws(() => qualifySeparateScorerEvidence(bad));
+  }
+});

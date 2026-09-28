@@ -8,9 +8,11 @@ export function qualifySeparateScorerEvidence({
   mediaCommands,
   recordings,
   final,
+  watchDeviceId,
 }) {
   assert(matchId && recordingId);
-  assert.equal(commands.length, 6, 'Exactly six durable score commands required');
+  const count = watchDeviceId ? 11 : 6;
+  assert.equal(commands.length, count, 'Exact durable score command count required');
   const rows = [...commands].sort(
     (a, b) => a.outcome.snapshot.revision - b.outcome.snapshot.revision,
   );
@@ -33,10 +35,29 @@ export function qualifySeparateScorerEvidence({
     [1, 0],
     [1, 1],
   ];
-  assert.equal(new Set(rows.map((r) => `${r.request.deviceId}/${r.request.commandId}`)).size, 6);
+  if (watchDeviceId) {
+    assert(
+      watchDeviceId !== camera && watchDeviceId !== scorer,
+      'Watch must have a third scoring identity',
+    );
+    const reason = rows.at(-1).request.operation.reason;
+    assert(typeof reason === 'string' && reason.length > 0);
+    operations.push(
+      { type: 'take_over' },
+      { type: 'award_point', side: 'home' },
+      { type: 'undo' },
+      { type: 'award_point', side: 'away' },
+      { type: 'end_match', reason },
+    );
+    scores.push([1, 1], [2, 1], [1, 1], [1, 2], [1, 2]);
+  }
+  assert.equal(
+    new Set(rows.map((r) => `${r.request.deviceId}/${r.request.commandId}`)).size,
+    count,
+  );
   for (const [i, { request, outcome }] of rows.entries()) {
-    const actor = i < 2 ? camera : scorer,
-      epoch = i < 2 ? 2 : 3;
+    const actor = i < 2 ? camera : i < 6 ? scorer : watchDeviceId,
+      epoch = i < 2 ? 2 : i < 6 ? 3 : 4;
     assert.equal(request.gameId, matchId);
     assert.equal(outcome.snapshot.id, matchId);
     assert.equal(outcome.accepted, true);
@@ -47,7 +68,7 @@ export function qualifySeparateScorerEvidence({
     assert.deepEqual(request.operation, operations[i]);
     assert.equal(request.expectedRevision, i === 0 ? 0 : i + 1);
     assert.equal(outcome.snapshot.revision, i === 0 ? 1 : i + 2);
-    assert.equal(request.scorerEpoch, i === 0 ? 1 : i <= 2 ? 2 : 3);
+    assert.equal(request.scorerEpoch, i === 0 ? 1 : i <= 2 ? 2 : i <= 6 ? 3 : 4);
     assert.deepEqual(outcome.snapshot.scorer, { deviceId: actor, epoch });
     assert.deepEqual(outcome.snapshot.score, {
       home: scores[i][0],
@@ -56,18 +77,22 @@ export function qualifySeparateScorerEvidence({
       homeSets: 0,
       awaySets: 0,
     });
-    assert.equal(outcome.snapshot.status, 'active');
+    assert.equal(outcome.snapshot.status, watchDeviceId && i === 10 ? 'ended' : 'active');
     assert.deepEqual(outcome.snapshot.broadcast, {
-      desired: i === 0 ? 'stopped' : 'running',
-      generation: i === 0 ? 0 : 1,
+      desired: i === 0 || i === 10 ? 'stopped' : 'running',
+      generation: i === 0 ? 0 : i === 10 ? 2 : 1,
     });
   }
-  assert.equal(mediaCommands.length, 2, 'One start and one stop required');
+  assert.equal(
+    mediaCommands.length,
+    watchDeviceId ? 1 : 2,
+    'Native start; Watch end replaces explicit media stop',
+  );
   const [start, stop] = [...mediaCommands].sort(
     (a, b) => a.request.expectedGeneration - b.request.expectedGeneration,
   );
-  assert.equal(new Set(mediaCommands.map((r) => r.request.commandId)).size, 2);
-  for (const [i, row] of [start, stop].entries()) {
+  assert.equal(new Set(mediaCommands.map((r) => r.request.commandId)).size, watchDeviceId ? 1 : 2);
+  for (const [i, row] of [start, stop].filter(Boolean).entries()) {
     assert.equal(row.request.gameId, matchId);
     assert.equal(row.outcome.snapshot.gameId, matchId);
     assert.equal(row.request.expectedGeneration, i);
@@ -85,7 +110,7 @@ export function qualifySeparateScorerEvidence({
   assert(selection.captureDeviceId);
   assert.notEqual(selection.captureDeviceId, scorer, 'Scorer cannot be the capture actor');
   assert.deepEqual(start.outcome.snapshot.broadcast.selection, selection);
-  assert.equal(stop.outcome.snapshot.broadcast.selection, null);
+  if (stop) assert.equal(stop.outcome.snapshot.broadcast.selection, null);
   const active = start.outcome.snapshot.recordings;
   assert.equal(active.length, 1);
   assert.equal(active[0].gameId, matchId);
@@ -96,7 +121,7 @@ export function qualifySeparateScorerEvidence({
   assert(
     typeof active[0].startedAt === 'string' && Number.isFinite(Date.parse(active[0].startedAt)),
   );
-  const atStreamStop = stop.outcome.snapshot.recordings;
+  const atStreamStop = stop ? stop.outcome.snapshot.recordings : active;
   assert.equal(atStreamStop.length, 1);
   for (const field of ['gameId', 'recordingId', 'deviceId', 'startedAt'])
     assert.equal(atStreamStop[0][field], active[0][field]);
@@ -116,10 +141,20 @@ export function qualifySeparateScorerEvidence({
       recordings[0].sequence > atStreamStop[0].sequence,
   );
   assert.equal(final.id, matchId);
-  assert.equal(final.revision, 8);
-  assert.equal(final.status, 'active');
-  assert.deepEqual(final.score, { home: 1, away: 1, set: 1, homeSets: 0, awaySets: 0 });
-  assert.deepEqual(final.scorer, { deviceId: scorer, epoch: 3 });
+  assert.equal(final.revision, watchDeviceId ? 12 : 8);
+  assert.equal(final.status, watchDeviceId ? 'ended' : 'active');
+  assert.deepEqual(final.score, {
+    home: 1,
+    away: watchDeviceId ? 2 : 1,
+    set: 1,
+    homeSets: 0,
+    awaySets: 0,
+  });
+  assert.deepEqual(final.scorer, {
+    deviceId: watchDeviceId ?? scorer,
+    epoch: watchDeviceId ? 4 : 3,
+  });
+  if (watchDeviceId) assert.notEqual(selection.captureDeviceId, watchDeviceId);
   assert.deepEqual(final.broadcast, { desired: 'stopped', generation: 2 });
   return {
     cameraScorerDeviceId: camera,
@@ -127,13 +162,19 @@ export function qualifySeparateScorerEvidence({
     captureDeviceId: selection.captureDeviceId,
     recordingId,
     matchId,
-    acceptedScoreCommands: 6,
-    acceptedMediaCommands: 2,
+    acceptedScoreCommands: count,
+    acceptedMediaCommands: mediaCommands.length,
+    ...(watchDeviceId ? { watchDeviceId } : {}),
     scope: 'Durable command and recording association only',
     mediaQualified: false,
   };
 }
-export async function readSeparateScorerEvidence(databasePath, matchId, recordingId) {
+export async function readSeparateScorerEvidence(
+  databasePath,
+  matchId,
+  recordingId,
+  watchDeviceId,
+) {
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(databasePath, { readOnly: true });
   try {
@@ -146,6 +187,7 @@ export async function readSeparateScorerEvidence(databasePath, matchId, recordin
     return qualifySeparateScorerEvidence({
       matchId,
       recordingId,
+      watchDeviceId,
       commands: rows('commands'),
       mediaCommands: rows('media_commands'),
       recordings: db
