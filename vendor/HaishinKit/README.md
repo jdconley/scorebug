@@ -275,7 +275,7 @@ show RTT and send buffer at most 50 ms with no new retransmission/drop counts.
 Missing statistics, pressure, finish, close or configuration changes revoke it.
 Configuration revision checks reject starts that overlap a settings change.
 One coalesced wake signal drives the existing transport consumer, which drains
-queued media before offering one optional message. An admitted probe owns a strict
+queued media before offering optional messages (one for standard probes). An admitted probe owns a strict
 dispatch timer that only signals this consumer; it cannot send or bank messages.
 Its deadline follows token availability with a 2 ms legacy or 0.5 ms staged minimum
 and 50 ms maximum. The staged timer permits at most 2,000 callbacks per second;
@@ -412,6 +412,10 @@ setters still perform their own final checks.
 `SRTStream(probeBudget: .uhd)` fixes v4/48Mbps/64MiB campaign bounds for the whole
 publication. It requires repeatable staged probes and keeps the same budget on
 replacement/restart. Default `.standard` retains v1–v3 bounds. The300ms lease,
-60second campaign deadline, synchronous authority revocation and one-message token
-cap are unchanged; UHD wake minimum is200µs. Rate ceilings are permissions, not
+60second campaign deadline and synchronous authority revocation are unchanged.
+UHD uses a four-message token bucket (5,440 accounted wire bytes) and at most four
+nonblocking writes per wake to recover timer jitter; each write rechecks media
+priority, lease, revocation and byte limits. Standard probes retain one-message
+pacing. UHD wake minimum is200µs. This is a sender scheduling change; v4 wire
+format and measured receiver admission are unchanged. Rate ceilings are permissions, not
 measured network or encoder capacity. App capability/admission wiring remains separate.

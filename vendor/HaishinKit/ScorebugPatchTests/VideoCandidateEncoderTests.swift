@@ -5,6 +5,39 @@ import VideoToolbox
 @testable import HaishinKit
 
 @Suite(.serialized) struct VideoCandidateEncoderTests {
+    /// Opt-in real-footage diagnostic; failures are reported, not hidden by larger queues.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["SCOREBUG_CANDIDATE_SOURCE"] != nil),
+          arguments: [false, true])
+    func uhdNativeLatencyDiagnostic(lowLatency: Bool) async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["SCOREBUG_CANDIDATE_SOURCE"])
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
+        output.alwaysCopiesSampleData = false
+        reader.add(output); try #require(reader.startReading())
+        defer { reader.cancelReading() }
+        let recipe = VideoCodecSettings(videoSize: CGSize(width: 3840, height: 2160), bitRate: 24_000_000,
+            profileLevel: kVTProfileLevel_H264_High_AutoLevel as String,
+            maxKeyFrameIntervalDuration: 2, allowFrameReordering: false,
+            isLowLatencyRateControlEnabled: lowLatency, expectedFrameRate: 30)
+        let encoder = try VideoCandidateEncoder(settings: recipe)
+        try await encoder.start()
+        do {
+            let start = ContinuousClock.now
+            for i in 0..<90 {
+                try await Task.sleep(until: start + .nanoseconds(Int64(i) * 1_000_000_000 / 30), clock: .continuous)
+                let sample = try #require(output.copyNextSampleBuffer())
+                if !encoder.offer(sample) { break }
+            }
+            let result = await encoder.finish()
+            let first = result.frames.first.map { $0.completedAt - $0.admittedAt } ?? -1
+            let maximum = result.frames.map { $0.completedAt - $0.admittedAt }.max() ?? -1
+            print("UHD_CANDIDATE_DIAGNOSTIC lowLatency=\(lowLatency) accepted=\(result.acceptedInputCount) output=\(result.outputCount) failure=\(result.failure ?? "none") firstDelay=\(first) maximumDelay=\(maximum)")
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
     private var settings: VideoCodecSettings {
         .init(videoSize: CGSize(width: 32, height: 32), bitRate: 500_000,
               profileLevel: kVTProfileLevel_H264_Baseline_AutoLevel as String, allowFrameReordering: false)

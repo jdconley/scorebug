@@ -13,25 +13,30 @@ owns TODOs; the [acceptance matrix](../simulator-acceptance.md) owns retained ev
 
 ## Active checkpoint
 
-Production now selects `broadcast-reliability3000-v3`:3s media deadline,1s control
-report age,4.25s capture evaluation allowance. Old profiles unchanged. Core, native
-cadence/delivery/scheduler, diagnostics and host validators share the profile.
-Focused delayed HTTP/expiry/ownership and actual-scheduler checks pass; full sim
-build passes. Failed preliminary v2 used an incompatible3.5s evaluation allowance;
-its stopped run `ordinary-native-ClWHlf` is retained, cleanup[].
+UHD sender pacing fix: four-message token capacity and at most four nonblocking
+writes per idle wake, rechecking pending media and all probe limits per message.
+Standard pacing, v4 wire,48Mbps/64MiB bounds and receiver admission are unchanged.
+Real SDK timer/pump diagnostic (always-accepting socket) improves48Mbps request
+from25.143 to47.998Mbps; all four rates achieve99.5–100%.75 affected tests pass.
+Patch reverse/original hashes/reapply verified. This measures sender scheduling,
+not network capacity.
 
-Final `ordinary-native-z1va0e`, labvgxwUF, exec55738 joined1/cleanup[].360 and720
-probation pass.1080applies just after its150s gate; UHD still unqualified. Padding
-headroom is the next blocker: candidate7.185Mbps/padding7.698Mbps, retry7.153/8.841;
-later6.977/9.171qualifies. No timing rollback reproduced. One intervening candidate
-fails at candidateJoined. Use saved attachments; do not blindly extend gates.
+Full simulator `ordinary-native-aK6INv`, lab `device-lab-9PaWFc`, exec80522 joined1,
+cleanup[].360/720/1080 confirmed; real receiver sees those geometries without gaps.
+4K candidate fails `inputRejected / unresolvedInputLimit` (16 unresolved raw frames).
+An earlier attempt timed out in sourceWait. No2160 admission or full media pass.
+Native export succeeds;166 segment hashes checked.240s UHD terminal allowance works.
+Artifacts and exact phase attachment are in the [session log](2026-09-28-uhd-sender-pacing.md).
 
-UHD export failed because the test's90s terminal allowance clipped its180s export
-wait. Harness now grants240s terminal for UHD only; this small change awaits runtime
-verification. Raw archive/prepared MP4s retained; no successful native export claim.
-No full offline media analysis on this failed checkpoint. All jobs joined.
+Short real-footage SDK encoder diagnostic on macOS: normal4K24Mbps produces90/90
+frames,83ms maximum completion delay; low-latency mode produces1/6 then hits raw
+queue limit (375ms first completion). Do not switch production modes or raise limits.
+The simulator/load-specific failure remains to isolate. SDK Xcode schemes available:
+HaishinKit,HaishinKit-Package,SRTHaishinKit; test target HaishinKitPatchTests.
+No simulator-specific SDK diagnostic has run yet. All jobs joined.
 
-[Current session](2026-09-28-production-report-timing.md) contains exact evidence.
+Production timing remains broadcast-reliability3000-v3:3s media,1s report age,
+4.25s capture evaluation. Prior timing evidence/session retained.
 
 ## Reuse, don't repeat
 
@@ -46,16 +51,13 @@ No full offline media analysis on this failed checkpoint. All jobs joined.
 
 ## Next work
 
-1. Isolate native UHD probe pacing/headroom throughput with a short SDK/headless
-   check before another full simulator run. Sender requests more padding than the
-   receiver gets; actual cause is not yet proven. Preserve25% measured admission,
-   ownership, bounded queues and old protocol contracts. Review
-   `NativeCandidateAttempt.swift`, SDK `SRTBandwidthProbe.swift` (one-message token
-   cap), `SRTProbeWakeSchedule.swift` and actual sender pump before proposing changes.
-   `scripts/test-headless-streaming.mjs` avoids UI/export overhead; test clips bounded
-   to under~200s keep its2048-row timing audit intact. Saved120/180s harness evidence
-   in `headless-native-hmNggn`/`headless-native-qfiBCM` remains diagnostic only.
-2. After focused throughput fix, qualify full4K climb and saved media with retained
+1. Isolate4K candidate pending-input failure with a short simulator SDK encoding
+   diagnostic. Existing opt-in `VideoCandidateEncoderTests/uhdNativeLatencyDiagnostic`
+   reads `SCOREBUG_CANDIDATE_SOURCE`; normal and low-latency recipes are diagnostics,
+   not passing-capacity assertions. Mac alone does not reproduce simulator failure.
+   Inspect native encoder selection/startup/completion under the actual load; preserve
+   memory/queue caps. Avoid another full8minute UI/export run without a causal fix.
+2. After focused candidate fix, qualify full4K climb and saved media with retained
    `verify-2160-climb-20260928.py`, `verify-uhd-media-20260928.py` and
    `collect-ordinary-export-20260925.py`. Native frame/media thresholds unchanged.
 3. Audit remaining delivery/pressure TODOs against existing coverage, then sustained

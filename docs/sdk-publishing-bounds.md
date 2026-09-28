@@ -223,3 +223,12 @@ total stop budget to SDK finish, then waits for current sender occupancy, negoti
 peer latency, and a configurable 500 ms downstream allowance. This production policy
 passes [native end-to-end qualification](native-streaming-qualification.md); elapsed
 allowance still does not acknowledge remote delivery.
+
+## UHD probe scheduling
+
+Explicit `.uhd` probes cap accumulated tokens at four messages (5,440 accounted
+wire bytes), and the socket submits at most four per idle opportunity. Every
+message independently rechecks media priority, lease, revocation, native pressure
+and cumulative byte bounds. Standard probes retain one-message pacing. The v4
+wire format and receiver-measured admission are unchanged. See the
+[sender diagnostic](session-logs/2026-09-28-uhd-sender-pacing.md) for timing evidence.

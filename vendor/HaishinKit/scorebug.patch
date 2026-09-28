@@ -1226,7 +1226,7 @@
              if incomingBuffer.count < windowSizeC {
                  incomingBuffer = .init(count: Int(windowSizeC))
              }
-@@ -188,12 +238,84 @@
+@@ -188,12 +238,87 @@
          }
      }
 
@@ -1279,7 +1279,7 @@
 +        }
 +    }
 +
-+    /// Optional one-message write, serialized with media and never waiting for
++    /// Bounded optional writes, serialized with media and never waiting for
 +    /// send-buffer space. The shared permit rechecks revocation after actor hops.
 +    func sendPadding(_ probe: SRTBandwidthProbe, pendingMedia: TransportOutputAccounting) throws {
 +        guard isRunning, connected, failure.error == nil, !Task.isCancelled else {
@@ -1289,27 +1289,30 @@
 +              probe.isEligible(now: { ProcessInfo.processInfo.systemUptime }) else { return }
 +        let statistics = samplePerformanceData()
 +        do {
-+            try pendingMedia.whileEmpty {
-+                try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) { message in
-+                    try SRTNonblockingSend.perform(get: {
-+                        var value = false
-+                        var size = Int32(MemoryLayout<Bool>.size)
-+                        guard srt_getsockflag(socket, SRTO_SNDSYN, &value, &size) == 0,
-+                              size == MemoryLayout<Bool>.size else { throw PublishingError.transportWriteFailed }
-+                        return value
-+                    }, set: { value in
-+                        var value = value
-+                        guard srt_setsockflag(socket, SRTO_SNDSYN, &value, Int32(MemoryLayout<Bool>.size)) == 0 else {
++            for _ in 0..<probe.maximumMessagesPerWake {
++                let accepted = try pendingMedia.whileEmpty {
++                    try probe.offer(statistics: statistics, now: { ProcessInfo.processInfo.systemUptime }) { message in
++                        try SRTNonblockingSend.perform(get: {
++                            var value = false
++                            var size = Int32(MemoryLayout<Bool>.size)
++                            guard srt_getsockflag(socket, SRTO_SNDSYN, &value, &size) == 0,
++                                  size == MemoryLayout<Bool>.size else { throw PublishingError.transportWriteFailed }
++                            return value
++                        }, set: { value in
++                            var value = value
++                            guard srt_setsockflag(socket, SRTO_SNDSYN, &value, Int32(MemoryLayout<Bool>.size)) == 0 else {
++                                throw PublishingError.transportWriteFailed
++                            }
++                        }, send: {
++                            let sent = sendmsg(message)
++                            if sent == message.count { return true }
++                            // Capture the native thread-local error before restoring an option.
++                            if sent == SRT_ERROR, srt_getlasterror(nil) == SRT_EASYNCSND.rawValue { return false }
 +                            throw PublishingError.transportWriteFailed
-+                        }
-+                    }, send: {
-+                        let sent = sendmsg(message)
-+                        if sent == message.count { return true }
-+                        // Capture the native thread-local error before restoring an option.
-+                        if sent == SRT_ERROR, srt_getlasterror(nil) == SRT_EASYNCSND.rawValue { return false }
-+                        throw PublishingError.transportWriteFailed
-+                    })
++                        })
++                    }
 +                }
++                guard accepted == true else { break }
 +            }
 +        } catch {
 +            failure.fail(.transportWriteFailed)
@@ -1317,7 +1320,7 @@
          }
      }
 
-@@ -213,11 +335,34 @@
+@@ -213,11 +338,34 @@
          return true
      }
 
@@ -1356,7 +1359,7 @@
      }
 
      private func makeSocketError() -> Error {
-@@ -234,6 +379,7 @@
+@@ -234,6 +382,7 @@
 
      @inline(__always)
      private func sendmsg(_ data: Data) -> Int32 {
@@ -1364,7 +1367,7 @@
          return data.withUnsafeBytes { pointer in
              guard let buffer = pointer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
                  return SRT_ERROR
-@@ -256,38 +402,37 @@
+@@ -256,38 +405,37 @@
  extension SRTSocket: AsyncRunner {
      // MARK: AsyncRunner
      func startRunning() async {
@@ -3687,7 +3690,7 @@
 +}
 --- /dev/null
 +++ b/SRTHaishinKit/Sources/SRT/SRTBandwidthProbe.swift
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,252 @@
 +import Foundation
 +
 +/// Fixed for a publication. UHD uses wire v4; legacy v1-v3 retain their bounds.
@@ -3846,15 +3849,19 @@
 +    }
 +    private func eligible(_ at: Double) -> Bool {
 +        guard check(at) else { return false }
-+        tokens = min(1360, tokens + (at - tokenAt) * Double(bitRate) / 8)
++        tokens = min(Double(maximumMessagesPerWake) * 1360, tokens + (at - tokenAt) * Double(bitRate) / 8)
 +        tokenAt = at
 +        return tokens >= 1360
 +    }
++    /// UHD can recover timer jitter with at most four accounted messages.
++    /// Standard probes retain their single-message bucket.
++    var maximumMessagesPerWake: Int { budget == .uhd ? 4 : 1 }
++
 +    /// Versioned wake bound; readiness still requires one 1360-byte token.
 +    var minimumWakeInterval: Double { stage == nil ? 0.002 : (budget == .uhd ? 0.0002 : 0.0005) }
 +
 +    /// A wake is only an opportunity. The same token cap and permit are checked
-+    /// again at native submission, so delayed timers never accumulate a burst.
++    /// again at each native submission; catch-up stays within the fixed bucket.
 +    func nextOpportunityDelay(now: () -> Double) -> Double? {
 +        lock.withLock {
 +            let at = now()

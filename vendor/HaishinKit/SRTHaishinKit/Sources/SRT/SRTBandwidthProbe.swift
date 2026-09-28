@@ -156,15 +156,19 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     }
     private func eligible(_ at: Double) -> Bool {
         guard check(at) else { return false }
-        tokens = min(1360, tokens + (at - tokenAt) * Double(bitRate) / 8)
+        tokens = min(Double(maximumMessagesPerWake) * 1360, tokens + (at - tokenAt) * Double(bitRate) / 8)
         tokenAt = at
         return tokens >= 1360
     }
+    /// UHD can recover timer jitter with at most four accounted messages.
+    /// Standard probes retain their single-message bucket.
+    var maximumMessagesPerWake: Int { budget == .uhd ? 4 : 1 }
+
     /// Versioned wake bound; readiness still requires one 1360-byte token.
     var minimumWakeInterval: Double { stage == nil ? 0.002 : (budget == .uhd ? 0.0002 : 0.0005) }
 
     /// A wake is only an opportunity. The same token cap and permit are checked
-    /// again at native submission, so delayed timers never accumulate a burst.
+    /// again at each native submission; catch-up stays within the fixed bucket.
     func nextOpportunityDelay(now: () -> Double) -> Double? {
         lock.withLock {
             let at = now()

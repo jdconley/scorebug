@@ -283,7 +283,7 @@ import Testing
     }
 
     private enum Failure: Error { case injected }
-    @Test func uhdBudgetIsExplicitAndPreservesOnePacketPacing() throws {
+    @Test func uhdBudgetAllowsOnlyFourMessageCatchUp() throws {
         #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
             try SRTBandwidthProbe(bitRate: 48_000_000, generation: 1, statistics: stats(10), at: 10,
                 stage: 1, campaign: 1, campaignStartedAt: 10)
@@ -301,13 +301,18 @@ import Testing
         #expect(probe.minimumWakeInterval == 0.0002)
         #expect(!probe.isEligible(now: { 10.0002 }))
         var sent: [Data] = []
-        #expect(try probe.offer(statistics: stats(10.1), now: { 10.1 }, send: { sent.append($0); return true }))
+        for _ in 0..<4 {
+            #expect(try probe.offer(statistics: stats(10.1), now: { 10.1 }, send: { sent.append($0); return true }))
+        }
         #expect(try !probe.offer(statistics: stats(10.1), now: { 10.1 }, send: { sent.append($0); return true }))
-        #expect(sent.count == 1)
+        #expect(sent.count == 4)
+        #expect(try !probe.offer(statistics: stats(10.1002), now: { 10.1002 }, send: { _ in true }))
+        #expect(try probe.offer(statistics: stats(10.1003), now: { 10.1003 }, send: { _ in true }))
+        #expect(try !probe.offer(statistics: stats(10.1003), now: { 10.1003 }, send: { _ in true }))
         let bytes = try #require(sent.first)
         #expect(String(data: bytes[4..<12], encoding: .utf8) == "SBUGPRB4")
         #expect(Array(bytes[44..<48]) == [2, 0xdc, 0x6c, 0])
-        #expect(probe.snapshot(now: { 10.1 }).budget == .uhd)
+        #expect(probe.snapshot(now: { 10.1003 }).budget == .uhd)
         #expect(probe.snapshot(now: { 10.301 }).reason == .leaseExpired)
     }
 

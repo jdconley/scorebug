@@ -60,3 +60,12 @@ Hosted compilation is not Watch UI or Docker media acceptance; those remain boun
 local workflow checkpoints. No physical signing or full media soak runs for each edit.
 
 All outstanding work remains in the [delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md).
+
+## Latest UHD checkpoint
+
+`ordinary-native-aK6INv` confirms360/720/1080 from a4K source and completes native
+export;166 archive segment hashes verified.4K candidate admission fails on the
+pending-input bound, so full UHD/media acceptance remains open. Focused sender
+pacing is fixed and verified separately. See the
+[session log](session-logs/2026-09-28-uhd-sender-pacing.md) for scoped results and
+short encoder comparison; no hardware rerun.

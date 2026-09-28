@@ -6,6 +6,43 @@ import Testing
 @testable import SRTHaishinKit
 
 @Suite(.serialized) struct SRTStreamPaddingTests {
+    /// Opt-in wall-clock diagnosis through the real native pump and socket path.
+    /// The socket accepts every write: this measures sender scheduling, not network capacity.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["SCOREBUG_PROBE_TIMING_DIAGNOSTIC"] == "1"),
+          arguments: [9_192_000, 12_000_000, 36_192_000, 48_000_000])
+    func uhdSenderSchedulingDiagnostic(rate: Int) async throws {
+        let output = StreamPaddingBytes()
+        let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true, probeBudget: .uhd)
+        await connection.addStream(stream)
+        do {
+            try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+            await stream.setExpectedMedias([.video]); await stream.publish()
+            await stream.append(try paddingVideo(0))
+            let ready = ContinuousClock.now + .seconds(2)
+            while output.videoStarts < 1 && ContinuousClock.now < ready { await Task.yield() }
+            try #require(output.videoStarts == 1)
+            let generation = try #require(await stream.publishingGeneration)
+            let started = try await stream.beginBandwidthProbe(bitRate: rate, publishingGeneration: generation,
+                staged: true, repeatable: true)
+            for _ in 0..<20 {
+                try await Task.sleep(for: .milliseconds(100))
+                let renewed = try await stream.renewBandwidthProbe(id: started.id, publishingGeneration: generation)
+                try #require(renewed.reason == nil)
+            }
+            let active = try #require(await stream.bandwidthProbeSnapshot)
+            let elapsed = ProcessInfo.processInfo.systemUptime - started.startedAt
+            let actual = Double(active.acceptedPayloadBytes / 1316) * 1360 * 8 / elapsed
+            print("UHD_SENDER_DIAGNOSTIC requested=\(rate) accepted=\(actual) ratio=\(actual / Double(rate)) seconds=\(elapsed)")
+            #expect(active.reason == nil)
+            #expect(active.acceptedPayloadBytes > 0)
+            _ = try await stream.retireBandwidthProbe(id: started.id, publishingGeneration: generation)
+            await stream.finish(); await connection.close()
+        } catch {
+            await stream.finish(); await connection.close()
+            throw error
+        }
+    }
     @Test(arguments: [1_000_000, 2_000_000]) func probeReachesTargetWithoutDependingOnAnotherMediaFrameAndThenExpires(rate: Int) async throws {
         let output = StreamPaddingBytes()
         let connection = SRTConnection(socket: SRTSocket(sender: { output.append($0); return Int32($0.count) }, statisticsReader: probeStatistics))
