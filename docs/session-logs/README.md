@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 relay generation and healthy media](2026-09-28-relay-generation-and-healthy-media.md) — stale session/generation rejection, late reader, and retained phase acceptance.
+
 - [September 28 buffered candidate scheduling](2026-09-28-buffered-candidate-scheduling.md) — bounded production phase alignment and focused regression.
 
 - [September28 transport recovery budget](2026-09-28-transport-recovery-budget.md) — rejected long-buffer candidates expose source/candidate phase mismatch; bounded SRT stop fix retained.

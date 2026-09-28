@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -318,14 +319,22 @@ try {
   if (!(await relay.list(grant.path.slice(0, 26))).includes(grant.path))
     throw new Error('Reconciliation removed another installation path');
   await relay.remove(grant.path);
-  const request = async (path, token, body) => {
+  const request = async (path, token, body, rejection) => {
     const response = await fetch(`${api.baseURL}${path}`, {
       method: body ? 'POST' : 'GET',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(5000),
     });
-    if (!response.ok) throw new Error(`Native relay request failed: HTTP ${response.status}`);
+    if (rejection) {
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), { error: rejection });
+      return;
+    }
+    if (!response.ok)
+      throw Object.assign(new Error(`Native relay request failed: HTTP ${response.status}`), {
+        status: response.status,
+      });
     return response.json();
   };
   console.log('Startup orphan cleanup and installation isolation verified.');
@@ -416,23 +425,146 @@ try {
     }
   }, 'automatic path restoration after relay restart');
   nativePublisher = start(publishArgs(access.publishUrl));
+  await until(async () => {
+    try {
+      return (await request('/v1/worker/connection?workerId=mac', workerToken)).connection?.source
+        .ready;
+    } catch (error) {
+      // Management/path recovery can precede source status availability. Keep the
+      // same bounded restart wait; authentication and other failures still abort.
+      if (error.status === 503) return false;
+      throw error;
+    }
+  }, 'source reconnect after relay restart');
+  const oldConnection = (await request('/v1/worker/connection?workerId=mac', workerToken))
+    .connection;
+  const firstSession = await request('/v1/worker/sessions', workerToken, {
+    workerId: 'mac',
+    runId: 'first-checked-worker',
+  });
+  const firstReport = {
+    workerId: 'mac',
+    sessionId: firstSession.sessionId,
+    sequence: 1,
+    observation: {
+      gameId: matchId,
+      generation: 1,
+      state: 'producing_output',
+      reason: null,
+      attempt: 1,
+      frame: 12,
+      outTimeUs: 400_000,
+      scoreRevision: 1,
+    },
+  };
+  await request('/v1/worker/observations', workerToken, firstReport);
+  const status = async () =>
+    (await request(`/v1/matches/${matchId}/media/status`, capture.credential.token)).status;
+  const firstStatus = await status();
+  assert.equal(firstStatus.state, 'producing_output');
+  assert(firstStatus.workerEpoch);
+  for (const [expectedGeneration, operation] of [
+    [1, { type: 'stop' }],
+    [
+      2,
+      {
+        type: 'start',
+        selection: {
+          workerId: 'mac',
+          outputId: 'local-sink',
+          captureDeviceId: 'phone',
+          recordingId: 'native-archive',
+        },
+      },
+    ],
+  ]) {
+    const outcome = await request(`/v1/matches/${matchId}/media/commands`, scoringTestToken, {
+      commandId: `generation-${expectedGeneration}`,
+      gameId: matchId,
+      expectedGeneration,
+      issuedAt: new Date().toISOString(),
+      operation,
+    });
+    assert.equal(outcome.accepted, true);
+    assert.equal(outcome.snapshot.broadcast.generation, expectedGeneration + 1);
+  }
+  const unreported = await status();
+  assert.equal(unreported.generation, 3);
+  assert.equal(unreported.state, 'unknown');
+  assert.equal(unreported.observation, null);
+  await request('/v1/worker/observations', workerToken, firstReport, 'broadcast_changed');
+  await request(
+    `/v1/matches/${matchId}/media/publish`,
+    capture.credential.token,
+    { recordingId: 'native-archive', generation: 1 },
+    'broadcast_changed',
+  );
+  const replacement = await request(
+    `/v1/matches/${matchId}/media/publish`,
+    capture.credential.token,
+    { recordingId: 'native-archive', generation: 3 },
+  );
+  assert.notEqual(replacement.publishUrl, access.publishUrl);
+  await Promise.all([
+    denied(publishArgs(access.publishUrl), 'old generation publisher'),
+    denied(readArgs(oldConnection.readUrl), 'old generation late reader'),
+  ]);
+  await until(() => nativePublisher.exited, 'old generation drain ends existing publisher');
+  nativePublisher = start(publishArgs(replacement.publishUrl));
+  let currentConnection;
+  await until(async () => {
+    currentConnection = (await request('/v1/worker/connection?workerId=mac', workerToken))
+      .connection;
+    return currentConnection?.generation === 3 && currentConnection.source.ready;
+  }, 'replacement generation source');
+  assert.notEqual(currentConnection.readUrl, oldConnection.readUrl);
+  const secondSession = await request('/v1/worker/sessions', workerToken, {
+    workerId: 'mac',
+    runId: 'replacement-checked-worker',
+  });
+  assert.equal((await status()).state, 'unknown');
+  await request('/v1/worker/observations', workerToken, firstReport, 'worker_session_retired');
+  const replacementReport = {
+    ...firstReport,
+    sessionId: secondSession.sessionId,
+    observation: { ...firstReport.observation, generation: 3 },
+  };
+  await request('/v1/worker/observations', workerToken, replacementReport);
+  const currentStatus = await status();
+  assert.equal(currentStatus.state, 'producing_output');
+  assert.notEqual(currentStatus.workerEpoch, firstStatus.workerEpoch);
+  await request('/v1/worker/observations', workerToken, firstReport, 'worker_session_retired');
+  assert.equal((await status()).workerEpoch, currentStatus.workerEpoch);
+  // Attach only after independently observing continuing source bytes. The reader
+  // really decodes both tracks; the posted worker reports above test control scope.
+  const beforeLateReader = currentConnection.source.inboundBytes;
   await until(
     async () =>
-      (await request('/v1/worker/connection?workerId=mac', workerToken)).connection?.source.ready,
-    'source reconnect after relay restart',
+      (await request('/v1/worker/connection?workerId=mac', workerToken)).connection.source
+        .inboundBytes > beforeLateReader,
+    'source advances before late reader',
   );
+  const lateReader = start(readArgs(currentConnection.readUrl));
+  await until(() => lateReader.exited, 'new generation late reader decodes', 15_000);
+  assert.equal(lateReader.code, 0);
+  assert.equal(lateReader.signal, null);
+  assert.equal(nativePublisher.exited, false);
+  console.log(
+    'Broadcast and worker replacement reject stale reports/credentials; late current reader decodes A/V.',
+  );
+  const endingMatch = (await request(`/v1/matches/${matchId}`, created.credential.token)).snapshot;
   await request(`/v1/matches/${matchId}/commands`, created.credential.token, {
     commandId: 'end',
     gameId: matchId,
     deviceId: 'scorer',
-    expectedRevision: 1,
-    scorerEpoch: 1,
+    expectedRevision: endingMatch.revision,
+    scorerEpoch: endingMatch.scorer.epoch,
     issuedAt: new Date().toISOString(),
     operation: { type: 'end_match', reason: 'Relay validation finished' },
   });
   // No direct adapter delete: the production reconciliation loop must revoke it.
   await until(() => nativePublisher.exited, 'match end automatically revokes relay publishing');
-  await denied(publishArgs(access.publishUrl), 'ended match credential');
+  await denied(publishArgs(replacement.publishUrl), 'ended match credential');
   const ended = await request(`/v1/matches/${matchId}/media`, capture.credential.token);
   if (ended.snapshot.recordings[0]?.status !== 'recording')
     throw new Error('Match end changed independent recording metadata');

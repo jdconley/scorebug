@@ -10,10 +10,17 @@ No proactive subagents. Preserve originals, recordings and unrelated simulators.
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 `codex/local-validation`. Use current Git HEAD. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [consolidated acceptance matrix](../simulator-acceptance.md) owns
-current cross-feature evidence. [Latest session](2026-09-28-buffered-candidate-scheduling.md)
+current cross-feature evidence. [Latest session](2026-09-28-relay-generation-and-healthy-media.md)
 contains exact new results and limitations.
 
 ## Current checkpoint
+
+- Real relay generation/worker-session replacement, retired report/credential rejection,
+  late current reader decoding and scoped cleanup pass. No live owned jobs remain.
+- Retained phase analysis proves baseline and buffered candidate healthy periods have
+  30minimum freshfps, zero missing/non-increasing IDs and zero audio timestamp gaps.
+  All missing source IDs fall inside the forced constraint; strict whole-stream failures
+  remain unchanged. See latest log/hash-bound artifact; no native capture repeated.
 
 - Bounded production candidate scheduling is implemented. Four focused model checks
   pass; `ordinary-native-kStE7J` completes the full720→minimum→720 native workflow,
@@ -43,15 +50,15 @@ contains exact new results and limitations.
 
 ## Next work
 
-1. Stop parameter-only congestion trials. Scheduling is fixed; larger buffering did
-   not repair live media. Use retained runs for source/transport/decoder loss diagnosis
-   and distinguish normal/healthy-period acceptance from the forced outage. Do not
-   weaken strict failed results, extend expiry, or enlarge audit limits. Prior production
-   baseline`ordinary-native-IZI72F`has87missing IDs,16audio gaps,2.4s maxgap; new buffered
-   candidate is worse. Keep previous production policy and continuous clean recording.
-2. Audit remaining relay/generation, stale telemetry and delivery-evidence TODOs
-   against existing real-relay/model coverage before adding tests. Qualify sustainable
-   profiles and production latency; unsupported4K remains disabled.
+1. Deliver1080p upload: productionProfiles currently ends at720p despite existing
+   high1080 encoder support. Inspect existing measured-cost/native/backend guards,
+   add1080 only through that same path, then one affected simulator real-source
+   workflow. Reuse existing qualification/build caches; no broad per-edit suite.
+   4K remains explicitly unqualified and must not be enabled merely by enum support.
+2. Keep prior production latency. No more parameter-only congestion captures: bounded
+   scheduling is fixed, larger buffering worsens media, and healthy-period FPS passes.
+   Investigate actual forced-outage loss from saved evidence when needed. Remaining
+   delivery-audit/stale-pressure TODOs should reuse existing complete model coverage.
 3. Confirm native CI when a push/hosted run is authorized. Actual external Linux/TLS,
    other GPU backends and hardware remain deferred until local feature gates resolve.
 
