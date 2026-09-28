@@ -539,13 +539,6 @@ async function main() {
     } catch {
       cleanupFailures.push('owned simulator discovery');
     }
-    if (watchPairId) {
-      try {
-        await run('xcrun', ['simctl', 'unpair', watchPairId], 'unpair-watch', 60000, true);
-      } catch {
-        cleanupFailures.push('Watch unpair');
-      }
-    }
     for (const [name, role] of Object.entries(roles)) {
       if (!role.device) continue;
       let preserved = !role.container;
@@ -583,16 +576,29 @@ async function main() {
           cleanupFailures.push(`${name} app-data preservation: ${error.message}`);
         }
       }
-      if (!preserved) continue; // Never delete an unpreserved recording/container.
-      try {
-        await run('xcrun', ['simctl', 'shutdown', role.device], `shutdown-${name}`, 60000, true);
-      } catch (error) {
-        cleanupFailures.push(`${name} shutdown: ${error.message}`);
+      role.preserved = preserved;
+    }
+    // Unpairing can remove Watch app data. Preserve EVERY container first.
+    if (Object.values(roles).every((role) => !role.container || role.preserved)) {
+      if (watchPairId) {
+        try {
+          await run('xcrun', ['simctl', 'unpair', watchPairId], 'unpair-watch', 60000, true);
+        } catch {
+          cleanupFailures.push('Watch unpair');
+        }
       }
-      try {
-        await run('xcrun', ['simctl', 'delete', role.device], `delete-${name}`, 60000, true);
-      } catch (error) {
-        cleanupFailures.push(`${name} delete: ${error.message}`);
+      for (const [name, role] of Object.entries(roles)) {
+        if (!role.device) continue;
+        try {
+          await run('xcrun', ['simctl', 'shutdown', role.device], `shutdown-${name}`, 60000, true);
+        } catch (error) {
+          cleanupFailures.push(`${name} shutdown: ${error.message}`);
+        }
+        try {
+          await run('xcrun', ['simctl', 'delete', role.device], `delete-${name}`, 60000, true);
+        } catch (error) {
+          cleanupFailures.push(`${name} delete: ${error.message}`);
+        }
       }
     }
     workflowPassed = workflowPassed && !failure && !cleanupFailures.length;
