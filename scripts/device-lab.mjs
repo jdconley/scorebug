@@ -91,7 +91,7 @@ export function deviceLabRelayArgs({ name, host, ingestPort, relayPort, configPa
     `127.0.0.1:${relayPort}:9997`,
     '-v',
     `${configPath}:/mediamtx.yml:ro`,
-    'scorebug/ingest:campaign-probe-v3',
+    'scorebug/ingest:drain-v1',
   ];
 }
 

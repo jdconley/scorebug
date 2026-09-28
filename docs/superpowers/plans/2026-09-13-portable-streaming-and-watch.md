@@ -39,7 +39,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Run the phone file-capture source through normal archive, publishing and adaptation while a native Watch scores through the real API. Fixture only the setup transport; verify the current match/pairing before mutations.
 - [x] While capture and stream continue, relaunch Watch without reinjecting setup; recover the same pairing/score, then score/undo/end with exactly one server outcome per command.
 - [x] Verify the complete two-phone vertical: clean archive/export, changing overlay in both proxy/mock MP4s, continuous30fps video, audio synchronization and archive continuation after streaming stops.
-- [ ] Fix/verify remote Watch match-end finalization: Watch commands/restoration, frame continuity, audio sync and visible score changes pass, but live audio outlasts video by454ms. Normal phone Stop streaming aligns within24ms.
+- [x] Fix remote Watch match-end finalization with bounded relay/worker draining. Native Watch scoring/restoration/end and phone recording/export pass; both live outputs now end within40ms A/V coverage. New connections are revoked while accepted media finishes.
 - [x] Exercise native phone B creating a match, phone A discovering/joining to record/publish, and phone B scoring/undoing without capture permissions. Both native workflows and durable role checks pass on iPhone14 simulators.
 - [ ] Extend the separate-scorer workflow through Watch B takeover; finish layout checks on supported small Watch screens.
 - [ ] Run scoring reconnect/lost-reply/takeover/stale-command cases against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.

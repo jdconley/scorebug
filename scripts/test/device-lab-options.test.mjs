@@ -114,7 +114,7 @@ test('ordinary relay uses the maintained image with LAN media and private manage
     '127.0.0.1:19997:9997',
     '-v',
     '/private/lab/ingest.yml:/mediamtx.yml:ro',
-    'scorebug/ingest:campaign-probe-v3',
+    'scorebug/ingest:drain-v1',
   ]);
 });
 

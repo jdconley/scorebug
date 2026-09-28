@@ -66,7 +66,7 @@ pnpm test:worker software
 Start the isolated fixtures with `pnpm local:up` and the local API with
 `pnpm dev:api`. On a clean host, first build the maintained ingest with
 `docker compose -f docker-compose.dev.yml build ingest`; retain an existing
-`scorebug/ingest:campaign-probe-v3` image. The mock output sink remains stock
+`scorebug/ingest:drain-v1` image. The mock output sink remains stock
 MediaMTX. Use `pnpm local:down` when finished. See [local testing](docs/local-testing.md)
 and [device testing](docs/device-testing.md) for build and 100 ms worker-report defaults.
 

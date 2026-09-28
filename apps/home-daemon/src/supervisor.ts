@@ -51,6 +51,7 @@ export type WorkerSupervisorOptions = {
   onState?: (state: WorkerState) => void;
   now?: () => number;
   controlTimeoutMs?: number;
+  drainTimeoutMs?: number;
   progressTimeoutMs?: number;
   retryWindowMs?: number;
   maxAttempts?: number;
@@ -61,6 +62,8 @@ type Running = {
   pipelineReadId?: string;
   exit: Promise<void>;
   stopping: boolean;
+  stopSignaled?: boolean;
+  drainTimer?: ReturnType<typeof setTimeout>;
   lastOutput: number;
   progress?: PipelineProgress;
 };
@@ -70,6 +73,7 @@ export class WorkerSupervisor {
   private readonly now: () => number;
   private readonly writeScore: (path: string, text: string) => Promise<void>;
   private readonly controlTimeoutMs: number;
+  private readonly drainTimeoutMs: number;
   private readonly progressTimeoutMs: number;
   private readonly retryWindowMs: number;
   private readonly maxAttempts: number;
@@ -93,11 +97,13 @@ export class WorkerSupervisor {
     this.now = options.now ?? (() => performance.now());
     this.writeScore = options.writeScore ?? atomicWrite;
     this.controlTimeoutMs = options.controlTimeoutMs ?? 5000;
+    this.drainTimeoutMs = options.drainTimeoutMs ?? 10000;
     this.progressTimeoutMs = options.progressTimeoutMs ?? 10000;
     this.retryWindowMs = options.retryWindowMs ?? 60000;
     this.maxAttempts = options.maxAttempts ?? 3;
     for (const value of [
       this.controlTimeoutMs,
+      this.drainTimeoutMs,
       this.progressTimeoutMs,
       this.retryWindowMs,
       this.maxAttempts,
@@ -242,19 +248,33 @@ export class WorkerSupervisor {
     this.timer.unref?.();
   }
 
-  private async stop(reason: WorkerState['reason']): Promise<void> {
+  private signalStop(active: Running): void {
+    clearTimeout(active.drainTimer);
+    if (this.active !== active || active.stopSignaled) return;
+    active.stopSignaled = true;
+    try {
+      active.handle.stop();
+    } catch {
+      // Never assume stop means exit, including when signaling fails.
+    }
+  }
+
+  private async stop(reason: WorkerState['reason'], drain = false): Promise<void> {
     const active = this.active;
     if (!active) return;
     if (!active.stopping) {
       active.stopping = true;
       clearTimeout(this.timer);
       this.emit('stopping', reason, active.input);
-      try {
-        active.handle.stop();
-      } catch {
-        // Never assume stop means exit, including when signaling fails.
+      if (drain) {
+        // The relay rejects new admissions while the current publisher finishes.
+        // Keep consuming its tail; the process owner still bounds forced teardown.
+        active.drainTimer = setTimeout(() => this.signalStop(active), this.drainTimeoutMs);
+        active.drainTimer.unref?.();
       }
     }
+    // Shutdown and explicit replacement interrupt a pending graceful drain.
+    if (!drain) this.signalStop(active);
     await active.exit;
   }
 
@@ -304,7 +324,7 @@ export class WorkerSupervisor {
     this.lastControl = this.now();
     this.armWatchdog();
     if (!input) {
-      await this.stop('assignment_changed');
+      await this.stop('assignment_changed', true);
       if (!this.closed) this.emit('idle');
       return;
     }
@@ -424,6 +444,7 @@ export class WorkerSupervisor {
     const started = running;
     this.active = started;
     started.exit = handle.waitExit().then(() => {
+      clearTimeout(started.drainTimer);
       if (this.active !== started) return;
       this.active = undefined;
       clearTimeout(this.timer);

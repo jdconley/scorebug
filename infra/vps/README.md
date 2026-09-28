@@ -59,7 +59,7 @@ broadcast, overlaid MP4, or both. Use a mock destination before a real broadcast
 
 The `control_data` volume contains `/data/scorebug.sqlite` and its WAL files.
 Recreating the API container retains matches, credentials and command receipts.
-Keep `INTERNAL_TOKEN` stable: it also anchors relay path/grant identities.
+Keep `PHONE_TOKEN` stable: it also anchors relay path/grant identities.
 Caddy certificate state has separate named volumes.
 
 Finish a broadcast before an upgrade. Stop the API, take a consistent backup of

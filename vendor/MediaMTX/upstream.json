@@ -21,7 +21,9 @@
     "internal/staticsources/rpicamera/mtxrpicamdownloader/HASH_MTXRPICAM_32_TAR_GZ": "f384a49249ca2066c967d3462c607d3c199010b9bcda0f6d32b4594e0d0174d3",
     "internal/core/path.go": "28ee3d8c6722ed44f2e59f6713cbecbed2028883492b08299b43ba0033252789",
     "internal/defs/path.go": "000e20711cfb62dfdc914f5fe42240d888c812e5fde24079384e4a4571f4406f",
-    "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1"
+    "internal/protocols/mpegts/from_stream.go": "5c8fbe59f9c9707984dd0c2ed68801dc6c4701cdf30e8456725aa251931ae1c1",
+    "internal/conf/path.go": "8af1949dc5af32e4da4bb048f45f04d2230a0591975f509b07eee03e65a4ad3d",
+    "internal/core/path_manager.go": "7bffdb77ee94dcb82a66b276cbc4d6e5f3a5a517778c86ece89516ac2ea882fe"
   },
   "patchSHA256": "0527758e3cca89b922ba5f380e43ab8299c7efbc1e9f51994ee6e28eb63200f4",
   "addedFiles": [
@@ -35,6 +37,8 @@
     "internal/servers/srt/conn_reader_source_test.go",
     "internal/servers/srt/probe_reader.go",
     "internal/servers/srt/probe_reader_campaign_test.go",
-    "internal/servers/srt/probe_reader_test.go"
-  ]
+    "internal/servers/srt/probe_reader_test.go",
+    "internal/core/scorebug_drain_test.go"
+  ],
+  "drainPatchSHA256": "72d0d2e476aa82eeee3e207017179bfbb82815aad862a9e2a96c0ea7320aea7e"
 }

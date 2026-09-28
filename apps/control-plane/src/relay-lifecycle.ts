@@ -39,7 +39,7 @@ export type WorkerIngestAssignment = {
   source: SourceObservation;
 };
 export type RelayAdapter = Pick<IngestRelay, 'ensure' | 'remove' | 'status' | 'list'> &
-  Partial<Pick<IngestRelay, 'publication'>>;
+  Partial<Pick<IngestRelay, 'publication' | 'retire'>>;
 type Target = { desired: RelayDesired; grant: IngestGrant };
 type RelayConfig = {
   installationSecret: string;
@@ -150,7 +150,8 @@ export class RelayLifecycle {
         continue;
       this.assertCurrent(target);
       if (path !== target?.grant.path) {
-        await this.relay.remove(path);
+        if (this.relay.retire) await this.relay.retire(path);
+        else await this.relay.remove(path);
         this.assertCurrent(target);
       }
     }

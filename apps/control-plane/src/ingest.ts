@@ -345,6 +345,7 @@ export class IngestRelay {
       if (
         !body ||
         typeof body !== 'object' ||
+        (body as Record<string, unknown>).scorebugDrain === true ||
         !Object.entries(config).every(
           ([key, value]) => (body as Record<string, unknown>)[key] === value,
         )
@@ -368,6 +369,29 @@ export class IngestRelay {
       }
     }
     throw new Error(`relay_http_${added.status}`);
+  }
+  /** Revoke new admissions immediately, preserving only the bounded accepted stream. */
+  async retire(path: string): Promise<void> {
+    path = this.path(path);
+    try {
+      const patched = await this.request('PATCH', `v3/config/paths/patch/${path}`, {
+        scorebugDrain: true,
+      });
+      if (patched.status === 404) return;
+      if (patched.status !== 200) throw new Error(`relay_http_${patched.status}`);
+      const verified = await this.request('GET', `v3/config/paths/get/${path}`);
+      if (verified.status === 404) return;
+      if (verified.status !== 200) throw new Error(`relay_http_${verified.status}`);
+      if ((verified.body as { scorebugDrain?: unknown } | null)?.scorebugDrain !== true)
+        throw new Error('relay_invalid_response');
+      // The relay itself enforces an eight-second hard deadline, including API outages.
+      // Reconciliation removes the retired configuration once its source has closed.
+      if (!(await this.status(path)).ready) await this.remove(path);
+    } catch (error) {
+      // Older/unreachable relays must never leave old grants admitting connections.
+      await this.remove(path);
+      throw error;
+    }
   }
   async remove(path: string): Promise<void> {
     const result = await this.request('DELETE', `v3/config/paths/delete/${this.path(path)}`);

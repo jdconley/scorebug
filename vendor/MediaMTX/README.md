@@ -10,12 +10,12 @@ with Alpine's version-pinned `patch=2.8-r0` build dependency.
 Upstream asset downloaders independently check pinned HLS and RPi asset hashes.
 
 Current normal local selection: `scripts/device-lab.mjs` and Compose ingest use
-`scorebug/ingest:campaign-probe-v3`. Compose builds from `./vendor/MediaMTX` on a
+`scorebug/ingest:drain-v1`. Compose builds from `./vendor/MediaMTX` on a
 clean host; its mock output sink stays stock. The ordinary worker defaults to
 100 ms reports, and device-lab explicitly uses that cadence for the current
 250 ms adaptive status freshness limit. Explicit 100–5000 ms worker overrides
 remain valid. These selections do not qualify media delivery or remote deployment;
-remote templates remain unchanged and unqualified. The sections below retain
+remote templates use the same source; external runtime qualification remains open. The sections below retain
 the historical qualification boundaries of each earlier image.
 
 The patch observes the actual first supported MPEG-TS callback passed through the
@@ -52,14 +52,14 @@ Production worker pipeline reads still need their own authenticated association;
 the qualification fixture's read query is only a unique test marker.
 
 On a clean ARM64 or AMD64 Docker host, build from the repository root. Reuse an
-already installed qualified `campaign-probe-v3` image rather than overwriting it:
+already installed `drain-v1` image rather than overwriting historical images:
 
 ```sh
-docker build --platform linux/arm64 -t scorebug/ingest:campaign-probe-v3 vendor/MediaMTX
+docker build --platform linux/arm64 -t scorebug/ingest:drain-v1 vendor/MediaMTX
 # Or select --platform linux/amd64 for an AMD64 deployment.
 ```
 
-Current cumulative source uses the `campaign-probe-v3` tag. Preserve the
+Current cumulative source uses the `drain-v1` tag. Preserve the `campaign-probe-v3` image and the
 previously qualified `staged-probe-hd-v2`, `staged-probe-v2`, `receiver-probe-v1`
 and `recovery-v1` images.
 
@@ -98,6 +98,26 @@ and [boundary contract](../../docs/relay-clock-correspondence.md) for qualificat
 results and the association work required at that historical stage. Those early
 builds were not selected by regular deployments; current normal local selection
 is the cumulative campaign-v3 image described above.
+
+## Bounded retirement
+
+`drain-v1` applies `drain.patch` after the campaign patch. Setting the private path
+configuration `scorebugDrain: true` rejects new source/read/describe admissions,
+including requests already dispatched from the path manager. Existing accepted
+connections continue for at most eight seconds. The deadline runs inside the relay,
+so an API failure cannot extend it. Repeating the patch never restarts the timer.
+Normal path deletion still immediately closes connections.
+
+The control plane retires obsolete paths, then removes their configuration once the
+source ends. If draining is unsupported or cannot be verified, it deletes the path.
+The worker allows up to ten seconds for natural EOF on assignment withdrawal;
+shutdown and explicit routing replacement still signal immediately. These are
+bounded teardown allowances, not adaptive streaming thresholds.
+
+Focused source regression: `go test -race ./internal/core -run '^TestScorebugDrain$'`.
+`pnpm test:relay` verifies actual SRT admission rejection and continued accepted
+media before the deadline. Native end-of-match A/V acceptance is recorded separately
+in the session logs.
 
 ## H.264 recovery qualification build
 
@@ -165,7 +185,7 @@ previously tagged recovery-v1 image remains frozen; current local selection is a
 The cumulative `staged-probe-wire-v2` build preserves `SBUGPRB1` accounting and
 adds explicit `SBUGPRB2` parsing. That historical source was built as
 `scorebug/ingest:staged-probe-v2`; preserve that qualified image. Build current
-cumulative source only as `campaign-probe-v3` using the command above.
+cumulative source only as `drain-v1` using the command above.
 
 V2 keeps bytes 0–48 of each packet's v1 layout except for the version marker.
 Bytes 49–52 carry a big-endian stage in 1...32; bytes 53–187 remain `0xff`.

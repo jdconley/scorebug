@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September28 bounded stream retirement](2026-09-28-bounded-stream-retirement.md) — remote Watch end preserves the stream tail; simulator A/V end mismatch reduced from454ms to under40ms with focused checks.
+
 - [September 28 portable deployment](2026-09-28-portable-deployment.md) — repaired Compose, persistent native API/relay wiring, focused container-recreation check and CI.
 
 - [September 26 evening device resume](2026-09-26-evening-device-resume.md) — current LAN corrected, phone automation works, fresh network probe still denied, Watch connection reset.

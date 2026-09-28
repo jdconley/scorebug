@@ -462,3 +462,23 @@ it('snapshots the publisher endpoint while preserving attestation and worker cap
   expect(url.searchParams.get('maxbw')).toBe('0');
   expect((await lifecycle.worker('mac'))?.readUrl === baseline.readUrl).toBe(true);
 });
+
+it('retires obsolete paths through admission revocation when the relay supports draining', async () => {
+  const f = fixture();
+  const retired: string[] = [];
+  const lifecycle = new RelayLifecycle(
+    {
+      ...f.relay,
+      retire: async (path: string) => {
+        retired.push(path);
+      },
+    },
+    config,
+    () => null,
+  );
+  const path = grantFor(running()).path;
+  f.paths.add(path);
+  await lifecycle.reconcile();
+  expect(retired).toEqual([path]);
+  expect(f.paths.has(path)).toBe(true);
+});

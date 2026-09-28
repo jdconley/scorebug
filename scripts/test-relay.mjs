@@ -32,11 +32,14 @@ async function availablePort(protocol) {
 function start(args) {
   const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'ignore'] });
   owned.add(child);
-  const result = { child, exited: false, code: null, signal: null, frames: false };
+  const result = { child, exited: false, code: null, signal: null, frames: false, frameCount: 0 };
   let progress = '';
   child.stdout.on('data', (chunk) => {
     progress = (progress + chunk.toString()).slice(-2048);
-    if (/(?:^|\n)frame=\s*[1-9]\d*\s*\n/.test(progress)) result.frames = true;
+    for (const match of progress.matchAll(/(?:^|\n)frame=\s*(\d+)\s*\n/g)) {
+      result.frameCount = Math.max(result.frameCount, Number(match[1]));
+      result.frames ||= result.frameCount > 0;
+    }
   });
   result.done = new Promise((resolve) => {
     const finish = (code, signal) => {
@@ -145,7 +148,7 @@ try {
       `127.0.0.1:${srtPort}:8890/udp`,
       '-v',
       `${join(directory, 'mediamtx.yml')}:/mediamtx.yml:ro`,
-      'bluenviron/mediamtx:1.21.0',
+      'scorebug/ingest:drain-v1',
     ],
     120_000,
   );
@@ -263,16 +266,31 @@ try {
     if (liveReader.exited) throw new Error('Reader exited before revocation');
     return liveReader.frames;
   }, 'live reader output before revocation');
-  await relay.remove(grant.path);
+  const framesBeforeDrain = liveReader.frameCount;
+  await relay.retire(grant.path);
+  await Promise.all([
+    denied(publishArgs(grant.publishUrl), 'draining publisher credential'),
+    denied(readArgs(grant.readUrl), 'draining reader credential'),
+  ]);
+  await until(
+    () => {
+      if (liveReader.exited || publisher.exited) throw new Error('Drain cut accepted media early');
+      return liveReader.frameCount >= framesBeforeDrain + 15;
+    },
+    'accepted media continues after admission revocation',
+    3000,
+  );
   await until(
     () => liveReader.exited && publisher.exited,
-    'revocation disconnects existing clients',
+    'relay drain deadline disconnects existing clients',
   );
   await relay.remove(grant.path);
   await denied(publishArgs(grant.publishUrl), 'revoked publishing credential');
   await denied(readArgs(grant.readUrl), 'revoked reading credential');
   if ((await relay.status(grant.path)).ready) throw new Error('Revoked path remains ready');
-  console.log('Revocation disconnects existing clients and rejects reuse of both credentials.');
+  console.log(
+    'Drain rejects new connections, preserves accepted media, and enforces its deadline.',
+  );
   const environment = {
     RELAY_API_URL: apiUrl,
     RELAY_API_USERNAME: 'qa-admin',

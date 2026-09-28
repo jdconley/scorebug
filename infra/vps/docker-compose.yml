@@ -44,7 +44,7 @@ services:
     stop_grace_period: 30s
 
   mediamtx:
-    image: scorebug/ingest:campaign-probe-v3
+    image: scorebug/ingest:drain-v1
     build:
       context: ../../vendor/MediaMTX
     restart: unless-stopped

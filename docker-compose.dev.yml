@@ -3,7 +3,7 @@ name: scorebug-qa
 # Local fixtures only. These credentials are public test values.
 services:
   ingest:
-    image: scorebug/ingest:campaign-probe-v3
+    image: scorebug/ingest:drain-v1
     build:
       context: ./vendor/MediaMTX
     ports:

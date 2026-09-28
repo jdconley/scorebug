@@ -422,3 +422,38 @@ it.each([
     ),
   ).toThrow('invalid_ingest_identity');
 });
+
+it('retires admission without deleting an accepted source, then cleans up after EOF', async () => {
+  let ready = true;
+  const f = await relay((_method, path) => {
+    if (path.includes('/paths/get/')) {
+      if (path.includes('/config/')) return { body: { scorebugDrain: true } };
+      return ready
+        ? {
+            body: {
+              online: true,
+              available: true,
+              inboundBytes: 10,
+              source: { type: 'srtConn', id: 'source' },
+              tracks2: [{ codec: 'H264' }],
+            },
+          }
+        : { status: 404 };
+    }
+    return {};
+  });
+  await f.client.retire(grant().path);
+  expect(f.requests[0]).toMatchObject({ method: 'PATCH', body: { scorebugDrain: true } });
+  expect(f.requests.some((r) => r.method === 'DELETE')).toBe(false);
+  ready = false;
+  await f.client.retire(grant().path);
+  expect(f.requests.at(-1)?.method).toBe('DELETE');
+});
+
+it('fails closed when drain support is missing or unverified', async () => {
+  for (const status of [400, 200]) {
+    const f = await relay((method) => (method === 'PATCH' ? { status } : {}));
+    await expect(f.client.retire(grant().path)).rejects.toThrow();
+    expect(f.requests.at(-1)?.method).toBe('DELETE');
+  }
+});

@@ -146,7 +146,7 @@ Do not point automated local tests at YouTube.
 
 ```sh
 # First use only; retain an already installed qualified image.
-docker image inspect scorebug/ingest:campaign-probe-v3 >/dev/null 2>&1 || \
+docker image inspect scorebug/ingest:drain-v1 >/dev/null 2>&1 || \
   docker compose -f docker-compose.dev.yml build ingest
 pnpm local:up
 pnpm dev:api
@@ -161,7 +161,7 @@ shell without production token/host overrides. No `.env` with production secrets
 is read. The API is still the in-memory prototype and can only support the older
 contracts until milestone 1.
 
-`docker-compose.dev.yml` selects the maintained `scorebug/ingest:campaign-probe-v3`
+`docker-compose.dev.yml` selects the maintained `scorebug/ingest:drain-v1`
 ingest image and includes the pinned `./vendor/MediaMTX` build context for clean
 hosts. The independent mock output sink remains stock `bluenviron/mediamtx:1.21.0`.
 The normal worker reports every 100 ms; explicit 100–5000 ms overrides remain

@@ -190,7 +190,7 @@ describe('WorkerSupervisor', () => {
     r.set(next);
     const pending = r.supervisor.tick();
     await flush();
-    expect(r.children[0]!.stops).toBe(1);
+    expect(r.children[0]!.stops).toBe(next ? 1 : 0);
     expect(r.start).toHaveBeenCalledTimes(1);
     r.children[0]!.exit();
     await pending;
@@ -613,4 +613,42 @@ it('samples processing and decoder evidence atomically and clears processing out
   expect(r.supervisor.observation()?.decoderDelivery).toBeUndefined();
   r.children[0]!.exit();
   await closing;
+});
+
+it('drains an existing stream on withdrawal without signaling before natural EOF', async () => {
+  const r = rig();
+  await r.supervisor.tick();
+  r.set(null);
+  const tick = r.supervisor.tick();
+  await flush();
+  expect(r.children[0]!.stops).toBe(0);
+  expect(r.supervisor.observation()).toMatchObject({
+    state: 'stopping',
+    reason: 'assignment_changed',
+  });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(r.children[0]!.stops).toBe(0);
+  r.children[0]!.exit();
+  await tick;
+  expect(r.supervisor.observation()).toBeNull();
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(r.children[0]!.stops).toBe(0);
+});
+
+it('bounds withdrawal drain and lets shutdown interrupt it immediately', async () => {
+  for (const shutdown of [false, true]) {
+    const r = rig({ drainTimeoutMs: 1000 });
+    await r.supervisor.tick();
+    r.set(null);
+    const tick = r.supervisor.tick();
+    await flush();
+    expect(r.children[0]!.stops).toBe(0);
+    const close = shutdown ? r.supervisor.close() : undefined;
+    if (!shutdown) await vi.advanceTimersByTimeAsync(1000);
+    expect(r.children[0]!.stops).toBe(1);
+    r.children[0]!.exit();
+    await tick;
+    await close;
+    expect(r.supervisor.observation()).not.toMatchObject({ state: 'producing_output' });
+  }
 });

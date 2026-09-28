@@ -9,7 +9,7 @@ Use an installed Node/pnpm, Docker, FFmpeg with SRT/drawtext/H.264/AAC, and a fo
 ```sh
 pnpm --filter @scorebug/protocol build
 # First use only: build the maintained relay if it is not installed.
-docker image inspect scorebug/ingest:campaign-probe-v3 >/dev/null 2>&1 || \
+docker image inspect scorebug/ingest:drain-v1 >/dev/null 2>&1 || \
   docker compose -f docker-compose.dev.yml build ingest
 # Find the active LAN address; the phone must reach this interface.
 ipconfig getifaddr en0
@@ -17,7 +17,7 @@ ipconfig getifaddr en0
 node scripts/device-lab.mjs --host 192.168.1.130 --duration 1800 --encoder software
 ```
 
-The ordinary lab uses `scorebug/ingest:campaign-probe-v3`, built from the pinned source and cumulative patch in `vendor/MediaMTX`. It provides the relay metadata and campaign accounting required by ordinary adaptive publishing. Keep previously qualified image tags unchanged. The worker explicitly reports every 100 ms, matching its normal default and the current 250 ms status freshness limit; slower explicit worker cadences remain supported but can leave status stale for adaptation. Decoder threading, media timing and freshness limits retain their existing defaults. Image selection and server readiness do not qualify adaptive media delivery or remote deployment.
+The ordinary lab uses `scorebug/ingest:drain-v1`, built from the pinned source and cumulative patch in `vendor/MediaMTX`. It provides the relay metadata and campaign accounting required by ordinary adaptive publishing. Keep previously qualified image tags unchanged. The worker explicitly reports every 100 ms, matching its normal default and the current 250 ms status freshness limit; slower explicit worker cadences remain supported but can leave status stale for adaptation. Decoder threading, media timing and freshness limits retain their existing defaults. Image selection and server readiness do not qualify adaptive media delivery or remote deployment.
 
 Use `--encoder videotoolbox` for the Mac hardware encoder. `FFMPEG_PATH`, `FFPROBE_PATH` and `FONT_PATH` override local tool discovery. Only an explicitly selected private IPv4 address assigned to this machine is accepted. Management and the mock RTMP listener remain on loopback; scoring and encrypted SRT bind to the selected LAN address.
 
