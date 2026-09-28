@@ -138,10 +138,13 @@ Archive, phone-to-relay, and worker-to-destination profiles are separate. A bott
 may occur at phone encoding, venue upload, retransmission, worker encoding, or worker
 upload. Measure all hops and protect archive quality from network-driven changes.
 
-Use a configurable 30 fps ladder: 480p, 720p, 1080p, 1440p, 2160p. Exclude unsupported
-or unqualified formats. Initial H.264 phone-to-relay experiment bands are respectively
-1–2, 2–5, 5–10, 10–18, and 18–35 Mbps. These are proposed test parameters, not measured
-optima or destination requirements. Use motion-heavy footage when tuning quality.
+The current production H.264 upload ladder is240p/350kbps,360p/600kbps,
+720p/3Mbps and1080p/6Mbps, all targeting30fps. Each increase requires measured
+encoder cost and receiver headroom, then probation.1080p has short local simulator
+and software-worker qualification with real match footage; sustained and physical
+qualification remain separate.4K is excluded until bounded measurement budgets,
+source/output capabilities and throughput are qualified. These bitrates are project
+settings, not destination requirements or measured optima for every device.
 
 Proposed controller, calibrated through tests:
 

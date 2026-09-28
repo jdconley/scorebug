@@ -327,6 +327,21 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testOrdinarySimulatorQualify1080ScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_1080"] == "1" else {
+            throw XCTSkip("Use the explicit quality1080 simulator lane.")
+        }
+        quality1080 = true; recovery720 = true; evidencePrefix = "Ordinary1080Streaming"
+        defer { attachRecoveryEvidence() }
+        do { try runVertical(watchScoring: false, ordinarySimulator: true, recovery: true) }
+        catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
+        #else
+        throw XCTSkip("1080 file-source qualification requires a disposable simulator.")
+        #endif
+    }
+
     @MainActor func testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport() throws {
         #if targetEnvironment(simulator)
         guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
@@ -365,6 +380,7 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recoveryAttempt: String?
     private var recoveryScope: String?
     private var recoveryFailure: String?
+    private var quality1080 = false
     private var recovery720 = false
     private var physicalRecovery = false
     private var physicalInitialEncoderACK: OrdinaryRecoverySample?
@@ -392,6 +408,7 @@ final class PhysicalStreamingTests: XCTestCase {
             "samples": recoverySamples, "gates": recoveryGates,
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
         if recovery720 { report["contract"] = physicalRecovery ? "physical-recovery720-v1" : "recovery720" }
+        if quality1080 { report["contract"] = "quality1080-v1" }
         if physicalRecovery {
             report["captureSource"] = "physical-camera"
             report["localPublishingObservedUptimeSeconds"] = physicalLocalPublishingObserved
@@ -1037,6 +1054,11 @@ final class PhysicalStreamingTests: XCTestCase {
             after: recovery720 ? minimum.ended : minimum.acknowledgedAt, previous: minimum, consecutive: recovery720)
         let increased = recovery720 ? try recoveryIncrease(app, prefix: "initial-720", after: first.ended,
             previous: first, profile: "720p30", bitrate: 3000000, consecutive: true) : first
+        if quality1080 {
+            _ = try recoveryIncrease(app, prefix: "initial-1080", after: increased.ended,
+                previous: increased, profile: "1080p30", bitrate: 6000000, consecutive: true)
+            return
+        }
         let constrainedAt = try recoveryRequest("constrain", sequence: 1, sample: increased)
         var constrainedRevision = increased.revision
         var constrainedBitrate = Int(increased.diagnostic["policyAppliedBitrate"] ?? "") ?? 0

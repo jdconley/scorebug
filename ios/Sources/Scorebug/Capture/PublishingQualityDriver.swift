@@ -738,7 +738,8 @@ import ScorebugStreaming
     nonisolated static let productionProfiles: [QualityController.Profile] = [
         .init(id: "240p30", width: 426, height: 240, minimumBitrate: 350_000, maximumBitrate: 350_000),
         .init(id: "360p30", width: 640, height: 360, minimumBitrate: 600_000, maximumBitrate: 600_000),
-        .init(id: "720p30", width: 1280, height: 720, minimumBitrate: 3_000_000, maximumBitrate: 3_000_000)
+        .init(id: "720p30", width: 1280, height: 720, minimumBitrate: 3_000_000, maximumBitrate: 3_000_000),
+        .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
     ]
     static func productionWorkerLimits(_ source: WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits? {
         guard let encoder = source.processing?.encoder else { return nil }

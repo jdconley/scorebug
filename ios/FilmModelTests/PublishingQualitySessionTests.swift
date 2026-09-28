@@ -1496,12 +1496,12 @@ final class PublishingMeasuredCandidateSessionTests: XCTestCase {
     }
     func testProductionLadderMeasuresNextRungAndAcknowledgesActualFormat() async throws {
         let profiles = PublishingQualityDriver.productionProfiles
-        XCTAssertEqual(profiles.map(\.id), ["240p30", "360p30", "720p30"])
-        XCTAssertEqual(profiles.map(\.width), [426, 640, 1280])
-        XCTAssertEqual(profiles.map(\.height), [240, 360, 720])
-        XCTAssertEqual(profiles.map(\.minimumBitrate), [350_000, 600_000, 3_000_000])
-        XCTAssertEqual(profiles.map(\.maximumBitrate), [350_000, 600_000, 3_000_000])
-        for (initial, next) in [(PublishingVideoProfile.low240, PublishingVideoProfile.low360), (.low360, .hd720)] {
+        XCTAssertEqual(profiles.map(\.id), ["240p30", "360p30", "720p30", "1080p30"])
+        XCTAssertEqual(profiles.map(\.width), [426, 640, 1280, 1920])
+        XCTAssertEqual(profiles.map(\.height), [240, 360, 720, 1080])
+        XCTAssertEqual(profiles.map(\.minimumBitrate), [350_000, 600_000, 3_000_000, 6_000_000])
+        XCTAssertEqual(profiles.map(\.maximumBitrate), [350_000, 600_000, 3_000_000, 6_000_000])
+        for (initial, next) in [(PublishingVideoProfile.low240, PublishingVideoProfile.low360), (.low360, .hd720), (.hd720, .hd1080)] {
             let f = try await CandidateQualityFixture.make(initialProfile: initial, useProductionProfiles: true)
             let context = await f.owner.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
             XCTAssertEqual(context?.readiness.settings.profileID, next.rawValue)
@@ -2290,7 +2290,7 @@ struct CandidateQualityFixture: Sendable {
         probe.leaseDeadline = 115.3; probe.acceptedPayloadBytes = 6000 * 1316; probe.lastAcceptedAt = 115.09
         let admission = try XCTUnwrap(PublishingCandidateAdmission.laboratoryIPv4(measurement: .init(id: UUID(),
             scope: .init(recordingID: "recording", matchID: "match", broadcastGeneration: 2, publishingAttemptID: attempt, appliedProfileRevision: 1),
-            profile: initialProfile == .low240 ? .low360 : (useProductionProfiles ? .hd720 : .sd540), publishingGeneration: 7, startedAt: 110, endedAt: 114.06, firstInputAt: 110, lastInputAt: 114,
+            profile: initialProfile == .low240 ? .low360 : (useProductionProfiles ? (initialProfile == .hd720 ? .hd1080 : .hd720) : .sd540), publishingGeneration: 7, startedAt: 110, endedAt: 114.06, firstInputAt: 110, lastInputAt: 114,
             sourceDuration: 4, submissionDuration: 4, transportBytes: 376000, transportMessageCount: 400),
             applied: applied, binding: binding, boundAt: 109.6, completedAt: 114.07, probe: probe, pair: pair,
             authority: PublishingCandidateAuthority(pair.newer.end),

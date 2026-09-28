@@ -75,6 +75,7 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
         'server-recovery',
         'server-crash',
         'source-interruption',
+        'quality1080',
       ].includes(lane),
     'Unsupported ordinary lane',
   );
@@ -108,6 +109,7 @@ export function ordinaryLaneConfiguration(lane) {
         'server-recovery',
         'server-crash',
         'source-interruption',
+        'quality1080',
       ].includes(lane),
   );
   const directWatch = lane === 'watch-direct';
@@ -118,20 +120,24 @@ export function ordinaryLaneConfiguration(lane) {
     ...(directWatch ? { directWatch: true } : {}),
     recovery,
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
+    ...(lane === 'quality1080' ? { quality1080: true } : {}),
     ...(lane === 'server-recovery' || lane === 'server-crash' ? { serverRecovery: true } : {}),
     ...(lane === 'server-crash' ? { workerCrash: true } : {}),
     ...(lane === 'source-interruption' ? { sourceInterruption: true } : {}),
     phoneTest: directWatch
       ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
-      : lane === 'recovery720'
-        ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
-        : recovery
-          ? recoveryTestID
-          : paired
-            ? pairedTestID
-            : testID,
-    allowance: recovery ? 780 : paired || directWatch ? 600 : 480,
-    timeout: recovery ? 900_000 : paired || directWatch ? 720_000 : 600_000,
+      : lane === 'quality1080'
+        ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorQualify1080ScoreStopAndExport'
+        : lane === 'recovery720'
+          ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
+          : recovery
+            ? recoveryTestID
+            : paired
+              ? pairedTestID
+              : testID,
+    allowance: recovery || lane === 'quality1080' ? 780 : paired || directWatch ? 600 : 480,
+    timeout:
+      recovery || lane === 'quality1080' ? 900_000 : paired || directWatch ? 720_000 : 600_000,
   };
 }
 
@@ -141,6 +147,7 @@ export function ordinaryTestEnvironment({
   watchFixture,
   recovery = false,
   recovery720 = false,
+  quality1080 = false,
   serverRecovery = false,
   sourceInterruption = false,
   watch = false,
@@ -149,6 +156,10 @@ export function ordinaryTestEnvironment({
 }) {
   assert(!directWatch || (!paired && !recovery), 'Direct Watch is a separate simulator lane');
   assert(!recovery720 || recovery, '720 recovery requires recovery controller');
+  assert(
+    !quality1080 || (!recovery && !paired && !watch && !directWatch),
+    '1080 qualification is an independent phone lane',
+  );
   assert(!recovery || (!paired && !watch), 'Recovery requires the standalone phone lane');
   if (recovery) {
     assert(recoveryControl, 'Recovery controller required');
@@ -191,6 +202,7 @@ export function ordinaryTestEnvironment({
     SCOREBUG_DEVICE_API_URL: setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
+    ...(quality1080 ? { SCOREBUG_ORDINARY_1080: '1' } : {}),
     ...(serverRecovery ? { SCOREBUG_SERVER_RECOVERY: '1' } : {}),
     ...(sourceInterruption ? { SCOREBUG_SOURCE_INTERRUPTION: '1' } : {}),
     ...(directWatch ? { SCOREBUG_DIRECT_WATCH_SIMULATOR: '1' } : {}),
@@ -471,6 +483,7 @@ async function main() {
     directWatch = false,
     recovery,
     recovery720,
+    quality1080 = false,
     serverRecovery = false,
     workerCrash = false,
     sourceInterruption = false,
@@ -659,7 +672,7 @@ async function main() {
           : { publishPeerLatencyMs: options.publishPeerLatencyMs }),
         ...(options.publishPacing === undefined ? {} : { publishPacing: options.publishPacing }),
         ...(recovery ? { publisherRecovery: true } : {}),
-        ...(recovery720 ? { decodedGeometry: true } : {}),
+        ...(recovery720 || quality1080 ? { decodedGeometry: true } : {}),
         ...(serverRecovery ? { serverRecovery: true } : {}),
         ...(workerCrash ? { workerCrash: true } : {}),
       },
@@ -707,6 +720,7 @@ os.chmod(destination, 0o600)
             watchFixture,
             recovery,
             recovery720,
+            quality1080,
             serverRecovery,
             sourceInterruption,
             watch: isWatch,

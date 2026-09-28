@@ -10,10 +10,18 @@ No proactive subagents. Preserve originals, recordings and unrelated simulators.
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 `codex/local-validation`. Use current Git HEAD. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [consolidated acceptance matrix](../simulator-acceptance.md) owns
-current cross-feature evidence. [Latest session](2026-09-28-relay-generation-and-healthy-media.md)
+current cross-feature evidence. [Latest session](2026-09-28-1080-upload.md)
 contains exact new results and limitations.
 
 ## Current checkpoint
+
+- Production ladder now240→360→720→1080(6Mbps), verified in`ordinary-native-PpPozK`.
+  Native climb/confirmation, actual pre-scale1080receiver geometry, archive/live
+  consecutive30fps, waveform, changing score and cleanup pass. Archive8518frames,
+  live8260frames;1077receiver frames at1080. A/V ends≤34ms; archive110frames longer.
+  Initial offline checker assumptions were corrected without recapture; see log.
+  Native19182joined0, media27663joined1for the preserved initial checker failure;
+  final hash-bound acceptance passes. No live jobs.
 
 - Real relay generation/worker-session replacement, retired report/credential rejection,
   late current reader decoding and scoped cleanup pass. No live owned jobs remain.
@@ -50,11 +58,13 @@ contains exact new results and limitations.
 
 ## Next work
 
-1. Deliver1080p upload: productionProfiles currently ends at720p despite existing
-   high1080 encoder support. Inspect existing measured-cost/native/backend guards,
-   add1080 only through that same path, then one affected simulator real-source
-   workflow. Reuse existing qualification/build caches; no broad per-edit suite.
-   4K remains explicitly unqualified and must not be enabled merely by enum support.
+1. Design and implement bounded4K measurement/capability support, then qualify real
+   4Ksource and output throughput locally. Existing uhd2160 nominal24Mbps exceeds
+   NativeCandidateStagePlan.productionSRT media-cost8Mbps/probe-rate12Mbps limits;
+   native probe lifetime16MiB also needs explicit bounded budgeting. Do not blindly
+   raise audit limits or infer support from the enum. Inspect worker output/source
+   capabilities so uploading4K is useful to the selected output, and retain automatic
+   lower-profile fallback. Use the existing4K Downloads footage; preserve originals.
 2. Keep prior production latency. No more parameter-only congestion captures: bounded
    scheduling is fixed, larger buffering worsens media, and healthy-period FPS passes.
    Investigate actual forced-outage loss from saved evidence when needed. Remaining
@@ -87,7 +97,7 @@ Prepared600s source: `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`,
 
 Use `node scripts/test-ordinary-native-app.mjs --host <LAN> --source <absolute.mov> --lane <lane>`
 with scoped DEVELOPER_DIR. `source-interruption` requires the short clip. Other lanes
-include `server-recovery`, `server-crash`, `recovery720`, `watch-direct`.
+include `quality1080`, `server-recovery`, `server-crash`, `recovery720`, `watch-direct`.
 Use `node scripts/test-apple.mjs --pending-takeover --ui-only` for only that native UI.
 Mac service: build home-daemon then `node scripts/test-macos-worker-service.mjs --host <LAN> --duration 120 --encoder videotoolbox`.
 

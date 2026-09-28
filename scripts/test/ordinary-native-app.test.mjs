@@ -834,3 +834,41 @@ test('source interruption uses the ordinary native source lifecycle without proc
   assert.equal(env.SCOREBUG_SOURCE_INTERRUPTION, '1');
   assert.equal(env.SCOREBUG_SERVER_RECOVERY, undefined);
 });
+
+test('1080 quality lane uses ordinary production publishing without an impairment controller', () => {
+  const options = ordinaryNativeOptions(
+    ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'quality1080'],
+    interfaces,
+  );
+  assert.equal(options.lane, 'quality1080');
+  const lane = ordinaryLaneConfiguration(options.lane);
+  assert.equal(lane.quality1080, true);
+  assert.equal(lane.recovery, false);
+  assert.equal(lane.paired, false);
+  assert.equal(
+    lane.phoneTest,
+    'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorQualify1080ScoreStopAndExport',
+  );
+  const env = ordinaryTestEnvironment({
+    ...lane,
+    setup: { endpoint: 'http://192.168.1.130:8080', installationToken: 'qa-token' },
+  });
+  assert.equal(env.SCOREBUG_ORDINARY_1080, '1');
+  assert.equal(env.SCOREBUG_ORDINARY_RECOVERY, undefined);
+  assert.equal(env.SCOREBUG_RECOVERY_CONTROL_URL, undefined);
+  assert.throws(() =>
+    ordinaryNativeOptions(
+      [
+        '--host',
+        '192.168.1.130',
+        '--source',
+        '/p.mov',
+        '--lane',
+        'quality1080',
+        '--publish-peer-latency-ms',
+        '700',
+      ],
+      interfaces,
+    ),
+  );
+});
