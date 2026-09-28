@@ -680,6 +680,7 @@ import ScorebugStreaming
                     "elapsedMilliseconds": String(s.elapsedMilliseconds), "sentBytes": String(s.sentBytes),
                     "retransmittedBytes": String(s.retransmittedBytes), "droppedPackets": s.droppedPackets,
                     "rttMilliseconds": s.rttMilliseconds, "senderBufferMilliseconds": s.senderBufferMilliseconds,
+                    "senderBufferedBytes": s.senderBufferedBytes,
                     "estimatedBandwidthMbps": s.estimatedBandwidthMbps,
                     "senderDeliveryDelayMilliseconds": optional(s.senderDeliveryDelayMilliseconds),
                     "senderMaximumBandwidthMbps": optional(s.senderMaximumBandwidthMbps),

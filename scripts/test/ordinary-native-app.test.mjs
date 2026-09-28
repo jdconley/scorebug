@@ -795,3 +795,15 @@ test('server recovery opts into owned process restarts without bandwidth faults 
   assert.equal(environment.SCOREBUG_SERVER_RECOVERY, '1');
   assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_URL, undefined);
 });
+
+test('server crash reuses native recovery workflow but explicitly kills the worker', () => {
+  const options = ordinaryNativeOptions(
+    ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'server-crash'],
+    interfaces,
+  );
+  const lane = ordinaryLaneConfiguration(options.lane);
+  assert.equal(lane.serverRecovery, true);
+  assert.equal(lane.workerCrash, true);
+  assert.equal(lane.phoneTest, ordinaryLaneConfiguration('server-recovery').phoneTest);
+  assert.equal(ordinaryLaneConfiguration('server-recovery').workerCrash, undefined);
+});

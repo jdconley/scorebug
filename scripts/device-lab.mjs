@@ -125,9 +125,10 @@ async function bounded(promise, ms) {
   }
 }
 /** Outer grace exceeds the production worker's one-second encoder grace. */
-export async function stopLabWorker(child, closed, graceMs = 10000) {
-  let forced = false;
-  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+export async function stopLabWorker(child, closed, graceMs = 10000, initialSignal = 'SIGTERM') {
+  assert(['SIGTERM', 'SIGKILL'].includes(initialSignal), 'Invalid worker stop signal');
+  let forced = initialSignal === 'SIGKILL';
+  if (child.exitCode === null && child.signalCode === null) child.kill(initialSignal);
   try {
     await bounded(closed, graceMs);
   } catch {
@@ -178,9 +179,9 @@ function startWorker(environment, artifact, logName = 'worker.log') {
   return {
     ready,
     closed,
-    stop() {
+    stop({ crash = false } = {}) {
       return (stopping ??= (async () => {
-        const result = await stopLabWorker(child, closed);
+        const result = await stopLabWorker(child, closed, 10000, crash ? 'SIGKILL' : 'SIGTERM');
         await new Promise((resolve) => output.end(resolve));
         return result;
       })());
@@ -502,10 +503,13 @@ export async function startDeviceLab(options, { signal } = {}) {
                 const startedAt = Date.now();
                 if (component === 'api') await api.stop();
                 else {
-                  const exit = await worker.stop();
+                  const crash = options.workerCrash === true;
+                  const exit = await worker.stop({ crash });
                   assert(
-                    !exit.forced && exit.code === 0 && exit.signal === null,
-                    'Worker must join before replacement',
+                    crash
+                      ? exit.forced && exit.code === null && exit.signal === 'SIGKILL'
+                      : !exit.forced && exit.code === 0 && exit.signal === null,
+                    'Worker must join with the requested termination before replacement',
                   );
                 }
                 // Exceed the production five-second worker control deadline and the
@@ -521,7 +525,12 @@ export async function startDeviceLab(options, { signal } = {}) {
                   worker = startWorker(workerEnvironment, artifact, 'worker-restarted.log');
                   await bounded(worker.ready, 20000);
                 }
-                const result = { component, startedAt, readyAt: Date.now() };
+                const result = {
+                  component,
+                  startedAt,
+                  readyAt: Date.now(),
+                  termination: component === 'api' || options.workerCrash ? 'SIGKILL' : 'SIGTERM',
+                };
                 await writeFile(
                   join(artifact, `${component}-restart.json`),
                   JSON.stringify(result, null, 2) + '\n',

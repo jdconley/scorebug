@@ -137,6 +137,41 @@ final class PublishingQualityTelemetryTests: XCTestCase {
             XCTAssertEqual(try local(fixture(drops: 1, delay: delay), limits: recoveredPacketLimits)?.transportPressure, .elevated)
         }
     }
+    func testGrowingSenderRetentionWarnsBeforeHalfDelayBudget() throws {
+        let f = try growingBufferFixture(milliseconds: [50, 85, 130, 200])
+        let w = try XCTUnwrap(local(f, limits: recoveredPacketLimits))
+        XCTAssertEqual(w.transportPressure, .elevated)
+        XCTAssertNil(w.receiver); XCTAssertNil(w.usableVideoCapacity)
+        XCTAssertNil(try local(f, limits: recoveryLimits))
+        var acknowledged = f
+        acknowledged.applied.acknowledgedAt = 110.71
+        XCTAssertNil(try local(acknowledged, limits: recoveredPacketLimits))
+    }
+    func testGrowingRetentionRequiresBytesGrowthAndStableKnownDelay() throws {
+        for milliseconds: [Int32] in [[200, 200, 200, 200], [250, 230, 210, 200],
+                                      [101, 130, 160, 200], [0, 50, 100, 174]] {
+            XCTAssertNil(try local(growingBufferFixture(milliseconds: milliseconds), limits: recoveredPacketLimits))
+        }
+        for bytes: [Int32] in [[10000, 10000, 10000, 10000], [40000, 30000, 20000, 10000]] {
+            XCTAssertNil(try local(growingBufferFixture(milliseconds: [50, 85, 130, 200], bytes: bytes), limits: recoveredPacketLimits))
+        }
+        for delay: [Int32?] in [[nil, 700, 700, 700], [700, 700, 800, 700], [0, 0, 0, 0]] {
+            XCTAssertNil(try local(growingBufferFixture(milliseconds: [50, 85, 130, 200], delays: delay), limits: recoveredPacketLimits))
+        }
+    }
+    private func growingBufferFixture(milliseconds: [Int32], bytes: [Int32] = [10000, 20000, 30000, 40000],
+                                      delays: [Int32?] = [700, 700, 700, 700]) throws -> Fixture {
+        var f = try fixture(), transport = PublishingTransportStatisticsTracker()
+        for i in 0..<4 {
+            transport.observe(.init(publishingGeneration: 7, sampledAt: 110.7 + Double(i) / 10,
+                elapsedMilliseconds: Int64(i * 100), sentBytes: UInt64(i * 10000),
+                retransmittedBytes: 0, droppedPackets: 0, rttMilliseconds: 10, estimatedBandwidthMbps: 999,
+                senderBufferedBytes: bytes[i], senderBufferMilliseconds: milliseconds[i],
+                availableSenderBytes: 10000, senderDeliveryDelayMilliseconds: delays[i]))
+        }
+        f.diagnostics.transport = transport.snapshot
+        return f
+    }
     func testQuarterSecondPressureDoesNotWaitForOneSecondAfterAck() throws {
         var f = try fixture(buffer: 501)
         f.applied.acknowledgedAt = 110

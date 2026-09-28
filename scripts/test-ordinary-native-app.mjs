@@ -66,9 +66,15 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   const lane = values.get('--lane');
   assert(
     lane === undefined ||
-      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720', 'server-recovery'].includes(
-        lane,
-      ),
+      [
+        'phone',
+        'paired',
+        'watch-direct',
+        'recovery',
+        'recovery720',
+        'server-recovery',
+        'server-crash',
+      ].includes(lane),
     'Unsupported ordinary lane',
   );
   assert(
@@ -92,9 +98,15 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
 export function ordinaryLaneConfiguration(lane) {
   assert(
     lane === undefined ||
-      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720', 'server-recovery'].includes(
-        lane,
-      ),
+      [
+        'phone',
+        'paired',
+        'watch-direct',
+        'recovery',
+        'recovery720',
+        'server-recovery',
+        'server-crash',
+      ].includes(lane),
   );
   const directWatch = lane === 'watch-direct';
   const paired = lane === 'paired',
@@ -104,7 +116,8 @@ export function ordinaryLaneConfiguration(lane) {
     ...(directWatch ? { directWatch: true } : {}),
     recovery,
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
-    ...(lane === 'server-recovery' ? { serverRecovery: true } : {}),
+    ...(lane === 'server-recovery' || lane === 'server-crash' ? { serverRecovery: true } : {}),
+    ...(lane === 'server-crash' ? { workerCrash: true } : {}),
     phoneTest: directWatch
       ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
       : lane === 'recovery720'
@@ -454,6 +467,7 @@ async function main() {
     recovery,
     recovery720,
     serverRecovery = false,
+    workerCrash = false,
     phoneTest,
     allowance,
     timeout,
@@ -641,6 +655,7 @@ async function main() {
         ...(recovery ? { publisherRecovery: true } : {}),
         ...(recovery720 ? { decodedGeometry: true } : {}),
         ...(serverRecovery ? { serverRecovery: true } : {}),
+        ...(workerCrash ? { workerCrash: true } : {}),
       },
       { signal: controller.signal },
     );

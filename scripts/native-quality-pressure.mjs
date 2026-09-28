@@ -87,6 +87,8 @@ function classifyNativePressure(
         'estimatedBandwidthMbps',
       ])
         if (s[key] != null) assert(finite(s[key]), 'Invalid native transport diagnostic');
+      if (s.senderBufferedBytes != null)
+        assert(integer(s.senderBufferedBytes) && s.senderBufferedBytes <= 2147483647);
       if (s.senderDeliveryDelayMilliseconds != null)
         assert(
           integer(s.senderDeliveryDelayMilliseconds) &&
@@ -122,6 +124,27 @@ function classifyNativePressure(
             s.senderDeliveryDelayMilliseconds > 0 &&
             s.senderBufferMilliseconds > s.senderDeliveryDelayMilliseconds / 2),
       ) ||
+      (transportPolicy === 'recovery-budget-v1' &&
+        transportSamples.some((current, index) => {
+          const start = transportSamples
+            .slice(0, index)
+            .findLastIndex((previous) => current.sampledAt - previous.sampledAt >= 0.25);
+          if (start < 0) return false;
+          const previous = transportSamples[start],
+            delay = current.senderDeliveryDelayMilliseconds;
+          return (
+            delay > 0 &&
+            current.sampledAt - previous.sampledAt <= 0.5 &&
+            current.senderBufferMilliseconds >= Math.min(250, delay / 4) &&
+            transportSamples
+              .slice(start, index + 1)
+              .every((s) => s.senderDeliveryDelayMilliseconds === delay) &&
+            previous.senderBufferedBytes != null &&
+            current.senderBufferedBytes != null &&
+            current.senderBufferedBytes > previous.senderBufferedBytes &&
+            current.senderBufferMilliseconds - previous.senderBufferMilliseconds >= 100
+          );
+        })) ||
       (transportPolicy !== 'recovery-budget-v1' &&
         sent > 0n &&
         Number(retransmitted) / Number(sent) > 0.01)

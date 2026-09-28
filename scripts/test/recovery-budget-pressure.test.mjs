@@ -153,3 +153,31 @@ for (const mutate of [
     mutate(f.row.evidence.transport.samples);
     assert.throws(() => source(f));
   });
+
+test('growing native retention warns before half-delay and requires corroborating bytes', () => {
+  const f = fixture({ retries: 0, delay: 700, rtt: 10, buffer: 200, pressure: 'elevated' });
+  const samples = f.row.evidence.transport.samples;
+  samples[0].senderBufferMilliseconds = 50;
+  samples[0].senderBufferedBytes = 10000;
+  samples[1].senderBufferedBytes = 40000;
+  assert.equal(local(f).transport, 'elevated');
+  for (const change of [
+    (s) => {
+      s[0].senderBufferMilliseconds = 101;
+    },
+    (s) => {
+      s[0].senderBufferedBytes = 40000;
+    },
+    (s) => {
+      delete s[0].senderBufferedBytes;
+    },
+    (s) => {
+      s[0].senderDeliveryDelayMilliseconds = 800;
+    },
+  ]) {
+    const stable = structuredClone(f);
+    change(stable.row.evidence.transport.samples);
+    stable.row.window.transport = 'nominal';
+    assert.equal(source(stable).transport, 'nominal');
+  }
+});

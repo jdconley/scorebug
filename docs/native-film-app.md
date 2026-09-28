@@ -91,16 +91,22 @@ both completed/recovered exports, with maximum end-coverage difference 28.1 ms.
 The 37-model-test rerun and unsigned Scorebug iPhone Release build also pass; see
 `native-streaming-film-model-final.log` and `native-streaming-release-iphone.log`.
 
-Xcode currently discovers a connected iPhone 16 Pro and a known, disconnected
-Apple Watch Ultra 2. That inventory establishes availability only; this work has
-not installed or exercised the new camera app on either device.
+## Current integration status
+
+Native Watch and separate-phone scoring, adaptive upload, automatic control-plane
+recovery, the portable overlay proxy, mock RTMP recording and optional proxy MP4
+are implemented. The complete two-phone simulator vertical passes; the separate
+Watch workflow passes using explicit simulator setup and real HTTP scoring.
+Physical-camera and standalone Watch results are recorded separately in the
+[session index](session-logs/README.md). These older recording checks remain
+valid evidence for their stated scope; their test counts are historical.
 
 ## Remaining work
 
-Physical-phone permission flow, camera preview/orientation, audio-route negotiation,
-interruptions, storage pressure, thermal behavior, and sustained simultaneous encoding
-remain unqualified. Capture-role registration, independent publisher coordination,
-and bounded SDK transport queues are integrated. Streaming finalization passes on
-iOS 17.5, 18.5, and 26.2. Automatic reconnection and adaptive quality remain planned.
-Native Watch scoring and its paired/Wi-Fi/cellular routes remain planned. Shared scoring,
-portable local workers, SDK probes, and their existing gates remain in place.
+Hardware acceptance is deferred until simulator-testable features work together.
+Missing full-app checks are low-space/queue pressure and source interruption.
+Severe upload congestion still damages live output while the clean archive stays
+continuous. Sustained profiles, physical interruptions, radio routing, thermal
+behavior and long-duration simultaneous encoding remain unqualified. Current
+status and all outstanding work belong to the
+[delivery plan](superpowers/plans/2026-09-13-portable-streaming-and-watch.md).

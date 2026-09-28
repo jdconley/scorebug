@@ -72,9 +72,10 @@ test('worker shutdown joins delayed graceful exit and distinguishes forced termi
   const { spawn } = await import('node:child_process');
   const { once } = await import('node:events');
   const { stopLabWorker } = await import('../device-lab.mjs');
-  for (const [body, grace, forced] of [
+  for (const [body, grace, forced, initialSignal] of [
     ["process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),100));", 1000, false],
     ["process.on('SIGTERM',()=>{});", 100, true],
+    ["process.on('SIGTERM',()=>process.exit(0));", 1000, true, 'SIGKILL'],
   ]) {
     const child = spawn(
       process.execPath,
@@ -84,7 +85,7 @@ test('worker shutdown joins delayed graceful exit and distinguishes forced termi
     const closed = once(child, 'close').then(([code, signal]) => ({ code, signal }));
     try {
       await once(child.stdout, 'data');
-      const result = await stopLabWorker(child, closed, grace);
+      const result = await stopLabWorker(child, closed, grace, initialSignal);
       assert.equal(result.forced, forced);
       assert.equal(result.signal, forced ? 'SIGKILL' : null);
       assert.equal(result.code, forced ? null : 0);

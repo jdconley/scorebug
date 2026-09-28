@@ -221,9 +221,28 @@ enum PublishingQualityTelemetry {
                 return point.rttMilliseconds > min(limits.maximumRTTMs, Double(delay) / 4)
                     || (limits.policy == .recoveryBudget && Double(point.senderBufferMilliseconds) > min(limits.maximumBufferMs, Double(delay) / 2))
             }) { return .elevated }
+            if limits.policy == .recoveryBudget, growingSenderRetention(points, limits: limits) { return .elevated }
             guard points.allSatisfy({ ($0.senderDeliveryDelayMilliseconds ?? 0) > 0 }) else { return .unknown }
         }
         return sample.enclosingSentBytes > 0 ? .nominal : .unknown
+    }
+    /// A downward-only warning while there is still time to replace the encoder.
+    /// SRT retains unacknowledged packets, so a large stable buffer is not enough:
+    /// require both byte and time growth over recent actual collections. This is
+    /// project policy, not a receiver-delivery or available-capacity measurement.
+    private static func growingSenderRetention(_ points: [PublishingTransportStatistics], limits: TransportLimits) -> Bool {
+        for index in points.indices {
+            let current = points[index]
+            guard let delay = current.senderDeliveryDelayMilliseconds, delay > 0,
+                  Double(current.senderBufferMilliseconds) >= min(limits.maximumBufferMs / 2, Double(delay) / 4),
+                  let start = points[..<index].lastIndex(where: { current.sampledAt - $0.sampledAt >= 0.25 }),
+                  current.sampledAt - points[start].sampledAt <= 0.5,
+                  points[start...index].allSatisfy({ $0.senderDeliveryDelayMilliseconds == delay }),
+                  current.senderBufferedBytes > points[start].senderBufferedBytes,
+                  Int64(current.senderBufferMilliseconds) - Int64(points[start].senderBufferMilliseconds) >= 100 else { continue }
+            return true
+        }
+        return false
     }
     private static func sameReceipt(_ a: PublishingBitRateChange, _ b: PublishingBitRateChange) -> Bool {
         a.publishingGeneration == b.publishingGeneration && a.configuration == b.configuration

@@ -26,11 +26,11 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 |---|---|---|
 | Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone simulator workflow passes; integrated adversarial/reconnect cases remain |
 | Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
-| SRT → overlay proxy → RTMP and MP4 | Yes; initial/changing score, configurable font, software/VideoToolbox selection, mock destination and proxy recording | Native workflow with worker/control-plane restart; backend capability reporting and installation packaging |
+| SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption; actual service operation |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p→minimum→720p controller/geometry passes; forced collapse still loses live A/V. Higher profiles and sustained operation unqualified |
 | Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Two-phone plus separate Watch takeover/scoring/relaunch/end passes with real HTTP;41mm controls exercised. Real WatchConnectivity simulator registration remains unqualified |
 | Physical system | Phone local archive/native scoring/proxy/mock outputs work; standalone Ultra2 scoring works | Combined paired run and sustained/radio-route testing deferred; uncertain test pairing preserved |
-| Portability | Local Mac and container workflows exist; long1080p/4K file replays pass | Install/service/upgrade instructions, backend capability matrix and other-host runtime qualification |
+| Portability | Mac service helper and Linux CPU/GPU runbooks implemented; local container persistence and encoder startup checks pass | Actual service operation, sustained backend profile matrix and other-host runtime qualification |
 
 Implementation evidence and failures live in [session logs](../../session-logs/README.md). [NEXT](../../session-logs/NEXT.md) identifies the current checkout, commands and handoff. Checkmarks below mean the stated item is complete, not blanket release qualification.
 
@@ -49,7 +49,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 
 - [x] On progressive transport congestion, descend directly to minimum without an unnecessary intermediate encoder replacement; preserve other pressure behavior and measured upward admission.
 - [x] Measure720p increase → direct minimum fallback →720p recovery on the simulator. Controller/transport/geometry and clean local archive pass; failed live-media evidence is retained.
-- [ ] Reduce the remaining severe-congestion damage: latest run has93 missing source IDs,11 repeated/corrupted observations,26 audio gaps and a2.4-second maximum video gap. Preserve actual metrics and failed outputs; do not equate a controller pass with a media pass.
+- [x] Detect growing native SRT retention earlier using independently covered byte/time growth; minimum-quality acknowledgment improves to856–887ms in the measured simulator run. Stable/draining or unknown-delay buffers do not activate the new warning.
+- [ ] Reduce the remaining severe-congestion damage: latest run has87 missing source IDs,5 repeated/corrupted observations,16 audio gaps and a2.4-second maximum video gap. Preserve actual metrics and failed outputs; do not equate a controller pass with a media pass.
 - [ ] Finish delivery-evidence retention/terminal coverage and missing-live-audio/shutdown diagnosis where still relevant to current runs; do not raise audit limits or pad silence to conceal loss.
 - [ ] Verify stale reports/no-progress handling, native readback and revision/keyframe boundaries, thermal/queue pressure, partial loss, total outage and restoration.
 - [ ] Qualify sustainable profiles and transport overhead for each supported backend/device. Unsupported4K remains disabled. Maintain bounded continuous adaptation for full-match durations.
@@ -62,8 +63,10 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 ## 3. Complete local resilience and deployment
 
 - [x] Keep native recording/publishing through API restart and graceful worker restart; recover the current score and both output recordings automatically. Simulator archive preserves every source frame through both outages.
-- [ ] Qualify source interruption and hard worker crash. Interrupted output tails retain about0.5seconds of audio beyond final video; improve or explicitly bound that behavior.
-- [ ] Consolidate archive forced-termination/relaunch/export, low-space and queue-pressure coverage with the full app. Check recovery tail loss≤5seconds; preserve existing outputs on error.
+- [x] Verify native recovery after hard worker SIGKILL with real API/relay/output recordings. Clean archive preserves every source frame, output recovers automatically, and both final MP4s show the correct score with A/V ends within26ms.
+- [ ] Qualify source interruption. Interrupted output tails retain508–548ms of audio beyond final video in the measured hard-crash run; improve or establish a tested bound for that behavior.
+- [x] Exercise full-app offline recording, forced termination/relaunch, native export/playback and decoded continuity on iOS17.5/18.5/26.2; reuse the preserved results in [native recording](../../native-film-app.md).
+- [ ] Add only missing full-app low-space/queue-pressure and source-interruption cases; retain recovery tail-loss budget≤5seconds and preserve existing outputs on error.
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [x] Report configured backend/output and measured encoder initialization; scope availability to fresh worker heartbeats. Native start checks worker readiness/output identity without stopping recording. Sustained performance remains explicitly unqualified; input profile/throughput qualification stays open.
 - [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Generation/configuration checks pass; actual launchd service operation remains to verify.
