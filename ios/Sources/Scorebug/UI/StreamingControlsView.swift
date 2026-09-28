@@ -31,7 +31,7 @@ struct StreamingControlsView: View {
             if let game = model.connectedGameID {
                 Text("Match: \(game)").font(.caption).foregroundStyle(.secondary)
             }
-            if model.localState == .publishing || model.localState == .starting {
+            if model.canStopStreaming {
                 Button("Stop streaming", role: .destructive) { Task { await model.stopStreaming() } }
                     .buttonStyle(.bordered).accessibilityIdentifier("streaming.stop")
             } else {
@@ -58,7 +58,8 @@ struct StreamingControlsView: View {
         }
     }
     private var localStatus: String {
-        switch model.localState {
+        if model.isReconnecting { return "Camera publishing: reconnecting…" }
+        return switch model.localState {
         case .idle: "Camera publishing: off"
         case .starting: "Camera publishing: starting…"
         case .publishing: "Camera publishing: sending media"

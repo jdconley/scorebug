@@ -500,6 +500,45 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       setup,
       stop,
       workerClosed: worker.closed,
+      async disconnectPublisher() {
+        assert(!stopping, 'Lab is stopping');
+        const headers = {
+          authorization: `Basic ${Buffer.from(`lab-admin:${relayPassword}`).toString('base64')}`,
+        };
+        const base = `http://127.0.0.1:${relayPort}/v3/srt/conns`;
+        const response = await fetch(`${base}/list?itemsPerPage=100&page=0`, {
+          headers,
+          signal: AbortSignal.timeout(3000),
+        });
+        assert(response.ok, 'Cannot inspect owned lab SRT connections');
+        const inventory = await response.json();
+        const publishers = inventory.items.filter((entry) => entry.state === 'publish');
+        assert.equal(
+          publishers.length,
+          1,
+          'Exactly one publisher must belong to this isolated lab',
+        );
+        const id = publishers[0].id;
+        assert.match(id, /^[a-f0-9-]{36}$/);
+        const startedAt = Date.now();
+        const kicked = await fetch(`${base}/kick/${id}`, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.timeout(3000),
+        });
+        assert(kicked.ok, 'Owned publisher disconnect failed');
+        const result = {
+          scope: 'Real SRT connection termination; not a sustained network blackhole',
+          id,
+          startedAt,
+          completedAt: Date.now(),
+        };
+        await writeFile(join(artifact, 'native-disconnect.json'), JSON.stringify(result, null, 2), {
+          flag: 'wx',
+          mode: 0o600,
+        });
+        return result;
+      },
       ...(options.serverRecovery
         ? {
             restart(component) {

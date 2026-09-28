@@ -2323,6 +2323,149 @@ import XCTest
         XCTAssertTrue(storage.value?.stopRecordingIDs?.isEmpty == true)
     }
 
+    func testNativeConnectionFailureAutomaticallyRejoinsSameBroadcast() async throws {
+        let server = CaptureTestServer()
+        var publishers: [CaptureTestPublisher] = []
+        let model = makeModel(server: server, publisherFactory: { _, _ in
+            let publisher = CaptureTestPublisher(); publishers.append(publisher); return publisher
+        })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await publishers[0].failHealth()
+        let failureDeadline = ContinuousClock.now + .seconds(2)
+        while model.localState == .publishing, ContinuousClock.now < failureDeadline {
+            model.pollLocalHealth(); try await Task.sleep(for: .milliseconds(10))
+        }
+        let retryDeadline = ContinuousClock.now + .seconds(4)
+        while publishers.count < 2, ContinuousClock.now < retryDeadline {
+            await model.pollBackgroundControl(); try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(publishers.count, 2, "A transient native connection failure must not require another Start tap")
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        let operations = await server.operations
+        XCTAssertEqual(operations, ["start"], "Reconnect must preserve the authorized broadcast generation")
+        await model.stopStreaming()
+    }
+
+    private func failNativeConnection(_ publisher: CaptureTestPublisher, model: CaptureStreamingModel) async throws {
+        await publisher.failHealth()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while model.localState == .publishing, ContinuousClock.now < deadline {
+            model.pollLocalHealth(); try await Task.sleep(for: .milliseconds(5))
+        }
+        while !model.canStart, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(model.localState, .failed)
+        XCTAssertTrue(model.canStart, "Old publisher teardown must complete")
+        XCTAssertTrue(model.isReconnecting)
+        XCTAssertTrue(model.canStopStreaming, "Stop must remain available during automatic retry")
+    }
+    private func finishReconnectPoll(_ model: CaptureStreamingModel) async throws {
+        await model.pollBackgroundControl()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while model.busy, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertFalse(model.busy)
+    }
+
+    func testNativeReconnectRequiresFreshControlAndKeepsRecordingOffline() async throws {
+        var now = 100.0
+        let server = CaptureTestServer()
+        var publishers: [CaptureTestPublisher] = []
+        let model = makeModel(server: server, publisherFactory: { _, _ in
+            let publisher = CaptureTestPublisher(); publishers.append(publisher); return publisher
+        }, reconnectClock: { now })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        try await failNativeConnection(publishers[0], model: model)
+        now = 1000; await server.setOffline(true)
+        try await finishReconnectPoll(model)
+        XCTAssertEqual(publishers.count, 1)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        await server.setOffline(false)
+        try await finishReconnectPoll(model)
+        XCTAssertEqual(publishers.count, 2)
+        XCTAssertEqual(model.localState, .publishing)
+        let operations = await server.operations; XCTAssertEqual(operations, ["start"])
+        await model.stopStreaming()
+    }
+
+    func testNativeReconnectCanceledByStopCaptureOwnershipAndAuthorizationChanges() async throws {
+        for change in ["stop", "capture", "remote-stop", "foreign", "generation", "auth"] {
+            var now = 100.0
+            let server = CaptureTestServer()
+            var publishers: [CaptureTestPublisher] = []
+            let model = makeModel(server: server, publisherFactory: { _, _ in
+                let publisher = CaptureTestPublisher(); publishers.append(publisher); return publisher
+            }, reconnectClock: { now })
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            try await failNativeConnection(publishers[0], model: model)
+            switch change {
+            case "stop": await model.stopStreaming()
+            case "capture": model.captureChanged(captureContext()) // same ID, different tap
+            case "remote-stop": await server.stopBroadcastRemotely()
+            case "foreign": await server.selectAnotherCapture()
+            case "generation": await server.replaceBroadcastGeneration()
+            case "auth": await server.setHTTPFailure(401)
+            default: XCTFail("Unknown test case")
+            }
+            now = 1000
+            try await finishReconnectPoll(model)
+            await server.setHTTPFailure(nil)
+            now = 2000
+            try await finishReconnectPoll(model)
+            XCTAssertEqual(publishers.count, 1, change)
+            XCTAssertFalse(model.isReconnecting, change)
+            XCTAssertFalse(model.canStopStreaming, change)
+            XCTAssertEqual(model.activeRecordingID, "recording-1", change)
+            if ["remote-stop", "foreign", "generation", "auth"].contains(change) {
+                let operations = await server.operations
+                XCTAssertEqual(operations, ["start"], "Automatic retry must not issue a new start or stop: \(change)")
+            }
+            await model.stopStreaming()
+        }
+    }
+
+    func testExplicitStopCancelsInFlightNativeReconnectAccess() async throws {
+        var now = 100.0, factoryCalls = 0
+        let server = CaptureTestServer(), first = CaptureTestPublisher(), gate = FilmTestGate()
+        let model = makeModel(server: server, publisherFactory: { _, _ in
+            factoryCalls += 1; return factoryCalls == 1 ? first : CaptureTestPublisher()
+        }, reconnectClock: { now })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        try await failNativeConnection(first, model: model)
+        await server.setPublishGate(gate)
+        now = 102; await model.pollBackgroundControl()
+        let entered = await gate.waitUntilEntered(timeout: .seconds(2))
+        XCTAssertTrue(entered)
+        let stop = Task { await model.stopStreaming() }
+        while !model.stopping { await Task.yield() }
+        await gate.release(); await stop.value
+        now = 1000; try await finishReconnectPoll(model)
+        XCTAssertEqual(factoryCalls, 1, "A late access reply must not create a publisher after Stop")
+        XCTAssertEqual(model.localState, .idle)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        let operations = await server.operations; XCTAssertEqual(operations, ["start", "stop"])
+    }
+
+    func testNativeReconnectBacksOffFailedStartupWithoutNewBroadcastCommand() async throws {
+        var now = 100.0, factoryCalls = 0
+        let server = CaptureTestServer(), first = CaptureTestPublisher()
+        let model = makeModel(server: server, publisherFactory: { _, _ in
+            factoryCalls += 1
+            if factoryCalls == 1 { return first }
+            if factoryCalls == 2 { throw URLError(.cannotConnectToHost) }
+            return CaptureTestPublisher()
+        }, reconnectClock: { now })
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        try await failNativeConnection(first, model: model)
+        now = 101.99; try await finishReconnectPoll(model); XCTAssertEqual(factoryCalls, 1)
+        now = 102; try await finishReconnectPoll(model); XCTAssertEqual(factoryCalls, 2)
+        XCTAssertEqual(model.localState, .failed)
+        now = 105.99; try await finishReconnectPoll(model); XCTAssertEqual(factoryCalls, 2)
+        now = 106; try await finishReconnectPoll(model); XCTAssertEqual(factoryCalls, 3)
+        XCTAssertEqual(model.localState, .publishing)
+        let operations = await server.operations; XCTAssertEqual(operations, ["start"])
+        await model.stopStreaming()
+    }
+
     func testHealthFailureTeardownBlocksRestartUntilOldPublisherStops() async throws {
         let server = CaptureTestServer()
         let gate = FilmTestGate()
@@ -2989,10 +3132,11 @@ import XCTest
                            publisherFactory: ((URL, VideoFrameObservationOwner?) throws -> any MediaPublisher)? = nil,
                            observationFactory: @escaping (VideoFrameObservationScope) throws -> VideoFrameObservationOwner = { try VideoFrameObservationOwner(scope: $0) },
                            qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = { _, _ in nil },
-                           pending: CaptureMemoryPending = CaptureMemoryPending()) -> CaptureStreamingModel {
+                           pending: CaptureMemoryPending = CaptureMemoryPending(),
+                           reconnectClock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) -> CaptureStreamingModel {
         CaptureStreamingModel(storage: storage ?? CaptureMemoryStorage(saved), pendingStore: pending,
                               clientFactory: { endpoint in MatchHTTPClient(endpoint: endpoint, transport: { try await server.respond($0) }) },
-                              publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory, qualityFactory: qualityFactory)
+                              publisherFactory: publisherFactory ?? { _, _ in publisher }, observationFactory: observationFactory, qualityFactory: qualityFactory, reconnectClock: reconnectClock)
     }
 }
 
@@ -3123,6 +3267,8 @@ actor CaptureTestServer {
     func setDropReply() { dropReply = true }
     func setStatusGate(_ value: FilmTestGate?) { statusGate = value }
     func selectAnotherCapture(sameDevice: Bool = false) { broadcast = .init(desired: .running, generation: broadcast.generation + 1, selection: .init(workerId: "worker-1", outputId: "output-1", captureDeviceId: sameDevice ? "capture-1" : "another-device", recordingId: "other-recording")) }
+    func stopBroadcastRemotely() { broadcast = .init(desired: .stopped, generation: broadcast.generation + 1, selection: nil) }
+    func replaceBroadcastGeneration() { broadcast = .init(desired: .running, generation: broadcast.generation + 2, selection: broadcast.selection) }
     func setOffline(_ value: Bool) { offline = value }
     func setPublishGate(_ value: FilmTestGate) { publishGate = value }
     func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {

@@ -20,11 +20,12 @@ test methods and assertions. The source/log hashes and exact cases are in
 
 ## Remaining integration gaps
 
-A native publisher failure currently detaches the publisher, schedules an owned
-broadcast stop and displays a manual Retry message. API/worker recovery does not
-prove automatic reconnection after the filming device loses its SRT connection.
-This is an implementation gap for the total-network-outage workflow, not another
-missing test of already working automatic recovery.
+Native publisher failure now reconnects automatically after joined teardown and
+fresh control, using the same authorized broadcast generation. Focused ownership,
+backoff, cancellation and in-flight Stop checks pass. headless-native-omoEsi verifies
+an actual SRT connection termination and automatic rejoin, a continuous clean archive,
+and both output recordings. The measured live outage is4.567seconds. This is not
+sustained packet-blackhole or physical radio-route qualification.
 
 Real packet loss/total network outage and restoration still need their own native
 integration evidence. Severe congestion has measured media loss; healthy periods

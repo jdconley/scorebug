@@ -194,6 +194,17 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private var publisherStopping = false
     private var epoch = UUID()
     @Published private var controlBusy = false
+    private struct NativeReconnect {
+        let id = UUID()
+        let context: CurrentCapture
+        let gameID: String
+        let generation: Int
+        let notBefore: Double
+    }
+    @Published private var nativeReconnect: NativeReconnect?
+    private var nativeReconnectFailures = 0
+    private var nativeHealthySince: Double?
+    private let reconnectClock: () -> Double
     private var requestedStart: CurrentCapture?
     private var shouldStopOwnedBroadcast = false
     private var ownedRecordingIDs: Set<String> = []
@@ -308,7 +319,8 @@ struct PublishingClockObservation: Equatable, Sendable {
              #endif
          }, qualityFactory: @escaping @MainActor (PublishingSession, UUID) throws -> PublishingQualityDriver? = {
              try PublishingQualityDriver.standard(session: $0, attemptID: $1)
-         }) {
+         }, reconnectClock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+        self.reconnectClock = reconnectClock
         self.storage = storage; self.pendingStore = pendingStore
         self.clientFactory = clientFactory; self.publisherFactory = publisherFactory
         self.observationFactory = observationFactory; self.qualityFactory = qualityFactory
@@ -338,6 +350,8 @@ struct PublishingClockObservation: Equatable, Sendable {
             campaignOwner: campaign, stagePlanSelection: .productionSRTUHD)
     }
 
+    var isReconnecting: Bool { nativeReconnect != nil }
+    var canStopStreaming: Bool { localState == .publishing || localState == .starting || isReconnecting }
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
         guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
@@ -376,6 +390,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     func captureChanged(_ context: CurrentCapture?, terminalStatus: RecordingStatus? = .stopped) {
         let previous = current
         if context?.id != previous?.id || context?.tap !== previous?.tap {
+            cancelNativeReconnect()
             appliedPublishingSettings = nil
             #if DEBUG
             qualityDiagnostic = nil; candidateInputDiagnostic = [:]
@@ -417,6 +432,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func captureFinished(_ context: CurrentCapture, interrupted: Bool) {
+        if nativeReconnect?.context.tap === context.tap { cancelNativeReconnect() }
         queueReport(context, status: interrupted ? .interrupted : .stopped)
     }
 
@@ -442,6 +458,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func startStreaming() async {
+        cancelNativeReconnect()
         await beginStreaming()?.value
     }
 
@@ -449,6 +466,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// before an unstructured Task reaches the start guard. Only one intent exists.
     func requestStartStreaming() {
         guard canStart, let context = current else { return }
+        cancelNativeReconnect()
         if controlBusy {
             requestedStart = context
             localState = .starting
@@ -474,7 +492,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         _ = beginStreaming()
     }
 
-    private func beginStreaming() -> Task<Void, Never>? {
+    private func beginStreaming(reconnecting: NativeReconnect? = nil) -> Task<Void, Never>? {
         guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, let context = current else { return nil }
         busy = true
         let attempt = UUID(); epoch = attempt; actionID = attempt
@@ -485,6 +503,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             do {
                 await restore()
                 try check(context, attempt)
+                if reconnecting != nil, coordinator == nil { throw CaptureControlError.selectionChanged }
                 if coordinator == nil { try await joinActiveMatch(); try check(context, attempt) }
                 guard let setup, let credential = setup.credential, let coordinator else { throw CaptureControlError.noSetup }
                 // A stop may have yielded to an already-running control poll or
@@ -507,6 +526,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                 commandState = state
                 guard state.pending == nil else { throw CaptureControlError.unresolved }
                 let selection = BroadcastSelection(workerId: setup.workerId, outputId: setup.outputId, captureDeviceId: setup.deviceId, recordingId: context.id)
+                if let reconnecting {
+                    guard nativeReconnect?.id == reconnecting.id, credential.gameId == reconnecting.gameID,
+                          state.snapshot?.broadcast.desired == .running,
+                          state.snapshot?.broadcast.generation == reconnecting.generation,
+                          state.snapshot?.broadcast.selection == selection else { throw CaptureControlError.selectionChanged }
+                }
                 let needsStart = state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection
                 var allowsUHD = false
                 if needsStart || context.profile.isUHDRecording {
@@ -646,10 +671,20 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 #endif
                 localState = .publishing
+                nativeReconnect = nil; nativeHealthySince = reconnectClock()
                 shouldStopOwnedBroadcast = false
                 message = "Sending camera media. Worker output is reported separately."
             } catch {
-                if epoch == attempt { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true; fail(error) }
+                if epoch == attempt {
+                    detachPublisher(); localState = .failed
+                    if let reconnecting, nativeReconnect?.id == reconnecting.id,
+                       Self.isTransientControlFailure(error) || error as? PublishingSessionError == .startFailed || error as? CaptureControlError == .workerUnavailable {
+                        scheduleNativeReconnect(context: reconnecting.context, gameID: reconnecting.gameID,
+                            generation: reconnecting.generation)
+                    } else {
+                        cancelNativeReconnect(); shouldStopOwnedBroadcast = reconnecting == nil; fail(error)
+                    }
+                }
                 if let coordinator { commandState = await coordinator.state() }
             }
         }
@@ -658,6 +693,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     }
 
     func stopStreaming() async {
+        cancelNativeReconnect()
         requestedStart = nil
         if let stoppingTask { await stoppingTask.value; return }
         stopping = true
@@ -705,6 +741,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         defer {
             controlBusy = false
             resumeRequestedStart(controlFailed: controlFailed)
+            if !controlFailed { resumeNativeReconnect() }
         }
         do {
             try persist()
@@ -956,10 +993,51 @@ struct PublishingClockObservation: Equatable, Sendable {
         qualityDriver?.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
             source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: snapshot))
         if snapshot.failure != nil || snapshot.state == .stopped {
-            detachPublisher(); shouldStopOwnedBroadcast = true
+            let retryable = snapshot.failure == .publisherUnhealthy || snapshot.failure == .appendFailed
+            let gameID = setup?.credential?.gameId
+            detachPublisher()
             localState = .failed
-            message = "Camera publishing stopped. Your local recording continues. Retry streaming when the connection is ready."
+            if retryable, let gameID, current?.tap === publishing.context.tap, !stopping {
+                scheduleNativeReconnect(context: publishing.context, gameID: gameID, generation: publishing.generation)
+            } else {
+                cancelNativeReconnect(); shouldStopOwnedBroadcast = true
+                message = "Camera publishing stopped. Your local recording continues. Retry streaming when the connection is ready."
+            }
+        } else if let since = nativeHealthySince, reconnectClock() - since >= 30 {
+            nativeReconnectFailures = 0
         }
+    }
+
+    private func cancelNativeReconnect() {
+        nativeReconnect = nil; nativeReconnectFailures = 0; nativeHealthySince = nil
+    }
+    private func scheduleNativeReconnect(context: CurrentCapture, gameID: String, generation: Int) {
+        let delays = [2.0, 4.0, 8.0, 16.0, 30.0]
+        nativeReconnectFailures = min(nativeReconnectFailures + 1, delays.count)
+        nativeHealthySince = nil
+        nativeReconnect = .init(context: context, gameID: gameID, generation: generation,
+            notBefore: reconnectClock() + delays[nativeReconnectFailures - 1])
+        shouldStopOwnedBroadcast = false
+        message = "Stream connection interrupted. Local recording continues; reconnecting automatically."
+    }
+    /// Called only after a successful control poll, outside its busy guard.
+    private func resumeNativeReconnect() {
+        guard let retry = nativeReconnect, !busy, !stopping, !publisherStopping,
+              publishing == nil, requestedStart == nil, commandState?.pending == nil else { return }
+        guard current?.id == retry.context.id, current?.tap === retry.context.tap,
+              setup?.credential?.gameId == retry.gameID,
+              let broadcast = commandState?.snapshot?.broadcast,
+              broadcast.desired == .running, broadcast.generation == retry.generation,
+              broadcast.selection?.captureDeviceId == setup?.deviceId,
+              broadcast.selection?.recordingId == retry.context.id,
+              broadcast.selection?.workerId == setup?.workerId,
+              broadcast.selection?.outputId == setup?.outputId else {
+            cancelNativeReconnect()
+            message = "Streaming selection ended or changed. Recording continues on this device."
+            return
+        }
+        guard reconnectClock() >= retry.notBefore, !needsStorageRetry else { return }
+        _ = beginStreaming(reconnecting: retry)
     }
 
     private func nextProbeReadSequence() -> UInt64 {
@@ -1325,6 +1403,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     /// Stale worker evidence is cleared by callers; a fresh snapshot still enforces
     /// selection ownership on recovery. Never resurrect starts or explicit stops.
     private func handlePollingFailure(_ error: Error) {
+        if nativeReconnect != nil {
+            if Self.isTransientControlFailure(error) { return }
+            cancelNativeReconnect()
+        }
         if let publishing, !shouldStopOwnedBroadcast, !publisherStopping,
            publishing.session.snapshot.state == .publishing,
            publishing.session.snapshot.failure == nil,

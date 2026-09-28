@@ -401,6 +401,7 @@ extension FilmModelTests {
             let duration: Double
             let uhd: Bool
             let timingAudit: Bool?
+            let expectReconnect: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
@@ -423,6 +424,8 @@ extension FilmModelTests {
         await film.start()
         await streaming.startStreaming()
         let started = ContinuousClock.now
+        try Data("ready".utf8).write(to: artifact.appendingPathComponent("native-ready.json"), options: .atomic)
+        var lifecycle: [[String: String]] = []
         let worker = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollWorkerStatus() }) }
         let control = Task { await ControlPollSchedule.run(interval: { streaming.controlPollInterval }, poll: { await streaming.pollBackgroundControl() }) }
         let health = Task {
@@ -436,8 +439,15 @@ extension FilmModelTests {
         var lastProfileState: String?
         do {
             while ContinuousClock.now < started + .seconds(config.duration), film.state == .recording,
-                  streaming.localState == .publishing {
+                  (config.expectReconnect == true || streaming.localState == .publishing) {
                 await film.pollHealth()
+                if lifecycle.last?["state"] != streaming.localState.rawValue {
+                    lifecycle.append(["state": streaming.localState.rawValue,
+                        "recording": streaming.activeRecordingID ?? "none",
+                        "attempt": streaming.videoObservation?.scope.publishingAttemptID.uuidString ?? "none",
+                        "generation": streaming.videoObservation.map { String($0.scope.broadcastGeneration) } ?? "none",
+                        "elapsedSeconds": String(started.duration(to: .now).components.seconds)])
+                }
                 if let text = streaming.qualityDiagnostic,
                    let fields = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] {
                     samples.append(fields)
@@ -459,7 +469,7 @@ extension FilmModelTests {
         await worker.value; await control.value; await health.value
         await streaming.stopStreaming()
         await film.stop()
-        let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples,
+        let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples, "lifecycle": lifecycle,
             "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
             "timingAuditEnabled": timingAudit,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]

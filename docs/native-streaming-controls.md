@@ -4,11 +4,21 @@ The iPhone Film tab records an offline, clean archive without a server or match.
 
 Streaming is an independent optional attachment to an already running recording. Open Film → Streaming → Setup, enter the control server URL, installation token, worker ID and output ID, then save and connect to the active match. Capture joins with role `capture` and a stable device UUID. Start recording, then choose Start streaming. Stop streaming detaches the publisher and leaves the archive running. Stopping recording clears capture identity and cancels publishing before archive shutdown awaits. Backgrounding stops recording through the same path.
 
+## Automatic reconnection
+
+A failed native stream connection retries while the same recording and authorized
+broadcast remain active. The app shows “reconnecting” and keeps Stop available.
+Retries wait for the old publisher to finish, revalidate server ownership and start
+with minimum upload quality. Backoff rises from2seconds to30seconds. Explicit Stop,
+recording replacement/end, authorization failure or a changed/stopped broadcast
+cancels retries. Local recording continues independently; the live output can have
+an outage gap. Physical radio changes and sustained blackholes remain unqualified.
+
 ## State and credentials
 
 `FilmModel` publishes `CurrentCapture` (recording ID, stable ISO start time, fresh `PublishingTap`) only after source readiness. It invokes its synchronous lifecycle callback before archive draining on stop. It has no API client or streaming dependency.
 
-`CaptureStreamingModel` owns the client, broadcast coordinator and publisher attachment. It validates the local recording and attempt identity after every suspended startup stage. Control polling is a separate two-second task from archive health polling; local publishing health and worker observation expiry use a separate 250 ms task. Delayed HTTP requests cannot delay capture failure handling. `PublishingSession` bounds the media queue, monitors publisher health and discards stale queued samples at shutdown.
+`CaptureStreamingModel` owns the client, broadcast coordinator and publisher attachment. It validates the local recording and attempt identity after every suspended startup stage. Control polling is a separate two-second task from archive health polling; local publishing health and worker observation expiry use a separate100ms task. Delayed HTTP requests cannot delay capture failure handling. `PublishingSession` bounds the media queue, monitors publisher health and discards stale queued samples at shutdown.
 
 Capture configuration, its match credential, stable device UUID, recording-report outbox and bounded stop-ownership ledger use the device-only Keychain service `live.scorebug.capture.setup`. They are separate from the scorer's Keychain service. Publish URLs remain in memory inside one publishing attempt and are never added to saved setup, command files, UI messages or diagnostics.
 

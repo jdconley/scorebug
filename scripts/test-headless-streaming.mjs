@@ -1,5 +1,6 @@
 // Faster opt-in native media diagnosis, not simulator/UI acceptance.
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,14 @@ for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index],
     value = process.argv[index + 1];
   assert(
-    ['--host', '--source', '--duration', '--quality', '--timing-audit'].includes(key) &&
+    [
+      '--host',
+      '--source',
+      '--duration',
+      '--quality',
+      '--timing-audit',
+      '--disconnect-after',
+    ].includes(key) &&
       value &&
       !values.has(key),
   );
@@ -25,6 +33,12 @@ assert(['1080', '2160'].includes(quality));
 const timingAudit = values.get('--timing-audit') ?? 'on';
 assert(['on', 'off'].includes(timingAudit));
 const duration = Number(values.get('--duration') ?? '120');
+const disconnectAfter = Number(values.get('--disconnect-after') ?? '0');
+assert(
+  Number.isInteger(disconnectAfter) &&
+    disconnectAfter >= 0 &&
+    (disconnectAfter === 0 || disconnectAfter + 20 < duration),
+);
 assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
 const options = deviceLabOptions(['--host', values.get('--host'), '--encoder', 'videotoolbox']);
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
@@ -71,8 +85,13 @@ try {
   await writeFile(
     config,
     JSON.stringify({
-      setup: lab.setup, source, artifact, duration, uhd: quality === '2160',
+      setup: lab.setup,
+      source,
+      artifact,
+      duration,
+      uhd: quality === '2160',
       timingAudit: timingAudit === 'on',
+      expectReconnect: disconnectAfter > 0,
     }),
     { mode: 0o600 },
   );
@@ -93,7 +112,7 @@ try {
     [configure, join(products, configurations[0]), destination, config, products],
     'configure',
   );
-  await run(
+  const workflow = run(
     'xcodebuild',
     [
       'test-without-building',
@@ -108,11 +127,63 @@ try {
     'workflow',
     (duration + 90) * 1000,
   );
+  if (disconnectAfter > 0) {
+    const inject = (async () => {
+      const deadline = Date.now() + 30000;
+      while (true) {
+        controller.signal.throwIfAborted();
+        try {
+          await readFile(join(artifact, 'native-ready.json'));
+          break;
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        assert(Date.now() < deadline, 'Native capture did not become ready');
+        await delay(100, undefined, { signal: controller.signal });
+      }
+      await delay(disconnectAfter * 1000, undefined, { signal: controller.signal });
+      controller.signal.throwIfAborted();
+      await lab.disconnectPublisher();
+    })();
+    try {
+      await Promise.all([workflow, inject]);
+    } catch (error) {
+      controller.abort();
+      await Promise.allSettled([workflow, inject]);
+      throw error;
+    }
+  } else await workflow;
   const result = JSON.parse(await readFile(join(artifact, 'diagnostic.json'), 'utf8'));
   assert.equal(result.scope, 'headless-native-diagnostic-v1');
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
   assert(result.samples.length > 0, 'Test must execute, not skip');
+  if (disconnectAfter > 0) {
+    assert(
+      result.lifecycle.some((entry) => entry.state === 'failed'),
+      'Native connection loss must be observed',
+    );
+    const attempts = new Set(
+      result.lifecycle
+        .filter((entry) => entry.state === 'publishing')
+        .map((entry) => entry.attempt),
+    );
+    assert.equal(attempts.size, 2, 'Native app must create exactly one replacement publisher');
+    assert.equal(
+      new Set(result.lifecycle.map((entry) => entry.recording)).size,
+      1,
+      'Archive must remain the same recording',
+    );
+    assert.equal(
+      new Set(
+        result.lifecycle
+          .filter((entry) => entry.state === 'publishing')
+          .map((entry) => entry.generation),
+      ).size,
+      1,
+      'Reconnect must preserve broadcast generation',
+    );
+  }
   assert.equal(result.timingAuditEnabled, timingAudit === 'on');
   if (timingAudit === 'on') {
     const cadence = JSON.parse(await readFile(join(artifact, 'cadence.json'), 'utf8'));

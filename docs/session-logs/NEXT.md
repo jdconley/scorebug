@@ -36,24 +36,39 @@ already proved real gaps. No decoded-media qualification is claimed. Export-only
 without another live capture. Headless progress now prints elapsed time and reset
 causes. These harness additions postdate this capture; its producing patch is saved.
 
-## Next work
+## Current reconnect checkpoint and next work
 
-Priority: implement the actual missing native SRT reconnect feature, not another
-4K or generic fault rerun. See [current session design](2026-09-28-fault-coverage-and-reconnect-gap.md).
-Current pollLocalHealth detaches a failed publisher, stops its owned broadcast and
-requires manual Retry. Existing API/worker recovery is a different failure mode.
+Native SRT reconnect is implemented and verified; see
+[session evidence](2026-09-28-fault-coverage-and-reconnect-gap.md). Failed native
+publisher/append gets bounded2/4/8/16/30s retry for the same tap/game/generation,
+joined teardown and successful fresh control. It cannot issue another Start after
+remote/explicit stop or ownership change. UI says reconnecting and retains Stop.
+Nine distinct focused model tests (including six cancellation variants), an
+additional control assertion rerun, and incremental arm64 simulator build pass.
 
-Reconnect only after joined teardown and fresh control, for the same capture tap,
-match, selection and broadcast generation. Reuse the authorized running generation
-and a fresh publishingAttemptId; do not auto-submit .start after remote stop/change.
-Explicit Stop/capture end/replacement/auth/setup changes cancel retries. Back off
-failures and start at minimum while local recording continues. Focused model gates,
-then one native network-outage run. Hardware remains deferred.
+headless-native-omoEsi, labQ0T9a3: actual relay SRT kick at15s, new publisher at17s,
+same recording and generation1, native recording/publishing survive to71s, cleanup[].
+Native export and full archive/four-output decode pass their scoped checks:
+2137consecutive clean archive frames, no within-session video/audio gaps, identical
+live source IDs across both outputs, all A/V ends within31ms.137missing live frames
+between sessions (4.567s) remain explicit. Exactly one Start and final Stop inSQLite.
+Static score; changing-score acceptance is retained separately. All jobs joined.
 
-19retained fault test passes and current sources are audited in local-fault-coverage.md;
-runtime classification beyond diagnostic caps already passes. Real packet loss and
-full disconnect/restoration, severe-collapse loss, native4K performance, abrupt audio
-tails and sustained profiles remain open. All jobs terminal; no code changed this turn.
+1. Next missing native fault integration is sustained packet blackhole/total outage,
+   not another SRT kick. Extend the existing scoped impairment path carefully;
+   ensure new client UDP endpoints after reconnect are supported by the test proxy.
+   Verify backoff, restored output and continuous recording without a long ladder run.
+2. Keep4K performance diagnosis separate: actual444UHD frames reached receiver then
+   probation found pre-receiver loss. App ingress vsSDK raw input vsnative encoder
+   drop origin remains unproven. Do not enlarge queues or weaken thresholds.
+3. Severe-collapse loss, abrupt crash tails and sustained profiles remain open;
+   hardware/radio/external hosts deferred. Retained fault coverage is audited in
+   local-fault-coverage.md; runtime control beyond optional audit limits already passes.
+
+Headless fault command: `node scripts/test-headless-streaming.mjs --host <LAN> --source <1080fixture> --duration 70 --quality 1080 --timing-audit off --disconnect-after 15`.
+Media verifier: artifacts/qa/fault-coverage-20260928/verify-reconnect-media.py (bound
+to omoEsi). Artifacts include producing source patch and input/output hashes. UI
+changes postdate capture and passed model controls plus simulator compilation.
 
 ## Reuse, don't repeat
 

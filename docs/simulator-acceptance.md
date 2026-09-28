@@ -44,8 +44,10 @@ production behavior changes, not when unrelated documentation or fixtures change
 
 The [local fault matrix](local-fault-coverage.md) records19retained passing cases
 for stale/stall/pressure/ownership and continuous-control behavior. Native publisher
-connection failure still requires manual Retry: API/worker restart evidence does
-not establish automatic recovery after loss of the phone's SRT connection.
+connection loss now has its own actual headless SRT disconnect/rejoin pass:
+headless-native-omoEsi preserves the same recording/generation,2137consecutive clean
+archive frames and both recovered output recordings. The4.567second live gap remains
+explicit. This does not qualify sustained blackholes or physical radio changes.
 
 ## Iteration and CI
 
