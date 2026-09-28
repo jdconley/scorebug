@@ -44,6 +44,12 @@ struct WatchSetupProvenance: Codable, Equatable {
               id.uuidString.lowercased() == text.lowercased() else { throw Invalid.expectedMatch }
         return id.uuidString.lowercased()
     }
+    /// Match IDs are case-sensitive server keys, even when they have UUID syntax.
+    static func expectedGame(_ text: String?) throws -> String {
+        _ = try expectedMatch(text)
+        guard let text else { throw Invalid.expectedMatch }
+        return text
+    }
     static func simulatorFixture(_ text: String?, expectedMatch: String) throws -> String {
         guard let text, text.utf8.count <= 8192, let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -31,7 +31,12 @@ for bad: String? in [nil, "", "  ", "$(SCOREBUG_EXPECTED_WATCH_MATCH_ID)", "not-
 check(try snapshot(ready:false).readyForOfferWait() == false)
 check(try snapshot(busy:true).readyForOfferWait() == false)
 check(try snapshot().readyForOfferWait() == true)
-let expected = try WatchSetupProvenance.expectedMatch(game)
+let uppercaseGame = "ABCDEFAB-1234-4567-89AB-ABCDEFABCDEF"
+check(try WatchSetupProvenance.expectedGame(uppercaseGame) == uppercaseGame)
+let uppercaseIdentity = try WatchSetupProvenance.Identity(gameID:uppercaseGame,pairingID:pair)
+check(try snapshot(offer:uppercaseIdentity).matchingOffer(expected:uppercaseGame) == uppercaseIdentity)
+check(try snapshot(offer:uppercaseIdentity).matchingOffer(expected:uppercaseGame.lowercased()) == nil)
+let expected = try WatchSetupProvenance.expectedGame(game)
 let selected = try WatchSetupProvenance.Identity(gameID:game,pairingID:pair)
 let other = try WatchSetupProvenance.Identity(gameID:foreign,pairingID:otherPair)
 func snapshot(offer:WatchSetupProvenance.Identity? = nil, pending:WatchSetupProvenance.Identity? = nil, paired:WatchSetupProvenance.Identity? = nil, scoringPending:Bool = false, ready:Bool = true, busy:Bool = false) -> WatchSetupProvenance {

@@ -155,13 +155,13 @@ export function ordinaryTestEnvironment({
       validateDirectWatchFixture(watchFixture, setup.matchId);
       return {
         SCOREBUG_DIRECT_WATCH_SIMULATOR: '1',
-        SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId.toLowerCase(),
+        SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId,
         SCOREBUG_TEST_WATCH_SETUP: JSON.stringify(watchFixture),
       };
     }
     return {
       SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1',
-      SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId.toLowerCase(),
+      SCOREBUG_EXPECTED_WATCH_MATCH_ID: setup.matchId,
     };
   }
   return {

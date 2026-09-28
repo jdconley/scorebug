@@ -669,6 +669,16 @@ test('watch-direct is explicit, unpaired, fixture-only setup with no phone crede
   });
   assert.equal(env.SCOREBUG_DIRECT_WATCH_SIMULATOR, '1');
   assert.equal(env.SCOREBUG_EXPECTED_WATCH_MATCH_ID, setup.matchId);
+  const upper = 'ABCDEFAB-1234-4567-89AB-ABCDEFABCDEF';
+  const uppercase = ordinaryTestEnvironment({
+    paired: false,
+    directWatch: true,
+    watch: true,
+    setup: { ...setup, matchId: upper },
+    watchFixture: { ...watchFixture, offer: { ...watchFixture.offer, gameId: upper } },
+  });
+  assert.equal(uppercase.SCOREBUG_EXPECTED_WATCH_MATCH_ID, upper);
+
   assert.deepEqual(JSON.parse(env.SCOREBUG_TEST_WATCH_SETUP), watchFixture);
   assert(!JSON.stringify(env).includes('phone-secret'));
   assert.equal(env.SCOREBUG_PAIRED_ORDINARY_SIMULATOR, undefined);

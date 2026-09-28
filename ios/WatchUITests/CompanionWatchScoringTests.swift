@@ -14,7 +14,7 @@ final class CompanionWatchScoringTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["SCOREBUG_DIRECT_WATCH_SIMULATOR"] == "1" else {
             throw XCTSkip("Use the explicit watch-direct simulator lane.")
         }
-        let expected = try WatchSetupProvenance.expectedMatch(ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
+        let expected = try WatchSetupProvenance.expectedGame(ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
         let fixture = try WatchSetupProvenance.simulatorFixture(ProcessInfo.processInfo.environment["SCOREBUG_TEST_WATCH_SETUP"], expectedMatch: expected)
         try runScoring(directFixture: fixture)
         #else
@@ -28,7 +28,7 @@ final class CompanionWatchScoringTests: XCTestCase {
         let homePoint = separate ? "2-1" : "1-0"
         let awayPoint = separate ? "1-2" : "0-1"
         continueAfterFailure = false
-        let expectedMatch = try WatchSetupProvenance.expectedMatch(
+        let expectedMatch = try WatchSetupProvenance.expectedGame(
             ProcessInfo.processInfo.environment["SCOREBUG_EXPECTED_WATCH_MATCH_ID"])
         #if targetEnvironment(simulator)
         let pairedOrdinary = ProcessInfo.processInfo.environment["SCOREBUG_PAIRED_ORDINARY_SIMULATOR"] == "1"
