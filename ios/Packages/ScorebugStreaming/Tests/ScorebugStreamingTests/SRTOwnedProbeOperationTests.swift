@@ -7,6 +7,51 @@ import XCTest
 @testable import SRTHaishinKit
 
 final class SRTOwnedProbeOperationTests: XCTestCase {
+    func testUHDLowerHandoffRetainsBudgetAndJoinsRetirement() async throws {
+        // The app uses two owned layers, unlike the direct native fixture.
+        for rate in [500_000, 36_192_000] {
+            let fixture = OwnedNativeFixture(budget: .uhd, rate: rate)
+            let lowerContext = await fixture.context
+            let issuer = UUID()
+            let context = PublishingBandwidthProbeContext(issuer: issuer, epoch: UUID(),
+                selected: lowerContext.selected, lower: lowerContext)
+            let operation = PublishingBandwidthProbeOperation(issuer: issuer, context: context,
+                request: .init(kind: .begin, bitRate: rate, policy: .localZeroLoss, budget: .uhd),
+                predecessor: nil, backend: .lower(.init(validate: { _ in },
+                    allocate: { _, _ in await fixture.operation() })))
+            operation.start()
+            let initial = try await operation.value()
+            XCTAssertEqual(initial.budget, .uhd)
+            let renewed = try await operation.renew()
+            XCTAssertEqual(renewed.budget, .uhd)
+            let retired = try await operation.retire()
+            XCTAssertTrue(retired.eligible)
+            XCTAssertEqual(retired.lower?.terminal?.budget, .uhd)
+            let counts = await fixture.counts
+            XCTAssertEqual(counts.retirements, 1)
+        }
+    }
+
+    func testUHDBudgetCrossesOwnedBridgeAndRejectsSubstitutedReadback() async throws {
+        let fixture = OwnedNativeFixture(budget: .uhd, rate: 36_192_000)
+        let operation = await fixture.operation()
+        let initial = try await operation.value()
+        XCTAssertEqual(initial.budget, .uhd)
+        XCTAssertEqual(initial.bitRate, 36_192_000)
+        let renewed = try await operation.renew()
+        XCTAssertEqual(renewed.budget, .uhd)
+        let terminal = try await operation.retire()
+        XCTAssertTrue(terminal.eligible)
+        XCTAssertEqual(terminal.terminal?.budget, .uhd)
+        // Low rate is valid under either ceiling; budget identity still must match.
+        let wrong = OwnedNativeFixture(defect: "budget", budget: .uhd)
+        let rejected = await wrong.operation()
+        if case .success = await Result(catchingAsync: { try await rejected.value() }) { XCTFail("Changed budget granted authority") }
+        _ = try await rejected.retire()
+        let counts = await wrong.counts
+        XCTAssertEqual(counts.retirements, 1)
+    }
+
     func testZeroLengthInitialLeaseCannotProduceContinuation() async throws {
         let fixture = OwnedNativeFixture(defect: "zeroInitialLease")
         let operation = await fixture.operation()
@@ -115,7 +160,10 @@ private actor OwnedNativeFixture {
     private var validationEntered = false, validationWait: CheckedContinuation<Void, Never>?
     private var retirementHeld = false, retirementEntered = false, retirementWait: CheckedContinuation<Void, Never>?
     var counts = (allocations: 0, retirements: 0)
-    init(defect: String = "") {
+    private let budget: PublishingBandwidthProbeSnapshot.Budget
+    private let rate: Int
+    init(defect: String = "", budget: PublishingBandwidthProbeSnapshot.Budget = .standard, rate: Int = 500_000) {
+        self.budget = budget; self.rate = rate
         self.defect = defect
         context = PublishingBandwidthProbeContext(issuer: issuer, epoch: UUID(), selected:
             PublishingBitRateChange(publishingGeneration: 7,
@@ -124,7 +172,7 @@ private actor OwnedNativeFixture {
     }
     func operation(start: Bool = true) -> PublishingBandwidthProbeOperation {
         let result = PublishingBandwidthProbeOperation(issuer: issuer, context: context,
-            request: .init(kind: .begin, bitRate: 500_000, policy: .localZeroLoss), predecessor: nil,
+            request: .init(kind: .begin, bitRate: rate, policy: .localZeroLoss, budget: budget), predecessor: nil,
             backend: .native(.init(validate: { _ in try await self.validate() },
                 allocate: { _, _ in try await self.allocate() },
                 renew: { _, _ in try await self.renew() }, cancel: { _, _ in await self.cancel() },
@@ -170,15 +218,16 @@ private actor OwnedNativeFixture {
         if heldAllocation { await withCheckedContinuation { allocationWait = $0 } }
         let at = ProcessInfo.processInfo.systemUptime
         var mon = CBytePerfMon(); mon.msRTT = 2
-        let probe = try SRTBandwidthProbe(bitRate: 500_000, generation: 7,
-            statistics: .init(mon: mon, sampledAt: at), at: at, stage: 1, campaign: 1, campaignStartedAt: at)
+        let probe = try SRTBandwidthProbe(bitRate: rate, generation: 7,
+            statistics: .init(mon: mon, sampledAt: at), at: at, stage: 1, campaign: 1, campaignStartedAt: at, budget: budget)
         current = probe
         let raw = PublishingBandwidthProbeSnapshot(probe.snapshot(now: { at }))
-        let value = defect == "zeroInitialLease" ? PublishingBandwidthProbeSnapshot(id: raw.id,
+        var value = defect == "zeroInitialLease" ? PublishingBandwidthProbeSnapshot(id: raw.id,
             publishingGeneration: raw.publishingGeneration, bitRate: raw.bitRate, startedAt: raw.startedAt,
             leaseDeadline: raw.startedAt, acceptedPayloadBytes: 0, lastAcceptedAt: nil, reason: nil,
             stage: raw.stage, campaign: raw.campaign, authority: raw.authority,
             campaignStartedAt: raw.campaignStartedAt, totalAcceptedPayloadBytes: 0) : raw
+        if defect == "budget" { value.budget = .standard }
         original = value
         return value
     }

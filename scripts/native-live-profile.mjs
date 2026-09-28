@@ -28,15 +28,17 @@ export function nativeLiveProfile({
   return raw;
 }
 export function nativeMediaGeometry(profile, live) {
-  assert.ok(['1080p30', '540p30', '360p30', '240p30'].includes(profile));
+  assert.ok(['2160p30', '1080p30', '540p30', '360p30', '240p30'].includes(profile));
   const [width, height] =
-    !live || profile === '1080p30'
-      ? [1920, 1080]
-      : profile === '540p30'
-        ? [960, 540]
-        : profile === '360p30'
-          ? [640, 360]
-          : [426, 240];
+    profile === '2160p30'
+      ? [3840, 2160]
+      : !live || profile === '1080p30'
+        ? [1920, 1080]
+        : profile === '540p30'
+          ? [960, 540]
+          : profile === '360p30'
+            ? [640, 360]
+            : [426, 240];
   // 426x240 is not an exact uniform scale of 1920x1080. Keep every crop
   // coordinate integral and use the actual horizontal and vertical scales.
   const scaleX = width / 1920,

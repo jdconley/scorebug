@@ -44,6 +44,7 @@ actor PublishingOwnedMeasurementLease {
     private nonisolated let audit: PublishingOwnedMeasurementAudit?
     struct CurrentDiagnostic: Sendable {
         var phase = "registered", failure: String?, failurePhase: String?, candidateReason: String?
+        var encoderFailure: String?, transportFailure: String?
         var costReady = false
         var boundAt: Double?, completedAt: Double?
         func fields(settlement: String, at now: Double) -> [String: String] {
@@ -55,6 +56,8 @@ actor PublishingOwnedMeasurementLease {
             result["lastMeasurementFailure"] = failure
             result["lastMeasurementFailurePhase"] = failurePhase
             result["lastMeasurementCandidateReason"] = candidateReason
+            result["lastMeasurementEncoderFailure"] = encoderFailure
+            result["lastMeasurementTransportFailure"] = transportFailure
             result["lastMeasurementBoundAgeAtSettlementSeconds"] = boundAt.map { String(now - $0) }
             result["lastMeasurementCompletedAgeAtSettlementSeconds"] = completedAt.map { String(now - $0) }
             return result
@@ -348,6 +351,8 @@ actor PublishingOwnedMeasurementLease {
         #if DEBUG
         currentDiagnostic.phase = "candidateJoined"
         currentDiagnostic.candidateReason = result?.reason.rawValue
+        currentDiagnostic.encoderFailure = result?.encoding?.encoding.failure
+        currentDiagnostic.transportFailure = result?.encoding?.transport?.failure
         if audit != nil, let result, let object = try? JSONSerialization.jsonObject(with: NativeCandidateFixture.data(result)) {
             record("candidateJoined", fields: ["measurement": object, "pressure": finalPressure?.object as Any? ?? NSNull()])
         }

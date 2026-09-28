@@ -20,4 +20,12 @@ public struct WorkerCapabilitiesResponse: Decodable, Equatable, Sendable {
               ["240p30", "360p30", "540p30", "720p30", "1080p30", "2160p30"].contains(capabilities.outputProfile) else { return false }
         return true
     }
+    /// A configured UHD output is only an eligibility gate; measured native
+    /// candidate cost and matching v4 receiver delivery still decide admission.
+    public func permitsUHDInput(worker: String, output: String, sourceWidth: Int, sourceHeight: Int,
+                                requestDuration: Duration) -> Bool {
+        sourceWidth >= 3840 && sourceHeight >= 2160 && capabilities?.outputProfile == "2160p30" &&
+            permitsStart(worker: worker, output: output, requestDuration: requestDuration)
+    }
+
 }

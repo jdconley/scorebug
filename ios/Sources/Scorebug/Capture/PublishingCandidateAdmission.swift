@@ -154,14 +154,15 @@ struct PublishingCandidateAdmission: Sendable {
               Self.sameReceipt(currentReceipt(), applied.receipt) else { return rejected("scope-receipt") }
         guard candidateIsCurrent(), authority.permits(receiver), authority.permits(pair.older.end),
               pair.older.end.snapshot == pair.newer.start else { return rejected("receiver-authority") }
-        guard binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
+        guard binding.budget == probe.budget, binding.id == probe.id, binding.publishingGeneration == probe.publishingGeneration,
               binding.policy == probe.policy, binding.stage == probe.stage, binding.campaign == probe.campaign, binding.bitRate == probe.bitRate, binding.startedAt == probe.startedAt,
               binding.startedAt + 0.5 <= boundAt, boundAt <= m.startedAt, binding.isActive(at: boundAt),
               probe.id.uuidString.lowercased() == expected.probeId, probe.publishingGeneration == expected.publishingGeneration,
               probe.stage == expected.stage, probe.campaign == expected.campaign, probe.bitRate == expected.bitRate, probe.stage != nil,
               probe.acceptedPayloadBytes >= binding.acceptedPayloadBytes, probe.leaseDeadline >= binding.leaseDeadline,
               probe.isActive(at: now), probe.leaseDeadline - now <= 0.300001 else { return rejected("probe") }
-        guard let receiverBytes = UInt64(receiver.snapshot.deliveredPayloadBytes), receiverBytes <= probe.acceptedPayloadBytes,
+        guard (probe.budget == .uhd) == (receiver.snapshot.convention == "mpegts-null-probe-v4"),
+              let receiverBytes = UInt64(receiver.snapshot.deliveredPayloadBytes), receiverBytes <= probe.acceptedPayloadBytes,
               let age = receiver.snapshotAgeUpperBound(at: clock.instant),
               let deliveryAge = receiver.lastDeliveryAgeUpperBound(at: clock.instant),
               age <= .milliseconds(1500), deliveryAge <= .milliseconds(1500) else { return rejected("receiver-freshness") }

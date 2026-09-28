@@ -106,6 +106,25 @@ import VideoToolbox
     }
 
     @Test(arguments: [false, true])
+    func uhdSourceRetainsSixteenFrameStartupBound(callbacksOnly: Bool) async throws {
+        let session = CandidateSession(fault: "missingOutput", immediate: callbacksOnly)
+        let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
+        try await encoder.start()
+        do {
+            for i in 0..<16 {
+                try #require(encoder.offer(try raw(CMTime(value: Int64(i), timescale: 30),
+                    size: 3840, height: 2160, pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)))
+                try #require(await session.waitForSubmissions(i + 1))
+            }
+            #expect(!encoder.offer(try raw(CMTime(value: 16, timescale: 30),
+                size: 3840, height: 2160, pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)))
+            let result = await encoder.finish()
+            #expect(result.acceptedInputCount == 16)
+            #expect(result.failure == "unresolvedInputLimit")
+        } catch { _ = await encoder.cancel(); throw error }
+    }
+
+    @Test(arguments: [false, true])
     func aggregateRawByteBoundIsIndependentOfCountAndCallbacks(callbacksOnly: Bool) async throws {
         let session = CandidateSession(fault: "missingOutput", immediate: callbacksOnly)
         let encoder = try VideoCandidateEncoder(settings: settings, sessionFactory: { _, _ in session })
@@ -412,9 +431,9 @@ import VideoToolbox
         #expect(result.frames.map(\.sourcePTS) == (0..<3).map { CMTime(value: Int64($0), timescale: 30) })
     }
 
-    private func raw(_ pts: CMTime, size: Int = 64) throws -> CMSampleBuffer {
+    private func raw(_ pts: CMTime, size: Int = 64, height: Int? = nil, pixelFormat: OSType = kCVPixelFormatType_32BGRA) throws -> CMSampleBuffer {
         var image: CVPixelBuffer?
-        #expect(CVPixelBufferCreate(kCFAllocatorDefault, size, size, kCVPixelFormatType_32BGRA,
+        #expect(CVPixelBufferCreate(kCFAllocatorDefault, size, height ?? size, pixelFormat,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &image) == kCVReturnSuccess)
         let pixel = try #require(image)
         CVPixelBufferLockBaseAddress(pixel, [])

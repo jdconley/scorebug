@@ -3,8 +3,8 @@ import Foundation
 /// Called only inside a publisher's non-suspending reservation turn, before
 /// consuming the receipt or replacing its current operation slot.
 func validateOwnedReservation(current: PublishingBandwidthProbeOperation?, issuer: UUID,
-    context: PublishingBandwidthProbeContext, receipt: PublishingBandwidthProbeRetirement?, request: PublishingOwnedProbeRequest) throws {
-    guard (1...12_000_000).contains(request.bitRate) else { throw PublishingBandwidthProbeError.obsolete }
+    context: PublishingBandwidthProbeContext, receipt: PublishingBandwidthProbeRetirement?, request: PublishingOwnedProbeRequest, budget: PublishingBandwidthProbeSnapshot.Budget = .standard) throws {
+    guard request.budget == budget, (1...budget.maximumBitRate).contains(request.bitRate) else { throw PublishingBandwidthProbeError.obsolete }
     guard let receipt else {
         guard request.kind == .begin, current == nil else { throw PublishingBandwidthProbeError.busy }
         return
@@ -25,13 +25,13 @@ func validateOwnedReservation(current: PublishingBandwidthProbeOperation?, issue
 
 extension PublishingBandwidthProbeSnapshot {
     private var ownedShape: Bool {
-        guard publishingGeneration > 0, (1...12_000_000).contains(bitRate),
+        guard budget == .standard || campaign != nil, publishingGeneration > 0, (1...budget.maximumBitRate).contains(bitRate),
               let stage, (1...32).contains(stage), let campaign, campaign > 0,
               let origin = campaignStartedAt, origin.isFinite, origin >= 0,
               startedAt.isFinite, startedAt >= origin, startedAt - origin < 60,
               leaseDeadline.isFinite, leaseDeadline >= startedAt,
               let total = totalAcceptedPayloadBytes, total >= acceptedPayloadBytes,
-              total <= 16 * 1024 * 1024, total % 1316 == 0, acceptedPayloadBytes % 1316 == 0,
+              total <= budget.maximumPayloadBytes, total % 1316 == 0, acceptedPayloadBytes % 1316 == 0,
               authority != nil else { return false }
         if acceptedPayloadBytes == 0 { return lastAcceptedAt == nil }
         guard let lastAcceptedAt else { return false }
@@ -47,7 +47,7 @@ extension PublishingBandwidthProbeSnapshot {
 
     func isOwnedAllocation(_ request: PublishingOwnedProbeRequest, predecessor: Self?, generation: UInt64,
                            requestedAt: Double, observedAt: Double) -> Bool {
-        guard ownedShape, publishingGeneration == generation, bitRate == request.bitRate, policy == request.policy,
+        guard ownedShape, budget == request.budget, publishingGeneration == generation, bitRate == request.bitRate, policy == request.policy,
               requestedAt.isFinite, requestedAt >= 0, observedAt.isFinite, observedAt >= requestedAt,
               startedAt >= requestedAt, startedAt <= observedAt,
               leaseDeadline > startedAt, leaseDeadline <= startedAt + 0.300001, reason == nil,
@@ -57,7 +57,7 @@ extension PublishingBandwidthProbeSnapshot {
                 campaignStartedAt == startedAt && totalAcceptedPayloadBytes == 0
         }
         guard id != predecessor.id, publishingGeneration == predecessor.publishingGeneration,
-              policy == predecessor.policy else { return false }
+              budget == predecessor.budget, policy == predecessor.policy else { return false }
         switch request.kind {
         case .begin: return false
         case .replace:
@@ -73,7 +73,7 @@ extension PublishingBandwidthProbeSnapshot {
     }
 
     func isOwnedProgress(of prior: Self, observedAt: Double) -> Bool {
-        guard ownedShape, prior.ownedShape, observedAt.isFinite, observedAt >= startedAt,
+        guard budget == prior.budget, ownedShape, prior.ownedShape, observedAt.isFinite, observedAt >= startedAt,
               id == prior.id, publishingGeneration == prior.publishingGeneration,
               stage == prior.stage, campaign == prior.campaign, campaignStartedAt == prior.campaignStartedAt,
               policy == prior.policy, bitRate == prior.bitRate, startedAt == prior.startedAt,

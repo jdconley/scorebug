@@ -327,6 +327,21 @@ final class PhysicalStreamingTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testOrdinarySimulatorQualify2160ScoreStopAndExport() throws {
+        #if targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
+              ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_2160"] == "1" else {
+            throw XCTSkip("Use the explicit quality2160 simulator lane.")
+        }
+        quality2160 = true; quality1080 = true; recovery720 = true; evidencePrefix = "Ordinary2160Streaming"
+        defer { attachRecoveryEvidence() }
+        do { try runVertical(watchScoring: false, ordinarySimulator: true, recovery: true) }
+        catch { recoveryFailure = recoveryFailure ?? String(describing: error); throw error }
+        #else
+        throw XCTSkip("4K file-source qualification requires a disposable simulator.")
+        #endif
+    }
+
     @MainActor func testOrdinarySimulatorQualify1080ScoreStopAndExport() throws {
         #if targetEnvironment(simulator)
         guard ProcessInfo.processInfo.environment["SCOREBUG_ORDINARY_SIMULATOR"] == "1",
@@ -380,6 +395,7 @@ final class PhysicalStreamingTests: XCTestCase {
     private var recoveryAttempt: String?
     private var recoveryScope: String?
     private var recoveryFailure: String?
+    private var quality2160 = false
     private var quality1080 = false
     private var recovery720 = false
     private var physicalRecovery = false
@@ -408,7 +424,7 @@ final class PhysicalStreamingTests: XCTestCase {
             "samples": recoverySamples, "gates": recoveryGates,
             "milestones": recoveryMilestones, "exchanges": recoveryExchanges]
         if recovery720 { report["contract"] = physicalRecovery ? "physical-recovery720-v1" : "recovery720" }
-        if quality1080 { report["contract"] = "quality1080-v1" }
+        if quality1080 { report["contract"] = quality2160 ? "quality2160-v1" : "quality1080-v1" }
         if physicalRecovery {
             report["captureSource"] = "physical-camera"
             report["localPublishingObservedUptimeSeconds"] = physicalLocalPublishingObserved
@@ -445,6 +461,10 @@ final class PhysicalStreamingTests: XCTestCase {
         if physicalRecovery && phase == "initial-encoder-ack" { physicalEncoderDiagnosticReceived = true }
         recoverySamples.append(["phase": phase, "diagnostic": diagnostic,
             "readStartedUptimeSeconds": started, "readEndedUptimeSeconds": ended])
+        if quality2160, diagnostic["lastMeasurementCandidateReason"] == "inputRejected",
+           let cause = diagnostic["lastMeasurementEncoderFailure"] ?? diagnostic["lastMeasurementTransportFailure"] {
+            throw SmokeFailure.failed("UHD candidate rejected input: \(cause)")
+        }
         // A constrained path can temporarily leave no current accepted source.
         // Retain such samples but never let them acknowledge or confirm a phase.
         guard let sample = try? OrdinaryRecoverySample(diagnostic, started: started, ended: ended, previousReadEnd: previousEnd, previousObserved: recoveryLastObserved) else { return nil }
@@ -1271,6 +1291,7 @@ final class PhysicalStreamingTests: XCTestCase {
             recoveryMilestone("recording-requested")
         }
         recordingRequested = true
+        if quality2160 { try tap(app.buttons["4K"], in: app) }
         try tap(app.buttons["film.start"], in: app)
         try wait("Recording did not advance.", seconds: 25) {
             self.allowExpectedPermissions()
@@ -1578,7 +1599,7 @@ final class PhysicalStreamingTests: XCTestCase {
         // earlier recording or infer identity from a timestamp or export order.
         completedRecordingID = recordingID
         try tap(app.buttons[exportIdentifier], in: app)
-        try wait("The new recording could not be exported to MP4.", seconds: 35) {
+        try wait("The new recording could not be exported to MP4.", seconds: quality2160 ? 180 : 35) {
             app.staticTexts["recordings.exportReady"].exists
         }
         evidence(app, phase: ordinarySimulator ? "new-ordinary-recording-export-ready" : "new-hardware-recording-export-ready", screenshot: true)

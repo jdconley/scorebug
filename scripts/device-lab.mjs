@@ -79,7 +79,8 @@ export function deviceLabPublishEnvironment(publishPeerLatencyMs, publishPacing)
 }
 
 /** Docker arguments for the ordinary local relay, with a loopback-only management API. */
-export function deviceLabRelayArgs({ name, host, ingestPort, relayPort, configPath }) {
+export function deviceLabRelayArgs({ name, host, ingestPort, relayPort, configPath, uhd = false }) {
+  assert(typeof uhd === 'boolean', 'Invalid UHD relay selection');
   return [
     'run',
     '-d',
@@ -91,7 +92,7 @@ export function deviceLabRelayArgs({ name, host, ingestPort, relayPort, configPa
     `127.0.0.1:${relayPort}:9997`,
     '-v',
     `${configPath}:/mediamtx.yml:ro`,
-    'scorebug/ingest:drain-v1',
+    uhd ? 'scorebug/ingest:uhd-probe-v4' : 'scorebug/ingest:drain-v1',
   ];
 }
 
@@ -233,6 +234,10 @@ export function deviceLabSeedsMatch(value) {
 }
 
 export async function startDeviceLab(options, { signal, workerFactory = startWorker } = {}) {
+  assert(
+    options.uhd === undefined || typeof options.uhd === 'boolean',
+    'Invalid UHD lab selection',
+  );
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
@@ -351,6 +356,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     await execute(
       'docker',
       deviceLabRelayArgs({
+        uhd: options.uhd,
         name: relayName,
         host: options.host,
         ingestPort,
@@ -455,7 +461,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       OUTPUT_RECORDING_DIR: join(artifact, 'proxy-recordings'),
       ENCODER: options.encoder,
       DECODER_THREADING: 'automatic',
-      VIDEO_PROFILE: '1080p30',
+      VIDEO_PROFILE: options.uhd ? '2160p30' : '1080p30',
       SCORE_DIR: join(artifact, 'worker'),
       FFMPEG_PATH: ffmpeg,
       FFPROBE_PATH: ffprobe,

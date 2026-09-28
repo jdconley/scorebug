@@ -1,9 +1,28 @@
 import AVFoundation
 import Foundation
 import ScorebugMedia
+import ScorebugCore
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
+    func testUHDRequiresFreshMatchingWorkerOutputAndRealSourceGeometry() throws {
+        func response(_ profile: String) throws -> WorkerCapabilitiesResponse {
+            try JSONDecoder().decode(WorkerCapabilitiesResponse.self, from: Data("""
+            {"workerId":"mac","state":"fresh","serverTime":"now","validForMs":5000,
+             "capabilities":{"version":1,"outputId":"main","encoder":"software","outputProfile":"\(profile)",
+             "outputMode":"rtmp+record","startup":"passed","sustainedPerformance":"unqualified"}}
+            """.utf8))
+        }
+        let uhd = try response("2160p30")
+        XCTAssertTrue(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
+        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "other", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
+        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 1920, sourceHeight: 1080, requestDuration: .milliseconds(20)))
+        XCTAssertFalse(uhd.permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .seconds(5)))
+        XCTAssertFalse(try response("1080p30").permitsUHDInput(worker: "mac", output: "main", sourceWidth: 3840, sourceHeight: 2160, requestDuration: .milliseconds(20)))
+        XCTAssertEqual(RecordingQuality.uhd2160.profile.captureQueueScale, 4)
+        XCTAssertEqual(RecordingQuality.hd1080.profile.captureQueueScale, 1)
+    }
+
     func testRecordingQualityConfiguresSourceAndArchiveAndLocksDuringCapture() async throws {
         let root = testRecordingRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -17,6 +36,7 @@ import XCTest
         await model.start()
         XCTAssertEqual(model.state, .recording)
         XCTAssertFalse(model.selectQuality(.hd1080))
+        XCTAssertEqual(model.currentCapture?.profile, RecordingQuality.uhd2160.profile)
         let id = try XCTUnwrap(model.currentCapture?.id)
         XCTAssertEqual(sourceProfiles, [RecordingQuality.uhd2160.profile])
         let archive = try ArchiveSegmentStore.recover(directory: root.appendingPathComponent(id))

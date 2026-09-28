@@ -10,6 +10,7 @@ protocol PublishingProbeObserving: Sendable {
 struct PublishingProbeObservation: Sendable {
     typealias Policy = PublishingBandwidthProbeSnapshot.Policy
     typealias RecoveryObservation = PublishingBandwidthProbeSnapshot.RecoveryObservation
+    var budget: PublishingBandwidthProbeSnapshot.Budget = .standard
     var policy: Policy = .localZeroLoss
     var recoveryObservation: RecoveryObservation? = nil
     var id: UUID
@@ -28,14 +29,14 @@ struct PublishingProbeObservation: Sendable {
             guard stage != nil, let recoveryObservation, recoveryObservation.isValid,
                   recoveryObservation.checkedAt >= startedAt, recoveryObservation.checkedAt <= now else { return false }
         } else if recoveryObservation != nil { return false }
-        let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
-        guard campaign.map({ $0 > 0 && stage != nil }) ?? true,
+        let maximumBitRate = stage == nil ? 2_000_000 : budget.maximumBitRate
+        guard budget == .standard || campaign != nil, campaign.map({ $0 > 0 && stage != nil }) ?? true,
               stage.map({ (1...32).contains($0) }) ?? true,
               permitsCurrentOwner?(id, publishingGeneration, stage, policy) == true else { return false }
         guard reason == nil, publishingGeneration > 0, (1...maximumBitRate).contains(bitRate),
               now.isFinite, startedAt.isFinite, startedAt >= 0, now >= startedAt, now - startedAt < 60,
               leaseDeadline.isFinite, leaseDeadline > now, leaseDeadline <= startedAt + 60.3,
-              acceptedPayloadBytes <= 16 * 1024 * 1024, acceptedPayloadBytes % 1316 == 0,
+              acceptedPayloadBytes <= budget.maximumPayloadBytes, acceptedPayloadBytes % 1316 == 0,
               (acceptedPayloadBytes == 0) == (lastAcceptedAt == nil) else { return false }
         return lastAcceptedAt.map { $0.isFinite && $0 >= startedAt && $0 <= now && $0 < leaseDeadline } ?? true
     }
@@ -46,13 +47,13 @@ struct PublishingProbeObservation: Sendable {
             stage: sample.stage.flatMap(Int.init(exactly:)), campaign: sample.campaign, permitsCurrentOwner: { id, generation, stage, policy in
                 sample.authority?.permits(id: id, generation: generation,
                     stage: stage.flatMap(UInt32.init(exactly:)), policy: policy) == true
-            }, policy: sample.policy, recoveryObservation: sample.recoveryObservation)
+            }, policy: sample.policy, recoveryObservation: sample.recoveryObservation, budget: sample.budget)
     }
     init(id: UUID, publishingGeneration: UInt64, bitRate: Int, startedAt: Double, leaseDeadline: Double,
          acceptedPayloadBytes: UInt64, lastAcceptedAt: Double?, reason: String?, stage: Int? = nil, campaign: UInt32? = nil,
          permitsCurrentOwner: (@Sendable (UUID, UInt64, Int?, Policy) -> Bool)? = nil,
-         policy: Policy = .localZeroLoss, recoveryObservation: RecoveryObservation? = nil) {
-        self.policy = policy; self.recoveryObservation = recoveryObservation
+         policy: Policy = .localZeroLoss, recoveryObservation: RecoveryObservation? = nil, budget: PublishingBandwidthProbeSnapshot.Budget = .standard) {
+        self.budget = budget; self.policy = policy; self.recoveryObservation = recoveryObservation
         self.id = id; self.publishingGeneration = publishingGeneration; self.bitRate = bitRate
         self.startedAt = startedAt; self.leaseDeadline = leaseDeadline; self.acceptedPayloadBytes = acceptedPayloadBytes
         self.lastAcceptedAt = lastAcceptedAt; self.reason = reason

@@ -37,6 +37,7 @@ public actor SRTMediaPublisher: MediaPublisher {
 
     /// The destination is captured in an opaque operation, never in error text or
     /// a persistent/public diagnostic state. The control-plane client validates it.
+    private let probeBudget: PublishingBandwidthProbeSnapshot.Budget
     public init(url: URL, stopPolicy: SRTStopPolicy = .init(), observations: VideoFrameObservationOwner? = nil,
                 encoderConfigurationObserver: (@Sendable (SRTPublisher.EncoderFrame) -> Void)? = nil,
                 videoProfile: PublishingVideoProfile = .hd1080,
@@ -44,16 +45,17 @@ public actor SRTMediaPublisher: MediaPublisher {
                 compressedAudioObserver: (@Sendable (SRTPublisher.CompressedAudioFrame) -> Void)? = nil,
                 muxedPacketObserver: (@Sendable (SRTPublisher.MuxedPacketFrame) -> Void)? = nil,
                 didStop: (@Sendable () -> Void)? = nil, pacesEncodedVideo: Bool = false,
-                allowsBandwidthProbes: Bool = false, videoCost: PublishingVideoCostOwner? = nil,
+                allowsBandwidthProbes: Bool = false, probeBudget: PublishingBandwidthProbeSnapshot.Budget = .standard, videoCost: PublishingVideoCostOwner? = nil,
                 healthObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)? = nil,
                 transportSendObserver: (@Sendable (SRTPublisher.TransportSendObservation) -> Void)? = nil,
                 encoderSubmissionObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)? = nil) {
+        self.probeBudget = probeBudget
         let adapter = SRTPublisher(stopPolicy: stopPolicy, observations: observations,
             encoderConfigurationObserver: encoderConfigurationObserver, videoProfile: videoProfile,
             compressedVideoObserver: compressedVideoObserver, compressedAudioObserver: compressedAudioObserver,
             muxedPacketObserver: muxedPacketObserver,
             pacesEncodedVideo: pacesEncodedVideo,
-            allowsBandwidthProbes: allowsBandwidthProbes, videoCost: videoCost, healthObserver: healthObserver, transportSendObserver: transportSendObserver,
+            allowsBandwidthProbes: allowsBandwidthProbes, probeBudget: probeBudget, videoCost: videoCost, healthObserver: healthObserver, transportSendObserver: transportSendObserver,
             encoderSubmissionObserver: encoderSubmissionObserver)
         self.videoCost = adapter.videoCost
         self.startupRead = { adapter.videoStartup }
@@ -123,7 +125,7 @@ public actor SRTMediaPublisher: MediaPublisher {
         var setBitRateExpecting: (@Sendable (Int, PublishingVideoMutationExpectation) async throws -> PublishingBitRateChange)? = nil
         var setProfileExpecting: (@Sendable (PublishingVideoProfile, PublishingBitRateChange) async throws -> PublishingVideoProfileChange)? = nil
     }
-    init(operations: Operations) { self.operations = operations; videoCost = nil; startupRead = { nil } }
+    init(operations: Operations, probeBudget: PublishingBandwidthProbeSnapshot.Budget = .standard) { self.probeBudget = probeBudget; self.operations = operations; videoCost = nil; startupRead = { nil } }
 
     public func start() async throws {
         guard state == .prepared else { throw PublisherError.invalidState }
@@ -389,22 +391,22 @@ public actor SRTMediaPublisher: MediaPublisher {
 
     public func beginOwnedBandwidthProbe(in context: PublishingBandwidthProbeContext, bitRate: Int,
         policy: PublishingBandwidthProbeSnapshot.Policy = .localZeroLoss) throws -> PublishingBandwidthProbeOperation {
-        try makeOwnedProbe(in: context, after: nil, request: .init(kind: .begin, bitRate: bitRate, policy: policy))
+        try makeOwnedProbe(in: context, after: nil, request: .init(kind: .begin, bitRate: bitRate, policy: policy, budget: probeBudget))
     }
     public func replaceOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
         in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
-        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .replace, bitRate: bitRate, policy: receipt.policy))
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .replace, bitRate: bitRate, policy: receipt.policy, budget: probeBudget))
     }
     public func restartOwnedBandwidthProbe(after receipt: PublishingBandwidthProbeRetirement,
         in context: PublishingBandwidthProbeContext, bitRate: Int) throws -> PublishingBandwidthProbeOperation {
-        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .restart, bitRate: bitRate, policy: receipt.policy))
+        try makeOwnedProbe(in: context, after: receipt, request: .init(kind: .restart, bitRate: bitRate, policy: receipt.policy, budget: probeBudget))
     }
     private func makeOwnedProbe(in context: PublishingBandwidthProbeContext, after receipt: PublishingBandwidthProbeRetirement?,
         request: PublishingOwnedProbeRequest) throws -> PublishingBandwidthProbeOperation {
         guard context.issuer == probeContextIssuer, let lowerContext = context.lower else { throw PublishingBandwidthProbeError.obsolete }
         try checkProbeContextScope(context.epoch)
         try validateOwnedReservation(current: ownedProbeOperation, issuer: probeContextIssuer,
-            context: context, receipt: receipt, request: request)
+            context: context, receipt: receipt, request: request, budget: probeBudget)
         let allocate: @Sendable (PublishingOwnedProbeRequest, PublishingBandwidthProbeRetirement?) async throws -> PublishingBandwidthProbeOperation
         if request.kind == .begin || receipt?.lower == nil {
             guard let begin = operations.beginOwnedProbe else { throw PublishingBandwidthProbeError.disabled }
@@ -454,7 +456,7 @@ public actor SRTMediaPublisher: MediaPublisher {
             else if staged { value = try await self.operations.beginStagedProbe(bitRate) }
             else { value = try await self.operations.beginProbe(bitRate) }
             owner.capture(value)
-            guard value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable, policy: policy) else {
+            guard value.budget == self.probeBudget, value.isValidStart(staged: staged, bitRate: bitRate, repeatable: repeatable, policy: policy) else {
                 throw PublishingBandwidthProbeError.obsolete
             }
             return value

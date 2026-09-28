@@ -98,6 +98,22 @@ final class PublishingCandidateEncoderTests: XCTestCase {
     }
 
     @MainActor
+    func testUHDSourceCanMeasure360WithoutRejectingRawFrames() async throws {
+        let candidate = try PublishingCandidateEncoder(scope: scope(), profile: .low360)
+        try await candidate.start()
+        for n in 0..<12 {
+            let accepted = candidate.offer(try sample(pts: CMTime(value: Int64(n), timescale: 30),
+                width: 3840, height: 2160, pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange))
+            if !accepted { break }
+            try await Task.sleep(for: .milliseconds(34))
+        }
+        let result = await candidate.finish()
+        XCTAssertEqual(result.encoding.outcome, .completed, result.encoding.failure ?? "")
+        XCTAssertEqual(result.encoding.acceptedInputCount, 12, result.encoding.failure ?? "")
+        XCTAssertEqual(result.encoding.outputCount, 12, result.encoding.failure ?? "")
+    }
+
+    @MainActor
     func test720RecipeProducesActualVideoToolboxH264At720Dimensions() async throws {
         let profile = try XCTUnwrap(PublishingVideoProfile(rawValue: "720p30"))
         let scope = scope()
@@ -196,10 +212,10 @@ final class PublishingCandidateEncoderTests: XCTestCase {
         } catch { _ = await candidate.cancel(); throw error }
     }
 
-    private func sample(pts: CMTime) throws -> CMSampleBuffer {
+    private func sample(pts: CMTime, width: Int = 64, height: Int = 64, pixelFormat: OSType = kCVPixelFormatType_32BGRA) throws -> CMSampleBuffer {
         var pixel: CVPixelBuffer?
-        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 64, 64,
-            kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+            pixelFormat, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
         let image = try XCTUnwrap(pixel)
         CVPixelBufferLockBaseAddress(image, [])
         if let address = CVPixelBufferGetBaseAddress(image) { memset(address, 0, CVPixelBufferGetDataSize(image)) }

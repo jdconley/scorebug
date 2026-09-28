@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { nativeScoreTemplate } from '../native-score-template.mjs';
 const font = '/local/Arial.ttf';
 for (const [profile, size, fontSize, border, x, bottom, crop, bytes] of [
+  ['2160p30', '3840x2160', 84, 36, 80, 200, '1500:240:0:1860', 360000],
   ['1080p30', '1920x1080', 42, 18, 40, 100, '750:120:0:930', 90000],
   ['540p30', '960x540', 21, 9, 20, 50, '375:60:0:465', 22500],
   ['360p30', '640x360', 14, 6, 13, 33, '250:40:0:310', 10000],

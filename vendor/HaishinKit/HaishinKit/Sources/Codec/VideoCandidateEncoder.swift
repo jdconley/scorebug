@@ -84,7 +84,7 @@ public final class VideoCandidateEncoder: @unchecked Sendable {
         }
     }
     /// Queues at most four raw frames, with at most sixteen unresolved inputs and
-    /// 64 MiB of outstanding raw payload. Never waits for the encoder or schedules
+    /// 64 MiB of outstanding raw payload (192 MiB for UHD source buffers). Never waits for the encoder or schedules
     /// a per-frame task. A malformed/overflowing active offer fails the run.
     @discardableResult public func offer(_ sample: CMSampleBuffer) -> Bool { state.offer(sample) }
     /// Native completion may block beyond admission's deadline; it is always joined.
@@ -194,7 +194,11 @@ private final class CandidateState: @unchecked Sendable {
             guard records.count < 121 else { reject("frameLimit"); return false }
             let rawBytes = CVPixelBufferGetDataSize(image)
             guard unresolved < 16 else { reject("unresolvedInputLimit"); return false }
-            guard rawBytes <= 64 * 1024 * 1024 - outstandingRawBytes else {
+            // UHD NV12 frames are ~12 MiB: retain the same sixteen-frame startup
+            // allowance without changing ordinary-source or per-input limits.
+            let rawByteLimit = CVPixelBufferGetWidth(image) >= 3840 && CVPixelBufferGetHeight(image) >= 2160
+                ? 192 * 1024 * 1024 : 64 * 1024 * 1024
+            guard rawBytes <= rawByteLimit - outstandingRawBytes else {
                 reject("unresolvedRawByteLimit"); return false
             }
             inputFormat = format

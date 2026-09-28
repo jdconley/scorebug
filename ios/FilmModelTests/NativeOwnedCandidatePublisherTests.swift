@@ -61,6 +61,17 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         await f.owner.stop(); await wrapper.stop()
     }
 
+    func testUHDProductionPlanRequiresExplicitBudgetAndBoundsMeasuredCost() throws {
+        let plan = try NativeCandidateStagePlan.productionSRT(videoBitRate: 24_000_000, budget: .uhd)
+        XCTAssertEqual(plan.budget, .uhd)
+        XCTAssertEqual(plan.bitRates, [18_096_000, 36_192_000])
+        XCTAssertEqual(try NativeCandidateStagePlan.productionSRT(videoBitRate: 24_000_000,
+            measuredCost: 32_000_000, budget: .uhd).bitRates.last, 48_000_000)
+        XCTAssertThrowsError(try NativeCandidateStagePlan.productionSRT(videoBitRate: 24_000_000))
+        XCTAssertThrowsError(try NativeCandidateStagePlan.productionSRT(videoBitRate: 24_000_000,
+            measuredCost: 32_000_001, budget: .uhd))
+    }
+
     func testProductionPlanUsesNextVideoAndActualAACForDistinctBoundedProbes() throws {
         var rates: [Int] = []
         let hd720 = try XCTUnwrap(PublishingVideoProfile(rawValue: "720p30"))

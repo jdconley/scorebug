@@ -42,31 +42,33 @@ struct NativeCandidateSnapshot: Sendable {
 /// remain authoritative, including while waiting for fresh source coverage.
 struct NativeCandidateStagePlan: Sendable, Equatable {
     enum Failure: Error { case invalidPlan }
+    let budget: PublishingBandwidthProbeSnapshot.Budget
     let bitRates: [Int]
     let holds: [Double]
     var finalStage: UInt32 { UInt32(bitRates.count) }
-    init(bitRates: [Int], holds: [Double]) throws {
+    init(bitRates: [Int], holds: [Double], budget: PublishingBandwidthProbeSnapshot.Budget = .standard) throws {
         guard (1...32).contains(bitRates.count), holds.count == bitRates.count,
-              bitRates.allSatisfy({ (1...12_000_000).contains($0) }),
+              bitRates.allSatisfy({ (1...budget.maximumBitRate).contains($0) }),
               holds.allSatisfy({ $0.isFinite && $0 >= 0 }),
               holds.last! >= 0.5, holds.reduce(0, +) < 60 else { throw Failure.invalidPlan }
-        self.bitRates = bitRates; self.holds = holds
+        self.budget = budget; self.bitRates = bitRates; self.holds = holds
     }
     /// Scheduling estimate only: nominal 20% mux/framing allowance times the
     /// existing 25% headroom. It is neither an upper bound nor an admission rule;
     /// measured complete candidate cost and receiver delivery decide admission.
-    static func productionSRT(videoBitRate: Int, measuredCost: Double? = nil) throws -> Self {
+    static func productionSRT(videoBitRate: Int, measuredCost: Double? = nil, budget: PublishingBandwidthProbeSnapshot.Budget = .standard) throws -> Self {
+        let maximumCost = budget == .uhd ? 32_000_000 : 8_000_000
         let (mediaRate, overflow) = videoBitRate.addingReportingOverflow(SRTPublisher.audioBitRate)
-        guard videoBitRate > 0, !overflow, mediaRate <= 8_000_000 else { throw Failure.invalidPlan }
+        guard videoBitRate > 0, !overflow, mediaRate <= maximumCost else { throw Failure.invalidPlan }
         // Integer ceil(mediaRate * 1.5), after bounding the sum for safe arithmetic.
         var finalRate = (mediaRate * 3 + 1) / 2
         if let measuredCost {
-            guard measuredCost.isFinite, measuredCost > 0, measuredCost <= 8_000_000 else { throw Failure.invalidPlan }
+            guard measuredCost.isFinite, measuredCost > 0, measuredCost <= Double(maximumCost) else { throw Failure.invalidPlan }
             // Scheduling reserve only: 25% admission headroom with 20% reserve.
             // A new measurement and receiver proof must still qualify the retry.
             finalRate = max(finalRate, Int(ceil(measuredCost * 1.5)))
         }
-        return try Self(bitRates: [finalRate / 2, finalRate], holds: [0.8, 0.5])
+        return try Self(bitRates: [finalRate / 2, finalRate], holds: [0.8, 0.5], budget: budget)
     }
     #if DEBUG
     static let laboratory = try! Self(bitRates: [500_000, 2_000_000, 12_000_000], holds: [0.8, 0.8, 0.5])
@@ -77,19 +79,21 @@ struct NativeCandidateStagePlan: Sendable, Equatable {
 /// before allocating a native owner. Fixed plans remain explicit for tests/labs.
 enum NativeCandidateStagePlanSelection: Sendable, Equatable {
     case fixed(NativeCandidateStagePlan)
-    case productionSRT
+    case productionSRT, productionSRTUHD
+    var isProductionSRT: Bool { self == .productionSRT || self == .productionSRTUHD }
 
     enum SourceWaitPlacement: Sendable { case beforeFinalStage, afterFinalHold }
     var sourceWaitPlacement: SourceWaitPlacement {
         switch self {
         case .fixed: return .beforeFinalStage
-        case .productionSRT: return .afterFinalHold
+        case .productionSRT, .productionSRTUHD: return .afterFinalHold
         }
     }
 
     func resolve(_ context: PublishingQualitySession.CandidateMeasurementContext) throws -> NativeCandidateStagePlan {
         switch self {
         case .fixed(let plan): return plan
+        case .productionSRTUHD: return try .productionSRT(videoBitRate: context.readiness.settings.videoBitrate, measuredCost: context.measuredCost, budget: .uhd)
         case .productionSRT: return try .productionSRT(videoBitRate: context.readiness.settings.videoBitrate, measuredCost: context.measuredCost)
         }
     }

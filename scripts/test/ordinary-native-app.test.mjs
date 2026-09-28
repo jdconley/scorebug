@@ -872,3 +872,18 @@ test('1080 quality lane uses ordinary production publishing without an impairmen
     ),
   );
 });
+
+test('4K lane selects full native climb and keeps the impairment controller off', () => {
+  const lane = ordinaryLaneConfiguration('quality2160');
+  assert.equal(lane.quality1080, true);
+  assert.equal(lane.quality2160, true);
+  assert.equal(lane.recovery, false);
+  assert.match(lane.phoneTest, /Qualify2160/);
+  const env = ordinaryTestEnvironment({
+    ...lane,
+    setup: { endpoint: 'http://192.168.1.130:8080', installationToken: 'qa-token' },
+  });
+  assert.equal(env.SCOREBUG_ORDINARY_2160, '1');
+  assert.equal(env.SCOREBUG_ORDINARY_RECOVERY, undefined);
+  assert.equal(env.SCOREBUG_RECOVERY_CONTROL_URL, undefined);
+});

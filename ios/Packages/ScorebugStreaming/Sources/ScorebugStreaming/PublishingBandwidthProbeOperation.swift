@@ -5,6 +5,11 @@ struct PublishingOwnedProbeRequest: Sendable {
     let kind: Kind
     let bitRate: Int
     let policy: PublishingBandwidthProbeSnapshot.Policy
+    let budget: PublishingBandwidthProbeSnapshot.Budget
+    init(kind: Kind, bitRate: Int, policy: PublishingBandwidthProbeSnapshot.Policy,
+         budget: PublishingBandwidthProbeSnapshot.Budget = .standard) {
+        self.kind = kind; self.bitRate = bitRate; self.policy = policy; self.budget = budget
+    }
 }
 
 /// Joined cleanup evidence. Only its issuing publisher can consume it once to
@@ -99,7 +104,7 @@ public final class PublishingBandwidthProbeOperation: @unchecked Sendable {
         lock.withLock {
             guard upperOwner == nil, self.context === context, issuer == context?.issuer,
                   self.request.kind == request.kind, self.request.bitRate == request.bitRate,
-                  self.request.policy == request.policy, self.predecessor === predecessor,
+                  self.request.budget == request.budget, self.request.policy == request.policy, self.predecessor === predecessor,
                   createdAt >= requestedAt else { return false }
             upperOwner = upper
             return true
@@ -220,7 +225,7 @@ public final class PublishingBandwidthProbeOperation: @unchecked Sendable {
             case .lower(let downstream):
                 let handle: PublishingBandwidthProbeOperation
                 let lowerRequest = PublishingOwnedProbeRequest(kind: predecessor?.lower == nil ? .begin : request.kind,
-                    bitRate: request.bitRate, policy: request.policy)
+                    bitRate: request.bitRate, policy: request.policy, budget: request.budget)
                 do { handle = try await downstream.allocate(request, predecessor?.lower) }
                 catch {
                     let proven = (error as? PublishingOwnedFactoryRejection)?.matches(
@@ -343,6 +348,6 @@ struct PublishingOwnedFactoryRejection: Error {
     let reason: PublishingBandwidthProbeError
     func matches(context: PublishingBandwidthProbeContext?, predecessor: PublishingBandwidthProbeRetirement?, request: PublishingOwnedProbeRequest) -> Bool {
         self.context === context && self.predecessor === predecessor && self.request.kind == request.kind &&
-            self.request.bitRate == request.bitRate && self.request.policy == request.policy
+            self.request.budget == request.budget && self.request.bitRate == request.bitRate && self.request.policy == request.policy
     }
 }

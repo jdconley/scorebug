@@ -12,10 +12,20 @@ enum RecordingQuality: String, CaseIterable, Identifiable {
     }
 }
 
+extension ArchiveProfile {
+    var isUHDRecording: Bool { width == 3840 && height == 2160 }
+    // Preserve the same bounded number of NV12 frames at either offered quality.
+    var captureQueueScale: Int { isUHDRecording ? 4 : 1 }
+}
+
 struct CurrentCapture: Sendable {
     let id: String
     let startedAt: String
     let tap: PublishingTap
+    let profile: ArchiveProfile
+    init(id: String, startedAt: String, tap: PublishingTap, profile: ArchiveProfile = .init()) {
+        self.id = id; self.startedAt = startedAt; self.tap = tap; self.profile = profile
+    }
 }
 
 /// Offline recording has no dependency on match setup, credentials or a server.
@@ -136,7 +146,7 @@ struct CurrentCapture: Sendable {
             captureSession = (source as? IOSCameraCaptureSource)?.previewSession
             #endif
             let tap = PublishingTap()
-            let session = try RecordingSession(sink: created.sink)
+            let session = try RecordingSession(sink: created.sink, maxBytes: 24 * 1024 * 1024 * profile.captureQueueScale)
             #if DEBUG
             fileFixtureSource = source as? FileFixtureCameraSource
             if let owner = archivePressureFactory?(created.id), owner.snapshot.recordingID == created.id {
@@ -151,7 +161,7 @@ struct CurrentCapture: Sendable {
             recorder = capture
             try await capture.start()
             guard state == .starting else { throw RecordingSessionError.cancelled }
-            let context = CurrentCapture(id: created.id, startedAt: ISO8601DateFormatter().string(from: Date()), tap: tap)
+            let context = CurrentCapture(id: created.id, startedAt: ISO8601DateFormatter().string(from: Date()), tap: tap, profile: profile)
             currentCapture = context
             onCaptureChanged?(context)
         }

@@ -741,6 +741,10 @@ import ScorebugStreaming
         .init(id: "720p30", width: 1280, height: 720, minimumBitrate: 3_000_000, maximumBitrate: 3_000_000),
         .init(id: "1080p30", width: 1920, height: 1080, minimumBitrate: 6_000_000, maximumBitrate: 6_000_000)
     ]
+    nonisolated static let productionUHDProfiles = productionProfiles + [
+        QualityController.Profile(id: "2160p30", width: 3840, height: 2160,
+            minimumBitrate: 24_000_000, maximumBitrate: 24_000_000)
+    ]
     static func productionWorkerLimits(_ source: WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits? {
         guard let encoder = source.processing?.encoder else { return nil }
         // The telemetry evaluator still validates the authenticated publication,

@@ -512,6 +512,7 @@ actor PublishingQualitySession {
         let health = policy?.candidateMeasurementDiagnostic
         var result = ["sessionObservedAtUptimeSeconds": String(now), "sessionClosed": String(closed), "sessionBusy": String(busy),
             "measurementActive": String(ownedMeasurement?.isActive ?? false),
+            "measurementPublisherPresent": String(ownedPublisher != nil),
             "candidateHealthSourcePresent": String(candidateHealthSource != nil),
             "policyReady": String(readiness != nil), "recoveryDeliveryPresent": String(recoveryDelivery != nil)]
         if let health {
@@ -637,6 +638,18 @@ actor PublishingQualitySession {
         guard !closed, !busy, !Task.isCancelled, operations.isPublishing(),
               let policy, let receipt, let acknowledgedAt, let source = candidateHealthSource else { return nil }
         let now = uptime()
+        #if DEBUG
+        candidateSourceDiagnostic["measurementContextGate"] =
+            !diagnostics.isPublishing ? "not-publishing" :
+            diagnostics.receipt?.configuration != receipt.configuration ? "receipt-configuration" :
+            diagnostics.receipt?.acceptedAt != receipt.acceptedAt ? "receipt-time" :
+            diagnostics.receipt?.lastSubmittedSourcePTS != receipt.lastSubmittedSourcePTS ? "receipt-pts" :
+            diagnostics.clock != source.clock ? "clock-mismatch" :
+            diagnostics.ingress == nil ? "ingress-absent" :
+            diagnostics.ingress?.isClosed == true ? "ingress-closed" :
+            diagnostics.ingress?.scope != source.observationScope ? "ingress-scope" :
+            "policy-or-authority"
+        #endif
         guard now.isFinite, now >= lastNow, now <= 1e12,
               let readiness = policy.candidateMeasurementReadiness(at: now),
               diagnostics.isPublishing, let current = diagnostics.receipt,
@@ -675,6 +688,9 @@ actor PublishingQualitySession {
             guard candidateRecovery.permits(healthySince: readiness.healthySince,
                 healthyThrough: readiness.healthyThrough, healthSequence: readiness.healthSequence) else { return nil }
         }
+        #if DEBUG
+        candidateSourceDiagnostic["measurementContextGate"] = "ready"
+        #endif
         return .init(readiness: readiness,
             applied: .init(attemptID: attemptID, revision: readiness.appliedRevision, settings: readiness.baseline,
                 receipt: receipt, acknowledgedAt: acknowledgedAt), scope: ingress.scope, clock: clock,
@@ -782,7 +798,7 @@ actor PublishingQualitySession {
                 decision = try policy.evaluateCandidate(admission.value, at: now)
             }
             if decision.recommendation == nil, decision.reasons.contains(.capacityHeadroom),
-               ownedPublisher?.stagePlanSelection == .productionSRT, admission.isProductionSRT, !Task.isCancelled,
+               ownedPublisher?.stagePlanSelection.isProductionSRT == true, admission.isProductionSRT, !Task.isCancelled,
                let lease = ownedMeasurement, lease.isActive, lease.permits(admission),
                admission.value.candidateTransportBitsPerSecond.isFinite, admission.value.candidateTransportBitsPerSecond > 0 {
                 candidateProbeDemand = .init(baseline: policy.applied, revision: policy.appliedRevision,

@@ -53,7 +53,8 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
       '--host',
       values.get('--host'),
       '--encoder',
-      values.get('--encoder') ?? 'software',
+      values.get('--encoder') ??
+        (values.get('--lane') === 'quality2160' ? 'videotoolbox' : 'software'),
       ...(values.has('--publish-peer-latency-ms')
         ? ['--publish-peer-latency-ms', values.get('--publish-peer-latency-ms')]
         : []),
@@ -76,6 +77,7 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
         'server-crash',
         'source-interruption',
         'quality1080',
+        'quality2160',
       ].includes(lane),
     'Unsupported ordinary lane',
   );
@@ -110,6 +112,7 @@ export function ordinaryLaneConfiguration(lane) {
         'server-crash',
         'source-interruption',
         'quality1080',
+        'quality2160',
       ].includes(lane),
   );
   const directWatch = lane === 'watch-direct';
@@ -120,24 +123,36 @@ export function ordinaryLaneConfiguration(lane) {
     ...(directWatch ? { directWatch: true } : {}),
     recovery,
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
-    ...(lane === 'quality1080' ? { quality1080: true } : {}),
+    ...(['quality1080', 'quality2160'].includes(lane) ? { quality1080: true } : {}),
+    ...(lane === 'quality2160' ? { quality2160: true } : {}),
     ...(lane === 'server-recovery' || lane === 'server-crash' ? { serverRecovery: true } : {}),
     ...(lane === 'server-crash' ? { workerCrash: true } : {}),
     ...(lane === 'source-interruption' ? { sourceInterruption: true } : {}),
     phoneTest: directWatch
       ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
-      : lane === 'quality1080'
-        ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorQualify1080ScoreStopAndExport'
-        : lane === 'recovery720'
-          ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
-          : recovery
-            ? recoveryTestID
-            : paired
-              ? pairedTestID
-              : testID,
-    allowance: recovery || lane === 'quality1080' ? 780 : paired || directWatch ? 600 : 480,
+      : lane === 'quality2160'
+        ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorQualify2160ScoreStopAndExport'
+        : lane === 'quality1080'
+          ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorQualify1080ScoreStopAndExport'
+          : lane === 'recovery720'
+            ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinarySimulatorRecover720ScoreStopAndExport'
+            : recovery
+              ? recoveryTestID
+              : paired
+                ? pairedTestID
+                : testID,
+    allowance:
+      recovery || ['quality1080', 'quality2160'].includes(lane)
+        ? 780
+        : paired || directWatch
+          ? 600
+          : 480,
     timeout:
-      recovery || lane === 'quality1080' ? 900_000 : paired || directWatch ? 720_000 : 600_000,
+      recovery || ['quality1080', 'quality2160'].includes(lane)
+        ? 900_000
+        : paired || directWatch
+          ? 720_000
+          : 600_000,
   };
 }
 
@@ -148,12 +163,14 @@ export function ordinaryTestEnvironment({
   recovery = false,
   recovery720 = false,
   quality1080 = false,
+  quality2160 = false,
   serverRecovery = false,
   sourceInterruption = false,
   watch = false,
   setup,
   recoveryControl,
 }) {
+  assert(!quality2160 || quality1080, 'UHD qualification includes the1080 climb');
   assert(!directWatch || (!paired && !recovery), 'Direct Watch is a separate simulator lane');
   assert(!recovery720 || recovery, '720 recovery requires recovery controller');
   assert(
@@ -203,6 +220,7 @@ export function ordinaryTestEnvironment({
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
     ...(quality1080 ? { SCOREBUG_ORDINARY_1080: '1' } : {}),
+    ...(quality2160 ? { SCOREBUG_ORDINARY_2160: '1' } : {}),
     ...(serverRecovery ? { SCOREBUG_SERVER_RECOVERY: '1' } : {}),
     ...(sourceInterruption ? { SCOREBUG_SOURCE_INTERRUPTION: '1' } : {}),
     ...(directWatch ? { SCOREBUG_DIRECT_WATCH_SIMULATOR: '1' } : {}),
@@ -484,6 +502,7 @@ async function main() {
     recovery,
     recovery720,
     quality1080 = false,
+    quality2160 = false,
     serverRecovery = false,
     workerCrash = false,
     sourceInterruption = false,
@@ -673,6 +692,7 @@ async function main() {
         ...(options.publishPacing === undefined ? {} : { publishPacing: options.publishPacing }),
         ...(recovery ? { publisherRecovery: true } : {}),
         ...(recovery720 || quality1080 ? { decodedGeometry: true } : {}),
+        ...(quality2160 ? { uhd: true } : {}),
         ...(serverRecovery ? { serverRecovery: true } : {}),
         ...(workerCrash ? { workerCrash: true } : {}),
       },
@@ -721,6 +741,7 @@ os.chmod(destination, 0o600)
             recovery,
             recovery720,
             quality1080,
+            quality2160,
             serverRecovery,
             sourceInterruption,
             watch: isWatch,

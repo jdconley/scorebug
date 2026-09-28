@@ -46,8 +46,10 @@ The compressed video byte check does not apply to decompressed playback images.
 
 The optional candidate encoder has a separate budget. Its raw ingress queue holds
 at most four inputs. Across queued and native work, it admits at most sixteen
-unresolved inputs and 64 MiB of aggregate raw payload, with each input at most
-16 MiB. Count and actual pixel-buffer byte reservations return only when the
+unresolved inputs and 64 MiB of aggregate raw payload (192 MiB when source
+buffers are at least3840×2160), with each input at most16 MiB. The UHD allowance
+fits sixteen NV12 frames during native startup; it does not raise the raw queue
+count, unresolved-frame count, per-frame limit or deadlines. Count and actual pixel-buffer byte reservations return only when the
 corresponding compressed output is validated and dequeued. Frame evidence records
 admission time and raw payload size so both limits can be independently checked. It
 uses its own 8 × 2 MiB compressed queue and retains at most 121 scalar frame records.

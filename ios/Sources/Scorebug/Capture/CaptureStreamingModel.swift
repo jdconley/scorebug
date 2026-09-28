@@ -329,6 +329,15 @@ struct PublishingClockObservation: Equatable, Sendable {
             campaignOwner: campaign, stagePlanSelection: .productionSRT)
     }
 
+    nonisolated static func productionUHDPublisher(url: URL, observations: VideoFrameObservationOwner?) -> any MediaPublisher {
+        guard let observations else { return productionPublisher(url: url, observations: nil) }
+        let campaign = PublishingCandidateCampaignOwner()
+        let publisher = SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup,
+            compressedAudioObserver: { campaign.observeAudio($0) }, allowsBandwidthProbes: true, probeBudget: .uhd)
+        return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
+            campaignOwner: campaign, stagePlanSelection: .productionSRTUHD)
+    }
+
     var canStart: Bool { current != nil && !busy && !stopping && !publisherStopping && requestedStart == nil && localState != .publishing && !needsStorageRetry && commandState?.pending == nil }
     var canChangeSetup: Bool {
         guard !busy, !stopping, !publisherStopping, !controlBusy, requestedStart == nil, publishing == nil, !needsStorageRetry else { return false }
@@ -498,12 +507,19 @@ struct PublishingClockObservation: Equatable, Sendable {
                 commandState = state
                 guard state.pending == nil else { throw CaptureControlError.unresolved }
                 let selection = BroadcastSelection(workerId: setup.workerId, outputId: setup.outputId, captureDeviceId: setup.deviceId, recordingId: context.id)
-                if state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection {
+                let needsStart = state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection
+                var allowsUHD = false
+                if needsStart || context.profile.isUHDRecording {
                     let checkStarted = ContinuousClock.now
                     let capabilities = try await clientFactory(ScoringEndpoint(setup.endpoint)).workerCapabilities(workerId: setup.workerId, credential: credential)
                     try check(context, attempt)
                     guard capabilities.permitsStart(worker: setup.workerId, output: setup.outputId,
                         requestDuration: checkStarted.duration(to: .now)) else { throw CaptureControlError.workerUnavailable }
+                    allowsUHD = capabilities.permitsUHDInput(worker: setup.workerId, output: setup.outputId,
+                        sourceWidth: context.profile.width, sourceHeight: context.profile.height,
+                        requestDuration: checkStarted.duration(to: .now))
+                }
+                if needsStart {
                     state = try await coordinator.submit(.start(selection: selection), activeRecordingId: context.id)
                     try check(context, attempt)
                     commandState = state
@@ -524,8 +540,8 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let session: PublishingSession
                 let publisher: any MediaPublisher
                 do {
-                    publisher = try publisherFactory(access.publishUrl, observations)
-                    session = try PublishingSession(publisher: publisher,
+                    publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations) : publisherFactory(access.publishUrl, observations)
+                    session = try PublishingSession(publisher: publisher, maxBytes: 12 * 1024 * 1024 * context.profile.captureQueueScale,
                         healthCheckInterval: Self.publishingHealthInterval,
                         ingressObservation: ingressConfiguration(for: videoObservation))
                     ingressObservation = session.snapshot.ingressObservation
@@ -543,7 +559,8 @@ struct PublishingClockObservation: Equatable, Sendable {
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()
                 try check(context, attempt)
-                qualityDriver = try qualityFactory(session, attempt)
+                qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
+                    profiles: PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
                 qualityDriver?.appliedSettingsDidChange = { [weak self, weak session] settings in
                     guard let self, let session, let live = self.publishing,
                           live.session === session, live.attempt == attempt,
@@ -593,7 +610,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                 }
                 #endif
                 if let readCandidate = measuredCandidateFactory(publisher) {
-                    let mode: CandidateAdmissionMode = (publisher as? NativeOwnedCandidatePublisher)?.stagePlanSelection == .productionSRT ? .productionSRT : .laboratoryIPv4
+                    let mode: CandidateAdmissionMode = (publisher as? NativeOwnedCandidatePublisher)?.stagePlanSelection.isProductionSRT == true ? .productionSRT : .laboratoryIPv4
                     qualityDriver?.candidateInputProvider = { [weak self] state in
                         await self?.measuredCandidateInput(state, admissionMode: mode, readCandidate: readCandidate)
                     }
