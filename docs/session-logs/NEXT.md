@@ -10,10 +10,19 @@ No proactive subagents. Preserve originals, recordings and unrelated simulators.
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 `codex/local-validation`. Use current Git HEAD. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [consolidated acceptance matrix](../simulator-acceptance.md) owns
-current cross-feature evidence. [Latest session](2026-09-28-source-recovery-and-mac-service.md)
+current cross-feature evidence. [Latest session](2026-09-28-transport-recovery-budget.md)
 contains exact new results and limitations.
 
 ## Current checkpoint
+
+- Latest congestion diagnosis:6000ms and4000ms peer-delay candidates cannot climb
+  because of source/candidate timing mismatch; all timing/API/test-guard candidates
+  restored exactly to`bcd626a`. Failed runs`ordinary-native-JXNYVG`,
+  `ordinary-native-aFBbhR`(intentionally stopped early),`ordinary-native-C8IXkq`
+  preserved; all jobs terminal/cleanup[]. No parameter-only rerun.
+- Retained fix: default bounded SRT stop budget6seconds, allowing the already-supported
+  2second peer+500ms downstream+encoder finish.11focused tests pass; short-peer stops
+  remain prompt. New default has model/library proof, not a fresh device/media run.
 
 - `ordinary-native-C7yloY`: live file-source interruption → publisher idle → recover/export
   → fresh recording/broadcast → normal stop/export passes. Archives1320/882 consecutive
@@ -32,11 +41,18 @@ contains exact new results and limitations.
 
 ## Next work
 
-1. Resolve severe-congestion acceptance from saved captures and a substantial batch.
-   `ordinary-native-IZI72F` still fails strict live media:87missing IDs,5repeat/corrupt,
-   16audio gaps,2.4s maxgap;98.833% all5s windows≥24freshfps. Archive11122continuous.
-   Minimum acknowledgment856–887ms. Separate healthy periods from transitions with
-   measured boundaries; don't redefine an old failed contract as passing.
+1. Fix production candidate scheduling for long decode lag before more latency tests.
+   `C8IXkq` shows fresh reports but no overlap: decoded source lag≈5.18s, source reports
+   every5s, candidate starts immediately after a report and lasts4s with2s expiry.
+   Next report ends before candidate start; following report misses expiry. Use the
+   existing production scheduling regression in`NativeOwnedCandidatePublisherTests.swift`.
+   Consider a bounded phase-alignment wait derived from actual source interval/lag,
+   preserving every real overlap/freshness/authority check, fixed4s cost and2s expiry.
+   See latest session for constraints and a concrete timing example. Then one actual
+   comparison; don't merely enlarge admission deadlines or repeat buffer knobs.
+   Baseline`ordinary-native-IZI72F`still fails strict live media:87missing IDs,16audio
+   gaps,2.4s maxgap; archive11122continuous. Keep this failure and successful normal
+   workflow evidence distinct. Production timing remains3000ms; API override120–2000ms.
 2. Audit remaining relay/generation, stale telemetry and delivery-evidence TODOs
    against existing real-relay/model coverage before adding tests. Qualify sustainable
    profiles and production latency; unsupported4K remains disabled.

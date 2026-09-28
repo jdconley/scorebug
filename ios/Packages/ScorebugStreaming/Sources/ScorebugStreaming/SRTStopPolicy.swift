@@ -9,7 +9,9 @@ public struct SRTStopPolicy: Sendable {
     public let totalBudget: Duration
     public let downstreamDrainAllowance: Duration
 
-    public init(totalBudget: Duration = .seconds(3), downstreamDrainAllowance: Duration = .milliseconds(500)) {
+    // Allows the supported peer recovery window plus encoder finish
+    // and downstream drain. A shorter peer still exits as soon as its allowance ends.
+    public init(totalBudget: Duration = .seconds(6), downstreamDrainAllowance: Duration = .milliseconds(500)) {
         self.totalBudget = max(.zero, totalBudget)
         self.downstreamDrainAllowance = max(.zero, downstreamDrainAllowance)
     }

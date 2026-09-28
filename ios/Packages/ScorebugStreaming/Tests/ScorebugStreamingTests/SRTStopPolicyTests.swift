@@ -17,16 +17,16 @@ final class SRTStopPolicyTests: XCTestCase {
         let outcome = await SRTStopPolicy().run(clock: fixture.clock, operations: fixture.operations)
         XCTAssertEqual(outcome, .allowanceElapsed)
         XCTAssertEqual(fixture.time, .milliseconds(660)) // 40 ms ACK + 120 ms peer + 500 ms deployment.
-        XCTAssertEqual(fixture.finishBudgets, [.seconds(3)])
+        XCTAssertEqual(fixture.finishBudgets, [.seconds(6)])
         XCTAssertEqual(fixture.closes, 1)
         XCTAssertGreaterThan(fixture.snapshots, 3, "Health/statistics remain live during the allowance")
     }
 
     func testCodecFinishAndTransportShareOneDeadline() async {
-        let fixture = StopFixture(finishCost: .milliseconds(2_500))
+        let fixture = StopFixture(finishCost: .milliseconds(5_500))
         let outcome = await SRTStopPolicy().run(clock: fixture.clock, operations: fixture.operations)
         XCTAssertEqual(outcome, .deadlineExceeded)
-        XCTAssertEqual(fixture.time, .seconds(3))
+        XCTAssertEqual(fixture.time, .seconds(6))
         XCTAssertEqual(fixture.closes, 1)
     }
 
@@ -37,6 +37,19 @@ final class SRTStopPolicyTests: XCTestCase {
         XCTAssertEqual(outcome, .deadlineExceeded)
         XCTAssertEqual(fixture.time, .milliseconds(70))
         XCTAssertEqual(fixture.closes, 1)
+    }
+
+    func testSupportedTwoSecondPeerAndCodecFinishFitDefaultBound() async {
+        let snapshot = SRTStopPolicy.Snapshot(healthy: true, unacknowledgedPackets: 0, peerLatencyMilliseconds: 2000)
+        let fixture = StopFixture(finishCost: .milliseconds(800), snapshotOverride: .some(snapshot))
+        let outcome = await SRTStopPolicy().run(clock: fixture.clock, operations: fixture.operations)
+        XCTAssertEqual(outcome, .allowanceElapsed)
+        XCTAssertEqual(fixture.time, .milliseconds(3300))
+        XCTAssertEqual(fixture.closes, 1)
+        let limited = StopFixture(finishCost: .milliseconds(800), snapshotOverride: .some(snapshot))
+        let expired = await SRTStopPolicy(totalBudget: .seconds(3)).run(clock: limited.clock, operations: limited.operations)
+        XCTAssertEqual(expired, .deadlineExceeded, "Explicit shorter deadlines must still be enforced")
+        XCTAssertEqual(limited.time, .seconds(3))
     }
 
     func testFailureDuringAllowanceAbortsAtNextPoll() async {
@@ -87,7 +100,7 @@ final class SRTStopPolicyTests: XCTestCase {
     }
 
     func testOversleptDeadlineCannotReportAllowanceElapsed() async {
-        let fixture = StopFixture(sleepOvershoot: .seconds(4))
+        let fixture = StopFixture(sleepOvershoot: .seconds(7))
         let outcome = await SRTStopPolicy().run(clock: fixture.clock, operations: fixture.operations)
         XCTAssertEqual(outcome, .deadlineExceeded)
         XCTAssertEqual(fixture.closes, 1)
