@@ -74,6 +74,14 @@ export function nativeCreatedEnvironment(lab, role, separateWatch = false) {
   }
   return { ...environment, SCOREBUG_NATIVE_CREATED_SIMULATOR: '1' };
 }
+export function nativeSimulatorCleanupActions(role, snapshot) {
+  const device = Object.values(snapshot.devices)
+    .flat()
+    .find((d) => d.udid === role.device);
+  if (!device) return [];
+  assert.equal(device.name, role.name, 'Owned simulator identity changed');
+  return device.state === 'Shutdown' ? ['delete'] : ['shutdown', 'delete'];
+}
 export function validateNativeCreation(stored) {
   assert.equal(stored.length, 1, 'Exactly one native-created match required');
   const match = stored[0];
@@ -587,18 +595,28 @@ async function main() {
           cleanupFailures.push('Watch unpair');
         }
       }
-      for (const [name, role] of Object.entries(roles)) {
-        if (!role.device) continue;
-        try {
-          await run('xcrun', ['simctl', 'shutdown', role.device], `shutdown-${name}`, 60000, true);
-        } catch (error) {
-          cleanupFailures.push(`${name} shutdown: ${error.message}`);
+      try {
+        const snapshot = JSON.parse(
+          await run(
+            'xcrun',
+            ['simctl', 'list', 'devices', '-j'],
+            'cleanup-device-state',
+            60000,
+            true,
+          ),
+        );
+        for (const [name, role] of Object.entries(roles)) {
+          if (!role.device) continue;
+          for (const action of nativeSimulatorCleanupActions(role, snapshot)) {
+            try {
+              await run('xcrun', ['simctl', action, role.device], `${action}-${name}`, 60000, true);
+            } catch (error) {
+              cleanupFailures.push(`${name} ${action}: ${error.message}`);
+            }
+          }
         }
-        try {
-          await run('xcrun', ['simctl', 'delete', role.device], `delete-${name}`, 60000, true);
-        } catch (error) {
-          cleanupFailures.push(`${name} delete: ${error.message}`);
-        }
+      } catch (error) {
+        cleanupFailures.push(`cleanup state: ${error.message}`);
       }
     }
     workflowPassed = workflowPassed && !failure && !cleanupFailures.length;

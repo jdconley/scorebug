@@ -460,3 +460,15 @@ Direct runs additionally reject any missing encoded tail, decoder/saved frame-co
 difference, incomplete terminal evidence or forced recorder shutdown; actual worker
 termination is reported distinctly. The 180-second iPhone 14/iOS 17.5 run passes; see
 [measurements and limits](superpowers/plans/2026-09-14-native-sustained-validation.md).
+
+
+### Separate scorer Watch simulator
+
+Add `--watch separate` to `scripts/test-native-created-simulators.mjs` to run the
+native-created match with two iPhone14 simulators and a41mm Series7 Watch paired
+to the scoring phone. The filming phone records/publishes while the other phone
+and then the Watch take scoring control. The Watch restores after relaunch and
+ends the match; the filming phone exports its independent archive. This lane uses
+loopback HTTP and the existing scoped setup fixture; it does not qualify actual
+WatchConnectivity delivery. It requires installed iOS/watchOS26.2 runtimes and uses
+incremental builds. Use the default two-phone lane when Watch behavior is unchanged.

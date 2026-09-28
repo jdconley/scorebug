@@ -5,7 +5,7 @@ import { nativeMediaGeometry } from './native-live-profile.mjs';
 export function nativeScoreTemplate({ profile, font, score }) {
   assert(['1080p30', '540p30', '360p30', '240p30'].includes(profile));
   assert(typeof font === 'string' && font.length > 0 && !/[\\':;,\[\]\n]/.test(font));
-  assert(['0-0', '1-0', '0-1', '1-1'].includes(score));
+  assert(['0-0', '1-0', '0-1', '1-1', '2-1', '1-2'].includes(score));
   const { width, height, overlay } = nativeMediaGeometry(profile, true);
   const ratio = height / 1080;
   return {

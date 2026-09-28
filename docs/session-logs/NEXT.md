@@ -8,7 +8,9 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 ## Current checkpoint
 
-Latest work: [September28 bounded retirement](2026-09-28-bounded-stream-retirement.md). Remote Watch end is fixed with the maintained `drain-v1` relay and graceful worker withdrawal.
+Latest work: [September28 separate Watch vertical](2026-09-28-separate-watch-vertical.md). `native-created-simulators-yjIyo3` at e3e5269 passes all three native app workflows and11durable scoring commands. Paired-to-B Watch uses fixture setup/direct HTTP; transport itself is not qualified. Archive109segments/export and sampled final1–2 in both live MP4s pass, end alignment<17ms. Original runner false is an already-shutdown cleanup false alarm; independent acceptance proves all data preserved/devices removed. Cleanup correction has a focused regression; do not repeat the native run for it.
+
+Remote Watch end was fixed in [bounded retirement](2026-09-28-bounded-stream-retirement.md) using the maintained `drain-v1` relay and graceful worker withdrawal.
 
 Previous work: [September28 deployment](2026-09-28-portable-deployment.md). `node scripts/test-vps-stack.mjs --image <existing-api-image>` verifies the repaired deployment with a focused owned-container check; CI reuses its built API/relay images.
 
@@ -21,10 +23,10 @@ Use focused checks, incremental builds and completed-workflow media verification
 
 ## Next priorities
 
-1. Preserve the fully green native-created two-phone vertical as the working baseline. Finish simulator feature/recovery checkpoint using existing recording and scoring tests, not new harnesses.
-2. Diagnose the remaining congestion interval fromPvbKtK before another capture. Prior bitrate-first, relative-pacing and source-cadence experiments are already retained failures.
-3. Extend native separate scoring through Watch B takeover and consolidate reconnect/restoration coverage using existing tests.
-4. Native recording across worker/API/source restart, backend capabilities and actual service operation remain open. Hardware stays deferred.
+1. Implement/verify native capture across API and worker restart. Inspect current reconnection behavior first; reuse the existing native file source and owned lab. Keep clean recording continuous and return to current score/live output.
+2. Add backend capability reporting beyond static encoder selection, distinguishing configured, available and runtime-qualified capabilities.
+3. Diagnose remaining congestion from savedPvbKtK evidence before another capture; do not repeat prior failed bitrate-first/relative-pacing/source-cadence experiments.
+4. Consolidate existing recording/scoring recovery evidence with only genuinely missing focused checks. Offline/forced-termination UI results already exist in `docs/native-film-app.md`; do not rebuild or rerun everything for small edits. Hardware remains deferred.
 
 ## Existing evidence and open limits
 

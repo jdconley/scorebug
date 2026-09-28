@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September28 separate Watch vertical](2026-09-28-separate-watch-vertical.md) — three native simulator workflows, three scoring identities, Watch takeover/end, clean archive and final score in both output recordings.
+
 - [September28 bounded stream retirement](2026-09-28-bounded-stream-retirement.md) — remote Watch end preserves the stream tail; simulator A/V end mismatch reduced from454ms to under40ms with focused checks.
 
 - [September 28 portable deployment](2026-09-28-portable-deployment.md) — repaired Compose, persistent native API/relay wiring, focused container-recreation check and CI.

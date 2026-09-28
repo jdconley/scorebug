@@ -6,6 +6,7 @@ import {
   nativeCreatedEnvironment,
   nativeCreatedTests,
   validateNativeCreation,
+  nativeSimulatorCleanupActions,
 } from '../test-native-created-simulators.mjs';
 
 const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
@@ -103,5 +104,18 @@ test('separate Watch lane is explicit, local-only, and preserves scorer/camera r
       'camera',
       true,
     ),
+  );
+});
+
+test('paired cleanup uses actual state after unpair and never selects another simulator', () => {
+  const role = { device: 'owned', name: 'Scorebug owned Watch' };
+  const snapshot = (state) => ({
+    devices: { runtime: [{ udid: role.device, name: role.name, state }] },
+  });
+  assert.deepEqual(nativeSimulatorCleanupActions(role, snapshot('Shutdown')), ['delete']);
+  assert.deepEqual(nativeSimulatorCleanupActions(role, snapshot('Booted')), ['shutdown', 'delete']);
+  assert.deepEqual(nativeSimulatorCleanupActions(role, { devices: {} }), []);
+  assert.throws(() =>
+    nativeSimulatorCleanupActions({ ...role, name: 'different' }, snapshot('Shutdown')),
   );
 });
