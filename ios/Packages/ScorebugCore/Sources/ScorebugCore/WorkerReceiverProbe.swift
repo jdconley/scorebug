@@ -69,10 +69,14 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
         return number
     }
 
+    var maximumCampaignPayloadBytes: UInt64 {
+        (convention == "mpegts-null-probe-v4" ? 64 : 16) * 1024 * 1024
+    }
+
     /// Mirrors the bounded authenticated API envelope, independently of decoding.
     var validated: (generation: UInt64, observed: UInt64, last: UInt64?)? {
         let maximumBitRate = convention == "mpegts-null-probe-v4" ? 48_000_000 : convention == "mpegts-null-probe-v2" || convention == "mpegts-null-probe-v3" ? 12_000_000 : 2_000_000
-        let campaignCap: UInt64 = (convention == "mpegts-null-probe-v4" ? 64 : 16) * 1024 * 1024
+        let campaignCap = maximumCampaignPayloadBytes
         guard invalidReason == nil,
               WorkerPublication.isCanonicalUUID(id), id != "00000000-0000-0000-0000-000000000000",
               let generation = Self.integer(publishingGeneration), generation > 0,

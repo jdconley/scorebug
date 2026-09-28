@@ -367,6 +367,27 @@ private struct SourceFactoryTestSink: RecordingArchiveSink {
 // production models and transport; UI, Watch routing and media acceptance remain
 // the responsibility of the simulator lanes.
 extension FilmModelTests {
+    /// Reuse a completed diagnostic archive without repeating camera/network capture.
+    func testExportExistingDiagnosticArchive() async throws {
+        guard let path = ProcessInfo.processInfo.environment["SCOREBUG_EXISTING_ARCHIVE_ROOT"] else {
+            throw XCTSkip("Set an existing diagnostic archive root to export retained media")
+        }
+        let root = try XCTUnwrap(path.hasPrefix("/") ? URL(fileURLWithPath: path, isDirectory: true) : nil)
+        let library = RecordingLibrary(rootDirectory: root)
+        let entries = try await library.list()
+        let entry = try XCTUnwrap(entries.count == 1 ? entries.first : nil,
+            "Select a diagnostic containing one recording")
+        guard entry.status == .completed else {
+            XCTFail("Do not promote interrupted media to completed"); return
+        }
+        let exported = try await library.export(id: entry.id)
+        let result: [String: Any] = ["recordingID": entry.id, "export": exported.path,
+            "scope": "native archive export only; no media qualification"]
+        try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
+            to: root.appendingPathComponent("native-export.json"), options: .atomic)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exported.path))
+    }
+
     func testHeadlessLocalStreamingDiagnostic() async throws {
         guard let path = ProcessInfo.processInfo.environment["SCOREBUG_HEADLESS_CONFIG"] else {
             throw XCTSkip("Run scripts/test-headless-streaming.mjs to enable real local media")
@@ -422,7 +443,11 @@ extension FilmModelTests {
                     samples.append(fields)
                     let profileState = "\(fields["policyAppliedProfile"] ?? "unknown") trial=\(fields["policyTrialActive"] ?? "unknown")"
                     if profileState != lastProfileState {
-                        print("HEADLESS_QUALITY \(profileState)")
+                        print("HEADLESS_QUALITY \(profileState) elapsed=\(started.duration(to: .now).components.seconds)s")
+                        if let transition = fields["appliedTransition"],
+                           let cause = (try? JSONSerialization.jsonObject(with: Data(transition.utf8))) as? [String: String] {
+                            print("HEADLESS_TRANSITION kind=\(cause["kind"] ?? "unknown") input=\(cause["input"] ?? "unknown") reasons=\(cause["reasons"] ?? "unknown")")
+                        }
                         lastProfileState = profileState
                     }
                 }

@@ -107,7 +107,7 @@ public struct WorkerReceiverProbeTracker: Sendable {
         let p = evidence.snapshot
         // Freshness validation has already bounded these canonical strings.
         guard let messages = UInt64(p.deliveredMessages), let observed = UInt64(p.observedAtNanoseconds),
-              acceptedPayloadBytes <= 16 * 1024 * 1024, acceptedPayloadBytes % 1316 == 0,
+              acceptedPayloadBytes <= p.maximumCampaignPayloadBytes, acceptedPayloadBytes % 1316 == 0,
               (messages + (p.pendingPackets > 0 ? 1 : 0)) * 1316 <= acceptedPayloadBytes,
               previousAccepted.map({ acceptedPayloadBytes >= $0 }) ?? true else { quarantine(); return nil }
         let receiverElapsed = Duration.nanoseconds(Int64(observed))

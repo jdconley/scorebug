@@ -63,9 +63,13 @@ All outstanding work remains in the [delivery plan](superpowers/plans/2026-09-13
 
 ## Latest UHD checkpoint
 
-`ordinary-native-aK6INv` confirms360/720/1080 from a4K source and completes native
-export;166 archive segment hashes verified.4K candidate admission fails on the
-pending-input bound, so full UHD/media acceptance remains open. Focused sender
-pacing is fixed and verified separately. See the
-[session log](session-logs/2026-09-28-uhd-sender-pacing.md) for scoped results and
-short encoder comparison; no hardware rerun.
+The short SDK simulator diagnostic reproduces a4K encoder pending-input limit;
+low-latency mode cannot create an encoder. Keep that platform limit explicit.
+`headless-native-gZctuL` verifies the real native Mac path after the missing-processing
+and v4 byte-accounting fixes:360/720/1080confirm, then24Mbps4K reaches the receiver
+as444actual3840×2160frames. Probation falls back after real source-frame loss;
+recording/publishing survive and lower-quality recovery works. Sustained4K remains
+unqualified. Native export and212segment hashes pass. Redundant full-file decode was stopped
+after receiver geometry proved real gaps; no full-media qualification is claimed.
+This is headless native integration, not simulator UI or hardware acceptance.
+See the [session log](session-logs/2026-09-28-missing-processing-race.md).

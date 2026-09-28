@@ -19,6 +19,34 @@ final class WorkerReceiverProbeCampaignTests: XCTestCase {
         p.convention = "mpegts-null-probe-v4"; p.campaign = nil; XCTAssertNil(p.validated)
     }
 
+    func testV4TrackerFormsReceiverPairBeyondLegacyByteLimit() throws {
+        var tracker = WorkerReceiverProbeTracker()
+        let legacyMessages = 16 * 1024 * 1024 / 1316
+        for (index, messages) in [legacyMessages - 100, legacyMessages + 100, legacyMessages + 300].enumerated() {
+            _ = try observe(&tracker, seconds: Double(index + 5), messages: messages) {
+                $0.convention = "mpegts-null-probe-v4"; $0.bitRate = 48_000_000
+            }
+        }
+        XCTAssertFalse(tracker.isQuarantined)
+        XCTAssertNotNil(tracker.latestPair)
+        XCTAssertEqual(tracker.latestPair?.newer.deliveredMessages, 200)
+    }
+
+    func testTrackerLocalAcceptanceRespectsEachWireBudget() throws {
+        for version in ["mpegts-null-probe-v3", "mpegts-null-probe-v4"] {
+            let cap = (version.hasSuffix("v4") ? 64 : 16) * 1024 * 1024
+            for exceeds in [false, true] {
+                var response = try fixture()
+                response.status.receiverProbe?.snapshot.convention = version
+                let evidence = try XCTUnwrap(freshness(response))
+                let accepted = UInt64((cap / 1316 + (exceeds ? 1 : 0)) * 1316)
+                var tracker = WorkerReceiverProbeTracker()
+                _ = tracker.observe(evidence, acceptedPayloadBytes: accepted, senderActive: true, at: anchor + .seconds(1))
+                XCTAssertEqual(tracker.isQuarantined, exceeds, "\(version), exceeds=\(exceeds)")
+            }
+        }
+    }
+
     private let anchor = ContinuousClock.now
     private func fixture() throws -> WorkerMediaStatusResponse {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "receiver-probe-status-v3", withExtension: "json", subdirectory: "Fixtures"))

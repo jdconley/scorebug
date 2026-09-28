@@ -323,7 +323,11 @@ import ScorebugStreaming
             if noted != key + "/transition" { noted = key + "/transition"; await record("transition", source: source) }
             return false
         }
-        if let processing = source.processing, processing.interval.pendingFrames > 0,
+        // Decoder windows can arrive before their matching processing report.
+        // Leave the sequence available for the tracker's next poll, just as for
+        // incomplete processing; the original capture deadline still bounds waiting.
+        let processingPending = source.processing.map { $0.interval.pendingFrames > 0 } ?? true
+        if processingPending,
            uptime() - source.interval.captureBoundaryEndTime < timingProfile.maximumCaptureWindowEvaluationAge { return false }
         consumed = key
         let decision: QualityController.Decision

@@ -215,6 +215,67 @@ import XCTest
         await driver.stop()
     }
 
+    func testMissingProcessingWaitsForMatchingReportWithoutConsumingWindow() async throws {
+        let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
+        let complete = try XCTUnwrap(f.source), diagnostics = try XCTUnwrap(f.sourceDiagnostics)
+        var missing = complete; missing.processing = nil
+        let driver = PublishingQualityDriver(owner: f.owner, workerLimits: nil,
+            workerLimitsProvider: PublishingQualityDriver.productionWorkerLimits,
+            transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+            uptime: { f.native.now }, retainsDiagnosticHistory: false, enableMeasuredSourceEvaluation: true)
+        await driver.tick(encoderReady: true, source: missing, diagnostics: diagnostics)?.value
+        let waiting = await f.owner.snapshot
+        XCTAssertNil(waiting.lastWindow, "Absent processing is not a completed quality window")
+        let unavailable = await driver.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNil(unavailable, "Waiting must not grant recovery or admission credit")
+        await driver.tick(encoderReady: true, source: complete, diagnostics: diagnostics)?.value
+        let accepted = await f.owner.snapshot
+        XCTAssertEqual(accepted.lastWindow?.workerPressure, .nominal)
+        let ready = await driver.candidateMeasurementContext(diagnostics: diagnostics)
+        XCTAssertNotNil(ready, "The same source sequence remains eligible when its report arrives")
+        await driver.stop()
+    }
+
+    func testMissingProcessingCannotExtendTrialOrCaptureDeadline() async throws {
+        for expires in [false, true] {
+            let f = try await CandidateQualityFixture.make()
+            let trial = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(trial.recommendation))
+            f.native.useActualInstant()
+            let driver = PublishingQualityDriver(owner: f.owner,
+                workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
+                transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01),
+                uptime: { f.native.now }, retainsDiagnosticHistory: false, enableMeasuredSourceEvaluation: true)
+            f.native.setNow(120.2)
+            let first = try await f.freshSource(start: 115.1, sequence: 3)
+            var missing = first.0; missing.processing = nil
+            await driver.tick(encoderReady: true, source: missing, diagnostics: first.1)?.value
+            let waiting = await f.owner.currentDiagnostic()
+            XCTAssertEqual(waiting["policyTrialActive"], "true")
+            XCTAssertEqual(waiting["policyMinimumResetRequired"], "false")
+            if expires {
+                f.native.setNow(122.2) // Original two-second capture window has expired.
+                let delayed = try await f.freshSource(start: 115.1, sequence: 3)
+                var absent = delayed.0; absent.processing = nil
+                await driver.tick(encoderReady: true, source: absent, diagnostics: delayed.1)?.value
+                await driver.tick(encoderReady: true, source: nil, diagnostics: delayed.1)?.value
+                let reset = await f.owner.currentDiagnostic()
+                XCTAssertEqual(reset["policyAppliedProfile"], "240p30")
+                XCTAssertEqual(reset["policyTrialActive"], "false")
+            } else {
+                await driver.tick(encoderReady: true, source: first.0, diagnostics: first.1)?.value
+                f.native.setNow(125.2)
+                let next = try await f.freshSource(start: 120.1, sequence: 4)
+                await driver.tick(encoderReady: true, source: next.0, diagnostics: next.1)?.value
+                let confirmed = await f.owner.currentDiagnostic()
+                XCTAssertEqual(confirmed["policyAppliedProfile"], "360p30")
+                XCTAssertEqual(confirmed["policyTrialActive"], "false")
+                XCTAssertEqual(confirmed["policyMinimumResetRequired"], "false")
+            }
+            await driver.stop()
+        }
+    }
+
     func testProductionWorkerLimitsRecognizeOnlyReportedSupportedBackend() async throws {
         for encoder in ["software", "videotoolbox", "nvenc", "unknown", "", "VideoToolbox", nil] {
             let f = try await CandidateQualityFixture.make(deferHealthEvaluation: true)
@@ -236,7 +297,8 @@ import XCTest
                 uptime: { f.native.now }, retainsDiagnosticHistory: false, enableMeasuredSourceEvaluation: true)
             await driver.tick(encoderReady: true, source: copy, diagnostics: try XCTUnwrap(f.sourceDiagnostics))?.value
             let state = await f.owner.snapshot
-            XCTAssertEqual(state.lastWindow?.workerPressure, limits == nil ? .unknown : .nominal)
+            if encoder == nil { XCTAssertNil(state.lastWindow, "Missing report waits within the existing deadline") }
+            else { XCTAssertEqual(state.lastWindow?.workerPressure, limits == nil ? .unknown : .nominal) }
             let context = await driver.candidateMeasurementContext(diagnostics: try XCTUnwrap(f.sourceDiagnostics))
             XCTAssertEqual(context != nil, limits != nil, "Unrecognized backend must never earn recovery credit")
             await driver.stop()
