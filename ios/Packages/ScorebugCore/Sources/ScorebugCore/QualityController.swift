@@ -589,7 +589,7 @@ public struct QualityController: Sendable {
                   signal.observedAtLowerBound <= now,
                   signal.observedAtLowerBound >= appliedAt + ProgressiveStreamingPolicy.minimumDecoderStallDuration
             else { throw ValidationError.invalidWindow }
-            guard now - signal.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge
+            guard now - signal.observedAtLowerBound <= timingProfile.maximumCadenceDeliveryReportAge
             else { throw ValidationError.staleWindow }
         } catch { invalidateTelemetry(); throw error }
         lastSequence = signal.sequence
@@ -600,7 +600,7 @@ public struct QualityController: Sendable {
         if minimumResetRequired {
             pending = .init(kind: .reset, attemptID: attemptID, windowSequence: signal.sequence,
                 appliedRevision: appliedRevision,
-                validUntil: signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
+                validUntil: signal.observedAtLowerBound + timingProfile.maximumCadenceDeliveryReportAge,
                 settings: minimumSettings)
         }
         return .init(state: .stalled,
@@ -625,7 +625,7 @@ public struct QualityController: Sendable {
                   signal.end <= signal.observedAtLowerBound, signal.observedAtLowerBound <= now
             else { throw ValidationError.invalidWindow }
             guard now - signal.end <= timingProfile.maximumCaptureWindowEvaluationAge,
-                  now - signal.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge
+                  now - signal.observedAtLowerBound <= timingProfile.maximumCadenceDeliveryReportAge
             else { throw ValidationError.staleWindow }
             guard (1...240).contains(signal.expectedFrames),
                   [signal.onTimeFrames, signal.lateFrames, signal.missingFrames].allSatisfy({ (0...240).contains($0) }),
@@ -645,7 +645,7 @@ public struct QualityController: Sendable {
         if minimumResetRequired {
             pending = .init(kind: .reset, attemptID: attemptID, windowSequence: signal.sequence,
                 appliedRevision: appliedRevision,
-                validUntil: min(signal.end + timingProfile.maximumCaptureWindowEvaluationAge, signal.observedAtLowerBound + ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                validUntil: min(signal.end + timingProfile.maximumCaptureWindowEvaluationAge, signal.observedAtLowerBound + timingProfile.maximumCadenceDeliveryReportAge),
                 settings: minimumSettings)
         }
         var reasons: [Reason] = [duration == 1 ? .freshFrameFloor : .sourceLoss]

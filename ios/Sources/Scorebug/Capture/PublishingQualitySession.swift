@@ -980,7 +980,7 @@ actor PublishingQualitySession {
             // by aging in a local cache. A newly received stale report still rejects.
             guard requiresCadenceFreshnessValidation || consumedCadenceReceipt != cadence.receiptID else { return nil }
             let signal = try PublishingQualityTelemetry.decoderStall(cadence: cadence, applied: applied,
-                diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant)
+                diagnostics: diagnostics, sequence: lastPolicySequence + 1, at: now, instant: sampledInstant, timingProfile: timingProfile)
             let scope = DecoderScope(cadence), progress = cadence.snapshot.progress!.lastFreshPTS
             if let decoderScope, decoderScope != scope {
                 invalidateTelemetry(&policy, input: "cadenceScopeChanged"); candidateHealthSource = nil; pending = nil
@@ -1016,7 +1016,7 @@ actor PublishingQualitySession {
                 }
                 var witness = ["cadenceReceiptID": cadence.receiptID.uuidString.lowercased(),
                     "cadenceEvaluatedAt": String(evaluationAt), "cadenceAgeState": age.state.rawValue,
-                    "cadenceMaximumSampleAgeSeconds": String(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                    "cadenceMaximumSampleAgeSeconds": String(timingProfile.maximumCadenceDeliveryReportAge),
                     "cadenceServerAgeSeconds": String(EvaluationDiagnostic.seconds(age.serverAge)!),
                     "cadenceRequestSeconds": String(EvaluationDiagnostic.seconds(age.requestDuration)!),
                     "cadenceReceiptPreviouslyConsumed": String(evaluationConsumed),
@@ -1065,10 +1065,10 @@ actor PublishingQualitySession {
             // next health poll revokes its context authority.
             guard let currentAge = observation.delivery.sampleAgeUpperBound(at: instant ?? .now),
                   currentAge >= .zero,
-                  currentAge <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge),
+                  currentAge <= .seconds(timingProfile.maximumCadenceDeliveryReportAge),
                   observation.observedAtLowerBound.isFinite, observation.observedAtLowerBound <= now,
                   source.windowEnd <= observation.observedAtLowerBound,
-                  now - observation.observedAtLowerBound <= ProgressiveStreamingPolicy.maximumDecoderStallSampleAge,
+                  now - observation.observedAtLowerBound <= timingProfile.maximumCadenceDeliveryReportAge,
                   now - source.windowEnd <= timingProfile.maximumCaptureWindowEvaluationAge else { throw PublishingQualityTelemetry.Failure.freshness }
             if deliveryAuthority !== authority || deliveryRevision != policy.appliedRevision {
                 if deliveryAuthority != nil { invalidateTelemetry(&policy, input: "deliveryAuthorityChanged"); candidateHealthSource = nil; pending = nil }

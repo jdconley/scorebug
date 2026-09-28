@@ -52,7 +52,7 @@ final class NativeStreamingTests: XCTestCase {
         let capacityRecovery = ProcessInfo.processInfo.environment["SCOREBUG_TEST_CAPACITY_RECOVERY"] ?? ""
         let ownedMeasurement = ProcessInfo.processInfo.environment["SCOREBUG_TEST_OWNED_MEASUREMENT"] ?? ""
         let timingProfile = ProcessInfo.processInfo.environment["SCOREBUG_TEST_TIMING_PROFILE"] ?? ""
-        let timingBudgets = ["strict1500-v1": "1500", "broadcast-reliability2000-v1": "2000", "broadcast-reliability3000-v1": "3000"]
+        let timingBudgets = ["strict1500-v1": "1500", "broadcast-reliability2000-v1": "2000", "broadcast-reliability3000-v1": "3000", "broadcast-reliability3000-v3": "3000"]
         let expectedMeasuredDeadline = timingProfile.isEmpty ? "1500" : try XCTUnwrap(timingBudgets[timingProfile])
         if !timingProfile.isEmpty {
             XCTAssertEqual(ownedMeasurement, "1"); XCTAssertEqual(capacityRecovery, "1")

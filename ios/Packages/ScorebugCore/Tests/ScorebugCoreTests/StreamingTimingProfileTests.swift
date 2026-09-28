@@ -18,6 +18,28 @@ final class StreamingTimingProfileTests: XCTestCase {
               usableVideoCapacity: nil, connectivity: .connected, thermalPressure: .nominal,
               workerPressure: .nominal, transportPressure: .nominal)
     }
+    func testProductionHTTPJitterUsesVersionedReportBudgetWithoutRelaxingMediaOrAuthority() throws {
+        let timing = try XCTUnwrap(StreamingTimingProfile(rawValue: "broadcast-reliability3000-v3"))
+        XCTAssertEqual(timing.decoderBudgetMs, 3000)
+        XCTAssertEqual(timing.maximumCaptureWindowEvaluationAgeMs, 4250)
+        XCTAssertEqual(timing.maximumCadenceDeliveryReportAgeMs, 1000)
+        for age in [0.289655334, 0.45764125, 1.0, 1.000001] {
+            for profile in [StreamingTimingProfile.strict1500, .broadcastReliability3000, timing] {
+                var policy = try controller(profile, applied: .init(profileID: "small", videoBitrate: 900_000))
+                let signal = Q.DecoderStall(attemptID: attempt, appliedRevision: 0, sequence: 1, observedAtLowerBound: 2)
+                if profile == timing && age <= 1 {
+                    let advice = try XCTUnwrap(policy.evaluateDecoderStall(signal, at: 2 + age).recommendation)
+                    XCTAssertEqual(advice.kind, .reset)
+                    XCTAssertEqual(advice.validUntil, 3)
+                } else {
+                    XCTAssertThrowsError(try policy.evaluateDecoderStall(signal, at: 2 + age))
+                }
+            }
+        }
+        var staleOwner = try controller(timing)
+        XCTAssertThrowsError(try staleOwner.evaluateDecoderStall(.init(attemptID: UUID(), appliedRevision: 0,
+            sequence: 1, observedAtLowerBound: 2), at: 2.45))
+    }
     func testSourceResetAndDecreaseAdviceExpiresWithCaptureAndOriginalReceiverReport() throws {
         for timing in StreamingTimingProfile.allCases {
             for reset in [true, false] {
@@ -93,7 +115,7 @@ final class StreamingTimingProfileTests: XCTestCase {
     }
     func testScheduleBudgetPlusQuarterSecondFitsMediaAgeButDoesNotRelaxFailureAuthority() throws {
         for profile in StreamingTimingProfile.allCases {
-            let now = 1 + profile.decoderBudget + 0.25
+            let now = 1 + profile.decoderBudget + profile.maximumCadenceDeliveryReportAge
             XCTAssertLessThan(now - 1, profile.maximumCaptureWindowEvaluationAge)
             func failure(observed: Double, revision: UInt64 = 0) -> Q.DeliveryFailure {
                 .init(attemptID: attempt, appliedRevision: revision, sequence: 1, start: 0, end: 1,
@@ -102,13 +124,13 @@ final class StreamingTimingProfileTests: XCTestCase {
             var policy = try controller(profile)
             XCTAssertNoThrow(try policy.evaluateDeliveryFailure(failure(observed: now), at: now))
             var stale = try controller(profile)
-            XCTAssertThrowsError(try stale.evaluateDeliveryFailure(failure(observed: now - 0.250001), at: now))
+            XCTAssertThrowsError(try stale.evaluateDeliveryFailure(failure(observed: now - profile.maximumCadenceDeliveryReportAge - 0.000001), at: now))
             var wrong = try controller(profile)
             XCTAssertThrowsError(try wrong.evaluateDeliveryFailure(failure(observed: now, revision: 1), at: now))
         }
     }
     func testExperimentalMediaAgeNeverExtendsCandidateResultOrProbeExpiry() throws {
-        for timing in [StreamingTimingProfile.broadcastReliability2000, .broadcastReliability3000, .broadcastReliability6000] {
+        for timing in [StreamingTimingProfile.broadcastReliability2000, .broadcastReliability3000, .broadcastReliability3000V3, .broadcastReliability6000] {
             for now in [6.000001, 6.1] {
                 var policy = try controller(timing)
                 _ = try policy.evaluate(health(observed: now), at: now)

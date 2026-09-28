@@ -38,10 +38,14 @@ struct OrdinaryRecoverySample {
         var maximumSourceAge = 5.0
         if let profile = diagnostic["timingProfileID"] {
             let budgets = ["strict1500-v1": 1500, "broadcast-reliability2000-v1": 2000,
-                           "broadcast-reliability3000-v1": 3000, "broadcast-reliability6000-v1": 6000]
+                           "broadcast-reliability3000-v1": 3000, "broadcast-reliability3000-v3": 3000, "broadcast-reliability6000-v1": 6000]
+            let allowance = profile == "broadcast-reliability3000-v3" ? 1250 : 500
             guard let budget = budgets[profile], diagnostic["decoderBudgetMilliseconds"] == String(budget),
-                  diagnostic["captureWindowMaximumAgeMilliseconds"] == String(budget + 500) else { throw Invalid.diagnostic }
-            maximumSourceAge = max(5, Double(budget + 500) / 1000)
+                  diagnostic["captureWindowMaximumAgeMilliseconds"] == String(budget + allowance) else { throw Invalid.diagnostic }
+            if profile == "broadcast-reliability3000-v3" {
+                guard diagnostic["reportMaximumAgeMilliseconds"] == "1000" else { throw Invalid.diagnostic }
+            }
+            maximumSourceAge = max(5, Double(budget + allowance) / 1000)
         }
         if let owner {
             guard owner.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
@@ -1075,8 +1079,12 @@ final class PhysicalStreamingTests: XCTestCase {
         let increased = recovery720 ? try recoveryIncrease(app, prefix: "initial-720", after: first.ended,
             previous: first, profile: "720p30", bitrate: 3000000, consecutive: true) : first
         if quality1080 {
-            _ = try recoveryIncrease(app, prefix: "initial-1080", after: increased.ended,
+            let fullHD = try recoveryIncrease(app, prefix: "initial-1080", after: increased.ended,
                 previous: increased, profile: "1080p30", bitrate: 6000000, consecutive: true)
+            if quality2160 {
+                _ = try recoveryIncrease(app, prefix: "initial-2160", after: fullHD.ended,
+                    previous: fullHD, profile: "2160p30", bitrate: 24000000, consecutive: true)
+            }
             return
         }
         let constrainedAt = try recoveryRequest("constrain", sequence: 1, sample: increased)
@@ -1351,7 +1359,7 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             // Terminal actions need time even when the recording budget failed.
             // This does not change the monotonic adaptive or recording limits.
-            deadline = Date().addingTimeInterval(90)
+            deadline = Date().addingTimeInterval(quality2160 ? 240 : 90)
             recoveryMilestone("terminal-started")
         }
         func adaptiveGate() throws {

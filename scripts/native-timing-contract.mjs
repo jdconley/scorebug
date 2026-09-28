@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
 
-// Experimental stage budgets, not platform guidance. The extra 500ms is a
-// capture-window evaluation allowance; repolling never renews media age.
-const profile = (profileId, decoderBudgetMs, maximumCaptureWindowEvaluationAgeMs) =>
+// Product/experimental budgets, not platform guidance. Capture evaluation includes
+// report age plus 250ms scheduling allowance; repolling never renews media age.
+const profile = (
+  profileId,
+  decoderBudgetMs,
+  maximumCaptureWindowEvaluationAgeMs,
+  reportAgeMs = 250,
+) =>
   Object.freeze({
     formatVersion: 1,
     profileId,
     decoderBudgetMs,
     maximumCaptureWindowEvaluationAgeMs,
     maximumCompletedDecoderWindowReportAgeMs: 2000,
-    maximumCadenceDeliveryReportAgeMs: 250,
+    maximumCadenceDeliveryReportAgeMs: reportAgeMs,
     decoderStallThresholdMs: 1000,
     scope: 'owned-capacity-diagnostic',
   });
@@ -17,6 +22,7 @@ export const timingContracts = Object.freeze({
   'strict1500-v1': profile('strict1500-v1', 1500, 2000),
   'broadcast-reliability2000-v1': profile('broadcast-reliability2000-v1', 2000, 2500),
   'broadcast-reliability3000-v1': profile('broadcast-reliability3000-v1', 3000, 3500),
+  'broadcast-reliability3000-v3': profile('broadcast-reliability3000-v3', 3000, 4250, 1000),
   'broadcast-reliability6000-v1': profile('broadcast-reliability6000-v1', 6000, 6500),
 });
 export function timingContractForProfile(profileId = 'strict1500-v1') {

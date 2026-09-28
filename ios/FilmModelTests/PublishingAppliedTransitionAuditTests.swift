@@ -61,7 +61,7 @@ final class PublishingAppliedTransitionAuditTests: XCTestCase {
             XCTAssertEqual(timing["decoderBudgetMs"] as? Int, profile.decoderBudgetMs)
             XCTAssertEqual(timing["maximumCaptureWindowEvaluationAgeMs"] as? Int, profile.maximumCaptureWindowEvaluationAgeMs)
             XCTAssertEqual(timing["maximumCompletedDecoderWindowReportAgeMs"] as? Int, 2000)
-            XCTAssertEqual(timing["maximumCadenceDeliveryReportAgeMs"] as? Int, 250)
+            XCTAssertEqual(timing["maximumCadenceDeliveryReportAgeMs"] as? Int, profile.maximumCadenceDeliveryReportAgeMs)
             XCTAssertEqual(timing["decoderStallThresholdMs"] as? Int, 1000)
         }
     }

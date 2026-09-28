@@ -18,14 +18,18 @@ function fixture(profile) {
     delivery: {
       ...header(),
       latencyBudget: timingContracts[profile].decoderBudgetMs / 1000,
-      maximumSampleAge: 0.25,
+      maximumSampleAge: timingContracts[profile].maximumCadenceDeliveryReportAgeMs / 1000,
     },
     ownedLifecycle: header(),
   };
 }
 test('owned diagnostic envelopes match trusted selection and grant no qualification', () => {
   assert.equal(typeof module.qualifyOwnedTimingEnvelopes, 'function');
-  for (const profile of ['broadcast-reliability2000-v1', 'broadcast-reliability3000-v1']) {
+  for (const profile of [
+    'broadcast-reliability2000-v1',
+    'broadcast-reliability3000-v1',
+    'broadcast-reliability3000-v3',
+  ]) {
     const input = fixture(profile),
       before = structuredClone(input);
     const result = module.qualifyOwnedTimingEnvelopes(input, { timingProfile: profile });

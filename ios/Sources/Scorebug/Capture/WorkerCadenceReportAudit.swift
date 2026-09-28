@@ -41,9 +41,9 @@ struct WorkerCadenceReportAudit {
     // retaining a later smaller row would hide a gap in the original history.
     private static let envelopeAllowance = 4096
     private var serializedRowBytes = 0
-    init(usesRequestTiming: Bool = false, environment: [String: String] = [:]) {
+    init(usesRequestTiming: Bool = false, environment: [String: String] = [:], timingProfile: StreamingTimingProfile? = nil) {
         self.usesRequestTiming = usesRequestTiming
-        self.timingProfile = (try? VideoObservationFixture.timingProfile(environment: environment)) ?? .strict1500
+        self.timingProfile = timingProfile ?? (try? VideoObservationFixture.timingProfile(environment: environment)) ?? .strict1500
         let measured = (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true
         if measured && VideoObservationFixture.capacityFileUplink(environment: environment) {
             extendedMode = "capacity"
@@ -89,7 +89,7 @@ struct WorkerCadenceReportAudit {
             "deliveryReceiptID": delivery?.receiptID.uuidString.lowercased() as Any? ?? NSNull(),
             "deliverySampleAgeSeconds": delivery?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
             "sampleAgeSeconds": helper?.sampleAgeUpperBound(at: instant).map(Self.seconds) as Any? ?? NSNull(),
-            "observedStall": helper?.observedStall(maximumSampleAge: .milliseconds(250), at: instant) as Any? ?? NSNull()]
+            "observedStall": helper?.observedStall(maximumSampleAge: .milliseconds(timingProfile.maximumCadenceDeliveryReportAgeMs), at: instant) as Any? ?? NSNull()]
         if usesRequestTiming {
             row["deliverySampleTimeBounds"] = delivery?.sampleTimeBounds.map { ["lower": $0.lower, "upper": $0.upper] } as Any? ?? NSNull()
         }

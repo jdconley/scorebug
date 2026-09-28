@@ -9,26 +9,29 @@ pushes, real broadcasts or purchases. Preserve originals and unrelated simulator
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [acceptance matrix](../simulator-acceptance.md) owns retained evidence.
-[Current session](2026-09-28-faster-media-iteration.md) records the faster diagnostic path.
+[Faster iteration](2026-09-28-faster-media-iteration.md) documents the diagnostic harness.
 
 ## Active checkpoint
 
-UHD app integration carries v4 budgets through publisher/request/readback, selects
-2160 only for4K source + fresh2160 output capability, and scales raw queues.
-Fixed a lost budget at the lower owned-operation handoff and a candidate64MiB raw
-limit that only held five4K frames. UHD candidate source now gets192MiB; ordinary
-64MiB,4queued/16unresolved frames,16MiB/input and deadlines remain unchanged.
+Production now selects `broadcast-reliability3000-v3`:3s media deadline,1s control
+report age,4.25s capture evaluation allowance. Old profiles unchanged. Core, native
+cadence/delivery/scheduler, diagnostics and host validators share the profile.
+Focused delayed HTTP/expiry/ownership and actual-scheduler checks pass; full sim
+build passes. Failed preliminary v2 used an incompatible3.5s evaluation allowance;
+its stopped run `ordinary-native-ClWHlf` is retained, cleanup[].
 
-Focused model13/owned8/runner30, native4K→360encoder1, SDK3tests/six cases pass.
-Full simulator builds and maintained SDK original-hash/patch round trip pass.
-quality2160 defaults to VideoToolbox; explicit software and other lanes unchanged.
+Final `ordinary-native-z1va0e`, labvgxwUF, exec55738 joined1/cleanup[].360 and720
+probation pass.1080applies just after its150s gate; UHD still unqualified. Padding
+headroom is the next blocker: candidate7.185Mbps/padding7.698Mbps, retry7.153/8.841;
+later6.977/9.171qualifies. No timing rollback reproduced. One intervening candidate
+fails at candidateJoined. Use saved attachments; do not blindly extend gates.
 
-Latest `ordinary-native-Xg2t0t`, labBOKJBq, exec92183 joined1/cleanup[]. Native4K
-archive/export and240→360 measured increase/probation pass.720increase times out:
-measuredcost3718715bps, repeated source-wait/cancellation,40s recovery backoff.
-No4K upload/media pass. All jobs joined; no active owned simulators/labs. Hardware
-untouched. Log: `artifacts/qa/uhd-app-20260928/native-gpu-run.log`; exported xcresult
-attachments retained. Session log records earlier failures and their fixes.
+UHD export failed because the test's90s terminal allowance clipped its180s export
+wait. Harness now grants240s terminal for UHD only; this small change awaits runtime
+verification. Raw archive/prepared MP4s retained; no successful native export claim.
+No full offline media analysis on this failed checkpoint. All jobs joined.
+
+[Current session](2026-09-28-production-report-timing.md) contains exact evidence.
 
 ## Reuse, don't repeat
 
@@ -43,26 +46,21 @@ attachments retained. Session log records earlier failures and their fixes.
 
 ## Next work
 
-1. Use `scripts/test-headless-streaming.mjs` for focused real-native media diagnosis
-   before another full simulator/UI/export run. It uses the real archive, production
-   quality models, local proxy and mock recorder, retaining raw segments and timing
-   audit. First120s run `headless-native-hmNggn` passes joined lifecycle, reaches360;
-   acquisition cadence age stays below115ms, so simulator freshness is not reproduced.
-   Extended180s `headless-native-qfiBCM` reaches720 then resets240 on cadence freshness:
-   HTTP168ms + server119ms + residence2.6ms =289.7ms; native probe only0.034ms.
-   Second delayed response457.6ms.1798audit rows/two over250ms. Both native paths
-   remain active; exit0/cleanup[]. All jobs joined. This is not UI/media acceptance.
-   Current diagnostics now separate cumulative recovery coverage from latest-window
-   duration and preserve the exact rejected cadence's age breakdown outside trials.
-   Next fix the production report timing using this exact HTTP-delay regression.
-   Preserve strict250ms benchmark and immutable historical contracts; any production
-   age-budget change needs coherent versioning across Core/telemetry/delivery.
-   Do not treat delayed evidence as fresh or weaken ownership/media criteria.
-   After a focused fix passes, qualify full4K climb/media using the retained helpers.
-2. Audit remaining delivery/pressure TODOs against existing focused coverage.
-   Investigate severe-outage losses from saved evidence; no repeated unchanged captures.
-3. Sustained profile qualification, then physical companion/radio and external hosts.
-   Native hosted CI remains unverified until a push is authorized.
+1. Isolate native UHD probe pacing/headroom throughput with a short SDK/headless
+   check before another full simulator run. Sender requests more padding than the
+   receiver gets; actual cause is not yet proven. Preserve25% measured admission,
+   ownership, bounded queues and old protocol contracts. Review
+   `NativeCandidateAttempt.swift`, SDK `SRTBandwidthProbe.swift` (one-message token
+   cap), `SRTProbeWakeSchedule.swift` and actual sender pump before proposing changes.
+   `scripts/test-headless-streaming.mjs` avoids UI/export overhead; test clips bounded
+   to under~200s keep its2048-row timing audit intact. Saved120/180s harness evidence
+   in `headless-native-hmNggn`/`headless-native-qfiBCM` remains diagnostic only.
+2. After focused throughput fix, qualify full4K climb and saved media with retained
+   `verify-2160-climb-20260928.py`, `verify-uhd-media-20260928.py` and
+   `collect-ordinary-export-20260925.py`. Native frame/media thresholds unchanged.
+3. Audit remaining delivery/pressure TODOs against existing coverage, then sustained
+   profiles, physical companion/radio and external hosts. Hosted CI remains unverified
+   until a push is authorized. Do not retest established two-phone/Watch features.
 
 ## Environment
 

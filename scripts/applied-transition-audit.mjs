@@ -180,6 +180,7 @@ function verify(audit, phase, physical) {
     'strict1500-v1': 1500,
     'broadcast-reliability2000-v1': 2000,
     'broadcast-reliability3000-v1': 3000,
+    'broadcast-reliability3000-v3': 3000,
     'broadcast-reliability6000-v1': 6000,
   }[timing?.profileId];
   assert(budget, 'Unknown timing profile');
@@ -188,9 +189,11 @@ function verify(audit, phase, physical) {
     scope: 'ordinary-successful-applications',
     profileId: timing.profileId,
     decoderBudgetMs: budget,
-    maximumCaptureWindowEvaluationAgeMs: budget + 500,
+    maximumCaptureWindowEvaluationAgeMs:
+      budget + (timing.profileId === 'broadcast-reliability3000-v3' ? 1250 : 500),
     maximumCompletedDecoderWindowReportAgeMs: 2000,
-    maximumCadenceDeliveryReportAgeMs: 250,
+    maximumCadenceDeliveryReportAgeMs:
+      timing.profileId === 'broadcast-reliability3000-v3' ? 1000 : 250,
     decoderStallThresholdMs: 1000,
   });
   assert(

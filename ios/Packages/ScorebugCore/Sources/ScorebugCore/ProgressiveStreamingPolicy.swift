@@ -3,6 +3,7 @@
 /// packet loss or decoder arrival bursts are not missing/late source frames.
 public enum ProgressiveStreamingPolicy {
     public static let minimumDecoderStallDuration = 1.0
+    /// Legacy strict benchmark. Production callers use the selected timing profile.
     public static let maximumDecoderStallSampleAge = 0.25
     public static let freshFrameFloor = 24.0
     public static let healthyFrameRate = 29.7

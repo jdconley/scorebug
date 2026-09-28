@@ -28,7 +28,7 @@ import ScorebugStreaming
     private let enableMeasuredSourceEvaluation: Bool
     private let deliveryConsumer: PublishingDeliveryMonitor.Consumer?
     private let deliveryExport: ((Data) async -> Void)?
-    private let timingProfile: StreamingTimingProfile
+    let timingProfile: StreamingTimingProfile
     private let owner: PublishingQualitySession
     private let retainsDiagnosticHistory: Bool
     private let workerLimitsProvider: ((WorkerSourceIntervalObservation) -> PublishingQualityTelemetry.WorkerLimits?)?
@@ -220,7 +220,7 @@ import ScorebugStreaming
                     }
                     // A repeated fresh stall cannot give an old source window healthy
                     // recovery credit. It also need not dispatch the same reset twice.
-                    if cadence.observedStall(maximumSampleAge: .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)) == true {
+                    if cadence.observedStall(maximumSampleAge: .seconds(timingProfile.maximumCadenceDeliveryReportAge)) == true {
                         canEvaluateSource = false; canEvaluateCandidate = false
                     }
                 }
@@ -381,6 +381,7 @@ import ScorebugStreaming
         fields.merge(currentCandidateDiagnostic) { _, newest in newest }
         fields["timingProfileID"] = timingProfile.rawValue
         fields["decoderBudgetMilliseconds"] = String(timingProfile.decoderBudgetMs)
+        fields["reportMaximumAgeMilliseconds"] = String(timingProfile.maximumCadenceDeliveryReportAgeMs)
         fields["captureWindowMaximumAgeMilliseconds"] = String(timingProfile.maximumCaptureWindowEvaluationAgeMs)
         fields["observedAtUptimeSeconds"] = String(now)
         fields["driverClosed"] = String(isClosed)
@@ -404,7 +405,7 @@ import ScorebugStreaming
             let protected = Set(["appliedTransition", "observedAtUptimeSeconds", "sessionObservedAtUptimeSeconds",
                 "sessionClosed", "sessionBusy", "driverClosed", "diagnosticCompacted",
                 "timingProfileID", "decoderBudgetMilliseconds", "captureWindowMaximumAgeMilliseconds",
-                "cadenceRejectionTiming", "recoveryCoverageSeconds"])
+                "cadenceRejectionTiming", "recoveryCoverageSeconds", "reportMaximumAgeMilliseconds"])
             let removable = fields.keys.filter { !$0.hasPrefix("policy") && !protected.contains($0) }.sorted {
                 let lhsHistory = $0.hasPrefix("lastCandidate") || $0.hasPrefix("lastMeasurement")
                 let rhsHistory = $1.hasPrefix("lastCandidate") || $1.hasPrefix("lastMeasurement")
@@ -758,7 +759,7 @@ import ScorebugStreaming
         // Broadcast recovery needs room for encoder, SRT and worker buffering.
         // This is a deadline allowance, not an inserted delay. Report freshness,
         // stall detection and local transport pressure remain independent.
-        let timing: StreamingTimingProfile = .broadcastReliability3000
+        let timing: StreamingTimingProfile = .broadcastReliability3000V3
         let appliedTransitionExport: (@Sendable (Data) async -> Void)?
         #if DEBUG
         appliedTransitionExport = { data in PublishingAppliedTransitionAudit.persist(data, attemptID: attemptID) }
@@ -775,7 +776,7 @@ import ScorebugStreaming
                 maximumRetransmittedFraction: 0.01, policy: .recoveryBudget),
             retainsDiagnosticHistory: false,
             deliveryConsumer: .continuous(try .init(latencyBudget: timing.decoderBudget,
-                maximumSampleAge: 0.25, usesRequestTiming: true)),
+                maximumSampleAge: timing.maximumCadenceDeliveryReportAge, usesRequestTiming: true)),
             enableDeliveryFailures: true, enableMeasuredSourceEvaluation: true)
     }
     static func standard(session: PublishingSession, attemptID: UUID) throws -> PublishingQualityDriver? {
@@ -825,7 +826,7 @@ import ScorebugStreaming
         return .init(owner: owner, timingProfile: timingProfile,
             workerLimits: .init(encoder: "videotoolbox", maximumFilterMs: 250, maximumProcessingMs: 1000),
             transportLimits: .init(maximumBufferMs: 500, maximumRTTMs: 500, maximumRetransmittedFraction: 0.01, policy: probePolicy == .recoveryBudget ? .recoveryBudget : .senderDelay),
-            deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: 0.25, usesRequestTiming: true, environment: environment, timingProfile: timingProfile) : nil,
+            deliveryAudit: (minimumStall || measured) ? try PublishingDeliveryMonitor.Audit(latencyBudget: deliveryLatencyBudget, maximumSampleAge: timingProfile.maximumCadenceDeliveryReportAge, usesRequestTiming: true, environment: environment, timingProfile: timingProfile) : nil,
             deliveryExport: (minimumStall || measured) ? { await PublishingDeliveryMonitor.Audit.persist($0) } : nil,
             enableDeliveryFailures: enableDeliveryFailures, enableMeasuredSourceEvaluation: measured,
             liveExport: liveCheckpoint ? { await Self.persistLiveCheckpoint($0) } : nil,

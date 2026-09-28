@@ -37,9 +37,10 @@ import XCTest
         await active.tick(encoderReady: false, source: nil, diagnostics: .init(snapshot: session.snapshot))?.value
         let text = try XCTUnwrap(model.qualityDiagnostic)
         let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
-        XCTAssertEqual(fields["timingProfileID"], "broadcast-reliability3000-v1")
+        XCTAssertEqual(fields["timingProfileID"], "broadcast-reliability3000-v3")
         XCTAssertEqual(fields["decoderBudgetMilliseconds"], "3000")
-        XCTAssertEqual(fields["captureWindowMaximumAgeMilliseconds"], "3500")
+        XCTAssertEqual(fields["reportMaximumAgeMilliseconds"], "1000")
+        XCTAssertEqual(fields["captureWindowMaximumAgeMilliseconds"], "4250")
         await model.stopStreaming()
     }
 

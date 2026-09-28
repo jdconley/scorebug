@@ -64,10 +64,11 @@ enum PublishingQualityTelemetry {
         }
     }
     static func decoderStall(cadence: WorkerDecoderCadenceFreshness, applied: Applied, diagnostics: Diagnostics,
-                             sequence: UInt64, at now: Double, instant: ContinuousClock.Instant) throws -> QualityController.DecoderStall? {
+                             sequence: UInt64, at now: Double, instant: ContinuousClock.Instant,
+                             timingProfile: StreamingTimingProfile = .strict1500) throws -> QualityController.DecoderStall? {
         try validateDecoderContext(cadence: cadence, applied: applied, diagnostics: diagnostics, sequence: sequence, at: now)
         guard let age = cadence.sampleAgeUpperBound(at: instant), age >= .zero,
-              age <= .seconds(ProgressiveStreamingPolicy.maximumDecoderStallSampleAge)
+              age <= .seconds(timingProfile.maximumCadenceDeliveryReportAge)
         else { throw Failure.freshness }
         guard cadence.snapshot.progress?.stalled == true else { return nil }
         let seconds = Double(age.components.seconds) + Double(age.components.attoseconds) / 1e18

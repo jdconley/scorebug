@@ -1,3 +1,4 @@
+import { timingContractForProfile } from './native-timing-contract.mjs';
 import { qualifyCadenceAuditEnvelope } from './cadence-audit-envelope.mjs';
 import assert from 'node:assert/strict';
 const finite = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
@@ -45,6 +46,8 @@ export function qualifyNativeCadenceReports({
   timingProfile = 'strict1500-v1',
 }) {
   qualifyCadenceAuditEnvelope(audit, { cadenceAuditMode, timingProfile });
+  const maximumReportAge =
+    timingContractForProfile(timingProfile).maximumCadenceDeliveryReportAgeMs / 1000;
   let previous = -1,
     firstUsable,
     known = 0;
@@ -98,7 +101,7 @@ export function qualifyNativeCadenceReports({
     assert(Math.abs(row.sampleAgeSeconds - expected) < 1e-8, 'Helper bound does not reconcile');
     assert.equal(
       row.observedStall,
-      expected <= 0.25 ? cadence.progress.stalled : null,
+      expected <= maximumReportAge ? cadence.progress.stalled : null,
       'Observed stall differs from fresh worker evidence',
     );
     known++;
@@ -109,7 +112,9 @@ export function qualifyNativeCadenceReports({
     end = audit.rows.at(-1).evaluatedUptime;
   assert(end - start >= 30, 'Insufficient settled coverage');
   const rows = audit.rows.filter((r) => r.evaluatedUptime >= start);
-  const fresh = rows.filter((r) => r.sampleAgeSeconds !== null && r.sampleAgeSeconds <= 0.25);
+  const fresh = rows.filter(
+    (r) => r.sampleAgeSeconds !== null && r.sampleAgeSeconds <= maximumReportAge,
+  );
   const fraction = fresh.length / rows.length;
   assert(fraction >= 0.95, 'Fewer than 95% of settled reports fit the freshness budget');
   let last = start,

@@ -1,25 +1,30 @@
 import Foundation
 
 /// Immutable capture-to-decoder contracts. The app's production factory selects
-/// broadcastReliability3000; strict1500 remains the default for explicit legacy
+/// broadcastReliability3000V3; strict1500 remains the default for explicit legacy
 /// construction and fixture benchmarks. Selecting a value never authorizes a route.
 public enum StreamingTimingProfile: String, CaseIterable, Sendable {
     case strict1500 = "strict1500-v1"
     case broadcastReliability2000 = "broadcast-reliability2000-v1"
     case broadcastReliability3000 = "broadcast-reliability3000-v1"
+    /// Production control-plane jitter allowance. Media deadlines are unchanged.
+    case broadcastReliability3000V3 = "broadcast-reliability3000-v3"
 
     /// Explicit buffered scheduling experiments; not the production selection.
     case broadcastReliability6000 = "broadcast-reliability6000-v1"
 
     public var decoderBudgetMs: Int {
-        switch self { case .strict1500: 1500; case .broadcastReliability2000: 2000; case .broadcastReliability3000: 3000; case .broadcastReliability6000: 6000 }
+        switch self { case .strict1500: 1500; case .broadcastReliability2000: 2000; case .broadcastReliability3000, .broadcastReliability3000V3: 3000; case .broadcastReliability6000: 6000 }
     }
-    public var maximumCaptureWindowEvaluationAgeMs: Int { decoderBudgetMs + 500 }
+    public var maximumCaptureWindowEvaluationAgeMs: Int {
+        decoderBudgetMs + maximumCadenceDeliveryReportAgeMs + 250
+    }
     public var decoderBudget: Double { Double(decoderBudgetMs) / 1000 }
-    /// The extra 500ms is experimental evaluation allowance, not industry guidance.
+    /// Control-report allowance plus 250ms scheduling margin; no extra media buffering.
     public var maximumCaptureWindowEvaluationAge: Double { Double(maximumCaptureWindowEvaluationAgeMs) / 1000 }
     public var maximumCompletedDecoderWindowReportAgeMs: Int { 2000 }
-    public var maximumCadenceDeliveryReportAgeMs: Int { 250 }
+    public var maximumCadenceDeliveryReportAgeMs: Int { self == .broadcastReliability3000V3 ? 1000 : 250 }
+    public var maximumCadenceDeliveryReportAge: Double { Double(maximumCadenceDeliveryReportAgeMs) / 1000 }
     public var decoderStallThresholdMs: Int { 1000 }
 
     /// Historical fixture artifacts retain their original diagnostic scope.

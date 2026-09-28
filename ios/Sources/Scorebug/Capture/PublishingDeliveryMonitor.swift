@@ -220,7 +220,7 @@ enum PublishingDeliveryMonitor {
             #if DEBUG
             let selected = try VideoObservationFixture.timingProfile(environment: environment)
             guard timingProfile == nil || timingProfile == selected,
-                  selected == .strict1500 || (latencyBudget == selected.decoderBudget && maximumSampleAge == 0.25)
+                  selected == .strict1500 || (latencyBudget == selected.decoderBudget && maximumSampleAge == selected.maximumCadenceDeliveryReportAge)
             else { throw VideoObservationFixture.UplinkError.invalidFixtureRoute }
             self.timingProfile = selected
             let measured = (try? NativeMeasuredTrialFixture.requested(environment: environment)) == true

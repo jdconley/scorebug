@@ -469,6 +469,28 @@ final class PublishingQualitySessionTests: XCTestCase {
         let state = await owner.snapshot
         XCTAssertTrue(state.isClosed); XCTAssertNil(state.applied); XCTAssertNil(state.receipt)
     }
+    func testProductionHTTPJitterKeepsTrialButExpiredReportStillRequiresRollback() async throws {
+        for age in [0.289655334, 0.45764125, 1.000001] {
+            let f = try await CandidateQualityFixture.make(timingProfile: .broadcastReliability3000V3)
+            let decision = try await f.owner.evaluateCandidate(f.admission)
+            try await f.owner.apply(XCTUnwrap(decision.recommendation))
+            let cadence = try f.freshCadence(serverAgeMs: 119, requestDuration: .seconds(age - 0.119))
+            if age <= 1 {
+                let result = try await f.owner.evaluateDecoderStall(cadence: cadence, diagnostics: f.diagnostics(), instant: f.native.instant)
+                XCTAssertNil(result)
+                let rollback = try await f.owner.checkTrialDeadline()
+                XCTAssertNil(rollback, "A delayed control request must not reset otherwise valid probation")
+            } else {
+                do {
+                    _ = try await f.owner.evaluateDecoderStall(cadence: cadence, diagnostics: f.diagnostics(), instant: f.native.instant)
+                    XCTFail("An expired report must reject")
+                } catch { XCTAssertEqual(error as? PublishingQualityTelemetry.Failure, .freshness) }
+                let rollback = try await f.owner.checkTrialDeadline()
+                XCTAssertNotNil(rollback)
+            }
+            await f.owner.stop()
+        }
+    }
     func testCadenceRejectionAuditFreezesFirstReceiptThroughDelayedResetACK() async throws {
         for expired in [false, true] {
             let exported = AppliedTransitionExportCapture()

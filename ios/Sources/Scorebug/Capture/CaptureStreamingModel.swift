@@ -639,7 +639,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                     // Lab timestamps must remain responsive while MainActor control awaits network I/O.
                     capacityClockPolling = Task.detached { await capacityClockFixture.runPolling() }
                 }
-                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment)
+                cadenceReportAudit = cadenceReportFixtureWriter == nil ? nil : WorkerCadenceReportAudit(usesRequestTiming: true, environment: ProcessInfo.processInfo.environment, timingProfile: qualityDriver?.timingProfile)
                 if let fixture = publisher as? NativeProfileTransitionPublisher {
                     if fixture.adaptive { adaptiveProfileEvidence = fixture.evidence }
                     else { transitionDriver = NativeProfileTransitionDriver(session: session, evidence: fixture.evidence) }

@@ -11,6 +11,11 @@ export function ordinarySourceAgeLimit(diagnostic) {
     diagnostic.captureWindowMaximumAgeMilliseconds,
     String(contract.maximumCaptureWindowEvaluationAgeMs),
   );
+  if (diagnostic.timingProfileID === 'broadcast-reliability3000-v3')
+    assert.equal(
+      diagnostic.reportMaximumAgeMilliseconds,
+      String(contract.maximumCadenceDeliveryReportAgeMs),
+    );
   return Math.max(5, contract.maximumCaptureWindowEvaluationAgeMs / 1000);
 }
 

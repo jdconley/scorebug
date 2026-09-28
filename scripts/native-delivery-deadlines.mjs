@@ -563,7 +563,9 @@ export function qualifyNativeDeliveryDeadlines({
     'Unsupported expected deadline budget',
   );
   assert(
-    audit.latencyBudget === expectedLatencyBudget && audit.maximumSampleAge === 0.25,
+    audit.latencyBudget === expectedLatencyBudget &&
+      audit.maximumSampleAge ===
+        timingContractForProfile(timingProfile).maximumCadenceDeliveryReportAgeMs / 1000,
     'Unexpected experiment deadline budgets',
   );
   same(audit.deliveryTiming, reports.deliveryTiming, 'Delivery timing modes differ');

@@ -3,6 +3,22 @@ import ScorebugCore
 import XCTest
 
 final class PublishingDeliveryMonitorTests: XCTestCase {
+    func testProductionScheduleFitsItsEvaluationAllowance() throws {
+        for timing in StreamingTimingProfile.allCases {
+            var schedule = try PublishingDeliveryMonitor.Schedule(latencyBudget: timing.decoderBudget,
+                maximumSampleAge: timing.maximumCadenceDeliveryReportAge)
+            XCTAssertTrue(schedule.poll(at: 100, identity: "current").isEmpty)
+            let now = 101 + timing.decoderBudget + timing.maximumCadenceDeliveryReportAge
+            // Keep the foreground scheduler active even for the historical6s profile.
+            for tick in 101..<Int(ceil(now)) {
+                XCTAssertTrue(schedule.poll(at: Double(tick), identity: "current").isEmpty)
+            }
+            let first = try XCTUnwrap(schedule.poll(at: now, identity: "current").first)
+            XCTAssertEqual(first.end, 101)
+            XCTAssertLessThan(now - first.end, timing.maximumCaptureWindowEvaluationAge,
+                "First classification must leave bounded actor scheduling allowance")
+        }
+    }
     func testDeadlineBudgetOverrideRequiresExactControlledFixture() throws {
         XCTAssertEqual(try PublishingDeliveryMonitor.fixtureLatencyBudget(environment: [:]), 1)
         let base = ["SCOREBUG_TEST_VIDEO_OBSERVATIONS": "1", "SCOREBUG_TEST_CADENCE_REPORTS": "1",
