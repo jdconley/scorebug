@@ -778,3 +778,20 @@ test('direct simulator API binding is exact loopback and never widens existing L
   for (const apiLoopback of [false, '127.0.0.1', '0.0.0.0'])
     assert.throws(() => deviceLabAPIBind({ host: '192.168.1.130', apiLoopback }));
 });
+
+test('server recovery opts into owned process restarts without bandwidth faults or Watch setup', () => {
+  const options = ordinaryNativeOptions(
+    ['--host', '192.168.1.130', '--source', '/p.mov', '--lane', 'server-recovery'],
+    interfaces,
+  );
+  const lane = ordinaryLaneConfiguration(options.lane);
+  assert.equal(lane.serverRecovery, true);
+  assert.equal(lane.recovery, false);
+  assert.equal(lane.paired, false);
+  const environment = ordinaryTestEnvironment({
+    ...lane,
+    setup: { endpoint: 'http://192.168.1.130:1234', installationToken: 'test' },
+  });
+  assert.equal(environment.SCOREBUG_SERVER_RECOVERY, '1');
+  assert.equal(environment.SCOREBUG_RECOVERY_CONTROL_URL, undefined);
+});

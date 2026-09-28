@@ -137,8 +137,8 @@ export async function stopLabWorker(child, closed, graceMs = 10000) {
   return { ...(await closed), forced };
 }
 
-function startWorker(environment, artifact) {
-  const output = createWriteStream(join(artifact, 'worker.log'), { flags: 'wx', mode: 0o600 });
+function startWorker(environment, artifact, logName = 'worker.log') {
+  const output = createWriteStream(join(artifact, logName), { flags: 'wx', mode: 0o600 });
   const child = spawn(
     process.execPath,
     [
@@ -267,10 +267,16 @@ export async function startDeviceLab(options, { signal } = {}) {
     recoveryControl,
     stopUplink,
     relayStarted = false,
-    stopping;
+    stopping,
+    restarting;
   async function stop() {
     return (stopping ??= (async () => {
       const failures = [];
+      try {
+        await restarting;
+      } catch {
+        failures.push('restart');
+      }
       let workerExit = null,
         receiver = null;
       for (const [name, action] of [
@@ -402,7 +408,7 @@ export async function startDeviceLab(options, { signal } = {}) {
       };
     }
     recorder = await startReconnectingRTMPRecorder({ artifact, ffmpeg, port: 0 });
-    api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), {
+    const apiEnvironment = {
       HOST: apiBind,
       PHONE_TOKEN: phoneToken,
       HOME_TOKEN: homeToken,
@@ -414,7 +420,9 @@ export async function startDeviceLab(options, { signal } = {}) {
       RELAY_API_URL: `http://127.0.0.1:${relayPort}`,
       RELAY_API_USERNAME: 'lab-admin',
       RELAY_API_PASSWORD: relayPassword,
-    });
+    };
+    api = await startScoringTestServer(join(artifact, 'scorebug.sqlite'), apiEnvironment);
+    apiEnvironment.PORT = new URL(api.baseURL).port;
     signal?.throwIfAborted();
     const endpoint = new URL(api.baseURL);
     endpoint.hostname = apiBind;
@@ -436,29 +444,27 @@ export async function startDeviceLab(options, { signal } = {}) {
       assert.equal(response.status, 201, 'Lab match creation failed');
       await response.arrayBuffer();
     }
-    worker = startWorker(
-      {
-        CONTROL_PLANE_URL: baseURL,
-        HOME_TOKEN: homeToken,
-        WORKER_ID: 'mac',
-        OUTPUT_ID: 'local-sink',
-        OUTPUT_MODE: 'rtmp+record',
-        OUTPUT_URL: recorder.url,
-        OUTPUT_RECORDING_DIR: join(artifact, 'proxy-recordings'),
-        ENCODER: options.encoder,
-        DECODER_THREADING: 'automatic',
-        VIDEO_PROFILE: '1080p30',
-        SCORE_DIR: join(artifact, 'worker'),
-        FFMPEG_PATH: ffmpeg,
-        FFPROBE_PATH: ffprobe,
-        FONT_PATH: font,
-        LOG_LEVEL: 'info',
-        WORKER_PROCESSING: 'auto',
-        WORKER_REPORT_INTERVAL_MS: '100',
-        ...diagnosticEnvironment,
-      },
-      artifact,
-    );
+    const workerEnvironment = {
+      CONTROL_PLANE_URL: baseURL,
+      HOME_TOKEN: homeToken,
+      WORKER_ID: 'mac',
+      OUTPUT_ID: 'local-sink',
+      OUTPUT_MODE: 'rtmp+record',
+      OUTPUT_URL: recorder.url,
+      OUTPUT_RECORDING_DIR: join(artifact, 'proxy-recordings'),
+      ENCODER: options.encoder,
+      DECODER_THREADING: 'automatic',
+      VIDEO_PROFILE: '1080p30',
+      SCORE_DIR: join(artifact, 'worker'),
+      FFMPEG_PATH: ffmpeg,
+      FFPROBE_PATH: ffprobe,
+      FONT_PATH: font,
+      LOG_LEVEL: 'info',
+      WORKER_PROCESSING: 'auto',
+      WORKER_REPORT_INTERVAL_MS: '100',
+      ...diagnosticEnvironment,
+    };
+    worker = startWorker(workerEnvironment, artifact);
     await bounded(worker.ready, 20000);
     signal?.throwIfAborted();
     const setup = {
@@ -487,6 +493,49 @@ export async function startDeviceLab(options, { signal } = {}) {
       setup,
       stop,
       workerClosed: worker.closed,
+      ...(options.serverRecovery
+        ? {
+            restart(component) {
+              assert(!stopping && !restarting, 'Lab restart must be serialized before cleanup');
+              assert(component === 'api' || component === 'worker', 'Unknown lab component');
+              const operation = (async () => {
+                const startedAt = Date.now();
+                if (component === 'api') await api.stop();
+                else {
+                  const exit = await worker.stop();
+                  assert(
+                    !exit.forced && exit.code === 0 && exit.signal === null,
+                    'Worker must join before replacement',
+                  );
+                }
+                // Exceed the production five-second worker control deadline and the
+                // status lease, so the native app must observe actual unavailability.
+                await wait(15000);
+                signal?.throwIfAborted();
+                if (component === 'api')
+                  api = await startScoringTestServer(
+                    join(artifact, 'scorebug.sqlite'),
+                    apiEnvironment,
+                  );
+                else {
+                  worker = startWorker(workerEnvironment, artifact, 'worker-restarted.log');
+                  await bounded(worker.ready, 20000);
+                }
+                const result = { component, startedAt, readyAt: Date.now() };
+                await writeFile(
+                  join(artifact, `${component}-restart.json`),
+                  JSON.stringify(result, null, 2) + '\n',
+                  { flag: 'wx', mode: 0o600 },
+                );
+                return result;
+              })();
+              restarting = operation;
+              return operation.finally(() => {
+                restarting = undefined;
+              });
+            },
+          }
+        : {}),
       ...(recoveryControl
         ? {
             recoveryControl: {

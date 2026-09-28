@@ -61,7 +61,8 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 
 ## 3. Complete local resilience and deployment
 
-- [ ] During native capture, test source interruption, worker crash/restart and control-plane restart. Return to the current score and reachable source; keep archive continuous.
+- [x] Keep native recording/publishing through API restart and graceful worker restart; recover the current score and both output recordings automatically. Simulator archive preserves every source frame through both outages.
+- [ ] Qualify source interruption and hard worker crash. Interrupted output tails retain about0.5seconds of audio beyond final video; improve or explicitly bound that behavior.
 - [ ] Consolidate archive forced-termination/relaunch/export, low-space and queue-pressure coverage with the full app. Check recovery tail loss≤5seconds; preserve existing outputs on error.
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [ ] Add explicit backend capability reporting/negotiation beyond static encoder selection; distinguish configured, available and runtime-qualified profiles.

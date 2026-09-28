@@ -692,6 +692,7 @@ struct PublishingClockObservation: Equatable, Sendable {
             var state = try await coordinator.recover(activeRecordingId: shouldStopOwnedBroadcast ? nil : current?.id)
             guard !publisherStopping else { return }
             commandState = state
+            if message == Self.reconnectingMessage { message = nil }
             if shouldStopOwnedBroadcast {
                 state = try await reconcileOwnedStop(state, coordinator: coordinator)
                 guard !publisherStopping else { return }
@@ -710,9 +711,8 @@ struct PublishingClockObservation: Equatable, Sendable {
         } catch {
             controlFailed = true
             clearWorker()
-            if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
             if let coordinator { commandState = await coordinator.state() }
-            fail(error)
+            handlePollingFailure(error)
         }
     }
 
@@ -885,9 +885,8 @@ struct PublishingClockObservation: Equatable, Sendable {
                     // End that intent now; its later completion cannot revive it.
                     requestedStart = nil
                     clearWorker()
-                    if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
                     // Teardown joins this request; this request must never await teardown.
-                    fail(error)
+                    handlePollingFailure(error)
                     return true
                 }
             }
@@ -1298,6 +1297,39 @@ struct PublishingClockObservation: Equatable, Sendable {
         do { try storage.save(setup); needsStorageRetry = false }
         catch { needsStorageRetry = true; throw CaptureControlError.storage }
     }
+    private static let reconnectingMessage = "Server connection interrupted. Recording and publishing continue; reconnecting automatically."
+
+    /// Control availability is independent of the accepted media connection.
+    /// Stale worker evidence is cleared by callers; a fresh snapshot still enforces
+    /// selection ownership on recovery. Never resurrect starts or explicit stops.
+    private func handlePollingFailure(_ error: Error) {
+        if let publishing, !shouldStopOwnedBroadcast, !publisherStopping,
+           publishing.session.snapshot.state == .publishing,
+           publishing.session.snapshot.failure == nil,
+           Self.isTransientControlFailure(error) {
+            message = Self.reconnectingMessage
+            return
+        }
+        if publishing != nil { detachPublisher(); localState = .failed; shouldStopOwnedBroadcast = true }
+        fail(error)
+    }
+
+    private static func isTransientControlFailure(_ error: Error) -> Bool {
+        if let error = error as? URLError {
+            switch error.code {
+            case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+                 .dnsLookupFailed, .notConnectedToInternet, .internationalRoamingOff,
+                 .callIsActive, .dataNotAllowed:
+                return true
+            default: return false
+            }
+        }
+        if case let MatchClientError.http(status, _) = error {
+            return status == 429 || (500...599).contains(status)
+        }
+        return false
+    }
+
     private func fail(_ error: Error) {
         candidateAuthority?.revoke()
         if error is CancellationError || error as? CaptureControlError == .recordingStopped { return }

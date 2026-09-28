@@ -1464,7 +1464,24 @@ final class PhysicalStreamingTests: XCTestCase {
             }
             if scoreFailure == nil { evidence(app, phase: "native-home-point-acknowledged", screenshot: true) }
             try selectTab("Film", app)
-            if (ordinarySimulator || recovery) && !physicalRecovery { try adaptiveGate() }
+            if ordinarySimulator && environment["SCOREBUG_SERVER_RECOVERY"] == "1" {
+                for component in ["api", "worker"] {
+                    let before = elapsed(app)
+                    print("SCOREBUG_RESTART_\(component.uppercased())")
+                    try wait("Native app did not observe \(component) outage.", seconds: 40) {
+                        try self.require(self.value(app, "streaming.localStatus") == "publishing" && app.buttons["film.stop"].exists,
+                                         "Server outage stopped native recording or publishing.")
+                        return self.value(app, "streaming.workerStatus") != "producing_output"
+                    }
+                    evidence(app, phase: "\(component)-unavailable", screenshot: false)
+                    try wait("Native output did not recover after \(component) restart.", seconds: 60) {
+                        try self.require(self.value(app, "streaming.localStatus") == "publishing" && app.buttons["film.stop"].exists,
+                                         "Server recovery stopped native recording or publishing.")
+                        return self.value(app, "streaming.workerStatus") == "producing_output" && self.elapsed(app) > before + 10
+                    }
+                    evidence(app, phase: "\(component)-recovered", screenshot: true)
+                }
+            } else if (ordinarySimulator || recovery) && !physicalRecovery { try adaptiveGate() }
             try preservingRecoveryFailure {
                 if recovery { recoveryMilestone("live-hold-started") }
                 let holdStarted = Date()
@@ -1576,11 +1593,11 @@ final class PhysicalStreamingTests: XCTestCase {
         if !condition { throw SmokeFailure.failed(message) }
     }
 
-    @MainActor private func wait(_ message: String, seconds: Double, until condition: () -> Bool) throws {
+    @MainActor private func wait(_ message: String, seconds: Double, until condition: () throws -> Bool) throws {
         let end = min(deadline, Date().addingTimeInterval(seconds))
         while Date() < end {
             try enforceScorerPermissionPolicy()
-            let satisfied = condition()
+            let satisfied = try condition()
             try enforceScorerPermissionPolicy()
             if satisfied { return }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))

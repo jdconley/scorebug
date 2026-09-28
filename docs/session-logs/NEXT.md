@@ -8,6 +8,8 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 ## Current checkpoint
 
+Latest work: [September28 server recovery](2026-09-28-server-recovery.md). Native `ordinary-native-QOuplL` passes API SIGKILL/restart and graceful worker restart with15-second outages; recording/publishing stay active without another Start tap. Archive2534consecutive source frames/44hashed segments, both recovered outputs show1–0, final end alignment<13ms. Interrupted output tails retain~0.5seconds extra audio.118focused model tests+35launcher checks pass. All jobs joined/resources cleaned.
+
 Latest work: [September28 separate Watch vertical](2026-09-28-separate-watch-vertical.md). `native-created-simulators-yjIyo3` at e3e5269 passes all three native app workflows and11durable scoring commands. Paired-to-B Watch uses fixture setup/direct HTTP; transport itself is not qualified. Archive109segments/export and sampled final1–2 in both live MP4s pass, end alignment<17ms. Original runner false is an already-shutdown cleanup false alarm; independent acceptance proves all data preserved/devices removed. Cleanup correction has a focused regression; do not repeat the native run for it.
 
 Remote Watch end was fixed in [bounded retirement](2026-09-28-bounded-stream-retirement.md) using the maintained `drain-v1` relay and graceful worker withdrawal.
@@ -23,9 +25,9 @@ Use focused checks, incremental builds and completed-workflow media verification
 
 ## Next priorities
 
-1. Implement/verify native capture across API and worker restart. Inspect current reconnection behavior first; reuse the existing native file source and owned lab. Keep clean recording continuous and return to current score/live output.
-2. Add backend capability reporting beyond static encoder selection, distinguishing configured, available and runtime-qualified capabilities.
-3. Diagnose remaining congestion from savedPvbKtK evidence before another capture; do not repeat prior failed bitrate-first/relative-pacing/source-cadence experiments.
+1. Add backend capability reporting beyond static encoder selection, distinguishing configured, available and runtime-qualified capabilities.
+2. Diagnose remaining congestion from savedPvbKtK evidence before another capture; do not repeat prior failed bitrate-first/relative-pacing/source-cadence experiments.
+3. Cover hard worker crash/source interruption only where current component evidence is insufficient; API and graceful worker restart now pass the native workflow.
 4. Consolidate existing recording/scoring recovery evidence with only genuinely missing focused checks. Offline/forced-termination UI results already exist in `docs/native-film-app.md`; do not rebuild or rerun everything for small edits. Hardware remains deferred.
 
 ## Existing evidence and open limits

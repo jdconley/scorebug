@@ -66,7 +66,9 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
   const lane = values.get('--lane');
   assert(
     lane === undefined ||
-      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720'].includes(lane),
+      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720', 'server-recovery'].includes(
+        lane,
+      ),
     'Unsupported ordinary lane',
   );
   assert(
@@ -90,7 +92,9 @@ export function ordinaryNativeOptions(args, interfaces = networkInterfaces()) {
 export function ordinaryLaneConfiguration(lane) {
   assert(
     lane === undefined ||
-      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720'].includes(lane),
+      ['phone', 'paired', 'watch-direct', 'recovery', 'recovery720', 'server-recovery'].includes(
+        lane,
+      ),
   );
   const directWatch = lane === 'watch-direct';
   const paired = lane === 'paired',
@@ -100,6 +104,7 @@ export function ordinaryLaneConfiguration(lane) {
     ...(directWatch ? { directWatch: true } : {}),
     recovery,
     ...(lane === 'recovery720' ? { recovery720: true } : {}),
+    ...(lane === 'server-recovery' ? { serverRecovery: true } : {}),
     phoneTest: directWatch
       ? 'ScorebugAppUITests/PhysicalStreamingTests/testOrdinaryDirectWatchSimulatorAdaptScoreStopAndExport'
       : lane === 'recovery720'
@@ -120,6 +125,7 @@ export function ordinaryTestEnvironment({
   watchFixture,
   recovery = false,
   recovery720 = false,
+  serverRecovery = false,
   watch = false,
   setup,
   recoveryControl,
@@ -168,6 +174,7 @@ export function ordinaryTestEnvironment({
     SCOREBUG_DEVICE_API_URL: setup.endpoint,
     SCOREBUG_DEVICE_TOKEN: setup.installationToken,
     SCOREBUG_ORDINARY_SIMULATOR: '1',
+    ...(serverRecovery ? { SCOREBUG_SERVER_RECOVERY: '1' } : {}),
     ...(directWatch ? { SCOREBUG_DIRECT_WATCH_SIMULATOR: '1' } : {}),
     ...(paired ? { SCOREBUG_PAIRED_ORDINARY_SIMULATOR: '1' } : {}),
     ...(recovery
@@ -446,6 +453,7 @@ async function main() {
     directWatch = false,
     recovery,
     recovery720,
+    serverRecovery = false,
     phoneTest,
     allowance,
     timeout,
@@ -632,6 +640,7 @@ async function main() {
         ...(options.publishPacing === undefined ? {} : { publishPacing: options.publishPacing }),
         ...(recovery ? { publisherRecovery: true } : {}),
         ...(recovery720 ? { decodedGeometry: true } : {}),
+        ...(serverRecovery ? { serverRecovery: true } : {}),
       },
       { signal: controller.signal },
     );
@@ -677,6 +686,7 @@ os.chmod(destination, 0o600)
             watchFixture,
             recovery,
             recovery720,
+            serverRecovery,
             watch: isWatch,
             setup: lab.setup,
             recoveryControl: lab.recoveryControl,
@@ -791,6 +801,32 @@ os.chmod(destination, 0o600)
           });
         },
       });
+    } else if (serverRecovery) {
+      const requested = new Set(),
+        restarts = [];
+      let restartFailure;
+      try {
+        await executeWorkflow(workflows[0], (output) => {
+          for (const component of ['api', 'worker']) {
+            if (
+              !requested.has(component) &&
+              output.includes(`SCOREBUG_RESTART_${component.toUpperCase()}`)
+            ) {
+              requested.add(component);
+              restarts.push(
+                lab.restart(component).catch((error) => {
+                  restartFailure = error;
+                  controller.abort();
+                }),
+              );
+            }
+          }
+        });
+      } finally {
+        await Promise.all(restarts);
+      }
+      if (restartFailure) throw restartFailure;
+      assert.deepEqual([...requested], ['api', 'worker'], 'Both process outages must run');
     } else
       await joinOrdinaryWorkflows(workflows.map((workflow) => () => executeWorkflow(workflow)));
     if (hasWatch) {

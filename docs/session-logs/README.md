@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September28 server recovery](2026-09-28-server-recovery.md) — native publishing survives API failure/restart, worker restart recovers automatically, clean archive remains continuous.
+
 - [September28 separate Watch vertical](2026-09-28-separate-watch-vertical.md) — three native simulator workflows, three scoring identities, Watch takeover/end, clean archive and final score in both output recordings.
 
 - [September28 bounded stream retirement](2026-09-28-bounded-stream-retirement.md) — remote Watch end preserves the stream tail; simulator A/V end mismatch reduced from454ms to under40ms with focused checks.

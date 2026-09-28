@@ -414,7 +414,7 @@ import XCTest
         }
     }
 
-    func testCurrentStatusFailureCanCompleteBeforeItsJoinedTeardown() async throws {
+    func testTransientStatusFailureKeepsPublisherAndExplicitStopStillJoins() async throws {
         let server = CaptureTestServer(), publisher = CaptureTestPublisher()
         let model = makeModel(server: server, publisher: publisher)
         var exported: Data?
@@ -422,7 +422,14 @@ import XCTest
         await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
         await server.setStatusFailure(true)
         await model.pollWorkerStatus()
-        XCTAssertEqual(model.localState, .failed)
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        let operations = await server.operations
+        XCTAssertEqual(operations, ["start"])
+        await server.setStatusFailure(false)
+        await model.pollControl()
+        XCTAssertEqual(model.localState, .publishing)
+        XCTAssertNil(model.message)
         await model.stopStreaming()
         XCTAssertNotNil(exported, "Error handling must not form a status → teardown → status await cycle")
     }
@@ -1622,6 +1629,64 @@ import XCTest
         XCTAssertEqual(model.activeRecordingID, "recording-1")
         XCTAssertEqual(model.localState, .failed)
         XCTAssertNotNil(model.message)
+    }
+
+    func testControlOutageKeepsPublisherAndRecoveryStillHonorsSelection() async throws {
+        for replacement in [false, true] {
+            let server = CaptureTestServer(), publisher = CaptureTestPublisher()
+            let model = makeModel(server: server, publisher: publisher)
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            await server.setOffline(true)
+            await model.pollControl()
+            XCTAssertEqual(model.localState, .publishing)
+            XCTAssertEqual(model.activeRecordingID, "recording-1")
+            XCTAssertNotNil(model.message)
+            await server.setOffline(false)
+            if replacement { await server.selectAnotherCapture() }
+            await model.pollControl()
+            if replacement {
+                XCTAssertNotEqual(model.localState, .publishing)
+            } else {
+                XCTAssertEqual(model.localState, .publishing)
+                XCTAssertNil(model.message)
+            }
+            let starts = await publisher.startCount
+            let operations = await server.operations
+            XCTAssertEqual(starts, 1)
+            XCTAssertEqual(operations, ["start"], "Recovery must not stop or restart an accepted broadcast")
+            await model.stopStreaming()
+        }
+    }
+
+    func testExplicitStopDuringControlOutageCannotResumeOnRecovery() async throws {
+        let server = CaptureTestServer(), model = makeModel(server: server)
+        await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+        await server.setOffline(true)
+        await model.pollControl()
+        XCTAssertEqual(model.localState, .publishing)
+        await model.stopStreaming()
+        await server.setOffline(false)
+        await model.pollControl()
+        XCTAssertNotEqual(model.localState, .publishing)
+        XCTAssertEqual(model.activeRecordingID, "recording-1")
+        let operations = await server.operations
+        XCTAssertEqual(operations, ["start", "stop"])
+    }
+
+    func testServerUnavailableKeepsStreamButAuthorizationFailureStopsIt() async throws {
+        for workerStatus in [false, true] {
+            for status in [401, 403, 429, 503] {
+                let server = CaptureTestServer(), model = makeModel(server: server)
+                await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+                await server.setHTTPFailure(status, path: workerStatus ? "/status" : "/media")
+                if workerStatus { await model.pollWorkerStatus() }
+                else { await model.pollControl(includeWorkerStatus: false) }
+                XCTAssertEqual(model.localState, status == 429 || status == 503 ? .publishing : .failed)
+                XCTAssertEqual(model.activeRecordingID, "recording-1")
+                await server.setHTTPFailure(nil)
+                await model.stopStreaming()
+            }
+        }
     }
 
     func testRelaunchReplacesLiveReportWithHigherSequenceInterruptedReport() async throws {
@@ -3011,6 +3076,9 @@ actor CaptureTestServer {
     var broadcast = MediaBroadcast(desired: .stopped, generation: 0, selection: nil)
     var receipts: [String: BroadcastOutcome] = [:]
     var offline = false
+    var httpFailure: Int?
+    var httpFailurePath = "/media"
+    func setHTTPFailure(_ value: Int?, path: String = "/media") { httpFailure = value; httpFailurePath = path }
     var failMedia = false
     func setFailMedia(_ value: Bool) { failMedia = value }
     var publishAttempts: [String?] = []
@@ -3041,6 +3109,9 @@ actor CaptureTestServer {
         requestCount += 1
         if offline { throw URLError(.notConnectedToInternet) }
         let path = request.url!.path
+        if let httpFailure, path.hasSuffix(httpFailurePath) {
+            return (Data("{\"error\":\"unavailable\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: httpFailure, httpVersion: nil, headerFields: nil)!)
+        }
         if failMedia && path.hasSuffix("/media") { throw URLError(.notConnectedToInternet) }
         let time = ISO8601DateFormatter().string(from: Date())
         let data: Data
