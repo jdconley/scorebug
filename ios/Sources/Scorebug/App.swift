@@ -38,14 +38,17 @@ struct ScorebugApp: App {
         _connectivity = StateObject(wrappedValue: connectivity)
         _phoneWatch = StateObject(wrappedValue: phoneWatch)
         let streaming = CaptureStreamingModel()
-        let film = FilmModel(sourceFactory: {
         #if DEBUG && targetEnvironment(simulator)
-        return try SimulatorCaptureSource.make(environment: ProcessInfo.processInfo.environment,
-            supportDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        let film = FilmModel(sourceFactory: {
+            try SimulatorCaptureSource.make(environment: ProcessInfo.processInfo.environment,
+                supportDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        }, sinkFactory: { directory, profile in
+            try SimulatorCaptureSource.makeSink(directory: directory, profile: profile,
+                environment: ProcessInfo.processInfo.environment)
+        }, durationReader: { SimulatorCaptureSource.acceptedDuration($0) })
         #else
-        return IOSCameraCaptureSource()
+        let film = FilmModel(sourceFactory: { IOSCameraCaptureSource() })
         #endif
-        })
         film.onCaptureChanged = { [weak streaming] context in streaming?.captureChanged(context, terminalStatus: nil) }
         film.onCaptureFinished = { [weak streaming] context, interrupted in streaming?.captureFinished(context, interrupted: interrupted) }
         _film = StateObject(wrappedValue: film)

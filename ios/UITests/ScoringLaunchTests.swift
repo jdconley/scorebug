@@ -47,8 +47,8 @@ final class ScoringLaunchTests: XCTestCase {
                 XCTAssertTrue(home.waitForExistence(timeout: 10))
                 XCTAssertEqual(home.value as? String, "0")
                 tapWhenEnabled(home)
-                if scenario == "lost-reply" {
-                    exerciseLostReply(app)
+                if scenario == "lost-reply" || scenario == "pending-takeover" {
+                    exerciseLostReply(app, takeover: scenario == "pending-takeover")
                     return
                 }
                 XCTAssertTrue(waitForValue("1", element: home))
@@ -79,7 +79,7 @@ final class ScoringLaunchTests: XCTestCase {
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
     @MainActor
-    private func exerciseLostReply(_ app: XCUIApplication) {
+    private func exerciseLostReply(_ app: XCUIApplication, takeover: Bool) {
         let saved = app.staticTexts["Your last action is saved. The server must confirm it before another point can be sent."]
         XCTAssertTrue(saved.waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertFalse(app.buttons["scoring.homePoint"].isEnabled)
@@ -91,6 +91,13 @@ final class ScoringLaunchTests: XCTestCase {
         print("SCOREBUG_SCORING_RESTORE_CONNECTION")
         XCTAssertTrue(waitForValue("1", element: app.buttons["scoring.homePoint"]), app.debugDescription)
         app.swipeUp()
+        if takeover {
+            let control = app.buttons["scoring.takeover"]
+            XCTAssertTrue(control.waitForExistence(timeout: 10), "Fresh authority must replace the older point receipt snapshot.")
+            XCTAssertFalse(app.buttons["scoring.homePoint"].isEnabled)
+            XCTAssertFalse(saved.exists)
+            tapWhenEnabled(control)
+        }
         tapWhenEnabled(app.buttons["scoring.undo"])
         XCTAssertTrue(waitForValue("0", element: app.buttons["scoring.homePoint"]))
         XCTAssertFalse(saved.exists)

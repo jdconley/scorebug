@@ -1,6 +1,7 @@
 import { mkdtemp, rm, mkdir, writeFile, cp } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { takeOverPendingScore } from './scoring-takeover-fault.mjs';
 import { startScoringLostReplyProxy } from './scoring-lost-reply-proxy.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +17,8 @@ const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-15';
 const simulators = [];
 const twoPhones = process.argv.includes('--two-phones');
 const workerStatus = process.argv.includes('--worker-status');
-const lostReply = process.argv.includes('--lost-reply');
+const pendingTakeover = process.argv.includes('--pending-takeover');
+const lostReply = process.argv.includes('--lost-reply') || pendingTakeover;
 const uiOnly = process.argv.includes('--ui-only');
 assert(
   [twoPhones, workerStatus, lostReply].filter(Boolean).length <= 1,
@@ -62,12 +64,18 @@ function run(command, args, { timeout = 120_000, capture = false, cleanup = fals
     activeProcess = child;
     let output = '';
     let timedOut = false;
+    let callbackFailure;
     child.stdout?.on('data', (chunk) => {
       output = (output + chunk).slice(-8_000_000);
       if (!capture) process.stdout.write(chunk);
       if (proxy && !restored && output.includes('SCOREBUG_SCORING_RESTORE_CONNECTION')) {
         restored = true;
-        proxy.resume();
+        try {
+          proxy.resume();
+        } catch (error) {
+          callbackFailure = error;
+          stopChild();
+        }
       }
     });
     const timer = setTimeout(() => {
@@ -82,7 +90,8 @@ function run(command, args, { timeout = 120_000, capture = false, cleanup = fals
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       activeProcess = undefined;
-      if (code === 0) resolve(output.trim());
+      if (callbackFailure) reject(callbackFailure);
+      else if (code === 0) resolve(output.trim());
       else reject(new Error(`${command} ${timedOut ? 'timed out' : `failed (${code ?? signal})`}`));
     });
   });
@@ -151,7 +160,13 @@ try {
   }
   databaseDirectory = artifact ?? (await mkdtemp(join(tmpdir(), 'scorebug-apple-')));
   api = await startScoringTestServer(join(databaseDirectory, 'matches.sqlite'));
-  if (lostReply) proxy = await startScoringLostReplyProxy(api.baseURL);
+  if (lostReply)
+    proxy = await startScoringLostReplyProxy(
+      api.baseURL,
+      pendingTakeover
+        ? { afterApplied: (context) => takeOverPendingScore(api.baseURL, context) }
+        : {},
+    );
   const runtimes = JSON.parse(
     await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], { capture: true }),
   );
@@ -211,7 +226,13 @@ try {
   } else {
     await testSimulator(
       first,
-      lostReply ? 'lost-reply' : workerStatus ? 'worker-status' : 'lifecycle',
+      pendingTakeover
+        ? 'pending-takeover'
+        : lostReply
+          ? 'lost-reply'
+          : workerStatus
+            ? 'worker-status'
+            : 'lifecycle',
     );
   }
   if (lostReply) {
@@ -230,10 +251,27 @@ try {
       const commands = db
         .prepare('SELECT command_id, request, outcome FROM commands ORDER BY rowid')
         .all();
-      const awards = commands.filter((c) => JSON.parse(c.request).operation.type === 'award_point');
+      const awards = commands.filter(
+        (c) =>
+          JSON.parse(c.request).operation.type === 'award_point' && JSON.parse(c.outcome).accepted,
+      );
       assert.equal(awards.length, 1);
       assert.equal(awards[0].command_id, audit.lostCommand.commandId);
-      assert.equal(commands.length, 3, 'One point, undo, and end; no duplicate scoring mutation');
+      assert.equal(commands.length, pendingTakeover ? 7 : 3, 'Only the specified scoring commands');
+      if (pendingTakeover) {
+        assert.deepEqual(
+          commands
+            .filter((c) => !JSON.parse(c.outcome).accepted)
+            .map((c) => JSON.parse(c.outcome).error)
+            .sort(),
+          ['revision_conflict', 'scorer_changed'],
+        );
+        assert.equal(
+          commands.filter((c) => JSON.parse(c.request).operation.type === 'take_over').length,
+          2,
+        );
+        assert.equal(audit.lostCommand.concurrent.takeover.snapshot.scorer.epoch, 2);
+      }
       await writeFile(
         join(artifact, 'recovery-evidence.json'),
         JSON.stringify({ audit, commands }, null, 2),

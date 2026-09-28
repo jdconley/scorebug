@@ -24,8 +24,8 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 
 | Area | Implemented | Remaining acceptance |
 |---|---|---|
-| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone and lost-reply/relaunch workflows pass; concurrent takeover/stale-command recovery remains |
-| Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
+| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone, lost-reply/relaunch and pending-command takeover/stale rejection pass; consolidated checkpoint remains |
+| Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Native source/storage/queue failures recover/export; active-stream interruption and consolidated checkpoint remain |
 | SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption; actual service operation |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p→minimum→720p controller/geometry passes; forced collapse still loses live A/V. Higher profiles and sustained operation unqualified |
 | Native Watch | Setup, scoring, durable recovery, direct/companion routing and UI implemented | Two-phone plus separate Watch takeover/scoring/relaunch/end passes with real HTTP;41mm controls exercised. Real WatchConnectivity simulator registration remains unqualified |
@@ -43,7 +43,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Exercise native phone B creating a match, phone A discovering/joining to record/publish, and phone B scoring/undoing without capture permissions. Both native workflows and durable role checks pass on iPhone14 simulators.
 - [x] Extend separate native phone scoring through Watch B takeover, undo, relaunch and end while phone A records/streams; both phones observe the changes and lose scoring authority. All controls are exercised on41mm Series7. Real companion transport and broader device qualification remain deferred.
 - [x] Verify native lost-reply recovery against the real API: persist the uncertain applied point, relaunch offline, reconcile its original receipt, undo and end with exactly one durable outcome per command. Native UI/API assertions pass; post-test data-copy limitation is recorded in the session log.
-- [ ] Verify takeover during an unresolved command and stale-command recovery against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.
+- [x] Verify takeover during an unresolved command and stale-command recovery against the real API with native restoration. One applied point, two authority transfers and two rejected stale attempts retain exactly the intended durable outcomes; native controls reflect current ownership.
 - [ ] Complete one consolidated simulator regression checkpoint covering native phone, Watch, archive recovery/export and the real local media pipeline. Separate any unsupported simulator OS transport from application feature results.
 
 ## 2. Make adaptive streaming reliable
@@ -65,9 +65,10 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 
 - [x] Keep native recording/publishing through API restart and graceful worker restart; recover the current score and both output recordings automatically. Simulator archive preserves every source frame through both outages.
 - [x] Verify native recovery after hard worker SIGKILL with real API/relay/output recordings. Clean archive preserves every source frame, output recovers automatically, and both final MP4s show the correct score with A/V ends within26ms.
-- [ ] Qualify source interruption. Interrupted output tails retain508–548ms of audio beyond final video in the measured hard-crash run; improve or establish a tested bound for that behavior.
+- [x] Qualify local recording through native source interruption, low-capacity storage and blocked-writer queue pressure. All three recover/export continuous30fps H264/AAC with no audio gaps and A/V ends within28ms; source-interruption tail loss is2seconds.
+- [ ] Verify publishing cleanup/restart through source interruption. Interrupted output tails retain508–548ms of audio beyond final video in the measured hard-crash run; improve or establish a tested bound for that behavior.
 - [x] Exercise full-app offline recording, forced termination/relaunch, native export/playback and decoded continuity on iOS17.5/18.5/26.2; reuse the preserved results in [native recording](../../native-film-app.md).
-- [ ] Add only missing full-app low-space/queue-pressure and source-interruption cases; retain recovery tail-loss budget≤5seconds and preserve existing outputs on error.
+- [x] Exercise full-app low-space/queue-pressure and source-interruption recovery/export without filling the disk; preserve original segments and outputs. Broader timing/load and physical interruptions remain in hardware acceptance.
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [x] Report configured backend/output and measured encoder initialization; scope availability to fresh worker heartbeats. Native start checks worker readiness/output identity without stopping recording. Sustained performance remains explicitly unqualified; input profile/throughput qualification stays open.
 - [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Generation/configuration checks pass; actual launchd service operation remains to verify.

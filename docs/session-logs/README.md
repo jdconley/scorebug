@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September28 scoring and recording faults](2026-09-28-scoring-and-recording-faults.md) — pending-command takeover/stale rejection and one three-case native recording recovery batch.
+
 - [September28 native lost reply](2026-09-28-native-lost-reply.md) — real native outbox restoration through lost reply/relaunch, exact durable command/receipt verification, faster UI-only runner.
 
 - [September28 earlier pressure and crash](2026-09-28-earlier-pressure-and-crash.md) — focused sender-retention warning, existing-workflow hard-crash mode, plan reconciliation.

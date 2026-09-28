@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
 /** Test-only loopback fault: commit one real point, lose its reply, then hold an outage. */
-export async function startScoringLostReplyProxy(baseURL) {
+export async function startScoringLostReplyProxy(baseURL, { afterApplied } = {}) {
   const upstream = new URL(baseURL);
   assert(
     upstream.protocol === 'http:' &&
@@ -65,6 +65,12 @@ export async function startScoringLostReplyProxy(baseURL) {
           operation: command.operation,
           score: receipt.snapshot.score,
         };
+        if (afterApplied)
+          lostCommand.concurrent = await afterApplied({
+            command,
+            token: request.headers.authorization?.replace(/^Bearer /, ''),
+            receipt,
+          });
         phase = 'blocked';
         event.replyLost = true;
         response.destroy();

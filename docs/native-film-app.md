@@ -104,7 +104,7 @@ valid evidence for their stated scope; their test counts are historical.
 ## Remaining work
 
 Hardware acceptance is deferred until simulator-testable features work together.
-Missing full-app checks are low-space/queue pressure and source interruption.
+Full-app source interruption, low storage and writer queue-pressure recovery/export now pass in `recording-faults-20260928-fixed`; all three saved MP4s fully decode with continuous30fps frames and28ms A/V end difference. Source interruption leaves a measured2-second tail loss. These fault cases ran offline; publishing cleanup/restart through interruption remains to verify.
 Severe upload congestion still damages live output while the clean archive stays
 continuous. Sustained profiles, physical interruptions, radio routing, thermal
 behavior and long-duration simultaneous encoding remain unqualified. Current
