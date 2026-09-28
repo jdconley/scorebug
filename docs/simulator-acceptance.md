@@ -21,6 +21,7 @@ production behavior changes, not when unrelated documentation or fixtures change
 | API and worker restart | `ordinary-native-QOuplL/native-media-verification/` and `ordinary-native-SvL3gk/native-media-verification/` | Automatic recovery passed, including worker SIGKILL; native archive continuous. Hard-crash interrupted outputs retain 508–548 ms extra audio. |
 | Remote Watch end and stream drain | `ordinary-native-q9n288` | Passed; archive and live A/V ends within 40 ms. |
 | Adaptive upload | `ordinary-native-IZI72F` | Start-low, increase, minimum fallback and recovery work. Clean archive continuous. Severe-collapse live media **fails**: 87 missing frame IDs, 16 audio gaps, maximum video gap 2.4 seconds. |
+| Buffered adaptation scheduling and bounded stop | `ordinary-native-kStE7J` | Full720p increase/fallback/recovery, transport, geometry and transitions pass; archive12,991 consecutive frames. Stop ends within97ms A/V. Larger buffering worsens severe-congestion media (149missing IDs,15audio gaps,4.033s maxgap), so production timing is restored. Packet analysis is incomplete due to truncated ranges. |
 | Local portable server stack | `vps-stack-wozlWz`, `backend-capabilities-20260928`, `device-lab-P7D4bv/macos-service-result.json` | Container persistence/managed relay and encoder initialization passed. Actual Mac launchd worker produces both decoded MP4s with score 1–0 and A/V ends within71ms; clean worker exit and owned descendant cleanup verified. Sustained capacity and external hosts remain open. |
 
 ## Tested platform boundaries

@@ -35,6 +35,7 @@ for (const [profile, milliseconds] of [
   ['strict1500-v1', 1500],
   ['broadcast-reliability2000-v1', 2000],
   ['broadcast-reliability3000-v1', 3000],
+  ['broadcast-reliability6000-v1', 6000],
 ]) {
   test(`${profile} composes complete owned route with exact independent peer latency`, () => {
     for (const peer of ['400', '700', '1000']) {

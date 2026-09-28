@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import { qualifyRateLedger } from './rate-ledger-qualification.mjs';
 import { qualifyDatagramTimeline } from './datagram-timeline-qualification.mjs';
+import { timingContractForProfile } from './native-timing-contract.mjs';
+
+export function ordinarySourceAgeLimit(diagnostic) {
+  if (diagnostic.timingProfileID === undefined) return 5;
+  const contract = timingContractForProfile(diagnostic.timingProfileID);
+  assert.equal(diagnostic.decoderBudgetMilliseconds, String(contract.decoderBudgetMs));
+  assert.equal(
+    diagnostic.captureWindowMaximumAgeMilliseconds,
+    String(contract.maximumCaptureWindowEvaluationAgeMs),
+  );
+  return Math.max(5, contract.maximumCaptureWindowEvaluationAgeMs / 1000);
+}
 
 /** Complete owned UDP accounting; does not infer native adaptation or media delivery. */
 export function qualifyOrdinaryRecoveryTransportEvidence({ snapshot, ledger, audit }) {
@@ -288,7 +300,7 @@ function qualifyNative({ native, audit }, recovery720, physical = false) {
     assert(scalar(d.policyAcknowledgedAtUptimeSeconds) <= sessionObserved);
     const sourceEnd = scalar(d.policyAcceptedSourceWindowEnd);
     assert(
-      sourceEnd <= sessionObserved && sessionObserved - sourceEnd <= 5,
+      sourceEnd <= sessionObserved && sessionObserved - sourceEnd <= ordinarySourceAgeLimit(d),
       'Stale accepted source',
     );
     ordinal(d.policyAppliedRevision);

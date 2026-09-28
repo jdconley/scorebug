@@ -2187,7 +2187,7 @@ struct CandidateQualityFixture: Sendable {
         var ingress = try LiveIngressObservationAccumulator(scope: scope, monotonicAnchor: 100, maxItems: 4, maxBytes: 100)
         ingress.updateOccupancy(items: unhealthy ? 4 : 0, bytes: unhealthy ? 40 : 0, phase: .admitting, at: 100)
         var thermal = PublishingThermalTracker(), transport = PublishingTransportStatisticsTracker()
-        for index in max(100, Int(native.now.rounded(.down)) - 7)...Int(max(115, native.now.rounded(.down))) {
+        for index in max(100, min(Int(start.rounded(.down)) - 1, Int(native.now.rounded(.down)) - 7))...Int(max(115, native.now.rounded(.down))) {
             let time = Double(index)
             thermal.observe(.init(state: .nominal, sampledAt: time))
             transport.observe(.init(publishingGeneration: 7, sampledAt: time, elapsedMilliseconds: Int64(index * 1000),
@@ -2212,6 +2212,7 @@ struct CandidateQualityFixture: Sendable {
                      deferHealthEvaluation: Bool = false, initialProfile: PublishingVideoProfile = .low240,
                      unhealthySource: Bool = false, priorHealthEnd: Double? = nil, includeHighProfiles: Bool = false, useProductionProfiles: Bool = false,
                      requiresSharedCandidateRecovery: Bool = false,
+                     timingProfile: StreamingTimingProfile = .strict1500,
                      guarded: PublishingQualitySession.GuardedMutations? = nil,
                      appliedTransitionExport: (@Sendable (Data) async -> Void)? = nil) async throws -> Self {
         let native = CandidateQualityNative(initialProfile: initialProfile)
@@ -2230,7 +2231,7 @@ struct CandidateQualityFixture: Sendable {
             .init(id: "2160p30", width: 3840, height: 2160, minimumBitrate: 24_000_000, maximumBitrate: 24_000_000)] : []),
             attemptID: attempt, initial: .init(profileID: initialProfile.rawValue, videoBitrate: initialProfile.bitRate),
             strategy: .measuredCandidateTrials, behavior: .progressive, requiresSharedCandidateRecovery: requiresSharedCandidateRecovery,
-            uptime: { native.now }, instant: { native.instant }, appliedTransitionExport: appliedTransitionExport)
+            timingProfile: timingProfile, uptime: { native.now }, instant: { native.instant }, appliedTransitionExport: appliedTransitionExport)
         try await owner.bootstrap()
         let state = await owner.snapshot
         let applied = PublishingQualityTelemetry.Applied(attemptID: attempt, revision: 0, settings: try XCTUnwrap(state.applied),

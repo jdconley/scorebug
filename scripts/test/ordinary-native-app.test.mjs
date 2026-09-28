@@ -43,7 +43,7 @@ test('ordinary upload budget comparison is explicit and restricted to recovery72
       ),
     );
   }
-  for (const value of ['119', '2001', '7e2', '0700', '700.1']) {
+  for (const value of ['119', '4001', '7e2', '0700', '700.1']) {
     assert.throws(() =>
       ordinaryNativeOptions(
         [...base, '--lane', 'recovery720', '--publish-peer-latency-ms', value],
@@ -380,6 +380,16 @@ test(
           `
 var d: [String:String] = ["sessionObservedAtUptimeSeconds":"100", "observedAtUptimeSeconds":"100", "driverClosed":"false", "sessionClosed":"false", "sessionBusy":"false", "policyAttemptID":"attempt", "policySourceScopeKey":String(repeating:"b",count:64), "policyOwnerKey":String(repeating:"a",count:64), "policyAppliedProfile":"360p30", "policyAppliedBitrate":"600000", "policyAppliedRevision":"1", "policyAcknowledgedAtUptimeSeconds":"95", "policyAcceptedSourceSequence":"4", "policyAcceptedSourceWindowEnd":"99", "policyTrialActive":"true", "policyTrialRollbackRequired":"false", "policyTrialHealthyCoverageSeconds":"5", "policyRecommendationPending":"false", "policyApplicationPending":"false", "policyMinimumResetRequired":"false"]
 func sample(_ value: [String:String]) throws -> OrdinaryRecoverySample { try OrdinaryRecoverySample(value, started:100, ended:100.2, previousReadEnd:99) }
+var delayed = d
+ delayed["policyAcceptedSourceWindowEnd"]="94"
+ do { _=try sample(delayed); fatalError("Legacy source age widened") } catch {}
+ delayed["timingProfileID"]="broadcast-reliability6000-v1"
+ delayed["decoderBudgetMilliseconds"]="6000"
+ delayed["captureWindowMaximumAgeMilliseconds"]="6500"
+ let delayedSample = try sample(delayed); assert(delayedSample.owner != nil)
+ for (key,value) in [("timingProfileID","unknown"),("decoderBudgetMilliseconds","3000"),("captureWindowMaximumAgeMilliseconds","10000"),("policyAcceptedSourceWindowEnd","93.4")] {
+ var bad=delayed; bad[key]=value; do { _=try sample(bad); fatalError("Invalid timing contract: " + key) } catch {}
+ }
 let probation = try sample(d)
 assert(probation.isProbation)
 assert(probation.acknowledges(profile:"360p30", bitrate:600000, after:94, newerThan:0))

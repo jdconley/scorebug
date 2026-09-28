@@ -108,7 +108,7 @@ final class StreamingTimingProfileTests: XCTestCase {
         }
     }
     func testExperimentalMediaAgeNeverExtendsCandidateResultOrProbeExpiry() throws {
-        for timing in [StreamingTimingProfile.broadcastReliability2000, .broadcastReliability3000] {
+        for timing in [StreamingTimingProfile.broadcastReliability2000, .broadcastReliability3000, .broadcastReliability6000] {
             for now in [6.000001, 6.1] {
                 var policy = try controller(timing)
                 _ = try policy.evaluate(health(observed: now), at: now)

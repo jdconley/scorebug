@@ -9,6 +9,29 @@ actor PublishingOwnedMeasurementLease {
     struct SourceCoverage: Sendable {
         let sequence: UInt64
         let start: Double, end: Double, observedAt: Double
+        // Forecast only when to collect the four-second cost. A real later source
+        // report must still overlap it and arrive within the unchanged two-second
+        // expiry. Use the current arrival phase (including report delivery lag),
+        // and never hold the native probe longer than one observed source period.
+        func candidateStartDelay(at now: Double) throws -> Double {
+            let period = end - start
+            guard [start, end, observedAt, now].allSatisfy({ $0.isFinite }),
+                  start >= 0, (1...QualityController.maximumWindowDuration).contains(period),
+                  end <= observedAt, observedAt <= now, now - observedAt <= 2 else {
+                throw PublishingQualitySession.Failure.staleAdvice
+            }
+            let horizon = 4.0 + 2.0, margin = 0.25
+            for step in 1...7 {
+                let offset = Double(step) * period
+                let earliest = max(now, now + offset - horizon + margin)
+                let latest = min(now + period, end + offset - margin)
+                if earliest <= latest {
+                    if earliest == now { return 0 }
+                    return (earliest + latest) / 2 - now
+                }
+            }
+            throw PublishingQualitySession.Failure.staleAdvice
+        }
         #if DEBUG
         var object: [String: Any] { ["sequence": String(sequence), "start": start, "end": end, "observedAt": observedAt] }
         #endif
@@ -218,7 +241,7 @@ actor PublishingOwnedMeasurementLease {
     // Observed source progress schedules collection without granting admission
     // authority or extending evidence age. Production waits after final settling;
     // fixed laboratory plans retain their lower-stage wait.
-    private func awaitNextSourceCoverage() async throws {
+    @discardableResult private func awaitNextSourceCoverage() async throws -> SourceCoverage {
         #if DEBUG
         currentDiagnostic.phase = "sourceWaitStarted"
         record("sourceWaitStarted", fields: ["deadline": sourceDeadline])
@@ -245,7 +268,7 @@ actor PublishingOwnedMeasurementLease {
                 currentDiagnostic.phase = "sourceReady"
                 record("sourceReady", fields: ["source": coverage.object])
                 #endif
-                return
+                return coverage
             }
             try await Task.sleep(for: .milliseconds(100))
             try await renew()
@@ -283,7 +306,15 @@ actor PublishingOwnedMeasurementLease {
         }
         if plan.bitRates.count == 1, sourceWaitPlacement == .beforeFinalStage { try await awaitNextSourceCoverage() }
         try await hold(for: plan.holds[plan.holds.count - 1])
-        if sourceWaitPlacement == .afterFinalHold { try await awaitNextSourceCoverage() }
+        if sourceWaitPlacement == .afterFinalHold {
+            let coverage = try await awaitNextSourceCoverage()
+            let delay = try coverage.candidateStartDelay(at: ProcessInfo.processInfo.systemUptime)
+            #if DEBUG
+            currentDiagnostic.phase = "sourcePhaseAlignment"
+            record("sourcePhaseAlignment", fields: ["delay": delay, "source": coverage.object])
+            #endif
+            try await hold(for: delay)
+        }
         guard let sample else { throw PublishingQualitySession.Failure.notReady }
         binding = PublishingProbeObservation(sample); boundAt = ProcessInfo.processInfo.systemUptime
         guard let pressure = publisher.pressure, pressure.valid else { throw PublishingQualitySession.Failure.notReady }

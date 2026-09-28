@@ -180,6 +180,7 @@ function verify(audit, phase, physical) {
     'strict1500-v1': 1500,
     'broadcast-reliability2000-v1': 2000,
     'broadcast-reliability3000-v1': 3000,
+    'broadcast-reliability6000-v1': 6000,
   }[timing?.profileId];
   assert(budget, 'Unknown timing profile');
   assert.deepEqual(timing, {

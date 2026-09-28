@@ -17,6 +17,7 @@ export const timingContracts = Object.freeze({
   'strict1500-v1': profile('strict1500-v1', 1500, 2000),
   'broadcast-reliability2000-v1': profile('broadcast-reliability2000-v1', 2000, 2500),
   'broadcast-reliability3000-v1': profile('broadcast-reliability3000-v1', 3000, 3500),
+  'broadcast-reliability6000-v1': profile('broadcast-reliability6000-v1', 6000, 6500),
 });
 export function timingContractForProfile(profileId = 'strict1500-v1') {
   assert(

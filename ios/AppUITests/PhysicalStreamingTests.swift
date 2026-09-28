@@ -35,11 +35,19 @@ struct OrdinaryRecoverySample {
         let scope = diagnostic["policySourceScopeKey"] ?? ""
         let sequence = diagnostic["policyAcceptedSourceSequence"].flatMap(Int64.init)
         let windowEnd = diagnostic["policyAcceptedSourceWindowEnd"].flatMap(Double.init)
+        var maximumSourceAge = 5.0
+        if let profile = diagnostic["timingProfileID"] {
+            let budgets = ["strict1500-v1": 1500, "broadcast-reliability2000-v1": 2000,
+                           "broadcast-reliability3000-v1": 3000, "broadcast-reliability6000-v1": 6000]
+            guard let budget = budgets[profile], diagnostic["decoderBudgetMilliseconds"] == String(budget),
+                  diagnostic["captureWindowMaximumAgeMilliseconds"] == String(budget + 500) else { throw Invalid.diagnostic }
+            maximumSourceAge = max(5, Double(budget + 500) / 1000)
+        }
         if let owner {
             guard owner.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
                   scope.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
                   let sequence, sequence >= 0, let windowEnd, windowEnd.isFinite,
-                  windowEnd >= 0, windowEnd <= observed, observed - windowEnd <= 5 else { throw Invalid.diagnostic }
+                  windowEnd >= 0, windowEnd <= observed, observed - windowEnd <= maximumSourceAge else { throw Invalid.diagnostic }
         }
         self.diagnostic = diagnostic; self.started = started; self.ended = ended
         self.attempt = attempt; self.scope = scope; self.owner = owner; self.revision = revision

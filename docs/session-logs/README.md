@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 buffered candidate scheduling](2026-09-28-buffered-candidate-scheduling.md) — bounded production phase alignment and focused regression.
+
 - [September28 transport recovery budget](2026-09-28-transport-recovery-budget.md) — rejected long-buffer candidates expose source/candidate phase mismatch; bounded SRT stop fix retained.
 
 - [September28 source recovery and Mac service](2026-09-28-source-recovery-and-mac-service.md) — live source interruption/restart, actual launchd output, consolidated simulator checkpoint and native CI.

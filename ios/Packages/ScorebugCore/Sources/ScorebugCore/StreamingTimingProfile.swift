@@ -8,8 +8,11 @@ public enum StreamingTimingProfile: String, CaseIterable, Sendable {
     case broadcastReliability2000 = "broadcast-reliability2000-v1"
     case broadcastReliability3000 = "broadcast-reliability3000-v1"
 
+    /// Explicit buffered scheduling experiments; not the production selection.
+    case broadcastReliability6000 = "broadcast-reliability6000-v1"
+
     public var decoderBudgetMs: Int {
-        switch self { case .strict1500: 1500; case .broadcastReliability2000: 2000; case .broadcastReliability3000: 3000 }
+        switch self { case .strict1500: 1500; case .broadcastReliability2000: 2000; case .broadcastReliability3000: 3000; case .broadcastReliability6000: 6000 }
     }
     public var maximumCaptureWindowEvaluationAgeMs: Int { decoderBudgetMs + 500 }
     public var decoderBudget: Double { Double(decoderBudgetMs) / 1000 }

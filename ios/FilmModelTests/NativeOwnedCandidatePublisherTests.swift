@@ -262,6 +262,26 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testProductionCandidateOverlapsFiveSecondSourceWithDelayedReceiverBounds() async throws {
         try await exerciseOwnedApplication(.productionSourceCadence)
     }
+    func testCandidateSchedulingIsBoundedAndRejectsUnusableReports() throws {
+        typealias Coverage = PublishingOwnedMeasurementLease.SourceCoverage
+        XCTAssertEqual(try Coverage(sequence: 4, start: 88.7, end: 93.7, observedAt: 95).candidateStartDelay(at: 95), 0)
+        let delayed = Coverage(sequence: 4, start: 84.82, end: 89.82, observedAt: 94.98)
+        let wait = try delayed.candidateStartDelay(at: 95)
+        XCTAssertGreaterThan(wait, 4)
+        XCTAssertLessThan(wait, 4.57)
+        XCTAssertLessThan(95 + wait, delayed.end + 10)
+        XCTAssertLessThan(105, 95 + wait + 4 + 2)
+        for coverage in [
+            Coverage(sequence: 4, start: 84, end: 89, observedAt: 95),
+            Coverage(sequence: 4, start: 88.7, end: 93.7, observedAt: 92),
+            Coverage(sequence: 4, start: 88.7, end: 93.7, observedAt: 96),
+            Coverage(sequence: 4, start: 80, end: 93.7, observedAt: 95),
+            Coverage(sequence: 4, start: .nan, end: 93.7, observedAt: 95)
+        ] { XCTAssertThrowsError(try coverage.candidateStartDelay(at: 95)) }
+    }
+    func testBufferedProductionCandidateOverlapsWithoutExtendingExpiry() async throws {
+        try await exerciseOwnedApplication(.bufferedProductionSourceCadence)
+    }
     func testFixedProductionRatesRetainOriginalWaitAndRejectStaleSource() async throws {
         try await exerciseOwnedApplication(.fixedProductionSourceCadence)
     }
@@ -300,17 +320,18 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
     func testAcknowledgedBaselineChangeClearsLearnedProbeDemand() async throws {
         try await exerciseOwnedApplication(.baselineChangeDemand)
     }
-    private enum ApplicationOutcome { case laboratoryDemand, baselineChangeDemand, overCapDemand, staleDemand, measuredDemand, productionPlan, continuousPlan, sourceCadence, productionSourceCadence, fixedProductionSourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
+    private enum ApplicationOutcome { case bufferedProductionSourceCadence, laboratoryDemand, baselineChangeDemand, overCapDemand, staleDemand, measuredDemand, productionPlan, continuousPlan, sourceCadence, productionSourceCadence, fixedProductionSourceCadence, accepted, profileRejected, rateRejected, contextRejected, heldProfileRejection, heldRejectionStop }
     @MainActor private func exerciseOwnedApplication(_ outcome: ApplicationOutcome) async throws {
         let router = OwnedMutationRouter()
         let fixedProductionCadence = outcome == .fixedProductionSourceCadence
-        let productionCadence = outcome == .productionSourceCadence || fixedProductionCadence
+        let bufferedCadence = outcome == .bufferedProductionSourceCadence
+        let productionCadence = outcome == .productionSourceCadence || fixedProductionCadence || bufferedCadence
         let sourceCadence = outcome == .sourceCadence || productionCadence
-        let reportLag = productionCadence ? 1.3 : 1.8
+        let reportLag = bufferedCadence ? 5.18 : productionCadence ? 1.3 : 1.8
         let measuredDemand = outcome == .measuredDemand || outcome == .overCapDemand || outcome == .staleDemand || outcome == .laboratoryDemand || outcome == .baselineChangeDemand
         let heldRejection = outcome == .heldProfileRejection || outcome == .heldRejectionStop
         let baseline: PublishingVideoProfile = heldRejection || outcome == .baselineChangeDemand ? .low360 : .low240
-        let f = try await CandidateQualityFixture.make(initialProfile: baseline, guarded: router.guarded)
+        let f = try await CandidateQualityFixture.make(initialProfile: baseline, timingProfile: bufferedCadence ? .broadcastReliability6000 : .strict1500, guarded: router.guarded)
         let start = ProcessInfo.processInfo.systemUptime
         f.native.useActualInstant()
         f.native.setNow(start)
@@ -364,7 +385,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
             }
             var nextSourceReport = 5.0, sequence: Int64 = 4
             var diagnostics = fresh.1
-            while ProcessInfo.processInfo.systemUptime - start < 12 {
+            while ProcessInfo.processInfo.systemUptime - start < (bufferedCadence ? 18 : 12) {
                 f.native.setNow(ProcessInfo.processInfo.systemUptime)
                 var source: WorkerSourceIntervalObservation?
                 if f.native.now - start >= nextSourceReport {
@@ -623,7 +644,7 @@ final class NativeOwnedCandidatePublisherTests: XCTestCase {
         case .contextRejected:
             XCTAssertFalse(state.isClosed); XCTAssertFalse(state.isBusy); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000"])
-        case .laboratoryDemand, .baselineChangeDemand, .overCapDemand, .staleDemand, .measuredDemand, .productionPlan, .continuousPlan, .sourceCadence, .productionSourceCadence, .fixedProductionSourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
+        case .bufferedProductionSourceCadence, .laboratoryDemand, .baselineChangeDemand, .overCapDemand, .staleDemand, .measuredDemand, .productionPlan, .continuousPlan, .sourceCadence, .productionSourceCadence, .fixedProductionSourceCadence, .heldProfileRejection, .heldRejectionStop: XCTFail("Handled above")
         case .rateRejected:
             XCTAssertTrue(state.isClosed); XCTAssertEqual(state.revision, 0)
             XCTAssertEqual(f.native.calls, ["rate:350000", "profile:360p30"])
