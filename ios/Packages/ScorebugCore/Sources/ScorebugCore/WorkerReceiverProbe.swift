@@ -71,14 +71,14 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
 
     /// Mirrors the bounded authenticated API envelope, independently of decoding.
     var validated: (generation: UInt64, observed: UInt64, last: UInt64?)? {
-        let maximumBitRate = convention == "mpegts-null-probe-v2" || convention == "mpegts-null-probe-v3" ? 12_000_000 : 2_000_000
-        let campaignCap: UInt64 = 16 * 1024 * 1024
+        let maximumBitRate = convention == "mpegts-null-probe-v4" ? 48_000_000 : convention == "mpegts-null-probe-v2" || convention == "mpegts-null-probe-v3" ? 12_000_000 : 2_000_000
+        let campaignCap: UInt64 = (convention == "mpegts-null-probe-v4" ? 64 : 16) * 1024 * 1024
         guard invalidReason == nil,
               WorkerPublication.isCanonicalUUID(id), id != "00000000-0000-0000-0000-000000000000",
               let generation = Self.integer(publishingGeneration), generation > 0,
               (1...maximumBitRate).contains(bitRate), (0...6).contains(pendingPackets),
-              let messages = Self.integer(deliveredMessages, maximum: 16 * 1024 * 1024 / 1316),
-              let bytes = Self.integer(deliveredPayloadBytes, maximum: 16 * 1024 * 1024),
+              let messages = Self.integer(deliveredMessages, maximum: campaignCap / 1316),
+              let bytes = Self.integer(deliveredPayloadBytes, maximum: campaignCap),
               bytes == messages * 1316, nextSequence == deliveredMessages,
               let observed = Self.integer(observedAtNanoseconds, maximum: 86_400_000_000_000) else { return nil }
         let total: UInt64
@@ -91,10 +91,10 @@ public struct ReceiverProbeSnapshot: Codable, Equatable, Sendable {
         case "mpegts-null-probe-v2":
             guard campaign == nil, campaignDeliveredPayloadBytes == nil,
                   let stage, (1...32).contains(stage), let text = totalDeliveredPayloadBytes,
-                  let cumulative = Self.integer(text, maximum: 16 * 1024 * 1024),
+                  let cumulative = Self.integer(text, maximum: campaignCap),
                   cumulative % 1316 == 0, cumulative >= bytes else { return nil }
             total = cumulative; publicationCap = campaignCap
-        case "mpegts-null-probe-v3":
+        case "mpegts-null-probe-v3", "mpegts-null-probe-v4":
             guard let stage, (1...32).contains(stage),
                   let campaign, let ordinal = Self.integer(campaign, maximum: UInt64(UInt32.max)), ordinal > 0,
                   let campaignDeliveredPayloadBytes,

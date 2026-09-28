@@ -1,6 +1,7 @@
 /** Relay pre-demux read accounting, not viewer delivery or available capacity.
  * Target-rate ceilings are 2 Mbps for legacy v1 and 12 Mbps for staged v2;
  * v3 repeats bounded 16 MiB campaigns with publication-wide accounting.
+ * v4 explicitly supports48Mbps/64MiB campaigns; legacy bounds are unchanged.
  * Integer strings preserve UInt64 identity on JS and watchOS arm64_32. */
 type ReceiverProbeFields = {
   id: string;
@@ -39,7 +40,7 @@ export type ReceiverProbeSnapshot = ReceiverProbeFields &
         campaignDeliveredPayloadBytes?: never;
       }
     | {
-        convention: 'mpegts-null-probe-v3';
+        convention: 'mpegts-null-probe-v3' | 'mpegts-null-probe-v4';
         stage: number;
         totalDeliveredPayloadBytes: string;
         campaign: string;

@@ -5,15 +5,15 @@ import Foundation
 enum SRTProbeMessage {
     /// Repeatable staged probes bind every packet to a publication campaign.
     static func encodeCampaign(id: UUID, generation: UInt64, campaign: UInt32, stage: UInt32,
-                               sequence: UInt64, bitRate: Int) throws -> Data {
+                               sequence: UInt64, bitRate: Int, budget: SRTBandwidthProbeBudget = .standard) throws -> Data {
         guard campaign > 0 else { throw SRTBandwidthProbeError.invalidConfiguration }
         var data = try encodeStage(id: id, generation: generation, stage: stage,
-                                   sequence: sequence, bitRate: bitRate)
+                                   sequence: sequence, bitRate: bitRate, budget: budget)
         var networkCampaign = campaign.bigEndian
         withUnsafeBytes(of: &networkCampaign) { bytes in
             for part in 0..<7 {
                 let at = part * 188
-                data[at + 11] = 0x33 // SBUGPRB3
+                data[at + 11] = budget == .uhd ? 0x34 : 0x33 // SBUGPRB4 / SBUGPRB3
                 data.replaceSubrange(at + 53..<at + 57, with: bytes)
             }
         }
@@ -23,9 +23,15 @@ enum SRTProbeMessage {
     /// Explicit staged probes use this version; the default legacy path retains v1.
     static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
                             sequence: UInt64, bitRate: Int) throws -> Data {
+        try encodeStage(id: id, generation: generation, stage: stage, sequence: sequence,
+                        bitRate: bitRate, budget: .standard)
+    }
+
+    private static func encodeStage(id: UUID, generation: UInt64, stage: UInt32,
+                                    sequence: UInt64, bitRate: Int, budget: SRTBandwidthProbeBudget) throws -> Data {
         guard id != UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)), generation > 0,
-              (1...32).contains(stage), (1...12_000_000).contains(bitRate),
-              sequence < UInt64(16 * 1024 * 1024 / 1316) else {
+              (1...32).contains(stage), (1...budget.maximumBitRate).contains(bitRate),
+              sequence < budget.maximumPayloadBytes / 1316 else {
             throw SRTBandwidthProbeError.invalidConfiguration
         }
         var data = encode(id: id, generation: generation, sequence: sequence, bitRate: bitRate)

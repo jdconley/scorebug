@@ -1,5 +1,12 @@
 import Foundation
 
+/// Fixed for a publication. UHD uses wire v4; legacy v1-v3 retain their bounds.
+public enum SRTBandwidthProbeBudget: Sendable, Equatable {
+    case standard, uhd
+    public var maximumBitRate: Int { self == .standard ? 12_000_000 : 48_000_000 }
+    public var maximumPayloadBytes: UInt64 { self == .standard ? 16 * 1024 * 1024 : 64 * 1024 * 1024 }
+}
+
 public enum SRTBandwidthProbeError: Error, Equatable, Sendable {
     case disabled, notPublishing, alreadyStarted, invalidConfiguration, unavailableStatistics, obsolete
 }
@@ -38,6 +45,7 @@ public struct SRTBandwidthProbeSnapshot: Equatable, Sendable {
     public let acceptedPayloadBytes: UInt64
     public let lastAcceptedAt: Double?
     public let reason: Reason?
+    public internal(set) var budget: SRTBandwidthProbeBudget = .standard
     public internal(set) var stage: UInt32? = nil
     public internal(set) var campaign: UInt32? = nil
     public internal(set) var authority: SRTBandwidthProbeAuthority? = nil
@@ -56,6 +64,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
     private let authority: SRTBandwidthProbeAuthority
     private let policy: SRTBandwidthProbePolicy
     private let lock = NSLock()
+    private let budget: SRTBandwidthProbeBudget
     private let bitRate: Int
     private let startedAt: Double
     private let stage: UInt32?
@@ -76,10 +85,12 @@ final class SRTBandwidthProbe: @unchecked Sendable {
 
     init(bitRate: Int, generation: UInt64, statistics: SRTPerformanceData, at: Double,
          stage: UInt32? = nil, campaign: UInt32? = nil, campaignStartedAt: Double? = nil,
-         previouslyAcceptedPayloadBytes: UInt64 = 0, policy: SRTBandwidthProbePolicy = .localZeroLoss) throws {
+         previouslyAcceptedPayloadBytes: UInt64 = 0, budget: SRTBandwidthProbeBudget = .standard, policy: SRTBandwidthProbePolicy = .localZeroLoss) throws {
         guard policy == .localZeroLoss || stage != nil else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard budget == .standard || (stage != nil && campaign != nil) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        self.budget = budget
         self.policy = policy
-        let maximumBitRate = stage == nil ? 2_000_000 : 12_000_000
+        let maximumBitRate = stage == nil ? 2_000_000 : budget.maximumBitRate
         guard (1...maximumBitRate).contains(bitRate), at.isFinite, at >= 0 else {
             throw SRTBandwidthProbeError.invalidConfiguration
         }
@@ -91,7 +102,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
                   let campaignStartedAt, campaignStartedAt.isFinite, campaignStartedAt >= 0,
                   campaignStartedAt <= at, at - campaignStartedAt < 60,
                   previouslyAcceptedPayloadBytes % 1316 == 0,
-                  previouslyAcceptedPayloadBytes <= 16 * 1024 * 1024 - 1316,
+                  previouslyAcceptedPayloadBytes <= budget.maximumPayloadBytes - 1316,
                   stage != 1 || (campaignStartedAt == at && previouslyAcceptedPayloadBytes == 0) else {
                 throw SRTBandwidthProbeError.invalidConfiguration
             }
@@ -140,7 +151,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         lastTime = at
         guard at - (campaignStartedAt ?? startedAt) < 60 else { return stop(.timeLimit) }
         guard at < deadline else { return stop(.leaseExpired) }
-        guard previouslyAcceptedPayloadBytes + bytes + 1316 <= 16 * 1024 * 1024 else { return stop(.byteLimit) }
+        guard previouslyAcceptedPayloadBytes + bytes + 1316 <= budget.maximumPayloadBytes else { return stop(.byteLimit) }
         return true
     }
     private func eligible(_ at: Double) -> Bool {
@@ -150,7 +161,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
         return tokens >= 1360
     }
     /// Versioned wake bound; readiness still requires one 1360-byte token.
-    var minimumWakeInterval: Double { stage == nil ? 0.002 : 0.0005 }
+    var minimumWakeInterval: Double { stage == nil ? 0.002 : (budget == .uhd ? 0.0002 : 0.0005) }
 
     /// A wake is only an opportunity. The same token cap and permit are checked
     /// again at native submission, so delayed timers never accumulate a burst.
@@ -198,7 +209,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
                 let message: Data
                 if let stage, let campaign {
                     message = try SRTProbeMessage.encodeCampaign(id: id, generation: generation,
-                        campaign: campaign, stage: stage, sequence: bytes / 1316, bitRate: bitRate)
+                        campaign: campaign, stage: stage, sequence: bytes / 1316, bitRate: bitRate, budget: budget)
                 } else if let stage {
                     message = try SRTProbeMessage.encodeStage(id: id, generation: generation,
                         stage: stage, sequence: bytes / 1316, bitRate: bitRate)
@@ -229,7 +240,7 @@ final class SRTBandwidthProbe: @unchecked Sendable {
             _ = check(now())
             return .init(id: id, publishingGeneration: generation, bitRate: bitRate, startedAt: startedAt,
                 leaseDeadline: deadline, acceptedPayloadBytes: bytes, lastAcceptedAt: lastAcceptedAt, reason: reason,
-                stage: stage, campaign: campaign, authority: authority, campaignStartedAt: campaignStartedAt,
+                budget: budget, stage: stage, campaign: campaign, authority: authority, campaignStartedAt: campaignStartedAt,
                 totalAcceptedPayloadBytes: stage == nil ? nil : previouslyAcceptedPayloadBytes + bytes, policy: policy,
                 recoveryObservation: recoveryGuard?.observation)
         }

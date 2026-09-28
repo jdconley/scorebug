@@ -404,6 +404,31 @@ private final class StreamProbeWakeGate: @unchecked Sendable {
 }
 
 extension SRTStreamPaddingTests {
+    @Test func uhdBudgetSurvivesReplacementAndJoinedRestart() async throws {
+        let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
+        let stream = SRTStream(connection: connection, allowsBandwidthProbes: true, probeBudget: .uhd)
+        await connection.addStream(stream); try await connection.connect(URL(string: "srt://127.0.0.1:1"))
+        await stream.setExpectedMedias([.video]); await stream.publish(); await stream.append(try paddingVideo(0))
+        do {
+            let generation = try #require(await stream.publishingGeneration)
+            await #expect(throws: SRTBandwidthProbeError.invalidConfiguration) {
+                try await stream.beginBandwidthProbe(bitRate: 1_000_000, publishingGeneration: generation, staged: true)
+            }
+            let first = try await stream.beginBandwidthProbe(bitRate: 36_192_000, publishingGeneration: generation, staged: true, repeatable: true)
+            #expect(first.budget == .uhd && first.campaign == 1)
+            let next = try await stream.replaceBandwidthProbe(id: first.id, publishingGeneration: generation, stage: 1, bitRate: 48_000_000)
+            #expect(next.budget == .uhd && next.stage == 2)
+            #expect(first.authority?.permits(id: first.id, generation: generation, stage: 1) == false)
+            try await stream.cancelBandwidthProbe(id: next.id, publishingGeneration: generation)
+            let restarted = try await stream.restartBandwidthProbe(id: next.id, publishingGeneration: generation, stage: 2, bitRate: 36_192_000)
+            #expect(restarted.budget == .uhd && restarted.campaign == 2 && restarted.stage == 1)
+            try await stream.cancelBandwidthProbe(id: restarted.id, publishingGeneration: generation)
+        } catch {
+            await stream.finish(); await connection.close(); throw error
+        }
+        await stream.finish(); await connection.close()
+    }
+
     @Test func stagedBeginAndReplacementAcceptHighRateButKeepVersionedCeilings() async throws {
         let connection = SRTConnection(socket: SRTSocket(sender: { Int32($0.count) }, statisticsReader: probeStatistics))
         let stream = SRTStream(connection: connection, allowsBandwidthProbes: true)

@@ -58,6 +58,7 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [ ] Verify stale reports/no-progress handling, native readback and revision/keyframe boundaries, thermal/queue pressure, partial loss, total outage and restoration.
 - [x] Enable1080p upload through the existing measured ladder. One real-source simulator run confirms6Mbps admission, actual1920×1080receiver input, continuous30fps archive/live media, audio alignment and changing score overlays.
 - [x] Offer1080p/4K recording quality with matching source/archive dimensions and locked selection during capture. Native4K record/export/playback/relaunch passes a short real-match check:247consecutive30fps frames and gap-free audio. Sustained and physical capture remain separate gates.
+- [x] Implement explicit bounded UHD probe protocolv4 across native transport, relay, API and Swift receiver validation, preserving legacy limits. Focused ownership/wire/accounting checks pass; actual4K traffic remains unqualified.
 - [ ] Extend bounded measurement and capability handling for4K, then qualify sustainable profiles/overhead for each backend/device. Unsupported4K remains disabled. Maintain bounded adaptation for full-match durations.
 - [ ] Choose and document production latency/SRT policy from measured results; current diagnostic timing profiles are experiments, not industry standards.
 

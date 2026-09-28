@@ -406,3 +406,12 @@ native verified receipt or retained replacement continuation, including lifecycl
 and competing mutation guards. It neither consumes the continuation nor changes
 encoder properties. This point-in-time read is not a mutation permit; guarded
 setters still perform their own final checks.
+
+### Explicit UHD bandwidth-probe budget
+
+`SRTStream(probeBudget: .uhd)` fixes v4/48Mbps/64MiB campaign bounds for the whole
+publication. It requires repeatable staged probes and keeps the same budget on
+replacement/restart. Default `.standard` retains v1–v3 bounds. The300ms lease,
+60second campaign deadline, synchronous authority revocation and one-message token
+cap are unchanged; UHD wake minimum is200µs. Rate ceilings are permissions, not
+measured network or encoder capacity. App capability/admission wiring remains separate.

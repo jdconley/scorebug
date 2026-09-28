@@ -48,6 +48,7 @@ public actor SRTStream {
     private let pacesEncodedVideo: Bool
     private let pacingSleep: @Sendable (Double) async throws -> Void
     private var sourceCadenceClock = SourceCadenceClock()
+    private let probeBudget: SRTBandwidthProbeBudget
     private let allowsBandwidthProbes: Bool
     private var bandwidthProbe: SRTBandwidthProbe?
     private let probeWakeRunner: @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void
@@ -69,8 +70,8 @@ public actor SRTStream {
                                     staged: Bool = false, repeatable: Bool = false, policy: SRTBandwidthProbePolicy = .localZeroLoss) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw SRTBandwidthProbeError.invalidConfiguration }
-        let maximumBitRate = staged ? 12_000_000 : 2_000_000
+        guard (probeBudget == .standard || repeatable), (!repeatable || staged), (policy == .localZeroLoss || staged) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        let maximumBitRate = staged ? probeBudget.maximumBitRate : 2_000_000
         guard (1...maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
               let connection else { throw SRTBandwidthProbeError.notPublishing }
@@ -85,7 +86,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: staged ? 1 : nil, campaign: repeatable ? 1 : nil, campaignStartedAt: staged ? at : nil, policy: policy)
+            stage: staged ? 1 : nil, campaign: repeatable ? 1 : nil, campaignStartedAt: staged ? at : nil, budget: probeBudget, policy: policy)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -96,7 +97,7 @@ public actor SRTStream {
                                       stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard (1...probeBudget.maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
               let connection else { throw SRTBandwidthProbeError.notPublishing }
         guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected,
@@ -126,7 +127,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: stage + 1, campaign: retired.campaign, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted, policy: retired.policy)
+            stage: stage + 1, campaign: retired.campaign, campaignStartedAt: origin, previouslyAcceptedPayloadBytes: accepted, budget: probeBudget, policy: retired.policy)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -139,7 +140,7 @@ public actor SRTStream {
                                       stage: UInt32, bitRate: Int) async throws -> SRTBandwidthProbeSnapshot {
         try Task.checkCancellation()
         guard allowsBandwidthProbes else { throw SRTBandwidthProbeError.disabled }
-        guard (1...12_000_000).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
+        guard (1...probeBudget.maximumBitRate).contains(bitRate) else { throw SRTBandwidthProbeError.invalidConfiguration }
         guard publishingGeneration == expected, writer.transportClock != nil, videoReplacement == nil, videoMutation == nil,
               let connection else { throw SRTBandwidthProbeError.notPublishing }
         guard let previous = bandwidthProbe, previous.id == id, previous.generation == expected else {
@@ -169,7 +170,7 @@ public actor SRTStream {
         guard let statistics else { throw SRTBandwidthProbeError.unavailableStatistics }
         let at = ProcessInfo.processInfo.systemUptime
         let probe = try SRTBandwidthProbe(bitRate: bitRate, generation: expected, statistics: statistics, at: at,
-            stage: 1, campaign: campaign, campaignStartedAt: at, policy: retired.policy)
+            stage: 1, campaign: campaign, campaignStartedAt: at, budget: probeBudget, policy: retired.policy)
         return installBandwidthProbe(probe, at: at)
     }
 
@@ -676,10 +677,12 @@ public actor SRTStream {
                 compressedAudioObserver: (@Sendable (CompressedAudioFrame) -> Void)? = nil,
                 muxedPacketObserver: (@Sendable (MuxedPacketFrame) -> Void)? = nil,
                 pacesEncodedVideo: Bool = false, allowsBandwidthProbes: Bool = false,
+                probeBudget: SRTBandwidthProbeBudget = .standard,
                 transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
                 encoderSubmissionObserver: VideoEncoderSubmissionObserver? = nil) {
         videoMutationSubmissionJoined = nil
         self.transportSendObserver = transportSendObserver
+        self.probeBudget = probeBudget
         self.allowsBandwidthProbes = allowsBandwidthProbes
         probeWakeRunner = { probe, accounting in
             await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
@@ -703,12 +706,14 @@ public actor SRTStream {
          transportSendObserver: (@Sendable (TransportSendObservation) -> Void)? = nil,
          pacesEncodedVideo: Bool = false,
          allowsBandwidthProbes: Bool = false,
+         probeBudget: SRTBandwidthProbeBudget = .standard,
          videoMutationSubmissionJoined: (@Sendable () async -> Void)? = nil,
          probeWakeRunner: @escaping @Sendable (SRTBandwidthProbe, TransportOutputAccounting) async -> Void = { probe, accounting in
              await SRTProbeWakeSchedule.run(probe: probe, wake: { accounting.wake() })
          },
          pacingSleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
         self.transportSendObserver = transportSendObserver
+        self.probeBudget = probeBudget
         self.allowsBandwidthProbes = allowsBandwidthProbes
         self.videoMutationSubmissionJoined = videoMutationSubmissionJoined
         self.probeWakeRunner = probeWakeRunner

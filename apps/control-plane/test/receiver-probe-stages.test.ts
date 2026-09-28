@@ -80,3 +80,31 @@ it.each([
 it('preserves explicit relay invalidity in a staged diagnostic', () => {
   expect(parseReceiverProbe({ ...v2(), invalidReason: 'scope' })?.invalidReason).toBe('scope');
 });
+
+it('v4 bounds UHD campaigns without widening v1-v3', () => {
+  const count = Math.floor((64 * 1024 * 1024) / 1316);
+  const bytes = String(count * 1316);
+  const value = {
+    ...golden(3).status.receiverProbe.snapshot,
+    convention: 'mpegts-null-probe-v4',
+    bitRate: 48_000_000,
+    campaign: '1',
+    stage: 1,
+    deliveredMessages: String(count),
+    nextSequence: String(count),
+    pendingPackets: 0,
+    deliveredPayloadBytes: bytes,
+    campaignDeliveredPayloadBytes: bytes,
+    totalDeliveredPayloadBytes: bytes,
+  };
+  expect(parseReceiverProbe(value)).toEqual(value);
+  for (const changed of [
+    { bitRate: 48_000_001 },
+    { pendingPackets: 1 },
+    { campaign: undefined },
+    { convention: 'mpegts-null-probe-v3', bitRate: 12_000_000 },
+    { totalDeliveredPayloadBytes: String((count + 1) * 1316) },
+    { campaign: '0' },
+  ])
+    expect(parseReceiverProbe({ ...value, ...changed })).toBeUndefined();
+});

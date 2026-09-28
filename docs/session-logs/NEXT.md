@@ -10,10 +10,17 @@ No proactive subagents. Preserve originals, recordings and unrelated simulators.
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch
 `codex/local-validation`. Use current Git HEAD. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; the [consolidated acceptance matrix](../simulator-acceptance.md) owns
-current cross-feature evidence. [Latest session](2026-09-28-recording-quality.md)
+current cross-feature evidence. [Latest session](2026-09-28-uhd-probe-protocol.md)
 contains exact new results and limitations.
 
 ## Current checkpoint
+
+- Explicit UHD probe protocol foundation passes focused native/Go/API/Swift checks.
+  SRTStream supports a fixed `.uhd` budget: v4,48Mbps,64MiB/campaign,200µs wake floor,
+  one packet maximum, unchanged leases/lifetime and strict v1–v3 bounds. Replacement
+  and restart retain budget. Relay/API/Swift receiver parsev4. SDK upstream round trip
+  and relay pinned-archive patch application pass. No image built, no app4K enabled.
+  See [design](../superpowers/specs/2026-09-28-uhd-probe-budget.md). All jobs joined0.
 
 - Film now offers1080p/4K recording. Source/archive geometry matches and quality
   locks through startup/recording/shutdown. Ten focused model checks and simulator
@@ -66,13 +73,15 @@ contains exact new results and limitations.
 
 ## Next work
 
-1. Design and implement bounded4K measurement/capability support, then qualify real
-   4Ksource and output throughput locally. Existing uhd2160 nominal24Mbps exceeds
-   NativeCandidateStagePlan.productionSRT media-cost8Mbps/probe-rate12Mbps limits;
-   native probe lifetime16MiB also needs explicit bounded budgeting. Do not blindly
-   raise audit limits or infer support from the enum. Inspect worker output/source
-   capabilities so uploading4K is useful to the selected output, and retain automatic
-   lower-profile fallback. Use the existing4K Downloads footage; preserve originals.
+1. Wire the new UHD budget through ScorebugStreaming owned reservations/snapshots,
+   candidate plans and source/output selection. Native low-level budget is implemented,
+   but wrappers/NativeCandidateStagePlan still retain12Mbps/16MiB/8Mbps limits. Select
+   UHD only for4K capture + fresh2160output capability; other paths retain1080 ceiling.
+   Source4K recording is qualified; use the existing120s4K derivative, extending it
+   only for the actual ordinary climb. Build `scorebug/ingest:uhd-probe-v4` separately
+   and update the new lane's explicit audit validators. Current lab image staysdrain-v1.
+   Prove measured4K climb, real receiver input/output, native scoring and independent
+   archive/live MP4 media. The v4 budget does not itself prove throughput.
 2. Keep prior production latency. No more parameter-only congestion captures: bounded
    scheduling is fixed, larger buffering worsens media, and healthy-period FPS passes.
    Investigate actual forced-outage loss from saved evidence when needed. Remaining

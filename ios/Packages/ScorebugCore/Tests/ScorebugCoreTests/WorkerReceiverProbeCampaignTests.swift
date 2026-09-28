@@ -3,6 +3,22 @@ import Foundation
 import XCTest
 
 final class WorkerReceiverProbeCampaignTests: XCTestCase {
+    func testV4AllowsExplicitUHDLimitButKeepsLegacyAndCampaignBounds() throws {
+        var p = try XCTUnwrap(fixture().status.receiverProbe?.snapshot)
+        p.convention = "mpegts-null-probe-v4"; p.bitRate = 48_000_000
+        p.campaign = "1"; p.stage = 1; p.pendingPackets = 0
+        let count = UInt64(64 * 1024 * 1024 / 1316)
+        p.deliveredMessages = String(count); p.nextSequence = String(count)
+        p.deliveredPayloadBytes = String(count * 1316)
+        p.campaignDeliveredPayloadBytes = p.deliveredPayloadBytes
+        p.totalDeliveredPayloadBytes = p.deliveredPayloadBytes
+        XCTAssertNotNil(p.validated)
+        p.pendingPackets = 1; XCTAssertNil(p.validated)
+        p.pendingPackets = 0; p.bitRate += 1; XCTAssertNil(p.validated)
+        p.bitRate = 12_000_000; p.convention = "mpegts-null-probe-v3"; XCTAssertNil(p.validated)
+        p.convention = "mpegts-null-probe-v4"; p.campaign = nil; XCTAssertNil(p.validated)
+    }
+
     private let anchor = ContinuousClock.now
     private func fixture() throws -> WorkerMediaStatusResponse {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "receiver-probe-status-v3", withExtension: "json", subdirectory: "Fixtures"))

@@ -61,6 +61,18 @@ const snapshot = z.discriminatedUnion('convention', [
     campaignDeliveredPayloadBytes: integer(16n * 1024n * 1024n),
     totalDeliveredPayloadBytes: integer(4_294_967_295n * 16n * 1024n * 1024n),
   }),
+  z.object({
+    ...fields,
+    convention: z.literal('mpegts-null-probe-v4'),
+    deliveredMessages: integer(BigInt(Math.floor((64 * 1024 * 1024) / 1316))),
+    deliveredPayloadBytes: integer(64n * 1024n * 1024n),
+    nextSequence: integer(BigInt(Math.floor((64 * 1024 * 1024) / 1316))),
+    bitRate: z.number().int().min(1).max(48_000_000),
+    stage: z.number().int().min(1).max(32),
+    campaign: integer(4_294_967_295n).refine((s) => s !== '0'),
+    campaignDeliveredPayloadBytes: integer(64n * 1024n * 1024n),
+    totalDeliveredPayloadBytes: integer(4_294_967_295n * 64n * 1024n * 1024n),
+  }),
 ]);
 /** Optional diagnostic parsing must not make ordinary publication unavailable. */
 export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | undefined {
@@ -79,10 +91,11 @@ export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | unde
       : messages * 1316n;
   if (total % 1316n !== 0n || total < messages * 1316n) return undefined;
   // The relay reserves one whole message before accepting even its first packet.
-  const cap = 16n * 1024n * 1024n;
-  const campaignTotal =
-    p.convention === 'mpegts-null-probe-v3' ? BigInt(p.campaignDeliveredPayloadBytes) : total;
-  if (p.convention === 'mpegts-null-probe-v3') {
+  const cap = (p.convention === 'mpegts-null-probe-v4' ? 64n : 16n) * 1024n * 1024n;
+  const repeated =
+    p.convention === 'mpegts-null-probe-v3' || p.convention === 'mpegts-null-probe-v4';
+  const campaignTotal = repeated ? BigInt(p.campaignDeliveredPayloadBytes) : total;
+  if (repeated) {
     if (
       campaignTotal % 1316n !== 0n ||
       campaignTotal < messages * 1316n ||
@@ -124,7 +137,7 @@ export function parseReceiverProbe(value: unknown): ReceiverProbeSnapshot | unde
     ...(lastDeliveredAtNanoseconds === undefined ? {} : { lastDeliveredAtNanoseconds }),
     ...(invalidReason === undefined ? {} : { invalidReason }),
   };
-  if (p.convention === 'mpegts-null-probe-v3')
+  if (repeated)
     return {
       ...result,
       convention: p.convention,

@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 UHD probe protocol](2026-09-28-uhd-probe-protocol.md) — explicit bounded v4 sender/receiver support; legacy limits preserved.
+
 - [September 28 recording quality](2026-09-28-recording-quality.md) — configurable camera/archive geometry and focused native 4K recording qualification.
 
 - [September 28 1080p upload](2026-09-28-1080-upload.md) — production ladder extension, one native climb, true decoded geometry and complete A/V/overlay verification.

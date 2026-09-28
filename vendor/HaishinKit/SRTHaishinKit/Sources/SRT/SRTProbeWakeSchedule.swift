@@ -15,7 +15,7 @@ final class SRTProbeWakeSchedule: @unchecked Sendable {
                 timer.cancel(); return
             }
             if delay == 0 { wake() }
-            // At most 500 legacy or 2000 staged callbacks/s while media delays
+            // At most 500 legacy, 2000 standard staged or 5000 UHD callbacks/s while media delays
             // a ready probe. Each signal coalesces; it never banks bytes or sends media.
             timer.schedule(deadline: .now() + min(0.05, max(probe.minimumWakeInterval, delay)), leeway: .nanoseconds(0))
         }

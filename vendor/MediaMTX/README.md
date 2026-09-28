@@ -289,3 +289,13 @@ At this source-foundation stage, v3 was not selected for ordinary publishing or
 regular deployment. Current normal local selection is documented above. These
 source tests alone do not qualify spare capacity, adaptive quality, physical
 devices or remote deployments.
+
+## Explicit UHD probe protocol
+
+`uhd-probe.patch` adds v4 after the existing patches. It retains the v3 wire layout
+but explicitly permits48Mbps and64MiB per campaign, with identical identity,
+whole-message reserve and publication accounting. Mixed versions on one publication
+are rejected as evidence; media is passed through unchanged. v1–v3 limits are unchanged.
+The Dockerfile includes this patch; existing cached `drain-v1` is not overwritten.
+Build a new `scorebug/ingest:uhd-probe-v4` tag when qualifying the4K application path.
+See `docs/superpowers/specs/2026-09-28-uhd-probe-budget.md` for integration limits.
