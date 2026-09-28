@@ -24,7 +24,7 @@ Keep native recording, real encoding/networking, the real API, proxy and output 
 
 | Area | Implemented | Remaining acceptance |
 |---|---|---|
-| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone simulator workflow passes; integrated adversarial/reconnect cases remain |
+| Native match create/discovery/join and phone scoring | Yes; durable commands, takeover, rules, undo, end-set/match, restoration | Native-created two-phone and lost-reply/relaunch workflows pass; concurrent takeover/stale-command recovery remains |
 | Clean archive and export | Yes; independent capture, segmented recovery, storage guards, playback/export | Combined failure/restart workflow and current full-feature regression checkpoint |
 | SRT → overlay proxy → RTMP and MP4 | Yes; changing score, configurable font/output modes, backend readiness, automatic API/worker-crash recovery | Source interruption; actual service operation |
 | Progressive upload | Start-low and measured adaptation implemented; two simulator240→360→minimum→360 recovery runs pass |720p→minimum→720p controller/geometry passes; forced collapse still loses live A/V. Higher profiles and sustained operation unqualified |
@@ -42,7 +42,8 @@ Implementation evidence and failures live in [session logs](../../session-logs/R
 - [x] Fix remote Watch match-end finalization with bounded relay/worker draining. Native Watch scoring/restoration/end and phone recording/export pass; both live outputs now end within40ms A/V coverage. New connections are revoked while accepted media finishes.
 - [x] Exercise native phone B creating a match, phone A discovering/joining to record/publish, and phone B scoring/undoing without capture permissions. Both native workflows and durable role checks pass on iPhone14 simulators.
 - [x] Extend separate native phone scoring through Watch B takeover, undo, relaunch and end while phone A records/streams; both phones observe the changes and lose scoring authority. All controls are exercised on41mm Series7. Real companion transport and broader device qualification remain deferred.
-- [ ] Run scoring reconnect/lost-reply/takeover/stale-command cases against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.
+- [x] Verify native lost-reply recovery against the real API: persist the uncertain applied point, relaunch offline, reconcile its original receipt, undo and end with exactly one durable outcome per command. Native UI/API assertions pass; post-test data-copy limitation is recorded in the session log.
+- [ ] Verify takeover during an unresolved command and stale-command recovery against the real API with native restoration; retain existing idempotency, tied-set rejection and durable-outbox coverage.
 - [ ] Complete one consolidated simulator regression checkpoint covering native phone, Watch, archive recovery/export and the real local media pipeline. Separate any unsupported simulator OS transport from application feature results.
 
 ## 2. Make adaptive streaming reliable

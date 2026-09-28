@@ -47,6 +47,10 @@ final class ScoringLaunchTests: XCTestCase {
                 XCTAssertTrue(home.waitForExistence(timeout: 10))
                 XCTAssertEqual(home.value as? String, "0")
                 tapWhenEnabled(home)
+                if scenario == "lost-reply" {
+                    exerciseLostReply(app)
+                    return
+                }
                 XCTAssertTrue(waitForValue("1", element: home))
                 app.terminate(); app.launch()
                 XCTAssertTrue(home.waitForExistence(timeout: 10))
@@ -72,6 +76,27 @@ final class ScoringLaunchTests: XCTestCase {
         screenshot.name = "Native scoring \(scenario)"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
+    }
+    @MainActor
+    private func exerciseLostReply(_ app: XCUIApplication) {
+        let saved = app.staticTexts["Your last action is saved. The server must confirm it before another point can be sent."]
+        XCTAssertTrue(saved.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertFalse(app.buttons["scoring.homePoint"].isEnabled)
+        app.terminate(); app.launch()
+        XCTAssertTrue(saved.waitForExistence(timeout: 15), "Relaunch must recover the real persisted outbox while still offline. " + app.debugDescription)
+        if app.buttons["scoring.homePoint"].exists { XCTAssertFalse(app.buttons["scoring.homePoint"].isEnabled) }
+        let pending = XCTAttachment(screenshot: app.screenshot())
+        pending.name = "Saved action restored offline"; pending.lifetime = .keepAlways; add(pending)
+        print("SCOREBUG_SCORING_RESTORE_CONNECTION")
+        XCTAssertTrue(waitForValue("1", element: app.buttons["scoring.homePoint"]), app.debugDescription)
+        app.swipeUp()
+        tapWhenEnabled(app.buttons["scoring.undo"])
+        XCTAssertTrue(waitForValue("0", element: app.buttons["scoring.homePoint"]))
+        XCTAssertFalse(saved.exists)
+        endMatch(app)
+        let recovered = XCTAttachment(screenshot: app.screenshot())
+        recovered.name = "Lost reply reconciled once and undone"; recovered.lifetime = .keepAlways; add(recovered)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
     @MainActor

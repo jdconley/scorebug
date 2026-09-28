@@ -4,9 +4,12 @@
 
 **Simulator-first; finish missing features faster.** Hardware is deferred. Batch changes, use focused checks, reuse incremental builds, and run one relevant integration workflow per completed failure mode. Reuse prior recording/Watch/two-phone acceptance rather than rerunning it for every edit. Do not spend another session repeating small congestion tweaks.
 
-Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Use current Git HEAD. [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/current status/todos; [latest session](2026-09-28-earlier-pressure-and-crash.md) owns exact evidence and limits.
+Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, branch `codex/local-validation`. Use current Git HEAD. [Delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md) owns goals/current status/todos; [latest session](2026-09-28-native-lost-reply.md) owns exact evidence and limits.
 
 ## Current checkpoint
+
+- `native-scoring-recovery-jpOJCg`: native lost reply → offline relaunch → original receipt → undo/end passes in64seconds; exactly one point in real SQLite. Production scorer/Keychain/outbox used through native harness. Original runner exit1 is a post-success collection failure: Xcode shut down simulator; original cleanup deleted it, so no copied outbox is claimed. Collector now boots before access and preserves on failure; correction not rerun. Saved `native-acceptance.json` separates functional pass from collection failure. All jobs joined.
+- Native scoring runner now supports `--lost-reply --ui-only`; skips unrelated Swift/model suites and physical builds. Two focused fault-proxy checks pass.
 
 - Earlier growing-buffer warning implemented and verified by45native telemetry and19independent replay checks. It requires byte/time growth over250–500ms, stable known sender delay, valid ownership/freshness and a quarter-delay threshold; it only permits decreases.
 - `ordinary-native-IZI72F` passes the native720→minimum→720 workflow, replay, geometry, archive/export and cleanup. Minimum-profile acknowledgment improves to856–887ms. Archive11,122consecutive30fps frames. Live output still fails strict media:87missing IDs,5repeat/corrupt observations,16audio gaps,2.4s maximum gap;98.833% of all5s windows≥24freshfps. Keep partial improvement; no blanket congestion pass. All its capture/analysis handles joined.
@@ -15,7 +18,7 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 ## Next work
 
-1. Native lost-reply/reconnect/outbox restoration with the real API; then missing full-app source-interruption and low-space/queue-pressure cases. Use existing runners/model coverage and add only missing integration checks.
+1. Native takeover during unresolved commands/stale-command recovery; then missing full-app source-interruption and low-space/queue-pressure cases. Use existing runners/model coverage and add only missing integration checks.
 2. Assemble one consolidated simulator acceptance result from valid existing checkpoints plus those missing cases. Keep severe-collapse/sustained-profile limitations explicit. Production latency remains unqualified; do not weaken existing failed media contracts.
 3. Actual local Mac service operation and documentation/CI matrix. External GPU/cloud and physical devices stay deferred until simulator-testable features work together.
 

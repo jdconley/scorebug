@@ -1,4 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, cp } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { startScoringLostReplyProxy } from './scoring-lost-reply-proxy.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startScoringTestServer } from './scoring-test-server.mjs';
@@ -13,6 +16,16 @@ const deviceType = process.env.SCOREBUG_IOS_DEVICE_TYPE ?? 'iPhone-15';
 const simulators = [];
 const twoPhones = process.argv.includes('--two-phones');
 const workerStatus = process.argv.includes('--worker-status');
+const lostReply = process.argv.includes('--lost-reply');
+const uiOnly = process.argv.includes('--ui-only');
+assert(
+  [twoPhones, workerStatus, lostReply].filter(Boolean).length <= 1,
+  'Choose one native scenario',
+);
+let proxy, artifact;
+let restored = false;
+let scoringDataCollected = false;
+
 if (twoPhones && workerStatus)
   throw new Error('Run worker status separately from the two-phone scenario');
 let api;
@@ -44,13 +57,18 @@ function run(command, args, { timeout = 120_000, capture = false, cleanup = fals
       cwd: root,
       env: process.env,
       detached: true,
-      stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+      stdio: capture || lostReply ? ['ignore', 'pipe', 'inherit'] : 'inherit',
     });
     activeProcess = child;
     let output = '';
     let timedOut = false;
     child.stdout?.on('data', (chunk) => {
-      output += chunk;
+      output = (output + chunk).slice(-8_000_000);
+      if (!capture) process.stdout.write(chunk);
+      if (proxy && !restored && output.includes('SCOREBUG_SCORING_RESTORE_CONNECTION')) {
+        restored = true;
+        proxy.resume();
+      }
     });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -75,32 +93,34 @@ try {
     throw new Error('Apple validation requires macOS and full Xcode');
   await run('xcodebuild', ['-version']);
   await run('xcodegen', ['generate', '--spec', 'ios/Scoring.yml']);
-  await run('swift', [
-    'test',
-    '--package-path',
-    'ios/Packages/ScorebugCore',
-    '--scratch-path',
-    'ios/.build/core',
-  ]);
-  await run(
-    'xcodebuild',
-    [
-      '-project',
-      'ios/ScorebugScoring.xcodeproj',
-      '-scheme',
-      'ScorebugScoringModelTests',
-      '-configuration',
-      'Debug',
-      '-derivedDataPath',
-      'ios/DerivedData/ScoringModel',
-      '-destination',
-      'platform=macOS',
+  if (!uiOnly) {
+    await run('swift', [
       'test',
-      'CODE_SIGNING_ALLOWED=YES',
-      'CODE_SIGN_IDENTITY=-',
-    ],
-    { timeout: 600_000 },
-  );
+      '--package-path',
+      'ios/Packages/ScorebugCore',
+      '--scratch-path',
+      'ios/.build/core',
+    ]);
+    await run(
+      'xcodebuild',
+      [
+        '-project',
+        'ios/ScorebugScoring.xcodeproj',
+        '-scheme',
+        'ScorebugScoringModelTests',
+        '-configuration',
+        'Debug',
+        '-derivedDataPath',
+        'ios/DerivedData/ScoringModel',
+        '-destination',
+        'platform=macOS',
+        'test',
+        'CODE_SIGNING_ALLOWED=YES',
+        'CODE_SIGN_IDENTITY=-',
+      ],
+      { timeout: 600_000 },
+    );
+  }
   const common = [
     '-project',
     'ios/ScorebugScoring.xcodeproj',
@@ -111,20 +131,27 @@ try {
     '-derivedDataPath',
     'ios/DerivedData/Scoring',
   ];
-  await run(
-    'xcodebuild',
-    [
-      ...common,
-      '-destination',
-      'generic/platform=iOS',
-      'build',
-      'CODE_SIGNING_ALLOWED=NO',
-      'IPHONEOS_DEPLOYMENT_TARGET=17.0',
-    ],
-    { timeout: 600_000 },
-  );
-  databaseDirectory = await mkdtemp(join(tmpdir(), 'scorebug-apple-'));
+  if (!uiOnly)
+    await run(
+      'xcodebuild',
+      [
+        ...common,
+        '-destination',
+        'generic/platform=iOS',
+        'build',
+        'CODE_SIGNING_ALLOWED=NO',
+        'IPHONEOS_DEPLOYMENT_TARGET=17.0',
+      ],
+      { timeout: 600_000 },
+    );
+  if (lostReply) {
+    await mkdir(join(root, 'artifacts/qa'), { recursive: true });
+    artifact = await mkdtemp(join(root, 'artifacts/qa/native-scoring-recovery-'));
+    console.log(JSON.stringify({ artifact }));
+  }
+  databaseDirectory = artifact ?? (await mkdtemp(join(tmpdir(), 'scorebug-apple-')));
   api = await startScoringTestServer(join(databaseDirectory, 'matches.sqlite'));
+  if (lostReply) proxy = await startScoringLostReplyProxy(api.baseURL);
   const runtimes = JSON.parse(
     await run('xcrun', ['simctl', 'list', 'runtimes', '--json'], { capture: true }),
   );
@@ -163,9 +190,11 @@ try {
         '-maximum-concurrent-test-simulator-destinations',
         '1',
         '-resultBundlePath',
-        `ios/build/scoring-${scenario}-${randomUUID()}.xcresult`,
+        artifact
+          ? join(artifact, 'workflow.xcresult')
+          : `ios/build/scoring-${scenario}-${randomUUID()}.xcresult`,
         'test',
-        `SCOREBUG_TEST_API_URL=${api.baseURL}`,
+        `SCOREBUG_TEST_API_URL=${proxy?.baseURL ?? api.baseURL}`,
         `SCOREBUG_TEST_SCENARIO=${scenario}`,
         'CODE_SIGNING_ALLOWED=YES',
         'CODE_SIGN_IDENTITY=-',
@@ -180,13 +209,79 @@ try {
     await testSimulator(second, 'join');
     await testSimulator(first, 'observe');
   } else {
-    await testSimulator(first, workerStatus ? 'worker-status' : 'lifecycle');
+    await testSimulator(
+      first,
+      lostReply ? 'lost-reply' : workerStatus ? 'worker-status' : 'lifecycle',
+    );
+  }
+  if (lostReply) {
+    const audit = proxy.audit();
+    assert(restored && audit.phase === 'restored' && audit.lostCommand.score.home === 1);
+    assert(
+      audit.requests.some(
+        (r) =>
+          r.method === 'GET' &&
+          r.status === 200 &&
+          r.path.endsWith('/commands/' + audit.lostCommand.commandId),
+      ),
+    );
+    const db = new DatabaseSync(join(databaseDirectory, 'matches.sqlite'), { readOnly: true });
+    try {
+      const commands = db
+        .prepare('SELECT command_id, request, outcome FROM commands ORDER BY rowid')
+        .all();
+      const awards = commands.filter((c) => JSON.parse(c.request).operation.type === 'award_point');
+      assert.equal(awards.length, 1);
+      assert.equal(awards[0].command_id, audit.lostCommand.commandId);
+      assert.equal(commands.length, 3, 'One point, undo, and end; no duplicate scoring mutation');
+      await writeFile(
+        join(artifact, 'recovery-evidence.json'),
+        JSON.stringify({ audit, commands }, null, 2),
+        { mode: 0o600 },
+      );
+    } finally {
+      db.close();
+    }
+    const summary = JSON.parse(
+      await run(
+        'xcrun',
+        [
+          'xcresulttool',
+          'get',
+          'test-results',
+          'summary',
+          '--path',
+          join(artifact, 'workflow.xcresult'),
+        ],
+        { capture: true },
+      ),
+    );
+    assert.equal(summary.result, 'Passed');
+    assert.equal(summary.passedTests, 1);
+    assert.equal(summary.skippedTests, 0);
+    const devices = JSON.parse(
+      await run('xcrun', ['simctl', 'list', 'devices', '--json'], { capture: true }),
+    );
+    const state = Object.values(devices.devices)
+      .flat()
+      .find((device) => device.udid === first)?.state;
+    assert(state, 'Owned simulator is missing before data collection');
+    if (state === 'Shutdown') await run('xcrun', ['simctl', 'boot', first]);
+    await run('xcrun', ['simctl', 'bootstatus', first, '-b']);
+    const container = await run(
+      'xcrun',
+      ['simctl', 'get_app_container', first, 'live.scorebug.scoring', 'data'],
+      { capture: true },
+    );
+    await cp(
+      join(container, 'Library/Application Support/Scorebug'),
+      join(artifact, 'scoring-data'),
+      { recursive: true },
+    );
+    scoringDataCollected = true;
   }
   console.log(
-    `PASS: shared Swift tests, unsigned iOS 17 deployment build, and native scoring ${twoPhones ? 'across two phone simulators' : workerStatus ? 'with worker status transitions' : 'lifecycle'}.`,
-  );
-  console.log(
-    'Camera/SRT, Watch, and physical-device behavior remain separate qualification gates.',
+    `PASS: native scoring ${lostReply ? 'lost-reply restoration' : twoPhones ? 'two-phone' : workerStatus ? 'worker-status' : 'lifecycle'}${uiOnly ? ' (UI-only; unrelated suites/builds skipped)' : ''}.`,
   );
 } catch (error) {
   console.error(error.message);
@@ -195,9 +290,23 @@ try {
   );
   process.exitCode = 1;
 } finally {
+  if (proxy) {
+    await proxy.stop();
+    if (artifact)
+      await writeFile(join(artifact, 'fault-audit.json'), JSON.stringify(proxy.audit(), null, 2), {
+        mode: 0o600,
+      });
+  }
   if (api) await api.stop();
-  if (databaseDirectory) await rm(databaseDirectory, { recursive: true, force: true });
+  if (databaseDirectory && !artifact) await rm(databaseDirectory, { recursive: true, force: true });
   for (const simulator of simulators) {
+    if (lostReply && !scoringDataCollected) {
+      console.error(
+        `Preserving owned simulator ${simulator}: scoring data collection did not complete.`,
+      );
+      process.exitCode = 1;
+      continue;
+    }
     const devices = await run('xcrun', ['simctl', 'list', 'devices', '--json'], {
       capture: true,
       cleanup: true,
