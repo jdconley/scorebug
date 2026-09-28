@@ -1,3 +1,4 @@
+import type { WorkerCapabilities } from '@scorebug/protocol';
 import {
   DECODED_VIDEO_TRANSPORT_CLOCK,
   WORKER_DECODER_DELIVERY_PROTOCOL,
@@ -40,6 +41,7 @@ export class WorkerReporter {
     private readonly workerId: string,
     private readonly timeout = 1500,
     private readonly runId = randomUUID(),
+    private readonly capabilities?: WorkerCapabilities,
   ) {
     try {
       this.base = new URL(url);
@@ -110,7 +112,11 @@ export class WorkerReporter {
     this.deliveryCursor = undefined;
     this.session = await this.post(
       'sessions',
-      { workerId: this.workerId, runId: this.runId },
+      {
+        workerId: this.workerId,
+        runId: this.runId,
+        ...(this.capabilities ? { capabilities: this.capabilities } : {}),
+      },
       session,
       signal,
     );

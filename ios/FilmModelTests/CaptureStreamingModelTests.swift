@@ -7,6 +7,23 @@ import XCTest
 @testable import SRTHaishinKit
 
 @MainActor final class CaptureStreamingModelTests: XCTestCase {
+    func testUnavailableOrMismatchedBackendNeverStartsBroadcastOrStopsArchive() async throws {
+        for failure in ["stale", "failed", "wrong-output", "expired", "unknown"] {
+            let server = CaptureTestServer(), model = makeModel(server: server)
+            await server.setBackendFailure(failure)
+            await model.restore(); model.captureChanged(captureContext()); await model.startStreaming()
+            XCTAssertEqual(model.localState, .failed)
+            XCTAssertEqual(model.activeRecordingID, "recording-1")
+            XCTAssertTrue(model.message?.contains("streaming proxy") == true)
+            let operations = await server.operations
+            XCTAssertTrue(operations.isEmpty)
+            await server.setBackendFailure(nil)
+            await model.startStreaming()
+            XCTAssertEqual(model.localState, .publishing)
+            await model.stopStreaming()
+        }
+    }
+
     func testOrdinaryQualityUsesExplicitBroadcastTiming() async throws {
         var driver: PublishingQualityDriver?
         var publishing: PublishingSession?
@@ -3076,6 +3093,8 @@ actor CaptureTestServer {
     var broadcast = MediaBroadcast(desired: .stopped, generation: 0, selection: nil)
     var receipts: [String: BroadcastOutcome] = [:]
     var offline = false
+    var backendFailure: String?
+    func setBackendFailure(_ value: String?) { backendFailure = value }
     var httpFailure: Int?
     var httpFailurePath = "/media"
     func setHTTPFailure(_ value: Int?, path: String = "/media") { httpFailure = value; httpFailurePath = path }
@@ -3115,7 +3134,14 @@ actor CaptureTestServer {
         if failMedia && path.hasSuffix("/media") { throw URLError(.notConnectedToInternet) }
         let time = ISO8601DateFormatter().string(from: Date())
         let data: Data
-        if path.hasSuffix("/active") {
+        if path.hasSuffix("/capabilities") {
+            data = try JSONSerialization.data(withJSONObject: [
+                "workerId": "worker-1", "state": backendFailure == "stale" || backendFailure == "unknown" ? backendFailure! : "fresh",
+                "validForMs": backendFailure == "expired" ? 0 : 5000, "serverTime": time,
+                "capabilities": ["version": 1, "outputId": backendFailure == "wrong-output" ? "other" : "output-1",
+                    "encoder": "software", "outputProfile": "1080p30", "outputMode": "rtmp+record",
+                    "startup": backendFailure == "failed" ? "failed" : "passed", "sustainedPerformance": "unqualified"]])
+        } else if path.hasSuffix("/active") {
             data = try JSONEncoder().encode(ActiveMatchResponse(snapshot: matchSnapshot(), serverTime: time))
         } else if path.hasSuffix("/join") {
             if let joinGate { await joinGate.enter() }

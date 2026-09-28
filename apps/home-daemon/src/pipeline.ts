@@ -71,10 +71,15 @@ function filterPath(value: string): string {
   return value.replace(/[\\':]/g, '\\$&').replace(/[\\'\[\],;]/g, '\\$&');
 }
 
-/**
- * Build the ffmpeg argv for a single game. `drawtext` reads `scoreFile` on
- * every frame thanks to `reload=1`; the daemon updates that file atomically.
- */
+/** Shared initialization options for the live pipeline and local startup probe. */
+export function videoEncoderArgs(encoder: 'software' | 'videotoolbox' | 'nvenc'): string[] {
+  return encoder === 'videotoolbox'
+    ? ['-c:v', 'h264_videotoolbox', '-allow_sw', '0', '-realtime', '1', '-bf', '0']
+    : encoder === 'nvenc'
+      ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll']
+      : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
+}
+
 export function buildFfmpegArgs(
   spec: PipelineSpec,
   options: {
@@ -140,12 +145,7 @@ export function buildFfmpegArgs(
   ].join(':');
 
   const encoder = spec.encoder ?? (spec.nvenc ? 'nvenc' : 'software');
-  const video =
-    encoder === 'videotoolbox'
-      ? ['-c:v', 'h264_videotoolbox', '-allow_sw', '0', '-realtime', '1', '-bf', '0']
-      : encoder === 'nvenc'
-        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll']
-        : ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency'];
+  const video = videoEncoderArgs(encoder);
   video.push(
     '-b:v',
     `${profile?.bitrateKbps ?? 6000}k`,

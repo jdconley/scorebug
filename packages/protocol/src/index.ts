@@ -10,3 +10,4 @@ export * from './decoder-delivery.js';
 
 export * from './decoder-delivery-report.js';
 export * from './pipeline-read-key.js';
+export * from './worker-capabilities.js';

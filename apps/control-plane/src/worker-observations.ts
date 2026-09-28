@@ -1,3 +1,4 @@
+import type { WorkerCapabilities, WorkerCapabilitiesResponse } from '@scorebug/protocol';
 import {
   advanceDelivery,
   deliveryDelta,
@@ -81,6 +82,8 @@ type Report = {
 type UpperAge = { sequence: number; ageMs: number | undefined; at: number };
 type TimingToken = { readonly value: string; readonly issuedAt: number };
 type Session = {
+  capabilities?: WorkerCapabilities;
+  capabilityHeartbeat?: number | undefined;
   runId: string;
   sessionId: string;
   workerEpoch: string;
@@ -153,7 +156,7 @@ export class WorkerObservations {
       : {};
   }
 
-  register({ workerId, runId }: WorkerSessionRequest): WorkerSessionResponse {
+  register({ workerId, runId, capabilities }: WorkerSessionRequest): WorkerSessionResponse {
     const sampled = this.sampleMonotonic();
     const worker = this.workers.get(workerId);
     if (worker?.retiredRuns.has(runId)) throw new WorkerObservationError('worker_session_retired');
@@ -170,6 +173,9 @@ export class WorkerObservations {
         serverTime: new Date(this.now()).toISOString(),
       };
     const current: Session = {
+      ...(capabilities
+        ? { capabilities: structuredClone(capabilities), capabilityHeartbeat: sampled }
+        : {}),
       runId,
       sessionId: randomUUID(),
       workerEpoch: randomUUID(),
@@ -201,6 +207,29 @@ export class WorkerObservations {
     };
   }
 
+  capabilities(workerId: string): WorkerCapabilitiesResponse {
+    const now = this.sampleMonotonic(),
+      session = this.workers.get(workerId)?.current;
+    const capabilities = session?.capabilities;
+    const fresh =
+      capabilities !== undefined &&
+      now !== undefined &&
+      session?.capabilityHeartbeat !== undefined &&
+      now - session.capabilityHeartbeat < WORKER_OBSERVATION_TTL_MS;
+    return {
+      workerId,
+      state: capabilities ? (fresh ? 'fresh' : 'stale') : 'unknown',
+      validForMs: fresh
+        ? Math.max(
+            0,
+            Math.floor(WORKER_OBSERVATION_TTL_MS - (now! - session!.capabilityHeartbeat!)),
+          )
+        : 0,
+      capabilities: capabilities ? structuredClone(capabilities) : null,
+      serverTime: new Date(this.now()).toISOString(),
+    };
+  }
+
   sampleTiming({ workerId, sessionId }: WorkerSampleTimingRequest): WorkerSampleTimingResponse {
     const worker = this.workers.get(workerId);
     if (worker?.retiredSessions.has(sessionId))
@@ -208,6 +237,7 @@ export class WorkerObservations {
     if (!worker || worker.current.sessionId !== sessionId)
       throw new WorkerObservationError('worker_session_unknown');
     const issuedAt = this.sampleMonotonic();
+    worker.current.capabilityHeartbeat = issuedAt;
     // Independent bounded slot: never redate or evict the legacy token pair.
     delete worker.current.pendingSampleToken;
     if (issuedAt !== undefined)

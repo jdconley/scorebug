@@ -21,6 +21,7 @@ to YouTube.
 - [Real SRT relay access and process supervision](docs/relay-conformance.md)
 - [Native worker setup and local media checks](apps/home-daemon/README.md)
 - [Worker status and native display](docs/worker-status.md)
+- [Worker capabilities and startup preflight](docs/worker-capabilities.md)
 - [Local sustained media qualification](docs/media-soak.md)
 - [Capture SDK compatibility findings](docs/capture-sdk-compatibility.md)
 - [Milestone 0 verification results](docs/milestone-0-results.md)

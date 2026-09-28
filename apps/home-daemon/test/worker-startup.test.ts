@@ -113,11 +113,11 @@ it('unsupported statistics still start normal control/report loops', async () =>
     expect(await f.exit).toEqual({ code: 0, signal: null });
   });
 });
-it('off mode skips the configured probe entirely', async () => {
-  await startup('setInterval(()=>{},100);', 'off', async (f) => {
+it('off mode skips statistics but still checks encoder initialization', async () => {
+  await startup("if(process.argv.includes('-h'))process.exit(9);", 'off', async (f) => {
     await expect.poll(f.output, { timeout: 3000 }).toContain('worker_processing_disabled');
     await expect.poll(f.requests).toBeGreaterThan(0);
-    await expect(readFile(f.binary + '.pid', 'utf8')).rejects.toThrow();
+    expect(f.output()).toContain('worker_backend_capabilities');
     f.stop();
     expect(await f.exit).toEqual({ code: 0, signal: null });
   });

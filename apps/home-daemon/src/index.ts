@@ -1,3 +1,4 @@
+import { probeBackend } from './backend-capabilities.js';
 import { loadConfig, videoProfiles } from './config.js';
 import { createLogger } from './logger.js';
 import { startPipeline } from './pipeline.js';
@@ -8,10 +9,7 @@ import { WorkerSupervisor } from './supervisor.js';
 import { WorkerReporter } from './worker-reporter.js';
 import { createWorkerStateLogger } from './worker-state-log.js';
 import { createWorkerTerminalDiagnostics, flushWorkerDiagnostics } from './worker-terminal.js';
-import {
-  probeEncoderStatistics,
-  type EncoderStatisticsCapability,
-} from './encoder-statistics-capability.js';
+import { probeEncoderStatistics } from './encoder-statistics-capability.js';
 
 const config = loadConfig();
 const log = createLogger(config.LOG_LEVEL);
@@ -23,10 +21,10 @@ const terminalDiagnostics = createWorkerTerminalDiagnostics(
 );
 const scoreFile = scoreFilePath(config.SCORE_DIR);
 const client = new WorkerClient(config.CONTROL_PLANE_URL, config.HOME_TOKEN, config.WORKER_ID);
-const reporter = new WorkerReporter(config.CONTROL_PLANE_URL, config.HOME_TOKEN, config.WORKER_ID);
+let reporter: WorkerReporter;
 let encoderTiming = false;
 const startupAbort = new AbortController();
-let startupProbe: Promise<EncoderStatisticsCapability> | undefined;
+let startupProbe: Promise<unknown>;
 const supervisor = new WorkerSupervisor({
   load: () => client.load(),
   scoreFile,
@@ -110,17 +108,25 @@ log.info('worker_started', {
   decoderThreading: config.DECODER_THREADING,
   profile: config.VIDEO_PROFILE,
 });
-if (config.WORKER_PROCESSING === 'off') {
-  log.info('worker_processing_disabled');
+if (config.WORKER_PROCESSING === 'off') log.info('worker_processing_disabled');
+startupProbe = Promise.all([
+  probeBackend(config, { signal: startupAbort.signal }),
+  config.WORKER_PROCESSING === 'off'
+    ? Promise.resolve(undefined)
+    : probeEncoderStatistics(config.FFMPEG_PATH, { signal: startupAbort.signal }),
+]).then(([backend, statistics]) => {
+  if (stopping) return;
+  reporter = new WorkerReporter(
+    config.CONTROL_PLANE_URL,
+    config.HOME_TOKEN,
+    config.WORKER_ID,
+    undefined,
+    undefined,
+    backend,
+  );
+  log.info('worker_backend_capabilities', backend);
+  if (statistics) encoderTiming = statistics.available;
+  log.info('worker_processing_capability', statistics ?? { available: false, reason: 'disabled' });
   void poll();
   void report();
-} else {
-  startupProbe = probeEncoderStatistics(config.FFMPEG_PATH, { signal: startupAbort.signal });
-  void startupProbe.then((capability) => {
-    if (stopping) return;
-    encoderTiming = capability.available;
-    log.info('worker_processing_capability', capability);
-    void poll();
-    void report();
-  });
-}
+});

@@ -499,6 +499,11 @@ struct PublishingClockObservation: Equatable, Sendable {
                 guard state.pending == nil else { throw CaptureControlError.unresolved }
                 let selection = BroadcastSelection(workerId: setup.workerId, outputId: setup.outputId, captureDeviceId: setup.deviceId, recordingId: context.id)
                 if state.snapshot?.broadcast.desired != .running || state.snapshot?.broadcast.selection != selection {
+                    let checkStarted = ContinuousClock.now
+                    let capabilities = try await clientFactory(ScoringEndpoint(setup.endpoint)).workerCapabilities(workerId: setup.workerId, credential: credential)
+                    try check(context, attempt)
+                    guard capabilities.permitsStart(worker: setup.workerId, output: setup.outputId,
+                        requestDuration: checkStarted.duration(to: .now)) else { throw CaptureControlError.workerUnavailable }
                     state = try await coordinator.submit(.start(selection: selection), activeRecordingId: context.id)
                     try check(context, attempt)
                     commandState = state
@@ -1339,6 +1344,8 @@ struct PublishingClockObservation: Equatable, Sendable {
             message = "Streaming state could not be saved. Retry before changing setup. Local recording is independent."
         } else if error as? CaptureControlError == .unresolved || commandState?.pending != nil {
             message = "Broadcast command is unresolved. Retry reconciliation before changing setup."
+        } else if error as? CaptureControlError == .workerUnavailable {
+            message = "The selected streaming proxy is unavailable or cannot start its encoder/output. Check the worker and output in Setup, then retry. Local recording continues."
         } else if error as? CaptureControlError == .noActiveMatch {
             message = "No active match. Create or join a match in Score, then connect capture."
         } else if error as? CaptureControlError == .noSetup {

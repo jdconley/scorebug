@@ -1,3 +1,4 @@
+import type { WorkerCapabilities } from './worker-capabilities.js';
 import type { DecoderDeliveryPacket } from './decoder-delivery-report.js';
 import type { DecoderCadenceSnapshot } from './decoder-cadence.js';
 import type { WorkerReceiverProbe } from './receiver-probe.js';
@@ -100,7 +101,11 @@ export type WorkerSampleTimingResponse = {
   /** Omitted when the server cannot establish monotonic issuance provenance. */
   timingToken?: string;
 };
-export type WorkerSessionRequest = { workerId: string; runId: string };
+export type WorkerSessionRequest = {
+  workerId: string;
+  runId: string;
+  capabilities?: WorkerCapabilities | undefined;
+};
 export type WorkerSessionResponse = {
   /** Exact capability match enables a fresh challenge before each sample. */
   sampleTiming?: string;

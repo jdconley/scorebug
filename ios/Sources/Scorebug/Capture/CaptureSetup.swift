@@ -56,4 +56,4 @@ struct CaptureKeychain: CaptureSetupStorage {
     }
 }
 
-enum CaptureControlError: Error { case storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged }
+enum CaptureControlError: Error { case workerUnavailable, storage, noSetup, noActiveMatch, invalidCredential, recordingStopped, rejected, unresolved, selectionChanged }

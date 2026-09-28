@@ -1,3 +1,4 @@
+import { WORKER_OUTPUT_PROFILES } from '@scorebug/protocol';
 import {
   deliveryPacketValid,
   WORKER_DECODER_DELIVERY_PROTOCOL,
@@ -26,6 +27,17 @@ import { RelayLifecycleError, type RelayLifecycle } from '../relay-lifecycle.js'
 import { PUBLISHING_ATTEMPT_ID_PATTERN } from '../publishing-attempt.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const capabilities = z
+  .object({
+    version: z.literal(1),
+    outputId: id,
+    encoder: z.enum(['software', 'videotoolbox', 'nvenc']),
+    outputProfile: z.enum(WORKER_OUTPUT_PROFILES),
+    outputMode: z.enum(['rtmp', 'record', 'rtmp+record']),
+    startup: z.enum(['passed', 'failed', 'timeout', 'cancelled', 'unsupported_platform']),
+    sustainedPerformance: z.literal('unqualified'),
+  })
+  .strict();
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const pts = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER);
 const decodedVideo = z
@@ -105,6 +117,9 @@ export function mediaRoutes(
     c.set('credential', credential);
     await next();
   });
+  app.get('/capabilities', scoped, zValidator('query', z.object({ workerId: id }).strict()), (c) =>
+    c.json(observations.capabilities(c.req.valid('query').workerId)),
+  );
   app.get(
     '/status',
     scoped,
@@ -240,8 +255,13 @@ export function workerRoutes(
     await next();
   });
   app.use('*', bearer(config.HOME_TOKEN, 'worker'));
-  app.post('/sessions', zValidator('json', z.object({ workerId: id, runId: id }).strict()), (c) =>
-    c.json(observations.register(c.req.valid('json'))),
+  app.post(
+    '/sessions',
+    zValidator(
+      'json',
+      z.object({ workerId: id, runId: id, capabilities: capabilities.optional() }).strict(),
+    ),
+    (c) => c.json(observations.register(c.req.valid('json'))),
   );
   app.post(
     '/sample-timing',

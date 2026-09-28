@@ -97,6 +97,11 @@ public struct MatchHTTPClient: MatchScoringClient {
         try await send(path: [credential.gameId, "media"], token: credential.token)
     }
 
+    public func workerCapabilities(workerId: String, credential: MatchCredential) async throws -> WorkerCapabilitiesResponse {
+        try await send(path: [credential.gameId, "media", "capabilities"], token: credential.token,
+            requiresFreshResponse: true, query: [.init(name: "workerId", value: workerId)])
+    }
+
     public func workerStatus(credential: MatchCredential, delivery: DecoderDeliveryRequest? = nil) async throws -> WorkerMediaStatusResponse {
         var query: [URLQueryItem] = []
         if let delivery {
