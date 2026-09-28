@@ -12,7 +12,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index],
     value = process.argv[index + 1];
   assert(
-    ['--host', '--source', '--duration', '--quality'].includes(key) && value && !values.has(key),
+    ['--host', '--source', '--duration', '--quality', '--timing-audit'].includes(key) &&
+      value &&
+      !values.has(key),
   );
   values.set(key, value);
 }
@@ -20,6 +22,8 @@ const source = values.get('--source');
 assert(source && isAbsolute(source), 'Provide an absolute prepared media path');
 const quality = values.get('--quality') ?? '2160';
 assert(['1080', '2160'].includes(quality));
+const timingAudit = values.get('--timing-audit') ?? 'on';
+assert(['on', 'off'].includes(timingAudit));
 const duration = Number(values.get('--duration') ?? '120');
 assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
 const options = deviceLabOptions(['--host', values.get('--host'), '--encoder', 'videotoolbox']);
@@ -66,7 +70,10 @@ try {
   const config = join(artifact, 'config.json');
   await writeFile(
     config,
-    JSON.stringify({ setup: lab.setup, source, artifact, duration, uhd: quality === '2160' }),
+    JSON.stringify({
+      setup: lab.setup, source, artifact, duration, uhd: quality === '2160',
+      timingAudit: timingAudit === 'on',
+    }),
     { mode: 0o600 },
   );
   const products = join(derived, 'Build/Products');
@@ -106,10 +113,13 @@ try {
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
   assert(result.samples.length > 0, 'Test must execute, not skip');
-  const cadence = JSON.parse(await readFile(join(artifact, 'cadence.json'), 'utf8'));
-  assert.equal(cadence.closed, true, 'Native audit must join before completing');
-  assert.equal(cadence.overflow, false, 'Choose a shorter diagnostic duration');
-  assert.equal(cadence.invalid, false);
+  assert.equal(result.timingAuditEnabled, timingAudit === 'on');
+  if (timingAudit === 'on') {
+    const cadence = JSON.parse(await readFile(join(artifact, 'cadence.json'), 'utf8'));
+    assert.equal(cadence.closed, true, 'Native audit must join before completing');
+    assert.equal(cadence.overflow, false, 'Choose a shorter diagnostic duration');
+    assert.equal(cadence.invalid, false);
+  }
 } catch (error) {
   failure = String(error);
 } finally {

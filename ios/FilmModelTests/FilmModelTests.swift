@@ -379,6 +379,7 @@ extension FilmModelTests {
             let source: String, artifact: String
             let duration: Double
             let uhd: Bool
+            let timingAudit: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
@@ -386,8 +387,11 @@ extension FilmModelTests {
         let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
         streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken
         streaming.workerId = config.setup.workerId; streaming.outputId = config.setup.outputId
-        streaming.cadenceReportFixtureWriter = { data in
-            try? data.write(to: artifact.appendingPathComponent("cadence.json"), options: .atomic)
+        let timingAudit = config.timingAudit ?? true
+        if timingAudit {
+            streaming.cadenceReportFixtureWriter = { data in
+                try? data.write(to: artifact.appendingPathComponent("cadence.json"), options: .atomic)
+            }
         }
         let film = FilmModel(library: RecordingLibrary(rootDirectory: artifact.appendingPathComponent("archive")),
             profile: config.uhd ? RecordingQuality.uhd2160.profile : RecordingQuality.hd1080.profile,
@@ -408,6 +412,7 @@ extension FilmModelTests {
         }
         var samples: [[String: String]] = []
         var diagnosticError: Error?
+        var lastProfileState: String?
         do {
             while ContinuousClock.now < started + .seconds(config.duration), film.state == .recording,
                   streaming.localState == .publishing {
@@ -415,6 +420,11 @@ extension FilmModelTests {
                 if let text = streaming.qualityDiagnostic,
                    let fields = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] {
                     samples.append(fields)
+                    let profileState = "\(fields["policyAppliedProfile"] ?? "unknown") trial=\(fields["policyTrialActive"] ?? "unknown")"
+                    if profileState != lastProfileState {
+                        print("HEADLESS_QUALITY \(profileState)")
+                        lastProfileState = profileState
+                    }
                 }
                 try await Task.sleep(for: .milliseconds(500))
             }
@@ -426,6 +436,7 @@ extension FilmModelTests {
         await film.stop()
         let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples,
             "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
+            "timingAuditEnabled": timingAudit,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
             to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)

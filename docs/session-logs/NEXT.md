@@ -13,30 +13,30 @@ owns TODOs; the [acceptance matrix](../simulator-acceptance.md) owns retained ev
 
 ## Active checkpoint
 
-UHD sender pacing fix: four-message token capacity and at most four nonblocking
-writes per idle wake, rechecking pending media and all probe limits per message.
-Standard pacing, v4 wire,48Mbps/64MiB bounds and receiver admission are unchanged.
-Real SDK timer/pump diagnostic (always-accepting socket) improves48Mbps request
-from25.143 to47.998Mbps; all four rates achieve99.5–100%.75 affected tests pass.
-Patch reverse/original hashes/reapply verified. This measures sender scheduling,
-not network capacity.
+Production remains4c43b7a: bounded UHD sender pacing, unchanged encoder and queue
+limits, broadcast-reliability3000-v3 timing. The latest session adds faster SDK
+simulator diagnosis and `--timing-audit off` for long native diagnostics, preserving
+all production checks and the2048-row audit cap. See
+[session evidence](2026-09-28-simulator-candidate-limit.md).
 
-Full simulator `ordinary-native-aK6INv`, lab `device-lab-9PaWFc`, exec80522 joined1,
-cleanup[].360/720/1080 confirmed; real receiver sees those geometries without gaps.
-4K candidate fails `inputRejected / unresolvedInputLimit` (16 unresolved raw frames).
-An earlier attempt timed out in sourceWait. No2160 admission or full media pass.
-Native export succeeds;166 segment hashes checked.240s UHD terminal allowance works.
-Artifacts and exact phase attachment are in the [session log](2026-09-28-uhd-sender-pacing.md).
+Direct iOS26.2 SDK test reproduces4K unresolvedInputLimit in2.697seconds with real
+footage:27accepted/26output,473ms initial/919ms max completion. Low-latency mode
+cannot create an encoder (-12908). EncoderID anon-1; hardware and max-delay readbacks
+are unsupported, not proof of software. Earlier Mac normal mode90/90frames succeeds.
+Do not enlarge queues or switch modes. Owned simulator cleanup[0,0].
 
-Short real-footage SDK encoder diagnostic on macOS: normal4K24Mbps produces90/90
-frames,83ms maximum completion delay; low-latency mode produces1/6 then hits raw
-queue limit (375ms first completion). Do not switch production modes or raise limits.
-The simulator/load-specific failure remains to isolate. SDK Xcode schemes available:
-HaishinKit,HaishinKit-Package,SRTHaishinKit; test target HaishinKitPatchTests.
-No simulator-specific SDK diagnostic has run yet. All jobs joined.
+`headless-native-ZiHDud`180s: archive/publish survive,360/720 confirm, valid closed
+1803-row audit, cleanup[]. `headless-native-3aD0U5`360s: archive/publish survive,
+360/720 confirm,1080 trial225s then minimum reset239s. Reset is sourceScopeChanged /
+telemetryInvalidated, not observed media loss. Sample478 contains the witness;
+469–477 contain prior scope digest/sequence46.30on-time frames/no loss at reset,
+134ms report age. Actual receiver geometry has uninterrupted30fps through1080.
+Exact changed scope field is not captured.4K is not attempted; no media acceptance.
+LabUV6LXk; exec76004 joined0/cleanup[]. All jobs joined.
 
-Production timing remains broadcast-reliability3000-v3:3s media,1s report age,
-4.25s capture evaluation. Prior timing evidence/session retained.
+Earlier full simulator ordinary-native-aK6INv confirms1080 and completes native4K
+export (166segment hashes), then reports4K candidate pending-input failure. Reuse
+that evidence; don't confuse it with the distinct Mac telemetry-identity reset.
 
 ## Reuse, don't repeat
 
@@ -51,15 +51,18 @@ Production timing remains broadcast-reliability3000-v3:3s media,1s report age,
 
 ## Next work
 
-1. Isolate4K candidate pending-input failure with a short simulator SDK encoding
-   diagnostic. Existing opt-in `VideoCandidateEncoderTests/uhdNativeLatencyDiagnostic`
-   reads `SCOREBUG_CANDIDATE_SOURCE`; normal and low-latency recipes are diagnostics,
-   not passing-capacity assertions. Mac alone does not reproduce simulator failure.
-   Inspect native encoder selection/startup/completion under the actual load; preserve
-   memory/queue caps. Avoid another full8minute UI/export run without a causal fix.
-2. After focused candidate fix, qualify full4K climb and saved media with retained
-   `verify-2160-climb-20260928.py`, `verify-uhd-media-20260928.py` and
-   `collect-ordinary-export-20260925.py`. Native frame/media thresholds unchanged.
+1. Diagnose native sourceScopeChanged reset using saved3aD0U5 samples. Inspect
+   PublishingQualitySession.SourceScope and its construction. It compares capture,
+   native clock, worker identity/epoch/attempt, publication and optional processing
+   scope. Which field changed is unknown. Add compact changed-field evidence if
+   required, then targeted model checks; do not remove identity/ownership checks.
+2. Keep simulator4K encoding limit explicit. Use real native Mac pipeline to diagnose
+   full4K admission without UI/export overhead. Runner accepts --timing-audit off
+   for longer diagnostic runs; this omits optional audit only and is not media
+   acceptance. No blanket rerun until a causal fix. SDK simulator test selector
+   must include uhdNativeLatencyDiagnostic(lowLatency:); base selector runs zero tests.
+   After full climb, qualify saved media using retained verify-2160-climb,
+   verify-uhd-media and native-export collection helpers, matching their scopes.
 3. Audit remaining delivery/pressure TODOs against existing coverage, then sustained
    profiles, physical companion/radio and external hosts. Hosted CI remains unverified
    until a push is authorized. Do not retest established two-phone/Watch features.

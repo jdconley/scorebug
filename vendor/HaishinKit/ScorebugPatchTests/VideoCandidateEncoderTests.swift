@@ -22,13 +22,24 @@ import VideoToolbox
             profileLevel: kVTProfileLevel_H264_High_AutoLevel as String,
             maxKeyFrameIntervalDuration: 2, allowFrameReordering: false,
             isLowLatencyRateControlEnabled: lowLatency, expectedFrameRate: 30)
-        let encoder = try VideoCandidateEncoder(settings: recipe)
+        let encoder = try VideoCandidateEncoder(settings: recipe, sessionFactory: { mode, codec in
+            let session = try mode.makeSession(codec)
+            for key in [VTSessionOptionKey.encoderID, .maxFrameDelayCount, .realTime,
+                        VTSessionOptionKey(rawValue: "UsingHardwareAcceleratedVideoEncoder")] {
+                let value = session.copyOption(key)
+                print("UHD_CANDIDATE_PROPERTY lowLatency=\(lowLatency) key=\(key.rawValue) status=\(value.status) value=\(String(describing: value.value))")
+            }
+            return session
+        })
         try await encoder.start()
         do {
+            // Decode startup precedes pacing; otherwise a slow first decode makes
+            // the fixture submit a catch-up burst unrelated to live capture.
+            let firstSample = try #require(output.copyNextSampleBuffer())
             let start = ContinuousClock.now
             for i in 0..<90 {
                 try await Task.sleep(until: start + .nanoseconds(Int64(i) * 1_000_000_000 / 30), clock: .continuous)
-                let sample = try #require(output.copyNextSampleBuffer())
+                let sample = i == 0 ? firstSample : try #require(output.copyNextSampleBuffer())
                 if !encoder.offer(sample) { break }
             }
             let result = await encoder.finish()

@@ -20,8 +20,10 @@ cost ceiling.64MiB bounds a whole campaign while accommodating the short holds,
 source alignment and four-second candidate collection. Hitting the byte bound is a
 failed attempt, never permission to extend it. The existing60second campaign and
 300ms renewable lease bounds remain. UHD wakes are at least200microseconds apart;
-each opportunity can bank/send only one1360byte wire token. Late callbacks cannot
-burst accumulated traffic. Actual achieved receiver throughput still gates admission.
+the sender banks at most four1360byte wire tokens and submits at most four
+messages per idle opportunity. Every message rechecks media priority, lease,
+revocation, pressure and byte limits. This bounded catch-up accommodates timer jitter;
+standard probes retain their single-message pacing. Actual achieved receiver throughput still gates admission.
 
 ## Application integration still required
 
