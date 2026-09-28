@@ -38,17 +38,22 @@ causes. These harness additions postdate this capture; its producing patch is sa
 
 ## Next work
 
-1. Use saved gZctuL data to assess4K live losses versus clean archive. The shared Mac
-   runs source decoding, clean4K recording, live4K encoding and the overlay worker;
-   this is not an isolated physical-camera throughput result. Do not infer the exact
-   local drop cause from nominal transport/thermal/worker values alone.
-2. Audit remaining local fault-matrix TODOs against retained tests and real runs.
-   Existing Core/FilmModel tests cover stale/no-progress, thermal/queue, ownership,
-   terminal joins and continuous operation beyond optional audit storage caps.
-   Distinguish those from full media/outage/sustained qualification.
-3. Native4K performance, severe-collapse live losses and abrupt-crash audio tails
-   remain open. Prior larger-buffer and one-second-GOP experiments worsened media;
-   avoid repeating them or changing thresholds without a causal finding.
+Priority: implement the actual missing native SRT reconnect feature, not another
+4K or generic fault rerun. See [current session design](2026-09-28-fault-coverage-and-reconnect-gap.md).
+Current pollLocalHealth detaches a failed publisher, stops its owned broadcast and
+requires manual Retry. Existing API/worker recovery is a different failure mode.
+
+Reconnect only after joined teardown and fresh control, for the same capture tap,
+match, selection and broadcast generation. Reuse the authorized running generation
+and a fresh publishingAttemptId; do not auto-submit .start after remote stop/change.
+Explicit Stop/capture end/replacement/auth/setup changes cancel retries. Back off
+failures and start at minimum while local recording continues. Focused model gates,
+then one native network-outage run. Hardware remains deferred.
+
+19retained fault test passes and current sources are audited in local-fault-coverage.md;
+runtime classification beyond diagnostic caps already passes. Real packet loss and
+full disconnect/restoration, severe-collapse loss, native4K performance, abrupt audio
+tails and sustained profiles remain open. All jobs terminal; no code changed this turn.
 
 ## Reuse, don't repeat
 

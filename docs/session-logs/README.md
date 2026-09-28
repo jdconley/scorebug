@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 fault coverage and reconnect gap](2026-09-28-fault-coverage-and-reconnect-gap.md) — retained fault checks audited; native SRT reconnection identified as missing behavior.
+
 - [September 28 missing processing race](2026-09-28-missing-processing-race.md) — bounded wait for delayed matching reports.
 
 - [September 28 simulator candidate limit](2026-09-28-simulator-candidate-limit.md) — short real-code simulator reproduction and native pipeline comparison.

@@ -69,14 +69,22 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 
 ## Remaining local work, in order
 
+- [ ] Implement automatic native-publisher reconnection after connection failure,
+  bound to the same active recording and authorized broadcast. Fresh control must
+  cancel retry after remote/explicit stop or ownership change; then verify one real
+  network-outage/restoration workflow. Current behavior requires manual Retry.
+
 - [ ] Qualify sustained 4K and final media after demonstrated native admission and
   actual receiver geometry; current probation detects real frame loss. The simulator's 4K candidate encoder exceeds
   its pending-input limit; keep that ceiling explicit rather than enlarging queues.
 - [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.
   Healthy-period acceptance already passes; do not relabel outage losses as healthy.
-- [ ] Complete the remaining stale-report/no-progress, native readback/revision/keyframe,
-  thermal/queue-pressure, partial-loss, total-outage and restoration matrix. Reuse
-  existing component and workflow coverage; distinguish simulated pressure from hardware.
+- [x] Verify retained deterministic stale-report/no-progress, ownership/revision,
+  thermal/queue-pressure and continuous-control coverage in the
+  [local fault matrix](../../local-fault-coverage.md). Native1080 boundaries/media
+  retain their separate integration pass; physical pressure is not simulated proof.
+- [ ] Complete real packet-loss/total-network-outage/restoration coverage after
+  native reconnection is implemented; preserve archive and truthful live-loss results.
 - [ ] Reconcile optional delivery-audit retention/terminal coverage with current
   production control. Missing live audio remains a failure where reproduced; do not
   raise audit limits or pad silence to conceal gaps.

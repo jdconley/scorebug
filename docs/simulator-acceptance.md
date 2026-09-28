@@ -40,6 +40,13 @@ production behavior changes, not when unrelated documentation or fixtures change
 | Local Linux container stack | API persistence, managed relay and software worker checks. Not external TLS/firewall/NVIDIA qualification. |
 | Physical iPhone/Watch and external hosts | Deferred until the remaining simulator-testable integration gates are resolved. |
 
+## Fault coverage
+
+The [local fault matrix](local-fault-coverage.md) records19retained passing cases
+for stale/stall/pressure/ownership and continuous-control behavior. Native publisher
+connection failure still requires manual Retry: API/worker restart evidence does
+not establish automatic recovery after loss of the phone's SRT connection.
+
 ## Iteration and CI
 
 Batch one behavior change, run its focused checks, then run the affected integration
