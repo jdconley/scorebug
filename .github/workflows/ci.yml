@@ -92,6 +92,9 @@ jobs:
       - name: verify isolated local relay configuration
         run: node scripts/test-local.mjs
 
+      - name: verify deployment persistence and native relay provisioning
+        run: node scripts/test-vps-stack.mjs --image scorebug/control-plane:ci
+
       - name: build home-daemon image
         uses: docker/build-push-action@v7
         with:

@@ -155,8 +155,8 @@ Build for the target host architecture. A successful build or an encoder listing
 is not runtime/media qualification. Keep the previous image tag/digest for rollback.
 The worker connects to an existing native control plane and managed SRT relay;
 it does not provision those services. The checked-in [VPS stack](../../infra/vps/README.md)
-is a legacy template with outstanding persistence/relay repairs, not a complete
-current native deployment. For native macOS use the [service runbook](../../docs/macos-worker-service.md).
+provides the native API, persistent database and managed relay; external-host
+and public TLS/media acceptance still require testing on that destination. For native macOS use the [service runbook](../../docs/macos-worker-service.md).
 
 Create a private deployment directory outside the checkout, with `worker.env`
 mode 0600 and its parent mode 0700. Do not commit it or print `docker compose config`

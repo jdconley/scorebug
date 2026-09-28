@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 portable deployment](2026-09-28-portable-deployment.md) — repaired Compose, persistent native API/relay wiring, focused container-recreation check and CI.
+
 - [September 26 evening device resume](2026-09-26-evening-device-resume.md) — current LAN corrected, phone automation works, fresh network probe still denied, Watch connection reset.
 
 - [September 26 device acceptance blocker audit](2026-09-26-device-acceptance-blocked.md) — no live jobs; device prerequisites still prevent the next acceptance tests.

@@ -8,10 +8,12 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 ## Current checkpoint
 
+Latest work: [September28 deployment](2026-09-28-portable-deployment.md). `node scripts/test-vps-stack.mjs --image <existing-api-image>` verifies the repaired deployment with a focused owned-container check; CI reuses its built API/relay images.
+
 - `native-created-simulators-opRrou` atf3428a0: **complete vertical passes**, including native creation/discovery/takeover/undo, independent archive/export, both live recordings, full decode/frame continuity/audio sync and visible score sequence. `vertical-acceptance.json` binds evidence.
 - `ordinary-native-UFjmr8` atb341b94: Watch/phone native workflows, restored pairing, frames/audio sync/score overlay pass. Strict media end coverage fails because audio outlasts video by454ms on remote match end. Relay retirement before publisher drain is a hypothesis. Do not misreport missing audio or relax coverage.
 - Direct-to-minimum fallback measured in `ordinary-native-PvbKtK` ateade9ac. Native/transport/geometry pass; one720→240 application, ACK about1.03s. Archive is continuous11290frames. Each live output still has93 missing IDs,11 repeated/corrupted observations,26audio gaps and2.4s maximum video gap. Strict media fails. Do not repeat unchanged or claim fixed.
-- Mac service helper and Linux worker deployment runbook are implemented. Persistent service operation, external runtime and legacy VPS template repair remain open. No service installed.
+- Mac service helper and Linux worker deployment runbook are implemented. VPS Compose persistence/native relay repair now passes local container checks (`vps-stack-wozlWz`); persistent Mac service operation and external runtime/TLS/media remain open. No service installed.
 
 Use focused checks, incremental builds and completed-workflow media verification. Current two-phone UI retry fixed only keyboard dismissal. Do not repeat hardware readiness work or broad suites for that change.
 

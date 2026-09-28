@@ -66,8 +66,9 @@ References: [progressive design](../specs/2026-09-16-progressive-streaming-desig
 - [ ] Verify valid/invalid SRT credentials, revocation, stale worker generations, late attachment and scoped cleanup in the complete local stack.
 - [ ] Add explicit backend capability reporting/negotiation beyond static encoder selection; distinguish configured, available and runtime-qualified profiles.
 - [x] Provide a native macOS worker service helper and [runbook](../../macos-worker-service.md) with configuration, logs, backup, upgrade and rollback. Generation/configuration checks pass; actual launchd service operation remains to verify.
-- [x] Document Linux worker Compose CPU/GPU configuration, output modes, upgrade/rollback and current qualification limits. The legacy VPS stack remains explicitly unqualified.
-- [ ] Verify Linux deployment networking/runtime and the Mac service against the local mock output; repair the legacy VPS template before using it.
+- [x] Document Linux worker Compose CPU/GPU configuration, output modes, upgrade/rollback and current qualification limits. The VPS Compose template now uses persistent storage and the managed native relay; its local wiring/persistence check passes.
+- [x] Repair and locally verify VPS Compose: persistent native database, private authenticated relay management, generation-scoped paths, durable API-container recreation and stop cleanup. CI reuses its built images for this check.
+- [ ] Verify actual external Linux deployment networking/TLS/media and the Mac service against the local mock output.
 - [ ] Update README, architecture, runbook and tested platform matrix. Add/verify CI for protocol/scoring, real server-container startup, native builds and simulator/media checkpoints appropriate to CI resources.
 
 ## 4. Deferred hardware and external acceptance
