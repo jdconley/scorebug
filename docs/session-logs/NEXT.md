@@ -8,6 +8,8 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`, 
 
 ## Current checkpoint
 
+Latest work: [September28 minimum keyframes](2026-09-28-minimum-keyframes.md). One-second minimum GOP candidate rejected and source/tests restored exactly to271e390. `ordinary-native-rVojgQ` passes native workflow/replay/cleanup; media fails96missing IDs,26audio gaps,3.233s maxvideo gap,98.651% of5s windows≥24fps. Archive9307consecutive frames. No production candidate retained; all jobs joined. Do not repeat it. Offline packet ACK replay and sender backlog evidence are the next congestion step.
+
 Latest work: [September28 backend capabilities](2026-09-28-backend-capabilities.md). Worker advertises actual configured output plus bounded local encoder initialization; native new-start preflight rejects unknown/stale/failed/mismatched workers while recording continues.119native model+79API+106worker tests pass; final3probe checks/typechecks pass. Real software/VideoToolbox initialization and idle worker/API heartbeat expiry verified. No sustainable profile claim. All jobs joined.
 
 Latest work: [September28 server recovery](2026-09-28-server-recovery.md). Native `ordinary-native-QOuplL` passes API SIGKILL/restart and graceful worker restart with15-second outages; recording/publishing stay active without another Start tap. Archive2534consecutive source frames/44hashed segments, both recovered outputs show1–0, final end alignment<13ms. Interrupted output tails retain~0.5seconds extra audio.118focused model tests+35launcher checks pass. All jobs joined/resources cleaned.
@@ -27,7 +29,7 @@ Use focused checks, incremental builds and completed-workflow media verification
 
 ## Next priorities
 
-1. Diagnose remaining congestion from savedPvbKtK evidence before another capture; do not repeat prior failed bitrate-first/relative-pacing/source-cadence experiments.
+1. Replay cumulative ACKs from savedPvbKtK/rVojgQ packet evidence to quantify outstanding bytes before current fallback. Native SRT stats already expose sender-buffer bytes; evaluate earlier pressure detection against saved data before another capture. Do not repeat rejected minimum-GOP, bitrate-first, relative-pacing or source-cadence experiments.
 2. Cover hard worker crash/source interruption only where current component evidence is insufficient; API and graceful worker restart now pass the native workflow.
 3. Consolidate existing recording/scoring recovery evidence with only genuinely missing focused checks. Offline/forced-termination UI results already exist in `docs/native-film-app.md`; do not rebuild or rerun everything for small edits. Hardware remains deferred.
 

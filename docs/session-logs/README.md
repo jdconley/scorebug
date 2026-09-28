@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September28 minimum keyframes](2026-09-28-minimum-keyframes.md) — saved-backlog diagnosis, one rejected native congestion experiment, exact source restoration.
+
 - [September28 backend capabilities](2026-09-28-backend-capabilities.md) — actual encoder initialization, fresh worker/output preflight, native recording independence.
 
 - [September28 server recovery](2026-09-28-server-recovery.md) — native publishing survives API failure/restart, worker restart recovers automatically, clean archive remains continuous.
