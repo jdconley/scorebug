@@ -61,9 +61,16 @@ archive frames. Both destinations fully decode before/after recovery, with no
 within-session video/audio gaps. Live gap35.5667s; interrupted output audio tail108ms.
 See [session evidence](2026-09-28-prolonged-relay-outage.md). All jobs joined.
 
-1. Keep isolated packet loss/blackhole coverage distinct from the verified relay
-   suspension; no more equivalent reconnect captures. The UDP fixture needs new
-   client endpoint support before it can exercise reconnection correctly.
+Publisher-only25s packet blackhole also passes: headless-native-K87zVV, lab6iMbvh.
+517forward/664reverse actual drops, zero sends during fault, same recording/generation
+across retries, publishing resumes42s.2731consecutive clean archive frames; both
+outputs decode with within-session continuity. Live gap29.3333s, all A/Vends≤42ms.
+Capture51384 and native export/media66766 joined0; cleanup[]. See
+[session evidence](2026-09-28-publisher-blackhole.md). No active jobs.
+
+1. No more equivalent reconnect captures. Intermittent packet loss and whole-client
+   network loss remain distinct from publisher-hop blackout. New outage fixture
+   supports reconnect ports with isolated reply routing; congestion fixture unchanged.
 2. Keep4K performance diagnosis separate: actual444UHD frames reached receiver then
    probation found pre-receiver loss. App ingress vsSDK raw input vsnative encoder
    drop origin remains unproven. Do not enlarge queues or weaken thresholds.

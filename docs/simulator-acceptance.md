@@ -53,6 +53,13 @@ frames, both destinations resume with fully decoded within-session continuity.
 The live gap is35.5667s; interrupted audio tail is108ms. Neither result qualifies
 isolated packet blackholes or physical radio changes.
 
+The distinct publisher-only blackhole now passes in headless-native-K87zVV:
+25s actual bidirectional packet loss, automatic retries/recovery on generation1,
+2731consecutive clean archive frames, both output sessions fully decoded without
+within-session video/audio gaps. Live gap29.3333s; all A/V ends within42ms. API and
+relay management remain reachable. This is native headless integration, not physical
+radio or whole-device network-loss qualification.
+
 ## Iteration and CI
 
 Batch one behavior change, run its focused checks, then run the affected integration

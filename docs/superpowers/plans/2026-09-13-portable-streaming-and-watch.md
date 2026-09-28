@@ -74,7 +74,7 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   pass; an actual SRT disconnect rejoins without another broadcast Start. Clean
   archive remains continuous and both outputs resume; measured live gap is reported.
   Prolonged25s relay suspension also recovers across failed retries, with a continuous
-  archive and35.5667s live gap. Isolated network/radio faults remain separate.
+  archive and35.5667s live gap.
 
 - [ ] Qualify sustained 4K and final media after demonstrated native admission and
   actual receiver geometry; current probation detects real frame loss. The simulator's 4K candidate encoder exceeds
@@ -85,8 +85,12 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   thermal/queue-pressure and continuous-control coverage in the
   [local fault matrix](../../local-fault-coverage.md). Native1080 boundaries/media
   retain their separate integration pass; physical pressure is not simulated proof.
-- [ ] Complete real packet-loss/total-network-outage/restoration coverage with
-  native reconnection; preserve archive and truthful live-loss results.
+- [x] Verify isolated publishing-hop packet blackhole and restoration:25s bidirectional
+  loss, repeated retries, same broadcast and continuous clean archive; both outputs
+  recover with29.3333s measured live gap.
+- [ ] Complete intermittent packet-loss and whole-client-network-outage/restoration
+  coverage. Publisher-only blackhole leaves the control API reachable; physical
+  radio changes require their own deferred qualification.
 - [ ] Reconcile optional delivery-audit retention/terminal coverage with current
   production control. Missing live audio remains a failure where reproduced; do not
   raise audit limits or pad silence to conceal gaps.

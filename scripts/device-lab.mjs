@@ -14,6 +14,7 @@ import { mediaTools } from './media-tools.mjs';
 import { startScoringTestServer } from './scoring-test-server.mjs';
 import { startReconnectingRTMPRecorder } from './reconnecting-rtmp-recorder.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
+import { createUDPOutageProxy } from './udp-outage.mjs';
 import { createUplinkEvidenceStopper } from './uplink-proxy-evidence.mjs';
 import { startOrdinaryRecoveryControl } from './ordinary-recovery-control.mjs';
 import { validatePrivateLabBind } from './private-lab-network.mjs';
@@ -239,6 +240,13 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     options.uhd === undefined || typeof options.uhd === 'boolean',
     'Invalid UHD lab selection',
   );
+  assert(
+    options.publisherBlackhole === undefined || typeof options.publisherBlackhole === 'boolean',
+  );
+  assert(
+    !(options.publisherBlackhole && options.publisherRecovery),
+    'Select one publisher fault fixture',
+  );
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
@@ -273,6 +281,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     worker,
     recoveryControl,
     stopUplink,
+    outageUplink,
     relayStarted = false,
     stopping,
     restarting;
@@ -415,6 +424,27 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
         INGEST_PUBLISH_PORT: String(uplink.port),
       };
     }
+    if (options.publisherBlackhole) {
+      outageUplink = await createUDPOutageProxy({
+        receiverHost: options.host,
+        receiverPort: ingestPort,
+      });
+      stopUplink = async () => {
+        await outageUplink.close();
+        const result = outageUplink.snapshot();
+        await writeFile(
+          join(artifact, 'publisher-blackhole.json'),
+          JSON.stringify(result, null, 2),
+          { flag: 'wx', mode: 0o600 },
+        );
+        assert.equal(result.pending, 0);
+        assert.deepEqual(result.errors, [], 'Publisher outage fixture failed');
+      };
+      publisherEnvironment = {
+        INGEST_PUBLISH_HOST: '127.0.0.1',
+        INGEST_PUBLISH_PORT: String(outageUplink.port),
+      };
+    }
     recorder = await startReconnectingRTMPRecorder({ artifact, ffmpeg, port: 0 });
     const apiEnvironment = {
       HOST: apiBind,
@@ -501,6 +531,31 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       setup,
       stop,
       workerClosed: worker.closed,
+      blackholePublisher(seconds) {
+        assert(
+          outageUplink && !stopping && !restarting,
+          'Publisher blackhole must be selected and serialized',
+        );
+        assert(Number.isInteger(seconds) && seconds >= 10 && seconds <= 60);
+        const operation = (async () => {
+          await outageUplink.setBlocked(true);
+          try {
+            await delay(seconds * 1000, undefined, { signal });
+          } finally {
+            await outageUplink.setBlocked(false);
+          }
+          const result = outageUplink.snapshot();
+          assert(
+            result.forward.dropped > 0 && result.reverse.dropped > 0,
+            'Both publisher directions must actually lose packets',
+          );
+          assert.deepEqual(result.errors, []);
+        })();
+        restarting = operation;
+        return operation.finally(() => {
+          restarting = undefined;
+        });
+      },
       pauseRelay(seconds) {
         assert(
           !stopping && !restarting,

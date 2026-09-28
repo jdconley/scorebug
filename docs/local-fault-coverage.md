@@ -34,8 +34,14 @@ resume and fully decode. Actual live gap35.5667s, interrupted audio tail108ms.
 This makes both SRT and relay management unavailable; it is not an isolated packet
 blackhole. See the [outage session](session-logs/2026-09-28-prolonged-relay-outage.md).
 
-Real packet loss/total network outage and restoration still need their own native
-integration evidence. Severe congestion has measured media loss; healthy periods
+headless-native-K87zVV qualifies an isolated25s bidirectional publishing-hop packet
+blackhole: real517forward/664reverse drops, zero sends during loss, repeated native
+retries, same recording/generation and automatic recovery.2731consecutive archive
+frames and gap-free audio; both outputs fully decode with no within-session loss.
+The live gap is29.3333s. See the [session](session-logs/2026-09-28-publisher-blackhole.md).
+
+Intermittent loss and whole-client network outage still need distinct integration
+evidence; the publisher-only blackout leaves control/API reachable. Severe congestion has measured media loss; healthy periods
 pass. The recent 4K run reaches actual 4K input, then correctly rejects probation
 on observed pre-receiver frame loss. Exact local drop origin and sustained 4K
 performance remain unqualified. Physical thermal/radio behavior stays deferred.

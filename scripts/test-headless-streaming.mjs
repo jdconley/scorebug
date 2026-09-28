@@ -21,6 +21,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--timing-audit',
       '--disconnect-after',
       '--relay-outage-seconds',
+      '--publisher-blackhole-seconds',
     ].includes(key) &&
       value &&
       !values.has(key),
@@ -35,7 +36,12 @@ const timingAudit = values.get('--timing-audit') ?? 'on';
 assert(['on', 'off'].includes(timingAudit));
 const duration = Number(values.get('--duration') ?? '120');
 const disconnectAfter = Number(values.get('--disconnect-after') ?? '0');
-const outageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
+const relayOutageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
+const blackholeSeconds = Number(values.get('--publisher-blackhole-seconds') ?? '0');
+assert(Number.isInteger(relayOutageSeconds) && relayOutageSeconds >= 0);
+assert(Number.isInteger(blackholeSeconds) && blackholeSeconds >= 0);
+assert(!(relayOutageSeconds && blackholeSeconds), 'Select one outage');
+const outageSeconds = relayOutageSeconds || blackholeSeconds;
 assert(
   outageSeconds === 0 ||
     (Number.isInteger(outageSeconds) &&
@@ -88,7 +94,12 @@ try {
     600000,
   );
   lab = await startDeviceLab(
-    { ...options, ...(quality === '2160' ? { uhd: true } : {}), decodedGeometry: true },
+    {
+      ...options,
+      ...(quality === '2160' ? { uhd: true } : {}),
+      decodedGeometry: true,
+      publisherBlackhole: blackholeSeconds > 0,
+    },
     { signal: controller.signal },
   );
   const config = join(artifact, 'config.json');
@@ -153,7 +164,8 @@ try {
       }
       await delay(disconnectAfter * 1000, undefined, { signal: controller.signal });
       controller.signal.throwIfAborted();
-      if (outageSeconds > 0) await lab.pauseRelay(outageSeconds);
+      if (blackholeSeconds > 0) await lab.blackholePublisher(blackholeSeconds);
+      else if (relayOutageSeconds > 0) await lab.pauseRelay(relayOutageSeconds);
       else await lab.disconnectPublisher();
     })();
     try {
