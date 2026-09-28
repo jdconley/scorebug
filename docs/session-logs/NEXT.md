@@ -54,10 +54,16 @@ live source IDs across both outputs, all A/V ends within31ms.137missing live fra
 between sessions (4.567s) remain explicit. Exactly one Start and final Stop inSQLite.
 Static score; changing-score acceptance is retained separately. All jobs joined.
 
-1. Next missing native fault integration is sustained packet blackhole/total outage,
-   not another SRT kick. Extend the existing scoped impairment path carefully;
-   ensure new client UDP endpoints after reconnect are supported by the test proxy.
-   Verify backoff, restored output and continuous recording without a long ladder run.
+A prolonged25s relay suspension now also passes: headless-native-WH3nME, labSRRETF.
+Failed retries back off before successful recovery at48s; same recording/generation,
+one Start/final Stop.47segment hashes and native export pass;2733consecutive clean
+archive frames. Both destinations fully decode before/after recovery, with no
+within-session video/audio gaps. Live gap35.5667s; interrupted output audio tail108ms.
+See [session evidence](2026-09-28-prolonged-relay-outage.md). All jobs joined.
+
+1. Keep isolated packet loss/blackhole coverage distinct from the verified relay
+   suspension; no more equivalent reconnect captures. The UDP fixture needs new
+   client endpoint support before it can exercise reconnection correctly.
 2. Keep4K performance diagnosis separate: actual444UHD frames reached receiver then
    probation found pre-receiver loss. App ingress vsSDK raw input vsnative encoder
    drop origin remains unproven. Do not enlarge queues or weaken thresholds.

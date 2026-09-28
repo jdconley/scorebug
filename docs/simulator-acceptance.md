@@ -47,7 +47,11 @@ for stale/stall/pressure/ownership and continuous-control behavior. Native publi
 connection loss now has its own actual headless SRT disconnect/rejoin pass:
 headless-native-omoEsi preserves the same recording/generation,2137consecutive clean
 archive frames and both recovered output recordings. The4.567second live gap remains
-explicit. This does not qualify sustained blackholes or physical radio changes.
+explicit. A25s owned relay suspension also passes in headless-native-WH3nME:
+failed attempts back off and recover automatically,2733consecutive clean archive
+frames, both destinations resume with fully decoded within-session continuity.
+The live gap is35.5667s; interrupted audio tail is108ms. Neither result qualifies
+isolated packet blackholes or physical radio changes.
 
 ## Iteration and CI
 

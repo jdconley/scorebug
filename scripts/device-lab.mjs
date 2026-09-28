@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
@@ -500,6 +501,50 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
       setup,
       stop,
       workerClosed: worker.closed,
+      pauseRelay(seconds) {
+        assert(
+          !stopping && !restarting,
+          'Relay suspension must be serialized with cleanup/restart',
+        );
+        assert(Number.isInteger(seconds) && seconds >= 10 && seconds <= 60);
+        const operation = (async () => {
+          const result = {
+            scope:
+              'Owned relay suspension; SRT and relay management unavailable, not physical radio loss',
+            seconds,
+            requestedAt: Date.now(),
+          };
+          try {
+            await execute('docker', ['pause', relayName], { timeout: 10000 });
+            const state = await execute(
+              'docker',
+              ['inspect', '--format', '{{.State.Paused}}', relayName],
+              { timeout: 10000 },
+            );
+            assert.equal(state.stdout.trim(), 'true');
+            result.pausedAt = Date.now();
+            await delay(seconds * 1000, undefined, { signal });
+          } finally {
+            await execute('docker', ['unpause', relayName], { timeout: 10000 });
+            const state = await execute(
+              'docker',
+              ['inspect', '--format', '{{.State.Paused}}', relayName],
+              { timeout: 10000 },
+            );
+            assert.equal(state.stdout.trim(), 'false');
+            result.resumedAt = Date.now();
+            await writeFile(join(artifact, 'relay-outage.json'), JSON.stringify(result, null, 2), {
+              flag: 'wx',
+              mode: 0o600,
+            });
+          }
+          return result;
+        })();
+        restarting = operation;
+        return operation.finally(() => {
+          restarting = undefined;
+        });
+      },
       async disconnectPublisher() {
         assert(!stopping, 'Lab is stopping');
         const headers = {

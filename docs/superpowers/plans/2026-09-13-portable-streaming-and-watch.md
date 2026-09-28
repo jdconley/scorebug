@@ -73,6 +73,8 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   and authorized broadcast. Fresh control, bounded retries and Stop/ownership guards
   pass; an actual SRT disconnect rejoins without another broadcast Start. Clean
   archive remains continuous and both outputs resume; measured live gap is reported.
+  Prolonged25s relay suspension also recovers across failed retries, with a continuous
+  archive and35.5667s live gap. Isolated network/radio faults remain separate.
 
 - [ ] Qualify sustained 4K and final media after demonstrated native admission and
   actual receiver geometry; current probation detects real frame loss. The simulator's 4K candidate encoder exceeds

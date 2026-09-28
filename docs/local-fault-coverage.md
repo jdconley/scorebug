@@ -27,6 +27,13 @@ an actual SRT connection termination and automatic rejoin, a continuous clean ar
 and both output recordings. The measured live outage is4.567seconds. This is not
 sustained packet-blackhole or physical radio-route qualification.
 
+headless-native-WH3nME additionally verifies a25s owned relay suspension, repeated
+failed native attempts and automatic restoration on the same recording/generation.
+Its archive has2733 consecutive frames with gap-free audio; both destinations
+resume and fully decode. Actual live gap35.5667s, interrupted audio tail108ms.
+This makes both SRT and relay management unavailable; it is not an isolated packet
+blackhole. See the [outage session](session-logs/2026-09-28-prolonged-relay-outage.md).
+
 Real packet loss/total network outage and restoration still need their own native
 integration evidence. Severe congestion has measured media loss; healthy periods
 pass. The recent 4K run reaches actual 4K input, then correctly rejects probation

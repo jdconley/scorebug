@@ -20,6 +20,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--quality',
       '--timing-audit',
       '--disconnect-after',
+      '--relay-outage-seconds',
     ].includes(key) &&
       value &&
       !values.has(key),
@@ -34,6 +35,15 @@ const timingAudit = values.get('--timing-audit') ?? 'on';
 assert(['on', 'off'].includes(timingAudit));
 const duration = Number(values.get('--duration') ?? '120');
 const disconnectAfter = Number(values.get('--disconnect-after') ?? '0');
+const outageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
+assert(
+  outageSeconds === 0 ||
+    (Number.isInteger(outageSeconds) &&
+      outageSeconds >= 10 &&
+      outageSeconds <= 60 &&
+      disconnectAfter > 0 &&
+      disconnectAfter + outageSeconds + 30 < duration),
+);
 assert(
   Number.isInteger(disconnectAfter) &&
     disconnectAfter >= 0 &&
@@ -143,7 +153,8 @@ try {
       }
       await delay(disconnectAfter * 1000, undefined, { signal: controller.signal });
       controller.signal.throwIfAborted();
-      await lab.disconnectPublisher();
+      if (outageSeconds > 0) await lab.pauseRelay(outageSeconds);
+      else await lab.disconnectPublisher();
     })();
     try {
       await Promise.all([workflow, inject]);
@@ -168,7 +179,11 @@ try {
         .filter((entry) => entry.state === 'publishing')
         .map((entry) => entry.attempt),
     );
-    assert.equal(attempts.size, 2, 'Native app must create exactly one replacement publisher');
+    assert.equal(
+      attempts.size,
+      2,
+      'Native app must establish one successfully publishing replacement',
+    );
     assert.equal(
       new Set(result.lifecycle.map((entry) => entry.recording)).size,
       1,

@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 prolonged relay outage](2026-09-28-prolonged-relay-outage.md) — scoped suspension of the owned relay and native reconnect verification.
+
 - [September 28 fault coverage and reconnect gap](2026-09-28-fault-coverage-and-reconnect-gap.md) — retained fault checks audited; native SRT reconnection identified as missing behavior.
 
 - [September 28 missing processing race](2026-09-28-missing-processing-race.md) — bounded wait for delayed matching reports.
