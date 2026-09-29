@@ -46,7 +46,9 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 ## Local feature checklist
 
 These checks reuse retained evidence in the acceptance matrix; they are not a new
-full-suite run. Local functional integration is complete on the documented paths.
+full-suite run. The current two-phone/Watch simulator checkpoint after DTS
+interleaving passes all native workflows and full saved-media checks; see the
+acceptance matrix for its cleanup reconciliation and exact scope.
 
 - [x] Phone A records and streams while native phone B creates/joins and scores.
 - [x] Native Watch scores, takes over, undoes, relaunches and ends the match through

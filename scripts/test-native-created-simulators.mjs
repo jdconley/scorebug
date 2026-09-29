@@ -82,6 +82,13 @@ export function nativeSimulatorCleanupActions(role, snapshot) {
   assert.equal(device.name, role.name, 'Owned simulator identity changed');
   return device.state === 'Shutdown' ? ['delete'] : ['shutdown', 'delete'];
 }
+// A command can race with CoreSimulator's asynchronous unpair shutdown. Require
+// a fresh authoritative state before accepting an already-satisfied cleanup.
+export function nativeSimulatorCleanupSatisfied(role, action, snapshot) {
+  assert(['shutdown', 'delete'].includes(action), 'Unknown cleanup action');
+  const remaining = nativeSimulatorCleanupActions(role, snapshot);
+  return action === 'shutdown' ? !remaining.includes('shutdown') : remaining.length === 0;
+}
 export function validateNativeCreation(stored) {
   assert.equal(stored.length, 1, 'Exactly one native-created match required');
   const match = stored[0];
@@ -127,6 +134,7 @@ async function main() {
   const controller = new AbortController(),
     commands = [],
     cleanupFailures = [],
+    cleanupReconciliations = [],
     outcomes = {};
   const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt);
@@ -611,6 +619,31 @@ async function main() {
             try {
               await run('xcrun', ['simctl', action, role.device], `${action}-${name}`, 60000, true);
             } catch (error) {
+              try {
+                const current = JSON.parse(
+                  await run(
+                    'xcrun',
+                    ['simctl', 'list', 'devices', '-j'],
+                    `recheck-${name}-${action}`,
+                    60000,
+                    true,
+                  ),
+                );
+                if (nativeSimulatorCleanupSatisfied(role, action, current)) {
+                  cleanupReconciliations.push({
+                    role: name,
+                    device: role.device,
+                    action,
+                    reason: 'Fresh simulator state confirms requested cleanup already completed',
+                  });
+                  continue;
+                }
+              } catch (verificationError) {
+                cleanupFailures.push(
+                  `${name} ${action} state verification: ${verificationError.message}`,
+                );
+                break; // Do not mutate a device whose ownership/state cannot be checked.
+              }
               cleanupFailures.push(`${name} ${action}: ${error.message}`);
             }
           }
@@ -646,6 +679,7 @@ async function main() {
           mediaQualified: false,
           failure,
           cleanupFailures,
+          cleanupReconciliations,
           commands,
           joined: true,
         },

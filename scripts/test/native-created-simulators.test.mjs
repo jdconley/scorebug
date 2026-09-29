@@ -7,6 +7,7 @@ import {
   nativeCreatedTests,
   validateNativeCreation,
   nativeSimulatorCleanupActions,
+  nativeSimulatorCleanupSatisfied,
 } from '../test-native-created-simulators.mjs';
 
 const interfaces = { en0: [{ address: '192.168.1.130', family: 'IPv4', internal: false }] };
@@ -118,4 +119,23 @@ test('paired cleanup uses actual state after unpair and never selects another si
   assert.throws(() =>
     nativeSimulatorCleanupActions({ ...role, name: 'different' }, snapshot('Shutdown')),
   );
+});
+
+test('cleanup races require fresh completed state and matching owned identity', () => {
+  const role = { device: 'owned', name: 'Scorebug owned Watch' };
+  const snapshot = (state) => ({
+    devices: { runtime: [{ udid: role.device, name: role.name, state }] },
+  });
+  assert.deepEqual(nativeSimulatorCleanupActions(role, snapshot('Booted')), ['shutdown', 'delete']);
+  assert.equal(nativeSimulatorCleanupSatisfied(role, 'shutdown', snapshot('Shutdown')), true);
+  assert.equal(nativeSimulatorCleanupSatisfied(role, 'shutdown', snapshot('Booted')), false);
+  assert.equal(nativeSimulatorCleanupSatisfied(role, 'shutdown', snapshot('Shutting Down')), false);
+  assert.equal(nativeSimulatorCleanupSatisfied(role, 'delete', snapshot('Shutdown')), false);
+  for (const action of ['shutdown', 'delete']) {
+    assert.equal(nativeSimulatorCleanupSatisfied(role, action, { devices: {} }), true);
+    assert.throws(() =>
+      nativeSimulatorCleanupSatisfied({ ...role, name: 'different' }, action, snapshot('Shutdown')),
+    );
+  }
+  assert.throws(() => nativeSimulatorCleanupSatisfied(role, 'erase', snapshot('Shutdown')));
 });

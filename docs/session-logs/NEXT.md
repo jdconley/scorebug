@@ -52,6 +52,16 @@ Simulator UHD/congestion and colocated VideoToolbox/probe limits remain document
 
 ## Reuse these passes
 
+- Current phone/Watch full vertical after DTS interleaving:
+  `native-created-simulators-m1tVpX/vertical-acceptance.json`. All3UI workflows pass;
+  archive6495/live6068continuous30fps frames, gap-free audio,9waveform anchors,
+  changing phone/Watch scores, ends≤48ms,7.8s archive continuation. Original runner
+  reported a Watch shutdown race; current inventory verifies all3owned devices
+  absent with data preserved. Runner now rechecks failed cleanup against fresh
+  state;6focused checks pass. See [session](2026-09-28-current-simulator-vertical.md).
+  This is current simulator functional acceptance, not companion/radio/UHD stress
+  qualification. No unchanged full simulator rerun.
+
 - Native phone creation/join/scoring, separate41mm Watch takeover/undo/relaunch/end,
   archive/export, changing overlay and both outputs: acceptance matrix. Watch setup
   fixture does not qualify WatchConnectivity/radios.

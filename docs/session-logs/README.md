@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 current simulator vertical](2026-09-28-current-simulator-vertical.md) — phone/Watch workflows and complete media pass after DTS interleaving; cleanup race fixed without rerunning apps.
+
 - [September 28 DTS interleaving](2026-09-28-dts-interleaving.md) — bounded timestamp-ordered publisher; short crash and complete saved-media checks pass.
 
 - [September 28 crash packet tails](2026-09-28-crash-packet-tails.md) — bounded terminal packet evidence survives worker death; live input/output tail boundary isolated.
