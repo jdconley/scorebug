@@ -138,6 +138,10 @@ full capture. Physical and remote-host work stays deferred.
 
 ## Deferred hardware and external acceptance
 
+Current signed phone/embedded-Watch Debug bundle is prepared; signatures and the
+requested team/device profiles pass. Installation and physical behavior remain
+unqualified. The existing device-readiness question is pending; no repeated probes.
+
 - [ ] Restore physical readiness and reconcile only the identified test-owned pending
   Watch pairing. Preserve Keychain and uncertain commands until ownership is known.
 - [ ] Verify filming-phone/Watch and separate-phone/Watch scoring on Ultra 2 and

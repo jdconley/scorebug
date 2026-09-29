@@ -22,6 +22,12 @@ cleanup pass. See [session](2026-09-28-current-simulator-crash.md) for scope/has
 Do not rerun unchanged. Older500ms simulator tails used software, not VideoToolbox;
 they predate DTS interleaving and are retained as historical failures.
 
+Current signed device build is ready: artifacts/qa/device-build-current-el0CCp/
+Scorebug.app includes Watch/ScorebugWatch.app. Generic-device build-for-testing and
+deep/strict signature check pass; both teamB222J9J7B8 profiles include the known
+devices. Producing6ebcf36, readiness.json retains hashes. Reuse PhysicalPhone derived
+products for the first physical workflow; no device execution occurred.
+
 Hardware readiness question is now pending after this checkpoint: are phone/Watch
 connected and unlocked for the next physical stage, or should hardware stay deferred?
 Wait for its reply before device polling/automation; do not repeat the question.
