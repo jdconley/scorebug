@@ -94,6 +94,8 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
+    var nativeHealthFixtureObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)?
+    var nativeSubmissionFixtureObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)?
     @Published private(set) var qualityDiagnostic: String?
     private var candidateInputDiagnostic: [String: String] = [:]
     #endif
@@ -341,11 +343,14 @@ struct PublishingClockObservation: Equatable, Sendable {
             campaignOwner: campaign, stagePlanSelection: .productionSRT)
     }
 
-    nonisolated static func productionUHDPublisher(url: URL, observations: VideoFrameObservationOwner?) -> any MediaPublisher {
+    nonisolated static func productionUHDPublisher(url: URL, observations: VideoFrameObservationOwner?,
+        healthObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)? = nil,
+        submissionObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)? = nil) -> any MediaPublisher {
         guard let observations else { return productionPublisher(url: url, observations: nil) }
         let campaign = PublishingCandidateCampaignOwner()
         let publisher = SRTMediaPublisher(url: url, observations: observations, videoProfile: .minimumStartup,
-            compressedAudioObserver: { campaign.observeAudio($0) }, allowsBandwidthProbes: true, probeBudget: .uhd)
+            compressedAudioObserver: { campaign.observeAudio($0) }, allowsBandwidthProbes: true, probeBudget: .uhd,
+            healthObserver: healthObserver, encoderSubmissionObserver: submissionObserver)
         return NativeOwnedCandidatePublisher(publisher: publisher, scope: observations.snapshot.scope,
             campaignOwner: campaign, stagePlanSelection: .productionSRTUHD)
     }
@@ -565,7 +570,12 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let session: PublishingSession
                 let publisher: any MediaPublisher
                 do {
+                    #if DEBUG
+                    publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
+                        healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver) : publisherFactory(access.publishUrl, observations)
+                    #else
                     publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations) : publisherFactory(access.publishUrl, observations)
+                    #endif
                     session = try PublishingSession(publisher: publisher, maxBytes: 12 * 1024 * 1024 * context.profile.captureQueueScale,
                         healthCheckInterval: Self.publishingHealthInterval,
                         ingressObservation: ingressConfiguration(for: videoObservation))

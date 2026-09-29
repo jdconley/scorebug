@@ -10,6 +10,22 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
+## Latest UHD boundary diagnosis
+
+Starting edb4b94, added opt-in scalar SDK-queue/native-submission diagnostics to
+headless UHD; incremental FilmModel build passes. headless-native-nm6xCH, labPRuCD0,
+exec82440 joined0 and cleanup[]. No active jobs. See
+[session](2026-09-28-uhd-boundaries.md) and boundary-analysis.json.
+
+4Ktrial256s, rollback271s:147captured/145encoded/received. App ingress eviction and
+rejection remain0. SDK raw-input evictions rise0→2→4→7 during UHD/fallback; native
+submission maximum grows from<5ms before UHD to90.8ms. Drop boundary is now proven
+in the SDK raw queue; host contention vs intrinsic native throughput remains open.
+No queue/threshold changes. Do not repeat unchanged full climb; isolate native
+encoder load with a short focused path. Full archive decoding was not rerun.
+Audit retention/terminal behavior was reconciled from current code and six retained
+passing checks; that plan TODO is complete without another suite.
+
 ## Latest checkpoint
 
 Starting4076db2, fixed two actual bugs: a missing worker processing report consumed
@@ -72,8 +88,8 @@ Capture51384 and native export/media66766 joined0; cleanup[]. See
    network loss remain distinct from publisher-hop blackout. New outage fixture
    supports reconnect ports with isolated reply routing; congestion fixture unchanged.
 2. Keep4K performance diagnosis separate: actual444UHD frames reached receiver then
-   probation found pre-receiver loss. App ingress vsSDK raw input vsnative encoder
-   drop origin remains unproven. Do not enlarge queues or weaken thresholds.
+   probation found pre-receiver loss. Latest boundary measurements locate SDK raw-input
+   evictions during slow native submissions; host contention remains unproven. Do not enlarge queues or weaken thresholds.
 3. Severe-collapse loss, abrupt crash tails and sustained profiles remain open;
    hardware/radio/external hosts deferred. Retained fault coverage is audited in
    local-fault-coverage.md; runtime control beyond optional audit limits already passes.

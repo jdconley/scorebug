@@ -558,7 +558,8 @@ public actor SRTStream {
         }
     }
     private var videoSubmission: VideoSubmissionState?
-    var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
+    /// Cumulative pre-encoder queue evictions for this publishing session; not transport loss.
+    public var rawVideoFramesDropped: UInt64 { outgoing.rawVideoFramesDropped }
     var isVideoMutationPending: Bool { videoMutation != nil }
     private var videoMutation: UUID?
     // Internal deterministic scheduling seam; absent from public construction.

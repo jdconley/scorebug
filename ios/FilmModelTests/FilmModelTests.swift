@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import ScorebugMedia
 import ScorebugCore
+import ScorebugStreaming
 import XCTest
 
 @MainActor final class FilmModelTests: XCTestCase {
@@ -409,6 +410,11 @@ extension FilmModelTests {
         let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
         streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken
         streaming.workerId = config.setup.workerId; streaming.outputId = config.setup.outputId
+        let nativeBoundaries = HeadlessNativeBoundaries()
+        if config.uhd {
+            streaming.nativeHealthFixtureObserver = { nativeBoundaries.health($0) }
+            streaming.nativeSubmissionFixtureObserver = { nativeBoundaries.submission($0) }
+        }
         let timingAudit = config.timingAudit ?? true
         if timingAudit {
             streaming.cadenceReportFixtureWriter = { data in
@@ -435,6 +441,7 @@ extension FilmModelTests {
             }
         }
         var samples: [[String: String]] = []
+        var boundaries: [[String: String]] = []
         var diagnosticError: Error?
         var lastProfileState: String?
         do {
@@ -447,6 +454,27 @@ extension FilmModelTests {
                         "attempt": streaming.videoObservation?.scope.publishingAttemptID.uuidString ?? "none",
                         "generation": streaming.videoObservation.map { String($0.scope.broadcastGeneration) } ?? "none",
                         "elapsedSeconds": String(started.duration(to: .now).components.seconds)])
+                }
+                if config.uhd {
+                    var row = nativeBoundaries.snapshot()
+                    row["at"] = String(ProcessInfo.processInfo.systemUptime)
+                    row["profile"] = streaming.qualityDiagnostic.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] }?["policyAppliedProfile"]
+                    if let ingress = streaming.ingressObservation {
+                        row["attempt"] = ingress.scope.publishingAttemptID.uuidString
+                        row["appVideoAdmitted"] = String(ingress.totalDispositions[.admitted]?[.video]?.count ?? 0)
+                        row["appVideoDequeued"] = String(ingress.totalDispositions[.dequeued]?[.video]?.count ?? 0)
+                        row["appVideoEvicted"] = String(ingress.totalDispositions[.overflowEvicted]?[.video]?.count ?? 0)
+                        row["appVideoRejected"] = String(ingress.totalDispositions.reduce(UInt64(0)) { sum, entry in
+                            if case .rejected = entry.key { return sum + (entry.value[.video]?.count ?? 0) }; return sum
+                        })
+                    }
+                    if let video = streaming.videoObservation {
+                        let windows = video.completed + [video.current]
+                        row["retainedCaptureCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.captureVideo.callbackCount })
+                        row["retainedEncodedCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount })
+                        row["omittedVideoWindows"] = String(video.omittedCompletedWindowCount)
+                    }
+                    boundaries.append(row)
                 }
                 if let text = streaming.qualityDiagnostic,
                    let fields = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] {
@@ -475,6 +503,10 @@ extension FilmModelTests {
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
             to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
+        if config.uhd {
+            try JSONSerialization.data(withJSONObject: ["scope": "Sequential local boundary observations, not atomic delivery proof", "samples": boundaries], options: [.sortedKeys]).write(
+                to: artifact.appendingPathComponent("native-boundaries.json"), options: .atomic)
+        }
         if let diagnosticError { throw diagnosticError }
         XCTAssertTrue(wasRecording, "Native archive stopped early")
         XCTAssertTrue(wasPublishing, "Native publisher stopped early")
@@ -482,4 +514,32 @@ extension FilmModelTests {
         XCTAssertEqual(film.state, .idle, "Archive finalization must complete")
         XCTAssertEqual(streaming.localState, .idle, "Native publisher must join")
     }
+}
+
+/// Scalar headless diagnostics only. No media retained and no publishing decisions.
+private final class HeadlessNativeBoundaries: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fields: [String: String] = [:]
+    private var submitted = 0, failed = 0
+    private var maximumSubmissionSeconds = 0.0
+    func health(_ value: SRTPublisher.HealthSnapshot) {
+        lock.withLock {
+            fields["healthAt"] = String(ProcessInfo.processInfo.systemUptime)
+            fields["sdkRawVideoDropped"] = value.rawVideoFramesDropped.map(String.init)
+        }
+    }
+    func submission(_ value: SRTPublisher.EncoderSubmission) {
+        lock.withLock {
+            submitted += 1
+            if value.status != noErr { failed += 1 }
+            maximumSubmissionSeconds = max(maximumSubmissionSeconds, value.returnedAt - value.startedAt)
+            fields["nativeSubmitted"] = String(submitted)
+            fields["nativeSubmitErrors"] = String(failed)
+            fields["maximumNativeSubmissionSeconds"] = String(maximumSubmissionSeconds)
+            fields["lastNativeSubmissionSeconds"] = String(value.returnedAt - value.startedAt)
+            fields["submissionAt"] = String(value.returnedAt)
+            fields["encoder"] = value.encoderSessionID.uuidString
+        }
+    }
+    func snapshot() -> [String: String] { lock.withLock { fields } }
 }

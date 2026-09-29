@@ -43,9 +43,17 @@ The live gap is29.3333s. See the [session](session-logs/2026-09-28-publisher-bla
 Intermittent loss and whole-client network outage still need distinct integration
 evidence; the publisher-only blackout leaves control/API reachable. Severe congestion has measured media loss; healthy periods
 pass. The recent 4K run reaches actual 4K input, then correctly rejects probation
-on observed pre-receiver frame loss. Exact local drop origin and sustained 4K
-performance remain unqualified. Physical thermal/radio behavior stays deferred.
+on observed pre-receiver frame loss. The latest nm6xCH boundary run localizes drops to the SDK raw-input queue while
+native submissions slow to90.8ms; app ingress rejects/evicts zero frames. Host
+contention versus encoder throughput and sustained4K remain unqualified. Physical thermal/radio behavior stays deferred.
 
 Complete retained delivery audits are laboratory evidence requirements. Runtime
 control continuing beyond their caps is already covered; do not confuse the two or
 increase audit bounds to claim long-run completeness.
+
+The audit-retention reconciliation is complete. Six retained focused checks cover
+row/byte exhaustion, invalid serialization, no health from unretained rows, continued
+production classification and cancellation. Current Consumer selection keeps audited
+and continuous modes explicit; overflow never switches modes. Evidence/source hashes:
+`artifacts/qa/uhd-boundaries-20260928/audit-reconciliation.json`. This closes the
+retention/terminal-behavior TODO, not missing-audio or long-run media qualification.

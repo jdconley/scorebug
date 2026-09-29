@@ -93,3 +93,10 @@ unqualified. Native export and212segment hashes pass. Redundant full-file decode
 after receiver geometry proved real gaps; no full-media qualification is claimed.
 This is headless native integration, not simulator UI or hardware acceptance.
 See the [session log](session-logs/2026-09-28-missing-processing-race.md).
+
+The follow-up native boundary capture `headless-native-nm6xCH/boundary-analysis.json`
+reproduces UHD probation loss and localizes the dropping boundary: SDK raw-input
+queue evictions rise to7, app ingress evictions/rejections stay0, and native encoder
+submission duration reaches90.8ms. Recording/publishing continue and fallback works.
+Host contention versus intrinsic native throughput remains open. No queue/timing
+limits changed; full archive decode was not repeated after receiver loss was proven.

@@ -18,6 +18,7 @@ public actor SRTPublisher {
         public let muxerError: SRTStream.MuxerError?
         public let streamError: PublishingError?
         public let transportError: PublishingError?
+        public let rawVideoFramesDropped: UInt64?
         public var isPublishing: Bool {
             connected && streamPublishing && muxerError == nil && streamError == nil && transportError == nil
         }
@@ -759,8 +760,9 @@ public actor SRTPublisher {
         let muxerError = await stream.muxerError
         let streamError = await stream.publishingError
         let transportError = await connection.publishingError
+        let rawDrops = healthObserver == nil ? nil : await stream.rawVideoFramesDropped
         let snapshot = HealthSnapshot(connected: connected, streamPublishing: publishing,
-            muxerError: muxerError, streamError: streamError, transportError: transportError)
+            muxerError: muxerError, streamError: streamError, transportError: transportError, rawVideoFramesDropped: rawDrops)
         healthObserver?(snapshot)
         return snapshot.isPublishing
     }

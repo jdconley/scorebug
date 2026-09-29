@@ -91,9 +91,11 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 - [ ] Complete intermittent packet-loss and whole-client-network-outage/restoration
   coverage. Publisher-only blackhole leaves the control API reachable; physical
   radio changes require their own deferred qualification.
-- [ ] Reconcile optional delivery-audit retention/terminal coverage with current
-  production control. Missing live audio remains a failure where reproduced; do not
-  raise audit limits or pad silence to conceal gaps.
+- [x] Reconcile optional delivery-audit retention/terminal coverage: production uses
+  continuous bounded-state monitoring; selected finite audits report overflow and
+  cannot return health for unretained rows. Row/byte/serialization terminal behavior
+  and runtime monitoring beyond audit caps have retained focused passing evidence.
+  Missing live audio remains a separate media failure; limits are unchanged.
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Graceful stops
   pass; hard-crash interrupted outputs can retain about half a second of extra audio.
 - [ ] Qualify sustained local profiles/backends and document their measured ceilings.
