@@ -114,3 +114,11 @@ receiver frames with0SDK/app drops and36.4ms maximum submission. This narrows th
 difference to adaptive workload/accumulated state, without proving a cause. Both
 jobs exit0 and cleanup succeeds; those runner exits are not adaptive quality passes.
 No redundant full media decode. Hashed comparison: `uhd-readiness-20260928/comparison.json`.
+
+Short combined guarded1080→UHD diagnostic `headless-native-19R4qp` passes with
+908consecutiveUHD frames,0SDK/app drops and hardware selection. Direct adaptive
+240→UHD diagnostic `headless-native-MuMtrg` reproduces SDK loss by37s, before stack
+profiling; hardware selection confirmed. It skips middle rungs and does not qualify
+the normal ladder. See each `isolation-analysis.json` and the
+[session log](session-logs/2026-09-28-fast-uhd-reproduction.md). These results narrow
+the difference to adaptive workload without requiring long accumulated state.

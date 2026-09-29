@@ -12,21 +12,25 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current finding and next action
 
-Code HEAD4ce91ca. The scalar history-readiness optimization did **not** fix adaptive
-UHD.300s run `headless-native-iOmUFd`: UHD261s, fallback270s,29SDK raw drops,
-0app ingress drops,87.1ms max native submission. Recording/publishing survive.
-Short fixed-UHD35s comparison `headless-native-aWay18` uses a remux of source250–300s:
-997consecutive4Kreceiver frames,0SDK/app drops,36.4ms max native submission.
-Adaptive workload/accumulated state remain differentiators; no cause proven.
-See [session](2026-09-28-adaptive-uhd-comparison.md) and
-`artifacts/qa/uhd-readiness-20260928/comparison.json` (hashes/provenance).
-Handles89445/8816/81373 joined0, cleanup empty. **No active jobs.**
+Starting92d2369, added short DEBUG-only diagnostics; normal production settings
+unchanged. Combined guarded1080→UHD replacement (`headless-native-19R4qp`) passes:
+908consecutiveUHD receiver frames,0drops, hardware selection,36ms max submission.
+Direct adaptive240→UHD (`headless-native-MuMtrg`) reaches UHD26s and reproduces SDK
+raw loss37s; two trials yield15SDK drops, app drops0, hardware confirmed. First
+rollback reasons are missingCapacity/unknownPressure/trialRollback, not the previous
+sourceLoss decision. Native encoder waits on VideoToolbox XPC in a brief stack
+sample; root cause inside that service remains unproven. First loss precedes
+sampling, but389ms maximum at profiling/rollback is not an undisturbed measurement.
+See [session](2026-09-28-fast-uhd-reproduction.md); both artifacts contain
+`isolation-analysis.json` and producing HEAD/patch/hashes.
+Handles11000/63939/16512 joined0, cleanup empty. **No active jobs.**
 
-Do not repeat an unchanged five-minute climb. Next use a short combined
-archive/SRT/proxy1080→UHD replacement diagnostic, preserving production recipe,
-normal queues and actual encoder-selection observations. If that passes, profile
-adaptive observers/probing before making another production optimization.
-No full archive export/decode is needed when receiver loss already fails the gate.
+Next investigate adaptive probing/observation versus the passing combined
+replacement. Long runtime/intermediate transitions are not required to reproduce.
+Use `--direct-uhd on --duration 55` (normal admission/timing; skipped middle rungs,
+not full ladder acceptance). Preserve normal queues and thresholds. Profile native
+service work or isolate adaptive components before another production optimization.
+No unchanged300s climb, broad suite or full decode when boundary loss already fails.
 
 Already isolated: single/triple native hardware UHD encoders and verified SDK
 1080→UHD replacement each deliver450/450frames without drops; plain encoder count,
@@ -69,3 +73,8 @@ production controls but not full delivery-audit/UI qualification.
 Native archive export when relevant:
 `python3 artifacts/qa/missing-processing-20260928/export-retained.py <headless-artifact>`.
 Uses incremental FilmModel build and real RecordingLibrary export; never concat.
+
+Short combined replacement: fixed command above plus `--fixed-uhd-transition on`.
+Direct adaptive reproduction: normal command with `--direct-uhd on`, quality2160,
+audit off, no outage/fixed mode,≤120s. Private130s slice available at
+`artifacts/qa/uhd-readiness-20260928/content-215-345.mov`.

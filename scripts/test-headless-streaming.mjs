@@ -23,6 +23,8 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--relay-outage-seconds',
       '--publisher-blackhole-seconds',
       '--fixed-uhd',
+      '--fixed-uhd-transition',
+      '--direct-uhd',
     ].includes(key) &&
       value &&
       !values.has(key),
@@ -58,6 +60,11 @@ assert(
 );
 assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
 const fixedUHD = values.get('--fixed-uhd') === 'on';
+const fixedUHDTransition = values.get('--fixed-uhd-transition') === 'on';
+assert(!values.has('--fixed-uhd-transition') || (fixedUHDTransition && fixedUHD));
+const directUHD = values.get('--direct-uhd') === 'on';
+assert(!values.has('--direct-uhd') || directUHD);
+assert(!directUHD || (quality === '2160' && !fixedUHD && duration <= 120 && timingAudit === 'off' && disconnectAfter === 0));
 assert(!values.has('--fixed-uhd') || values.get('--fixed-uhd') === 'on');
 assert(
   !fixedUHD ||
@@ -121,6 +128,8 @@ try {
       timingAudit: timingAudit === 'on',
       expectReconnect: disconnectAfter > 0,
       fixedUHD,
+      fixedUHDTransition,
+      directUHD,
     }),
     { mode: 0o600 },
   );
@@ -189,6 +198,9 @@ try {
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
   assert.equal(result.fixedUHD, fixedUHD);
+  assert.equal(result.fixedUHDTransition, fixedUHDTransition);
+  assert.equal(result.directUHD, directUHD);
+  if (fixedUHDTransition) assert.equal(result.transitionAcknowledged, true);
   assert(
     (fixedUHD ? result.boundarySampleCount : result.samples.length) > 0,
     'Test must execute, not skip',

@@ -79,8 +79,10 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 - [ ] Qualify sustained adaptive4K and final media. Short fixed-profile native
   archive/SRT/proxy runs pass receiver cadence, including the content region where
   adaptive upload fails. Adaptive UHD still incurs SDK raw-input queue loss after
-  the scalar readiness optimization; isolate adaptive workload/accumulated state
-  with a short reproduction before another full climb. The simulator's 4K candidate encoder exceeds
+  the scalar readiness optimization. A short combined1080→UHD replacement passes;
+  direct adaptive240→UHD reproduces loss by37s with hardware encoding confirmed.
+  Isolate adaptive probing/observation and native service waits using that short
+  path before another full climb. The simulator's 4K candidate encoder exceeds
   its pending-input limit; keep that ceiling explicit rather than enlarging queues.
 - [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.
   Healthy-period acceptance already passes; do not relabel outage losses as healthy.

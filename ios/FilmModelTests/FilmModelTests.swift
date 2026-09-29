@@ -404,6 +404,8 @@ extension FilmModelTests {
             let timingAudit: Bool?
             let expectReconnect: Bool?
             let fixedUHD: Bool?
+            let fixedUHDTransition: Bool?
+            let directUHD: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
@@ -414,6 +416,12 @@ extension FilmModelTests {
         let fixedUHD = config.fixedUHD == true
         guard !fixedUHD || (config.uhd && config.duration <= 60 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
         streaming.nativeFixedUHDForDiagnostics = fixedUHD
+        let fixedUHDTransition = config.fixedUHDTransition == true
+        guard !fixedUHDTransition || fixedUHD else { throw URLError(.badURL) }
+        streaming.nativeUHDTransitionForDiagnostics = fixedUHDTransition
+        let directUHD = config.directUHD == true
+        guard !directUHD || (config.uhd && !fixedUHD && config.duration <= 120 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
+        streaming.nativeDirectUHDForDiagnostics = directUHD
         let nativeBoundaries = HeadlessNativeBoundaries()
         if config.uhd {
             streaming.nativeHealthFixtureObserver = { nativeBoundaries.health($0) }
@@ -448,10 +456,15 @@ extension FilmModelTests {
         var boundaries: [[String: String]] = []
         var diagnosticError: Error?
         var lastProfileState: String?
+        var transitionReceipt: PublishingVideoProfileChange?
         do {
             while ContinuousClock.now < started + .seconds(config.duration), film.state == .recording,
                   (config.expectReconnect == true || streaming.localState == .publishing) {
                 await film.pollHealth()
+                if fixedUHDTransition, transitionReceipt == nil, ContinuousClock.now >= started + .seconds(5) {
+                    transitionReceipt = try await streaming.performNativeUHDTransitionDiagnostic()
+                    print("HEADLESS_FIXED_UHD_TRANSITION acknowledged")
+                }
                 if lifecycle.last?["state"] != streaming.localState.rawValue {
                     lifecycle.append(["state": streaming.localState.rawValue,
                         "recording": streaming.activeRecordingID ?? "none",
@@ -478,7 +491,9 @@ extension FilmModelTests {
                         row["retainedEncodedCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount })
                         row["omittedVideoWindows"] = String(video.omittedCompletedWindowCount)
                     }
-                    if fixedUHD { row["profile"] = "2160p30-fixed-diagnostic" }
+                    if fixedUHD {
+                        row["profile"] = fixedUHDTransition && transitionReceipt == nil ? "1080p30-fixed-diagnostic" : "2160p30-fixed-diagnostic"
+                    }
                     boundaries.append(row)
                 }
                 if let text = streaming.qualityDiagnostic,
@@ -505,6 +520,8 @@ extension FilmModelTests {
         let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples, "lifecycle": lifecycle,
             "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
             "timingAuditEnabled": timingAudit, "fixedUHD": fixedUHD, "boundarySampleCount": boundaries.count,
+            "fixedUHDTransition": fixedUHDTransition, "transitionAcknowledged": transitionReceipt != nil,
+            "directUHD": directUHD,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
             to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
@@ -515,6 +532,10 @@ extension FilmModelTests {
         if let diagnosticError { throw diagnosticError }
         XCTAssertTrue(wasRecording, "Native archive stopped early")
         XCTAssertTrue(wasPublishing, "Native publisher stopped early")
+        if fixedUHDTransition {
+            XCTAssertEqual(transitionReceipt?.width, 3840)
+            XCTAssertEqual(transitionReceipt?.height, 2160)
+        }
         if fixedUHD { XCTAssertFalse(boundaries.isEmpty, "Expected native boundary diagnostics") }
         else { XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics") }
         XCTAssertEqual(film.state, .idle, "Archive finalization must complete")
@@ -545,6 +566,7 @@ private final class HeadlessNativeBoundaries: @unchecked Sendable {
             fields["lastNativeSubmissionSeconds"] = String(value.returnedAt - value.startedAt)
             fields["submissionAt"] = String(value.returnedAt)
             fields["encoder"] = value.encoderSessionID.uuidString
+            fields["encoderHardwareSelection"] = value.selectionQueriedAfterPreparation.map { String(describing: $0) } ?? "unavailable"
         }
     }
     func snapshot() -> [String: String] { lock.withLock { fields } }

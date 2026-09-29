@@ -95,6 +95,19 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
     var nativeFixedUHDForDiagnostics = false
+    var nativeUHDTransitionForDiagnostics = false
+    var nativeDirectUHDForDiagnostics = false
+    /// Short combined-path isolation; never used by the app's adaptive controller.
+    func performNativeUHDTransitionDiagnostic() async throws -> PublishingVideoProfileChange {
+        guard nativeFixedUHDForDiagnostics, nativeUHDTransitionForDiagnostics,
+              localState == .publishing, let session = publishing?.session else {
+            throw SRTMediaPublisher.PublisherError.invalidState
+        }
+        let baseline = try await session.setVideoBitRate(PublishingVideoProfile.hd1080.bitRate)
+        let replacement = try await session.setVideoProfile(.uhd2160, expecting: baseline)
+        _ = try await session.setVideoBitRate(PublishingVideoProfile.uhd2160.bitRate, expecting: .replacement(replacement))
+        return replacement
+    }
     var nativeHealthFixtureObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)?
     var nativeSubmissionFixtureObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)?
     @Published private(set) var qualityDiagnostic: String?
@@ -574,7 +587,8 @@ struct PublishingClockObservation: Equatable, Sendable {
                     #if DEBUG
                     if nativeFixedUHDForDiagnostics {
                         guard allowsUHD else { throw SRTMediaPublisher.PublisherError.invalidState }
-                        publisher = SRTMediaPublisher(url: access.publishUrl, observations: observations, videoProfile: .uhd2160,
+                        publisher = SRTMediaPublisher(url: access.publishUrl, observations: observations,
+                            videoProfile: nativeUHDTransitionForDiagnostics ? .hd1080 : .uhd2160,
                             healthObserver: nativeHealthFixtureObserver, encoderSubmissionObserver: nativeSubmissionFixtureObserver)
                     } else {
                     publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
@@ -605,7 +619,9 @@ struct PublishingClockObservation: Equatable, Sendable {
                 if nativeFixedUHDForDiagnostics { qualityDriver = nil }
                 else {
                 qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
-                    profiles: PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
+                    profiles: nativeDirectUHDForDiagnostics
+                        ? [PublishingQualityDriver.productionUHDProfiles[0], PublishingQualityDriver.productionUHDProfiles.last!]
+                        : PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
                 }
                 #else
                 qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
