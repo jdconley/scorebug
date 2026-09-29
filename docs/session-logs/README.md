@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 device handoff audit](2026-09-28-device-handoff-blocked.md) — prepared local checkpoint awaits the existing device-readiness reply; full goal remains incomplete.
+
 - [September 28 current signed device build](2026-09-28-current-device-build.md) — current phone/embedded-Watch binaries built and signatures/profiles verified without device automation.
 
 - [September 28 current simulator crash](2026-09-28-current-simulator-crash.md) — current API/worker crash passes, all six MP4s decode and meet the unchanged100ms end-offset gate.

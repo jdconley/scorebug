@@ -15,6 +15,10 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
+Handoff audit: device readiness remains unanswered across three consecutive goal
+turns; local preparation is complete. Goal is blocked pending that reply, not
+complete. See [audit](2026-09-28-device-handoff-blocked.md). No running jobs to wait on.
+
 Current simulator core vertical AND targeted API/worker crash regression pass.
 Latest: ordinary-native-Ha71gs/crash-tail-verification/results.json; six saved MP4s
 fully decode, maximum59.826ms A/V end offset against unchanged100ms. Workflow and
