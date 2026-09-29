@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 quality admission and device readiness](2026-09-28-device-readiness.md) — conservative existing gates retained; physical devices unavailable; handoff compacted.
+
 - [September 28 native Linux proxy integration](2026-09-28-native-linux-proxy.md) — optional container lab worker; real SRT/RTMP and all three saved recordings pass.
 
 - [September 28 portable worker timing](2026-09-28-linux-worker-timing.md) — fixes missing encoder statistics in the Linux image; compiled dual-output timing/media check passes.
