@@ -10,6 +10,17 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
+## Latest short encoder isolation
+
+Starting81056a8: hardware selection confirmed. New opt-in15s SDK diagnostics show
+single and triple concurrent4K encoders each produce450/450frames with0drops; a
+verified1080→4K replacement also produces450/450. No raw-queue or recipe change.
+Integrated app/proxy/archive/real transport workload remains the differentiator.
+Do not repeat plain encoder-count, selection or replacement hypotheses. Next isolate
+that combined workload. See [session](2026-09-28-encoder-load-isolation.md) and
+artifacts/qa/encoder-selection-20260928/result.json. All three job handles joined;
+no active jobs. Low-latency mode failed its diagnostic and remains rejected.
+
 ## Latest UHD boundary diagnosis
 
 Starting edb4b94, added opt-in scalar SDK-queue/native-submission diagnostics to

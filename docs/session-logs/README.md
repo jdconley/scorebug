@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 encoder-load isolation](2026-09-28-encoder-load-isolation.md) — short native hardware/concurrency/replacement checks narrow the UHD failure.
+
 - [September 28 UHD boundary diagnosis](2026-09-28-uhd-boundaries.md) — opt-in native queue/submission counters for loss attribution.
 
 - [September 28 publisher network blackhole](2026-09-28-publisher-blackhole.md) — isolated publishing-hop loss and automatic restoration.
