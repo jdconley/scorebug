@@ -412,7 +412,8 @@ extension FilmModelTests {
             let freezeUHDPolling: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
+        // Bound the diagnostic run; finite delivery audit limits remain unchanged.
+        guard (10...(config.timingAudit == false ? 1200.0 : 600.0)).contains(config.duration) else { throw URLError(.badURL) }
         let artifact = URL(fileURLWithPath: config.artifact)
         let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
         streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken

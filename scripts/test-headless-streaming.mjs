@@ -113,7 +113,10 @@ assert(
     disconnectAfter >= 0 &&
     (disconnectAfter === 0 || disconnectAfter + 20 < duration),
 );
-assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
+// Longer soaks use continuous production control, never expanded finite audit retention.
+assert(
+  Number.isInteger(duration) && duration >= 10 && duration <= (timingAudit === 'off' ? 1200 : 600),
+);
 const fixedUHD = values.get('--fixed-uhd') === 'on';
 const fixedUHDTransition = values.get('--fixed-uhd-transition') === 'on';
 assert(!values.has('--fixed-uhd-transition') || (fixedUHDTransition && fixedUHD));
@@ -302,11 +305,7 @@ try {
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
   if (packetLossEvery > 0 || workerCrashAfter > 0) {
-    assert.equal(
-      result.lifecycle.length,
-      1,
-      'This fault must retain the publishing session',
-    );
+    assert.equal(result.lifecycle.length, 1, 'This fault must retain the publishing session');
     assert.equal(result.lifecycle[0].state, 'publishing');
   }
   if (congestionSeconds > 0) {

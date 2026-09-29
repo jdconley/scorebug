@@ -15,6 +15,26 @@ removes its processes, relay containers, and temporary working files. Playable
 clips and `soak-metrics.json` remain under
 `artifacts/qa/native-worker-<encoder>-soak-<seconds>/`.
 
+## Native app media soak
+
+The headless native lane can run up to1200seconds with `--timing-audit off`;
+selected finite-audit runs remain capped at600seconds with unchanged retention.
+Production continuous control stays active. Use the known working software proxy:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+node scripts/test-headless-streaming.mjs \
+  --host <Mac-LAN-IP> --source <absolute-long-prepared-4k.mov> \
+  --duration 1050 --quality 2160 --timing-audit off --worker-encoder software
+```
+
+The source must outlast capture and finalization. An actual ten-minute UHD hold
+requires the normal ramp to complete early enough; elapsed run time alone is not
+qualification. Inspect receiver geometry, profile confirmations, input losses,
+clean archive and both saved outputMP4s. Keep UI/Watch, physical thermal/camera,
+other backends and full-match qualification separate. The September28 run is
+pending in [its session log](session-logs/2026-09-28-sustained-native.md).
+
 ## What is measured
 
 The source is 1280×720 at 30 fps. The worker uses its 720p30 profile, including the

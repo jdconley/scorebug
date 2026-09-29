@@ -12,27 +12,33 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-Starting36c93c2. `--worker-crash-after 15` adds a short native integration lane;
-no production settings change. `headless-native-MAuIfq/worker-crash-analysis.json`:
-actualSIGKILL,15.186s down, same nativepublisher/gen1 and archive.37segments,
-archive2,124consecutiveframes; bothoutputs62–442 then962–2104, gap17.3s.
-All5filesdecode, no within-session video/audio gaps; interruptedaudio107ms,
-recoveredends≤36ms. Capture10982/export53068 joined0,cleanup[].
-[Session](2026-09-28-interrupted-tail-comparison.md). **No active jobs.**
+**ACTIVE capture80073: headless-native-yFO9Hu. Rejoin; do not restart.**
+Started17728d0 plus two opt-in duration guards (JS/Swift): no-finite-audit headless
+runs allow1200s; audit-enabled stays600s. No production changes. Actual1050s
+normalUHD/software-proxy run has confirmed360at76s and720at161s. No acceptance yet.
+[Session](2026-09-28-sustained-native.md). No other session jobs active.
 
-Four6s production-proxy file-input/SIGTERM comparisons (automatic/slice × VT/software)
-all endwithin29ms, so do not justify a decoder-default change. Process43499 joined0;
-artifacts/interrupted-tail-20260928/run-krr5eu. Earlier fixture failed before spawning
-FFmpeg due unopened log descriptor, fixed with pipe/freshdirectory. General crash-tail
-bound across load/backends remains open; oldsimulator508–548ms is not a native pass.
-TSWriter only buffersstartup; audio/video then emitonarrival. Live source encoder
-lag is a possible contributor, not a proved cause. Do not add speculative mux queues.
+Prepared source `artifacts/qa/sustained-native-20260928/input.mov` is1200s,
+stream-copiedH264 with exact30fps packet timestamps; exact600s PCM repeated once.
+SourceIDs repeat18000; decodedjoin17994…17999,0…5. Allvideo/audio packet timestamps
+verified; source-qualification.json binds hashes. Prep47289/qualification60768 joined0.
+Downloads/originalfixture untouched. Initialdisk104GiB; preserve all evidence.
 
-Next prioritize sustained local1080/UHD qualification using the workingsoftware
-proxy; reuse all completed UI/scoring/fault results. No unchanged crash or file-input
-comparison rerun. SourceMOVs last600s; native runner max600s, leave startup/drain room.
-Retained periodicloss MUpcfR, congestion44b0fy, API/SRToutageKJYNvL, adaptiveUHDnZ4tzv
-remainpassed. Simulator congestion/UHD and colocatedVideoToolbox limits stay explicit.
+After capture terminal success, export once with currentbundle:
+`python3 artifacts/qa/publisher-blackhole-20260928/export-current.py
+artifacts/qa/headless-native-yFO9Hu`.
+Then `python3 artifacts/qa/sustained-native-20260928/verify-media.py <absolute-run>`
+and `python3 artifacts/qa/sustained-native-20260928/analyze.py <absolute-run>`.
+These new offline scripts syntax-check but have not run. Require>=600sconfirmedUHD,
+>=18000actualUHDreceiverframes, normal ladder, noSDK/appdrop/submiterror, all3files
+fullydecode with exactcontinuousPTS, IDsmod18000, gap-freeaudio andends<50ms.
+Do not claim long-run pass merely from1050elapsed or selected4K. Completehashbinding.
+Do not start another native build/media workload during this capture.
+
+Previous workercrashMAuIfq passesrecovery, notgeneral tailbound: archive2124frames,
+interruptedaudio107ms, recoveredends≤36ms, livegap17.3s; alljobsjoined.
+Retain periodiclossMUpcfR, congestion44b0fy, API/SRToutageKJYNvL, shortUHDnZ4tzv.
+Simulator/backendlimits andphysical/full-match qualification remainexplicit.
 
 ## Backend limits and useful short diagnostics
 
