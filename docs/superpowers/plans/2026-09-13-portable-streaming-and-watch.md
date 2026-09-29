@@ -66,6 +66,11 @@ full-suite run. Local functional integration is complete on the documented paths
 
 ## Remaining local work
 
+- [x] Keep encoder progress/telemetry writable after worker death so finalization
+  cannot fail on a broken parent pipe. Guardian owns and drains those readers;
+  bounded shutdown, focused process checks and a short FFmpeg comparison pass.
+  This fixes pipe ownership, not the still-open live A/V tail bound.
+
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Current
   native/software-proxy crash retains 107 ms extra audio; older simulator/
   VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output

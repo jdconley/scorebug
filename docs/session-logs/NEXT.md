@@ -13,13 +13,21 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 ## Current milestone and next action
 
 Latest direction: prioritize speed and simulator feature completion. The local
-functional checklist is complete on documented paths; do not restart completed
-acceptance or ask for hardware readiness. See [fast iteration](../fast-iteration.md).
-Next engineering work is the interrupted-output-tail path and unsupported backend
-gating in the plan. Inspect existing evidence/code first; choose one targeted check
-only after a concrete fix or new hypothesis. Other-host qualification and long
-soaks are later work, not prerequisites for local app iteration.
+functional checklist is complete on documented paths; no hardware readiness prompts
+or repeated unchanged acceptance. See [fast iteration](../fast-iteration.md).
 
+Parent-loss pipe defect fixed: guardian now owns FFmpeg progress/decoded/timing
+readers and drains them after worker death. Three new regression cases produced
+EPIPE before and pass after;45focused lifecycle tests and worker typecheck pass.
+Short actual worker-SIGKILL/FFmpeg comparison `guardian-drain-20260928/run-kQF0u8`
+fully decodes before/after with tails1.8/11.8ms; guardians joined. This does NOT
+explain the retained107ms/508–548ms live tails. See
+[parent-loss session](2026-09-28-guardian-parent-loss.md). No active jobs.
+
+Next inspect retained live packet timelines or narrowly instrument the live crash
+boundary to distinguish incoming audio lead from proxy drain loss. Do not repeat
+the unchanged file-input comparison or claim all crash tails fixed. Other backend,
+hardware and full-match qualification remain separate; preserve the software path.
 
 Sustained native UHD PASSES: `headless-native-yFO9Hu/sustained-acceptance.json`.
 1050s capture/1056throughfinalization, normal ladder,4Kconfirmed316s. Receiver22635

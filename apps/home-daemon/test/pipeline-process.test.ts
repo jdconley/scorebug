@@ -186,6 +186,47 @@ it('reaps an encoder that ignores TERM after its worker is killed abruptly', asy
   }
 });
 
+it.each([1, 3, 4])(
+  'keeps encoder descriptor %s writable during parent-loss finalization',
+  async (fd) => {
+    const fixture = await childFixture(`
+    process.on('SIGTERM', () => setTimeout(() => {
+      let result = 'drained';
+      try { require('node:fs').writeSync(${fd}, 'final telemetry\\n'); }
+      catch (error) { result = error.code; }
+      require('node:fs').writeFileSync(__filename + '.drained', result);
+      process.exit(0);
+    }, 50));
+    setInterval(() => {}, 1000);
+  `);
+    const workerPath = join(fixture.dir, 'worker.mjs');
+    await writeFile(
+      workerPath,
+      `
+    import { startPipeline } from ${JSON.stringify(new URL('../src/pipeline.ts', import.meta.url).href)};
+    const noop = () => {};
+    startPipeline(${JSON.stringify(fixture.spec)}, { debug: noop, info: noop, warn: noop, error: noop }, { stopTimeoutMs: 1000 });
+    setInterval(() => {}, 1000);
+  `,
+    );
+    const worker = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), workerPath], {
+      stdio: 'ignore',
+    });
+    const exited = new Promise((resolve) => worker.once('exit', resolve));
+    try {
+      await fixture.ready();
+      worker.kill('SIGKILL');
+      await exited;
+      await expect
+        .poll(() => readFile(fixture.spec.ffmpegPath + '.drained', 'utf8'), { timeout: 2000 })
+        .toBe('drained');
+    } finally {
+      worker.kill('SIGKILL');
+      await fixture.cleanup();
+    }
+  },
+);
+
 it('honors stop before the guardian has spawned its encoder', async () => {
   const fixture = await childFixture('setInterval(() => {}, 1000);');
   try {
