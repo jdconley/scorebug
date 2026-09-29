@@ -72,6 +72,35 @@ acceptance matrix for its cleanup reconciliation and exact scope.
 - [x] Hands-on simulator launcher opens two native phones and a Watch with the local
   lab, without UI automation; preserves app data and recordings after shutdown.
 
+## Immediate delivery checkpoint
+
+The core simulator vertical is available now: two native phones, a native Watch,
+clean recording/export, adaptive SRT, changing score overlay, mock RTMP MP4 and
+optional proxy MP4. Use the [hands-on launcher](../../fast-iteration.md#hands-on-simulator-session)
+with the software proxy and a prepared 1080p source. Reuse the current accepted
+recordings; no fresh full-suite run is needed to demonstrate these features.
+
+Keep these boundaries explicit during local use:
+
+| Configuration | Delivery status |
+| --- | --- |
+| iPhone/Watch simulators, 1080p fixture, software proxy | Core functional vertical accepted; available for hands-on use |
+| Native Mac publisher, software proxy, adaptive UHD | Retained sustained media pass; does not qualify simulator UHD |
+| Simulator UHD | Not accepted: encoder pending-input limit; failed candidates retain the applied profile |
+| Simulator severe congestion | Not accepted for continuous live media: saved video/audio gaps; archive and recovery pass |
+| Colocated VideoToolbox proxy plus bandwidth probes | Not accepted: measured publisher input drops; use the software proxy locally |
+| Abruptly interrupted output tails | Still open across timing/load; graceful output and independent archive pass |
+
+These are delivery/qualification boundaries, not new hard-coded product ceilings.
+Do not silently disable capable devices or label the failed configurations green.
+Do not make an AMD64 image smoke check, another soak, or a hardware availability
+probe a prerequisite for using the accepted simulator workflow.
+
+Next implementation work must address an observed functional failure in that
+workflow or a specific open fault below. For each fault, state a bounded hypothesis
+and use saved evidence or a minimal reproduction; do not automatically start another
+full capture. Physical and remote-host work stays deferred.
+
 ## Remaining local work
 
 - [x] Keep encoder progress/telemetry writable after worker death so finalization
@@ -89,10 +118,12 @@ acceptance matrix for its cleanup reconciliation and exact scope.
   native/software-proxy crash retains up to107 ms extra audio; older simulator/
   VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output
   and inspect the responsible path before choosing another targeted reproduction.
-- [ ] Resolve or explicitly gate unsupported simulator/backend combinations:
+- [x] Explicitly gate unsupported simulator/backend combinations in the immediate
+  delivery checkpoint (qualification boundaries, not product capability ceilings):
   simulator UHD pending-input limit, simulator severe-congestion media gaps, and
   colocated VideoToolbox/probe input drops. Preserve the working software-proxy
-  path; no repeated parameter sweeps or larger queues to hide overload.
+  path; no repeated parameter sweeps or larger queues to hide overload. Resolving
+  these failures remains part of the backend/profile qualification below.
 
 ## Later qualification (not missing local features)
 

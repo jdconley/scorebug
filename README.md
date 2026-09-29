@@ -11,6 +11,22 @@ to YouTube.
 > phone/Watch reliability, full-match operation and other proxy hosts remain
 > unqualified. Not ready for a real game; see the current plan below.
 
+## Try the current system locally
+
+The accepted simulator workflow includes native phone/Watch scoring, clean local
+recording/export, streaming through the overlay proxy, and both final MP4 outputs.
+On the configured development Mac, start a hands-on session without UI tests:
+
+```sh
+node scripts/simulator-lab.mjs --host YOUR_PRIVATE_LAN_IP --duration 1800
+```
+
+Follow the [setup steps](docs/fast-iteration.md#hands-on-simulator-session), or add
+`--source /absolute/prepared/input.mov` for representative footage. Use the software
+proxy locally. Simulator UHD, severe-congestion media and abrupt crash tails remain
+[explicit limits](docs/superpowers/plans/2026-09-13-portable-streaming-and-watch.md#immediate-delivery-checkpoint).
+This working demo does not imply full-match or physical-device qualification.
+
 ## Current plan
 
 - [Architecture and requirements](docs/architecture.md)

@@ -15,40 +15,40 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
-The user has explicitly renewed simulator-first delivery and faster iteration.
-Do not poll physical devices or request passcodes now; earlier readiness questions
-are superseded for current work. Existing local functional passes stand, but the
-remaining simulator/media failures below are not green.
+Core simulator features are accepted together. Use the hands-on launcher in
+[fast iteration](../fast-iteration.md); do not repeat the full vertical or gate
+manual use on another architecture, soak, or crash-tail experiment. The plan's
+**Immediate delivery checkpoint** identifies the supported local path and the
+failed/unqualified combinations without declaring them fixed.
 
-Latest production change: bounded TSWriter DTS interleaving (256PES/8MiB/2s),
-clean drain, unchanged timestamps and immediate single-track behavior.57focused SDK
-checks and complete short crash media pass. See [session](2026-09-28-dts-interleaving.md).
-`headless-native-a1rmZ9/interleave-acceptance.json`:2123continuous archive frames,
-matching live62–443/962–2102, all five MP4s decode, no internal A/V gaps;
-interrupted tails59.159ms, recovered≤16.889ms, cleanup[]. Do not rerun unchanged.
+User priority: fewer tests, faster implementation, simulators first. Hardware and
+other-host qualification are deferred. A read-only device check during this session
+found both physical devices unavailable; no automation or passcode request followed.
+Do not repeat the check. The proposed emulated AMD64 smoke was not started because
+it does not close a current simulator feature gap.
 
-Next local investigation: FFmpeg per-track shutdown/decoder queues or an ordered
-transport observation for the general abrupt-tail gate. Independent demux logs
-show track boundaries, not wire arrival order; neither the prior50.655ms nor the
-current71.978ms demux lead proves upstream emission order. Source interleaving is
-now covered, but prior107ms/native and500ms/simulator tails are not declared fixed.
+Latest bounded investigation: [shortest-tail isolation](2026-09-28-shortest-tail-isolation.md).
+Watch foreground retries already exist. A4second isolated FFmpeg SIGTERM comparison
+rejects adding shortest:7video frames/no decoded audio versus baseline134/190frames.
+Artifact shortest-tail-uod24p16; all commands joined. Do not repeat or adopt this
+option as a generic crash-tail fix. Explicit platform/backend gating is now checked;
+resolving those failures remains qualification work, not a claimed pass.
 
-Saved simulator congestion loss is confined to the actual restriction; before/after
-periods remain30fps and the archive is continuous. Do not repeat failed GOP/latency
-sweeps or the direct SDK simulator UHD failure. Failed candidates retain the
-applied profile and back off; no larger queues or invented fixed ceiling.
+No production code changed after e40294e. Current two-phone/Watch acceptance below
+stands. All local feature checklist items are implemented; remaining local work is
+fault bounds and known backend/platform limits. Keep those visible without conflating
+them with missing scoring/recording/overlay features.
 
-For each implementation batch, run only the directly affected check. Repeat the
-full simulator vertical only when a shared contract changes or to accept a finished
-feature batch. No broad suite, sustained 4K run, device readiness check, or
-cross-platform qualification in the routine edit loop. If evidence is insufficient,
-add the smallest missing diagnostic rather than starting another parameter sweep.
+If continuing a fault fix, first identify the failing boundary from saved evidence.
+Independent FFmpeg demux logs are not ordered wire evidence. General abrupt-tail
+bounds remain open despite the latest short DTS-interleaving run's59ms tail; no
+speculative timeout/decoder change or unchanged live crash rerun. Simulator UHD and
+severe-congestion failures and colocated VideoToolbox/probe loss are not waived.
+Candidate failure retains applied settings and requires fresh health/backoff.
 
-Local backend/endurance and interrupted-tail gates remain open, not silently
-waived. Quality failure handling is already conservative: joined candidate failure
-retains applied settings and requires fresh health/backoff before another trial.
-Do not add a hard-coded simulator ceiling or larger queue without new evidence.
-Simulator UHD/congestion and colocated VideoToolbox/probe limits remain documented.
+One directly affected check per implementation batch. No app tests for documentation,
+no broad suite after a focused pass, and no unchanged integration/endurance run.
+Do not spawn agents, push, or broadcast externally.
 
 ## Reuse these passes
 

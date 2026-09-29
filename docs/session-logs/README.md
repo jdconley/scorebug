@@ -8,6 +8,10 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 shortest-tail isolation](2026-09-28-shortest-tail-isolation.md) — existing Watch retry path confirmed; tiny proxy comparison rejects a harmful shortest-output shortcut.
+
+- [September 28 delivery focus](2026-09-28-delivery-focus.md) — accepted simulator path made immediately usable; further qualification no longer triggers redundant full runs.
+
 - [September 28 current simulator vertical](2026-09-28-current-simulator-vertical.md) — phone/Watch workflows and complete media pass after DTS interleaving; cleanup race fixed without rerunning apps.
 
 - [September 28 DTS interleaving](2026-09-28-dts-interleaving.md) — bounded timestamp-ordered publisher; short crash and complete saved-media checks pass.
