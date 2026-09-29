@@ -35,7 +35,7 @@ MP4 of the final overlaid stream.
 | Native Watch | Scoring, takeover, undo, relaunch and match end through real HTTP; 41 mm UI | Actual companion/radio routes; simulator setup fixture is not WatchConnectivity qualification |
 | Clean recording | 1080p/4K selection, segmented recovery, export/playback; storage, queue and source fault recovery | Sustained/physical capture profiles |
 | Proxy and outputs | SRT, changing score overlay, RTMP mock recorder and optional final MP4; automatic API/worker recovery | Severe-congestion loss, abrupt output tails and sustained profiles |
-| Adaptive upload | Qualified local 240→360→720→1080 ladder, minimum fallback and recovery; bounded UHD protocol and actual native 4K admission verified | Sustained 4K/media qualification and remaining fault matrix |
+| Adaptive upload | Normal240→2160 ladder and saved4Kmedia verified locally with software proxy; minimum fallback/recovery retained | Sustained/backend qualification and remaining fault matrix |
 | Deployment | Local Mac service; persistent Linux container stack and CPU/GPU runbooks | External networking/TLS and runtime/backend qualification |
 
 The [acceptance matrix](../../simulator-acceptance.md) owns retained results and
@@ -76,16 +76,10 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   Prolonged25s relay suspension also recovers across failed retries, with a continuous
   archive and35.5667s live gap.
 
-- [ ] Qualify sustained adaptive4K and final media. Short fixed-profile native
-  archive/SRT/proxy runs pass receiver cadence, including the content region where
-  adaptive upload fails. Adaptive UHD still incurs SDK raw-input queue loss after
-  the scalar readiness optimization. A short combined1080→UHD replacement passes;
-  direct adaptive240→UHD reproduces loss by37s with hardware encoding confirmed.
-  Short comparisons isolate loss to bandwidth probing with the local VideoToolbox
-  proxy; candidate-only and probe/software-proxy paths pass. Normal adaptive
-  software-proxy verification is in progress. Keep the shared VideoToolbox limit
-  explicit until its cause is established. The simulator's 4K candidate encoder exceeds
-  its pending-input limit; keep that ceiling explicit rather than enlarging queues.
+- [x] Verify normal local adaptive4K with clean archive and both final MP4 outputs.
+  Software proxy passes330s, including74s of actual4K/24Mbps; no source-frame/audio
+  gaps and A/V ends≤14ms. Static overlay is visually checked; dynamic scoring has
+  separate simulator evidence. Sustained/backend limits remain tracked below.
 - [ ] Reduce severe-congestion A/V loss and verify recovery with actual decoded media.
   Healthy-period acceptance already passes; do not relabel outage losses as healthy.
 - [x] Verify retained deterministic stale-report/no-progress, ownership/revision,
@@ -105,7 +99,9 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
   Missing live audio remains a separate media failure; limits are unchanged.
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Graceful stops
   pass; hard-crash interrupted outputs can retain about half a second of extra audio.
-- [ ] Qualify sustained local profiles/backends and document their measured ceilings.
+- [ ] Qualify sustained local profiles/backends beyond the short UHD run. Resolve or
+  document the colocated VideoToolbox/probe limit and simulator UHD encoder ceiling;
+  preserve the working software proxy path. Full-match qualification remains open.
 - [ ] Confirm hosted native CI when a push is authorized. Hosted builds do not replace
   local simulator/media acceptance.
 

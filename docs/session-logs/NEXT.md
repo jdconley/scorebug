@@ -3,91 +3,74 @@
 ## Direction and checkout
 
 Simulator-first; defer hardware/external hosts. Batch related changes, focused
-checks only, retain passing evidence. No agents, pushes, broadcasts or purchases.
+checks only, reuse passing evidence. No agents, pushes, broadcasts or purchases.
 Preserve footage, recordings and unrelated simulators.
 
 Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
-branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
+branch `codex/local-validation`. [Plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
-## Current finding and next action
+## Current milestone and next action
 
-Startingfe332cb. Short real measurement warmups isolate bandwidth-probe/backend
-interaction: candidate-only/VideoToolbox proxy passes786consecutiveUHD frames;
-probe-only/VideoToolbox proxy drops17SDK frames; probe-only/software proxy passes
-790consecutiveUHD frames with0drops. Native hardware selected in all cases.
-Artifacts `headless-native-fw3Zum`, `headless-native-LC8Cpq`, `headless-native-zDpc9c`
-retain source patches and hashed `isolation-analysis.json`. Handles69955/28797/60166
-joined0, cleanup empty. No normal adaptive/full-media pass claimed from these.
-See [session](2026-09-28-uhd-probe-backend.md).
+Code0099fbe. Normal native240→360→720→1080→2160 ladder and final media pass with
+software proxy on this Mac: `headless-native-nZ4tzv/final-acceptance.json`.
+330s run, UHD confirmed270s;2234actualUHD frames (~74s),0SDK/app drops. Native
+archive9927and each final output9846consecutive30fps frames;167segment hashes,
+full A/V decode, gap-free audible audio, ends≤14ms, clean/archive and score-overlay
+preview checks. Dynamic score/Watch/UI have separate retained passes.
 
-**ACTIVE: exec80423**, normal adaptive UHD with software proxy, duration330s,
-source `artifacts/qa/uhd-app-20260928/input.mov`, timing-audit off. Artifact
-`headless-native-nZ4tzv`, parent log `artifacts/qa/uhd-readiness-20260928/adaptive-software.log`.
-No direct/fixed/freeze/warm flags. Source HEAD/patch saved before capture. Poll/join
-this exact handle; observation timeout is not terminal. No other jobs active.
-If UHD receiver/native cadence passes, export clean archive through native library
-and verify actual archive/both output media. Otherwise inspect the reason first.
+The initial media verifier rejected RTMP's33/34ms timestamp quantization. Saved
+packets prove≤0.667ms cumulative cadence error; corrected only that protocol's
+precision bound, without another decode. Original failure preserved.
+See [session](2026-09-28-adaptive-uhd-media-pass.md). Handles80423/41230 joined0;
+97533 joined1 for that verifier error, corrected from retained data. **No active jobs.**
 
-CPU proxy is a plausible working local4K path. Preserve local shared-VideoToolbox
-limitation; its internal cause is not yet proven. Ongoing adaptive polling, publisher
-setup, long runtime, guarded replacement and candidate encoding alone were excluded
-as sufficient causes by the earlier short comparisons. No more speculative queue,
-history-copy or timing changes. Use the55s direct path for targeted future fixes;
-only repeat full climb for a material change, such as the currently tested backend.
+Next address remaining network/recovery behavior: intermittent packet loss and
+whole-client outage (API also unavailable), severe-congestion A/V loss, abrupt output
+tails. Reuse this complete media pass; do not restart UHD diagnosis as the default
+next task. Sustained/full-match/backend qualification remains open and tracked.
 
-Already isolated: single/triple native hardware UHD encoders and verified SDK
-1080→UHD replacement each deliver450/450frames without drops; plain encoder count,
-selection and replacement alone do not reproduce loss. Low-latency mode fails.
-Fixed-UHD first35s and later content region both pass short receiver cadence.
-The iOS simulator UHD encoder hits its pending-input limit; do not enlarge queues
-or rerun unchanged. Keep this platform ceiling distinct from the native Mac loss.
+## Backend limits and useful short diagnostics
+
+Use software proxy for colocated Mac UHD. Probe-only warmup with VideoToolbox proxy
+causes SDK input loss; candidate-only and probe/software cases pass. The internal
+shared-resource cause remains unproven. Simulator UHD candidate encoder hits its
+pending-input limit; do not enlarge queues or repeat unchanged simulator runs.
+
+If a future change requires UHD isolation: `--direct-uhd on --duration 55` skips
+middle rungs but retains normal admission/timing; not full-ladder acceptance.
+Other diagnostic warmups/freeze modes and exact evidence are in
+[probe/backend session](2026-09-28-uhd-probe-backend.md). They must not become
+production shortcuts or false acceptance. No more speculative parameter sweeps.
 
 ## Reuse, do not repeat
 
-- Full1080 vertical/media: `ordinary-native-PpPozK/1080-final-acceptance.json`.
-- Native two-phone create/join/scoring, separate41mm Watch takeover/relaunch/end,
-  offline/lost-reply/relaunch/stale-authority recovery. Watch setup fixture does
-  not qualify physical WatchConnectivity/radio routes.
-- Clean archive storage/queue/source fault recovery; short4K recording/export/playback.
-- Native reconnect, API/worker crashes, relay generations, local Mac service and
-  Docker deployment.25s publisher-hop blackout preserves continuous archive and
-  resumes both outputs, with29.3333s measured live gap.25s relay suspension also
-  recovers, with35.5667s gap. No equivalent reconnect reruns.
-- Retained fault/audit terminal coverage reconciled in [fault matrix](../local-fault-coverage.md).
-- Healthy congestion intervals pass. Severe collapse loss, abrupt output tails,
-  intermittent loss/whole-client outage, sustained profiles remain open. Do not
-  repeat rejected buffer/GOP sweeps. Hosted CI needs authorized push.
+- Native two-phone create/join/scoring; separate41mm Watch takeover/relaunch/end;
+  offline/lost-reply/stale-authority recovery. Watch setup is not radio qualification.
+-1080 full vertical/media: `ordinary-native-PpPozK/1080-final-acceptance.json`.
+- Archive storage/queue/source recovery, short4K export/playback/relaunch.
+- Native reconnect, API/worker crashes, relay generations, Mac service/container
+  deployment.25s publishing blackout preserves archive and resumes outputs with
+  29.3333s live gap;25s relay suspension recovers with35.5667s gap. No equivalent rerun.
+- Retained deterministic fault/audit coverage: [matrix](../local-fault-coverage.md).
+- Healthy congestion periods pass; severe collapse still has87missing IDs,
+ 16audio gaps/2.4s max gap. Buffer/GOP candidates were worse and rejected.
+- Hosted CI requires authorized push. Physical routes, devices, other hosts and
+  YouTube remain deferred gates, not inferred from local evidence.
 
 ## Environment and commands
 
 `DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer`.
 FFmpeg `/opt/homebrew/opt/ffmpeg-full/bin/`; LAN192.168.1.130; AppleM4Max.
-4K600s source `artifacts/qa/uhd-app-20260928/input.mov`.
-1080source `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`.
-Later-content slice `artifacts/qa/uhd-readiness-20260928/content-250-300.mov`.
-Do not modify Downloads originals. Do not print config/setup/environment secrets.
+4K600s fixture `artifacts/qa/uhd-app-20260928/input.mov`;
+1080 `artifacts/qa/prepared-ordinary-recovery-dZeq4S/input.mov`.
+Never modify Downloads originals or print generated endpoint/token configs.
 
 Headless: `node scripts/test-headless-streaming.mjs --host <LAN> --source <absolute.mov>
---duration <seconds> --quality 2160 --timing-audit off`.
-Short fixed diagnostic adds `--fixed-uhd on`, maximum60s/no outage; skips adaptive
-policy/probing and cannot establish adaptive acceptance. Audit-off retains
-production controls but not full delivery-audit/UI qualification.
-
-Native archive export when relevant:
-`python3 artifacts/qa/missing-processing-20260928/export-retained.py <headless-artifact>`.
-Uses incremental FilmModel build and real RecordingLibrary export; never concat.
-
-Short combined replacement: fixed command above plus `--fixed-uhd-transition on`.
-Direct adaptive reproduction: normal command with `--direct-uhd on`, quality2160,
-audit off, no outage/fixed mode,≤120s. Private130s slice available at
-`artifacts/qa/uhd-readiness-20260928/content-215-345.mov`.
-
-Polling ablation: direct command plus `--freeze-uhd-polling on`,≤60s. It deliberately
-halts adaptive reaction after UHD; never acceptance. Owned-publisher transition:
-fixed-transition command plus `--owned-uhd-transition on` (starts240, no campaigns).
-
-Finite warmups require owned/fixed transition: `--warm-uhd-candidate on` and/or
-`--warm-uhd-probe on`. Both actual owners join before the manual profile change;
-the concurrent combination is available but untested. Runner now accepts
-`--worker-encoder software|videotoolbox` (default VideoToolbox).
+--duration <seconds> --quality 2160 --timing-audit off --worker-encoder software`.
+Audit-off retains production control but not complete delivery-audit/UI evidence.
+Native export when relevant: `python3 artifacts/qa/missing-processing-20260928/export-retained.py <artifact>`.
+Current-bundle no-build variant: `artifacts/qa/publisher-blackhole-20260928/export-current.py`.
+Never concatenate native archive payloads. New single-decode media verifier is
+`artifacts/qa/uhd-readiness-20260928/verify-final-media.py`; do not rerun it on the
+completed artifact (outputs already exist). It documents the RTMP precision bound.

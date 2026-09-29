@@ -6,6 +6,28 @@ known failures and the tested platform matrix; the [delivery plan](superpowers/p
 owns remaining work. Batch changes and test the affected workflow once. Hardware
 qualification follows simulator-testable integration.
 
+## Current local UHD path
+
+Use the software proxy when this Mac also runs the native filming model. The normal
+adaptive ladder and all saved media pass a330s representative-footage run, including
+about74s of4K/24Mbps. A colocated VideoToolbox proxy has a measured interaction with
+bandwidth probing that causes native input drops; isolated hardware encoder startup
+checks do not establish this combined workload's capacity.
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-26.2.0.app/Contents/Developer \
+node scripts/test-headless-streaming.mjs \
+  --host <Mac-LAN-IP> --source <absolute-prepared-4k.mov> \
+  --duration 330 --quality 2160 --timing-audit off --worker-encoder software
+```
+
+Use a prepared source longer than the run and finalization; preserve the original
+phone footage. This is a headless native integration lane. Native phone/Watch UI
+coverage is retained separately, and the iOS simulator's UHD encoder limitation
+does not become a hardware qualification. `headless-native-nZ4tzv/final-acceptance.json`
+records the full decode, source identities, audio, output/clean-archive previews and
+source provenance. Reuse it for unchanged code rather than repeating the capture.
+
 ## What is available on this Mac
 
 | Item             | Observed                                                                               |
