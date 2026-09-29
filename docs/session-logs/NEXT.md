@@ -34,10 +34,17 @@ fully decodes before/after with tails1.8/11.8ms; guardians joined. This does NOT
 explain the retained107ms/508–548ms live tails. See
 [parent-loss session](2026-09-28-guardian-parent-loss.md). No active jobs.
 
-Next inspect retained live packet timelines or narrowly instrument the live crash
-boundary to distinguish incoming audio lead from proxy drain loss. Do not repeat
-the unchanged file-input comparison or claim all crash tails fixed. Other backend,
-hardware and full-match qualification remain separate; preserve the software path.
+Current guardian verified with actual native worker crash:
+`headless-native-8guvcT/worker-crash-acceptance.json`, lab`device-lab-xVZMvn`.
+Capture45847 and native-export/media22561 joined0; cleanup[]. Archive2,125consecutive
+frames/37segments; both output sequences62–443 then962–2104, gap17.2667s. Worker
+absent15.235s; same publisher. All five files decode without within-session frame/
+audio gaps. Interrupted tail106.24msmock/107.24msproxy; recovered≤37.5ms, archive13.3ms.
+Tail effectively unchanged by pipe isolation; no unchanged rerun or timeout tuning.
+Next tail investigation needs incoming/mux/decoder timing at the live crash boundary,
+which current saved diagnostics lack. No speculative interleaving/queues. Other
+backend/hardware/full-match qualification remains open. No lab/test jobs active.
+[Session](2026-09-28-live-crash-pipe-isolation.md).
 
 Sustained native UHD PASSES: `headless-native-yFO9Hu/sustained-acceptance.json`.
 1050s capture/1056throughfinalization, normal ladder,4Kconfirmed316s. Receiver22635
