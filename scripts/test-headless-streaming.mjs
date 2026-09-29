@@ -23,6 +23,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--disconnect-after',
       '--relay-outage-seconds',
       '--publisher-blackhole-seconds',
+      '--client-outage-seconds',
       '--fixed-uhd',
       '--fixed-uhd-transition',
       '--owned-uhd-transition',
@@ -46,10 +47,15 @@ const duration = Number(values.get('--duration') ?? '120');
 const disconnectAfter = Number(values.get('--disconnect-after') ?? '0');
 const relayOutageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
 const blackholeSeconds = Number(values.get('--publisher-blackhole-seconds') ?? '0');
+const clientOutageSeconds = Number(values.get('--client-outage-seconds') ?? '0');
 assert(Number.isInteger(relayOutageSeconds) && relayOutageSeconds >= 0);
 assert(Number.isInteger(blackholeSeconds) && blackholeSeconds >= 0);
-assert(!(relayOutageSeconds && blackholeSeconds), 'Select one outage');
-const outageSeconds = relayOutageSeconds || blackholeSeconds;
+assert(Number.isInteger(clientOutageSeconds) && clientOutageSeconds >= 0);
+assert(
+  [relayOutageSeconds, blackholeSeconds, clientOutageSeconds].filter(Boolean).length <= 1,
+  'Select one outage',
+);
+const outageSeconds = relayOutageSeconds || blackholeSeconds || clientOutageSeconds;
 assert(
   outageSeconds === 0 ||
     (Number.isInteger(outageSeconds) &&
@@ -77,7 +83,14 @@ const directUHD = values.get('--direct-uhd') === 'on';
 assert(!values.has('--direct-uhd') || directUHD);
 const freezeUHDPolling = values.get('--freeze-uhd-polling') === 'on';
 assert(!values.has('--freeze-uhd-polling') || (freezeUHDPolling && directUHD && duration <= 60));
-assert(!directUHD || (quality === '2160' && !fixedUHD && duration <= 120 && timingAudit === 'off' && disconnectAfter === 0));
+assert(
+  !directUHD ||
+    (quality === '2160' &&
+      !fixedUHD &&
+      duration <= 120 &&
+      timingAudit === 'off' &&
+      disconnectAfter === 0),
+);
 assert(!values.has('--fixed-uhd') || values.get('--fixed-uhd') === 'on');
 assert(
   !fixedUHD ||
@@ -127,7 +140,8 @@ try {
       ...options,
       ...(quality === '2160' ? { uhd: true } : {}),
       decodedGeometry: true,
-      publisherBlackhole: blackholeSeconds > 0,
+      publisherBlackhole: blackholeSeconds > 0 || clientOutageSeconds > 0,
+      clientNetworkOutage: clientOutageSeconds > 0,
     },
     { signal: controller.signal },
   );
@@ -200,7 +214,8 @@ try {
       }
       await delay(disconnectAfter * 1000, undefined, { signal: controller.signal });
       controller.signal.throwIfAborted();
-      if (blackholeSeconds > 0) await lab.blackholePublisher(blackholeSeconds);
+      if (blackholeSeconds > 0 || clientOutageSeconds > 0)
+        await lab.blackholePublisher(blackholeSeconds || clientOutageSeconds);
       else if (relayOutageSeconds > 0) await lab.pauseRelay(relayOutageSeconds);
       else await lab.disconnectPublisher();
     })();

@@ -40,12 +40,19 @@ retries, same recording/generation and automatic recovery.2731consecutive archiv
 frames and gap-free audio; both outputs fully decode with no within-session loss.
 The live gap is29.3333s. See the [session](session-logs/2026-09-28-publisher-blackhole.md).
 
-Intermittent loss and whole-client network outage still need distinct integration
-evidence; the publisher-only blackout leaves control/API reachable. Severe congestion has measured media loss; healthy periods
-pass. The recent 4K run reaches actual 4K input, then correctly rejects probation
-on observed pre-receiver frame loss. The latest nm6xCH boundary run localizes drops to the SDK raw-input queue while
-native submissions slow to90.8ms; app ingress rejects/evicts zero frames. Host
-contention versus encoder throughput and sustained4K remain unqualified. Physical thermal/radio behavior stays deferred.
+headless-native-KJYNvL verifies combined client API/SRT loss for 25 seconds. The API
+fixture rejects 366 connections and transfers no bytes during loss; SRT drops
+510 forward/669 reverse packets. Native recording remains continuous (2,727 frames,
+gap-free audio), generation stays 1, and publishing resumes automatically after
+control returns. Both destinations decode with no within-session loss; live gap
+27.233 seconds and A/V ends within 49 ms. Backend API/worker remain online. This is
+scoped client networking, not physical radio loss. See the
+[session](session-logs/2026-09-28-client-network-outage.md).
+
+Intermittent loss still needs integration evidence. Severe congestion has measured
+media loss; healthy periods pass. Normal adaptive UHD and complete saved media now
+pass with the software proxy; sustained/backend and physical thermal/radio limits
+remain open in the delivery plan.
 
 Complete retained delivery audits are laboratory evidence requirements. Runtime
 control continuing beyond their caps is already covered; do not confuse the two or

@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 combined client network outage](2026-09-28-client-network-outage.md) — API/SRT loss preserves archive and automatically restores both outputs.
+
 - [September 28 adaptive UHD media pass](2026-09-28-adaptive-uhd-media-pass.md) — normal ladder and all three saved A/V files pass with software proxy; backend limits remain explicit.
 
 - [September 28 UHD probe/backend isolation](2026-09-28-uhd-probe-backend.md) — probe-only loss with local VideoToolbox proxy disappears with software proxy; full adaptive verification active.

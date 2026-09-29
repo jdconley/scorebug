@@ -28,6 +28,17 @@ does not become a hardware qualification. `headless-native-nZ4tzv/final-acceptan
 records the full decode, source identities, audio, output/clean-archive previews and
 source provenance. Reuse it for unchanged code rather than repeating the capture.
 
+## Targeted client outage
+
+For a short API-and-streaming outage, use the headless command with a prepared
+1080p source and `--duration 90 --quality 1080 --timing-audit off
+--worker-encoder software --disconnect-after 15 --client-outage-seconds 25`.
+This isolates the native client's TCP API and bidirectional UDP SRT paths; the
+worker/backend remain online. It does not alter host networking. The option is
+exclusive with relay suspension and publisher-only blackout. Per-protocol counters
+are saved in the lab; the UDP artifact describes only its own hop. Lifecycle success
+alone is not saved-media acceptance. Reuse the retained acceptance above for unchanged code.
+
 ## What is available on this Mac
 
 | Item             | Observed                                                                               |

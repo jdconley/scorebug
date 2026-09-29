@@ -12,23 +12,26 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
-Code0099fbe. Normal native240→360→720→1080→2160 ladder and final media pass with
-software proxy on this Mac: `headless-native-nZ4tzv/final-acceptance.json`.
-330s run, UHD confirmed270s;2234actualUHD frames (~74s),0SDK/app drops. Native
-archive9927and each final output9846consecutive30fps frames;167segment hashes,
-full A/V decode, gap-free audible audio, ends≤14ms, clean/archive and score-overlay
-preview checks. Dynamic score/Watch/UI have separate retained passes.
+Starting ba0c570; current code adds only a private TCP outage fixture and a combined
+headless option. `headless-native-KJYNvL/client-network-acceptance.json` passes
+25-second native API/SRT loss: continuous 2,727-frame archive, gap-free audio,
+same generation, one Start/Stop, restored output at 40s. 366 API connections rejected,
+no API bytes or SRT sends during loss. Both outputs match; all five files decode,
+A/V ends≤49ms. Live gap27.233s. Capture53810/export-media9029 joined0; cleanup[].
+[Session](2026-09-28-client-network-outage.md). **No active jobs.**
 
-The initial media verifier rejected RTMP's33/34ms timestamp quantization. Saved
-packets prove≤0.667ms cumulative cadence error; corrected only that protocol's
-precision bound, without another decode. Original failure preserved.
-See [session](2026-09-28-adaptive-uhd-media-pass.md). Handles80423/41230 joined0;
-97533 joined1 for that verifier error, corrected from retained data. **No active jobs.**
+Normal native240→360→720→1080→2160 and complete saved media remain passed with
+software proxy: `headless-native-nZ4tzv/final-acceptance.json`.330s run including74s
+UHD; no SDK/app drops, archive9927/live9846consecutive frames, gap-free audio.
+[Prior session](2026-09-28-adaptive-uhd-media-pass.md) documents RTMP timestamp
+precision correction from retained packets, without another decode. UI/Watch and
+changing-score results are separate retained passes, not part of these headless runs.
 
-Next address remaining network/recovery behavior: intermittent packet loss and
-whole-client outage (API also unavailable), severe-congestion A/V loss, abrupt output
-tails. Reuse this complete media pass; do not restart UHD diagnosis as the default
-next task. Sustained/full-match/backend qualification remains open and tracked.
+Next address intermittent packet loss and severe-congestion A/V loss, then abrupt
+output tails and sustained/backend qualification. Do not repeat completed client,
+publisher or relay outage captures, nor reopen the resolved software-proxy UHD path.
+Use existing severe-congestion evidence to identify a concrete fix before another
+capture; no unchanged parameter sweeps.
 
 ## Backend limits and useful short diagnostics
 

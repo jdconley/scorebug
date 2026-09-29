@@ -15,6 +15,7 @@ import { startScoringTestServer } from './scoring-test-server.mjs';
 import { startReconnectingRTMPRecorder } from './reconnecting-rtmp-recorder.mjs';
 import { createUDPImpairmentProxy } from './udp-impairment.mjs';
 import { createUDPOutageProxy } from './udp-outage.mjs';
+import { createTCPOutageProxy } from './tcp-outage.mjs';
 import { createUplinkEvidenceStopper } from './uplink-proxy-evidence.mjs';
 import { startOrdinaryRecoveryControl } from './ordinary-recovery-control.mjs';
 import { validatePrivateLabBind } from './private-lab-network.mjs';
@@ -247,6 +248,13 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     !(options.publisherBlackhole && options.publisherRecovery),
     'Select one publisher fault fixture',
   );
+  assert(
+    options.clientNetworkOutage === undefined || typeof options.clientNetworkOutage === 'boolean',
+  );
+  assert(
+    !options.clientNetworkOutage || options.publisherBlackhole,
+    'Client outage requires the isolated publisher blackout fixture',
+  );
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
@@ -282,6 +290,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     recoveryControl,
     stopUplink,
     outageUplink,
+    outageAPI,
     relayStarted = false,
     stopping,
     restarting;
@@ -317,6 +326,21 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
           'receiver',
           async () => {
             receiver = await recorder?.finish();
+          },
+        ],
+        [
+          'client-api',
+          async () => {
+            if (!outageAPI) return;
+            await outageAPI.close();
+            const result = outageAPI.snapshot();
+            await writeFile(
+              join(artifact, 'client-api-outage.json'),
+              JSON.stringify(result, null, 2),
+              { flag: 'wx', mode: 0o600 },
+            );
+            assert.equal(result.active, 0);
+            assert.deepEqual(result.errors, [], 'Client API outage fixture failed');
           },
         ],
         [
@@ -465,6 +489,12 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     const endpoint = new URL(api.baseURL);
     endpoint.hostname = apiBind;
     const baseURL = endpoint.origin;
+    if (options.clientNetworkOutage) {
+      outageAPI = await createTCPOutageProxy({
+        receiverHost: apiBind,
+        receiverPort: Number(endpoint.port),
+      });
+    }
     const matchId = seedMatch ? randomUUID() : undefined;
     if (seedMatch) {
       const team = (name) => ({ name, shortName: name, color: '#123456' });
@@ -506,7 +536,7 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
     await bounded(worker.ready, 20000);
     signal?.throwIfAborted();
     const setup = {
-      endpoint: baseURL,
+      endpoint: outageAPI ? `http://127.0.0.1:${outageAPI.port}` : baseURL,
       installationToken: phoneToken,
       workerId: 'mac',
       outputId: 'local-sink',
@@ -538,11 +568,13 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
         );
         assert(Number.isInteger(seconds) && seconds >= 10 && seconds <= 60);
         const operation = (async () => {
-          await outageUplink.setBlocked(true);
           try {
+            await outageAPI?.setBlocked(true);
+            await outageUplink.setBlocked(true);
             await delay(seconds * 1000, undefined, { signal });
           } finally {
             await outageUplink.setBlocked(false);
+            await outageAPI?.setBlocked(false);
           }
           const result = outageUplink.snapshot();
           assert(
@@ -550,6 +582,10 @@ export async function startDeviceLab(options, { signal, workerFactory = startWor
             'Both publisher directions must actually lose packets',
           );
           assert.deepEqual(result.errors, []);
+          if (outageAPI) {
+            assert(outageAPI.snapshot().rejected > 0, 'Client must actually lose API access');
+            assert.deepEqual(outageAPI.snapshot().errors, []);
+          }
         })();
         restarting = operation;
         return operation.finally(() => {

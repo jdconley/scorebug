@@ -89,9 +89,10 @@ and immediate handoff. Checkmarks mean the stated scope passes, not release read
 - [x] Verify isolated publishing-hop packet blackhole and restoration:25s bidirectional
   loss, repeated retries, same broadcast and continuous clean archive; both outputs
   recover with29.3333s measured live gap.
-- [ ] Complete intermittent packet-loss and whole-client-network-outage/restoration
-  coverage. Publisher-only blackhole leaves the control API reachable; physical
-  radio changes require their own deferred qualification.
+- [x] Verify combined client API/SRT outage and restoration: 25 seconds offline,
+  continuous clean archive, same broadcast, automatic recovery and both MP4 outputs.
+  Measured live gap 27.233 seconds; physical radio routes remain deferred.
+- [ ] Complete intermittent packet-loss integration coverage.
 - [x] Reconcile optional delivery-audit retention/terminal coverage: production uses
   continuous bounded-state monitoring; selected finite audits report overflow and
   cannot return health for unretained rows. Row/byte/serialization terminal behavior
