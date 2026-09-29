@@ -94,6 +94,7 @@ struct PublishingClockObservation: Equatable, Sendable {
     @Published private(set) var workerSourceInterval: WorkerSourceIntervalObservation?
     @Published private(set) var appliedPublishingSettings: QualityController.Settings?
     #if DEBUG
+    var nativeFixedUHDForDiagnostics = false
     var nativeHealthFixtureObserver: (@Sendable (SRTPublisher.HealthSnapshot) -> Void)?
     var nativeSubmissionFixtureObserver: (@Sendable (SRTPublisher.EncoderSubmission) -> Void)?
     @Published private(set) var qualityDiagnostic: String?
@@ -179,7 +180,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         #if DEBUG
         // Probe evidence has a 300-ms observed lease. A two-second status
         // cadence would let local health expire every interval baseline.
-        if cadenceReportFixtureWriter != nil || receiverProbeFixtureWriter != nil { return .milliseconds(100) }
+        if nativeFixedUHDForDiagnostics || cadenceReportFixtureWriter != nil || receiverProbeFixtureWriter != nil { return .milliseconds(100) }
         #endif
         return qualityDriver == nil ? .seconds(2) : .milliseconds(100)
     }
@@ -571,8 +572,14 @@ struct PublishingClockObservation: Equatable, Sendable {
                 let publisher: any MediaPublisher
                 do {
                     #if DEBUG
+                    if nativeFixedUHDForDiagnostics {
+                        guard allowsUHD else { throw SRTMediaPublisher.PublisherError.invalidState }
+                        publisher = SRTMediaPublisher(url: access.publishUrl, observations: observations, videoProfile: .uhd2160,
+                            healthObserver: nativeHealthFixtureObserver, encoderSubmissionObserver: nativeSubmissionFixtureObserver)
+                    } else {
                     publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations,
                         healthObserver: nativeHealthFixtureObserver, submissionObserver: nativeSubmissionFixtureObserver) : publisherFactory(access.publishUrl, observations)
+                    }
                     #else
                     publisher = try allowsUHD ? Self.productionUHDPublisher(url: access.publishUrl, observations: observations) : publisherFactory(access.publishUrl, observations)
                     #endif
@@ -594,8 +601,16 @@ struct PublishingClockObservation: Equatable, Sendable {
                 guard context.tap.attach(session, observations: observations) else { throw CaptureControlError.recordingStopped }
                 try await session.start()
                 try check(context, attempt)
+                #if DEBUG
+                if nativeFixedUHDForDiagnostics { qualityDriver = nil }
+                else {
                 qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
                     profiles: PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
+                }
+                #else
+                qualityDriver = try allowsUHD ? PublishingQualityDriver.production(session: session, attemptID: attempt,
+                    profiles: PublishingQualityDriver.productionUHDProfiles) : qualityFactory(session, attempt)
+                #endif
                 qualityDriver?.appliedSettingsDidChange = { [weak self, weak session] settings in
                     guard let self, let session, let live = self.publishing,
                           live.session === session, live.attempt == attempt,
@@ -941,7 +956,7 @@ struct PublishingClockObservation: Equatable, Sendable {
                     // A newly completed worker report need not wait for the next health
                     // tick. The driver coalesces both callers into the same owned task.
                     if let publishing, let qualityDriver {
-                        qualityDriver.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
+                        qualityDriver.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
                             source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: publishing.session.snapshot))
                     }
                     workerState = workerFreshness?.isFresh() == true ? response.status.state : .stale
@@ -1000,7 +1015,7 @@ struct PublishingClockObservation: Equatable, Sendable {
         ingressObservation = snapshot.ingressObservation
         publishingClockObservation = clockObservation(snapshot.transportClock,
             scope: videoObservation?.scope, isClosed: false)
-        qualityDriver?.tick(encoderReady: publishing.observations?.sourceHistorySnapshot?.encoded.isEmpty == false,
+        qualityDriver?.tick(encoderReady: publishing.observations?.hasEncodedSourceHistory == true,
             source: workerSourceInterval, cadence: workerDecoderCadenceFreshness, diagnostics: .init(snapshot: snapshot))
         if snapshot.failure != nil || snapshot.state == .stopped {
             let retryable = snapshot.failure == .publisherUnhealthy || snapshot.failure == .appendFailed

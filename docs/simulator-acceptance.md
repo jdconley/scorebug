@@ -100,3 +100,10 @@ queue evictions rise to7, app ingress evictions/rejections stay0, and native enc
 submission duration reaches90.8ms. Recording/publishing continue and fallback works.
 Host contention versus intrinsic native throughput remains open. No queue/timing
 limits changed; full archive decode was not repeated after receiver loss was proven.
+
+A35s fixed-profile native diagnostic (`headless-native-KS4ILp/fixed-uhd-analysis.json`)
+shows the combined archive/SRT/proxy path delivering998consecutive4Kreceiver frames
+with0SDK/app queue drops. It skips adaptive quality/probing and uses different source
+time from the failing climb; not adaptive/sustained/full-media acceptance. The later
+scalar-readiness optimization passes11focused history checks and an incremental
+FilmModel build; no new adaptive integration result is claimed.

@@ -40,6 +40,8 @@ public struct VideoSourceHistory: Sendable {
         capture = Ring(capacity: capacity)
         encoded = Ring(capacity: capacity)
     }
+    /// Presence only, with the same retained-history semantics as snapshot.encoded.
+    public var hasEncodedFrames: Bool { encoded.lastPTS != nil }
     public var snapshot: VideoSourceHistorySnapshot {
         .init(scope: scope, capture: capture.frames, encoded: encoded.frames,
               omittedCaptureFrames: capture.omitted, omittedEncodedFrames: encoded.omitted,

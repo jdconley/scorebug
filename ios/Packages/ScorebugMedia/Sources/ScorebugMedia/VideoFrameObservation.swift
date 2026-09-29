@@ -324,6 +324,8 @@ public final class VideoFrameObservationOwner: @unchecked Sendable {
         sourceHistory = try sourceHistoryCapacity.map { try VideoSourceHistory(scope: scope, capacity: $0) }
     }
     public var snapshot: VideoFrameObservationSnapshot { lock.withLock { accumulator.snapshot } }
+    /// Avoid copying both history rings for the frequent startup-readiness check.
+    public var hasEncodedSourceHistory: Bool { lock.withLock { sourceHistory?.hasEncodedFrames == true } }
     /// Copies bounded scalar history only when a control-path consumer requests it.
     public var sourceHistorySnapshot: VideoSourceHistorySnapshot? { lock.withLock { sourceHistory?.snapshot } }
     @discardableResult

@@ -22,6 +22,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--disconnect-after',
       '--relay-outage-seconds',
       '--publisher-blackhole-seconds',
+      '--fixed-uhd',
     ].includes(key) &&
       value &&
       !values.has(key),
@@ -56,6 +57,12 @@ assert(
     (disconnectAfter === 0 || disconnectAfter + 20 < duration),
 );
 assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
+const fixedUHD = values.get('--fixed-uhd') === 'on';
+assert(!values.has('--fixed-uhd') || values.get('--fixed-uhd') === 'on');
+assert(
+  !fixedUHD ||
+    (quality === '2160' && timingAudit === 'off' && duration <= 60 && disconnectAfter === 0),
+);
 const options = deviceLabOptions(['--host', values.get('--host'), '--encoder', 'videotoolbox']);
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
 const artifact = await mkdtemp(join(root, 'artifacts/qa/headless-native-'));
@@ -113,6 +120,7 @@ try {
       uhd: quality === '2160',
       timingAudit: timingAudit === 'on',
       expectReconnect: disconnectAfter > 0,
+      fixedUHD,
     }),
     { mode: 0o600 },
   );
@@ -180,7 +188,11 @@ try {
   assert.equal(result.scope, 'headless-native-diagnostic-v1');
   assert.equal(result.recordingAtEnd, true);
   assert.equal(result.publishingAtEnd, true);
-  assert(result.samples.length > 0, 'Test must execute, not skip');
+  assert.equal(result.fixedUHD, fixedUHD);
+  assert(
+    (fixedUHD ? result.boundarySampleCount : result.samples.length) > 0,
+    'Test must execute, not skip',
+  );
   if (disconnectAfter > 0) {
     assert(
       result.lifecycle.some((entry) => entry.state === 'failed'),

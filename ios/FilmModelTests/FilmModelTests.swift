@@ -403,6 +403,7 @@ extension FilmModelTests {
             let uhd: Bool
             let timingAudit: Bool?
             let expectReconnect: Bool?
+            let fixedUHD: Bool?
         }
         let config = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         guard (10...600).contains(config.duration) else { throw URLError(.badURL) }
@@ -410,6 +411,9 @@ extension FilmModelTests {
         let streaming = CaptureStreamingModel(storage: CaptureMemoryStorage(nil), pendingStore: CaptureMemoryPending())
         streaming.endpoint = config.setup.endpoint; streaming.installationToken = config.setup.installationToken
         streaming.workerId = config.setup.workerId; streaming.outputId = config.setup.outputId
+        let fixedUHD = config.fixedUHD == true
+        guard !fixedUHD || (config.uhd && config.duration <= 60 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
+        streaming.nativeFixedUHDForDiagnostics = fixedUHD
         let nativeBoundaries = HeadlessNativeBoundaries()
         if config.uhd {
             streaming.nativeHealthFixtureObserver = { nativeBoundaries.health($0) }
@@ -474,6 +478,7 @@ extension FilmModelTests {
                         row["retainedEncodedCallbacks"] = String(windows.reduce(UInt64(0)) { $0 + $1.encodedVideo.callbackCount })
                         row["omittedVideoWindows"] = String(video.omittedCompletedWindowCount)
                     }
+                    if fixedUHD { row["profile"] = "2160p30-fixed-diagnostic" }
                     boundaries.append(row)
                 }
                 if let text = streaming.qualityDiagnostic,
@@ -499,7 +504,7 @@ extension FilmModelTests {
         await film.stop()
         let result: [String: Any] = ["scope": "headless-native-diagnostic-v1", "samples": samples, "lifecycle": lifecycle,
             "recordingAtEnd": wasRecording, "publishingAtEnd": wasPublishing,
-            "timingAuditEnabled": timingAudit,
+            "timingAuditEnabled": timingAudit, "fixedUHD": fixedUHD, "boundarySampleCount": boundaries.count,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(
             to: artifact.appendingPathComponent("diagnostic.json"), options: .atomic)
@@ -510,7 +515,8 @@ extension FilmModelTests {
         if let diagnosticError { throw diagnosticError }
         XCTAssertTrue(wasRecording, "Native archive stopped early")
         XCTAssertTrue(wasPublishing, "Native publisher stopped early")
-        XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics")
+        if fixedUHD { XCTAssertFalse(boundaries.isEmpty, "Expected native boundary diagnostics") }
+        else { XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics") }
         XCTAssertEqual(film.state, .idle, "Archive finalization must complete")
         XCTAssertEqual(streaming.localState, .idle, "Native publisher must join")
     }

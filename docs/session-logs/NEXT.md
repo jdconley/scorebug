@@ -10,6 +10,22 @@ Authoritative checkout: `/Users/jd/.codex/worktrees/scorebug-local-validation`,
 branch `codex/local-validation`. The [delivery plan](../superpowers/plans/2026-09-13-portable-streaming-and-watch.md)
 owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
+## Latest combined path and production optimization
+
+Startingb2b492f. New debug-only `--fixed-uhd on` headless option (UHD/audit-off,
+≤60s/no outage) exercises real archive/SRT/proxy/outputs while skipping adaptive
+quality/probing; retains100ms control polling. KS4ILp/labytjSFH,35s, passes scoped
+checks:0SDK/app queue drops,998consecutive4Kreceiver frames,34.3msmaxsubmission,
+recording/publishing survive. No full media or adaptive qualification. First35s
+source differs from the adaptive failure near256–271s; preserve that distinction.
+
+Production health polling now checks scalar encoded-history presence instead of
+copying4096records every100ms just to ask if any exist.11focused history tests and
+incremental FilmModel build pass. Change postdates fixed capture; do not credit it
+with that integration pass. Next verify adaptive4K or isolate content/warm-state
+using the short diagnostic. See [session](2026-09-28-fixed-uhd-and-readiness.md).
+All handles50640/3532/54367 joined0; no active jobs.
+
 ## Latest short encoder isolation
 
 Starting81056a8: hardware selection confirmed. New opt-in15s SDK diagnostics show

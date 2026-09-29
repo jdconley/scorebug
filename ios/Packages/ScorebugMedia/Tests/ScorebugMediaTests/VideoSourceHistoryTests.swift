@@ -8,6 +8,25 @@ final class VideoSourceHistoryTests: XCTestCase {
               publishingAttemptID: UUID(), appliedProfileRevision: 1)
     }
 
+    func testEncodedPresenceMatchesRetainedHistoryAcrossEvictionInvalidityAndClose() throws {
+        let disabled = try VideoFrameObservationOwner(scope: scope)
+        disabled.observe(.encodedVideo, sourcePTS: .zero)
+        XCTAssertFalse(disabled.hasEncodedSourceHistory)
+        let owner = try VideoFrameObservationOwner(scope: scope, sourceHistoryCapacity: 1)
+        XCTAssertFalse(owner.hasEncodedSourceHistory)
+        owner.observe(.captureVideo, sourcePTS: .zero)
+        XCTAssertFalse(owner.hasEncodedSourceHistory)
+        for frame in 0..<3 {
+            owner.observe(.encodedVideo, sourcePTS: CMTime(value: Int64(frame), timescale: 30))
+            XCTAssertTrue(owner.hasEncodedSourceHistory)
+            XCTAssertEqual(owner.hasEncodedSourceHistory, owner.sourceHistorySnapshot?.encoded.isEmpty == false)
+        }
+        owner.observe(.encodedVideo, sourcePTS: .invalid)
+        _ = owner.close()
+        XCTAssertTrue(owner.hasEncodedSourceHistory, "Historical presence must not invent a new freshness gate")
+        XCTAssertEqual(owner.hasEncodedSourceHistory, owner.sourceHistorySnapshot?.encoded.isEmpty == false)
+    }
+
     func testStagesRetainExactRationalTimesAndShareScope() throws {
         let scope = scope
         var history = try VideoSourceHistory(scope: scope)
