@@ -77,8 +77,11 @@ full-suite run. Local functional integration is complete on the documented paths
   bounded shutdown, focused process checks and a short FFmpeg comparison pass.
   This fixes pipe ownership, not the still-open live A/V tail bound.
 
+- [x] Bounded packet-tail diagnostics survive worker death and locate incoming versus
+  outgoing A/V track ends; one live crash boundary is measured.
+
 - [ ] Bound interrupted output tails across abrupt failure timing/load. Current
-  native/software-proxy crash retains 107 ms extra audio; older simulator/
+  native/software-proxy crash retains up to107 ms extra audio; older simulator/
   VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output
   and inspect the responsible path before choosing another targeted reproduction.
 - [ ] Resolve or explicitly gate unsupported simulator/backend combinations:
@@ -113,14 +116,24 @@ full-suite run. Local functional integration is complete on the documented paths
 ## Iteration and completion policy
 
 Simulator-first; defer hardware until simulator-testable features work together.
-Batch related fixes, run one affected check after the batch, and reuse passing
-evidence and incremental builds. No application tests for documentation-only work.
-Run the full native vertical only after changes across component boundaries or a
-meaningful feature checkpoint; do not run every runner in sequence. Use the
-[fast iteration guide](../../fast-iteration.md) to select a check. Long soaks,
-hardware and other-host qualification do not belong in the routine edit loop.
-Use the headless native pipeline for media diagnosis. Before any new capture,
-state which unresolved question it answers. Do not repeat unchanged experiments.
+Do not poll devices or request passcodes during this phase. Prioritize functional
+failures over additional qualification of already-passing paths.
+
+Batch related fixes and run one affected check after the batch. Reuse passing
+recordings, diagnostics and incremental builds. No application tests for docs-only
+work; no broad suite after a focused pass unless a new failure or shared-contract
+change warrants it. Use the [fast iteration guide](../../fast-iteration.md).
+
+Run the full native simulator vertical at a finished feature checkpoint or after
+changes across component boundaries. Keep hardware, other-host qualification and
+long soaks out of the edit loop. Simulator runtime limits and native media results
+must remain separately labeled; neither is evidence that the other passes.
+
+Before a new capture, identify the unresolved question and why saved evidence
+cannot answer it. Prefer a model replay or isolated reproduction. Do not repeat
+unchanged experiments, tune queues to conceal overload, or spend another batch
+reconfirming a known platform limit. Record the actionable result and move to the
+next unresolved delivery item.
 
 Preserve Downloads originals, recordings and unrelated simulators. No agents,
 pushes, cloud purchases, production keys or real broadcasts without authorization.

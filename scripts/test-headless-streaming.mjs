@@ -28,6 +28,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--congestion-seconds',
       '--packet-loss-every',
       '--worker-crash-after',
+      '--packet-timing',
       '--fixed-uhd',
       '--fixed-uhd-transition',
       '--owned-uhd-transition',
@@ -47,6 +48,8 @@ const quality = values.get('--quality') ?? '2160';
 assert(['1080', '2160'].includes(quality));
 const timingAudit = values.get('--timing-audit') ?? 'on';
 assert(['on', 'off'].includes(timingAudit));
+const packetTiming = values.get('--packet-timing') ?? 'off';
+assert(['on', 'off'].includes(packetTiming));
 const duration = Number(values.get('--duration') ?? '120');
 const disconnectAfter = Number(values.get('--disconnect-after') ?? '0');
 const relayOutageSeconds = Number(values.get('--relay-outage-seconds') ?? '0');
@@ -189,6 +192,7 @@ try {
       ...(values.has('--worker-image') ? { workerImage: values.get('--worker-image') } : {}),
       ...(quality === '2160' ? { uhd: true } : {}),
       decodedGeometry: true,
+      packetTiming: packetTiming === 'on',
       publisherBlackhole: blackholeSeconds > 0 || clientOutageSeconds > 0,
       clientNetworkOutage: clientOutageSeconds > 0,
       publisherRecovery: congestionSeconds > 0,

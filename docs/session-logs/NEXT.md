@@ -15,13 +15,30 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
-The documented local functional paths pass. Real phone/Watch qualification is now
-useful; on the latest read-only check, iPhone16Pro `00008140-001474110C13001C` and
-Ultra2 `00008310-0000B2CE3E08A01E` both show **unavailable**. No UI automation was
-started. Existing device-readiness request remains unanswered; do not duplicate it.
-Once reachable, inspect prior physical recovery/Watch logs and preserve pending
-commands/Keychain. Team `B222J9J7B8`; announce automation so the owner can notice the
-first-session passcode prompt. Don't repeatedly launch against unavailable devices.
+The user has explicitly renewed simulator-first delivery and faster iteration.
+Do not poll physical devices or request passcodes now; earlier readiness questions
+are superseded for current work. Existing local functional passes stand, but the
+remaining simulator/media failures below are not green.
+
+Next local batch: trace TSWriter A/V emission against encoder completion, using
+`headless-native-tC9YyK/packet-tail-analysis.json`. The interrupted input already
+has50.655ms extra audio; the mux adds about one video frame (83.998ms total).
+Both interrupted saved MP4s decode with84–87ms tails. Recovered packet evidence
+has one malformed row and is explicitly invalid; recovered saved files decode.
+New bounded packet tails and private guardian files survive worker SIGKILL.
+See [session](2026-09-28-crash-packet-tails.md). Do not infer that this fixes the
+prior107ms/native or500ms/simulator cases. No archive/UI/identity run was repeated.
+
+Saved simulator congestion loss is confined to the actual restriction; before/after
+periods remain30fps and the archive is continuous. Do not repeat failed GOP/latency
+sweeps or the direct SDK simulator UHD failure. Failed candidates retain the
+applied profile and back off; no larger queues or invented fixed ceiling.
+
+For each implementation batch, run only the directly affected check. Repeat the
+full simulator vertical only when a shared contract changes or to accept a finished
+feature batch. No broad suite, sustained 4K run, device readiness check, or
+cross-platform qualification in the routine edit loop. If evidence is insufficient,
+add the smallest missing diagnostic rather than starting another parameter sweep.
 
 Local backend/endurance and interrupted-tail gates remain open, not silently
 waived. Quality failure handling is already conservative: joined candidate failure
@@ -47,8 +64,8 @@ Simulator UHD/congestion and colocated VideoToolbox/probe limits remain document
   no unchanged fault sweeps. Latest worker crash after guardian pipe isolation:
   `headless-native-8guvcT/worker-crash-acceptance.json`; continuous2125frame archive,
   same publisher,17.267s live gap; interrupted tail still106–107ms, recovered≤37.5ms.
-  A future tail investigation needs live incoming/mux/decoder boundary timing;
-  current diagnostics lack it. No evidence supports changing guardian timeouts.
+  Latest incoming/mux boundary timing is now in `headless-native-tC9YyK`;
+  no evidence supports changing guardian timeouts.
 
 ## Hands-on use and environment
 

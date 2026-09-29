@@ -20,7 +20,7 @@ const push = (tracker: WorkerPacketTiming, value: string) =>
 describe('WorkerPacketTiming diagnostic numeric prefix', () => {
   it('starts with an explicitly diagnostic, empty independent snapshot', () => {
     expect(new WorkerPacketTiming().snapshot()).toEqual({
-      formatVersion: 1,
+      formatVersion: 2,
       diagnosticOnly: true,
       maximumPacketsPerLane: 128,
       ended: false,
@@ -29,8 +29,14 @@ describe('WorkerPacketTiming diagnostic numeric prefix', () => {
       incompleteLine: false,
       malformedRows: 0,
       oversizedLines: 0,
-      demux: { video: { packetCount: 0, first: [] }, audio: { packetCount: 0, first: [] } },
-      mux: { video: { packetCount: 0, first: [] }, audio: { packetCount: 0, first: [] } },
+      demux: {
+        video: { packetCount: 0, first: [], last: [] },
+        audio: { packetCount: 0, first: [], last: [] },
+      },
+      mux: {
+        video: { packetCount: 0, first: [], last: [] },
+        audio: { packetCount: 0, first: [], last: [] },
+      },
     });
   });
   it('frames byte chunks with sampled negative audio and encoded video in both directions', () => {
@@ -45,8 +51,11 @@ describe('WorkerPacketTiming diagnostic numeric prefix', () => {
     for (const byte of new TextEncoder().encode(input)) tracker.push(Uint8Array.of(byte));
     tracker.end();
     const result = tracker.snapshot();
-    expect(result.demux.audio).toEqual({ packetCount: 1, first: [packet('-2112', '-0.044')] });
-    expect(result.mux.audio).toEqual({ packetCount: 1, first: [packet('-23', '-0.023')] });
+    expect(result.demux.audio).toMatchObject({
+      packetCount: 1,
+      first: [packet('-2112', '-0.044')],
+    });
+    expect(result.mux.audio).toMatchObject({ packetCount: 1, first: [packet('-23', '-0.023')] });
     expect(result.demux.video.first).toEqual([packet()]);
     expect(result.mux.video.first).toEqual([
       packet(),
@@ -155,7 +164,7 @@ describe('WorkerPacketTiming diagnostic numeric prefix', () => {
     push(tracker, mux().replace('latency(', 'SECRET rtmp://private.example/ latency('));
     const result = tracker.snapshot();
     expect(result.malformedRows).toBe(invalid.length);
-    expect(result.mux.audio).toEqual({ packetCount: 1, first: [packet('-23', '-0.023')] });
+    expect(result.mux.audio).toMatchObject({ packetCount: 1, first: [packet('-23', '-0.023')] });
     expect(JSON.stringify(result)).not.toMatch(/SECRET|private|aac|0x74|latency|payload/);
     expect(result).not.toHaveProperty('recognized');
   });
@@ -203,6 +212,49 @@ describe('WorkerPacketTiming diagnostic numeric prefix', () => {
     tracker.end();
     push(tracker, demux());
     expect(tracker.snapshot()).toEqual(ended);
-    expect(ended.demux.audio).toEqual({ packetCount: 1, first: [packet('-2112', '-0.044')] });
+    expect(ended.demux.audio).toMatchObject({ packetCount: 1, first: [packet('-2112', '-0.044')] });
   });
 });
+
+it('retains a bounded chronological tail including durations after multiple wraps', () => {
+  const tracker = new WorkerPacketTiming();
+  for (let i = 0; i < 513; i++)
+    for (const media of ['video', 'audio'])
+      push(tracker, demux(media, String(i), String(i)) + mux(media, String(i), String(i)));
+  tracker.end();
+  const result = tracker.snapshot();
+  expect(result.formatVersion).toBe(2);
+  for (const stage of ['demux', 'mux'] as const)
+    for (const media of ['video', 'audio'] as const) {
+      const lane = result[stage][media] as any;
+      expect(lane.first.map((p: any) => p.pts)).toEqual(
+        Array.from({ length: 128 }, (_, i) => String(i)),
+      );
+      expect(lane.last.map((p: any) => p.pts)).toEqual(
+        Array.from({ length: 128 }, (_, i) => String(i + 385)),
+      );
+      expect(lane.last[127]).toMatchObject({
+        duration: stage === 'demux' ? '1024' : '23',
+        durationSeconds: stage === 'demux' ? '0.0213333' : '0.023',
+      });
+      lane.last[0].pts = 'mutated';
+      expect((tracker.snapshot()[stage][media] as any).last[0].pts).toBe('385');
+    }
+});
+
+it.each(['-1', 'NaN', '1e999', '01', '9223372036854775808'])(
+  'rejects invalid duration %s from terminal evidence',
+  (value) => {
+    const tracker = new WorkerPacketTiming();
+    push(tracker, mux().replace('duration:23', `duration:${value}`));
+    push(
+      tracker,
+      demux().replace(
+        'duration_time:0.0213333',
+        `duration_time:${value === '9223372036854775808' ? 'NaN' : value}`,
+      ),
+    );
+    expect(tracker.snapshot().malformedRows).toBe(2);
+    expect(tracker.snapshot().mux.audio.packetCount).toBe(0);
+  },
+);

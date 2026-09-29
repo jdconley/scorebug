@@ -195,6 +195,14 @@ it('emits bounded scoped packet prefixes separately from terminal media history'
   const f = fixture();
   const lane = () => ({
     packetCount: 200,
+    last: Array.from({ length: 128 }, (_, i) => ({
+      pts: String(i + 72),
+      ptsSeconds: String((i + 72) / 30),
+      dts: String(i + 72),
+      dtsSeconds: String((i + 72) / 30),
+      duration: '1',
+      durationSeconds: '0.0333333',
+    })),
     first: Array.from({ length: 128 }, (_, i) => ({
       pts: String(i),
       ptsSeconds: String(i / 30),
@@ -203,7 +211,7 @@ it('emits bounded scoped packet prefixes separately from terminal media history'
     })),
   });
   const packetTiming = {
-    formatVersion: 1,
+    formatVersion: 2,
     diagnosticOnly: true,
     maximumPacketsPerLane: 128,
     ended: true,
@@ -239,6 +247,16 @@ it('emits bounded scoped packet prefixes separately from terminal media history'
   const records = f.records as any[];
   const chunks = records.filter((r) => r.msg === 'worker_packet_timing');
   expect(chunks).toHaveLength(64);
+  const tails = records.filter((r) => r.msg === 'worker_packet_tail');
+  expect(tails).toHaveLength(64);
+  for (const stage of ['demux', 'mux'] as const)
+    for (const media of ['video', 'audio'] as const) {
+      const parts = tails.filter((r) => r.stage === stage && r.media === media);
+      expect(parts.map((r) => r.firstPacketIndex)).toEqual(
+        Array.from({ length: 16 }, (_, i) => 72 + i * 8),
+      );
+      expect(parts.flatMap((r) => r.packets)).toEqual(packetTiming[stage][media].last);
+    }
   for (const stage of ['demux', 'mux'])
     for (const media of ['video', 'audio']) {
       const parts = chunks.filter((r) => r.stage === stage && r.media === media);

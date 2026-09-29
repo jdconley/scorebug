@@ -104,3 +104,11 @@ The supported colocated media path uses the software proxy. Simulator UHD and
 severe-congestion limits, colocated VideoToolbox/probe loss, and abrupt crash tails
 remain explicit open items. Do not call those paths green or rerun an unchanged
 failure hoping for a pass.
+
+For an interrupted-output investigation, the headless native runner accepts
+`--packet-timing on`. This opt-in diagnostic retains the first and last128 numeric
+packets per A/V demux/mux lane. Private `packet-timing/*.json` files in the lab
+artifact survive worker SIGKILL. Treat any malformed/truncated/pipe-error report as
+invalid; compare with saved MP4 packet ends. This adds FFmpeg debug logging overhead
+and is diagnostic evidence, not throughput qualification. It is off by default and
+currently requires the native lab worker.

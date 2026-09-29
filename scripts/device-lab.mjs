@@ -202,14 +202,18 @@ function startWorker(environment, artifact, logName = 'worker.log') {
 }
 
 /** API-only observer selection; no app or worker profile/timing controls. */
-export function deviceLabDiagnosticEnvironment(decodedGeometry) {
+export function deviceLabDiagnosticEnvironment(decodedGeometry, packetTiming) {
   assert(
     decodedGeometry === undefined || typeof decodedGeometry === 'boolean',
     'Invalid decoded geometry selection',
   );
+  assert(
+    packetTiming === undefined || typeof packetTiming === 'boolean',
+    'Invalid packet timing selection',
+  );
   return {
-    SCOREBUG_TEST_WORKER_TERMINAL: decodedGeometry ? '1' : '',
-    SCOREBUG_TEST_WORKER_PACKET_TIMING: '',
+    SCOREBUG_TEST_WORKER_TERMINAL: decodedGeometry || packetTiming ? '1' : '',
+    SCOREBUG_TEST_WORKER_PACKET_TIMING: packetTiming ? '1' : '',
     SCOREBUG_TEST_WORKER_DECODED_GEOMETRY: decodedGeometry ? '1' : '',
   };
 }
@@ -285,7 +289,14 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
   const seedMatch = deviceLabSeedsMatch(options.seedMatch);
   const apiBind = deviceLabAPIBind(options);
   signal?.throwIfAborted();
-  const diagnosticEnvironment = deviceLabDiagnosticEnvironment(options.decodedGeometry);
+  const diagnosticEnvironment = deviceLabDiagnosticEnvironment(
+    options.decodedGeometry,
+    options.packetTiming,
+  );
+  assert(
+    !(options.packetTiming && options.workerImage),
+    'Packet timing files currently require the native lab worker',
+  );
   const publishEnvironment = deviceLabPublishEnvironment(
     options.publishPeerLatencyMs,
     options.publishPacing,
@@ -581,6 +592,8 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
       assert.equal(response.status, 201, 'Lab match creation failed');
       await response.arrayBuffer();
     }
+    const packetTimingDirectory = options.packetTiming ? join(artifact, 'packet-timing') : '';
+    if (packetTimingDirectory) await mkdir(packetTimingDirectory, { mode: 0o700 });
     const workerEnvironment = {
       CONTROL_PLANE_URL: baseURL,
       HOME_TOKEN: homeToken,
@@ -600,6 +613,7 @@ export async function startDeviceLab(options, { signal, workerFactory } = {}) {
       WORKER_PROCESSING: 'auto',
       WORKER_REPORT_INTERVAL_MS: '100',
       ...diagnosticEnvironment,
+      SCOREBUG_TEST_WORKER_PACKET_TIMING_DIR: packetTimingDirectory,
     };
     worker = await workerFactory(workerEnvironment, artifact);
     await bounded(worker.ready, 20000);

@@ -118,6 +118,36 @@ export function createWorkerTerminalDiagnostics(
             for (const stage of ['demux', 'mux'] as const)
               for (const media of ['video', 'audio'] as const) {
                 const lane = packetTiming[stage][media];
+                // Tail records include duration so a shutdown investigation can
+                // compare track ends, independently from the startup prefix.
+                for (let index = 0; index < (lane.last?.length ?? 0); index += 8) {
+                  scoped.info('worker_packet_tail', {
+                    formatVersion,
+                    diagnosticOnly,
+                    maximumPacketsPerLane,
+                    ended,
+                    pipeError,
+                    drainTimedOut,
+                    incompleteLine,
+                    malformedRows,
+                    oversizedLines,
+                    stage,
+                    media,
+                    packetCount: lane.packetCount,
+                    firstPacketIndex: lane.packetCount - lane.last.length + index,
+                    retainedPackets: lane.last.length,
+                    packets: lane.last
+                      .slice(index, index + 8)
+                      .map(({ pts, ptsSeconds, dts, dtsSeconds, duration, durationSeconds }) => ({
+                        pts,
+                        ptsSeconds,
+                        dts,
+                        dtsSeconds,
+                        duration,
+                        durationSeconds,
+                      })),
+                  });
+                }
                 // Separate bounded records retain lane order without claiming a
                 // common interstream arrival order from FFmpeg's stderr threads.
                 for (

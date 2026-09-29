@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -836,3 +836,65 @@ it.each([false, true])(
     }
   },
 );
+
+it('preserves numeric terminal packet evidence after abrupt worker death', async () => {
+  const packet =
+    '[aist#0:1/aac @ 0xabc] [info] demuxer -> ist_index:0:1 type:audio pkt_pts:10919 pkt_pts_time:0.121322 pkt_dts:10919 pkt_dts_time:0.121322 duration:1024 duration_time:0.0213333\n';
+  const fixture = await childFixture(`
+    process.on('SIGTERM', () => {
+      require('node:fs').writeSync(2, ${JSON.stringify('SECRET_URL\n' + packet)});
+      process.exitCode = 23;
+      clearInterval(timer);
+    });
+    const timer = setInterval(() => {}, 1000);
+  `);
+  const workerPath = join(fixture.dir, 'worker.mjs');
+  await writeFile(
+    workerPath,
+    `
+    import { startPipeline } from ${JSON.stringify(new URL('../src/pipeline.ts', import.meta.url).href)};
+    const noop = () => {};
+    startPipeline(${JSON.stringify(fixture.spec)}, {debug:noop,info:noop,warn:noop,error:noop},
+      {stopTimeoutMs:1000,packetTiming:true,onTerminal:noop});
+    setInterval(() => {}, 1000);
+  `,
+  );
+  const worker = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), workerPath], {
+    stdio: 'ignore',
+    env: { ...process.env, SCOREBUG_TEST_WORKER_PACKET_TIMING_DIR: fixture.dir },
+  });
+  const exited = new Promise((resolve) => worker.once('exit', resolve));
+  try {
+    await fixture.ready();
+    worker.kill('SIGKILL');
+    await exited;
+    let evidencePath = '';
+    await expect
+      .poll(
+        async () => {
+          const name = (await readdir(fixture.dir)).find(
+            (name) => name.startsWith('packet-timing-') && name.endsWith('.json'),
+          );
+          evidencePath = name ? join(fixture.dir, name) : '';
+          if (!evidencePath) return null;
+          return JSON.parse(await readFile(evidencePath, 'utf8'));
+        },
+        { timeout: 2500 },
+      )
+      .toMatchObject({
+        parentDisconnected: true,
+        code: 23,
+        signal: null,
+        packetTiming: {
+          ended: true,
+          malformedRows: 0,
+          demux: { audio: { packetCount: 1, last: [{ pts: '10919', duration: '1024' }] } },
+        },
+      });
+    expect((await stat(evidencePath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(evidencePath, 'utf8')).not.toMatch(/SECRET|PULL_PASSWORD|STREAM_KEY/);
+  } finally {
+    worker.kill('SIGKILL');
+    await fixture.cleanup();
+  }
+});

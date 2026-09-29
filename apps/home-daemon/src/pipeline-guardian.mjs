@@ -1,6 +1,9 @@
 // @ts-check
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { DecodedGeometry } from './decoded-geometry.mjs';
 /** @type {DecodedGeometry | undefined} */
 let decodedGeometry;
@@ -16,6 +19,7 @@ let encoder;
 let started = false;
 let stopping = false;
 let finished = false;
+let parentDisconnected = false;
 let stopTimeoutMs = 5000;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let killTimer;
@@ -58,6 +62,7 @@ function forward(source, fd) {
 }
 
 function detachParent() {
+  parentDisconnected = true;
   for (const output of forwards) output.detach();
   stop();
 }
@@ -91,6 +96,27 @@ async function finish(code, signal) {
   diagnostics?.end();
   packetTiming?.end();
   decodedGeometry?.end();
+  // Opt-in lab evidence must survive worker SIGKILL. Save only parsed numeric
+  // fields, never argv, URLs or raw stderr; never overwrite an existing file.
+  const directory = process.env.SCOREBUG_TEST_WORKER_PACKET_TIMING_DIR;
+  if (packetTiming && directory && isAbsolute(directory)) {
+    try {
+      await writeFile(
+        join(directory, `packet-timing-${process.pid}-${randomUUID()}.json`),
+        JSON.stringify({
+          guardianPid: process.pid,
+          encoderPid: encoder?.pid ?? null,
+          parentDisconnected,
+          code,
+          signal,
+          packetTiming: packetTiming.snapshot(),
+        }) + '\n',
+        { flag: 'wx', mode: 0o600 },
+      );
+    } catch {
+      report({ event: 'packet_timing_file_failed' });
+    }
+  }
   report(
     {
       event: 'exit',

@@ -312,3 +312,21 @@ test('container lane preserves credentials/routes while mapping host loopback an
   );
   assert.equal(opts.workerImage, 'scorebug/home-daemon:local');
 });
+
+test('packet timing is explicit and invalid selections fail before startup', async () => {
+  const module = await import('../device-lab.mjs');
+  assert.deepEqual(module.deviceLabDiagnosticEnvironment(false, true), {
+    SCOREBUG_TEST_WORKER_TERMINAL: '1',
+    SCOREBUG_TEST_WORKER_PACKET_TIMING: '1',
+    SCOREBUG_TEST_WORKER_DECODED_GEOMETRY: '',
+  });
+  await assert.rejects(module.startDeviceLab({ packetTiming: 'yes' }), /packet timing/);
+  await assert.rejects(
+    module.startDeviceLab({
+      packetTiming: true,
+      workerImage: 'example/image',
+      encoder: 'software',
+    }),
+    /native lab worker/,
+  );
+});
