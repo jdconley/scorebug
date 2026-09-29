@@ -15,40 +15,29 @@ Preserve originals, recordings and unrelated simulators. The
 
 ## Current readiness and next work
 
-Core simulator features are accepted together. Use the hands-on launcher in
-[fast iteration](../fast-iteration.md); do not repeat the full vertical or gate
-manual use on another architecture, soak, or crash-tail experiment. The plan's
-**Immediate delivery checkpoint** identifies the supported local path and the
-failed/unqualified combinations without declaring them fixed.
+Current simulator core vertical AND targeted API/worker crash regression pass.
+Latest: ordinary-native-Ha71gs/crash-tail-verification/results.json; six saved MP4s
+fully decode, maximum59.826ms A/V end offset against unchanged100ms. Workflow and
+cleanup pass. See [session](2026-09-28-current-simulator-crash.md) for scope/hashes.
+Do not rerun unchanged. Older500ms simulator tails used software, not VideoToolbox;
+they predate DTS interleaving and are retained as historical failures.
 
-User priority: fewer tests, faster implementation, simulators first. Hardware and
-other-host qualification are deferred. A read-only device check during this session
-found both physical devices unavailable; no automation or passcode request followed.
-Do not repeat the check. The proposed emulated AMD64 smoke was not started because
-it does not close a current simulator feature gap.
+Hardware readiness question is now pending after this checkpoint: are phone/Watch
+connected and unlocked for the next physical stage, or should hardware stay deferred?
+Wait for its reply before device polling/automation; do not repeat the question.
+TeamB222J9J7B8 remains authorized. First automation may require manual device passcodes.
+No live process handles remain. Source unchanged since e40294e;6221bdb captured code.
 
-Latest bounded investigation: [shortest-tail isolation](2026-09-28-shortest-tail-isolation.md).
-Watch foreground retries already exist. A4second isolated FFmpeg SIGTERM comparison
-rejects adding shortest:7video frames/no decoded audio versus baseline134/190frames.
-Artifact shortest-tail-uod24p16; all commands joined. Do not repeat or adopt this
-option as a generic crash-tail fix. Explicit platform/backend gating is now checked;
-resolving those failures remains qualification work, not a claimed pass.
+Broader interrupted-tail timing/load/backends remain unqualified. No speculative
+shortest flag or timeout change: single-input proxy comparisons did not reproduce
+the bad tail, and the old independent-input shortest test lost audio. Deprecated
+muxer shortest was removed from FFmpeg8; see session references.
+Simulator UHD/congestion and colocated VideoToolbox/probe limitations remain gated;
+failed candidates retain applied settings and recover conservatively.
 
-No production code changed after e40294e. Current two-phone/Watch acceptance below
-stands. All local feature checklist items are implemented; remaining local work is
-fault bounds and known backend/platform limits. Keep those visible without conflating
-them with missing scoring/recording/overlay features.
-
-If continuing a fault fix, first identify the failing boundary from saved evidence.
-Independent FFmpeg demux logs are not ordered wire evidence. General abrupt-tail
-bounds remain open despite the latest short DTS-interleaving run's59ms tail; no
-speculative timeout/decoder change or unchanged live crash rerun. Simulator UHD and
-severe-congestion failures and colocated VideoToolbox/probe loss are not waived.
-Candidate failure retains applied settings and requires fresh health/backoff.
-
-One directly affected check per implementation batch. No app tests for documentation,
-no broad suite after a focused pass, and no unchanged integration/endurance run.
-Do not spawn agents, push, or broadcast externally.
+Use the working hands-on simulator launcher now. One affected check per real fix,
+no broad suites or unchanged soaks. No agents, pushes, external broadcasts or
+purchases. Preserve original videos and unrelated simulator data.
 
 ## Reuse these passes
 

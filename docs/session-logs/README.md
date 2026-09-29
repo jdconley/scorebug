@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 current simulator crash](2026-09-28-current-simulator-crash.md) — current API/worker crash passes, all six MP4s decode and meet the unchanged100ms end-offset gate.
+
 - [September 28 shortest-tail isolation](2026-09-28-shortest-tail-isolation.md) — existing Watch retry path confirmed; tiny proxy comparison rejects a harmful shortest-output shortcut.
 
 - [September 28 delivery focus](2026-09-28-delivery-focus.md) — accepted simulator path made immediately usable; further qualification no longer triggers redundant full runs.

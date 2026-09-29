@@ -89,7 +89,7 @@ Keep these boundaries explicit during local use:
 | Simulator UHD | Not accepted: encoder pending-input limit; failed candidates retain the applied profile |
 | Simulator severe congestion | Not accepted for continuous live media: saved video/audio gaps; archive and recovery pass |
 | Colocated VideoToolbox proxy plus bandwidth probes | Not accepted: measured publisher input drops; use the software proxy locally |
-| Abruptly interrupted output tails | Still open across timing/load; graceful output and independent archive pass |
+| Abruptly interrupted output tails | Current native and simulator/software-proxy regressions pass100ms; other timing/load/backends remain open |
 
 These are delivery/qualification boundaries, not new hard-coded product ceilings.
 Do not silently disable capable devices or label the failed configurations green.
@@ -114,10 +114,14 @@ full capture. Physical and remote-host work stays deferred.
 - [x] Interleave dual-track publisher PES by decode timestamps with finite retention
   and lossless clean drain; SDK checks and one short native crash/media run pass.
 
-- [ ] Bound interrupted output tails across abrupt failure timing/load. Current
-  native/software-proxy crash retains up to107 ms extra audio; older simulator/
-  VideoToolbox outputs retain 508–548 ms. Graceful stops pass. Reuse saved output
-  and inspect the responsible path before choosing another targeted reproduction.
+- [x] Recheck the known simulator/software-proxy crash regression after publisher
+  interleaving. Current API/worker crash workflow passes; all six interrupted and
+  recovered output files fully decode with at most60ms A/V end offset, within the
+  unchanged100ms gate. Current native short crash also passes at59ms. Historical
+  107ms/native and508–548ms/simulator failures remain retained, not current passes.
+- [ ] Qualify interrupted output tails across remaining failure timing/load and
+  backends. The current targeted passes are not a general bound. Do not repeat
+  those same runs unchanged or widen the100ms gate.
 - [x] Explicitly gate unsupported simulator/backend combinations in the immediate
   delivery checkpoint (qualification boundaries, not product capability ceilings):
   simulator UHD pending-input limit, simulator severe-congestion media gaps, and
