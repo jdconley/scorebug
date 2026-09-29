@@ -8,6 +8,8 @@ Create one `YYYY-MM-DD-short-topic.md` per work session; use a suffix if needed.
 
 ## Index
 
+- [September 28 hands-on simulator launcher](2026-09-28-manual-simulator-lab.md) — one command opens the apps and backend for manual use without running tests.
+
 - [September 28 guardian parent loss](2026-09-28-guardian-parent-loss.md) — fixes broken telemetry writes during worker-crash finalization; live tail cause remains open.
 
 - [September 28 faster iteration](2026-09-28-faster-iteration.md) — local feature status separated from qualification; focused checks replace the broad default loop.

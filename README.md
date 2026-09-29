@@ -58,8 +58,8 @@ Node 22.13+ and the repository-pinned pnpm 9.15.0 are used for the TypeScript ap
 pnpm install --frozen-lockfile
 ```
 
-Use the [fast iteration guide](docs/fast-iteration.md) for focused checks and the
-full native simulator checkpoint. The full suite is a release/integration tool,
+Use the [fast iteration guide](docs/fast-iteration.md) to launch a hands-on simulator
+session, select focused checks, or run the full native simulator checkpoint. The full suite is a release/integration tool,
 not the default after every edit. Existing local feature evidence is recorded in
 the [acceptance matrix](docs/simulator-acceptance.md).
 

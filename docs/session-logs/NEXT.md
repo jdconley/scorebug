@@ -12,6 +12,16 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current milestone and next action
 
+Hands-on launch now available: `node scripts/simulator-lab.mjs --host <LAN>
+--duration 1800 [--source /absolute/prepared.mov]`. No UI automation. Synthetic
+source by default; source option reuses existing staged-file capture. Watch must
+tap Join offered match first. Guide: [fast iteration](../fast-iteration.md).
+Startup/build/install/launch/cleanup check passed, `manual-simulators-qiL8sA`,
+lab `device-lab-XEnHSX`; no new scoring/media acceptance claim. Three named
+Scorebug Manual simulators are retained and booted for inspection; devices.json
+contains their IDs. Lab/process15891 and screenshots47582 joined0. No lab/test jobs
+active; backend is stopped. Do not silently delete their app data.
+
 Latest direction: prioritize speed and simulator feature completion. The local
 functional checklist is complete on documented paths; no hardware readiness prompts
 or repeated unchanged acceptance. See [fast iteration](../fast-iteration.md).

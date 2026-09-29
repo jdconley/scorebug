@@ -50,13 +50,45 @@ after a media-affecting change, inspect/decode all three and compare audio, fram
 continuity and score changes. Reuse the retained verified recordings otherwise.
 Do not add a sustained UHD run to this checkpoint unless UHD behavior changed.
 
-## Hands-on local stack
+## Hands-on simulator session
 
-For manual app use, the existing
-[device lab instructions](device-testing.md#start-the-local-stack) start the API,
-SRT relay, software overlay worker and both recording outputs with one command.
-Use the generated private `setup.json` to configure the native apps. The lab is
-bounded and retains recordings when it stops; no real YouTube destination is used.
+Use this when you want to operate the apps yourself instead of running UI tests:
+
+```sh
+node scripts/simulator-lab.mjs --host YOUR_PRIVATE_LAN_IP --duration 1800
+```
+
+The launcher uses the installed iOS/watchOS 26.2 runtimes and Xcode 26.2, builds
+incrementally without tests, and opens a camera iPhone 14, a scoring iPhone 14 and
+a Series 7 41 mm Watch. It starts the existing local API, SRT relay, software proxy
+and mock RTMP recorder. The duration starts when all apps are launched.
+
+The camera uses synthetic A/V by default. Add `--source /absolute/prepared/input.mov`
+to replay representative footage instead. The source is copied into the new camera
+app container; the original is unchanged. Capture ends at the end of a finite file.
+
+1. On the Watch, tap **Join offered match** while the temporary offer is valid.
+   This accepts setup; take over scoring when you are ready.
+2. On each phone, open **Score**. The temporary local server and token are prefilled;
+   connect and choose the seeded HOME/AWAY match. Take over on the scoring phone.
+3. On the camera phone, open **Film → Setup** and enter the same server/token from
+   the printed private `setup.json`, worker `mac`, output `local-sink`, then connect.
+4. Start recording, then streaming. Score from the other phone or take over on the
+   Watch. The Watch is configured for the same match using a scoped simulator
+   setup fixture and real HTTP; this does not test WatchConnectivity/radios.
+5. Stop streaming, leave recording running briefly, then stop and export it from
+   **Recordings**. Stop the lab with Ctrl-C after finishing recording.
+
+The lab preserves the clean recording in the camera simulator and both overlaid
+MP4s under its artifact directory; see [output paths](device-testing.md#short-physical-smoke).
+It retains the three simulators so you can inspect/export/recover recordings.
+`devices.json` identifies them, and `session.json` points to the private lab setup.
+No unrelated simulator is modified. Each new launch creates a fresh session and
+credentials; remove only those named devices after saving any wanted recordings.
+Lab timeout stops the backend; it does not delete devices or stop a local recording.
+
+For an already installed app or a later physical session, use the backend-only
+[device lab instructions](device-testing.md#start-the-local-stack).
 
 The supported colocated media path uses the software proxy. Simulator UHD and
 severe-congestion limits, colocated VideoToolbox/probe loss, and abrupt crash tails

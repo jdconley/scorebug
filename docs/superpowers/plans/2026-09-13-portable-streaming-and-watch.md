@@ -63,6 +63,8 @@ full-suite run. Local functional integration is complete on the documented paths
   clean archive and both final outputs. Simulator UHD limits remain below.
 - [x] Relay credentials/generations, bounded telemetry and worker readiness covered.
 - [x] Mac service and persistent Linux API/relay deployment wiring implemented.
+- [x] Hands-on simulator launcher opens two native phones and a Watch with the local
+  lab, without UI automation; preserves app data and recordings after shutdown.
 
 ## Remaining local work
 
