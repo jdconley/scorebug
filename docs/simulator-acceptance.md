@@ -130,3 +130,12 @@ production publisher wrapper without measurement campaigns and manually changes
 preserve recording/publishing. See their `isolation-analysis.json` and
 [session log](session-logs/2026-09-28-uhd-polling-isolation.md). Pre-upgrade measurement
 work remains the differentiator; no adaptive fix or full-media pass is claimed.
+
+Warmup/backend comparisons further narrow this: real candidate-only warmup
+(`headless-native-fw3Zum`) passes with786consecutiveUHD receiver frames; probe-only
+warmup with VideoToolbox proxy (`headless-native-LC8Cpq`) incurs17SDK drops; the
+same probe-only path with software proxy (`headless-native-zDpc9c`) passes with
+790consecutiveUHD frames and0SDK/app drops. All retain native hardware encoding,
+recording/publishing and clean lab shutdown. Hashed `isolation-analysis.json`
+reports are retained. Normal adaptive software-proxy verification is in progress;
+no full-ladder/media acceptance is claimed from these short comparisons.

@@ -97,6 +97,10 @@ struct PublishingClockObservation: Equatable, Sendable {
     var nativeFixedUHDForDiagnostics = false
     var nativeUHDTransitionForDiagnostics = false
     var nativeOwnedUHDTransitionForDiagnostics = false
+    var nativeWarmUHDCandidateForDiagnostics = false
+    var nativeWarmUHDProbeForDiagnostics = false
+    private(set) var nativeWarmedCandidateInputCount: Int?
+    private(set) var nativeWarmedProbeBytes: UInt64?
     var nativeDirectUHDForDiagnostics = false
     var nativeFreezeUHDPollingForDiagnostics = false
     var nativeUHDPollingIsFrozen: Bool {
@@ -110,6 +114,15 @@ struct PublishingClockObservation: Equatable, Sendable {
         }
         let baseline = try await session.setVideoBitRate(nativeOwnedUHDTransitionForDiagnostics
             ? PublishingVideoProfile.minimumStartup.bitRate : PublishingVideoProfile.hd1080.bitRate)
+        if nativeWarmUHDCandidateForDiagnostics || nativeWarmUHDProbeForDiagnostics {
+            guard nativeOwnedUHDTransitionForDiagnostics,
+                  let publisher = publishing?.probeObserver as? NativeOwnedCandidatePublisher else {
+                throw SRTMediaPublisher.PublisherError.invalidState
+            }
+            async let candidate = nativeWarmUHDCandidateForDiagnostics ? publisher.warmCandidateForDiagnostics() : nil
+            async let probe = nativeWarmUHDProbeForDiagnostics ? publisher.warmProbeForDiagnostics(expecting: baseline) : nil
+            (nativeWarmedCandidateInputCount, nativeWarmedProbeBytes) = try await (candidate, probe)
+        }
         let replacement = try await session.setVideoProfile(.uhd2160, expecting: baseline)
         _ = try await session.setVideoBitRate(PublishingVideoProfile.uhd2160.bitRate, expecting: .replacement(replacement))
         return replacement

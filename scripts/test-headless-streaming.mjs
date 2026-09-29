@@ -15,6 +15,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
   assert(
     [
       '--host',
+      '--worker-encoder',
       '--source',
       '--duration',
       '--quality',
@@ -25,6 +26,8 @@ for (let index = 2; index < process.argv.length; index += 2) {
       '--fixed-uhd',
       '--fixed-uhd-transition',
       '--owned-uhd-transition',
+      '--warm-uhd-candidate',
+      '--warm-uhd-probe',
       '--direct-uhd',
       '--freeze-uhd-polling',
     ].includes(key) &&
@@ -66,6 +69,10 @@ const fixedUHDTransition = values.get('--fixed-uhd-transition') === 'on';
 assert(!values.has('--fixed-uhd-transition') || (fixedUHDTransition && fixedUHD));
 const ownedUHDTransition = values.get('--owned-uhd-transition') === 'on';
 assert(!values.has('--owned-uhd-transition') || (ownedUHDTransition && fixedUHDTransition));
+const warmUHDCandidate = values.get('--warm-uhd-candidate') === 'on';
+assert(!values.has('--warm-uhd-candidate') || (warmUHDCandidate && ownedUHDTransition));
+const warmUHDProbe = values.get('--warm-uhd-probe') === 'on';
+assert(!values.has('--warm-uhd-probe') || (warmUHDProbe && ownedUHDTransition));
 const directUHD = values.get('--direct-uhd') === 'on';
 assert(!values.has('--direct-uhd') || directUHD);
 const freezeUHDPolling = values.get('--freeze-uhd-polling') === 'on';
@@ -76,7 +83,9 @@ assert(
   !fixedUHD ||
     (quality === '2160' && timingAudit === 'off' && duration <= 60 && disconnectAfter === 0),
 );
-const options = deviceLabOptions(['--host', values.get('--host'), '--encoder', 'videotoolbox']);
+const workerEncoder = values.get('--worker-encoder') ?? 'videotoolbox';
+assert(['software', 'videotoolbox'].includes(workerEncoder));
+const options = deviceLabOptions(['--host', values.get('--host'), '--encoder', workerEncoder]);
 await mkdir(join(root, 'artifacts/qa'), { recursive: true });
 const artifact = await mkdtemp(join(root, 'artifacts/qa/headless-native-'));
 await chmod(artifact, 0o700);
@@ -136,6 +145,8 @@ try {
       fixedUHD,
       fixedUHDTransition,
       ownedUHDTransition,
+      warmUHDCandidate,
+      warmUHDProbe,
       directUHD,
       freezeUHDPolling,
     }),
@@ -208,6 +219,10 @@ try {
   assert.equal(result.fixedUHD, fixedUHD);
   assert.equal(result.fixedUHDTransition, fixedUHDTransition);
   assert.equal(result.ownedUHDTransition, ownedUHDTransition);
+  assert.equal(result.warmUHDCandidate, warmUHDCandidate);
+  if (warmUHDCandidate) assert(result.warmedCandidateInputCount >= 97);
+  assert.equal(result.warmUHDProbe, warmUHDProbe);
+  if (warmUHDProbe) assert(result.warmedProbeBytes > 0);
   assert.equal(result.directUHD, directUHD);
   assert.equal(result.freezeUHDPolling, freezeUHDPolling);
   if (fixedUHDTransition) assert.equal(result.transitionAcknowledged, true);

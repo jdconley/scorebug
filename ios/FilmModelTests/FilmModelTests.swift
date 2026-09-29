@@ -406,6 +406,8 @@ extension FilmModelTests {
             let fixedUHD: Bool?
             let fixedUHDTransition: Bool?
             let ownedUHDTransition: Bool?
+            let warmUHDCandidate: Bool?
+            let warmUHDProbe: Bool?
             let directUHD: Bool?
             let freezeUHDPolling: Bool?
         }
@@ -424,6 +426,12 @@ extension FilmModelTests {
         let ownedUHDTransition = config.ownedUHDTransition == true
         guard !ownedUHDTransition || fixedUHDTransition else { throw URLError(.badURL) }
         streaming.nativeOwnedUHDTransitionForDiagnostics = ownedUHDTransition
+        let warmUHDCandidate = config.warmUHDCandidate == true
+        guard !warmUHDCandidate || ownedUHDTransition else { throw URLError(.badURL) }
+        streaming.nativeWarmUHDCandidateForDiagnostics = warmUHDCandidate
+        let warmUHDProbe = config.warmUHDProbe == true
+        guard !warmUHDProbe || ownedUHDTransition else { throw URLError(.badURL) }
+        streaming.nativeWarmUHDProbeForDiagnostics = warmUHDProbe
         let directUHD = config.directUHD == true
         guard !directUHD || (config.uhd && !fixedUHD && config.duration <= 120 && config.timingAudit == false && config.expectReconnect != true) else { throw URLError(.badURL) }
         streaming.nativeDirectUHDForDiagnostics = directUHD
@@ -532,6 +540,8 @@ extension FilmModelTests {
             "timingAuditEnabled": timingAudit, "fixedUHD": fixedUHD, "boundarySampleCount": boundaries.count,
             "fixedUHDTransition": fixedUHDTransition, "transitionAcknowledged": transitionReceipt != nil,
             "ownedUHDTransition": ownedUHDTransition,
+            "warmUHDCandidate": warmUHDCandidate, "warmedCandidateInputCount": streaming.nativeWarmedCandidateInputCount ?? 0,
+            "warmUHDProbe": warmUHDProbe, "warmedProbeBytes": streaming.nativeWarmedProbeBytes ?? 0,
             "directUHD": directUHD,
             "freezeUHDPolling": freezeUHDPolling,
             "elapsedSeconds": Double(started.duration(to: .now).components.seconds), "mediaQualified": false]
@@ -549,6 +559,8 @@ extension FilmModelTests {
             XCTAssertEqual(transitionReceipt?.height, 2160)
         }
         if freezeUHDPolling { XCTAssertTrue(boundaries.contains { $0["adaptivePollingFrozen"] == "true" }) }
+        if warmUHDCandidate { XCTAssertGreaterThanOrEqual(streaming.nativeWarmedCandidateInputCount ?? 0, 97) }
+        if warmUHDProbe { XCTAssertGreaterThan(streaming.nativeWarmedProbeBytes ?? 0, 0) }
         if fixedUHD { XCTAssertFalse(boundaries.isEmpty, "Expected native boundary diagnostics") }
         else { XCTAssertFalse(samples.isEmpty, "Expected real quality diagnostics") }
         XCTAssertEqual(film.state, .idle, "Archive finalization must complete")

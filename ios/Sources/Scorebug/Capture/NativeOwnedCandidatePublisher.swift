@@ -87,6 +87,48 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
             stagePlanSelection: .fixed(stagePlan), probes: probes)
     }
     #if DEBUG
+    private var diagnosticCandidateID: UUID?
+    func warmProbeForDiagnostics(expecting baseline: PublishingBitRateChange) async throws -> UInt64 {
+        guard let probes else { throw PublishingSessionError.invalidState }
+        let context = try await probes.capture(baseline)
+        let operation = try await probes.begin(context, 36_192_000, .recoveryBudget)
+        do {
+            var value = try await operation.value()
+            for _ in 0..<40 {
+                try await Task.sleep(for: .milliseconds(100))
+                value = try await operation.renew()
+            }
+            _ = try await operation.retire()
+            return value.acceptedPayloadBytes
+        } catch {
+            _ = try? await operation.retire()
+            throw error
+        }
+    }
+    /// Isolates real finite candidate encoding without allocating a bandwidth probe.
+    func warmCandidateForDiagnostics() async throws -> Int {
+        guard lock.withLock({ !stopped && candidate == nil && candidateReader == nil && diagnosticCandidateID == nil }),
+              let generation = publisher.videoStartup?.publishingGeneration else {
+            throw PublishingSessionError.invalidState
+        }
+        let handle = try await campaignOwner.begin(scope: scope, profile: .uhd2160, publishingGeneration: generation)
+        let installed = lock.withLock { () -> Bool in
+            guard !stopped, diagnosticCandidateID == nil else { return false }
+            diagnosticCandidateID = handle.id; return true
+        }
+        guard installed else {
+            await campaignOwner.retire(id: handle.id, reason: .cancelled)
+            throw PublishingSessionError.invalidState
+        }
+        let result = await withTaskCancellationHandler {
+            await campaignOwner.result(id: handle.id)
+        } onCancel: { campaignOwner.cancel(id: handle.id, reason: .cancelled) }
+        lock.withLock { diagnosticCandidateID = nil }
+        await campaignOwner.retire(id: handle.id, reason: .ownerChanged)
+        try Task.checkCancellation()
+        guard let result, result.reason == .completed else { throw PublishingSessionError.invalidState }
+        return result.acceptedInputCount
+    }
     /// Compatibility laboratory construction retains the complete bounded audit.
     convenience init(publisher: any MediaPublisher, scope: VideoFrameObservationScope,
          campaignOwner: PublishingCandidateCampaignOwner, timingProfile: StreamingTimingProfile = .strict1500, probes: Probes? = nil,
@@ -114,6 +156,9 @@ final class NativeOwnedCandidatePublisher: MediaPublisher, PublishingProbeObserv
     func append(_ sample: CapturedMediaSample) async throws {
         let selected = lock.withLock { stopped ? nil : candidate }
         try await publisher.append(sample)
+        #if DEBUG
+        if let id = lock.withLock({ stopped ? nil : diagnosticCandidateID }) { _ = campaignOwner.offer(sample, id: id) }
+        #endif
         if let selected, lock.withLock({ !stopped && candidate === selected }) { selected.offer(sample) }
     }
     var isPublishing: Bool { get async { await publisher.isPublishing } }

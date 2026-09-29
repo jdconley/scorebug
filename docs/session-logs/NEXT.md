@@ -12,30 +12,29 @@ owns TODOs; [acceptance](../simulator-acceptance.md) owns retained results.
 
 ## Current finding and next action
 
-Starting8db60e7. Two short DEBUG-only comparisons:
-- `headless-native-mx1Wwc`: real direct UHD admission then freeze worker-status and
-  quality polling.18SDK raw drops,0app drops, hardware selected, median sampled
-  UHD submission33.05ms. Ongoing polling is not sufficient to explain the loss.
-- `headless-native-dZDuaa`: production UHD publisher wrapper/initial240 with a manual
-  guarded UHD change, no measurement campaigns.909consecutiveUHD receiver frames,
- 0drops, hardware selected. Publisher setup alone does not reproduce the slowdown.
-Both recording/publishing survive; both incremental builds/targeted lifecycle tests
-pass. Reports are `isolation-analysis.json` in each capture with source patch/hashes.
-See [session](2026-09-28-uhd-polling-isolation.md).
-Handles23488/29036 joined0, cleanup empty. **No active jobs.**
+Startingfe332cb. Short real measurement warmups isolate bandwidth-probe/backend
+interaction: candidate-only/VideoToolbox proxy passes786consecutiveUHD frames;
+probe-only/VideoToolbox proxy drops17SDK frames; probe-only/software proxy passes
+790consecutiveUHD frames with0drops. Native hardware selected in all cases.
+Artifacts `headless-native-fw3Zum`, `headless-native-LC8Cpq`, `headless-native-zDpc9c`
+retain source patches and hashed `isolation-analysis.json`. Handles69955/28797/60166
+joined0, cleanup empty. No normal adaptive/full-media pass claimed from these.
+See [session](2026-09-28-uhd-probe-backend.md).
 
-Next isolate pre-upgrade candidate native encoding from bandwidth probing, e.g. a
-short measurement warmup before the passing owned-publisher transition. Join the
-actual candidate lifecycle; do not fake admission evidence. No resource leak has
-been proven: candidate terminal code explicitly drains/stops/clears its codec.
-Do not make another history-copy, queue-size or timing optimization speculatively.
+**ACTIVE: exec80423**, normal adaptive UHD with software proxy, duration330s,
+source `artifacts/qa/uhd-app-20260928/input.mov`, timing-audit off. Artifact
+`headless-native-nZ4tzv`, parent log `artifacts/qa/uhd-readiness-20260928/adaptive-software.log`.
+No direct/fixed/freeze/warm flags. Source HEAD/patch saved before capture. Poll/join
+this exact handle; observation timeout is not terminal. No other jobs active.
+If UHD receiver/native cadence passes, export clean archive through native library
+and verify actual archive/both output media. Otherwise inspect the reason first.
 
-Retain the faster real adaptive reproduction `--direct-uhd on --duration 55`:
-`headless-native-MuMtrg` reachesUHD26s and loses first SDK frame37s, with hardware
-confirmed. Its first rollback reason differs from full-ladder sourceLoss. Native
-submission stacks wait for VideoToolbox XPC; service cause remains unproven.
-Skipped rungs mean diagnostic only. No unchanged300s climb/full media decode;
-verify a fix here before returning to the full ladder.
+CPU proxy is a plausible working local4K path. Preserve local shared-VideoToolbox
+limitation; its internal cause is not yet proven. Ongoing adaptive polling, publisher
+setup, long runtime, guarded replacement and candidate encoding alone were excluded
+as sufficient causes by the earlier short comparisons. No more speculative queue,
+history-copy or timing changes. Use the55s direct path for targeted future fixes;
+only repeat full climb for a material change, such as the currently tested backend.
 
 Already isolated: single/triple native hardware UHD encoders and verified SDK
 1080→UHD replacement each deliver450/450frames without drops; plain encoder count,
@@ -87,3 +86,8 @@ audit off, no outage/fixed mode,≤120s. Private130s slice available at
 Polling ablation: direct command plus `--freeze-uhd-polling on`,≤60s. It deliberately
 halts adaptive reaction after UHD; never acceptance. Owned-publisher transition:
 fixed-transition command plus `--owned-uhd-transition on` (starts240, no campaigns).
+
+Finite warmups require owned/fixed transition: `--warm-uhd-candidate on` and/or
+`--warm-uhd-probe on`. Both actual owners join before the manual profile change;
+the concurrent combination is available but untested. Runner now accepts
+`--worker-encoder software|videotoolbox` (default VideoToolbox).
